@@ -3,6 +3,7 @@ package generators
 import (
 	"context"
 	"net"
+	"os"
 	"testing"
 
 	generativelanguage "cloud.google.com/go/ai/generativelanguage/apiv1beta"
@@ -39,7 +40,7 @@ func TestGeminiListModels(t *testing.T) {
 		new(Module),
 	).Fork(
 		func() nets.ProxyAddr {
-			return "socks5://100.90.55.48:10000"
+			return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 		},
 	).Call(func(
 		dialer nets.Dialer,

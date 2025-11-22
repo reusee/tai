@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func testGenerator(
 			new(Module),
 		).Fork(
 			func() nets.ProxyAddr {
-				return "socks5://100.90.55.48:10000"
+				return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 			},
 		)
 

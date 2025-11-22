@@ -1,16 +1,23 @@
 package generators
 
-import "github.com/reusee/tai/vars"
+import (
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/vars"
+)
 
 type NewOpenRouter func(args GeneratorArgs) *OpenAI
 
 func (Module) NewOpenRouter(
 	newOpenAI NewOpenAI,
 	apiKey OpenRouterAPIKey,
+	loader configs.Loader,
 ) NewOpenRouter {
 	return func(args GeneratorArgs) *OpenAI {
-		//args.BaseURL = "https://openrouter.ai/api/v1"
-		args.BaseURL = "https://gateway.ai.cloudflare.com/v1/996ac84c502c70aa43589559d6e3f8d2/openrouter/openrouter"
+		if endpoint := configs.First[string](loader, "openrouter_endpoint"); endpoint != "" {
+			args.BaseURL = endpoint
+		} else {
+			args.BaseURL = "https://openrouter.ai/api/v1"
+		}
 		args.IsOpenRouter = true
 		return newOpenAI(
 			args,
