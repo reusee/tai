@@ -26,8 +26,8 @@ func (Module) ConfigsLoader(
 	}()
 
 	filenames := []string{
-		"cai.cue",
-		".cai.cue",
+		"tai.cue",
+		".tai.cue",
 	}
 
 	// working directory
