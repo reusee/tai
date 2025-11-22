@@ -97,6 +97,7 @@ proxy_addr?: string
 proxy_address?: string
 http_proxy?: string
 socks_proxy?: string
+openrouter_endpoint?: string
 
 _var: {
   name?: string
