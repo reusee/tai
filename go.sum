@@ -2,6 +2,12 @@ cuelabs.dev/go/oci/ociregistry v0.0.0-20250722084951-074d06050084 h1:4k1yAtPvZJZ
 cuelabs.dev/go/oci/ociregistry v0.0.0-20250722084951-074d06050084/go.mod h1:4WWeZNxUO1vRoZWAHIG0KZOd6dA25ypyWuwD3ti0Tdc=
 cuelang.org/go v0.15.1 h1:MRnjc/KJE+K42rnJ3a+425f1jqXeOOgq9SK4tYRTtWw=
 cuelang.org/go v0.15.1/go.mod h1:NYw6n4akZcTjA7QQwJ1/gqWrrhsN4aZwhcAL0jv9rZE=
+github.com/chzyer/logex v1.1.10 h1:Swpa1K6QvQznwJRcfTfQJmTE72DqScAa40E+fbHEXEE=
+github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
+github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e h1:fY5BOSpyZCqRo5OhCuC+XN+r/bBCmeuuJtjz+bCNIf8=
+github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
+github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1 h1:q763qf9huN11kDQavWsoZXJNW3xEE4JJyHa5Q25/sd8=
+github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=
 github.com/cockroachdb/apd/v3 v3.2.1 h1:U+8j7t0axsIgvQUqthuNm82HIrYXodOV2iWLWtEaIwg=
 github.com/cockroachdb/apd/v3 v3.2.1/go.mod h1:klXJcjp+FffLTHlhIG69tezTDvdP065naDsHzKhYSqc=
 github.com/emicklei/proto v1.14.2 h1:wJPxPy2Xifja9cEMrcA/g08art5+7CGJNFNk35iXC1I=
@@ -32,6 +38,14 @@ github.com/protocolbuffers/txtpbfmt v0.0.0-20251016062345-16587c79cd91 h1:s1LvMa
 github.com/protocolbuffers/txtpbfmt v0.0.0-20251016062345-16587c79cd91/go.mod h1:JSbkp0BviKovYYt9XunS95M3mLPibE9bGg+Y95DsEEY=
 github.com/reusee/dscope v0.0.0-20251119092406-214076ed1cb4 h1:nsKBc5liwrAjz5s9C4Ltgvn/K+QXQkbGvokcrx2yY+g=
 github.com/reusee/dscope v0.0.0-20251119092406-214076ed1cb4/go.mod h1:JtHKpPh9/rknocu2RAouG90FkXc+nPmvG5matoIrJtw=
+github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104 h1:GfPb/TN1XHHuPsaCwTt2rxXlbekrbeBzjlF0jLOuHeY=
+github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104/go.mod h1:L24cJjkVA/jMvaVhLLb1dY+S/BR48tEL2a4qFqXHXso=
+github.com/reusee/pr3 v0.0.0-20240520031754-49012a37a83e h1:zruB8DlyrCAps7tvlFcM1O/ld/KL21BSx5TcVexqUQI=
+github.com/reusee/pr3 v0.0.0-20240520031754-49012a37a83e/go.mod h1:FzIWTRz/wuKHZq2EpNpmlZdFGLUa1e3w7uJ05m7sh+w=
+github.com/reusee/sb v0.0.0-20250428023554-20bc55f5270a h1:TBXpGjv/mUDeLb2DSztnEsTsFycX1t/OO2FHfkl3nIQ=
+github.com/reusee/sb v0.0.0-20250428023554-20bc55f5270a/go.mod h1:Kjk5X9PpLupR3w7JQkKGglgsXxZ8Jk8guxq/Pogeys0=
+github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5 h1:OupwXCaCACD5+fQ2Z3i7NWH22XtGDp7oEqBL70H7J14=
+github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5/go.mod h1:i78kTV37FGn5H3BN5U0GPgTJJwG8PPZpqwVUmTeeTLY=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/samber/lo v1.52.0 h1:Rvi+3BFHES3A8meP33VPAxiBZX/Aws5RxrschYGjomw=
@@ -42,6 +56,8 @@ github.com/samber/slog-multi v1.6.0 h1:i1uBY+aaln6ljwdf7Nrt4Sys8Kk6htuYuXDHWJsHt
 github.com/samber/slog-multi v1.6.0/go.mod h1:qTqzmKdPpT0h4PFsTN5rYRgLwom1v+fNGuIrl1Xnnts=
 github.com/systemd/slog-journal v0.1.1 h1:6QmoeO/G/9ewZCWe6DQyeS8Q7sV7bEUaGncDJcAFcyU=
 github.com/systemd/slog-journal v0.1.1/go.mod h1:RroeO1jghpRimGgddhGx+TS/CmRJdPjK9g2ZeYLr9P8=
+go.starlark.net v0.0.0-20251109183026-be02852a5e1f h1:3KpJSfM1L+ziCR1a3I/Hgen2nwO94GjC7NAyiPArTkA=
+go.starlark.net v0.0.0-20251109183026-be02852a5e1f/go.mod h1:YKMCv9b1WrfWmeqdV5MAuEHWsu5iC+fe6kYl2sQjdI8=
 go.yaml.in/yaml/v3 v3.0.4 h1:tfq32ie2Jv2UxXFdLJdh3jXuOzWiL1fo0bu/FbuKpbc=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 golang.org/x/mod v0.29.0 h1:HV8lRxZC4l2cr3Zq1LvtOsi/ThTgWnUk/y64QSs8GwA=
