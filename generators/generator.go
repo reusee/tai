@@ -90,7 +90,7 @@ func (Module) GetGenerator(
 				Temperature:       vars.PtrTo(float32(0.1)),
 			}), nil
 
-		case "pro", "gemini-pro":
+		case "gemini", "pro", "gemini-pro":
 			return newGemini(GeneratorArgs{
 				Model:             "models/gemini-pro-latest",
 				ContextTokens:     192 * K,
