@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taiconfigs"
 )
 
@@ -25,7 +26,7 @@ func (Module) Generate(
 	logger logs.Logger,
 	action Action,
 	maxTokens taiconfigs.MaxTokens,
-	buildChat generators.BuildChatPhase,
+	buildChat phases.BuildChat,
 	tap debugs.Tap,
 ) Generate {
 

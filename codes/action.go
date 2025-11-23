@@ -6,12 +6,13 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/vars"
 )
 
 type Action interface {
 	Name() string
-	InitialPhase(cont generators.Phase) generators.Phase
+	InitialPhase(cont phases.Phase) phases.Phase
 	DefineCmds()
 	InitialGenerator() (generators.Generator, error)
 }

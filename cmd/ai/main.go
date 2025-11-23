@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/term"
 )
@@ -29,8 +30,8 @@ func main() {
 		logger logs.Logger,
 		getSystemPrompt GetSystemPrompt,
 		updateMemoryFunc UpdateMemoryFunc,
-		buildGeneratePhase generators.BuildGeneratePhase,
-		buildChatPhase generators.BuildChatPhase,
+		buildGenerate phases.BuildGenerate,
+		buildChat phases.BuildChat,
 		generator generators.Generator,
 	) {
 
@@ -75,9 +76,9 @@ func main() {
 			state = generators.NewFuncMap(state, updateMemoryFunc)
 		}
 
-		phase := buildGeneratePhase(
+		phase := buildGenerate(
 			generator,
-			buildChatPhase(generator, nil),
+			buildChat(generator, nil),
 		)
 		for phase != nil {
 			phase, state, err = phase(ctx, state)

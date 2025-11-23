@@ -7,15 +7,16 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/phases"
 )
 
 type ActionDo struct {
-	ActionArgument     dscope.Inject[ActionArgument]
-	DiffHandler        dscope.Inject[codetypes.DiffHandler]
-	BuildGeneratePhase dscope.Inject[generators.BuildGeneratePhase]
-	BuildChatPhase     dscope.Inject[generators.BuildChatPhase]
-	GetPlanGenerator   dscope.Inject[GetPlanGenerator]
-	GetCodeGenerator   dscope.Inject[GetCodeGenerator]
+	ActionArgument   dscope.Inject[ActionArgument]
+	DiffHandler      dscope.Inject[codetypes.DiffHandler]
+	BuildGenerate    dscope.Inject[phases.BuildGenerate]
+	BuildChat        dscope.Inject[phases.BuildChat]
+	GetPlanGenerator dscope.Inject[GetPlanGenerator]
+	GetCodeGenerator dscope.Inject[GetCodeGenerator]
 }
 
 var _ Action = ActionDo{}
@@ -28,12 +29,12 @@ func (Module) ActionDo(
 	return
 }
 
-func (a ActionDo) InitialPhase(cont generators.Phase) generators.Phase {
+func (a ActionDo) InitialPhase(cont phases.Phase) phases.Phase {
 	return a.plan(cont)
 }
 
-func (a ActionDo) plan(cont generators.Phase) generators.Phase {
-	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+func (a ActionDo) plan(cont phases.Phase) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		generator, err := a.GetPlanGenerator()()
 		if err != nil {
 			return nil, nil, err
@@ -51,12 +52,12 @@ Your first task is to create a comprehensive, step-by-step plan to achieve this 
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGeneratePhase()(generator, a.checkPlan(cont)), state, nil
+		return a.BuildGenerate()(generator, a.checkPlan(cont)), state, nil
 	}
 }
 
-func (a ActionDo) checkPlan(cont generators.Phase) generators.Phase {
-	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		contents := state.Contents()
 		if len(contents) > 0 {
 			lastContent := contents[len(contents)-1]
@@ -68,7 +69,7 @@ func (a ActionDo) checkPlan(cont generators.Phase) generators.Phase {
 							if err != nil {
 								return nil, nil, err
 							}
-							return a.BuildChatPhase()(codeGenerator, cont), state, nil
+							return a.BuildChat()(codeGenerator, cont), state, nil
 						}
 						break
 					}
@@ -79,8 +80,8 @@ func (a ActionDo) checkPlan(cont generators.Phase) generators.Phase {
 	}
 }
 
-func (a ActionDo) do(cont generators.Phase) generators.Phase {
-	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+func (a ActionDo) do(cont phases.Phase) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		codeGenerator, err := a.GetCodeGenerator()()
 		if err != nil {
 			return nil, nil, err
@@ -103,9 +104,9 @@ Always include a clear rationale for your decisions and the anticipated impact o
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGeneratePhase()(
+		return a.BuildGenerate()(
 			codeGenerator,
-			a.BuildChatPhase()(
+			a.BuildChat()(
 				codeGenerator,
 				cont,
 			),

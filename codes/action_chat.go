@@ -6,11 +6,12 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/phases"
 )
 
 type ActionChat struct {
-	BuildChatPhase      dscope.Inject[generators.BuildChatPhase]
-	BuildGeneratePhase  dscope.Inject[generators.BuildGeneratePhase]
+	BuildChat           dscope.Inject[phases.BuildChat]
+	BuildGenerate       dscope.Inject[phases.BuildGenerate]
 	ActionArgument      dscope.Inject[ActionArgument]
 	GetDefaultGenerator dscope.Inject[GetDefaultGenerator]
 }
@@ -24,8 +25,8 @@ func (Module) ActionChat(
 	return
 }
 
-func (a ActionChat) InitialPhase(cont generators.Phase) generators.Phase {
-	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		generator, err := a.GetDefaultGenerator()()
 		if err != nil {
 			return nil, nil, err
@@ -41,16 +42,16 @@ func (a ActionChat) InitialPhase(cont generators.Phase) generators.Phase {
 			if err != nil {
 				return nil, nil, err
 			}
-			return a.BuildGeneratePhase()(
+			return a.BuildGenerate()(
 				generator,
-				a.BuildChatPhase()(
+				a.BuildChat()(
 					generator,
 					cont,
 				),
 			), state, nil
 		}
 
-		return a.BuildChatPhase()(generator, cont), state, nil
+		return a.BuildChat()(generator, cont), state, nil
 	}
 }
 

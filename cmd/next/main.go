@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/phases"
 )
 
 func main() {
@@ -22,8 +23,8 @@ func main() {
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,
 		logger logs.Logger,
-		buildGeneratePhase generators.BuildGeneratePhase,
-		buildChatPhase generators.BuildChatPhase,
+		buildGenerate phases.BuildGenerate,
+		buildChat phases.BuildChat,
 	) {
 		ctx := context.Background()
 
@@ -41,9 +42,9 @@ func main() {
 		)
 		state = generators.NewOutput(state, os.Stdout, true)
 
-		phase := buildGeneratePhase(
+		phase := buildGenerate(
 			generator,
-			buildChatPhase(generator, nil),
+			buildChat(generator, nil),
 		)
 		var err error
 		for phase != nil {
