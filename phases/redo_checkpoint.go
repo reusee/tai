@@ -1,14 +1,16 @@
-package generators
+package phases
+
+import "github.com/reusee/tai/generators"
 
 type RedoCheckpoint struct {
-	upstream  State
-	state0    State
-	generator Generator
+	upstream  generators.State
+	state0    generators.State
+	generator generators.Generator
 }
 
-var _ State = RedoCheckpoint{}
+var _ generators.State = RedoCheckpoint{}
 
-func (r RedoCheckpoint) AppendContent(content *Content) (State, error) {
+func (r RedoCheckpoint) AppendContent(content *generators.Content) (generators.State, error) {
 	upstream, err := r.upstream.AppendContent(content)
 	if err != nil {
 		return nil, err
@@ -20,11 +22,11 @@ func (r RedoCheckpoint) AppendContent(content *Content) (State, error) {
 	}, nil
 }
 
-func (r RedoCheckpoint) Contents() []*Content {
+func (r RedoCheckpoint) Contents() []*generators.Content {
 	return r.upstream.Contents()
 }
 
-func (r RedoCheckpoint) Flush() (State, error) {
+func (r RedoCheckpoint) Flush() (generators.State, error) {
 	upstream, err := r.upstream.Flush()
 	if err != nil {
 		return nil, err
@@ -36,7 +38,7 @@ func (r RedoCheckpoint) Flush() (State, error) {
 	}, nil
 }
 
-func (r RedoCheckpoint) FuncMap() map[string]*Func {
+func (r RedoCheckpoint) FuncMap() map[string]*generators.Func {
 	return r.upstream.FuncMap()
 }
 
@@ -44,6 +46,6 @@ func (r RedoCheckpoint) SystemPrompt() string {
 	return r.upstream.SystemPrompt()
 }
 
-func (r RedoCheckpoint) Unwrap() State {
+func (r RedoCheckpoint) Unwrap() generators.State {
 	return r.upstream
 }

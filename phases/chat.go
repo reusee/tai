@@ -1,4 +1,4 @@
-package generators
+package phases
 
 import (
 	"context"
@@ -11,16 +11,17 @@ import (
 
 	"github.com/peterh/liner"
 	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 )
 
-type BuildChatPhase func(generator Generator, next Phase) Phase
+type BuildChat func(generator generators.Generator, next Phase) Phase
 
 func (Module) BuildChatPhase(
-	buildGeneratePhase BuildGeneratePhase,
+	buildGen BuildGenerate,
 	logger logs.Logger,
 	tap debugs.Tap,
-) (buildChat BuildChatPhase) {
+) (buildChat BuildChat) {
 
 	getHistoryPath := sync.OnceValues(func() (string, error) {
 		dir, err := os.UserConfigDir()
@@ -30,8 +31,8 @@ func (Module) BuildChatPhase(
 		return filepath.Join(dir, "ai-chat-history.json"), nil
 	})
 
-	buildChat = func(generator Generator, cont Phase) Phase {
-		return func(ctx context.Context, state State) (Phase, State, error) {
+	buildChat = func(generator generators.Generator, cont Phase) Phase {
+		return func(ctx context.Context, state generators.State) (Phase, generators.State, error) {
 
 			line := liner.NewLiner()
 			defer line.Close()
@@ -81,11 +82,11 @@ func (Module) BuildChatPhase(
 				return cont, state, nil
 
 			case "/regen":
-				checkpoint, ok := As[RedoCheckpoint](state)
+				checkpoint, ok := generators.As[RedoCheckpoint](state)
 				if !ok {
 					return nil, nil, fmt.Errorf("no redo checkpoint")
 				}
-				return buildGeneratePhase(
+				return buildGen(
 					checkpoint.generator,
 					buildChat(generator, cont),
 				), checkpoint.state0, nil
@@ -95,13 +96,13 @@ func (Module) BuildChatPhase(
 				if err != nil {
 					return nil, nil, err
 				}
-				output := NewOutput(state, out, true)
+				output := generators.NewOutput(state, out, true)
 				for _, content := range state.Contents() {
 					next, err := output.AppendContent(content)
 					if err != nil {
 						return nil, nil, err
 					}
-					output = next.(Output)
+					output = next.(generators.Output)
 				}
 				_, err = output.Flush()
 				if err != nil {
@@ -125,17 +126,17 @@ func (Module) BuildChatPhase(
 			}
 
 			input += "\n\n"
-			state, err = state.AppendContent(&Content{
-				Role: RoleUser,
-				Parts: []Part{
-					Text(input),
+			state, err = state.AppendContent(&generators.Content{
+				Role: generators.RoleUser,
+				Parts: []generators.Part{
+					generators.Text(input),
 				},
 			})
 			if err != nil {
 				return nil, nil, err
 			}
 
-			return buildGeneratePhase(
+			return buildGen(
 				generator,
 				buildChat(generator, cont),
 			), state, nil

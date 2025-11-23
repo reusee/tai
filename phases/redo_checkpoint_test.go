@@ -1,4 +1,4 @@
-package generators
+package phases
 
 import (
 	"context"
@@ -6,19 +6,21 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/reusee/tai/generators"
 )
 
 type mockState struct {
-	contents     []*Content
+	contents     []*generators.Content
 	systemPrompt string
-	funcMap      map[string]*Func
-	unwrapped    State
+	funcMap      map[string]*generators.Func
+	unwrapped    generators.State
 	flushErr     error
 	appendErr    error
 }
 
-func (m *mockState) Contents() []*Content { return m.contents }
-func (m *mockState) AppendContent(c *Content) (State, error) {
+func (m *mockState) Contents() []*generators.Content { return m.contents }
+func (m *mockState) AppendContent(c *generators.Content) (generators.State, error) {
 	if m.appendErr != nil {
 		return nil, m.appendErr
 	}
@@ -32,31 +34,33 @@ func (m *mockState) AppendContent(c *Content) (State, error) {
 		appendErr:    m.appendErr,
 	}, nil
 }
-func (m *mockState) SystemPrompt() string      { return m.systemPrompt }
-func (m *mockState) FuncMap() map[string]*Func { return m.funcMap }
-func (m *mockState) Flush() (State, error) {
+func (m *mockState) SystemPrompt() string                 { return m.systemPrompt }
+func (m *mockState) FuncMap() map[string]*generators.Func { return m.funcMap }
+func (m *mockState) Flush() (generators.State, error) {
 	if m.flushErr != nil {
 		return nil, m.flushErr
 	}
 	return m, nil
 }
-func (m *mockState) Unwrap() State { return m.unwrapped }
+func (m *mockState) Unwrap() generators.State { return m.unwrapped }
 
 type mockGenerator struct{}
 
-func (m *mockGenerator) Args() GeneratorArgs                                      { return GeneratorArgs{} }
-func (m *mockGenerator) CountTokens(string) (int, error)                          { return 0, nil }
-func (m *mockGenerator) Generate(ctx context.Context, state State) (State, error) { return state, nil }
+func (m *mockGenerator) Args() generators.GeneratorArgs  { return generators.GeneratorArgs{} }
+func (m *mockGenerator) CountTokens(string) (int, error) { return 0, nil }
+func (m *mockGenerator) Generate(ctx context.Context, state generators.State) (generators.State, error) {
+	return state, nil
+}
 
 func TestRedoCheckpoint(t *testing.T) {
 	upstream := &mockState{
-		contents:     []*Content{{Role: "user"}},
+		contents:     []*generators.Content{{Role: "user"}},
 		systemPrompt: "system",
-		funcMap:      map[string]*Func{"foo": {}},
+		funcMap:      map[string]*generators.Func{"foo": {}},
 		unwrapped:    nil,
 	}
 	state0 := &mockState{
-		contents: []*Content{{Role: "user", Parts: []Part{Text("state0")}}},
+		contents: []*generators.Content{{Role: "user", Parts: []generators.Part{generators.Text("state0")}}},
 	}
 	generator := &mockGenerator{}
 
@@ -91,7 +95,7 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 	t.Run("AppendContent", func(t *testing.T) {
-		newContent := &Content{Role: "model"}
+		newContent := &generators.Content{Role: "model"}
 		newState, err := checkpoint.AppendContent(newContent)
 		if err != nil {
 			t.Fatalf("AppendContent() returned an error: %v", err)
@@ -119,7 +123,7 @@ func TestRedoCheckpoint(t *testing.T) {
 		testErr := errors.New("append error")
 		upstreamWithErr := &mockState{appendErr: testErr}
 		checkpointWithErr := RedoCheckpoint{upstream: upstreamWithErr}
-		_, err := checkpointWithErr.AppendContent(&Content{})
+		_, err := checkpointWithErr.AppendContent(&generators.Content{})
 		if !errors.Is(err, testErr) {
 			t.Errorf("expected error %v, got %v", testErr, err)
 		}
