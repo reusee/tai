@@ -5,6 +5,7 @@ import (
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taiconfigs"
 )
 
@@ -14,4 +15,5 @@ type Module struct {
 	Configs    taiconfigs.Module
 	GoCodes    gocodes.Module
 	AnyTexts   anytexts.Module
+	Phases     phases.Module
 }
