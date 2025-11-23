@@ -42,9 +42,10 @@ func main() {
 		)
 		state = generators.NewOutput(state, os.Stdout, true)
 
-		phase := buildGenerate(
-			generator,
-			buildChat(generator, nil),
+		phase := buildGenerate(generator)(
+			buildChat(generator)(
+				nil,
+			),
 		)
 		var err error
 		for phase != nil {

@@ -138,7 +138,7 @@ func (Module) Generate(
 				tap(ctx, "codes generate error", globals)
 
 				// let user determine what to do
-				phase = buildChat(generator, phase)
+				phase = buildChat(generator)(phase)
 
 			} else {
 				// ok

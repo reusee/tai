@@ -52,7 +52,9 @@ Your first task is to create a comprehensive, step-by-step plan to achieve this 
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(generator, a.checkPlan(cont)), state, nil
+		return a.BuildGenerate()(generator)(
+			a.checkPlan(cont),
+		), state, nil
 	}
 }
 
@@ -69,7 +71,7 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 							if err != nil {
 								return nil, nil, err
 							}
-							return a.BuildChat()(codeGenerator, cont), state, nil
+							return a.BuildChat()(codeGenerator)(cont), state, nil
 						}
 						break
 					}
@@ -104,10 +106,8 @@ Always include a clear rationale for your decisions and the anticipated impact o
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(
-			codeGenerator,
-			a.BuildChat()(
-				codeGenerator,
+		return a.BuildGenerate()(codeGenerator)(
+			a.BuildChat()(codeGenerator)(
 				cont,
 			),
 		), state, nil
