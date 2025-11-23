@@ -13,9 +13,6 @@ import (
 
 type SystemPrompt string
 
-//go:embed system_prompt.md
-var systemPrompt string
-
 var (
 	focus  []string
 	ignore []string
@@ -40,7 +37,7 @@ func (Module) SystemPrompt(
 	now := time.Now().In(location)
 	ret += SystemPrompt("\n\n当前北京时间是：" + now.Format("2006-01-02 15:04:05") + "\n\n")
 
-	ret += SystemPrompt(systemPrompt)
+	ret += SystemPrompt(prompts.NextStep)
 
 	hasGoFiles := false
 	for info, err := range codeProvider.IterFiles() {
@@ -54,8 +51,6 @@ func (Module) SystemPrompt(
 		logger.Info("has go file")
 		ret += "\n\n" + prompts.UnifiedDiff + "\n\n"
 	}
-
-	//@@ai optimize
 
 	if len(focus) > 0 {
 		ret += "\n\n专注于这些方面：\n"
