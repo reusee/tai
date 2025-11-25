@@ -9,6 +9,7 @@ func NewEnv() *Env {
 		Globals: map[string]Value{
 			"printf": Printf{},
 			"now":    Now{},
+			"[":      List{},
 		},
 	}
 }
