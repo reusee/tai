@@ -12,4 +12,7 @@ const (
 	TokenIdentifier
 	TokenString
 	TokenNumber
+	TokenEOF
+	TokenNamedParam
+	TokenSymbol
 )
