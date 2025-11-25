@@ -11,6 +11,7 @@ func NewEnv() *Env {
 			"now":    Now{},
 			"[":      List{},
 			"join":   Join{},
+			"def":    Def{},
 		},
 	}
 }
