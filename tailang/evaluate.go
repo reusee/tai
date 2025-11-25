@@ -77,7 +77,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 		// Named parameters
 		for {
 			next, err := tokenizer.Current()
-			if err == io.EOF {
+			if err == io.EOF || next.Kind == TokenEOF {
 				break
 			}
 			if err != nil {
@@ -134,7 +134,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 				elemType := argType.Elem()
 				for {
 					pt, err := tokenizer.Current()
-					if err == io.EOF {
+					if err == io.EOF || pt.Kind == TokenEOF {
 						break
 					}
 					if err != nil {
