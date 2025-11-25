@@ -49,17 +49,19 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 		return t.parseNamedParam()
 	case r == '\'' || r == '"' || r == '`':
 		return t.parseString(r)
-	case unicode.IsLetter(r):
-		t.source.UnreadRune()
-		return t.parseIdentifier()
 	case unicode.IsDigit(r):
 		t.source.UnreadRune()
 		return t.parseNumber()
-	case r == '&' || r == '[' || r == ']':
+	case r == '[' || r == ']':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),
 		}, nil
+	}
+
+	if unicode.IsGraphic(r) {
+		t.source.UnreadRune()
+		return t.parseIdentifier()
 	}
 
 	return &Token{Kind: TokenInvalid, Text: string(r)}, nil
@@ -88,12 +90,11 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 		if err != nil {
 			return nil, err
 		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' {
-			buf.WriteRune(r)
-		} else {
+		if unicode.IsSpace(r) || r == '[' || r == ']' || r == '\'' || r == '"' || r == '`' {
 			t.source.UnreadRune()
 			break
 		}
+		buf.WriteRune(r)
 	}
 	return &Token{
 		Kind: TokenIdentifier,

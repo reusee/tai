@@ -54,7 +54,7 @@ func TestTokenizer(t *testing.T) {
 		{
 			input: "& [ ]",
 			tokens: []TokenInfo{
-				{TokenSymbol, "&"},
+				{TokenIdentifier, "&"},
 				{TokenSymbol, "["},
 				{TokenSymbol, "]"},
 			},
@@ -68,22 +68,19 @@ func TestTokenizer(t *testing.T) {
 		{
 			input: "foo.bar",
 			tokens: []TokenInfo{
-				{TokenIdentifier, "foo"},
-				{TokenNamedParam, ".bar"},
+				{TokenIdentifier, "foo.bar"},
 			},
 		},
 		{
 			input: "foo&bar",
 			tokens: []TokenInfo{
-				{TokenIdentifier, "foo"},
-				{TokenSymbol, "&"},
-				{TokenIdentifier, "bar"},
+				{TokenIdentifier, "foo&bar"},
 			},
 		},
 		{
 			input: "^",
 			tokens: []TokenInfo{
-				{TokenInvalid, "^"},
+				{TokenIdentifier, "^"},
 			},
 		},
 		{
