@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func TestPrintf(t *testing.T) {
+func TestEvaluate(t *testing.T) {
 	env := NewEnv()
-	src := `printf "Hello, %s!\n" "world" end`
+	src := `printf "Hello, %s! Today is %s\n" "world" now .format "01-02" end`
 	tokenizer := NewTokenizer(strings.NewReader(src))
 	_, err := env.Evaluate(tokenizer)
 	if err != nil {
