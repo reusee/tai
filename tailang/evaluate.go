@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func (e *Env) Evaluate(tokenizer *Tokenizer) (any, error) {
+func (e *Env) Evaluate(tokenizer TokenStream) (any, error) {
 	var result any
 	for {
 		t, err := tokenizer.Current()
@@ -27,7 +27,7 @@ func (e *Env) Evaluate(tokenizer *Tokenizer) (any, error) {
 	return result, nil
 }
 
-func (e *Env) evalExpr(tokenizer *Tokenizer, expectedType reflect.Type) (any, error) {
+func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
@@ -57,7 +57,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer, expectedType reflect.Type) (any, er
 
 		tokenizer.Consume()
 
-		val, ok := e.Globals[name]
+		val, ok := e.Lookup(name)
 		if !ok {
 			if expectedType != nil && expectedType.Kind() == reflect.String {
 				return name, nil
@@ -128,6 +128,25 @@ func (e *Env) evalExpr(tokenizer *Tokenizer, expectedType reflect.Type) (any, er
 		if numIn > 0 && methodType.In(0) == reflect.TypeOf(e) {
 			args = append(args, reflect.ValueOf(e))
 			argOffset++
+		}
+
+		if numIn > argOffset && methodType.In(argOffset) == reflect.TypeOf((*TokenStream)(nil)).Elem() {
+			args = append(args, reflect.ValueOf(tokenizer))
+			results := method.Call(args)
+			if len(results) == 0 {
+				return nil, nil
+			}
+			last := results[len(results)-1]
+			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+				if !last.IsNil() {
+					return nil, last.Interface().(error)
+				}
+				if len(results) > 1 {
+					return results[0].Interface(), nil
+				}
+				return nil, nil
+			}
+			return results[0].Interface(), nil
 		}
 
 		for i := argOffset; i < numIn; i++ {

@@ -9,6 +9,6 @@ func (d Def) Name() string {
 }
 
 func (d Def) Call(env *Env, name string, value any) any {
-	env.Globals[name] = value
+	env.Define(name, value)
 	return value
 }
