@@ -10,6 +10,7 @@ func NewEnv() *Env {
 			"printf": Printf{},
 			"now":    Now{},
 			"[":      List{},
+			"join":   Join{},
 		},
 	}
 }
