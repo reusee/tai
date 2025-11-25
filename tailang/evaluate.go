@@ -19,7 +19,7 @@ func (e *Env) Evaluate(tokenizer *Tokenizer) (any, error) {
 			return nil, err
 		}
 
-		result, err = e.evalExpr(tokenizer)
+		result, err = e.evalExpr(tokenizer, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -27,7 +27,7 @@ func (e *Env) Evaluate(tokenizer *Tokenizer) (any, error) {
 	return result, nil
 }
 
-func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
+func (e *Env) evalExpr(tokenizer *Tokenizer, expectedType reflect.Type) (any, error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
@@ -59,6 +59,9 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 
 		val, ok := e.Globals[name]
 		if !ok {
+			if expectedType != nil && expectedType.Kind() == reflect.String {
+				return name, nil
+			}
 			return nil, fmt.Errorf("undefined identifier: %s", name)
 		}
 
@@ -98,7 +101,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 			if field.Kind() == reflect.Bool {
 				field.SetBool(true)
 			} else {
-				arg, err := e.evalExpr(tokenizer)
+				arg, err := e.evalExpr(tokenizer, field.Type())
 				if err != nil {
 					return nil, err
 				}
@@ -156,7 +159,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 						break
 					}
 
-					val, err := e.evalExpr(tokenizer)
+					val, err := e.evalExpr(tokenizer, elemType)
 					if err != nil {
 						return nil, err
 					}
@@ -167,7 +170,7 @@ func (e *Env) evalExpr(tokenizer *Tokenizer) (any, error) {
 				}
 
 			} else {
-				val, err := e.evalExpr(tokenizer)
+				val, err := e.evalExpr(tokenizer, argType)
 				if err != nil {
 					return nil, err
 				}
