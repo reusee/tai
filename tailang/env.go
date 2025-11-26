@@ -13,6 +13,7 @@ func NewEnv() *Env {
 			"[":    List{},
 			"def":  Def{},
 			"func": FuncDef{},
+			"if":   If{},
 
 			"type": GoFunc{
 				Name: "type",
@@ -38,6 +39,31 @@ func NewEnv() *Env {
 			"%": GoFunc{
 				Name: "%",
 				Func: Mod,
+			},
+
+			"==": GoFunc{
+				Name: "==",
+				Func: Eq,
+			},
+			"!=": GoFunc{
+				Name: "!=",
+				Func: Ne,
+			},
+			"<": GoFunc{
+				Name: "<",
+				Func: Lt,
+			},
+			"<=": GoFunc{
+				Name: "<=",
+				Func: Le,
+			},
+			">": GoFunc{
+				Name: ">",
+				Func: Gt,
+			},
+			">=": GoFunc{
+				Name: ">=",
+				Func: Ge,
 			},
 
 			"int":     reflect.TypeFor[int](),
