@@ -304,14 +304,23 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 	if v.Type() == t {
 		return v
 	}
-	if v.Kind() == reflect.Int && t.Kind() == reflect.Float64 {
-		return reflect.ValueOf(float64(v.Int()))
-	}
-	if v.Kind() == reflect.Float64 && t.Kind() == reflect.Int {
-		return reflect.ValueOf(int(v.Float()))
-	}
 	if t.Kind() == reflect.Interface {
 		return v
 	}
+	if isNumeric(v.Kind()) && isNumeric(t.Kind()) {
+		if v.CanConvert(t) {
+			return v.Convert(t)
+		}
+	}
 	return v
+}
+
+func isNumeric(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
 }
