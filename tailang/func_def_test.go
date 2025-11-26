@@ -130,3 +130,25 @@ func TestFuncAsArg(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestFib(t *testing.T) {
+	env := NewEnv()
+	src := `
+		func fib(n) {
+			if <= n 1 {
+				n
+			} else {
+				+ (fib (- n 1)) (fib (- n 2))
+			}
+		}
+		fib 10
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 55 {
+		t.Fatalf("expected 55, got %v", res)
+	}
+}
