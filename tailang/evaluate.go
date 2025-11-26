@@ -138,101 +138,30 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			return callVal.Interface(), nil
 		}
 
-		methodType := method.Type()
-		numIn := methodType.NumIn()
-		isVariadic := methodType.IsVariadic()
-		args := make([]reflect.Value, 0, numIn)
+		return e.callFunc(tokenizer, method, name)
+	}
 
-		argOffset := 0
-		if numIn > 0 && methodType.In(0) == reflect.TypeOf(e) {
-			args = append(args, reflect.ValueOf(e))
-			argOffset++
-		}
+	return nil, fmt.Errorf("unexpected token kind: %v", t.Kind)
+}
 
-		if numIn > argOffset && methodType.In(argOffset) == reflect.TypeOf((*TokenStream)(nil)).Elem() {
-			args = append(args, reflect.ValueOf(tokenizer))
-			results := method.Call(args)
-			if len(results) == 0 {
-				return nil, nil
-			}
-			last := results[len(results)-1]
-			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-				if !last.IsNil() {
-					return nil, &StackError{
-						Name: name,
-						Err:  last.Interface().(error),
-					}
-				}
-				if len(results) > 1 {
-					return results[0].Interface(), nil
-				}
-				return nil, nil
-			}
-			return results[0].Interface(), nil
-		}
+func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string) (any, error) {
+	methodType := fn.Type()
+	numIn := methodType.NumIn()
+	isVariadic := methodType.IsVariadic()
+	args := make([]reflect.Value, 0, numIn)
 
-		for i := argOffset; i < numIn; i++ {
-			argType := methodType.In(i)
+	argOffset := 0
+	if numIn > 0 && methodType.In(0) == reflect.TypeOf(e) {
+		args = append(args, reflect.ValueOf(e))
+		argOffset++
+	}
 
-			if isVariadic && i == numIn-1 {
-				elemType := argType.Elem()
-				for {
-					pt, err := tokenizer.Current()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						return nil, err
-					}
-
-					if pt.Kind == TokenEOF {
-						break
-					}
-
-					if pt.Kind == TokenIdentifier && pt.Text == "end" {
-						tokenizer.Consume()
-						break
-					}
-					if pt.Kind == TokenSymbol && pt.Text == "]" {
-						if name == "[" {
-							tokenizer.Consume()
-						}
-						break
-					}
-
-					val, err := e.evalExpr(tokenizer, elemType)
-					if err != nil {
-						return nil, &StackError{
-							Name: name,
-							Err:  err,
-						}
-					}
-
-					vArg := reflect.ValueOf(val)
-					vArg = convertType(vArg, elemType)
-					args = append(args, vArg)
-				}
-
-			} else {
-				val, err := e.evalExpr(tokenizer, argType)
-				if err != nil {
-					return nil, &StackError{
-						Name: name,
-						Err:  err,
-					}
-				}
-				vArg := reflect.ValueOf(val)
-				vArg = convertType(vArg, argType)
-				args = append(args, vArg)
-			}
-
-		}
-
-		results := method.Call(args)
+	if numIn > argOffset && methodType.In(argOffset) == reflect.TypeOf((*TokenStream)(nil)).Elem() {
+		args = append(args, reflect.ValueOf(tokenizer))
+		results := fn.Call(args)
 		if len(results) == 0 {
 			return nil, nil
 		}
-
 		last := results[len(results)-1]
 		if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 			if !last.IsNil() {
@@ -249,7 +178,82 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		return results[0].Interface(), nil
 	}
 
-	return nil, fmt.Errorf("unexpected token kind: %v", t.Kind)
+	for i := argOffset; i < numIn; i++ {
+		argType := methodType.In(i)
+
+		if isVariadic && i == numIn-1 {
+			elemType := argType.Elem()
+			for {
+				pt, err := tokenizer.Current()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return nil, err
+				}
+
+				if pt.Kind == TokenEOF {
+					break
+				}
+
+				if pt.Kind == TokenIdentifier && pt.Text == "end" {
+					tokenizer.Consume()
+					break
+				}
+				if pt.Kind == TokenSymbol && pt.Text == "]" {
+					if name == "[" {
+						tokenizer.Consume()
+					}
+					break
+				}
+
+				val, err := e.evalExpr(tokenizer, elemType)
+				if err != nil {
+					return nil, &StackError{
+						Name: name,
+						Err:  err,
+					}
+				}
+
+				vArg := reflect.ValueOf(val)
+				vArg = convertType(vArg, elemType)
+				args = append(args, vArg)
+			}
+
+		} else {
+			val, err := e.evalExpr(tokenizer, argType)
+			if err != nil {
+				return nil, &StackError{
+					Name: name,
+					Err:  err,
+				}
+			}
+			vArg := reflect.ValueOf(val)
+			vArg = convertType(vArg, argType)
+			args = append(args, vArg)
+		}
+
+	}
+
+	results := fn.Call(args)
+	if len(results) == 0 {
+		return nil, nil
+	}
+
+	last := results[len(results)-1]
+	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		if !last.IsNil() {
+			return nil, &StackError{
+				Name: name,
+				Err:  last.Interface().(error),
+			}
+		}
+		if len(results) > 1 {
+			return results[0].Interface(), nil
+		}
+		return nil, nil
+	}
+	return results[0].Interface(), nil
 }
 
 func findField(v reflect.Value, name string) reflect.Value {
