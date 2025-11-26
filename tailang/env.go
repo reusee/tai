@@ -12,6 +12,7 @@ func NewEnv() *Env {
 		Vars: map[string]any{
 			"[":    List{},
 			"def":  Def{},
+			"set":  Set{},
 			"func": FuncDef{},
 
 			"if":      If{},

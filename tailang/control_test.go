@@ -22,8 +22,8 @@ func TestControl(t *testing.T) {
                 def i 0
                 def sum 0
                 while { < i 5 } {
-                        def sum (+ sum i)
-                        def i (+ i 1)
+                        set sum (+ sum i)
+                        set i (+ i 1)
                 }
         `)
 	if res, _ := env.Lookup("sum"); res != 10 {
@@ -34,7 +34,7 @@ func TestControl(t *testing.T) {
 	run(`
                 def c 0
                 repeat i 5 {
-                        def c (+ c i)
+                        set c (+ c i)
                 }
         `)
 	if res, _ := env.Lookup("c"); res != 15 {
@@ -45,7 +45,7 @@ func TestControl(t *testing.T) {
 	run(`
                 def s ""
                 foreach x ["a" "b" "c"] {
-                        def s (fmt.sprintf "%s%s" s x)
+                        set s (fmt.sprintf "%s%s" s x)
                 }
         `)
 	if res, _ := env.Lookup("s"); res != "abc" {
