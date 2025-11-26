@@ -79,10 +79,12 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		typ := v.Type()
 
 		var callVal reflect.Value
+		var isWrapped bool
 		if typ.Kind() == reflect.Struct {
 			ptr := reflect.New(typ)
 			ptr.Elem().Set(v)
 			callVal = ptr
+			isWrapped = true
 		} else {
 			callVal = v
 		}
@@ -132,7 +134,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 		method := callVal.MethodByName("Call")
 		if !method.IsValid() {
-			if callVal.Kind() == reflect.Pointer {
+			if isWrapped {
 				return callVal.Elem().Interface(), nil
 			}
 			return callVal.Interface(), nil

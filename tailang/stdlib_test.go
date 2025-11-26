@@ -32,7 +32,7 @@ func TestStdlib(t *testing.T) {
 				sort.ints l
 				l
 			`,
-			Expected: "",
+			Expected: "[1 2 3]",
 		},
 	}
 
