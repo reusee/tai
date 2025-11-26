@@ -169,7 +169,36 @@ func (t *Tokenizer) parseString(quote rune) (*Token, error) {
 		if r == quote {
 			break
 		}
-		buf.WriteRune(r)
+
+		if quote != '`' && r == '\\' {
+			next, _, err := t.source.ReadRune()
+			if err == io.EOF {
+				buf.WriteRune(r)
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			switch next {
+			case 'n':
+				buf.WriteRune('\n')
+			case 'r':
+				buf.WriteRune('\r')
+			case 't':
+				buf.WriteRune('\t')
+			case '\\':
+				buf.WriteRune('\\')
+			case '"':
+				buf.WriteRune('"')
+			case '\'':
+				buf.WriteRune('\'')
+			default:
+				buf.WriteRune('\\')
+				buf.WriteRune(next)
+			}
+		} else {
+			buf.WriteRune(r)
+		}
 	}
 	return &Token{
 		Kind: TokenString,

@@ -52,6 +52,13 @@ func TestTokenizer(t *testing.T) {
 			},
 		},
 		{
+			input: `"line1\nline2" 'tab\tquoted\'string'`,
+			tokens: []TokenInfo{
+				{TokenString, "line1\nline2"},
+				{TokenString, "tab\tquoted'string"},
+			},
+		},
+		{
 			input: "& [ ] ( ) { }",
 			tokens: []TokenInfo{
 				{TokenIdentifier, "&"},
