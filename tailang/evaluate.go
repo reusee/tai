@@ -95,7 +95,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 			field := findField(callVal.Elem(), paramName)
 			if !field.IsValid() {
-				return nil, fmt.Errorf("call %s: unknown named parameter .%s", name, paramName)
+				return nil, &StackError{
+					Name: name,
+					Err:  fmt.Errorf("unknown named parameter .%s", paramName),
+				}
 			}
 
 			if field.Kind() == reflect.Bool {
@@ -103,10 +106,16 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			} else {
 				arg, err := e.evalExpr(tokenizer, field.Type())
 				if err != nil {
-					return nil, fmt.Errorf("call %s: %w", name, err)
+					return nil, &StackError{
+						Name: name,
+						Err:  err,
+					}
 				}
 				if err := setField(field, arg); err != nil {
-					return nil, fmt.Errorf("call %s: %w", name, err)
+					return nil, &StackError{
+						Name: name,
+						Err:  err,
+					}
 				}
 			}
 		}
@@ -139,7 +148,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			last := results[len(results)-1]
 			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !last.IsNil() {
-					return nil, fmt.Errorf("call %s: %w", name, last.Interface().(error))
+					return nil, &StackError{
+						Name: name,
+						Err:  last.Interface().(error),
+					}
 				}
 				if len(results) > 1 {
 					return results[0].Interface(), nil
@@ -180,7 +192,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 					val, err := e.evalExpr(tokenizer, elemType)
 					if err != nil {
-						return nil, fmt.Errorf("call %s: %w", name, err)
+						return nil, &StackError{
+							Name: name,
+							Err:  err,
+						}
 					}
 
 					vArg := reflect.ValueOf(val)
@@ -191,7 +206,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			} else {
 				val, err := e.evalExpr(tokenizer, argType)
 				if err != nil {
-					return nil, fmt.Errorf("call %s: %w", name, err)
+					return nil, &StackError{
+						Name: name,
+						Err:  err,
+					}
 				}
 				vArg := reflect.ValueOf(val)
 				vArg = convertType(vArg, argType)
@@ -208,7 +226,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		last := results[len(results)-1]
 		if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 			if !last.IsNil() {
-				return nil, fmt.Errorf("call %s: %w", name, last.Interface().(error))
+				return nil, &StackError{
+					Name: name,
+					Err:  last.Interface().(error),
+				}
 			}
 			if len(results) > 1 {
 				return results[0].Interface(), nil
