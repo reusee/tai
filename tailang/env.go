@@ -8,12 +8,9 @@ type Env struct {
 func NewEnv() *Env {
 	e := &Env{
 		Vars: map[string]any{
-			"printf": Printf{},
-			"now":    Now{},
-			"[":      List{},
-			"join":   Join{},
-			"def":    Def{},
-			"func":   FuncDef{},
+			"[":    List{},
+			"def":  Def{},
+			"func": FuncDef{},
 		},
 	}
 	RegisterStdLib(e)
