@@ -55,6 +55,12 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			return nil, fmt.Errorf("unexpected symbol ']'")
 		}
 
+		isRef := false
+		if strings.HasPrefix(name, "&") && len(name) > 1 {
+			isRef = true
+			name = name[1:]
+		}
+
 		tokenizer.Consume()
 
 		val, ok := e.Lookup(name)
@@ -63,6 +69,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 				return name, nil
 			}
 			return nil, fmt.Errorf("undefined identifier: %s", name)
+		}
+
+		if isRef {
+			return val, nil
 		}
 
 		v := reflect.ValueOf(val)

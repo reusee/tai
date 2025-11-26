@@ -42,6 +42,25 @@ func TestFuncScope(t *testing.T) {
 	}
 }
 
+func TestFuncRef(t *testing.T) {
+	env := NewEnv()
+	src := `
+		func foo [ x ] [
+			x
+		]
+		def f &foo
+		f f f f f 42
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 42 {
+		t.Fatalf("expected 42, got %v", res)
+	}
+}
+
 func TestFuncNested(t *testing.T) {
 	env := NewEnv()
 	src := `
@@ -49,7 +68,7 @@ func TestFuncNested(t *testing.T) {
 			func adder [ y ] [
 				join + x y end
 			]
-			adder
+			&adder
 		]
 		def add1 make_adder 1
 		add1 2
