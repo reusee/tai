@@ -6,7 +6,7 @@ type Env struct {
 }
 
 func NewEnv() *Env {
-	return &Env{
+	e := &Env{
 		Vars: map[string]any{
 			"printf": Printf{},
 			"now":    Now{},
@@ -16,6 +16,8 @@ func NewEnv() *Env {
 			"func":   FuncDef{},
 		},
 	}
+	RegisterStdLib(e)
+	return e
 }
 
 func (e *Env) Define(name string, val any) {
