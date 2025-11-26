@@ -6,107 +6,116 @@ import (
 )
 
 func Plus(a, b any) any {
-	if aInt, ok := a.(int); ok {
-		if bInt, ok := b.(int); ok {
+	if aInt, ok := asInt(a); ok {
+		if bInt, ok := asInt(b); ok {
 			return aInt + bInt
 		}
-		if bFloat, ok := b.(float64); ok {
-			return float64(aInt) + bFloat
-		}
 	}
-	if aFloat, ok := a.(float64); ok {
-		if bFloat, ok := b.(float64); ok {
+	if aFloat, ok := asFloat(a); ok {
+		if bFloat, ok := asFloat(b); ok {
 			return aFloat + bFloat
-		}
-		if bInt, ok := b.(int); ok {
-			return aFloat + float64(bInt)
 		}
 	}
 	return fmt.Sprint(a) + fmt.Sprint(b)
 }
 
 func Minus(a, b any) (any, error) {
-	if aInt, ok := a.(int); ok {
-		if bInt, ok := b.(int); ok {
+	if aInt, ok := asInt(a); ok {
+		if bInt, ok := asInt(b); ok {
 			return aInt - bInt, nil
 		}
-		if bFloat, ok := b.(float64); ok {
-			return float64(aInt) - bFloat, nil
-		}
 	}
-	if aFloat, ok := a.(float64); ok {
-		if bFloat, ok := b.(float64); ok {
+	if aFloat, ok := asFloat(a); ok {
+		if bFloat, ok := asFloat(b); ok {
 			return aFloat - bFloat, nil
-		}
-		if bInt, ok := b.(int); ok {
-			return aFloat - float64(bInt), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for -: %v, %v", a, b)
 }
 
 func Multiply(a, b any) (any, error) {
-	if aInt, ok := a.(int); ok {
-		if bInt, ok := b.(int); ok {
+	if aInt, ok := asInt(a); ok {
+		if bInt, ok := asInt(b); ok {
 			return aInt * bInt, nil
 		}
-		if bFloat, ok := b.(float64); ok {
-			return float64(aInt) * bFloat, nil
-		}
 	}
-	if aFloat, ok := a.(float64); ok {
-		if bFloat, ok := b.(float64); ok {
+	if aFloat, ok := asFloat(a); ok {
+		if bFloat, ok := asFloat(b); ok {
 			return aFloat * bFloat, nil
-		}
-		if bInt, ok := b.(int); ok {
-			return aFloat * float64(bInt), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for *: %v, %v", a, b)
 }
 
 func Divide(a, b any) (any, error) {
-	if aInt, ok := a.(int); ok {
-		if bInt, ok := b.(int); ok {
+	if aInt, ok := asInt(a); ok {
+		if bInt, ok := asInt(b); ok {
 			if bInt == 0 {
 				return nil, fmt.Errorf("integer division by zero")
 			}
 			return aInt / bInt, nil
 		}
-		if bFloat, ok := b.(float64); ok {
-			return float64(aInt) / bFloat, nil
-		}
 	}
-	if aFloat, ok := a.(float64); ok {
-		if bFloat, ok := b.(float64); ok {
+	if aFloat, ok := asFloat(a); ok {
+		if bFloat, ok := asFloat(b); ok {
 			return aFloat / bFloat, nil
-		}
-		if bInt, ok := b.(int); ok {
-			return aFloat / float64(bInt), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for /: %v, %v", a, b)
 }
 
 func Mod(a, b any) (any, error) {
-	if aInt, ok := a.(int); ok {
-		if bInt, ok := b.(int); ok {
+	if aInt, ok := asInt(a); ok {
+		if bInt, ok := asInt(b); ok {
 			if bInt == 0 {
 				return nil, fmt.Errorf("integer modulo by zero")
 			}
 			return aInt % bInt, nil
 		}
-		if bFloat, ok := b.(float64); ok {
-			return math.Mod(float64(aInt), bFloat), nil
-		}
 	}
-	if aFloat, ok := a.(float64); ok {
-		if bFloat, ok := b.(float64); ok {
+	if aFloat, ok := asFloat(a); ok {
+		if bFloat, ok := asFloat(b); ok {
 			return math.Mod(aFloat, bFloat), nil
-		}
-		if bInt, ok := b.(int); ok {
-			return math.Mod(aFloat, float64(bInt)), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for %%: %v, %v", a, b)
+}
+
+func asInt(v any) (int, bool) {
+	switch val := v.(type) {
+	case int:
+		return val, true
+	case int8:
+		return int(val), true
+	case int16:
+		return int(val), true
+	case int32:
+		return int(val), true
+	case int64:
+		return int(val), true
+	case uint:
+		return int(val), true
+	case uint8:
+		return int(val), true
+	case uint16:
+		return int(val), true
+	case uint32:
+		return int(val), true
+	case uint64:
+		return int(val), true
+	}
+	return 0, false
+}
+
+func asFloat(v any) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	}
+	if i, ok := asInt(v); ok {
+		return float64(i), true
+	}
+	return 0, false
 }

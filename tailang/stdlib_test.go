@@ -34,6 +34,15 @@ func TestStdlib(t *testing.T) {
 			`,
 			Expected: "[1 2 3]",
 		},
+		{
+			Source: `
+				func map(r) {
+					+ r 1
+				}
+				strings.map &map "foo"
+			`,
+			Expected: "gpp",
+		},
 	}
 
 	for _, c := range kases {
