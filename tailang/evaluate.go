@@ -46,6 +46,23 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		return strconv.Atoi(t.Text)
 	}
 
+	if t.Kind == TokenSymbol && t.Text == "(" {
+		tokenizer.Consume()
+		val, err := e.evalExpr(tokenizer, expectedType)
+		if err != nil {
+			return nil, err
+		}
+		t, err = tokenizer.Current()
+		if err != nil {
+			return nil, err
+		}
+		if t.Text != ")" {
+			return nil, fmt.Errorf("expected )")
+		}
+		tokenizer.Consume()
+		return val, nil
+	}
+
 	if t.Kind == TokenIdentifier || (t.Kind == TokenSymbol && t.Text == "[") {
 		name := t.Text
 		if name == "end" {
