@@ -12,6 +12,11 @@ func NewEnv() *Env {
 			"def":  Def{},
 			"func": FuncDef{},
 
+			"type": GoFunc{
+				Name: "type",
+				Func: TypeOf,
+			},
+
 			"+": GoFunc{
 				Name: "+",
 				Func: Plus,
