@@ -16,6 +16,22 @@ func NewEnv() *Env {
 				Name: "+",
 				Func: Plus,
 			},
+			"-": GoFunc{
+				Name: "-",
+				Func: Minus,
+			},
+			"*": GoFunc{
+				Name: "*",
+				Func: Multiply,
+			},
+			"/": GoFunc{
+				Name: "/",
+				Func: Divide,
+			},
+			"%": GoFunc{
+				Name: "%",
+				Func: Mod,
+			},
 		},
 	}
 	RegisterStdLib(e)
