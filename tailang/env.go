@@ -2,12 +2,12 @@ package tailang
 
 type Env struct {
 	Parent *Env
-	Vars   map[string]Value
+	Vars   map[string]any
 }
 
 func NewEnv() *Env {
 	return &Env{
-		Vars: map[string]Value{
+		Vars: map[string]any{
 			"printf": Printf{},
 			"now":    Now{},
 			"[":      List{},
@@ -18,11 +18,11 @@ func NewEnv() *Env {
 	}
 }
 
-func (e *Env) Define(name string, val Value) {
+func (e *Env) Define(name string, val any) {
 	e.Vars[name] = val
 }
 
-func (e *Env) Lookup(name string) (Value, bool) {
+func (e *Env) Lookup(name string) (any, bool) {
 	if v, ok := e.Vars[name]; ok {
 		return v, true
 	}

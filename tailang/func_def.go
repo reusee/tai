@@ -12,7 +12,7 @@ func (f FuncDef) FunctionName() string {
 	return "func"
 }
 
-func (f FuncDef) Call(env *Env, stream TokenStream) (Value, error) {
+func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 	// Name
 	tok, err := stream.Current()
 	if err != nil {

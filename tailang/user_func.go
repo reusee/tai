@@ -29,7 +29,7 @@ func (u UserFunc) Call(env *Env, stream TokenStream) (any, error) {
 
 	callEnv := &Env{
 		Parent: u.DefinitionEnv,
-		Vars:   make(map[string]Value),
+		Vars:   make(map[string]any),
 	}
 
 	for i, param := range u.Params {
