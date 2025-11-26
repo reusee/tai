@@ -17,20 +17,25 @@ func (u UserFunc) Name() string {
 	return u.FuncName
 }
 
-func (u UserFunc) Call(args ...any) (any, error) {
-	env := &Env{
+func (u UserFunc) Call(env *Env, stream TokenStream) (any, error) {
+	args := make([]any, 0, len(u.Params))
+	for i := range u.Params {
+		arg, err := env.evalExpr(stream, nil)
+		if err != nil {
+			return nil, fmt.Errorf("argument %d: %w", i, err)
+		}
+		args = append(args, arg)
+	}
+
+	callEnv := &Env{
 		Parent: u.DefinitionEnv,
 		Vars:   make(map[string]Value),
 	}
 
-	if len(args) != len(u.Params) {
-		return nil, fmt.Errorf("arity mismatch: expected %d, got %d", len(u.Params), len(args))
-	}
-
 	for i, param := range u.Params {
-		env.Define(param, args[i])
+		callEnv.Define(param, args[i])
 	}
 
-	stream := NewSliceTokenStream(u.Body)
-	return env.Evaluate(stream)
+	bodyStream := NewSliceTokenStream(u.Body)
+	return callEnv.Evaluate(bodyStream)
 }
