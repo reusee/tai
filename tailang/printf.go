@@ -7,7 +7,7 @@ type Printf struct {
 
 var _ Function = Printf{}
 
-func (p Printf) Name() string {
+func (p Printf) FunctionName() string {
 	return "printf"
 }
 

@@ -8,7 +8,7 @@ type FuncDef struct{}
 
 var _ Function = FuncDef{}
 
-func (f FuncDef) Name() string {
+func (f FuncDef) FunctionName() string {
 	return "func"
 }
 

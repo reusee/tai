@@ -13,7 +13,7 @@ type UserFunc struct {
 
 var _ Function = UserFunc{}
 
-func (u UserFunc) Name() string {
+func (u UserFunc) FunctionName() string {
 	return u.FuncName
 }
 

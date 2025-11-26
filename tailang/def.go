@@ -4,7 +4,7 @@ type Def struct{}
 
 var _ Function = Def{}
 
-func (d Def) Name() string {
+func (d Def) FunctionName() string {
 	return "def"
 }
 

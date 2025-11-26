@@ -9,7 +9,7 @@ type Now struct {
 
 var _ Function = Now{}
 
-func (n Now) Name() string {
+func (n Now) FunctionName() string {
 	return "now"
 }
 

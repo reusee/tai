@@ -10,7 +10,7 @@ type Join struct{}
 
 var _ Function = Join{}
 
-func (j Join) Name() string {
+func (j Join) FunctionName() string {
 	return "join"
 }
 
