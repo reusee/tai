@@ -45,7 +45,7 @@ func TestControl(t *testing.T) {
 	run(`
                 def s ""
                 foreach x ["a" "b" "c"] {
-                        set s (fmt.sprintf "%s%s" s x)
+                        set s (fmt.sprintf "%s%s" s x end)
                 }
         `)
 	if res, _ := env.Lookup("s"); res != "abc" {
@@ -59,7 +59,7 @@ func TestControl(t *testing.T) {
 	if res := run(`switch 3 { 1 { "one" } 2 { "two" } }`); res != nil {
 		t.Fatalf("switch expected nil, got %v", res)
 	}
-	if res := run(`switch 2 { (1 + 1) { "math" } }`); res != "math" {
+	if res := run(`switch 2 { (+ 1 1) { "math" } }`); res != "math" {
 		t.Fatalf("switch expected math, got %v", res)
 	}
 }
