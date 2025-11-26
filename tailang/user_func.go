@@ -27,6 +27,14 @@ func (u UserFunc) Call(env *Env, stream TokenStream) (any, error) {
 		args = append(args, arg)
 	}
 
+	return u.CallArgs(args)
+}
+
+func (u UserFunc) CallArgs(args []any) (any, error) {
+	if len(args) != len(u.Params) {
+		return nil, fmt.Errorf("argument count mismatch: expected %d, got %d", len(u.Params), len(args))
+	}
+
 	callEnv := &Env{
 		Parent: u.DefinitionEnv,
 		Vars:   make(map[string]any),

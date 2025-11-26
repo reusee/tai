@@ -307,6 +307,86 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 	if t.Kind() == reflect.Interface {
 		return v
 	}
+
+	if t.Kind() == reflect.Func {
+		if uf, ok := v.Interface().(UserFunc); ok {
+			return reflect.MakeFunc(t, func(args []reflect.Value) (results []reflect.Value) {
+				funcArgs := make([]any, 0, len(args))
+				for _, arg := range args {
+					funcArgs = append(funcArgs, arg.Interface())
+				}
+
+				res, err := uf.CallArgs(funcArgs)
+
+				numOut := t.NumOut()
+				results = make([]reflect.Value, numOut)
+
+				// Check if the last return value is an error
+				var returnsError bool
+				if numOut > 0 {
+					lastType := t.Out(numOut - 1)
+					if lastType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+						returnsError = true
+					}
+				}
+
+				if err != nil {
+					if returnsError {
+						// Fill zeroes for non-error returns
+						for i := 0; i < numOut-1; i++ {
+							results[i] = reflect.Zero(t.Out(i))
+						}
+						results[numOut-1] = reflect.ValueOf(err)
+						return
+					} else {
+						// Go function does not return error, but we have one.
+						panic(fmt.Sprintf("call to %s failed: %v", uf.FunctionName(), err))
+					}
+				}
+
+				// Assign result
+				if numOut > 0 {
+					if returnsError {
+						// Last is error, set it to nil
+						results[numOut-1] = reflect.Zero(t.Out(numOut - 1))
+
+						if numOut > 1 {
+							// Assign return value
+							var valV reflect.Value
+							if res == nil {
+								valV = reflect.Zero(t.Out(0))
+							} else {
+								valV = reflect.ValueOf(res)
+								valV = convertType(valV, t.Out(0))
+							}
+							results[0] = valV
+							// Fill middles with zero
+							for i := 1; i < numOut-1; i++ {
+								results[i] = reflect.Zero(t.Out(i))
+							}
+						}
+					} else {
+						// Does not return error
+						var valV reflect.Value
+						if res == nil {
+							valV = reflect.Zero(t.Out(0))
+						} else {
+							valV = reflect.ValueOf(res)
+							valV = convertType(valV, t.Out(0))
+						}
+						results[0] = valV
+						// Fill remaining with zero
+						for i := 1; i < numOut; i++ {
+							results[i] = reflect.Zero(t.Out(i))
+						}
+					}
+				}
+
+				return results
+			})
+		}
+	}
+
 	if isNumeric(v.Kind()) && isNumeric(t.Kind()) {
 		if v.CanConvert(t) {
 			return v.Convert(t)

@@ -82,3 +82,51 @@ func TestFuncNested(t *testing.T) {
 		t.Fatalf("got %v", res)
 	}
 }
+
+func TestFuncAsArg(t *testing.T) {
+	env := NewEnv()
+	// Define a Go function that takes a function argument
+	env.Define("apply", GoFunc{
+		Name: "apply",
+		Func: func(fn func(int) int, val int) int {
+			return fn(val)
+		},
+	})
+	env.Define("apply_err", GoFunc{
+		Name: "apply_err",
+		Func: func(fn func(int) (int, error), val int) (int, error) {
+			return fn(val)
+		},
+	})
+
+	src := `
+		func add1(x) {
+			+ x 1
+		}
+		apply &add1 41
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 42 {
+		t.Fatalf("got %v", res)
+	}
+
+	// Test error propagation
+	srcErr := `
+		func fail(x) {
+			fmt.errorf "fail"
+		}
+		apply_err &fail 1
+	`
+	tokenizer = NewTokenizer(strings.NewReader(srcErr))
+	_, err = env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "fail") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
