@@ -1,5 +1,7 @@
 package tailang
 
+import "reflect"
+
 type Env struct {
 	Parent *Env
 	Vars   map[string]any
@@ -37,6 +39,12 @@ func NewEnv() *Env {
 				Name: "%",
 				Func: Mod,
 			},
+
+			"int":     reflect.TypeFor[int](),
+			"float64": reflect.TypeFor[float64](),
+			"bool":    reflect.TypeFor[bool](),
+			"string":  reflect.TypeFor[string](),
+			"any":     reflect.TypeFor[any](),
 		},
 	}
 	RegisterStdLib(e)

@@ -26,6 +26,14 @@ func TestStdlib(t *testing.T) {
 			Source:   `strings.join ['foo' 'bar'] ','`,
 			Expected: `foo,bar`,
 		},
+		{
+			Source: `
+				def l [ .elem int 1 3 2]
+				sort.ints l
+				l
+			`,
+			Expected: "",
+		},
 	}
 
 	for _, c := range kases {

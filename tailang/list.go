@@ -5,7 +5,9 @@ import (
 	"reflect"
 )
 
-type List struct{}
+type List struct {
+	Elem reflect.Type
+}
 
 func (l List) Name() string {
 	return "["
@@ -14,7 +16,10 @@ func (l List) Name() string {
 func (l List) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	var sliceType reflect.Type
 	var elemType reflect.Type
-	if expectedType != nil && expectedType.Kind() == reflect.Slice {
+	if l.Elem != nil {
+		elemType = l.Elem
+		sliceType = reflect.SliceOf(elemType)
+	} else if expectedType != nil && expectedType.Kind() == reflect.Slice {
 		sliceType = expectedType
 		elemType = expectedType.Elem()
 	} else {
