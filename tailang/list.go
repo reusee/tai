@@ -1,11 +1,51 @@
 package tailang
 
+import (
+	"fmt"
+	"reflect"
+)
+
 type List struct{}
 
 func (l List) Name() string {
 	return "["
 }
 
-func (l List) Call(args ...any) []any {
-	return args
+func (l List) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	var sliceType reflect.Type
+	var elemType reflect.Type
+	if expectedType != nil && expectedType.Kind() == reflect.Slice {
+		sliceType = expectedType
+		elemType = expectedType.Elem()
+	} else {
+		sliceType = reflect.TypeOf([]any{})
+		elemType = reflect.TypeOf((*any)(nil)).Elem()
+	}
+
+	res := reflect.MakeSlice(sliceType, 0, 0)
+
+	for {
+		tok, err := stream.Current()
+		if err != nil {
+			return nil, err
+		}
+		if tok.Kind == TokenEOF {
+			return nil, fmt.Errorf("unexpected EOF")
+		}
+		if tok.Kind == TokenSymbol && tok.Text == "]" {
+			stream.Consume()
+			break
+		}
+
+		val, err := env.evalExpr(stream, elemType)
+		if err != nil {
+			return nil, err
+		}
+
+		vVal := reflect.ValueOf(val)
+		vVal = convertType(vVal, elemType)
+		res = reflect.Append(res, vVal)
+	}
+
+	return res.Interface(), nil
 }

@@ -13,6 +13,6 @@ func (g GoFunc) FunctionName() string {
 	return g.Name
 }
 
-func (g GoFunc) Call(env *Env, stream TokenStream) (any, error) {
-	return env.callFunc(stream, reflect.ValueOf(g.Func), g.Name)
+func (g GoFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	return env.callFunc(stream, reflect.ValueOf(g.Func), g.Name, expectedType)
 }

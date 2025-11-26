@@ -22,6 +22,10 @@ func TestStdlib(t *testing.T) {
 			Source:   `strings.fields "foo bar baz"`,
 			Expected: `[foo bar baz]`,
 		},
+		{
+			Source:   `strings.join ['foo' 'bar'] ','`,
+			Expected: `foo,bar`,
+		},
 	}
 
 	for _, c := range kases {
