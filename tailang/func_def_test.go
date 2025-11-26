@@ -8,7 +8,7 @@ import (
 func TestFunc(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func add ( a b ) {
+		func add(a b) {
 			join + a b end
 		}
 		add 1 2
@@ -27,7 +27,7 @@ func TestFuncScope(t *testing.T) {
 	env := NewEnv()
 	src := `
 		def x "outer"
-		func foo ( ) {
+		func foo() {
 			x
 		}
 		foo
@@ -45,7 +45,7 @@ func TestFuncScope(t *testing.T) {
 func TestFuncRef(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func foo ( x ) {
+		func foo(x) {
 			x
 		}
 		def f &foo
@@ -64,8 +64,8 @@ func TestFuncRef(t *testing.T) {
 func TestFuncNested(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func make_adder ( x ) {
-			func adder ( y ) {
+		func make_adder(x) {
+			func adder (y) {
 				join + x y end
 			}
 			&adder
