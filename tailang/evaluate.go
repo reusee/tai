@@ -88,6 +88,12 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			return nil, fmt.Errorf("undefined identifier: %s", name)
 		}
 
+		if expectedType != nil && expectedType.Kind() == reflect.String {
+			if _, ok := val.(string); !ok {
+				return name, nil
+			}
+		}
+
 		if isRef {
 			return val, nil
 		}

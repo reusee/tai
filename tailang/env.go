@@ -13,7 +13,12 @@ func NewEnv() *Env {
 			"[":    List{},
 			"def":  Def{},
 			"func": FuncDef{},
-			"if":   If{},
+
+			"if":      If{},
+			"while":   While{},
+			"switch":  Switch{},
+			"repeat":  Repeat{},
+			"foreach": Foreach{},
 
 			"type": GoFunc{
 				Name: "type",

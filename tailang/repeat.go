@@ -1,0 +1,52 @@
+package tailang
+
+import "fmt"
+
+type Repeat struct{}
+
+var _ Function = Repeat{}
+
+func (r Repeat) FunctionName() string {
+	return "repeat"
+}
+
+func (r Repeat) Call(env *Env, stream TokenStream) (any, error) {
+	tok, err := stream.Current()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Kind != TokenIdentifier {
+		return nil, fmt.Errorf("expected identifier")
+	}
+	varName := tok.Text
+	stream.Consume()
+
+	countVal, err := env.evalExpr(stream, nil)
+	if err != nil {
+		return nil, err
+	}
+	count, ok := asInt(countVal)
+	if !ok {
+		return nil, fmt.Errorf("repeat expects integer count")
+	}
+
+	body, err := ParseBlock(stream)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastRes any
+	for i := 1; i <= count; i++ {
+		loopEnv := &Env{
+			Parent: env,
+			Vars:   make(map[string]any),
+		}
+		loopEnv.Define(varName, i)
+
+		lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return lastRes, nil
+}
