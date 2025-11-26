@@ -93,6 +93,13 @@ func TestTokenizer(t *testing.T) {
 				{TokenInvalid, "unclosed"},
 			},
 		},
+		{
+			input: "foo # comment \n bar",
+			tokens: []TokenInfo{
+				{TokenIdentifier, "foo"},
+				{TokenIdentifier, "bar"},
+			},
+		},
 	}
 
 	for _, test := range tests {

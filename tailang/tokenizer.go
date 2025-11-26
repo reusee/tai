@@ -45,6 +45,9 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 	}
 
 	switch {
+	case r == '#':
+		t.skipComment()
+		return t.parseNext()
 	case r == '.':
 		return t.parseNamedParam()
 	case r == '\'' || r == '"' || r == '`':
@@ -75,6 +78,18 @@ func (t *Tokenizer) skipWhitespace() {
 		}
 		if !unicode.IsSpace(r) {
 			t.source.UnreadRune()
+			return
+		}
+	}
+}
+
+func (t *Tokenizer) skipComment() {
+	for {
+		r, _, err := t.source.ReadRune()
+		if err != nil {
+			return
+		}
+		if r == '\n' {
 			return
 		}
 	}
