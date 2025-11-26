@@ -29,8 +29,8 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tok.Text != "[" {
-		return nil, fmt.Errorf("expected [ for params")
+	if tok.Text != "(" {
+		return nil, fmt.Errorf("expected ( for params")
 	}
 	stream.Consume()
 
@@ -40,7 +40,7 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		if tok.Text == "]" {
+		if tok.Text == ")" {
 			stream.Consume()
 			break
 		}
@@ -56,8 +56,8 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tok.Text != "[" {
-		return nil, fmt.Errorf("expected [ for body")
+	if tok.Text != "{" {
+		return nil, fmt.Errorf("expected { for body")
 	}
 	stream.Consume()
 
@@ -72,9 +72,9 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (Value, error) {
 			return nil, fmt.Errorf("unexpected EOF in func body")
 		}
 
-		if tok.Text == "[" {
+		if tok.Text == "{" {
 			depth++
-		} else if tok.Text == "]" {
+		} else if tok.Text == "}" {
 			depth--
 		}
 

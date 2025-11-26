@@ -52,7 +52,7 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 	case unicode.IsDigit(r):
 		t.source.UnreadRune()
 		return t.parseNumber()
-	case r == '[' || r == ']':
+	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),
@@ -90,7 +90,7 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 		if err != nil {
 			return nil, err
 		}
-		if unicode.IsSpace(r) || r == '[' || r == ']' || r == '\'' || r == '"' || r == '`' {
+		if unicode.IsSpace(r) || r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == '\'' || r == '"' || r == '`' {
 			t.source.UnreadRune()
 			break
 		}

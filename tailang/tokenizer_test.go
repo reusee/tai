@@ -52,11 +52,15 @@ func TestTokenizer(t *testing.T) {
 			},
 		},
 		{
-			input: "& [ ]",
+			input: "& [ ] ( ) { }",
 			tokens: []TokenInfo{
 				{TokenIdentifier, "&"},
 				{TokenSymbol, "["},
 				{TokenSymbol, "]"},
+				{TokenSymbol, "("},
+				{TokenSymbol, ")"},
+				{TokenSymbol, "{"},
+				{TokenSymbol, "}"},
 			},
 		},
 		{

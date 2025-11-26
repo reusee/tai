@@ -8,9 +8,9 @@ import (
 func TestFunc(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func add [ a b ] [
+		func add ( a b ) {
 			join + a b end
-		]
+		}
 		add 1 2
 	`
 	tokenizer := NewTokenizer(strings.NewReader(src))
@@ -27,9 +27,9 @@ func TestFuncScope(t *testing.T) {
 	env := NewEnv()
 	src := `
 		def x "outer"
-		func foo [ ] [
+		func foo ( ) {
 			x
-		]
+		}
 		foo
 	`
 	tokenizer := NewTokenizer(strings.NewReader(src))
@@ -45,9 +45,9 @@ func TestFuncScope(t *testing.T) {
 func TestFuncRef(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func foo [ x ] [
+		func foo ( x ) {
 			x
-		]
+		}
 		def f &foo
 		f f f f f 42
 	`
@@ -64,12 +64,12 @@ func TestFuncRef(t *testing.T) {
 func TestFuncNested(t *testing.T) {
 	env := NewEnv()
 	src := `
-		func make_adder [ x ] [
-			func adder [ y ] [
+		func make_adder ( x ) {
+			func adder ( y ) {
 				join + x y end
-			]
+			}
 			&adder
-		]
+		}
 		def add1 make_adder 1
 		add1 2
 	`
