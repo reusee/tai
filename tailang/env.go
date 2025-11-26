@@ -11,6 +11,11 @@ func NewEnv() *Env {
 			"[":    List{},
 			"def":  Def{},
 			"func": FuncDef{},
+
+			"+": GoFunc{
+				Name: "+",
+				Func: Plus,
+			},
 		},
 	}
 	RegisterStdLib(e)

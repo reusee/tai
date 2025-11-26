@@ -9,7 +9,7 @@ func TestFunc(t *testing.T) {
 	env := NewEnv()
 	src := `
 		func add(a b) {
-			join + a b end
+			+ a b
 		}
 		add 1 2
 	`
@@ -18,8 +18,8 @@ func TestFunc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != "1+2" {
-		t.Fatalf("expected 1+2, got %v", res)
+	if res != 3 {
+		t.Fatalf("got %v", res)
 	}
 }
 
@@ -66,7 +66,7 @@ func TestFuncNested(t *testing.T) {
 	src := `
 		func make_adder(x) {
 			func adder (y) {
-				join + x y end
+				+ x y
 			}
 			&adder
 		}
@@ -78,7 +78,7 @@ func TestFuncNested(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != "1+2" {
-		t.Fatalf("expected 1+2, got %v", res)
+	if res != 3 {
+		t.Fatalf("got %v", res)
 	}
 }

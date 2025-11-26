@@ -10,14 +10,14 @@ func TestDef(t *testing.T) {
 	src := `
 		def foo 42
 		def bar "baz"
-		join , foo bar end
+		+ foo bar
 	`
 	tokenizer := NewTokenizer(strings.NewReader(src))
 	res, err := env.Evaluate(tokenizer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != "42,baz" {
-		t.Fatalf("expected 42-baz, got %v", res)
+	if res != "42baz" {
+		t.Fatalf("got %v", res)
 	}
 }
