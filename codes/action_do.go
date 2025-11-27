@@ -61,23 +61,33 @@ Your first task is to create a comprehensive, step-by-step plan to achieve this 
 func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		contents := state.Contents()
-		if len(contents) > 0 {
-			lastContent := contents[len(contents)-1]
-			if lastContent.Role == generators.RoleModel || lastContent.Role == generators.RoleAssistant {
-				for _, part := range lastContent.Parts {
+		var lastFinishReason generators.FinishReason
+		found := false
+		for i := len(contents) - 1; i >= 0; i-- {
+			content := contents[i]
+			if content.Role == generators.RoleModel || content.Role == generators.RoleAssistant {
+				for j := len(content.Parts) - 1; j >= 0; j-- {
+					part := content.Parts[j]
 					if fr, ok := part.(generators.FinishReason); ok {
-						if fr != "stop" {
-							codeGenerator, err := a.GetCodeGenerator()()
-							if err != nil {
-								return nil, nil, err
-							}
-							return a.BuildChat()(codeGenerator)(cont), state, nil
-						}
+						lastFinishReason = fr
+						found = true
 						break
 					}
 				}
 			}
+			if found {
+				break
+			}
 		}
+
+		if found && lastFinishReason != "stop" {
+			codeGenerator, err := a.GetCodeGenerator()()
+			if err != nil {
+				return nil, nil, err
+			}
+			return a.BuildChat()(codeGenerator)(cont), state, nil
+		}
+
 		return a.do(cont), state, nil
 	}
 }
