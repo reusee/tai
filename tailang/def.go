@@ -15,7 +15,24 @@ func (d Def) FunctionName() string {
 	return "def"
 }
 
-func (d Def) Call(env *Env, name string, value any) (any, error) {
+func (d Def) Call(env *Env, stream TokenStream) (any, error) {
+	// Name
+	tok, err := stream.Current()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Kind != TokenIdentifier {
+		return nil, fmt.Errorf("expected identifier")
+	}
+	name := tok.Text
+	stream.Consume()
+
+	// Value
+	value, err := env.evalExpr(stream, d.Type)
+	if err != nil {
+		return nil, err
+	}
+
 	if d.Type != nil {
 		if value == nil {
 			switch d.Type.Kind() {

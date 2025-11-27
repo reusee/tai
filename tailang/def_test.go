@@ -45,3 +45,20 @@ func TestDef(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestBugRedeclaration(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def a "foo"
+		def a "bar"
+		a
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "bar" {
+		t.Fatalf("expected bar, got %v", res)
+	}
+}
