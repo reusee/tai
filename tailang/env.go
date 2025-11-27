@@ -15,6 +15,7 @@ func NewEnv() *Env {
 			"def":  Def{},
 			"set":  Set{},
 			"func": FuncDef{},
+			"do":   Do{},
 
 			"if":      If{},
 			"while":   While{},

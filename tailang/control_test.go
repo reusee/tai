@@ -62,4 +62,25 @@ func TestControl(t *testing.T) {
 	if res := run(`switch 2 { (+ 1 1) { "math" } }`); res != "math" {
 		t.Fatalf("switch expected math, got %v", res)
 	}
+
+	// do
+	run(`
+		def do_res 0
+		do {
+			set do_res 42
+		}
+	`)
+	if res, _ := env.Lookup("do_res"); res != 42 {
+		t.Fatalf("do expected 42, got %v", res)
+	}
+
+	run(`
+		def blk {
+			set do_res 100
+		}
+		do blk
+	`)
+	if res, _ := env.Lookup("do_res"); res != 100 {
+		t.Fatalf("do block variable expected 100, got %v", res)
+	}
 }
