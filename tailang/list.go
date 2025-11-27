@@ -47,8 +47,10 @@ func (l List) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any
 			return nil, err
 		}
 
-		vVal := reflect.ValueOf(val)
-		vVal = convertType(vVal, elemType)
+		vVal, err := prepareAssign(val, elemType)
+		if err != nil {
+			return nil, err
+		}
 		res = reflect.Append(res, vVal)
 	}
 

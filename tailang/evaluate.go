@@ -267,25 +267,16 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 					}
 				}
 
-				var vArg reflect.Value
-				if val == nil {
-					switch elemType.Kind() {
-					case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-						vArg = reflect.Zero(elemType)
-					default:
-						return nil, &StackError{
-							Name: name,
-							Err:  fmt.Errorf("cannot use nil as type %v in variadic argument", elemType),
-						}
+				vArg, err := prepareAssign(val, elemType)
+				if err != nil {
+					var userArgs []any
+					for k := argOffset; k < len(args); k++ {
+						userArgs = append(userArgs, args[k].Interface())
 					}
-				} else {
-					vArg = reflect.ValueOf(val)
-					vArg = convertType(vArg, elemType)
-					if !vArg.Type().AssignableTo(elemType) {
-						return nil, &StackError{
-							Name: name,
-							Err:  fmt.Errorf("cannot use %v (type %v) as type %v in variadic argument", val, vArg.Type(), elemType),
-						}
+					return nil, &StackError{
+						Name: name,
+						Args: userArgs,
+						Err:  err,
 					}
 				}
 				args = append(args, vArg)
@@ -305,25 +296,16 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 				}
 			}
 
-			var vArg reflect.Value
-			if val == nil {
-				switch argType.Kind() {
-				case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-					vArg = reflect.Zero(argType)
-				default:
-					return nil, &StackError{
-						Name: name,
-						Err:  fmt.Errorf("cannot use nil as type %v in argument %d", argType, i),
-					}
+			vArg, err := prepareAssign(val, argType)
+			if err != nil {
+				var userArgs []any
+				for k := argOffset; k < len(args); k++ {
+					userArgs = append(userArgs, args[k].Interface())
 				}
-			} else {
-				vArg = reflect.ValueOf(val)
-				vArg = convertType(vArg, argType)
-				if !vArg.Type().AssignableTo(argType) {
-					return nil, &StackError{
-						Name: name,
-						Err:  fmt.Errorf("cannot use %v (type %v) as type %v in argument %d", val, vArg.Type(), argType, i),
-					}
+				return nil, &StackError{
+					Name: name,
+					Args: userArgs,
+					Err:  err,
 				}
 			}
 			args = append(args, vArg)
@@ -373,10 +355,9 @@ func findField(v reflect.Value, name string) reflect.Value {
 }
 
 func setField(v reflect.Value, val any) error {
-	valV := reflect.ValueOf(val)
-	valV = convertType(valV, v.Type())
-	if !valV.Type().AssignableTo(v.Type()) {
-		return fmt.Errorf("cannot assign %s to %s", valV.Type(), v.Type())
+	valV, err := prepareAssign(val, v.Type())
+	if err != nil {
+		return err
 	}
 	v.Set(valV)
 	return nil
@@ -485,4 +466,22 @@ func isNumeric(k reflect.Kind) bool {
 		return true
 	}
 	return false
+}
+
+func prepareAssign(val any, targetType reflect.Type) (reflect.Value, error) {
+	if val == nil {
+		switch targetType.Kind() {
+		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+			return reflect.Zero(targetType), nil
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot assign nil to %v", targetType)
+		}
+	}
+
+	valV := reflect.ValueOf(val)
+	valV = convertType(valV, targetType)
+	if !valV.Type().AssignableTo(targetType) {
+		return reflect.Value{}, fmt.Errorf("cannot assign %v (type %v) to %v", val, valV.Type(), targetType)
+	}
+	return valV, nil
 }
