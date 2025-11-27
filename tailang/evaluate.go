@@ -250,11 +250,16 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 					tokenizer.Consume()
 					break
 				}
-				if pt.Kind == TokenSymbol && pt.Text == "]" {
-					if name == "[" {
-						tokenizer.Consume()
+				if pt.Kind == TokenSymbol {
+					if pt.Text == "]" {
+						if name == "[" {
+							tokenizer.Consume()
+						}
+						break
 					}
-					break
+					if pt.Text == ")" {
+						break
+					}
 				}
 
 				val, err := e.evalExpr(tokenizer, elemType)

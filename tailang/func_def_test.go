@@ -152,3 +152,39 @@ func TestFib(t *testing.T) {
 		t.Fatalf("expected 55, got %v", res)
 	}
 }
+
+func TestVariadicInParens(t *testing.T) {
+	env := NewEnv()
+	env.Define("sum", GoFunc{
+		Name: "sum",
+		Func: func(args ...int) int {
+			s := 0
+			for _, v := range args {
+				s += v
+			}
+			return s
+		},
+	})
+
+	// This previously failed because 'sum' would try to consume ')'
+	src := `(sum 1 2 3)`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res != 6 {
+		t.Fatalf("expected 6, got %v", res)
+	}
+
+	// Test with nested parens
+	src = `(sum 1 (sum 2 3) 4)`
+	tokenizer = NewTokenizer(strings.NewReader(src))
+	res, err = env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res != 10 {
+		t.Fatalf("expected 10, got %v", res)
+	}
+}
