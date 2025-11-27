@@ -56,10 +56,12 @@ func ParseBlockBody(stream TokenStream) (*Block, error) {
 			return nil, fmt.Errorf("unexpected EOF in block")
 		}
 
-		if tok.Text == "{" {
-			depth++
-		} else if tok.Text == "}" {
-			depth--
+		if tok.Kind == TokenSymbol {
+			if tok.Text == "{" {
+				depth++
+			} else if tok.Text == "}" {
+				depth--
+			}
 		}
 
 		if depth > 0 {
