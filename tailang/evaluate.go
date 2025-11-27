@@ -267,8 +267,27 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 					}
 				}
 
-				vArg := reflect.ValueOf(val)
-				vArg = convertType(vArg, elemType)
+				var vArg reflect.Value
+				if val == nil {
+					switch elemType.Kind() {
+					case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+						vArg = reflect.Zero(elemType)
+					default:
+						return nil, &StackError{
+							Name: name,
+							Err:  fmt.Errorf("cannot use nil as type %v in variadic argument", elemType),
+						}
+					}
+				} else {
+					vArg = reflect.ValueOf(val)
+					vArg = convertType(vArg, elemType)
+					if !vArg.Type().AssignableTo(elemType) {
+						return nil, &StackError{
+							Name: name,
+							Err:  fmt.Errorf("cannot use %v (type %v) as type %v in variadic argument", val, vArg.Type(), elemType),
+						}
+					}
+				}
 				args = append(args, vArg)
 			}
 
@@ -285,8 +304,28 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 					Err:  err,
 				}
 			}
-			vArg := reflect.ValueOf(val)
-			vArg = convertType(vArg, argType)
+
+			var vArg reflect.Value
+			if val == nil {
+				switch argType.Kind() {
+				case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+					vArg = reflect.Zero(argType)
+				default:
+					return nil, &StackError{
+						Name: name,
+						Err:  fmt.Errorf("cannot use nil as type %v in argument %d", argType, i),
+					}
+				}
+			} else {
+				vArg = reflect.ValueOf(val)
+				vArg = convertType(vArg, argType)
+				if !vArg.Type().AssignableTo(argType) {
+					return nil, &StackError{
+						Name: name,
+						Err:  fmt.Errorf("cannot use %v (type %v) as type %v in argument %d", val, vArg.Type(), argType, i),
+					}
+				}
+			}
 			args = append(args, vArg)
 		}
 
