@@ -6,7 +6,7 @@ import (
 )
 
 type List struct {
-	Elem reflect.Type
+	Elem reflect.Type `tai:"elem"`
 }
 
 func (l List) Name() string {

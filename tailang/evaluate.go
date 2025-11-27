@@ -63,13 +63,16 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		return val, nil
 	}
 
-	if t.Kind == TokenIdentifier || (t.Kind == TokenSymbol && (t.Text == "[" || t.Text == "{")) {
+	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol {
 		name := t.Text
 		if name == "end" {
 			return nil, fmt.Errorf("unexpected identifier 'end'")
 		}
-		if t.Kind == TokenSymbol && (t.Text == "]" || t.Text == "}") {
-			return nil, fmt.Errorf("unexpected symbol '%s'", t.Text)
+		if t.Kind == TokenSymbol {
+			switch name {
+			case ")", "]", "}":
+				return nil, fmt.Errorf("unexpected symbol '%s'", name)
+			}
 		}
 
 		isRef := false
@@ -345,9 +348,6 @@ func findField(v reflect.Value, name string) reflect.Value {
 		f := t.Field(i)
 		tag := f.Tag.Get("tai")
 		if tag == name {
-			return v.Field(i)
-		}
-		if strings.EqualFold(f.Name, name) {
 			return v.Field(i)
 		}
 	}
