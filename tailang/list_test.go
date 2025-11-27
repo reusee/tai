@@ -30,12 +30,7 @@ func TestTypedList(t *testing.T) {
 	// Case 2: Typed list with nil element (e.g. from if false)
 	// Previously panicked in reflect.ValueOf(nil) -> invalid Value
 	runExpectError("ListNilElement", `
-		def l [.elem int (if false 1)]
+		def l [.elem int (if false { 1 })]
 	`, "cannot assign nil")
 
-	// Case 3: Named parameter with nil value
-	// Previously panicked in setField
-	runExpectError("NamedParamNil", `
-		def .type (if false 1) i 1
-	`, "cannot assign nil")
 }

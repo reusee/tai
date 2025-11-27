@@ -10,6 +10,9 @@ type Env struct {
 func NewEnv() *Env {
 	e := &Env{
 		Vars: map[string]any{
+			"true":  true,
+			"false": false,
+
 			"[":    List{},
 			"{":    BlockDef{},
 			"def":  Def{},
