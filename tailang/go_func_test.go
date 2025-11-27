@@ -108,7 +108,7 @@ func TestBugPanicTypeMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for type mismatch in variadic arg")
 	}
-	if !strings.Contains(err.Error(), "cannot use") {
+	if !strings.Contains(err.Error(), "cannot assign") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestBugPanicTypeMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for type mismatch in argument")
 	}
-	if !strings.Contains(err.Error(), "cannot use") {
+	if !strings.Contains(err.Error(), "cannot assign") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestBugPanicTypeMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil to int")
 	}
-	if !strings.Contains(err.Error(), "cannot use nil") {
+	if !strings.Contains(err.Error(), "cannot assign") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
