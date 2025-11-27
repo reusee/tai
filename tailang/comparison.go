@@ -30,6 +30,11 @@ func Ne(a, b any) bool {
 }
 
 func Lt(a, b any) (bool, error) {
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as < bs, nil
+		}
+	}
 	if ai, ok := asInt(a); ok {
 		if bi, ok := asInt(b); ok {
 			return ai < bi, nil
@@ -50,6 +55,11 @@ func Lt(a, b any) (bool, error) {
 }
 
 func Le(a, b any) (bool, error) {
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as <= bs, nil
+		}
+	}
 	if ai, ok := asInt(a); ok {
 		if bi, ok := asInt(b); ok {
 			return ai <= bi, nil
@@ -70,6 +80,11 @@ func Le(a, b any) (bool, error) {
 }
 
 func Gt(a, b any) (bool, error) {
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as > bs, nil
+		}
+	}
 	if ai, ok := asInt(a); ok {
 		if bi, ok := asInt(b); ok {
 			return ai > bi, nil
@@ -90,6 +105,11 @@ func Gt(a, b any) (bool, error) {
 }
 
 func Ge(a, b any) (bool, error) {
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as >= bs, nil
+		}
+	}
 	if ai, ok := asInt(a); ok {
 		if bi, ok := asInt(b); ok {
 			return ai >= bi, nil
