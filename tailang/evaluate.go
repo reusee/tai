@@ -143,13 +143,13 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 				if err != nil {
 					return nil, &StackError{
 						Name: name,
-						Err:  err,
+						Err:  fmt.Errorf("arg .%s: %w", paramName, err),
 					}
 				}
 				if err := setField(field, arg); err != nil {
 					return nil, &StackError{
 						Name: name,
-						Err:  err,
+						Err:  fmt.Errorf("arg .%s: %w", paramName, err),
 					}
 				}
 			}
@@ -206,8 +206,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			last := results[len(results)-1]
 			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !last.IsNil() {
+					var userArgs []any
+					for i := argOffset; i < len(args); i++ {
+						userArgs = append(userArgs, args[i].Interface())
+					}
 					return nil, &StackError{
 						Name: name,
+						Args: userArgs,
 						Err:  last.Interface().(error),
 					}
 				}
@@ -251,8 +256,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 
 				val, err := e.evalExpr(tokenizer, elemType)
 				if err != nil {
+					var userArgs []any
+					for k := argOffset; k < len(args); k++ {
+						userArgs = append(userArgs, args[k].Interface())
+					}
 					return nil, &StackError{
 						Name: name,
+						Args: userArgs,
 						Err:  err,
 					}
 				}
@@ -265,8 +275,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 		} else {
 			val, err := e.evalExpr(tokenizer, argType)
 			if err != nil {
+				var userArgs []any
+				for k := argOffset; k < len(args); k++ {
+					userArgs = append(userArgs, args[k].Interface())
+				}
 				return nil, &StackError{
 					Name: name,
+					Args: userArgs,
 					Err:  err,
 				}
 			}
@@ -285,8 +300,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 	last := results[len(results)-1]
 	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		if !last.IsNil() {
+			var userArgs []any
+			for i := argOffset; i < len(args); i++ {
+				userArgs = append(userArgs, args[i].Interface())
+			}
 			return nil, &StackError{
 				Name: name,
+				Args: userArgs,
 				Err:  last.Interface().(error),
 			}
 		}
