@@ -4,6 +4,8 @@ import "fmt"
 
 type Switch struct{}
 
+type DefaultCase struct{}
+
 var _ Function = Switch{}
 
 func (s Switch) FunctionName() string {
@@ -27,28 +29,44 @@ func (s Switch) Call(env *Env, stream TokenStream) (any, error) {
 
 	bodyStream := NewSliceTokenStream(bodyBlock.Body)
 
+	var cases []any
+
 	for {
 		tok, err := bodyStream.Current()
 		if err != nil || tok.Kind == TokenEOF {
 			break
 		}
 
-		caseVal, err := env.evalExpr(bodyStream, nil)
+		if tok.Kind == TokenIdentifier && tok.Text == "default" {
+			bodyStream.Consume()
+			cases = append(cases, DefaultCase{})
+			continue
+		}
+
+		exprVal, err := env.evalExpr(bodyStream, nil)
 		if err != nil {
 			return nil, err
 		}
 
-		blockVal, err := env.evalExpr(bodyStream, nil)
-		if err != nil {
-			return nil, err
-		}
-		block, ok := blockVal.(*Block)
-		if !ok {
-			return nil, fmt.Errorf("expected block for case body, got %T", blockVal)
-		}
+		if block, ok := exprVal.(*Block); ok {
+			matched := false
+			for _, c := range cases {
+				if _, isDef := c.(DefaultCase); isDef {
+					matched = true
+					break
+				}
+				if Eq(val, c) {
+					matched = true
+					break
+				}
+			}
 
-		if Eq(val, caseVal) {
-			return env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
+			if matched {
+				return env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
+			}
+			cases = nil
+		} else {
+			cases = append(cases, exprVal)
 		}
 	}
 	return nil, nil

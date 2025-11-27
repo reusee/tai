@@ -62,6 +62,12 @@ func TestControl(t *testing.T) {
 	if res := run(`switch 2 { (+ 1 1) { "math" } }`); res != "math" {
 		t.Fatalf("switch expected math, got %v", res)
 	}
+	if res := run(`switch 1 { 1 2 3 { "ok" } }`); res != "ok" {
+		t.Fatalf("switch expected ok, got %v", res)
+	}
+	if res := run(`switch 4 { 1 2 3 { "ok" } default { "default" } }`); res != "default" {
+		t.Fatalf("switch expected default, got %v", res)
+	}
 
 	// do
 	run(`
