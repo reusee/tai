@@ -48,9 +48,9 @@ func (i If) Call(env *Env, stream TokenStream) (any, error) {
 	}
 
 	if isTrue {
-		return env.Evaluate(NewSliceTokenStream(trueBlock.Body))
+		return env.NewScope().Evaluate(NewSliceTokenStream(trueBlock.Body))
 	} else if falseBlock != nil {
-		return env.Evaluate(NewSliceTokenStream(falseBlock.Body))
+		return env.NewScope().Evaluate(NewSliceTokenStream(falseBlock.Body))
 	}
 
 	return nil, nil

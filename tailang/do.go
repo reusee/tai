@@ -20,5 +20,5 @@ func (d Do) Call(env *Env, stream TokenStream) (any, error) {
 		return nil, fmt.Errorf("expected block for do, got %T", blockVal)
 	}
 
-	return env.Evaluate(NewSliceTokenStream(block.Body))
+	return env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
 }

@@ -84,3 +84,56 @@ func TestControl(t *testing.T) {
 		t.Fatalf("do block variable expected 100, got %v", res)
 	}
 }
+
+func TestScopeLeakage(t *testing.T) {
+	env := NewEnv()
+
+	// Helper to check that accessing a variable returns an error (undefined)
+	assertUndefined := func(src string) {
+		t.Helper()
+		tokenizer := NewTokenizer(strings.NewReader(src))
+		_, err := env.Evaluate(tokenizer)
+		if err == nil {
+			t.Fatalf("expected error for undefined variable in src: %s, but got nil", src)
+		}
+		if !strings.Contains(err.Error(), "undefined identifier") {
+			t.Fatalf("expected undefined identifier error, got: %v", err)
+		}
+	}
+
+	// if
+	assertUndefined(`
+		if true {
+			def leaked_if 1
+		}
+		leaked_if
+	`)
+
+	// while
+	assertUndefined(`
+		def i 0
+		while < i 1 {
+			def leaked_while 1
+			set i (+ i 1)
+		}
+		leaked_while
+	`)
+
+	// do
+	assertUndefined(`
+		do {
+			def leaked_do 1
+		}
+		leaked_do
+	`)
+
+	// switch
+	assertUndefined(`
+		switch 1 {
+			1 {
+				def leaked_switch 1
+			}
+		}
+		leaked_switch
+	`)
+}

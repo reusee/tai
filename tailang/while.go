@@ -42,7 +42,7 @@ func (w While) Call(env *Env, stream TokenStream) (any, error) {
 			break
 		}
 
-		lastRes, err = env.Evaluate(NewSliceTokenStream(bodyBlock.Body))
+		lastRes, err = env.NewScope().Evaluate(NewSliceTokenStream(bodyBlock.Body))
 		if err != nil {
 			return nil, err
 		}

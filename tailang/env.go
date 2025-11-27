@@ -111,3 +111,10 @@ func (e *Env) Lookup(name string) (any, bool) {
 	}
 	return nil, false
 }
+
+func (e *Env) NewScope() *Env {
+	return &Env{
+		Parent: e,
+		Vars:   make(map[string]any),
+	}
+}

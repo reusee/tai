@@ -48,7 +48,7 @@ func (s Switch) Call(env *Env, stream TokenStream) (any, error) {
 		}
 
 		if Eq(val, caseVal) {
-			return env.Evaluate(NewSliceTokenStream(block.Body))
+			return env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
 		}
 	}
 	return nil, nil
