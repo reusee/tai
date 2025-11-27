@@ -11,13 +11,13 @@ func (w While) FunctionName() string {
 }
 
 func (w While) Call(env *Env, stream TokenStream) (any, error) {
-	condBlockVal, err := env.evalExpr(stream, nil)
+	recorder := &recordingStream{
+		stream: stream,
+	}
+
+	condVal, err := env.evalExpr(recorder, nil)
 	if err != nil {
 		return nil, err
-	}
-	condBlock, ok := condBlockVal.(*Block)
-	if !ok {
-		return nil, fmt.Errorf("expected block for while condition, got %T", condBlockVal)
 	}
 
 	bodyBlockVal, err := env.evalExpr(stream, nil)
@@ -31,16 +31,11 @@ func (w While) Call(env *Env, stream TokenStream) (any, error) {
 
 	var lastRes any
 	for {
-		condRes, err := env.Evaluate(NewSliceTokenStream(condBlock.Body))
-		if err != nil {
-			return nil, err
-		}
-
 		isTrue := false
-		if b, ok := condRes.(bool); ok {
+		if b, ok := condVal.(bool); ok {
 			isTrue = b
 		} else {
-			isTrue = condRes != nil && condRes != false
+			isTrue = condVal != nil && condVal != false
 		}
 
 		if !isTrue {
@@ -48,6 +43,11 @@ func (w While) Call(env *Env, stream TokenStream) (any, error) {
 		}
 
 		lastRes, err = env.Evaluate(NewSliceTokenStream(bodyBlock.Body))
+		if err != nil {
+			return nil, err
+		}
+
+		condVal, err = env.Evaluate(NewSliceTokenStream(recorder.tokens))
 		if err != nil {
 			return nil, err
 		}

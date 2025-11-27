@@ -21,7 +21,7 @@ func TestControl(t *testing.T) {
 	run(`
                 def i 0
                 def sum 0
-                while { < i 5 } {
+                while < i 5 {
                         set sum (+ sum i)
                         set i (+ i 1)
                 }

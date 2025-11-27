@@ -69,3 +69,20 @@ func ParseBlockBody(stream TokenStream) (*Block, error) {
 	}
 	return &Block{Body: body}, nil
 }
+
+type recordingStream struct {
+	stream TokenStream
+	tokens []*Token
+}
+
+func (r *recordingStream) Current() (*Token, error) {
+	return r.stream.Current()
+}
+
+func (r *recordingStream) Consume() {
+	tok, _ := r.stream.Current()
+	if tok != nil {
+		r.tokens = append(r.tokens, tok)
+	}
+	r.stream.Consume()
+}
