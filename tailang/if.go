@@ -1,5 +1,7 @@
 package tailang
 
+import "fmt"
+
 type If struct{}
 
 var _ Function = If{}
@@ -21,25 +23,34 @@ func (i If) Call(env *Env, stream TokenStream) (any, error) {
 		isTrue = cond != nil && cond != false
 	}
 
-	trueBlock, err := ParseBlock(stream)
+	trueBlockVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
 	}
+	trueBlock, ok := trueBlockVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for if body, got %T", trueBlockVal)
+	}
 
-	var falseBlock []*Token
+	var falseBlock *Block
 	tok, err := stream.Current()
 	if err == nil && tok.Kind == TokenIdentifier && tok.Text == "else" {
 		stream.Consume()
-		falseBlock, err = ParseBlock(stream)
+		falseBlockVal, err := env.evalExpr(stream, nil)
 		if err != nil {
 			return nil, err
+		}
+		var ok bool
+		falseBlock, ok = falseBlockVal.(*Block)
+		if !ok {
+			return nil, fmt.Errorf("expected block for else body, got %T", falseBlockVal)
 		}
 	}
 
 	if isTrue {
-		return env.Evaluate(NewSliceTokenStream(trueBlock))
-	} else if len(falseBlock) > 0 {
-		return env.Evaluate(NewSliceTokenStream(falseBlock))
+		return env.Evaluate(NewSliceTokenStream(trueBlock.Body))
+	} else if falseBlock != nil {
+		return env.Evaluate(NewSliceTokenStream(falseBlock.Body))
 	}
 
 	return nil, nil

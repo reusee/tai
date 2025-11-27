@@ -29,9 +29,13 @@ func (f Foreach) Call(env *Env, stream TokenStream) (any, error) {
 		return nil, err
 	}
 
-	body, err := ParseBlock(stream)
+	bodyVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
+	}
+	body, ok := bodyVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for foreach body, got %T", bodyVal)
 	}
 
 	vList := reflect.ValueOf(listVal)
@@ -47,7 +51,7 @@ func (f Foreach) Call(env *Env, stream TokenStream) (any, error) {
 			}
 			loopEnv.Define(varName, elem)
 
-			lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body))
+			lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body.Body))
 			if err != nil {
 				return nil, err
 			}

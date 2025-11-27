@@ -63,13 +63,13 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		return val, nil
 	}
 
-	if t.Kind == TokenIdentifier || (t.Kind == TokenSymbol && t.Text == "[") {
+	if t.Kind == TokenIdentifier || (t.Kind == TokenSymbol && (t.Text == "[" || t.Text == "{")) {
 		name := t.Text
 		if name == "end" {
 			return nil, fmt.Errorf("unexpected identifier 'end'")
 		}
-		if t.Kind == TokenSymbol && t.Text == "]" {
-			return nil, fmt.Errorf("unexpected symbol ']'")
+		if t.Kind == TokenSymbol && (t.Text == "]" || t.Text == "}") {
+			return nil, fmt.Errorf("unexpected symbol '%s'", t.Text)
 		}
 
 		isRef := false

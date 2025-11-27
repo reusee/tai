@@ -7,7 +7,7 @@ import (
 type UserFunc struct {
 	FuncName      string
 	Params        []string
-	Body          []*Token
+	Body          *Block
 	DefinitionEnv *Env
 }
 
@@ -44,6 +44,6 @@ func (u UserFunc) CallArgs(args []any) (any, error) {
 		callEnv.Define(param, args[i])
 	}
 
-	bodyStream := NewSliceTokenStream(u.Body)
+	bodyStream := NewSliceTokenStream(u.Body.Body)
 	return callEnv.Evaluate(bodyStream)
 }

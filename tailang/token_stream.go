@@ -31,7 +31,7 @@ func (s *SliceTokenStream) Consume() {
 	}
 }
 
-func ParseBlock(stream TokenStream) ([]*Token, error) {
+func ParseBlock(stream TokenStream) (*Block, error) {
 	tok, err := stream.Current()
 	if err != nil {
 		return nil, err
@@ -41,10 +41,14 @@ func ParseBlock(stream TokenStream) ([]*Token, error) {
 	}
 	stream.Consume()
 
+	return ParseBlockBody(stream)
+}
+
+func ParseBlockBody(stream TokenStream) (*Block, error) {
 	var body []*Token
 	depth := 1
 	for depth > 0 {
-		tok, err = stream.Current()
+		tok, err := stream.Current()
 		if err != nil {
 			return nil, err
 		}
@@ -63,5 +67,5 @@ func ParseBlock(stream TokenStream) ([]*Token, error) {
 		}
 		stream.Consume()
 	}
-	return body, nil
+	return &Block{Body: body}, nil
 }

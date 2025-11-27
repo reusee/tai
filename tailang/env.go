@@ -11,6 +11,7 @@ func NewEnv() *Env {
 	e := &Env{
 		Vars: map[string]any{
 			"[":    List{},
+			"{":    BlockDef{},
 			"def":  Def{},
 			"set":  Set{},
 			"func": FuncDef{},
@@ -89,6 +90,7 @@ func NewEnv() *Env {
 			"byte":    reflect.TypeFor[byte](),
 			"rune":    reflect.TypeFor[rune](),
 			"any":     reflect.TypeFor[any](),
+			"block":   reflect.TypeFor[*Block](),
 		},
 	}
 	RegisterStdLib(e)

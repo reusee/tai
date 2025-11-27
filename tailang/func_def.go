@@ -52,9 +52,13 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 	}
 
 	// Body
-	body, err := ParseBlock(stream)
+	bodyVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
+	}
+	body, ok := bodyVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for func body, got %T", bodyVal)
 	}
 
 	uf := UserFunc{

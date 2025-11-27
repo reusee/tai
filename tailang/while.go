@@ -1,5 +1,7 @@
 package tailang
 
+import "fmt"
+
 type While struct{}
 
 var _ Function = While{}
@@ -9,19 +11,27 @@ func (w While) FunctionName() string {
 }
 
 func (w While) Call(env *Env, stream TokenStream) (any, error) {
-	condBlock, err := ParseBlock(stream)
+	condBlockVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
 	}
+	condBlock, ok := condBlockVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for while condition, got %T", condBlockVal)
+	}
 
-	bodyBlock, err := ParseBlock(stream)
+	bodyBlockVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
+	}
+	bodyBlock, ok := bodyBlockVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for while body, got %T", bodyBlockVal)
 	}
 
 	var lastRes any
 	for {
-		condRes, err := env.Evaluate(NewSliceTokenStream(condBlock))
+		condRes, err := env.Evaluate(NewSliceTokenStream(condBlock.Body))
 		if err != nil {
 			return nil, err
 		}
@@ -37,7 +47,7 @@ func (w While) Call(env *Env, stream TokenStream) (any, error) {
 			break
 		}
 
-		lastRes, err = env.Evaluate(NewSliceTokenStream(bodyBlock))
+		lastRes, err = env.Evaluate(NewSliceTokenStream(bodyBlock.Body))
 		if err != nil {
 			return nil, err
 		}

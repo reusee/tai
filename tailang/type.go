@@ -17,6 +17,8 @@ func TypeOf(v any) string {
 		return "bool"
 	case []any:
 		return "list"
+	case *Block:
+		return "block"
 	}
 	if _, ok := v.(Function); ok {
 		return "function"

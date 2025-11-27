@@ -30,9 +30,13 @@ func (r Repeat) Call(env *Env, stream TokenStream) (any, error) {
 		return nil, fmt.Errorf("repeat expects integer count")
 	}
 
-	body, err := ParseBlock(stream)
+	bodyVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err
+	}
+	body, ok := bodyVal.(*Block)
+	if !ok {
+		return nil, fmt.Errorf("expected block for repeat body, got %T", bodyVal)
 	}
 
 	var lastRes any
@@ -43,7 +47,7 @@ func (r Repeat) Call(env *Env, stream TokenStream) (any, error) {
 		}
 		loopEnv.Define(varName, i)
 
-		lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body))
+		lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body.Body))
 		if err != nil {
 			return nil, err
 		}
