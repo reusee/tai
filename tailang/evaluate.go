@@ -133,10 +133,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 			field := findField(callVal.Elem(), paramName)
 			if !field.IsValid() {
-				return nil, &StackError{
-					Name: name,
-					Err:  fmt.Errorf("unknown named parameter .%s", paramName),
-				}
+				return nil, fmt.Errorf("unknown named parameter .%s", paramName)
 			}
 
 			if field.Kind() == reflect.Bool {
@@ -144,16 +141,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 			} else {
 				arg, err := e.evalExpr(tokenizer, field.Type())
 				if err != nil {
-					return nil, &StackError{
-						Name: name,
-						Err:  fmt.Errorf("arg .%s: %w", paramName, err),
-					}
+					return nil, fmt.Errorf("arg .%s: %w", paramName, err)
 				}
 				if err := setField(field, arg); err != nil {
-					return nil, &StackError{
-						Name: name,
-						Err:  fmt.Errorf("arg .%s: %w", paramName, err),
-					}
+					return nil, fmt.Errorf("arg .%s: %w", paramName, err)
 				}
 			}
 		}
@@ -209,15 +200,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			last := results[len(results)-1]
 			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !last.IsNil() {
-					var userArgs []any
-					for i := argOffset; i < len(args); i++ {
-						userArgs = append(userArgs, args[i].Interface())
-					}
-					return nil, &StackError{
-						Name: name,
-						Args: userArgs,
-						Err:  last.Interface().(error),
-					}
+					return nil, last.Interface().(error)
 				}
 				if len(results) > 1 {
 					return results[0].Interface(), nil
@@ -264,28 +247,12 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 
 				val, err := e.evalExpr(tokenizer, elemType)
 				if err != nil {
-					var userArgs []any
-					for k := argOffset; k < len(args); k++ {
-						userArgs = append(userArgs, args[k].Interface())
-					}
-					return nil, &StackError{
-						Name: name,
-						Args: userArgs,
-						Err:  err,
-					}
+					return nil, err
 				}
 
 				vArg, err := prepareAssign(val, elemType)
 				if err != nil {
-					var userArgs []any
-					for k := argOffset; k < len(args); k++ {
-						userArgs = append(userArgs, args[k].Interface())
-					}
-					return nil, &StackError{
-						Name: name,
-						Args: userArgs,
-						Err:  err,
-					}
+					return nil, err
 				}
 				args = append(args, vArg)
 			}
@@ -293,28 +260,12 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 		} else {
 			val, err := e.evalExpr(tokenizer, argType)
 			if err != nil {
-				var userArgs []any
-				for k := argOffset; k < len(args); k++ {
-					userArgs = append(userArgs, args[k].Interface())
-				}
-				return nil, &StackError{
-					Name: name,
-					Args: userArgs,
-					Err:  err,
-				}
+				return nil, err
 			}
 
 			vArg, err := prepareAssign(val, argType)
 			if err != nil {
-				var userArgs []any
-				for k := argOffset; k < len(args); k++ {
-					userArgs = append(userArgs, args[k].Interface())
-				}
-				return nil, &StackError{
-					Name: name,
-					Args: userArgs,
-					Err:  err,
-				}
+				return nil, err
 			}
 			args = append(args, vArg)
 		}
@@ -329,15 +280,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 	last := results[len(results)-1]
 	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		if !last.IsNil() {
-			var userArgs []any
-			for i := argOffset; i < len(args); i++ {
-				userArgs = append(userArgs, args[i].Interface())
-			}
-			return nil, &StackError{
-				Name: name,
-				Args: userArgs,
-				Err:  last.Interface().(error),
-			}
+			return nil, last.Interface().(error)
 		}
 		if len(results) > 1 {
 			return results[0].Interface(), nil

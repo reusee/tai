@@ -47,11 +47,7 @@ func (u UserFunc) CallArgs(args []any) (any, error) {
 	bodyStream := NewSliceTokenStream(u.Body.Body)
 	res, err := callEnv.Evaluate(bodyStream)
 	if err != nil {
-		return nil, &StackError{
-			Name: u.FuncName,
-			Args: args,
-			Err:  err,
-		}
+		return nil, err
 	}
 	return res, nil
 }
