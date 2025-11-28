@@ -3,6 +3,7 @@ package tailang
 type Token struct {
 	Kind TokenKind
 	Text string
+	Pos  Pos
 }
 
 type TokenKind uint8
@@ -16,3 +17,9 @@ const (
 	TokenNamedParam
 	TokenSymbol
 )
+
+type Pos struct {
+	File   string
+	Line   int
+	Column int
+}

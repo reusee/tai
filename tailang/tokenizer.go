@@ -10,12 +10,41 @@ import (
 type Tokenizer struct {
 	source  *bufio.Reader
 	current *Token
+
+	currPos Pos
+	prevPos Pos
 }
 
 func NewTokenizer(source io.Reader) *Tokenizer {
 	return &Tokenizer{
 		source: bufio.NewReader(source),
+		currPos: Pos{
+			Line:   1,
+			Column: 1,
+		},
 	}
+}
+
+func (t *Tokenizer) readRune() (rune, error) {
+	r, _, err := t.source.ReadRune()
+	if err != nil {
+		return 0, err
+	}
+
+	t.prevPos = t.currPos
+	if r == '\n' {
+		t.currPos.Line++
+		t.currPos.Column = 1
+	} else {
+		t.currPos.Column++
+	}
+
+	return r, nil
+}
+
+func (t *Tokenizer) unreadRune() {
+	t.source.UnreadRune()
+	t.currPos = t.prevPos
 }
 
 func (t *Tokenizer) Current() (*Token, error) {
@@ -35,10 +64,11 @@ func (t *Tokenizer) Consume() {
 
 func (t *Tokenizer) parseNext() (*Token, error) {
 	t.skipWhitespace()
+	startPos := t.currPos
 
-	r, _, err := t.source.ReadRune()
+	r, err := t.readRune()
 	if err == io.EOF {
-		return &Token{Kind: TokenEOF}, nil
+		return &Token{Kind: TokenEOF, Pos: startPos}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -49,35 +79,36 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 		t.skipComment()
 		return t.parseNext()
 	case r == '.':
-		return t.parseNamedParam()
+		return t.parseNamedParam(startPos)
 	case r == '\'' || r == '"' || r == '`':
-		return t.parseString(r)
+		return t.parseString(r, startPos)
 	case unicode.IsDigit(r):
-		t.source.UnreadRune()
+		t.unreadRune()
 		return t.parseNumber()
 	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),
+			Pos:  startPos,
 		}, nil
 	}
 
 	if unicode.IsGraphic(r) {
-		t.source.UnreadRune()
+		t.unreadRune()
 		return t.parseIdentifier()
 	}
 
-	return &Token{Kind: TokenInvalid, Text: string(r)}, nil
+	return &Token{Kind: TokenInvalid, Text: string(r), Pos: startPos}, nil
 }
 
 func (t *Tokenizer) skipWhitespace() {
 	for {
-		r, _, err := t.source.ReadRune()
+		r, err := t.readRune()
 		if err != nil {
 			return
 		}
 		if !unicode.IsSpace(r) {
-			t.source.UnreadRune()
+			t.unreadRune()
 			return
 		}
 	}
@@ -85,7 +116,7 @@ func (t *Tokenizer) skipWhitespace() {
 
 func (t *Tokenizer) skipComment() {
 	for {
-		r, _, err := t.source.ReadRune()
+		r, err := t.readRune()
 		if err != nil {
 			return
 		}
@@ -96,9 +127,10 @@ func (t *Tokenizer) skipComment() {
 }
 
 func (t *Tokenizer) parseIdentifier() (*Token, error) {
+	startPos := t.currPos
 	var buf bytes.Buffer
 	for {
-		r, _, err := t.source.ReadRune()
+		r, err := t.readRune()
 		if err == io.EOF {
 			break
 		}
@@ -106,7 +138,7 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 			return nil, err
 		}
 		if unicode.IsSpace(r) || r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == '\'' || r == '"' || r == '`' {
-			t.source.UnreadRune()
+			t.unreadRune()
 			break
 		}
 		buf.WriteRune(r)
@@ -114,10 +146,11 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 	return &Token{
 		Kind: TokenIdentifier,
 		Text: buf.String(),
+		Pos:  startPos,
 	}, nil
 }
 
-func (t *Tokenizer) parseNamedParam() (*Token, error) {
+func (t *Tokenizer) parseNamedParam(startPos Pos) (*Token, error) {
 	ident, err := t.parseIdentifier()
 	if err != nil {
 		return nil, err
@@ -125,14 +158,16 @@ func (t *Tokenizer) parseNamedParam() (*Token, error) {
 	return &Token{
 		Kind: TokenNamedParam,
 		Text: "." + ident.Text,
+		Pos:  startPos,
 	}, nil
 }
 
 func (t *Tokenizer) parseNumber() (*Token, error) {
+	startPos := t.currPos
 	var buf bytes.Buffer
 	hasDot := false
 	for {
-		r, _, err := t.source.ReadRune()
+		r, err := t.readRune()
 		if err == io.EOF {
 			break
 		}
@@ -145,23 +180,24 @@ func (t *Tokenizer) parseNumber() (*Token, error) {
 			hasDot = true
 			buf.WriteRune(r)
 		} else {
-			t.source.UnreadRune()
+			t.unreadRune()
 			break
 		}
 	}
 	return &Token{
 		Kind: TokenNumber,
 		Text: buf.String(),
+		Pos:  startPos,
 	}, nil
 }
 
-func (t *Tokenizer) parseString(quote rune) (*Token, error) {
+func (t *Tokenizer) parseString(quote rune, startPos Pos) (*Token, error) {
 	var buf bytes.Buffer
 	for {
-		r, _, err := t.source.ReadRune()
+		r, err := t.readRune()
 		if err == io.EOF {
 			// Unmatched quote
-			return &Token{Kind: TokenInvalid, Text: buf.String()}, nil
+			return &Token{Kind: TokenInvalid, Text: buf.String(), Pos: startPos}, nil
 		}
 		if err != nil {
 			return nil, err
@@ -171,7 +207,7 @@ func (t *Tokenizer) parseString(quote rune) (*Token, error) {
 		}
 
 		if quote != '`' && r == '\\' {
-			next, _, err := t.source.ReadRune()
+			next, err := t.readRune()
 			if err == io.EOF {
 				buf.WriteRune(r)
 				break
@@ -203,5 +239,6 @@ func (t *Tokenizer) parseString(quote rune) (*Token, error) {
 	return &Token{
 		Kind: TokenString,
 		Text: buf.String(),
+		Pos:  startPos,
 	}, nil
 }
