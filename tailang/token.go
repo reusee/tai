@@ -19,7 +19,7 @@ const (
 )
 
 type Pos struct {
-	File   string
+	Source *Source
 	Line   int
 	Column int
 }

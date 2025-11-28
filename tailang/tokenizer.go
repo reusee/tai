@@ -1,14 +1,15 @@
 package tailang
 
 import (
-	"bufio"
 	"bytes"
 	"io"
 	"unicode"
 )
 
 type Tokenizer struct {
-	source  *bufio.Reader
+	source  *Source
+	runes   []rune
+	cursor  int
 	current *Token
 
 	currPos Pos
@@ -16,9 +17,16 @@ type Tokenizer struct {
 }
 
 func NewTokenizer(source io.Reader) *Tokenizer {
+	content, err := io.ReadAll(source)
+	if err != nil {
+		panic(err)
+	}
+	src := NewSource("", string(content))
 	return &Tokenizer{
-		source: bufio.NewReader(source),
+		source: src,
+		runes:  []rune(src.Content),
 		currPos: Pos{
+			Source: src,
 			Line:   1,
 			Column: 1,
 		},
@@ -26,10 +34,11 @@ func NewTokenizer(source io.Reader) *Tokenizer {
 }
 
 func (t *Tokenizer) readRune() (rune, error) {
-	r, _, err := t.source.ReadRune()
-	if err != nil {
-		return 0, err
+	if t.cursor >= len(t.runes) {
+		return 0, io.EOF
 	}
+	r := t.runes[t.cursor]
+	t.cursor++
 
 	t.prevPos = t.currPos
 	if r == '\n' {
@@ -43,8 +52,20 @@ func (t *Tokenizer) readRune() (rune, error) {
 }
 
 func (t *Tokenizer) unreadRune() {
-	t.source.UnreadRune()
-	t.currPos = t.prevPos
+	if t.cursor > 0 {
+		t.cursor--
+		r := t.runes[t.cursor]
+		if r == '\n' {
+			t.currPos.Line--
+			if t.currPos.Line > 0 && t.currPos.Line <= len(t.source.Lines) {
+				t.currPos.Column = len(t.source.Lines[t.currPos.Line-1]) + 1
+			} else {
+				t.currPos.Column = 1
+			}
+		} else {
+			t.currPos.Column--
+		}
+	}
 }
 
 func (t *Tokenizer) Current() (*Token, error) {

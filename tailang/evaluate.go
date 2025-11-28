@@ -27,11 +27,18 @@ func (e *Env) Evaluate(tokenizer TokenStream) (any, error) {
 	return result, nil
 }
 
-func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, error) {
+func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any, err error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
 	}
+	startPos := t.Pos
+
+	defer func() {
+		if err != nil {
+			err = WithPos(err, startPos)
+		}
+	}()
 
 	if t.Kind == TokenString {
 		tokenizer.Consume()
