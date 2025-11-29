@@ -161,7 +161,7 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 		if err != nil {
 			return nil, err
 		}
-		if unicode.IsSpace(r) || r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == '\'' || r == '"' || r == '`' {
+		if unicode.IsSpace(r) || isDelimiter(r) {
 			t.unreadRune()
 			break
 		}
@@ -172,6 +172,14 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 		Text: buf.String(),
 		Pos:  startPos,
 	}, nil
+}
+
+func isDelimiter(r rune) bool {
+	switch r {
+	case '[', ']', '(', ')', '{', '}', '\'', '"', '`':
+		return true
+	}
+	return false
 }
 
 func (t *Tokenizer) parseNamedParam(startPos Pos) (*Token, error) {
