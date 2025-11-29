@@ -46,19 +46,18 @@ func TestDef(t *testing.T) {
 	}
 }
 
-func TestBugRedeclaration(t *testing.T) {
+func TestRedeclarationError(t *testing.T) {
 	env := NewEnv()
 	src := `
 		def a "foo"
 		def a "bar"
-		a
 	`
 	tokenizer := NewTokenizer(strings.NewReader(src))
-	res, err := env.Evaluate(tokenizer)
-	if err != nil {
-		t.Fatal(err)
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error on redeclaration")
 	}
-	if res != "bar" {
-		t.Fatalf("expected bar, got %v", res)
+	if !strings.Contains(err.Error(), "already defined") {
+		t.Fatalf("expected already defined error, got: %v", err)
 	}
 }

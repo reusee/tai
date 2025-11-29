@@ -139,6 +139,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 	}
 
 	// Named parameters
+	seenParams := make(map[string]bool)
 	for {
 		next, err := tokenizer.Current()
 		if err == io.EOF {
@@ -153,6 +154,11 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 
 		paramName := strings.TrimPrefix(next.Text, ".")
 		tokenizer.Consume()
+
+		if seenParams[paramName] {
+			return nil, fmt.Errorf("duplicate named parameter: .%s", paramName)
+		}
+		seenParams[paramName] = true
 
 		if !isWrapped {
 			return nil, fmt.Errorf("cannot use named parameter .%s on non-struct type %v", paramName, typ)

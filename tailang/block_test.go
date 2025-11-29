@@ -6,9 +6,9 @@ import (
 )
 
 func TestBlockParsingWithStrings(t *testing.T) {
-	env := NewEnv()
 	run := func(src string, expected any) {
 		t.Helper()
+		env := NewEnv()
 		tokenizer := NewTokenizer(strings.NewReader(src))
 		res, err := env.Evaluate(tokenizer)
 		if err != nil {
