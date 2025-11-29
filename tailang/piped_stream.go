@@ -4,6 +4,7 @@ type PipedStream struct {
 	TokenStream
 	Value    any
 	HasValue bool
+	PipeLast bool
 }
 
 func (p *PipedStream) Current() (*Token, error) {

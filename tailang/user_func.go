@@ -21,15 +21,29 @@ func (u UserFunc) FunctionName() string {
 func (u UserFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	args := make([]any, 0, len(u.Params))
 
-	startIdx := 0
+	var pipedVal any
+	hasPipe := false
+	pipeLast := false
 	if ps, ok := stream.(*PipedStream); ok && ps.HasValue {
+		hasPipe = true
+		pipedVal = ps.Value
+		pipeLast = ps.PipeLast
+	}
+
+	startIdx := 0
+	if hasPipe && !pipeLast {
 		if len(u.Params) > 0 {
-			args = append(args, ps.Value)
+			args = append(args, pipedVal)
 			startIdx = 1
 		}
 	}
 
 	for i := startIdx; i < len(u.Params); i++ {
+		if hasPipe && pipeLast && i == len(u.Params)-1 {
+			args = append(args, pipedVal)
+			continue
+		}
+
 		arg, err := env.evalExpr(stream, nil)
 		if err != nil {
 			return nil, fmt.Errorf("argument %d: %w", i, err)

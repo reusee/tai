@@ -30,7 +30,7 @@ func (e *Env) Evaluate(tokenizer TokenStream) (any, error) {
 }
 
 func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any, err error) {
-	lhs, err := e.evalTerm(tokenizer, expectedType, nil, false)
+	lhs, err := e.evalTerm(tokenizer, expectedType, nil, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -40,9 +40,10 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 		if err != nil || t.Kind == TokenEOF {
 			break
 		}
-		if t.Kind == TokenSymbol && t.Text == "|" {
+		if t.Kind == TokenSymbol && (t.Text == "|" || t.Text == "|>") {
+			pipeLast := t.Text == "|>"
 			tokenizer.Consume()
-			lhs, err = e.evalTerm(tokenizer, expectedType, lhs, true)
+			lhs, err = e.evalTerm(tokenizer, expectedType, lhs, true, pipeLast)
 			if err != nil {
 				return nil, err
 			}
@@ -53,7 +54,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 	return lhs, nil
 }
 
-func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVal any, hasPipe bool) (_ any, err error) {
+func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool) (_ any, err error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
@@ -122,13 +123,13 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 	}
 
 	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol || t.Kind == TokenUnquotedString {
-		return e.evalCall(tokenizer, t, expectedType, pipedVal, hasPipe)
+		return e.evalCall(tokenizer, t, expectedType, pipedVal, hasPipe, pipeLast)
 	}
 
 	return nil, fmt.Errorf("unexpected token kind: %v", t.Kind)
 }
 
-func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type, pipedVal any, hasPipe bool) (any, error) {
+func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool) (any, error) {
 	name := t.Text
 	if name == "end" {
 		return nil, fmt.Errorf("unexpected identifier 'end'")
@@ -252,6 +253,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 				TokenStream: tokenizer,
 				Value:       pipedVal,
 				HasValue:    true,
+				PipeLast:    pipeLast,
 			}
 		}
 		return fn.Call(e, stream, expectedType)
@@ -277,6 +279,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 			TokenStream: tokenizer,
 			Value:       pipedVal,
 			HasValue:    true,
+			PipeLast:    pipeLast,
 		}
 	}
 
@@ -337,9 +340,11 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 
 	usePipe := false
 	var pipedVal any
+	var pipeLast bool
 	if ps, ok := tokenizer.(*PipedStream); ok && ps.HasValue {
 		usePipe = true
 		pipedVal = ps.Value
+		pipeLast = ps.PipeLast
 	}
 
 	for i := argOffset; i < numIn; i++ {
@@ -348,7 +353,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 		if isVariadic && i == numIn-1 {
 			elemType := argType.Elem()
 
-			if usePipe {
+			if usePipe && !pipeLast {
 				vArg, err := prepareAssign(pipedVal, elemType)
 				if err != nil {
 					return nil, err
@@ -398,11 +403,23 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 				args = append(args, vArg)
 			}
 
+			if usePipe && pipeLast {
+				vArg, err := prepareAssign(pipedVal, elemType)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, vArg)
+				usePipe = false
+			}
+
 		} else {
 			var val any
 			var err error
 
-			if usePipe {
+			if usePipe && !pipeLast {
+				val = pipedVal
+				usePipe = false
+			} else if usePipe && pipeLast && i == numIn-1 {
 				val = pipedVal
 				usePipe = false
 			} else {
