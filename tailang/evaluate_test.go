@@ -56,3 +56,23 @@ func TestPanicForeachNil(t *testing.T) {
 		t.Fatalf("expected expects a list error, got: %v", err)
 	}
 }
+
+func TestPanicCallNonFunc(t *testing.T) {
+	env := NewEnv()
+	// Manually define a GoFunc with a non-function value to trigger callFunc.
+	// This simulates a misconfigured GoFunc or an internal error where a GoFunc is created with a wrong type.
+	env.Define("bad_func", GoFunc{
+		Name: "bad",
+		Func: 1, // Not a function
+	})
+
+	src := `bad_func`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot call non-function") {
+		t.Fatalf("expected cannot call non-function error, got: %v", err)
+	}
+}

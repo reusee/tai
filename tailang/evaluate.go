@@ -188,6 +188,10 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 }
 
 func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, expectedType reflect.Type) (any, error) {
+	if fn.Kind() != reflect.Func {
+		return nil, fmt.Errorf("cannot call non-function type %v", fn.Type())
+	}
+
 	methodType := fn.Type()
 	numIn := methodType.NumIn()
 	isVariadic := methodType.IsVariadic()
