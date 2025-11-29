@@ -1,190 +1,162 @@
-# tailang
+# Tailang
 
-`tailang` is a dynamic, embeddable scripting language implemented in Go. It is designed for seamless integration with Go applications, allowing direct mapping of Go functions and types to the scripting environment.
+Tailang is a dynamic, embeddable scripting language written in Go. It is designed for seamless interoperability with Go applications, offering a syntax that emphasizes data flow (pipelines) and simplicity.
 
-## Features
+## Core Concepts
 
-- **Go Integration**: Directly wrap and call Go functions.
-- **Dynamic Typing**: Supports standard types (`int`, `float64`, `string`, `bool`, `list`, `function`).
-- **Standard Library**: Built-in bindings for many Go standard library packages (`fmt`, `strings`, `math`, `os`, etc.).
-- **Control Flow**: Includes `if`, `while`, `repeat`, `foreach`, and `switch`.
-- **Function References**: First-class support for function passing.
+*   **Go Interoperability**: Tailang wraps Go's reflection capabilities, allowing scripts to call Go functions, instantiate structs, and manipulate Go types directly.
+*   **Pipeline First**: Inspired by functional programming and shell pipes, Tailang supports `|` (pipe to first argument) and `|>` (pipe to last argument) to create clean data transformation chains.
+*   **Robust Math**: Built-in support for arbitrary-precision integers and floats. Mathematical operations automatically promote operands to `big.Int` or `big.Float` when necessary to prevent overflow or precision loss.
+*   **Embeddable**: Designed to be easily integrated into Go programs with a minimal API surface.
 
-## Usage
+## Language Guide
 
-### Quick Start
+### Hello World
+
+```tailang
+fmt.println "Hello, World!"
+```
+
+### Variables and Types
+
+Variables are defined using `def` and modified using `set`. Variables are dynamically typed by default, but types can be enforced.
+
+```tailang
+def name "Tailang"
+def count 42
+def ratio 3.14
+
+# Typed definition
+def .type int x 100
+```
+
+Supported types include:
+*   Integers & Floats (with automatic big number promotion)
+*   Strings (quoted `"..."`, `'...'`, `` `...` ``)
+*   Lists `[ 1 2 3 ]`
+*   Blocks `{ ... }`
+
+### Functions
+
+Functions are first-class citizens and can be defined using `func`.
+
+```tailang
+func greet(name) {
+    fmt.sprintf "Hello, %v" name
+}
+
+greet "User"
+# Output: "Hello, User"
+```
+
+### Control Flow
+
+Tailang supports standard control structures including `if`, `while`, `foreach`, `switch`, and `repeat`.
+
+```tailang
+# If/Else
+if > x 10 {
+    fmt.println "Greater"
+} else {
+    fmt.println "Smaller"
+}
+
+# Foreach
+foreach item ["a" "b" "c"] {
+    fmt.println item
+}
+
+# While
+def i 0
+while < i 5 {
+    set i (+ i 1)
+}
+```
+
+### Pipelines
+
+Pipelines allow chaining function calls, reducing the need for nested parentheses.
+
+*   `|`: Passes the result of the previous expression as the **first** argument of the next function.
+*   `|>`: Passes the result of the previous expression as the **last** argument of the next function.
+
+```tailang
+# Standard call
+strings.to_upper "hello"
+
+# Pipe to first
+"hello" | strings.to_upper
+
+# Chaining operations
+"  tailang  " | strings.trim_space | strings.to_upper | fmt.println
+# Output: TAILANG
+
+# Pipe to last (useful for functions where the data comes last)
+def list [1 2 3]
+"," |> strings.join list
+# Output: 1,2,3
+```
+
+### Named Parameters
+
+Tailang supports named parameters mapping to struct fields, useful for configuration objects or complex function arguments.
+
+```tailang
+# Sets the field 'Val' on the 'cmd' object/function
+cmd .val 42
+```
+
+## Developer Guide (Embedding)
+
+To use Tailang in your Go project:
 
 ```go
 package main
 
 import (
-	"fmt"
-	"strings"
-	"github.com/reusee/tai/tailang"
+    "fmt"
+    "strings"
+    "github.com/reusee/tai/tailang"
 )
 
 func main() {
-	// 1. Create an environment
-	env := tailang.NewEnv()
+    // 1. Create an Environment
+    env := tailang.NewEnv()
 
-	// 2. Define custom values or functions
-	env.Define("greet", func(name string) {
-		fmt.Printf("Hello, %s!\n", name)
-	})
+    // 2. Define custom Go functions
+    env.Define("my_func", tailang.GoFunc{
+        Name: "my_func",
+        Func: func(s string) string {
+            return "Custom: " + s
+        },
+    })
 
-	// 3. Script source
-	src := `
-		def name "World"
-		greet name
-		
-		def result (+ 40 2)
-		fmt.printf "Result: %v\n" result
-	`
-
-	// 4. Parse and Evaluate
-	tokenizer := tailang.NewTokenizer(strings.NewReader(src))
-	_, err := env.Evaluate(tokenizer)
-	if err != nil {
-		panic(err)
-	}
+    // 3. Evaluate code
+    src := `
+        def res ("world" | my_func)
+        fmt.sprintf "Result: %v" res
+    `
+    tokenizer := tailang.NewTokenizer(strings.NewReader(src))
+    res, err := env.Evaluate(tokenizer)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(res)
 }
-```
-
-## Language Reference
-
-### Comments
-Lines starting with `#` are comments.
-
-```tailang
-# This is a comment
-def x 1
-```
-
-### Variables
-Use `def` to define new variables and `set` to update them.
-
-```tailang
-def x 10
-set x 20
-```
-
-### Types
-`tailang` supports:
-- Integers and Floats
-- Strings (single `'`, double `"`, or backtick `` ` `` quotes)
-- Booleans
-- Lists
-- Functions
-
-### Lists
-Lists are created using brackets `[]`. They can be untyped (holding `any`) or typed.
-
-```tailang
-# Untyped list
-def l1 [ 1 "two" 3.0 ]
-
-# Typed list (using named parameter .elem)
-def l2 [ .elem int 1 2 3 ]
-```
-
-### Operators
-- Arithmetic: `+`, `-`, `*`, `/`, `%`
-- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
-
-### Control Flow
-
-#### If / Else
-```tailang
-if > x 10 {
-    fmt.println "Greater"
-} else {
-    fmt.println "Not greater"
-}
-```
-
-#### While
-The condition must be wrapped in a block `{ ... }`.
-```tailang
-def i 0
-while { < i 5 } {
-    fmt.println i
-    set i (+ i 1)
-}
-```
-
-#### Repeat
-Loops a specific number of times. The loop variable (1-based) is defined in the block scope.
-```tailang
-repeat i 5 {
-    fmt.printf "Iteration %d\n" i
-}
-```
-
-#### Foreach
-Iterates over a list.
-```tailang
-foreach item [ "a" "b" "c" ] {
-    fmt.println item
-}
-```
-
-#### Switch
-```tailang
-switch val {
-    1 { fmt.println "one" }
-    2 { fmt.println "two" }
-}
-```
-
-### Functions
-
-#### Definition
-Define functions using `func`.
-```tailang
-func add(a b) {
-    + a b
-}
-```
-
-#### Calling
-Call functions by name followed by arguments.
-```tailang
-add 1 2
-```
-
-#### Function References
-Use `&` to reference a function object (e.g., for passing as an argument).
-```tailang
-func handler(v) {
-    fmt.println v
-}
-# Pass handler to another function
-some_func &handler
-```
-
-#### Variadic Functions
-When calling Go variadic functions (other than list construction), use `end` to mark the end of arguments.
-```tailang
-fmt.printf "%d %d %d" 1 2 3 end
-```
-
-#### Named Parameters
-Struct-based functions (like `[`) allow setting fields via named parameters syntax (`.Field val`).
-```tailang
-# Sets the Elem field of the List struct before calling
-[ .elem int 1 2 3 ]
 ```
 
 ## Standard Library
-The environment comes pre-loaded with many Go standard library functions converted to `snake_case`.
 
-**Examples:**
-- `fmt.print`, `fmt.printf`, `fmt.errorf`
-- `strings.split`, `strings.join`, `strings.to_upper`
-- `math.max`, `math.pow`, `math.abs`
-- `time.now`, `time.sleep`, `time.parse`
-- `os.get_env`, `os.read_file`
-- `json.marshal`, `json.unmarshal`
+Tailang exposes a comprehensive set of Go's standard library packages by default, making it a powerful tool for scripting system tasks.
 
-Refer to `stdlib.go` for the complete list of registered functions.
+Supported packages include:
+*   `fmt`: Formatting and printing.
+*   `strings`, `bytes`: Text manipulation.
+*   `math`: Mathematical constants and functions.
+*   `os`, `path`, `filepath`: File system and environment interaction.
+*   `time`: Time measurement and parsing.
+*   `json`: JSON encoding/decoding.
+*   `regexp`: Regular expressions.
+*   `sort`: Sorting primitives.
+*   `base64`, `hex`, `md5`, `sha256`: Encoding and hashing.
 
