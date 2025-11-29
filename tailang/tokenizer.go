@@ -57,11 +57,14 @@ func (t *Tokenizer) unreadRune() {
 		r := t.runes[t.cursor]
 		if r == '\n' {
 			t.currPos.Line--
-			if t.currPos.Line > 0 && t.currPos.Line <= len(t.source.Lines) {
-				t.currPos.Column = len(t.source.Lines[t.currPos.Line-1]) + 1
-			} else {
-				t.currPos.Column = 1
+			col := 1
+			for i := t.cursor - 1; i >= 0; i-- {
+				if t.runes[i] == '\n' {
+					break
+				}
+				col++
 			}
+			t.currPos.Column = col
 		} else {
 			t.currPos.Column--
 		}

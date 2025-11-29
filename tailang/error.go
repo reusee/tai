@@ -19,7 +19,7 @@ func (p PosError) Error() string {
 	sb.WriteString(fmt.Sprintf("%s at %s:%d:%d\n", p.Err.Error(), p.Pos.Source.Name, p.Pos.Line, p.Pos.Column))
 
 	// Line content
-	lines := p.Pos.Source.Lines
+	lines := strings.Split(p.Pos.Source.Content, "\n")
 	idx := p.Pos.Line - 1
 	if idx >= 0 && idx < len(lines) {
 		line := lines[idx]

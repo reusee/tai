@@ -30,73 +30,53 @@ func NewEnv() *Env {
 				Name: "type",
 				Func: TypeOf,
 			},
-
-			"+": GoFunc{
-				Name: "+",
-				Func: Plus,
-			},
-			"-": GoFunc{
-				Name: "-",
-				Func: Minus,
-			},
-			"*": GoFunc{
-				Name: "*",
-				Func: Multiply,
-			},
-			"/": GoFunc{
-				Name: "/",
-				Func: Divide,
-			},
-			"%": GoFunc{
-				Name: "%",
-				Func: Mod,
-			},
-
-			"==": GoFunc{
-				Name: "==",
-				Func: Eq,
-			},
-			"!=": GoFunc{
-				Name: "!=",
-				Func: Ne,
-			},
-			"<": GoFunc{
-				Name: "<",
-				Func: Lt,
-			},
-			"<=": GoFunc{
-				Name: "<=",
-				Func: Le,
-			},
-			">": GoFunc{
-				Name: ">",
-				Func: Gt,
-			},
-			">=": GoFunc{
-				Name: ">=",
-				Func: Ge,
-			},
-
-			"int":     reflect.TypeFor[int](),
-			"int8":    reflect.TypeFor[int8](),
-			"int16":   reflect.TypeFor[int16](),
-			"int32":   reflect.TypeFor[int32](),
-			"int64":   reflect.TypeFor[int64](),
-			"uint":    reflect.TypeFor[uint](),
-			"uint8":   reflect.TypeFor[uint8](),
-			"uint16":  reflect.TypeFor[uint16](),
-			"uint32":  reflect.TypeFor[uint32](),
-			"uint64":  reflect.TypeFor[uint64](),
-			"float32": reflect.TypeFor[float32](),
-			"float64": reflect.TypeFor[float64](),
-			"bool":    reflect.TypeFor[bool](),
-			"string":  reflect.TypeFor[string](),
-			"byte":    reflect.TypeFor[byte](),
-			"rune":    reflect.TypeFor[rune](),
-			"any":     reflect.TypeFor[any](),
-			"block":   reflect.TypeFor[*Block](),
 		},
 	}
+
+	// Ops
+	for name, fn := range map[string]any{
+		"+":  Plus,
+		"-":  Minus,
+		"*":  Multiply,
+		"/":  Divide,
+		"%":  Mod,
+		"==": Eq,
+		"!=": Ne,
+		"<":  Lt,
+		"<=": Le,
+		">":  Gt,
+		">=": Ge,
+	} {
+		e.Define(name, GoFunc{
+			Name: name,
+			Func: fn,
+		})
+	}
+
+	// Types
+	for name, t := range map[string]reflect.Type{
+		"int":     reflect.TypeFor[int](),
+		"int8":    reflect.TypeFor[int8](),
+		"int16":   reflect.TypeFor[int16](),
+		"int32":   reflect.TypeFor[int32](),
+		"int64":   reflect.TypeFor[int64](),
+		"uint":    reflect.TypeFor[uint](),
+		"uint8":   reflect.TypeFor[uint8](),
+		"uint16":  reflect.TypeFor[uint16](),
+		"uint32":  reflect.TypeFor[uint32](),
+		"uint64":  reflect.TypeFor[uint64](),
+		"float32": reflect.TypeFor[float32](),
+		"float64": reflect.TypeFor[float64](),
+		"bool":    reflect.TypeFor[bool](),
+		"string":  reflect.TypeFor[string](),
+		"byte":    reflect.TypeFor[byte](),
+		"rune":    reflect.TypeFor[rune](),
+		"any":     reflect.TypeFor[any](),
+		"block":   reflect.TypeFor[*Block](),
+	} {
+		e.Define(name, t)
+	}
+
 	RegisterStdLib(e)
 	return e
 }
