@@ -27,15 +27,19 @@ func (p PosError) Error() string {
 		sb.WriteString("\n")
 
 		// Caret
-		pad := p.Pos.Column - 1
-		if pad < 0 {
-			pad = 0
-		}
-		for i := 0; i < pad; i++ {
-			if i < len(line) && line[i] == '\t' {
+		runes := []rune(line)
+		col := p.Pos.Column - 1
+		for i, r := range runes {
+			if i >= col {
+				break
+			}
+			if r == '\t' {
 				sb.WriteString("\t")
 			} else {
-				sb.WriteString(" ")
+				w := runeWidth(r)
+				for k := 0; k < w; k++ {
+					sb.WriteString(" ")
+				}
 			}
 		}
 		sb.WriteString("^\n")
@@ -59,4 +63,22 @@ func WithPos(err error, pos Pos) error {
 		Err: err,
 		Pos: pos,
 	}
+}
+
+func runeWidth(r rune) int {
+	if r == 0 {
+		return 0
+	}
+	if r >= 0x1100 &&
+		(r <= 0x115f || r == 0x2329 || r == 0x232a ||
+			(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+			(r >= 0xac00 && r <= 0xd7a3) ||
+			(r >= 0xf900 && r <= 0xfaff) ||
+			(r >= 0xfe10 && r <= 0xfe19) ||
+			(r >= 0xfe30 && r <= 0xfe6f) ||
+			(r >= 0xff00 && r <= 0xff60) ||
+			(r >= 0xffe0 && r <= 0xffe6)) {
+		return 2
+	}
+	return 1
 }
