@@ -49,6 +49,7 @@ func (t *ArgsTokenizer) parse() *Token {
 	isNumber := true
 	hasDot := false
 	hasExp := false
+	hasDigit := false
 	start := 0
 	if len(txt) > 0 && (txt[0] == '-' || txt[0] == '+') {
 		start = 1
@@ -63,6 +64,7 @@ func (t *ArgsTokenizer) parse() *Token {
 				continue
 			}
 			if unicode.IsDigit(r) {
+				hasDigit = true
 				continue
 			}
 			if r == '.' && !hasDot && !hasExp {
@@ -81,7 +83,7 @@ func (t *ArgsTokenizer) parse() *Token {
 		}
 	}
 
-	if isNumber && len(txt) > 0 {
+	if isNumber && len(txt) > 0 && hasDigit {
 		return &Token{
 			Kind: TokenNumber,
 			Text: strings.ReplaceAll(txt, "_", ""),
