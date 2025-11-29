@@ -48,21 +48,43 @@ func (t *ArgsTokenizer) parse() *Token {
 	// Number
 	isNumber := true
 	hasDot := false
-	for i, r := range txt {
-		if unicode.IsDigit(r) {
-			continue
-		}
-		if r == '.' && !hasDot && i > 0 && i < len(txt)-1 {
-			hasDot = true
-			continue
-		}
-		isNumber = false
-		break
+	hasExp := false
+	start := 0
+	if len(txt) > 0 && (txt[0] == '-' || txt[0] == '+') {
+		start = 1
 	}
+
+	if start == len(txt) {
+		isNumber = false
+	} else {
+		for i := start; i < len(txt); i++ {
+			r := rune(txt[i])
+			if r == '_' {
+				continue
+			}
+			if unicode.IsDigit(r) {
+				continue
+			}
+			if r == '.' && !hasDot && !hasExp {
+				hasDot = true
+				continue
+			}
+			if (r == 'e' || r == 'E') && !hasExp {
+				hasExp = true
+				if i+1 < len(txt) && (txt[i+1] == '+' || txt[i+1] == '-') {
+					i++
+				}
+				continue
+			}
+			isNumber = false
+			break
+		}
+	}
+
 	if isNumber && len(txt) > 0 {
 		return &Token{
 			Kind: TokenNumber,
-			Text: txt,
+			Text: strings.ReplaceAll(txt, "_", ""),
 			Pos:  Pos{Source: &Source{Name: "args"}},
 		}
 	}

@@ -79,7 +79,7 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 			return nil, fmt.Errorf("cannot pipe into number literal")
 		}
 		tokenizer.Consume()
-		if strings.Contains(t.Text, ".") {
+		if strings.ContainsAny(t.Text, ".eE") {
 			f, err := strconv.ParseFloat(t.Text, 64)
 			if err == nil && !math.IsInf(f, 0) {
 				return f, nil

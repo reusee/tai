@@ -109,6 +109,15 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 	case unicode.IsDigit(r):
 		t.unreadRune()
 		return t.parseNumber()
+	case r == '+' || r == '-':
+		next, err := t.readRune()
+		if err == nil {
+			t.unreadRune()
+			if unicode.IsDigit(next) {
+				t.unreadRune()
+				return t.parseNumber()
+			}
+		}
 	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == '|':
 		return &Token{
 			Kind: TokenSymbol,
@@ -197,7 +206,19 @@ func (t *Tokenizer) parseNamedParam(startPos Pos) (*Token, error) {
 func (t *Tokenizer) parseNumber() (*Token, error) {
 	startPos := t.currPos
 	var buf bytes.Buffer
+
+	r, err := t.readRune()
+	if err != nil {
+		return nil, err
+	}
+	if r == '+' || r == '-' {
+		buf.WriteRune(r)
+	} else {
+		t.unreadRune()
+	}
+
 	hasDot := false
+	hasExp := false
 	for {
 		r, err := t.readRune()
 		if err == io.EOF {
@@ -206,15 +227,47 @@ func (t *Tokenizer) parseNumber() (*Token, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		if r == '_' {
+			continue
+		}
+
 		if unicode.IsDigit(r) {
 			buf.WriteRune(r)
-		} else if r == '.' && !hasDot {
+			continue
+		}
+
+		if r == '.' {
+			if hasDot || hasExp {
+				t.unreadRune()
+				break
+			}
 			hasDot = true
 			buf.WriteRune(r)
-		} else {
-			t.unreadRune()
-			break
+			continue
 		}
+
+		if r == 'e' || r == 'E' {
+			if hasExp {
+				t.unreadRune()
+				break
+			}
+			hasExp = true
+			buf.WriteRune(r)
+
+			next, err := t.readRune()
+			if err == nil {
+				if next == '+' || next == '-' {
+					buf.WriteRune(next)
+					continue
+				}
+				t.unreadRune()
+			}
+			continue
+		}
+
+		t.unreadRune()
+		break
 	}
 	return &Token{
 		Kind: TokenNumber,
