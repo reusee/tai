@@ -27,6 +27,10 @@ func (d Def) Call(env *Env, stream TokenStream) (any, error) {
 	name := tok.Text
 	stream.Consume()
 
+	if IsKeyword(name) {
+		return nil, fmt.Errorf("cannot define keyword: %s", name)
+	}
+
 	if _, ok := env.Vars[name]; ok {
 		return nil, fmt.Errorf("variable %s already defined", name)
 	}

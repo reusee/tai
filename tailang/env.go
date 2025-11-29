@@ -101,3 +101,13 @@ func (e *Env) NewScope() *Env {
 		Vars:   make(map[string]any),
 	}
 }
+
+func IsKeyword(name string) bool {
+	switch name {
+	case "def", "set", "func", "if", "else", "do", "while",
+		"switch", "repeat", "foreach", "true", "false", "nil",
+		"break", "continue", "return", "default", "end":
+		return true
+	}
+	return false
+}

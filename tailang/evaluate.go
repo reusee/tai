@@ -99,9 +99,6 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 
 	val, ok := e.Lookup(name)
 	if !ok {
-		if expectedType != nil && expectedType.Kind() == reflect.String {
-			return name, nil
-		}
 		return nil, fmt.Errorf("undefined identifier: %s", name)
 	}
 
