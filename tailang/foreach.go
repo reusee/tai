@@ -28,6 +28,9 @@ func (f Foreach) Call(env *Env, stream TokenStream) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if listVal == nil {
+		return nil, fmt.Errorf("foreach expects a list, got nil")
+	}
 
 	bodyVal, err := env.evalExpr(stream, nil)
 	if err != nil {

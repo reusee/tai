@@ -115,6 +115,15 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		return val, nil
 	}
 
+	if val == nil {
+		// Check for named params trying to attach to nil
+		next, err := tokenizer.Current()
+		if err == nil && next.Kind == TokenNamedParam {
+			return nil, fmt.Errorf("cannot use named parameter .%s on nil value", strings.TrimPrefix(next.Text, "."))
+		}
+		return nil, nil
+	}
+
 	v := reflect.ValueOf(val)
 	typ := v.Type()
 
@@ -144,6 +153,10 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 
 		paramName := strings.TrimPrefix(next.Text, ".")
 		tokenizer.Consume()
+
+		if !isWrapped {
+			return nil, fmt.Errorf("cannot use named parameter .%s on non-struct type %v", paramName, typ)
+		}
 
 		field := findField(callVal.Elem(), paramName)
 		if !field.IsValid() {
