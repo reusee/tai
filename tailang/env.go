@@ -1,6 +1,9 @@
 package tailang
 
-import "reflect"
+import (
+	"math/big"
+	"reflect"
+)
 
 type Env struct {
 	Parent *Env
@@ -55,24 +58,26 @@ func NewEnv() *Env {
 
 	// Types
 	for name, t := range map[string]reflect.Type{
-		"int":     reflect.TypeFor[int](),
-		"int8":    reflect.TypeFor[int8](),
-		"int16":   reflect.TypeFor[int16](),
-		"int32":   reflect.TypeFor[int32](),
-		"int64":   reflect.TypeFor[int64](),
-		"uint":    reflect.TypeFor[uint](),
-		"uint8":   reflect.TypeFor[uint8](),
-		"uint16":  reflect.TypeFor[uint16](),
-		"uint32":  reflect.TypeFor[uint32](),
-		"uint64":  reflect.TypeFor[uint64](),
-		"float32": reflect.TypeFor[float32](),
-		"float64": reflect.TypeFor[float64](),
-		"bool":    reflect.TypeFor[bool](),
-		"string":  reflect.TypeFor[string](),
-		"byte":    reflect.TypeFor[byte](),
-		"rune":    reflect.TypeFor[rune](),
-		"any":     reflect.TypeFor[any](),
-		"block":   reflect.TypeFor[*Block](),
+		"int":      reflect.TypeFor[int](),
+		"int8":     reflect.TypeFor[int8](),
+		"int16":    reflect.TypeFor[int16](),
+		"int32":    reflect.TypeFor[int32](),
+		"int64":    reflect.TypeFor[int64](),
+		"uint":     reflect.TypeFor[uint](),
+		"uint8":    reflect.TypeFor[uint8](),
+		"uint16":   reflect.TypeFor[uint16](),
+		"uint32":   reflect.TypeFor[uint32](),
+		"uint64":   reflect.TypeFor[uint64](),
+		"float32":  reflect.TypeFor[float32](),
+		"float64":  reflect.TypeFor[float64](),
+		"bool":     reflect.TypeFor[bool](),
+		"string":   reflect.TypeFor[string](),
+		"byte":     reflect.TypeFor[byte](),
+		"rune":     reflect.TypeFor[rune](),
+		"any":      reflect.TypeFor[any](),
+		"block":    reflect.TypeFor[*Block](),
+		"bigint":   reflect.TypeFor[*big.Int](),
+		"bigfloat": reflect.TypeFor[*big.Float](),
 	} {
 		e.Define(name, t)
 	}

@@ -3,17 +3,29 @@ package tailang
 import (
 	"fmt"
 	"math"
+	"math/big"
 )
 
 func Plus(a, b any) any {
 	if aInt, ok := asInt(a); ok {
 		if bInt, ok := asInt(b); ok {
-			return aInt + bInt
+			res := aInt + bInt
+			if (res^aInt)&(res^bInt) < 0 {
+				return new(big.Int).Add(big.NewInt(int64(aInt)), big.NewInt(int64(bInt)))
+			}
+			return res
 		}
 	}
-	if aFloat, ok := asFloat(a); ok {
-		if bFloat, ok := asFloat(b); ok {
-			return aFloat + bFloat
+	if isFloat(a) || isFloat(b) {
+		if bfA, ok := asBigFloat(a); ok {
+			if bfB, ok := asBigFloat(b); ok {
+				return new(big.Float).Add(bfA, bfB)
+			}
+		}
+	}
+	if biA, ok := asBigInt(a); ok {
+		if biB, ok := asBigInt(b); ok {
+			return new(big.Int).Add(biA, biB)
 		}
 	}
 	return fmt.Sprint(a) + fmt.Sprint(b)
@@ -22,12 +34,23 @@ func Plus(a, b any) any {
 func Minus(a, b any) (any, error) {
 	if aInt, ok := asInt(a); ok {
 		if bInt, ok := asInt(b); ok {
-			return aInt - bInt, nil
+			res := aInt - bInt
+			if (aInt^bInt) < 0 && (aInt^res) < 0 {
+				return new(big.Int).Sub(big.NewInt(int64(aInt)), big.NewInt(int64(bInt))), nil
+			}
+			return res, nil
 		}
 	}
-	if aFloat, ok := asFloat(a); ok {
-		if bFloat, ok := asFloat(b); ok {
-			return aFloat - bFloat, nil
+	if isFloat(a) || isFloat(b) {
+		if bfA, ok := asBigFloat(a); ok {
+			if bfB, ok := asBigFloat(b); ok {
+				return new(big.Float).Sub(bfA, bfB), nil
+			}
+		}
+	}
+	if biA, ok := asBigInt(a); ok {
+		if biB, ok := asBigInt(b); ok {
+			return new(big.Int).Sub(biA, biB), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for -: %v, %v", a, b)
@@ -36,18 +59,39 @@ func Minus(a, b any) (any, error) {
 func Multiply(a, b any) (any, error) {
 	if aInt, ok := asInt(a); ok {
 		if bInt, ok := asInt(b); ok {
-			return aInt * bInt, nil
+			res := aInt * bInt
+			if aInt != 0 && res/aInt != bInt {
+				return new(big.Int).Mul(big.NewInt(int64(aInt)), big.NewInt(int64(bInt))), nil
+			}
+			return res, nil
 		}
 	}
-	if aFloat, ok := asFloat(a); ok {
-		if bFloat, ok := asFloat(b); ok {
-			return aFloat * bFloat, nil
+	if isFloat(a) || isFloat(b) {
+		if bfA, ok := asBigFloat(a); ok {
+			if bfB, ok := asBigFloat(b); ok {
+				return new(big.Float).Mul(bfA, bfB), nil
+			}
+		}
+	}
+	if biA, ok := asBigInt(a); ok {
+		if biB, ok := asBigInt(b); ok {
+			return new(big.Int).Mul(biA, biB), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for *: %v, %v", a, b)
 }
 
 func Divide(a, b any) (any, error) {
+	if isFloat(a) || isFloat(b) {
+		if bfA, ok := asBigFloat(a); ok {
+			if bfB, ok := asBigFloat(b); ok {
+				if bfB.Sign() == 0 {
+					return nil, fmt.Errorf("float division by zero")
+				}
+				return new(big.Float).Quo(bfA, bfB), nil
+			}
+		}
+	}
 	if aInt, ok := asInt(a); ok {
 		if bInt, ok := asInt(b); ok {
 			if bInt == 0 {
@@ -56,15 +100,34 @@ func Divide(a, b any) (any, error) {
 			return aInt / bInt, nil
 		}
 	}
-	if aFloat, ok := asFloat(a); ok {
-		if bFloat, ok := asFloat(b); ok {
-			return aFloat / bFloat, nil
+	if biA, ok := asBigInt(a); ok {
+		if biB, ok := asBigInt(b); ok {
+			if biB.Sign() == 0 {
+				return nil, fmt.Errorf("integer division by zero")
+			}
+			return new(big.Int).Quo(biA, biB), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for /: %v, %v", a, b)
 }
 
 func Mod(a, b any) (any, error) {
+	if isFloat(a) || isFloat(b) {
+		if bfA, ok := asBigFloat(a); ok {
+			if bfB, ok := asBigFloat(b); ok {
+				// math.Mod style for BigFloat? big.Float doesn't support Mod directly.
+				// Promote to float64 if possible or implement Mod.
+				// Given lack of direct BigFloat Mod, fallback to float64 for now
+				// or use a custom implementation. The prompt asked for "use big type",
+				// but big.Float mod is non-trivial without converting to int or implementing manually.
+				// Let's use float64 fallback for mod if it fits, else error?
+				// Or implementing a simple mod: a - trunc(a/b)*b
+				fA, _ := bfA.Float64()
+				fB, _ := bfB.Float64()
+				return math.Mod(fA, fB), nil
+			}
+		}
+	}
 	if aInt, ok := asInt(a); ok {
 		if bInt, ok := asInt(b); ok {
 			if bInt == 0 {
@@ -73,9 +136,12 @@ func Mod(a, b any) (any, error) {
 			return aInt % bInt, nil
 		}
 	}
-	if aFloat, ok := asFloat(a); ok {
-		if bFloat, ok := asFloat(b); ok {
-			return math.Mod(aFloat, bFloat), nil
+	if biA, ok := asBigInt(a); ok {
+		if biB, ok := asBigInt(b); ok {
+			if biB.Sign() == 0 {
+				return nil, fmt.Errorf("integer modulo by zero")
+			}
+			return new(big.Int).Rem(biA, biB), nil
 		}
 	}
 	return nil, fmt.Errorf("invalid operands for %%: %v, %v", a, b)
@@ -118,4 +184,35 @@ func asFloat(v any) (float64, bool) {
 		return float64(i), true
 	}
 	return 0, false
+}
+
+func asBigInt(v any) (*big.Int, bool) {
+	if i, ok := asInt(v); ok {
+		return big.NewInt(int64(i)), true
+	}
+	if bi, ok := v.(*big.Int); ok {
+		return bi, true
+	}
+	return nil, false
+}
+
+func asBigFloat(v any) (*big.Float, bool) {
+	if bf, ok := v.(*big.Float); ok {
+		return bf, true
+	}
+	if bi, ok := v.(*big.Int); ok {
+		return new(big.Float).SetInt(bi), true
+	}
+	if f, ok := asFloat(v); ok {
+		return big.NewFloat(f), true
+	}
+	return nil, false
+}
+
+func isFloat(v any) bool {
+	switch v.(type) {
+	case float32, float64, *big.Float:
+		return true
+	}
+	return false
 }

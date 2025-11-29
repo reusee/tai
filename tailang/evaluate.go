@@ -3,6 +3,8 @@ package tailang
 import (
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"reflect"
 	"strconv"
 	"strings"
@@ -48,9 +50,25 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 	if t.Kind == TokenNumber {
 		tokenizer.Consume()
 		if strings.Contains(t.Text, ".") {
-			return strconv.ParseFloat(t.Text, 64)
+			f, err := strconv.ParseFloat(t.Text, 64)
+			if err == nil && !math.IsInf(f, 0) {
+				return f, nil
+			}
+			bf, _, err := big.ParseFloat(t.Text, 10, 128, big.ToNearestEven)
+			if err == nil {
+				return bf, nil
+			}
+			return nil, err
 		}
-		return strconv.Atoi(t.Text)
+		i, err := strconv.ParseInt(t.Text, 10, 0)
+		if err == nil {
+			return int(i), nil
+		}
+		bi := new(big.Int)
+		if _, ok := bi.SetString(t.Text, 10); ok {
+			return bi, nil
+		}
+		return nil, fmt.Errorf("invalid number: %s", t.Text)
 	}
 
 	if t.Kind == TokenSymbol && t.Text == "(" {

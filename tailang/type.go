@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"math/big"
+)
 
 func TypeOf(v any) string {
 	if v == nil {
@@ -11,6 +14,10 @@ func TypeOf(v any) string {
 		return "int"
 	case float64:
 		return "float64"
+	case *big.Int:
+		return "bigint"
+	case *big.Float:
+		return "bigfloat"
 	case string:
 		return "string"
 	case bool:
