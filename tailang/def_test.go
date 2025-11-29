@@ -62,3 +62,20 @@ func TestBugRedeclaration(t *testing.T) {
 		t.Fatalf("expected bar, got %v", res)
 	}
 }
+
+func TestRedeclarationError(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def a "foo"
+		def a "bar"
+		a
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "already defined") {
+		t.Fatalf("expected already defined error, got: %v", err)
+	}
+}
