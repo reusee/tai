@@ -19,7 +19,16 @@ func (u UserFunc) FunctionName() string {
 
 func (u UserFunc) Call(env *Env, stream TokenStream) (any, error) {
 	args := make([]any, 0, len(u.Params))
-	for i := range u.Params {
+
+	startIdx := 0
+	if ps, ok := stream.(*PipedStream); ok && ps.HasValue {
+		if len(u.Params) > 0 {
+			args = append(args, ps.Value)
+			startIdx = 1
+		}
+	}
+
+	for i := startIdx; i < len(u.Params); i++ {
 		arg, err := env.evalExpr(stream, nil)
 		if err != nil {
 			return nil, fmt.Errorf("argument %d: %w", i, err)

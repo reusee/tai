@@ -37,7 +37,7 @@ func (t *ArgsTokenizer) parse() *Token {
 
 	// Symbol
 	switch txt {
-	case "[", "]", "(", ")", "{", "}":
+	case "[", "]", "(", ")", "{", "}", "|":
 		return &Token{
 			Kind: TokenSymbol,
 			Text: txt,

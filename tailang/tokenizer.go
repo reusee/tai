@@ -109,7 +109,7 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 	case unicode.IsDigit(r):
 		t.unreadRune()
 		return t.parseNumber()
-	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}':
+	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == '|':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),
@@ -176,7 +176,7 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 
 func isDelimiter(r rune) bool {
 	switch r {
-	case '[', ']', '(', ')', '{', '}', '\'', '"', '`':
+	case '[', ']', '(', ')', '{', '}', '\'', '"', '`', '|':
 		return true
 	}
 	return false
