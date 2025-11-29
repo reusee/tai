@@ -71,103 +71,107 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 	}
 
 	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol {
-		name := t.Text
-		if name == "end" {
-			return nil, fmt.Errorf("unexpected identifier 'end'")
-		}
-		if t.Kind == TokenSymbol {
-			switch name {
-			case ")", "]", "}":
-				return nil, fmt.Errorf("unexpected symbol '%s'", name)
-			}
-		}
-
-		isRef := false
-		if strings.HasPrefix(name, "&") && len(name) > 1 {
-			isRef = true
-			name = name[1:]
-		}
-
-		tokenizer.Consume()
-
-		val, ok := e.Lookup(name)
-		if !ok {
-			if expectedType != nil && expectedType.Kind() == reflect.String {
-				return name, nil
-			}
-			return nil, fmt.Errorf("undefined identifier: %s", name)
-		}
-
-		if expectedType != nil && expectedType.Kind() == reflect.String {
-			if _, ok := val.(string); !ok {
-				return name, nil
-			}
-		}
-
-		if isRef {
-			return val, nil
-		}
-
-		v := reflect.ValueOf(val)
-		typ := v.Type()
-
-		var callVal reflect.Value
-		var isWrapped bool
-		if typ.Kind() == reflect.Struct {
-			ptr := reflect.New(typ)
-			ptr.Elem().Set(v)
-			callVal = ptr
-			isWrapped = true
-		} else {
-			callVal = v
-		}
-
-		// Named parameters
-		for {
-			next, err := tokenizer.Current()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return nil, err
-			}
-			if next.Kind != TokenNamedParam {
-				break
-			}
-
-			paramName := strings.TrimPrefix(next.Text, ".")
-			tokenizer.Consume()
-
-			field := findField(callVal.Elem(), paramName)
-			if !field.IsValid() {
-				return nil, fmt.Errorf("unknown named parameter .%s", paramName)
-			}
-
-			if field.Kind() == reflect.Bool {
-				field.SetBool(true)
-			} else {
-				arg, err := e.evalExpr(tokenizer, field.Type())
-				if err != nil {
-					return nil, fmt.Errorf("arg .%s: %w", paramName, err)
-				}
-				if err := setField(field, arg); err != nil {
-					return nil, fmt.Errorf("arg .%s: %w", paramName, err)
-				}
-			}
-		}
-
-		method := callVal.MethodByName("Call")
-		if !method.IsValid() {
-			if isWrapped {
-				return callVal.Elem().Interface(), nil
-			}
-			return callVal.Interface(), nil
-		}
-
-		return e.callFunc(tokenizer, method, name, expectedType)
+		return e.evalCall(tokenizer, t, expectedType)
 	}
 
 	return nil, fmt.Errorf("unexpected token kind: %v", t.Kind)
+}
+
+func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type) (any, error) {
+	name := t.Text
+	if name == "end" {
+		return nil, fmt.Errorf("unexpected identifier 'end'")
+	}
+	if t.Kind == TokenSymbol {
+		switch name {
+		case ")", "]", "}":
+			return nil, fmt.Errorf("unexpected symbol '%s'", name)
+		}
+	}
+
+	isRef := false
+	if strings.HasPrefix(name, "&") && len(name) > 1 {
+		isRef = true
+		name = name[1:]
+	}
+
+	tokenizer.Consume()
+
+	val, ok := e.Lookup(name)
+	if !ok {
+		if expectedType != nil && expectedType.Kind() == reflect.String {
+			return name, nil
+		}
+		return nil, fmt.Errorf("undefined identifier: %s", name)
+	}
+
+	if expectedType != nil && expectedType.Kind() == reflect.String {
+		if _, ok := val.(string); !ok {
+			return name, nil
+		}
+	}
+
+	if isRef {
+		return val, nil
+	}
+
+	v := reflect.ValueOf(val)
+	typ := v.Type()
+
+	var callVal reflect.Value
+	var isWrapped bool
+	if typ.Kind() == reflect.Struct {
+		ptr := reflect.New(typ)
+		ptr.Elem().Set(v)
+		callVal = ptr
+		isWrapped = true
+	} else {
+		callVal = v
+	}
+
+	// Named parameters
+	for {
+		next, err := tokenizer.Current()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if next.Kind != TokenNamedParam {
+			break
+		}
+
+		paramName := strings.TrimPrefix(next.Text, ".")
+		tokenizer.Consume()
+
+		field := findField(callVal.Elem(), paramName)
+		if !field.IsValid() {
+			return nil, fmt.Errorf("unknown named parameter .%s", paramName)
+		}
+
+		if field.Kind() == reflect.Bool {
+			field.SetBool(true)
+		} else {
+			arg, err := e.evalExpr(tokenizer, field.Type())
+			if err != nil {
+				return nil, fmt.Errorf("arg .%s: %w", paramName, err)
+			}
+			if err := setField(field, arg); err != nil {
+				return nil, fmt.Errorf("arg .%s: %w", paramName, err)
+			}
+		}
+	}
+
+	method := callVal.MethodByName("Call")
+	if !method.IsValid() {
+		if isWrapped {
+			return callVal.Elem().Interface(), nil
+		}
+		return callVal.Interface(), nil
+	}
+
+	return e.callFunc(tokenizer, method, name, expectedType)
 }
 
 func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, expectedType reflect.Type) (any, error) {
