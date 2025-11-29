@@ -541,6 +541,13 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 		}
 	}
 
+	if v.Kind() == reflect.String && t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+		return reflect.ValueOf([]byte(v.String()))
+	}
+	if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 && t.Kind() == reflect.String {
+		return reflect.ValueOf(string(v.Bytes()))
+	}
+
 	if v.Kind() == reflect.Slice && t.Kind() == reflect.Slice {
 		newSlice := reflect.MakeSlice(t, v.Len(), v.Len())
 		elemType := t.Elem()
