@@ -24,10 +24,6 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 	name := tok.Text
 	stream.Consume()
 
-	if _, ok := env.Vars[name]; ok {
-		return nil, fmt.Errorf("variable %s already defined", name)
-	}
-
 	// Params
 	tok, err = stream.Current()
 	if err != nil {
@@ -39,7 +35,6 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 	stream.Consume()
 
 	var params []string
-	seenParams := make(map[string]bool)
 	for {
 		tok, err = stream.Current()
 		if err != nil {
@@ -52,10 +47,6 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 		if tok.Kind != TokenIdentifier {
 			return nil, fmt.Errorf("expected param name")
 		}
-		if seenParams[tok.Text] {
-			return nil, fmt.Errorf("duplicate parameter: %s", tok.Text)
-		}
-		seenParams[tok.Text] = true
 		params = append(params, tok.Text)
 		stream.Consume()
 	}

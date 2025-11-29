@@ -27,10 +27,6 @@ func (d Def) Call(env *Env, stream TokenStream) (any, error) {
 	name := tok.Text
 	stream.Consume()
 
-	if _, ok := env.Vars[name]; ok {
-		return nil, fmt.Errorf("variable %s already defined", name)
-	}
-
 	// Value
 	value, err := env.evalExpr(stream, d.Type)
 	if err != nil {
