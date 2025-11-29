@@ -437,6 +437,25 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 			return v.Convert(t)
 		}
 	}
+
+	if v.Kind() == reflect.Slice && t.Kind() == reflect.Slice {
+		newSlice := reflect.MakeSlice(t, v.Len(), v.Len())
+		elemType := t.Elem()
+		ok := true
+		for i := 0; i < v.Len(); i++ {
+			elemVal := v.Index(i).Interface()
+			convElem, err := prepareAssign(elemVal, elemType)
+			if err != nil {
+				ok = false
+				break
+			}
+			newSlice.Index(i).Set(convElem)
+		}
+		if ok {
+			return newSlice
+		}
+	}
+
 	return v
 }
 

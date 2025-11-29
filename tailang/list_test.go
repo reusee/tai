@@ -34,3 +34,52 @@ func TestTypedList(t *testing.T) {
 	`, "cannot assign nil")
 
 }
+
+func TestBugSliceConversion(t *testing.T) {
+	env := NewEnv()
+
+	// This should fail before the fix because 'l' is []any and strings.join expects []string
+	src := `
+		def l ["a" "b"]
+		strings.join l ","
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if res != "a,b" {
+		t.Fatalf("expected 'a,b', got '%v'", res)
+	}
+}
+
+func TestBugSliceConversionNested(t *testing.T) {
+	env := NewEnv()
+
+	// Register a helper to check [][]int
+	env.Define("sum_matrix", GoFunc{
+		Name: "sum_matrix",
+		Func: func(matrix [][]int) int {
+			sum := 0
+			for _, row := range matrix {
+				for _, v := range row {
+					sum += v
+				}
+			}
+			return sum
+		},
+	})
+
+	src := `
+		def m [ [1 2] [3 4] ]
+		sum_matrix m
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if res != 10 {
+		t.Fatalf("expected 10, got '%v'", res)
+	}
+}
