@@ -17,6 +17,13 @@ func Plus(a, b any) any {
 		}
 	}
 	if isFloat(a) || isFloat(b) {
+		if !isBig(a) && !isBig(b) {
+			fA, okA := asFloat(a)
+			fB, okB := asFloat(b)
+			if okA && okB {
+				return fA + fB
+			}
+		}
 		if bfA, ok := asBigFloat(a); ok {
 			if bfB, ok := asBigFloat(b); ok {
 				return new(big.Float).Add(bfA, bfB)
@@ -42,6 +49,13 @@ func Minus(a, b any) (any, error) {
 		}
 	}
 	if isFloat(a) || isFloat(b) {
+		if !isBig(a) && !isBig(b) {
+			fA, okA := asFloat(a)
+			fB, okB := asFloat(b)
+			if okA && okB {
+				return fA - fB, nil
+			}
+		}
 		if bfA, ok := asBigFloat(a); ok {
 			if bfB, ok := asBigFloat(b); ok {
 				return new(big.Float).Sub(bfA, bfB), nil
@@ -67,6 +81,13 @@ func Multiply(a, b any) (any, error) {
 		}
 	}
 	if isFloat(a) || isFloat(b) {
+		if !isBig(a) && !isBig(b) {
+			fA, okA := asFloat(a)
+			fB, okB := asFloat(b)
+			if okA && okB {
+				return fA * fB, nil
+			}
+		}
 		if bfA, ok := asBigFloat(a); ok {
 			if bfB, ok := asBigFloat(b); ok {
 				return new(big.Float).Mul(bfA, bfB), nil
@@ -83,6 +104,16 @@ func Multiply(a, b any) (any, error) {
 
 func Divide(a, b any) (any, error) {
 	if isFloat(a) || isFloat(b) {
+		if !isBig(a) && !isBig(b) {
+			fA, okA := asFloat(a)
+			fB, okB := asFloat(b)
+			if okA && okB {
+				if fB == 0 {
+					return nil, fmt.Errorf("float division by zero")
+				}
+				return fA / fB, nil
+			}
+		}
 		if bfA, ok := asBigFloat(a); ok {
 			if bfB, ok := asBigFloat(b); ok {
 				if bfB.Sign() == 0 {
@@ -113,6 +144,13 @@ func Divide(a, b any) (any, error) {
 
 func Mod(a, b any) (any, error) {
 	if isFloat(a) || isFloat(b) {
+		if !isBig(a) && !isBig(b) {
+			fA, okA := asFloat(a)
+			fB, okB := asFloat(b)
+			if okA && okB {
+				return math.Mod(fA, fB), nil
+			}
+		}
 		if bfA, ok := asBigFloat(a); ok {
 			if bfB, ok := asBigFloat(b); ok {
 				// math.Mod style for BigFloat? big.Float doesn't support Mod directly.
@@ -212,6 +250,14 @@ func asBigFloat(v any) (*big.Float, bool) {
 func isFloat(v any) bool {
 	switch v.(type) {
 	case float32, float64, *big.Float:
+		return true
+	}
+	return false
+}
+
+func isBig(v any) bool {
+	switch v.(type) {
+	case *big.Int, *big.Float:
 		return true
 	}
 	return false
