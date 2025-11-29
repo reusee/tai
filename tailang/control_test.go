@@ -143,3 +143,48 @@ func TestScopeLeakage(t *testing.T) {
 		leaked_switch
 	`)
 }
+
+func TestNestedLoops(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def res ""
+		foreach i ["a" "b"] {
+			foreach j ["1" "2"] {
+				set res (fmt.sprintf "%s%s%s" res i j)
+			}
+		}
+		res
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "a1a2b1b2" {
+		t.Fatalf("expected a1a2b1b2, got %v", res)
+	}
+}
+
+func TestControlFlowState(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def i 0
+		def acc 0
+		while < i 5 {
+			if == (% i 2) 0 {
+				set acc (+ acc i)
+			}
+			set i (+ i 1)
+		}
+		acc
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0 + 2 + 4 = 6
+	if res != 6 {
+		t.Fatalf("expected 6, got %v", res)
+	}
+}

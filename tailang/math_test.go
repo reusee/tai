@@ -87,3 +87,39 @@ func TestBigComparisons(t *testing.T) {
 	run(`> 12345678901234567891 12345678901234567890`, true)
 	run(`== 12345678901234567890 12345678901234567890`, true)
 }
+
+func TestMathStdLib(t *testing.T) {
+	env := NewEnv()
+	run := func(src string, expected float64) {
+		t.Helper()
+		tokenizer := NewTokenizer(strings.NewReader(src))
+		res, err := env.Evaluate(tokenizer)
+		if err != nil {
+			t.Fatalf("src: %s, err: %v", src, err)
+		}
+
+		var fRes float64
+		switch v := res.(type) {
+		case float64:
+			fRes = v
+		case int:
+			fRes = float64(v)
+		default:
+			t.Fatalf("expected number, got %T", res)
+		}
+
+		diff := fRes - expected
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > 1e-9 {
+			t.Fatalf("src: %s, expected %v, got %v", src, expected, res)
+		}
+	}
+
+	run(`math.pow 2 3`, 8.0)
+	run(`math.sqrt 16`, 4.0)
+	run(`math.abs -10.5`, 10.5)
+	run(`math.floor 1.9`, 1.0)
+	run(`math.ceil 1.1`, 2.0)
+}

@@ -188,3 +188,53 @@ func TestVariadicInParens(t *testing.T) {
 		t.Fatalf("expected 10, got %v", res)
 	}
 }
+
+func TestClosureCounter(t *testing.T) {
+	env := NewEnv()
+	src := `
+		func make_counter(start) {
+			def count start
+			func inc() {
+				set count (+ count 1)
+				count
+			}
+			&inc
+		}
+		def c1 make_counter 0
+		def c2 make_counter 10
+		def r1 c1
+		def r2 c1
+		def r3 c2
+		(fmt.sprintf "%v %v %v" r1 r2 r3)
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "1 2 11" {
+		t.Fatalf("expected '1 2 11', got '%v'", res)
+	}
+}
+
+func TestRecursionFactorial(t *testing.T) {
+	env := NewEnv()
+	src := `
+		func fact(n) {
+			if <= n 1 {
+				1
+			} else {
+				* n (fact (- n 1))
+			}
+		}
+		fact 5
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 120 {
+		t.Fatalf("expected 120, got %v", res)
+	}
+}
