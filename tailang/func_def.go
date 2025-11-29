@@ -18,7 +18,7 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tok.Kind != TokenIdentifier {
+	if tok.Kind != TokenIdentifier && tok.Kind != TokenUnquotedString {
 		return nil, fmt.Errorf("expected func name")
 	}
 	name := tok.Text
@@ -53,7 +53,7 @@ func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
 			stream.Consume()
 			break
 		}
-		if tok.Kind != TokenIdentifier {
+		if tok.Kind != TokenIdentifier && tok.Kind != TokenUnquotedString {
 			return nil, fmt.Errorf("expected param name")
 		}
 		if seenParams[tok.Text] {

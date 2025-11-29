@@ -70,7 +70,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 		return val, nil
 	}
 
-	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol {
+	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol || t.Kind == TokenUnquotedString {
 		return e.evalCall(tokenizer, t, expectedType)
 	}
 
@@ -99,6 +99,9 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 
 	val, ok := e.Lookup(name)
 	if !ok {
+		if t.Kind == TokenUnquotedString {
+			return name, nil
+		}
 		return nil, fmt.Errorf("undefined identifier: %s", name)
 	}
 

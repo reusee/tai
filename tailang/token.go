@@ -16,6 +16,7 @@ const (
 	TokenEOF
 	TokenNamedParam
 	TokenSymbol
+	TokenUnquotedString
 )
 
 type Pos struct {

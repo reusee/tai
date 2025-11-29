@@ -15,7 +15,7 @@ func (s Set) Call(env *Env, stream TokenStream) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tok.Kind != TokenIdentifier {
+	if tok.Kind != TokenIdentifier && tok.Kind != TokenUnquotedString {
 		return nil, fmt.Errorf("expected identifier")
 	}
 	name := tok.Text
