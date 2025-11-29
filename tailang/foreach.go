@@ -13,7 +13,7 @@ func (f Foreach) FunctionName() string {
 	return "foreach"
 }
 
-func (f Foreach) Call(env *Env, stream TokenStream) (any, error) {
+func (f Foreach) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	tok, err := stream.Current()
 	if err != nil {
 		return nil, err

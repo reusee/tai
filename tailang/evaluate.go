@@ -245,6 +245,18 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		}
 	}
 
+	if fn, ok := callVal.Interface().(Function); ok {
+		stream := tokenizer
+		if hasPipe {
+			stream = &PipedStream{
+				TokenStream: tokenizer,
+				Value:       pipedVal,
+				HasValue:    true,
+			}
+		}
+		return fn.Call(e, stream, expectedType)
+	}
+
 	method := callVal.MethodByName("Call")
 	if !method.IsValid() {
 		if isWrapped {

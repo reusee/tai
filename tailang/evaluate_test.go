@@ -1,6 +1,7 @@
 package tailang
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -226,7 +227,7 @@ func (c *TestCommand) FunctionName() string {
 	return "cmd"
 }
 
-func (c *TestCommand) Call(env *Env, stream TokenStream) (any, error) {
+func (c *TestCommand) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	return c.Val, nil
 }
 

@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type Repeat struct{}
 
@@ -10,7 +13,7 @@ func (r Repeat) FunctionName() string {
 	return "repeat"
 }
 
-func (r Repeat) Call(env *Env, stream TokenStream) (any, error) {
+func (r Repeat) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	tok, err := stream.Current()
 	if err != nil {
 		return nil, err

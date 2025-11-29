@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type If struct{}
 
@@ -10,7 +13,7 @@ func (i If) FunctionName() string {
 	return "if"
 }
 
-func (i If) Call(env *Env, stream TokenStream) (any, error) {
+func (i If) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	cond, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err

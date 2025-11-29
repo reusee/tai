@@ -2,6 +2,7 @@ package tailang
 
 import (
 	"fmt"
+	"reflect"
 )
 
 type FuncDef struct{}
@@ -12,7 +13,7 @@ func (f FuncDef) FunctionName() string {
 	return "func"
 }
 
-func (f FuncDef) Call(env *Env, stream TokenStream) (any, error) {
+func (f FuncDef) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	// Name
 	tok, err := stream.Current()
 	if err != nil {

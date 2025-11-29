@@ -2,6 +2,7 @@ package tailang
 
 import (
 	"fmt"
+	"reflect"
 )
 
 type UserFunc struct {
@@ -17,7 +18,7 @@ func (u UserFunc) FunctionName() string {
 	return u.FuncName
 }
 
-func (u UserFunc) Call(env *Env, stream TokenStream) (any, error) {
+func (u UserFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	args := make([]any, 0, len(u.Params))
 
 	startIdx := 0

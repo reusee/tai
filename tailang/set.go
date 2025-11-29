@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type Set struct{}
 
@@ -10,7 +13,7 @@ func (s Set) FunctionName() string {
 	return "set"
 }
 
-func (s Set) Call(env *Env, stream TokenStream) (any, error) {
+func (s Set) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	tok, err := stream.Current()
 	if err != nil {
 		return nil, err

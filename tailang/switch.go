@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type Switch struct{}
 
@@ -12,7 +15,7 @@ func (s Switch) FunctionName() string {
 	return "switch"
 }
 
-func (s Switch) Call(env *Env, stream TokenStream) (any, error) {
+func (s Switch) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	val, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err

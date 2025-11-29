@@ -15,7 +15,7 @@ func (d Def) FunctionName() string {
 	return "def"
 }
 
-func (d Def) Call(env *Env, stream TokenStream) (any, error) {
+func (d Def) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	// Name
 	tok, err := stream.Current()
 	if err != nil {

@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type While struct{}
 
@@ -10,7 +13,7 @@ func (w While) FunctionName() string {
 	return "while"
 }
 
-func (w While) Call(env *Env, stream TokenStream) (any, error) {
+func (w While) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	recorder := &recordingStream{
 		stream: stream,
 	}

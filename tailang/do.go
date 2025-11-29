@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type Do struct{}
 
@@ -10,7 +13,7 @@ func (d Do) FunctionName() string {
 	return "do"
 }
 
-func (d Do) Call(env *Env, stream TokenStream) (any, error) {
+func (d Do) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	blockVal, err := env.evalExpr(stream, nil)
 	if err != nil {
 		return nil, err

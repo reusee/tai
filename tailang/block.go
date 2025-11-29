@@ -1,5 +1,7 @@
 package tailang
 
+import "reflect"
+
 type Block struct {
 	Body []*Token
 }
@@ -12,6 +14,6 @@ func (b BlockDef) FunctionName() string {
 	return "{"
 }
 
-func (b BlockDef) Call(env *Env, stream TokenStream) (any, error) {
+func (b BlockDef) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	return ParseBlockBody(stream)
 }
