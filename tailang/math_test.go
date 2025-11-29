@@ -123,3 +123,18 @@ func TestMathStdLib(t *testing.T) {
 	run(`math.floor 1.9`, 1.0)
 	run(`math.ceil 1.1`, 2.0)
 }
+
+func TestMathUnderflow(t *testing.T) {
+	env := NewEnv()
+	// MinInt64 = -9223372036854775808
+	// - MinInt64 1 -> underflow to BigInt
+	src := `- -9223372036854775808 1`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.(*big.Int); !ok {
+		t.Fatalf("expected big.Int after underflow, got %T", res)
+	}
+}

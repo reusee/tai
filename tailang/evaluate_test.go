@@ -169,3 +169,90 @@ func TestPipeErrors(t *testing.T) {
 		1 | x
 	`, "cannot pipe into non-callable value")
 }
+
+func TestScoping(t *testing.T) {
+	env := NewEnv()
+	run := func(src string) any {
+		t.Helper()
+		tokenizer := NewTokenizer(strings.NewReader(src))
+		res, err := env.Evaluate(tokenizer)
+		if err != nil {
+			t.Fatalf("src: %s, err: %v", src, err)
+		}
+		return res
+	}
+
+	// 1. def shadowing in block
+	run(`
+		def x 10
+		do {
+			def x 20
+			if != x 20 { error "inner x should be 20" }
+		}
+	`)
+	if res, _ := env.Lookup("x"); res != 10 {
+		t.Fatalf("outer x should remain 10, got %v", res)
+	}
+
+	// 2. set modifies outer
+	run(`
+		def y 10
+		do {
+			set y 20
+		}
+	`)
+	if res, _ := env.Lookup("y"); res != 20 {
+		t.Fatalf("outer y should be 20, got %v", res)
+	}
+
+	// 3. func scope is isolated for def
+	run(`
+		def z 10
+		func f() {
+			def z 30
+		}
+		f
+	`)
+	if res, _ := env.Lookup("z"); res != 10 {
+		t.Fatalf("outer z should remain 10, got %v", res)
+	}
+}
+
+type TestCommand struct {
+	Val int `tai:"val"`
+}
+
+func (c *TestCommand) FunctionName() string {
+	return "cmd"
+}
+
+func (c *TestCommand) Call(env *Env, stream TokenStream) (any, error) {
+	return c.Val, nil
+}
+
+func TestStructCommand(t *testing.T) {
+	env := NewEnv()
+	// We define a struct VALUE. evalCall will make a pointer to a copy of it to set fields.
+	env.Define("cmd", TestCommand{Val: 1})
+
+	tokenizer := NewTokenizer(strings.NewReader(`cmd .val 42`))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 42 {
+		t.Fatalf("expected 42, got %v", res)
+	}
+}
+
+func TestPrefixNotation(t *testing.T) {
+	env := NewEnv()
+	// (+ 2 (* 3 4)) = 2 + 12 = 14
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(`+ 2 (* 3 4)`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 14 {
+		t.Fatalf("expected 14, got %v", res)
+	}
+}

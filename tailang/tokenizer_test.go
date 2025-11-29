@@ -182,3 +182,58 @@ func TestTokenizerNumbers(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenizerEdgeCases(t *testing.T) {
+	type TokenInfo struct {
+		Kind TokenKind
+		Text string
+	}
+
+	tests := []struct {
+		name   string
+		input  string
+		tokens []TokenInfo
+	}{
+		{
+			name:   "CommentAtEOF",
+			input:  "foo # bar",
+			tokens: []TokenInfo{{TokenIdentifier, "foo"}},
+		},
+		{
+			name:   "Empty",
+			input:  "   ",
+			tokens: []TokenInfo{},
+		},
+		{
+			name:   "OnlyComment",
+			input:  "# just a comment",
+			tokens: []TokenInfo{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tokenizer := NewTokenizer(strings.NewReader(test.input))
+			for i, expected := range test.tokens {
+				token, err := tokenizer.Current()
+				if err != nil {
+					t.Fatalf("step %d: unexpected error: %v", i, err)
+				}
+				if token.Kind != expected.Kind {
+					t.Errorf("step %d: expected kind %v, got %v", i, expected.Kind, token.Kind)
+				}
+				if token.Text != expected.Text {
+					t.Errorf("step %d: expected text %q, got %q", i, expected.Text, token.Text)
+				}
+				tokenizer.Consume()
+			}
+			token, err := tokenizer.Current()
+			if err != nil {
+				t.Fatalf("eof: unexpected error: %v", err)
+			}
+			if token.Kind != TokenEOF {
+				t.Errorf("expected EOF, got %v", token.Kind)
+			}
+		})
+	}
+}
