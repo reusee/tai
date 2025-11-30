@@ -40,19 +40,50 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 		if err != nil || t.Kind == TokenEOF {
 			break
 		}
-		if t.Kind == TokenSymbol && strings.HasPrefix(t.Text, "|") {
-			pipeLast := t.Text == "|>"
-			pipeIndex := 0
-			if !pipeLast && len(t.Text) > 1 {
-				n, err := strconv.Atoi(t.Text[1:])
-				if err == nil && n > 0 {
-					pipeIndex = n - 1
+		if t.Kind == TokenSymbol {
+			if strings.HasPrefix(t.Text, "|") {
+				pipeLast := t.Text == "|>"
+				pipeIndex := 0
+				if !pipeLast && len(t.Text) > 1 {
+					n, err := strconv.Atoi(t.Text[1:])
+					if err == nil && n > 0 {
+						pipeIndex = n - 1
+					}
 				}
-			}
-			tokenizer.Consume()
-			lhs, err = e.evalTerm(tokenizer, expectedType, lhs, true, pipeLast, pipeIndex)
-			if err != nil {
-				return nil, err
+				tokenizer.Consume()
+				lhs, err = e.evalTerm(tokenizer, expectedType, lhs, true, pipeLast, pipeIndex)
+				if err != nil {
+					return nil, err
+				}
+			} else if t.Text == ":" {
+				tokenizer.Consume()
+				// expect identifier
+				t, err := tokenizer.Current()
+				if err != nil {
+					return nil, err
+				}
+				if t.Kind != TokenIdentifier {
+					return nil, fmt.Errorf("expected identifier after :, got %v", t.Kind)
+				}
+				methodName := t.Text
+				tokenizer.Consume()
+
+				if lhs == nil {
+					return nil, fmt.Errorf("cannot call method %s on nil", methodName)
+				}
+				v := reflect.ValueOf(lhs)
+				method := v.MethodByName(methodName)
+				if !method.IsValid() {
+					return nil, fmt.Errorf("method %s not found on %T", methodName, lhs)
+				}
+
+				res, err := e.callFunc(tokenizer, method, methodName, nil)
+				if err != nil {
+					return nil, err
+				}
+				lhs = res
+			} else {
+				break
 			}
 		} else {
 			break

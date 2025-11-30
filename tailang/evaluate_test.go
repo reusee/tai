@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPanicNilVariable(t *testing.T) {
@@ -391,5 +392,17 @@ func TestPipeIndex(t *testing.T) {
 	// 3 |3 many_args 1 2 => many_args(1, 2, 3) = 6
 	if res := run("3 |3 many_args 1 2"); res != 6 {
 		t.Fatalf("pipe 3 expected 6, got %v", res)
+	}
+}
+
+func TestMethod(t *testing.T) {
+	env := NewEnv()
+	src := `time.now:Format "2006-01-02"`
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(src)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != time.Now().Format("2006-01-02") {
+		t.Fatalf("got %v", res)
 	}
 }

@@ -156,7 +156,7 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 			Text: "|",
 			Pos:  startPos,
 		}, nil
-	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}':
+	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == ':':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),
@@ -223,7 +223,7 @@ func (t *Tokenizer) parseIdentifier() (*Token, error) {
 
 func isDelimiter(r rune) bool {
 	switch r {
-	case '[', ']', '(', ')', '{', '}', '\'', '"', '`', '|':
+	case '[', ']', '(', ')', '{', '}', '\'', '"', '`', '|', ':':
 		return true
 	}
 	return false
