@@ -6,8 +6,10 @@ import (
 )
 
 type Env struct {
-	Parent *Env
-	Vars   map[string]any
+	Parent      *Env
+	Vars        map[string]any
+	Defers      []func()
+	IsFuncFrame bool
 }
 
 func NewEnv() *Env {
@@ -28,15 +30,29 @@ func NewEnv() *Env {
 			"switch":  Switch{},
 			"repeat":  Repeat{},
 			"foreach": Foreach{},
+			"select":  Select{},
 
 			"break":    Break{},
 			"continue": Continue{},
 			"return":   Return{},
+			"defer":    Defer{},
 			"go":       Go{},
 
 			"type": GoFunc{
 				Name: "type",
 				Func: TypeOf,
+			},
+			"map_of": GoFunc{
+				Name: "map_of",
+				Func: reflect.MapOf,
+			},
+			"slice_of": GoFunc{
+				Name: "slice_of",
+				Func: reflect.SliceOf,
+			},
+			"chan_of": GoFunc{
+				Name: "chan_of",
+				Func: reflect.ChanOf,
 			},
 
 			"len":       Len,

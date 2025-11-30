@@ -63,9 +63,16 @@ func (u UserFunc) CallArgs(args []any) (any, error) {
 	}
 
 	callEnv := &Env{
-		Parent: u.DefinitionEnv,
-		Vars:   make(map[string]any),
+		Parent:      u.DefinitionEnv,
+		Vars:        make(map[string]any),
+		IsFuncFrame: true,
 	}
+
+	defer func() {
+		for i := len(callEnv.Defers) - 1; i >= 0; i-- {
+			callEnv.Defers[i]()
+		}
+	}()
 
 	for i, param := range u.Params {
 		callEnv.Define(param, args[i])
