@@ -2,9 +2,10 @@ package tailang
 
 type PipedStream struct {
 	TokenStream
-	Value    any
-	HasValue bool
-	PipeLast bool
+	Value     any
+	HasValue  bool
+	PipeLast  bool
+	PipeIndex int
 }
 
 func (p *PipedStream) Current() (*Token, error) {

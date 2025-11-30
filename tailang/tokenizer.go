@@ -128,6 +128,27 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 					Pos:  startPos,
 				}, nil
 			}
+			if unicode.IsDigit(next) {
+				var buf bytes.Buffer
+				buf.WriteRune('|')
+				buf.WriteRune(next)
+				for {
+					r, err := t.readRune()
+					if err != nil {
+						break
+					}
+					if !unicode.IsDigit(r) {
+						t.unreadRune()
+						break
+					}
+					buf.WriteRune(r)
+				}
+				return &Token{
+					Kind: TokenSymbol,
+					Text: buf.String(),
+					Pos:  startPos,
+				}, nil
+			}
 			t.unreadRune()
 		}
 		return &Token{

@@ -24,24 +24,27 @@ func (u UserFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) 
 	var pipedVal any
 	hasPipe := false
 	pipeLast := false
+	pipeIndex := 0
 	if ps, ok := stream.(*PipedStream); ok && ps.HasValue {
 		hasPipe = true
 		pipedVal = ps.Value
 		pipeLast = ps.PipeLast
+		pipeIndex = ps.PipeIndex
 	}
 
-	startIdx := 0
-	if hasPipe && !pipeLast {
-		if len(u.Params) > 0 {
-			args = append(args, pipedVal)
-			startIdx = 1
-		}
-	}
-
-	for i := startIdx; i < len(u.Params); i++ {
-		if hasPipe && pipeLast && i == len(u.Params)-1 {
-			args = append(args, pipedVal)
-			continue
+	for i := 0; i < len(u.Params); i++ {
+		if hasPipe {
+			if pipeLast {
+				if i == len(u.Params)-1 {
+					args = append(args, pipedVal)
+					continue
+				}
+			} else {
+				if i == pipeIndex {
+					args = append(args, pipedVal)
+					continue
+				}
+			}
 		}
 
 		arg, err := env.evalExpr(stream, nil)

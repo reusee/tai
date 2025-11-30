@@ -321,3 +321,75 @@ func TestPipeLast(t *testing.T) {
 		t.Fatalf("variadic pipe last expected abc, got %v", res)
 	}
 }
+
+func TestPipeIndex(t *testing.T) {
+	env := NewEnv()
+	run := func(src string) any {
+		t.Helper()
+		tokenizer := NewTokenizer(strings.NewReader(src))
+		res, err := env.Evaluate(tokenizer)
+		if err != nil {
+			t.Fatalf("src: %s, err: %v", src, err)
+		}
+		return res
+	}
+
+	// 1 - 2 = -1
+	// 1 | - 2 => 1 - 2 = -1 (|1 default)
+	if res := run("1 |1 - 2"); res != -1 {
+		t.Fatalf("expected -1, got %v", res)
+	}
+
+	// 2 |2 - 1 => 1 - 2 = -1
+	// pipe 2 into 2nd arg of -
+	if res := run("2 |2 - 1"); res != -1 {
+		t.Fatalf("expected -1, got %v", res)
+	}
+
+	// User Func
+	run(`
+		func sub(a b) {
+			- a b
+		}
+	`)
+	// sub(1, 2) = -1
+	if res := run("1 |1 sub 2"); res != -1 {
+		t.Fatalf("user func pipe 1 expected -1, got %v", res)
+	}
+	// sub(1, 2) = -1. Pipe 2 into 2nd arg.
+	if res := run("2 |2 sub 1"); res != -1 {
+		t.Fatalf("user func pipe 2 expected -1, got %v", res)
+	}
+
+	// Variadic Go Func
+	// sum_all(1, 2, 3) = 6
+	// 2 |2 sum_all 1 3
+	// pipe 2 into 2nd position. logicalIdx: 0->1, 1->2 (matched), 2->3
+	// args: 1, 2, 3
+	env.Define("sum_all", GoFunc{
+		Name: "sum_all",
+		Func: func(args ...int) int {
+			s := 0
+			for _, v := range args {
+				s += v
+			}
+			return s
+		},
+	})
+	if res := run("2 |2 sum_all 1 3 end"); res != 6 {
+		t.Fatalf("variadic pipe 2 expected 6, got %v", res)
+	}
+
+	// |16 (large index)
+	// func with many args
+	env.Define("many_args", GoFunc{
+		Name: "many_args",
+		Func: func(a, b, c int) int {
+			return a + b + c
+		},
+	})
+	// 3 |3 many_args 1 2 => many_args(1, 2, 3) = 6
+	if res := run("3 |3 many_args 1 2"); res != 6 {
+		t.Fatalf("pipe 3 expected 6, got %v", res)
+	}
+}
