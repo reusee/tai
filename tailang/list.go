@@ -9,7 +9,9 @@ type List struct {
 	Elem reflect.Type `tai:"elem"`
 }
 
-func (l List) Name() string {
+var _ Function = List{}
+
+func (l List) FunctionName() string {
 	return "["
 }
 
