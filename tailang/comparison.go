@@ -1,6 +1,9 @@
 package tailang
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 func Eq(a, b any) bool {
 	if a == b {
@@ -17,6 +20,9 @@ func Eq(a, b any) bool {
 		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) == 0
 		}
+	}
+	if reflect.DeepEqual(a, b) {
+		return true
 	}
 	return false
 }
