@@ -484,6 +484,16 @@ func ConvertType(v reflect.Value, t reflect.Type) reflect.Value {
 		}
 	}
 
+	if t.Kind() == reflect.Slice && v.Kind() != reflect.Slice {
+		elemType := t.Elem()
+		valV := ConvertType(v, elemType)
+		if valV.Type().AssignableTo(elemType) {
+			newSlice := reflect.MakeSlice(t, 1, 1)
+			newSlice.Index(0).Set(valV)
+			return newSlice
+		}
+	}
+
 	return v
 }
 
