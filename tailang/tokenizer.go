@@ -321,6 +321,11 @@ func (t *Tokenizer) parseNumber() (*Token, error) {
 			continue
 		}
 
+		if r == 'i' {
+			buf.WriteRune(r)
+			break
+		}
+
 		t.unreadRune()
 		break
 	}
