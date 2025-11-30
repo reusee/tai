@@ -1,8 +1,12 @@
 package tailang
 
 import (
+	"bytes"
 	"math/big"
 	"reflect"
+	"runtime"
+	"strings"
+	"unicode"
 )
 
 type Env struct {
@@ -145,7 +149,46 @@ func NewEnv() *Env {
 }
 
 func (e *Env) Define(name string, val any) {
+	if val != nil && reflect.TypeOf(val).Kind() == reflect.Func {
+		if _, ok := val.(Function); !ok {
+			val = GoFunc{
+				Name: funcName(val),
+				Func: val,
+			}
+		}
+	}
 	e.Vars[name] = val
+}
+
+func funcName(fn any) string {
+	v := reflect.ValueOf(fn)
+	fullName := runtime.FuncForPC(v.Pointer()).Name()
+	parts := strings.Split(fullName, "/")
+	last := parts[len(parts)-1]
+	dotParts := strings.Split(last, ".")
+	if len(dotParts) < 2 {
+		return ""
+	}
+	pkg := dotParts[len(dotParts)-2]
+	name := dotParts[len(dotParts)-1]
+	return pkg + "." + toSnake(name)
+}
+
+func toSnake(s string) string {
+	var buf bytes.Buffer
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 &&
+				(unicode.IsLower(rune(s[i-1])) ||
+					(i+1 < len(s) && unicode.IsLower(rune(s[i+1])))) {
+				buf.WriteRune('_')
+			}
+			buf.WriteRune(unicode.ToLower(r))
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return buf.String()
 }
 
 func (e *Env) Lookup(name string) (any, bool) {
