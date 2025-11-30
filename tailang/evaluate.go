@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+type pipeInfo struct {
+	val    any
+	active bool
+	last   bool
+	index  int
+}
+
 func (e *Env) Evaluate(tokenizer TokenStream) (any, error) {
 	var result any
 	for {
@@ -29,8 +36,8 @@ func (e *Env) Evaluate(tokenizer TokenStream) (any, error) {
 	return result, nil
 }
 
-func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any, err error) {
-	lhs, err := e.evalTerm(tokenizer, expectedType, nil, false, false, 0)
+func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, error) {
+	lhs, err := e.evalTerm(tokenizer, expectedType, pipeInfo{})
 	if err != nil {
 		return nil, err
 	}
@@ -40,18 +47,22 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 		if err != nil || t.Kind == TokenEOF {
 			break
 		}
+
 		if t.Kind == TokenSymbol {
 			if strings.HasPrefix(t.Text, "|") {
-				pipeLast := t.Text == "|>"
-				pipeIndex := 0
-				if !pipeLast && len(t.Text) > 1 {
+				info := pipeInfo{
+					val:    lhs,
+					active: true,
+					last:   t.Text == "|>",
+				}
+				if !info.last && len(t.Text) > 1 {
 					n, err := strconv.Atoi(t.Text[1:])
 					if err == nil && n > 0 {
-						pipeIndex = n - 1
+						info.index = n - 1
 					}
 				}
 				tokenizer.Consume()
-				lhs, err = e.evalTerm(tokenizer, expectedType, lhs, true, pipeLast, pipeIndex)
+				lhs, err = e.evalTerm(tokenizer, expectedType, info)
 				if err != nil {
 					return nil, err
 				}
@@ -98,24 +109,31 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 	return lhs, nil
 }
 
-func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool, pipeIndex int) (res any, err error) {
+func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipe pipeInfo) (any, error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
 	}
 	startPos := t.Pos
 
-	if t.Kind == TokenString {
-		if hasPipe {
-			return nil, WithPos(fmt.Errorf("cannot pipe into string literal"), startPos)
+	checkPipe := func(msg string) error {
+		if pipe.active {
+			return WithPos(fmt.Errorf("%s", msg), startPos)
+		}
+		return nil
+	}
+
+	switch t.Kind {
+	case TokenString:
+		if err := checkPipe("cannot pipe into string literal"); err != nil {
+			return nil, err
 		}
 		tokenizer.Consume()
 		return t.Text, nil
-	}
 
-	if t.Kind == TokenNumber {
-		if hasPipe {
-			return nil, WithPos(fmt.Errorf("cannot pipe into number literal"), startPos)
+	case TokenNumber:
+		if err := checkPipe("cannot pipe into number literal"); err != nil {
+			return nil, err
 		}
 		tokenizer.Consume()
 		if strings.ContainsAny(t.Text, ".eE") {
@@ -138,30 +156,31 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 			return bi, nil
 		}
 		return nil, WithPos(fmt.Errorf("invalid number: %s", t.Text), startPos)
-	}
 
-	if t.Kind == TokenSymbol && t.Text == "(" {
-		if hasPipe {
-			return nil, WithPos(fmt.Errorf("cannot pipe into parenthesized expression"), startPos)
+	case TokenSymbol:
+		if t.Text == "(" {
+			if err := checkPipe("cannot pipe into parenthesized expression"); err != nil {
+				return nil, err
+			}
+			tokenizer.Consume()
+			val, err := e.evalExpr(tokenizer, expectedType)
+			if err != nil {
+				return nil, WithPos(err, startPos)
+			}
+			t, err = tokenizer.Current()
+			if err != nil {
+				return nil, WithPos(err, startPos)
+			}
+			if t.Text != ")" {
+				return nil, WithPos(fmt.Errorf("expected )"), startPos)
+			}
+			tokenizer.Consume()
+			return val, nil
 		}
-		tokenizer.Consume()
-		val, err := e.evalExpr(tokenizer, expectedType)
-		if err != nil {
-			return nil, WithPos(err, startPos)
-		}
-		t, err = tokenizer.Current()
-		if err != nil {
-			return nil, WithPos(err, startPos)
-		}
-		if t.Text != ")" {
-			return nil, WithPos(fmt.Errorf("expected )"), startPos)
-		}
-		tokenizer.Consume()
-		return val, nil
 	}
 
 	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol || t.Kind == TokenUnquotedString {
-		res, err := e.evalCall(tokenizer, t, expectedType, pipedVal, hasPipe, pipeLast, pipeIndex)
+		res, err := e.evalCall(tokenizer, t, expectedType, pipe)
 		if err != nil {
 			return nil, WithPos(err, startPos)
 		}
@@ -171,7 +190,7 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 	return nil, WithPos(fmt.Errorf("unexpected token kind: %v", t.Kind), startPos)
 }
 
-func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool, pipeIndex int) (any, error) {
+func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type, pipe pipeInfo) (any, error) {
 	name := t.Text
 	if name == "end" {
 		return nil, fmt.Errorf("unexpected identifier 'end'")
@@ -194,7 +213,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 	val, ok := e.Lookup(name)
 	if !ok {
 		if t.Kind == TokenUnquotedString {
-			if hasPipe {
+			if pipe.active {
 				return nil, fmt.Errorf("cannot pipe into unquoted string")
 			}
 			return name, nil
@@ -204,7 +223,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 
 	if expectedType != nil && expectedType.Kind() == reflect.String {
 		if _, ok := val.(string); !ok {
-			if hasPipe {
+			if pipe.active {
 				return nil, fmt.Errorf("cannot pipe into string expected identifier")
 			}
 			return name, nil
@@ -212,7 +231,7 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 	}
 
 	if isRef {
-		if hasPipe {
+		if pipe.active {
 			return nil, fmt.Errorf("cannot pipe into reference")
 		}
 		return val, nil
@@ -224,50 +243,40 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		if err == nil && next.Kind == TokenNamedParam {
 			return nil, fmt.Errorf("cannot use named parameter .%s on nil value", strings.TrimPrefix(next.Text, "."))
 		}
-		if hasPipe {
+		if pipe.active {
 			return nil, fmt.Errorf("cannot pipe into nil")
 		}
 		return nil, nil
 	}
 
 	v := reflect.ValueOf(val)
-	typ := v.Type()
+	isWrapped := false
 
-	var callVal reflect.Value
-	var isWrapped bool
-	if typ.Kind() == reflect.Struct {
+	// Struct wrapping logic
+	if v.Kind() == reflect.Struct {
 		shouldWrap := false
-		// Peek for named params
+		// Peek for named params or if pointer method needed
 		next, err := tokenizer.Current()
 		if err == nil && next.Kind == TokenNamedParam {
 			shouldWrap = true
 		} else {
-			// Not forced by named params. Check if we can avoid wrapping.
-			if _, ok := val.(Function); ok {
-				// Value implements Function. No wrap needed.
-				shouldWrap = false
-			} else if v.MethodByName("Call").IsValid() {
-				// Value has Call method. No wrap needed.
-				shouldWrap = false
-			} else if _, ok := reflect.PointerTo(typ).MethodByName("Call"); ok {
-				// Pointer has Call method. Must wrap.
-				shouldWrap = true
-			} else {
-				// Just data? Fallback to no wrap
-				shouldWrap = false
+			// Check if we need to wrap because value doesn't implement Call/Function
+			// but pointer does.
+			_, isFunc := val.(Function)
+			hasCall := v.MethodByName("Call").IsValid()
+			if !isFunc && !hasCall {
+				if _, ok := reflect.PointerTo(v.Type()).MethodByName("Call"); ok {
+					shouldWrap = true
+				}
 			}
 		}
 
 		if shouldWrap {
-			ptr := reflect.New(typ)
+			ptr := reflect.New(v.Type())
 			ptr.Elem().Set(v)
-			callVal = ptr
+			v = ptr
 			isWrapped = true
-		} else {
-			callVal = v
 		}
-	} else {
-		callVal = v
 	}
 
 	// Named parameters
@@ -297,10 +306,10 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		seenParams[paramName] = true
 
 		if !isWrapped {
-			return nil, fmt.Errorf("cannot use named parameter .%s on non-struct type %v", paramName, typ)
+			return nil, fmt.Errorf("cannot use named parameter .%s on non-struct type %v", paramName, v.Type())
 		}
 
-		field := findField(callVal.Elem(), paramName)
+		field := findField(v.Elem(), paramName)
 		if !field.IsValid() {
 			return nil, fmt.Errorf("unknown named parameter .%s", paramName)
 		}
@@ -318,42 +327,42 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		}
 	}
 
-	if fn, ok := callVal.Interface().(Function); ok {
+	if fn, ok := v.Interface().(Function); ok {
 		stream := tokenizer
-		if hasPipe {
+		if pipe.active {
 			stream = &PipedStream{
 				TokenStream: tokenizer,
-				Value:       pipedVal,
+				Value:       pipe.val,
 				HasValue:    true,
-				PipeLast:    pipeLast,
-				PipeIndex:   pipeIndex,
+				PipeLast:    pipe.last,
+				PipeIndex:   pipe.index,
 			}
 		}
 		return fn.Call(e, stream, expectedType)
 	}
 
-	method := callVal.MethodByName("Call")
+	method := v.MethodByName("Call")
 	if !method.IsValid() {
 		if isWrapped {
-			if hasPipe {
+			if pipe.active {
 				return nil, fmt.Errorf("cannot pipe into non-callable struct")
 			}
-			return callVal.Elem().Interface(), nil
+			return v.Elem().Interface(), nil
 		}
-		if hasPipe {
+		if pipe.active {
 			return nil, fmt.Errorf("cannot pipe into non-callable value")
 		}
-		return callVal.Interface(), nil
+		return v.Interface(), nil
 	}
 
 	stream := tokenizer
-	if hasPipe {
+	if pipe.active {
 		stream = &PipedStream{
 			TokenStream: tokenizer,
-			Value:       pipedVal,
+			Value:       pipe.val,
 			HasValue:    true,
-			PipeLast:    pipeLast,
-			PipeIndex:   pipeIndex,
+			PipeLast:    pipe.last,
+			PipeIndex:   pipe.index,
 		}
 	}
 
@@ -412,12 +421,12 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 		}
 	}
 
-	usePipe := false
 	var pipedVal any
 	var pipeLast bool
 	var pipeIndex int
+	var hasPipe bool
 	if ps, ok := tokenizer.(*PipedStream); ok && ps.HasValue {
-		usePipe = true
+		hasPipe = true
 		pipedVal = ps.Value
 		pipeLast = ps.PipeLast
 		pipeIndex = ps.PipeIndex
@@ -432,13 +441,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			elemType := argType.Elem()
 
 			for {
-				if usePipe && !pipeLast && logicalIdx == pipeIndex {
+				if hasPipe && !pipeLast && logicalIdx == pipeIndex {
 					vArg, err := PrepareAssign(pipedVal, elemType)
 					if err != nil {
 						return nil, err
 					}
 					args = append(args, vArg)
-					usePipe = false
+					hasPipe = false
 					logicalIdx++
 					continue
 				}
@@ -484,13 +493,13 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 				logicalIdx++
 			}
 
-			if usePipe && pipeLast {
+			if hasPipe && pipeLast {
 				vArg, err := PrepareAssign(pipedVal, elemType)
 				if err != nil {
 					return nil, err
 				}
 				args = append(args, vArg)
-				usePipe = false
+				hasPipe = false
 				logicalIdx++
 			}
 
@@ -498,12 +507,12 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			var val any
 			var err error
 
-			if usePipe && !pipeLast && logicalIdx == pipeIndex {
+			if hasPipe && !pipeLast && logicalIdx == pipeIndex {
 				val = pipedVal
-				usePipe = false
-			} else if usePipe && pipeLast && i == numIn-1 {
+				hasPipe = false
+			} else if hasPipe && pipeLast && i == numIn-1 {
 				val = pipedVal
-				usePipe = false
+				hasPipe = false
 			} else {
 				val, err = e.evalExpr(tokenizer, argType)
 				if err != nil {
@@ -518,7 +527,6 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			args = append(args, vArg)
 			logicalIdx++
 		}
-
 	}
 
 	results := fn.Call(args)
