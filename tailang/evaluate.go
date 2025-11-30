@@ -380,46 +380,6 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 	args := make([]reflect.Value, 0, numIn)
 
 	argOffset := 0
-	if numIn > 0 && methodType.In(0) == reflect.TypeOf(e) {
-		args = append(args, reflect.ValueOf(e))
-		argOffset++
-	}
-
-	hasStream := false
-	if numIn > argOffset && methodType.In(argOffset) == reflect.TypeOf((*TokenStream)(nil)).Elem() {
-		args = append(args, reflect.ValueOf(tokenizer))
-		argOffset++
-		hasStream = true
-	}
-
-	if numIn > argOffset && methodType.In(argOffset) == reflect.TypeOf((*reflect.Type)(nil)).Elem() {
-		if expectedType == nil {
-			args = append(args, reflect.Zero(methodType.In(argOffset)))
-		} else {
-			args = append(args, reflect.ValueOf(expectedType))
-		}
-		argOffset++
-	}
-
-	if hasStream {
-		if len(args) == numIn {
-			results := fn.Call(args)
-			if len(results) == 0 {
-				return nil, nil
-			}
-			last := results[len(results)-1]
-			if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-				if !last.IsNil() {
-					return nil, last.Interface().(error)
-				}
-				if len(results) > 1 {
-					return results[0].Interface(), nil
-				}
-				return nil, nil
-			}
-			return results[0].Interface(), nil
-		}
-	}
 
 	var pipedVal any
 	var pipeLast bool

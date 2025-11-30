@@ -37,15 +37,6 @@ func TestGoFunc(t *testing.T) {
 		},
 	})
 
-	// With Env
-	env.Define("get_val", GoFunc{
-		Name: "get_val",
-		Func: func(e *Env, name string) any {
-			v, _ := e.Lookup(name)
-			return v
-		},
-	})
-
 	run := func(src string) (any, error) {
 		tokenizer := NewTokenizer(strings.NewReader(src))
 		return env.Evaluate(tokenizer)
@@ -72,14 +63,6 @@ func TestGoFunc(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	env.Define("foo", 42)
-	res, err = run(`get_val "foo"`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res != 42 {
-		t.Fatalf("expected 42, got %v", res)
-	}
 }
 
 func TestBugPanicTypeMismatch(t *testing.T) {
