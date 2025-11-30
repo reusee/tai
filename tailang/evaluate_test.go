@@ -422,3 +422,18 @@ func TestMethodReference(t *testing.T) {
 		t.Fatalf("got %v", res)
 	}
 }
+
+func TestTypeAsArgument(t *testing.T) {
+	env := NewEnv()
+	env.Define("foo", GoFunc{
+		Name: "foo",
+		Func: func(t reflect.Type) reflect.Type {
+			return reflect.PointerTo(t)
+		},
+	})
+	src := `foo int`
+	_, err := env.Evaluate(NewTokenizer(strings.NewReader(src)))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
