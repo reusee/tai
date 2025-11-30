@@ -122,6 +122,24 @@ func NewEnv() *Env {
 		e.Define(name, t)
 	}
 
+	// Reflect
+	for name, fn := range map[string]any{
+		"slice_of":   reflect.SliceOf,
+		"map_of":     reflect.MapOf,
+		"array_of":   reflect.ArrayOf,
+		"chan_of":    reflect.ChanOf,
+		"pointer_to": reflect.PointerTo,
+		"func_of":    reflect.FuncOf,
+	} {
+		e.Define(name, GoFunc{
+			Name: name,
+			Func: fn,
+		})
+	}
+	e.Define("recv_dir", reflect.RecvDir)
+	e.Define("send_dir", reflect.SendDir)
+	e.Define("both_dir", reflect.BothDir)
+
 	RegisterStdLib(e)
 	return e
 }
