@@ -42,20 +42,6 @@ func NewEnv() *Env {
 				Name: "type",
 				Func: TypeOf,
 			},
-			"map_of": GoFunc{
-				Name: "map_of",
-				Func: reflect.MapOf,
-			},
-			"slice_of": GoFunc{
-				Name: "slice_of",
-				Func: reflect.SliceOf,
-			},
-			"chan_of": GoFunc{
-				Name: "chan_of",
-				Func: func(t reflect.Type) reflect.Type {
-					return reflect.ChanOf(reflect.BothDir, t)
-				},
-			},
 
 			"len":       Len,
 			"cap":       Cap,
