@@ -98,22 +98,16 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (_ any,
 	return lhs, nil
 }
 
-func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool, pipeIndex int) (_ any, err error) {
+func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool, pipeIndex int) (res any, err error) {
 	t, err := tokenizer.Current()
 	if err != nil {
 		return nil, err
 	}
 	startPos := t.Pos
 
-	defer func() {
-		if err != nil {
-			err = WithPos(err, startPos)
-		}
-	}()
-
 	if t.Kind == TokenString {
 		if hasPipe {
-			return nil, fmt.Errorf("cannot pipe into string literal")
+			return nil, WithPos(fmt.Errorf("cannot pipe into string literal"), startPos)
 		}
 		tokenizer.Consume()
 		return t.Text, nil
@@ -121,7 +115,7 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 
 	if t.Kind == TokenNumber {
 		if hasPipe {
-			return nil, fmt.Errorf("cannot pipe into number literal")
+			return nil, WithPos(fmt.Errorf("cannot pipe into number literal"), startPos)
 		}
 		tokenizer.Consume()
 		if strings.ContainsAny(t.Text, ".eE") {
@@ -133,7 +127,7 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 			if err == nil {
 				return bf, nil
 			}
-			return nil, err
+			return nil, WithPos(err, startPos)
 		}
 		i, err := strconv.ParseInt(t.Text, 10, 0)
 		if err == nil {
@@ -143,34 +137,38 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipedVa
 		if _, ok := bi.SetString(t.Text, 10); ok {
 			return bi, nil
 		}
-		return nil, fmt.Errorf("invalid number: %s", t.Text)
+		return nil, WithPos(fmt.Errorf("invalid number: %s", t.Text), startPos)
 	}
 
 	if t.Kind == TokenSymbol && t.Text == "(" {
 		if hasPipe {
-			return nil, fmt.Errorf("cannot pipe into parenthesized expression")
+			return nil, WithPos(fmt.Errorf("cannot pipe into parenthesized expression"), startPos)
 		}
 		tokenizer.Consume()
 		val, err := e.evalExpr(tokenizer, expectedType)
 		if err != nil {
-			return nil, err
+			return nil, WithPos(err, startPos)
 		}
 		t, err = tokenizer.Current()
 		if err != nil {
-			return nil, err
+			return nil, WithPos(err, startPos)
 		}
 		if t.Text != ")" {
-			return nil, fmt.Errorf("expected )")
+			return nil, WithPos(fmt.Errorf("expected )"), startPos)
 		}
 		tokenizer.Consume()
 		return val, nil
 	}
 
 	if t.Kind == TokenIdentifier || t.Kind == TokenSymbol || t.Kind == TokenUnquotedString {
-		return e.evalCall(tokenizer, t, expectedType, pipedVal, hasPipe, pipeLast, pipeIndex)
+		res, err := e.evalCall(tokenizer, t, expectedType, pipedVal, hasPipe, pipeLast, pipeIndex)
+		if err != nil {
+			return nil, WithPos(err, startPos)
+		}
+		return res, nil
 	}
 
-	return nil, fmt.Errorf("unexpected token kind: %v", t.Kind)
+	return nil, WithPos(fmt.Errorf("unexpected token kind: %v", t.Kind), startPos)
 }
 
 func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type, pipedVal any, hasPipe bool, pipeLast bool, pipeIndex int) (any, error) {
@@ -238,16 +236,42 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 	var callVal reflect.Value
 	var isWrapped bool
 	if typ.Kind() == reflect.Struct {
-		ptr := reflect.New(typ)
-		ptr.Elem().Set(v)
-		callVal = ptr
-		isWrapped = true
+		shouldWrap := false
+		// Peek for named params
+		next, err := tokenizer.Current()
+		if err == nil && next.Kind == TokenNamedParam {
+			shouldWrap = true
+		} else {
+			// Not forced by named params. Check if we can avoid wrapping.
+			if _, ok := val.(Function); ok {
+				// Value implements Function. No wrap needed.
+				shouldWrap = false
+			} else if v.MethodByName("Call").IsValid() {
+				// Value has Call method. No wrap needed.
+				shouldWrap = false
+			} else if _, ok := reflect.PointerTo(typ).MethodByName("Call"); ok {
+				// Pointer has Call method. Must wrap.
+				shouldWrap = true
+			} else {
+				// Just data? Fallback to no wrap
+				shouldWrap = false
+			}
+		}
+
+		if shouldWrap {
+			ptr := reflect.New(typ)
+			ptr.Elem().Set(v)
+			callVal = ptr
+			isWrapped = true
+		} else {
+			callVal = v
+		}
 	} else {
 		callVal = v
 	}
 
 	// Named parameters
-	seenParams := make(map[string]bool)
+	var seenParams map[string]bool
 	for {
 		next, err := tokenizer.Current()
 		if err == io.EOF {
@@ -258,6 +282,10 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		}
 		if next.Kind != TokenNamedParam {
 			break
+		}
+
+		if seenParams == nil {
+			seenParams = make(map[string]bool)
 		}
 
 		paramName := strings.TrimPrefix(next.Text, ".")
