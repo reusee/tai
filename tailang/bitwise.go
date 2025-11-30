@@ -42,18 +42,25 @@ func BitOr(a, b any) (any, error) {
 	return nil, fmt.Errorf("invalid operands for |: %v, %v", a, b)
 }
 
-func BitXor(a, b any) (any, error) {
-	if biA, ok := AsBigInt(a); ok {
-		if biB, ok := AsBigInt(b); ok {
-			return new(big.Int).Xor(biA, biB), nil
-		}
+func BitXor(a any, args ...any) (any, error) {
+	if len(args) == 0 {
+		return BitNot(a)
 	}
-	if aInt, ok := AsInt(a); ok {
-		if bInt, ok := AsInt(b); ok {
-			return aInt ^ bInt, nil
+	if len(args) == 1 {
+		b := args[0]
+		if biA, ok := AsBigInt(a); ok {
+			if biB, ok := AsBigInt(b); ok {
+				return new(big.Int).Xor(biA, biB), nil
+			}
 		}
+		if aInt, ok := AsInt(a); ok {
+			if bInt, ok := AsInt(b); ok {
+				return aInt ^ bInt, nil
+			}
+		}
+		return nil, fmt.Errorf("invalid operands for ^: %v, %v", a, b)
 	}
-	return nil, fmt.Errorf("invalid operands for ^: %v, %v", a, b)
+	return nil, fmt.Errorf("invalid number of arguments for ^")
 }
 
 func BitClear(a, b any) (any, error) {

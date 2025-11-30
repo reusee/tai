@@ -47,9 +47,16 @@ func (w While) Call(env *Env, stream TokenStream, expectedType reflect.Type) (an
 
 		lastRes, err = env.NewScope().Evaluate(NewSliceTokenStream(bodyBlock.Body))
 		if err != nil {
+			if _, ok := err.(BreakSignal); ok {
+				break
+			}
+			if _, ok := err.(ContinueSignal); ok {
+				goto EvaluateCond
+			}
 			return nil, err
 		}
 
+	EvaluateCond:
 		condVal, err = env.Evaluate(NewSliceTokenStream(recorder.tokens))
 		if err != nil {
 			return nil, err

@@ -56,11 +56,41 @@ func (f Foreach) Call(env *Env, stream TokenStream, expectedType reflect.Type) (
 
 			lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body.Body))
 			if err != nil {
+				if _, ok := err.(BreakSignal); ok {
+					break
+				}
+				if _, ok := err.(ContinueSignal); ok {
+					continue
+				}
+				return nil, err
+			}
+		}
+		return lastRes, nil
+	case reflect.Map:
+		var lastRes any
+		iter := vList.MapRange()
+		for iter.Next() {
+			key := iter.Key().Interface()
+
+			loopEnv := &Env{
+				Parent: env,
+				Vars:   make(map[string]any),
+			}
+			loopEnv.Define(varName, key)
+
+			lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body.Body))
+			if err != nil {
+				if _, ok := err.(BreakSignal); ok {
+					break
+				}
+				if _, ok := err.(ContinueSignal); ok {
+					continue
+				}
 				return nil, err
 			}
 		}
 		return lastRes, nil
 	default:
-		return nil, fmt.Errorf("foreach expects a list, got %T", listVal)
+		return nil, fmt.Errorf("foreach expects a list or map, got %T", listVal)
 	}
 }

@@ -150,3 +150,120 @@ func Slice(container any, args ...any) (any, error) {
 	}
 	return nil, fmt.Errorf("type %T does not support slicing", container)
 }
+
+func SetIndex(container any, key any, val any) error {
+	v := reflect.ValueOf(container)
+	switch v.Kind() {
+	case reflect.Slice, reflect.Array:
+		idx, ok := AsInt(key)
+		if !ok {
+			return fmt.Errorf("index must be integer")
+		}
+		if idx < 0 || idx >= v.Len() {
+			return fmt.Errorf("index out of range")
+		}
+		elemType := v.Type().Elem()
+		valV, err := PrepareAssign(val, elemType)
+		if err != nil {
+			return err
+		}
+		v.Index(idx).Set(valV)
+		return nil
+	case reflect.Map:
+		keyV, err := PrepareAssign(key, v.Type().Key())
+		if err != nil {
+			return fmt.Errorf("invalid map key: %w", err)
+		}
+		valV, err := PrepareAssign(val, v.Type().Elem())
+		if err != nil {
+			return fmt.Errorf("invalid map value: %w", err)
+		}
+		v.SetMapIndex(keyV, valV)
+		return nil
+	}
+	return fmt.Errorf("type %T does not support setting index", container)
+}
+
+func Send(ch any, val any) error {
+	v := reflect.ValueOf(ch)
+	if v.Kind() != reflect.Chan {
+		return fmt.Errorf("send expects channel, got %T", ch)
+	}
+	valV, err := PrepareAssign(val, v.Type().Elem())
+	if err != nil {
+		return err
+	}
+	v.Send(valV)
+	return nil
+}
+
+func Recv(ch any) (any, error) {
+	v := reflect.ValueOf(ch)
+	if v.Kind() != reflect.Chan {
+		return nil, fmt.Errorf("recv expects channel, got %T", ch)
+	}
+	val, ok := v.Recv()
+	if !ok {
+		return nil, nil
+	}
+	return val.Interface(), nil
+}
+
+type Break struct{}
+
+var _ Function = Break{}
+
+func (b Break) FunctionName() string {
+	return "break"
+}
+
+func (b Break) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	return nil, BreakSignal{}
+}
+
+type Continue struct{}
+
+var _ Function = Continue{}
+
+func (c Continue) FunctionName() string {
+	return "continue"
+}
+
+func (c Continue) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	return nil, ContinueSignal{}
+}
+
+type Return struct{}
+
+var _ Function = Return{}
+
+func (r Return) FunctionName() string {
+	return "return"
+}
+
+func (r Return) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	val, err := env.evalExpr(stream, nil)
+	if err != nil {
+		return nil, err
+	}
+	return nil, ReturnSignal{Val: val}
+}
+
+type Go struct{}
+
+var _ Function = Go{}
+
+func (g Go) FunctionName() string {
+	return "go"
+}
+
+func (g Go) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	block, err := ParseBlock(stream)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
+	}()
+	return nil, nil
+}

@@ -74,6 +74,9 @@ func (u UserFunc) CallArgs(args []any) (any, error) {
 	bodyStream := NewSliceTokenStream(u.Body.Body)
 	res, err := callEnv.Evaluate(bodyStream)
 	if err != nil {
+		if ret, ok := err.(ReturnSignal); ok {
+			return ret.Val, nil
+		}
 		return nil, err
 	}
 	return res, nil

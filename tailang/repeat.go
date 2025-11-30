@@ -52,6 +52,12 @@ func (r Repeat) Call(env *Env, stream TokenStream, expectedType reflect.Type) (a
 
 		lastRes, err = loopEnv.Evaluate(NewSliceTokenStream(body.Body))
 		if err != nil {
+			if _, ok := err.(BreakSignal); ok {
+				break
+			}
+			if _, ok := err.(ContinueSignal); ok {
+				continue
+			}
 			return nil, err
 		}
 	}

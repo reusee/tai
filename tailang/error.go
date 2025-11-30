@@ -82,3 +82,23 @@ func runeWidth(r rune) int {
 	}
 	return 1
 }
+
+type BreakSignal struct{}
+
+func (b BreakSignal) Error() string {
+	return "break"
+}
+
+type ContinueSignal struct{}
+
+func (c ContinueSignal) Error() string {
+	return "continue"
+}
+
+type ReturnSignal struct {
+	Val any
+}
+
+func (r ReturnSignal) Error() string {
+	return "return"
+}
