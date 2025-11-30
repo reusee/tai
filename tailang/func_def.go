@@ -19,18 +19,27 @@ func (f FuncDef) Call(env *Env, stream TokenStream, expectedType reflect.Type) (
 	if err != nil {
 		return nil, err
 	}
-	if tok.Kind != TokenIdentifier && tok.Kind != TokenUnquotedString {
-		return nil, fmt.Errorf("expected func name")
-	}
-	name := tok.Text
-	stream.Consume()
 
-	if IsKeyword(name) {
-		return nil, fmt.Errorf("cannot define keyword: %s", name)
-	}
+	var name string
+	isAnonymous := false
 
-	if _, ok := env.Vars[name]; ok {
-		return nil, fmt.Errorf("variable %s already defined", name)
+	if tok.Text == "(" {
+		isAnonymous = true
+		name = "anonymous"
+	} else {
+		if tok.Kind != TokenIdentifier && tok.Kind != TokenUnquotedString {
+			return nil, fmt.Errorf("expected func name")
+		}
+		name = tok.Text
+		stream.Consume()
+
+		if IsKeyword(name) {
+			return nil, fmt.Errorf("cannot define keyword: %s", name)
+		}
+
+		if _, ok := env.Vars[name]; ok {
+			return nil, fmt.Errorf("variable %s already defined", name)
+		}
 	}
 
 	// Params
@@ -82,6 +91,8 @@ func (f FuncDef) Call(env *Env, stream TokenStream, expectedType reflect.Type) (
 		DefinitionEnv: env,
 	}
 
-	env.Define(name, uf)
+	if !isAnonymous {
+		env.Define(name, uf)
+	}
 	return uf, nil
 }

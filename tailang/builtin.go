@@ -283,3 +283,15 @@ func Clear(c any) {
 		}
 	}
 }
+
+func Deref(v any) (any, error) {
+	val := reflect.ValueOf(v)
+	if val.Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("expected pointer, got %T", v)
+	}
+	return val.Elem().Interface(), nil
+}
+
+func Zero(t reflect.Type) any {
+	return reflect.Zero(t).Interface()
+}

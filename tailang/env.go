@@ -54,6 +54,8 @@ func NewEnv() *Env {
 	e.Define("append", Append)
 	e.Define("copy", Copy)
 	e.Define("delete", Delete)
+	e.Define("deref", Deref)
+	e.Define("zero", Zero)
 	e.Define("close", Close)
 	e.Define("panic", Panic)
 	e.Define("recover", Recover)

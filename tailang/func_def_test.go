@@ -238,3 +238,19 @@ func TestRecursionFactorial(t *testing.T) {
 		t.Fatalf("expected 120, got %v", res)
 	}
 }
+
+func TestAnonymousFunc(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def f (func(a) { + a 1 })
+		f 41
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 42 {
+		t.Fatalf("expected 42, got %v", res)
+	}
+}
