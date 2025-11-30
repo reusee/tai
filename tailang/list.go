@@ -47,7 +47,7 @@ func (l List) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any
 			return nil, err
 		}
 
-		vVal, err := prepareAssign(val, elemType)
+		vVal, err := PrepareAssign(val, elemType)
 		if err != nil {
 			return nil, err
 		}

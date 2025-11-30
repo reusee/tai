@@ -28,7 +28,7 @@ func (r Repeat) Call(env *Env, stream TokenStream, expectedType reflect.Type) (a
 	if err != nil {
 		return nil, err
 	}
-	count, ok := asInt(countVal)
+	count, ok := AsInt(countVal)
 	if !ok {
 		return nil, fmt.Errorf("repeat expects integer count")
 	}

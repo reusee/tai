@@ -6,15 +6,15 @@ func Eq(a, b any) bool {
 	if a == b {
 		return true
 	}
-	if isFloat(a) || isFloat(b) {
-		bfA, okA := asBigFloat(a)
-		bfB, okB := asBigFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		bfA, okA := AsBigFloat(a)
+		bfB, okB := AsBigFloat(b)
 		if okA && okB {
 			return bfA.Cmp(bfB) == 0
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) == 0
 		}
 	}
@@ -31,15 +31,15 @@ func Lt(a, b any) (bool, error) {
 			return as < bs, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		bfA, okA := asBigFloat(a)
-		bfB, okB := asBigFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		bfA, okA := AsBigFloat(a)
+		bfB, okB := AsBigFloat(b)
 		if okA && okB {
 			return bfA.Cmp(bfB) < 0, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) < 0, nil
 		}
 	}
@@ -52,15 +52,15 @@ func Le(a, b any) (bool, error) {
 			return as <= bs, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		bfA, okA := asBigFloat(a)
-		bfB, okB := asBigFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		bfA, okA := AsBigFloat(a)
+		bfB, okB := AsBigFloat(b)
 		if okA && okB {
 			return bfA.Cmp(bfB) <= 0, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) <= 0, nil
 		}
 	}
@@ -73,15 +73,15 @@ func Gt(a, b any) (bool, error) {
 			return as > bs, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		bfA, okA := asBigFloat(a)
-		bfB, okB := asBigFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		bfA, okA := AsBigFloat(a)
+		bfB, okB := AsBigFloat(b)
 		if okA && okB {
 			return bfA.Cmp(bfB) > 0, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) > 0, nil
 		}
 	}
@@ -94,15 +94,15 @@ func Ge(a, b any) (bool, error) {
 			return as >= bs, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		bfA, okA := asBigFloat(a)
-		bfB, okB := asBigFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		bfA, okA := AsBigFloat(a)
+		bfB, okB := AsBigFloat(b)
 		if okA && okB {
 			return bfA.Cmp(bfB) >= 0, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return biA.Cmp(biB) >= 0, nil
 		}
 	}

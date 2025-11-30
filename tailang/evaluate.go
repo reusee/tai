@@ -405,7 +405,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 
 			for {
 				if usePipe && !pipeLast && logicalIdx == pipeIndex {
-					vArg, err := prepareAssign(pipedVal, elemType)
+					vArg, err := PrepareAssign(pipedVal, elemType)
 					if err != nil {
 						return nil, err
 					}
@@ -448,7 +448,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 					return nil, err
 				}
 
-				vArg, err := prepareAssign(val, elemType)
+				vArg, err := PrepareAssign(val, elemType)
 				if err != nil {
 					return nil, err
 				}
@@ -457,7 +457,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 			}
 
 			if usePipe && pipeLast {
-				vArg, err := prepareAssign(pipedVal, elemType)
+				vArg, err := PrepareAssign(pipedVal, elemType)
 				if err != nil {
 					return nil, err
 				}
@@ -483,7 +483,7 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 				}
 			}
 
-			vArg, err := prepareAssign(val, argType)
+			vArg, err := PrepareAssign(val, argType)
 			if err != nil {
 				return nil, err
 			}
@@ -524,7 +524,7 @@ func findField(v reflect.Value, name string) reflect.Value {
 }
 
 func setField(v reflect.Value, val any) error {
-	valV, err := prepareAssign(val, v.Type())
+	valV, err := PrepareAssign(val, v.Type())
 	if err != nil {
 		return err
 	}
@@ -532,7 +532,7 @@ func setField(v reflect.Value, val any) error {
 	return nil
 }
 
-func convertType(v reflect.Value, t reflect.Type) reflect.Value {
+func ConvertType(v reflect.Value, t reflect.Type) reflect.Value {
 	if v.Type() == t {
 		return v
 	}
@@ -589,7 +589,7 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 								valV = reflect.Zero(t.Out(0))
 							} else {
 								valV = reflect.ValueOf(res)
-								valV = convertType(valV, t.Out(0))
+								valV = ConvertType(valV, t.Out(0))
 							}
 							results[0] = valV
 							// Fill middles with zero
@@ -604,7 +604,7 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 							valV = reflect.Zero(t.Out(0))
 						} else {
 							valV = reflect.ValueOf(res)
-							valV = convertType(valV, t.Out(0))
+							valV = ConvertType(valV, t.Out(0))
 						}
 						results[0] = valV
 						// Fill remaining with zero
@@ -619,7 +619,7 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 		}
 	}
 
-	if isNumeric(v.Kind()) && isNumeric(t.Kind()) {
+	if IsNumeric(v.Kind()) && IsNumeric(t.Kind()) {
 		if v.CanConvert(t) {
 			return v.Convert(t)
 		}
@@ -638,7 +638,7 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 		ok := true
 		for i := 0; i < v.Len(); i++ {
 			elemVal := v.Index(i).Interface()
-			convElem, err := prepareAssign(elemVal, elemType)
+			convElem, err := PrepareAssign(elemVal, elemType)
 			if err != nil {
 				ok = false
 				break
@@ -653,7 +653,7 @@ func convertType(v reflect.Value, t reflect.Type) reflect.Value {
 	return v
 }
 
-func isNumeric(k reflect.Kind) bool {
+func IsNumeric(k reflect.Kind) bool {
 	switch k {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
@@ -663,7 +663,7 @@ func isNumeric(k reflect.Kind) bool {
 	return false
 }
 
-func prepareAssign(val any, targetType reflect.Type) (reflect.Value, error) {
+func PrepareAssign(val any, targetType reflect.Type) (reflect.Value, error) {
 	if val == nil {
 		switch targetType.Kind() {
 		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
@@ -674,7 +674,7 @@ func prepareAssign(val any, targetType reflect.Type) (reflect.Value, error) {
 	}
 
 	valV := reflect.ValueOf(val)
-	valV = convertType(valV, targetType)
+	valV = ConvertType(valV, targetType)
 	if !valV.Type().AssignableTo(targetType) {
 		return reflect.Value{}, fmt.Errorf("cannot assign %v (type %v) to %v", val, valV.Type(), targetType)
 	}

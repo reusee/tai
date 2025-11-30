@@ -7,8 +7,8 @@ import (
 )
 
 func Plus(a, b any) any {
-	if aInt, ok := asInt(a); ok {
-		if bInt, ok := asInt(b); ok {
+	if aInt, ok := AsInt(a); ok {
+		if bInt, ok := AsInt(b); ok {
 			res := aInt + bInt
 			if (res^aInt)&(res^bInt) < 0 {
 				return new(big.Int).Add(big.NewInt(int64(aInt)), big.NewInt(int64(bInt)))
@@ -16,22 +16,22 @@ func Plus(a, b any) any {
 			return res
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		if !isBig(a) && !isBig(b) {
-			fA, okA := asFloat(a)
-			fB, okB := asFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		if !IsBig(a) && !IsBig(b) {
+			fA, okA := AsFloat(a)
+			fB, okB := AsFloat(b)
 			if okA && okB {
 				return fA + fB
 			}
 		}
-		if bfA, ok := asBigFloat(a); ok {
-			if bfB, ok := asBigFloat(b); ok {
+		if bfA, ok := AsBigFloat(a); ok {
+			if bfB, ok := AsBigFloat(b); ok {
 				return new(big.Float).Add(bfA, bfB)
 			}
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return new(big.Int).Add(biA, biB)
 		}
 	}
@@ -39,8 +39,8 @@ func Plus(a, b any) any {
 }
 
 func Minus(a, b any) (any, error) {
-	if aInt, ok := asInt(a); ok {
-		if bInt, ok := asInt(b); ok {
+	if aInt, ok := AsInt(a); ok {
+		if bInt, ok := AsInt(b); ok {
 			res := aInt - bInt
 			if (aInt^bInt) < 0 && (aInt^res) < 0 {
 				return new(big.Int).Sub(big.NewInt(int64(aInt)), big.NewInt(int64(bInt))), nil
@@ -48,22 +48,22 @@ func Minus(a, b any) (any, error) {
 			return res, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		if !isBig(a) && !isBig(b) {
-			fA, okA := asFloat(a)
-			fB, okB := asFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		if !IsBig(a) && !IsBig(b) {
+			fA, okA := AsFloat(a)
+			fB, okB := AsFloat(b)
 			if okA && okB {
 				return fA - fB, nil
 			}
 		}
-		if bfA, ok := asBigFloat(a); ok {
-			if bfB, ok := asBigFloat(b); ok {
+		if bfA, ok := AsBigFloat(a); ok {
+			if bfB, ok := AsBigFloat(b); ok {
 				return new(big.Float).Sub(bfA, bfB), nil
 			}
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return new(big.Int).Sub(biA, biB), nil
 		}
 	}
@@ -71,8 +71,8 @@ func Minus(a, b any) (any, error) {
 }
 
 func Multiply(a, b any) (any, error) {
-	if aInt, ok := asInt(a); ok {
-		if bInt, ok := asInt(b); ok {
+	if aInt, ok := AsInt(a); ok {
+		if bInt, ok := AsInt(b); ok {
 			res := aInt * bInt
 			if aInt != 0 && res/aInt != bInt {
 				return new(big.Int).Mul(big.NewInt(int64(aInt)), big.NewInt(int64(bInt))), nil
@@ -80,22 +80,22 @@ func Multiply(a, b any) (any, error) {
 			return res, nil
 		}
 	}
-	if isFloat(a) || isFloat(b) {
-		if !isBig(a) && !isBig(b) {
-			fA, okA := asFloat(a)
-			fB, okB := asFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		if !IsBig(a) && !IsBig(b) {
+			fA, okA := AsFloat(a)
+			fB, okB := AsFloat(b)
 			if okA && okB {
 				return fA * fB, nil
 			}
 		}
-		if bfA, ok := asBigFloat(a); ok {
-			if bfB, ok := asBigFloat(b); ok {
+		if bfA, ok := AsBigFloat(a); ok {
+			if bfB, ok := AsBigFloat(b); ok {
 				return new(big.Float).Mul(bfA, bfB), nil
 			}
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			return new(big.Int).Mul(biA, biB), nil
 		}
 	}
@@ -103,10 +103,10 @@ func Multiply(a, b any) (any, error) {
 }
 
 func Divide(a, b any) (any, error) {
-	if isFloat(a) || isFloat(b) {
-		if !isBig(a) && !isBig(b) {
-			fA, okA := asFloat(a)
-			fB, okB := asFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		if !IsBig(a) && !IsBig(b) {
+			fA, okA := AsFloat(a)
+			fB, okB := AsFloat(b)
 			if okA && okB {
 				if fB == 0 {
 					return nil, fmt.Errorf("float division by zero")
@@ -114,8 +114,8 @@ func Divide(a, b any) (any, error) {
 				return fA / fB, nil
 			}
 		}
-		if bfA, ok := asBigFloat(a); ok {
-			if bfB, ok := asBigFloat(b); ok {
+		if bfA, ok := AsBigFloat(a); ok {
+			if bfB, ok := AsBigFloat(b); ok {
 				if bfB.Sign() == 0 {
 					return nil, fmt.Errorf("float division by zero")
 				}
@@ -123,16 +123,16 @@ func Divide(a, b any) (any, error) {
 			}
 		}
 	}
-	if aInt, ok := asInt(a); ok {
-		if bInt, ok := asInt(b); ok {
+	if aInt, ok := AsInt(a); ok {
+		if bInt, ok := AsInt(b); ok {
 			if bInt == 0 {
 				return nil, fmt.Errorf("integer division by zero")
 			}
 			return aInt / bInt, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			if biB.Sign() == 0 {
 				return nil, fmt.Errorf("integer division by zero")
 			}
@@ -143,16 +143,16 @@ func Divide(a, b any) (any, error) {
 }
 
 func Mod(a, b any) (any, error) {
-	if isFloat(a) || isFloat(b) {
-		if !isBig(a) && !isBig(b) {
-			fA, okA := asFloat(a)
-			fB, okB := asFloat(b)
+	if IsFloat(a) || IsFloat(b) {
+		if !IsBig(a) && !IsBig(b) {
+			fA, okA := AsFloat(a)
+			fB, okB := AsFloat(b)
 			if okA && okB {
 				return math.Mod(fA, fB), nil
 			}
 		}
-		if bfA, ok := asBigFloat(a); ok {
-			if bfB, ok := asBigFloat(b); ok {
+		if bfA, ok := AsBigFloat(a); ok {
+			if bfB, ok := AsBigFloat(b); ok {
 				// math.Mod style for BigFloat? big.Float doesn't support Mod directly.
 				// Promote to float64 if possible or implement Mod.
 				// Given lack of direct BigFloat Mod, fallback to float64 for now
@@ -166,16 +166,16 @@ func Mod(a, b any) (any, error) {
 			}
 		}
 	}
-	if aInt, ok := asInt(a); ok {
-		if bInt, ok := asInt(b); ok {
+	if aInt, ok := AsInt(a); ok {
+		if bInt, ok := AsInt(b); ok {
 			if bInt == 0 {
 				return nil, fmt.Errorf("integer modulo by zero")
 			}
 			return aInt % bInt, nil
 		}
 	}
-	if biA, ok := asBigInt(a); ok {
-		if biB, ok := asBigInt(b); ok {
+	if biA, ok := AsBigInt(a); ok {
+		if biB, ok := AsBigInt(b); ok {
 			if biB.Sign() == 0 {
 				return nil, fmt.Errorf("integer modulo by zero")
 			}
@@ -185,7 +185,7 @@ func Mod(a, b any) (any, error) {
 	return nil, fmt.Errorf("invalid operands for %%: %v, %v", a, b)
 }
 
-func asInt(v any) (int, bool) {
+func AsInt(v any) (int, bool) {
 	switch val := v.(type) {
 	case int:
 		return val, true
@@ -211,21 +211,21 @@ func asInt(v any) (int, bool) {
 	return 0, false
 }
 
-func asFloat(v any) (float64, bool) {
+func AsFloat(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
 		return val, true
 	case float32:
 		return float64(val), true
 	}
-	if i, ok := asInt(v); ok {
+	if i, ok := AsInt(v); ok {
 		return float64(i), true
 	}
 	return 0, false
 }
 
-func asBigInt(v any) (*big.Int, bool) {
-	if i, ok := asInt(v); ok {
+func AsBigInt(v any) (*big.Int, bool) {
+	if i, ok := AsInt(v); ok {
 		return big.NewInt(int64(i)), true
 	}
 	if bi, ok := v.(*big.Int); ok {
@@ -234,20 +234,20 @@ func asBigInt(v any) (*big.Int, bool) {
 	return nil, false
 }
 
-func asBigFloat(v any) (*big.Float, bool) {
+func AsBigFloat(v any) (*big.Float, bool) {
 	if bf, ok := v.(*big.Float); ok {
 		return bf, true
 	}
 	if bi, ok := v.(*big.Int); ok {
 		return new(big.Float).SetInt(bi), true
 	}
-	if f, ok := asFloat(v); ok {
+	if f, ok := AsFloat(v); ok {
 		return big.NewFloat(f), true
 	}
 	return nil, false
 }
 
-func isFloat(v any) bool {
+func IsFloat(v any) bool {
 	switch v.(type) {
 	case float32, float64, *big.Float:
 		return true
@@ -255,7 +255,7 @@ func isFloat(v any) bool {
 	return false
 }
 
-func isBig(v any) bool {
+func IsBig(v any) bool {
 	switch v.(type) {
 	case *big.Int, *big.Float:
 		return true

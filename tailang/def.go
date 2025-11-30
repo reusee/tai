@@ -51,7 +51,7 @@ func (d Def) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 			}
 		} else {
 			valV := reflect.ValueOf(value)
-			valV = convertType(valV, d.Type)
+			valV = ConvertType(valV, d.Type)
 			if !valV.Type().AssignableTo(d.Type) {
 				return nil, fmt.Errorf("cannot assign %v to %v", valV.Type(), d.Type)
 			}

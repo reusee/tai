@@ -33,6 +33,23 @@ func NewEnv() *Env {
 				Name: "type",
 				Func: TypeOf,
 			},
+
+			"len":     Len,
+			"cap":     Cap,
+			"make":    Make,
+			"new":     New,
+			"append":  Append,
+			"copy":    Copy,
+			"delete":  Delete,
+			"close":   Close,
+			"panic":   Panic,
+			"recover": Recover,
+			"complex": Complex,
+			"real":    Real,
+			"imag":    Imag,
+
+			"index": Index,
+			"slice": Slice,
 		},
 	}
 
@@ -49,6 +66,18 @@ func NewEnv() *Env {
 		"<=": Le,
 		">":  Gt,
 		">=": Ge,
+
+		"&":       BitAnd,
+		"bit_or":  BitOr,
+		"^":       BitXor,
+		"&^":      BitClear,
+		"<<":      LShift,
+		">>":      RShift,
+		"bit_not": BitNot,
+
+		"!":  Not,
+		"&&": LogicAnd,
+		"||": LogicOr,
 	} {
 		e.Define(name, GoFunc{
 			Name: name,
