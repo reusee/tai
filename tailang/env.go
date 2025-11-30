@@ -52,7 +52,9 @@ func NewEnv() *Env {
 			},
 			"chan_of": GoFunc{
 				Name: "chan_of",
-				Func: reflect.ChanOf,
+				Func: func(t reflect.Type) reflect.Type {
+					return reflect.ChanOf(reflect.BothDir, t)
+				},
 			},
 
 			"len":       Len,
