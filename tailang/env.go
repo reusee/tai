@@ -18,133 +18,111 @@ type Env struct {
 
 func NewEnv() *Env {
 	e := &Env{
-		Vars: map[string]any{
-			"true":  true,
-			"false": false,
-
-			"[":    List{},
-			"{":    BlockDef{},
-			"def":  Def{},
-			"set":  Set{},
-			"func": FuncDef{},
-			"do":   Do{},
-
-			"if":      If{},
-			"while":   While{},
-			"switch":  Switch{},
-			"repeat":  Repeat{},
-			"foreach": Foreach{},
-			"select":  Select{},
-
-			"break":    Break{},
-			"continue": Continue{},
-			"return":   Return{},
-			"defer":    Defer{},
-			"go":       Go{},
-
-			"type": GoFunc{
-				Name: "type",
-				Func: TypeOf,
-			},
-
-			"len":       Len,
-			"cap":       Cap,
-			"make":      Make,
-			"new":       New,
-			"append":    Append,
-			"copy":      Copy,
-			"delete":    Delete,
-			"close":     Close,
-			"panic":     Panic,
-			"recover":   Recover,
-			"complex":   Complex,
-			"real":      Real,
-			"imag":      Imag,
-			"index":     Index,
-			"slice":     Slice,
-			"set_index": SetIndex,
-			"send":      Send,
-			"recv":      Recv,
-		},
+		Vars: make(map[string]any),
 	}
 
-	// Ops
-	for name, fn := range map[string]any{
-		"+":  Plus,
-		"-":  Minus,
-		"*":  Multiply,
-		"/":  Divide,
-		"%":  Mod,
-		"==": Eq,
-		"!=": Ne,
-		"<":  Lt,
-		"<=": Le,
-		">":  Gt,
-		">=": Ge,
+	e.Define("true", true)
+	e.Define("false", false)
 
-		"&":       BitAnd,
-		"bit_or":  BitOr,
-		"^":       BitXor,
-		"&^":      BitClear,
-		"<<":      LShift,
-		">>":      RShift,
-		"bit_not": BitNot,
+	e.Define("[", List{})
+	e.Define("{", BlockDef{})
+	e.Define("def", Def{})
+	e.Define("set", Set{})
+	e.Define("func", FuncDef{})
+	e.Define("do", Do{})
 
-		"!":  Not,
-		"&&": LogicAnd,
-		"||": LogicOr,
-	} {
-		e.Define(name, GoFunc{
-			Name: name,
-			Func: fn,
-		})
-	}
+	e.Define("if", If{})
+	e.Define("while", While{})
+	e.Define("switch", Switch{})
+	e.Define("repeat", Repeat{})
+	e.Define("foreach", Foreach{})
+	e.Define("select", Select{})
 
-	// Types
-	for name, t := range map[string]reflect.Type{
-		"int":      reflect.TypeFor[int](),
-		"int8":     reflect.TypeFor[int8](),
-		"int16":    reflect.TypeFor[int16](),
-		"int32":    reflect.TypeFor[int32](),
-		"int64":    reflect.TypeFor[int64](),
-		"uint":     reflect.TypeFor[uint](),
-		"uint8":    reflect.TypeFor[uint8](),
-		"uint16":   reflect.TypeFor[uint16](),
-		"uint32":   reflect.TypeFor[uint32](),
-		"uint64":   reflect.TypeFor[uint64](),
-		"float32":  reflect.TypeFor[float32](),
-		"float64":  reflect.TypeFor[float64](),
-		"bool":     reflect.TypeFor[bool](),
-		"string":   reflect.TypeFor[string](),
-		"byte":     reflect.TypeFor[byte](),
-		"rune":     reflect.TypeFor[rune](),
-		"any":      reflect.TypeFor[any](),
-		"block":    reflect.TypeFor[*Block](),
-		"bigint":   reflect.TypeFor[*big.Int](),
-		"bigfloat": reflect.TypeFor[*big.Float](),
-	} {
-		e.Define(name, t)
-	}
+	e.Define("break", Break{})
+	e.Define("continue", Continue{})
+	e.Define("return", Return{})
+	e.Define("defer", Defer{})
+	e.Define("go", Go{})
 
-	// Reflect
-	for name, fn := range map[string]any{
-		"slice_of":   reflect.SliceOf,
-		"map_of":     reflect.MapOf,
-		"array_of":   reflect.ArrayOf,
-		"chan_of":    reflect.ChanOf,
-		"pointer_to": reflect.PointerTo,
-		"func_of":    reflect.FuncOf,
-	} {
-		e.Define(name, GoFunc{
-			Name: name,
-			Func: fn,
-		})
-	}
+	e.Define("type", TypeOf)
+
+	e.Define("len", Len)
+	e.Define("cap", Cap)
+	e.Define("make", Make)
+	e.Define("new", New)
+	e.Define("append", Append)
+	e.Define("copy", Copy)
+	e.Define("delete", Delete)
+	e.Define("close", Close)
+	e.Define("panic", Panic)
+	e.Define("recover", Recover)
+	e.Define("complex", Complex)
+	e.Define("real", Real)
+	e.Define("imag", Imag)
+	e.Define("index", Index)
+	e.Define("slice", Slice)
+	e.Define("set_index", SetIndex)
+	e.Define("send", Send)
+	e.Define("recv", Recv)
+
+	e.Define("+", Plus)
+	e.Define("-", Minus)
+	e.Define("*", Multiply)
+	e.Define("/", Divide)
+	e.Define("%", Mod)
+	e.Define("==", Eq)
+	e.Define("!=", Ne)
+	e.Define("<", Lt)
+	e.Define("<=", Le)
+	e.Define(">", Gt)
+	e.Define(">=", Ge)
+
+	e.Define("&", BitAnd)
+	e.Define("bit_or", BitOr)
+	e.Define("^", BitXor)
+	e.Define("&^", BitClear)
+	e.Define("<<", LShift)
+	e.Define(">>", RShift)
+	e.Define("bit_not", BitNot)
+
+	e.Define("!", Not)
+	e.Define("&&", LogicAnd)
+	e.Define("||", LogicOr)
+
+	e.Define("int", reflect.TypeFor[int]())
+	e.Define("int8", reflect.TypeFor[int8]())
+	e.Define("int16", reflect.TypeFor[int16]())
+	e.Define("int32", reflect.TypeFor[int32]())
+	e.Define("int64", reflect.TypeFor[int64]())
+	e.Define("uint", reflect.TypeFor[uint]())
+	e.Define("uint8", reflect.TypeFor[uint8]())
+	e.Define("uint16", reflect.TypeFor[uint16]())
+	e.Define("uint32", reflect.TypeFor[uint32]())
+	e.Define("uint64", reflect.TypeFor[uint64]())
+	e.Define("float32", reflect.TypeFor[float32]())
+	e.Define("float64", reflect.TypeFor[float64]())
+	e.Define("bool", reflect.TypeFor[bool]())
+	e.Define("string", reflect.TypeFor[string]())
+	e.Define("byte", reflect.TypeFor[byte]())
+	e.Define("rune", reflect.TypeFor[rune]())
+	e.Define("any", reflect.TypeFor[any]())
+	e.Define("block", reflect.TypeFor[*Block]())
+	e.Define("bigint", reflect.TypeFor[*big.Int]())
+	e.Define("bigfloat", reflect.TypeFor[*big.Float]())
+
+	e.Define("slice_of", reflect.SliceOf)
+	e.Define("map_of", reflect.MapOf)
+	e.Define("array_of", reflect.ArrayOf)
+	e.Define("chan_of", reflect.ChanOf)
+	e.Define("pointer_to", reflect.PointerTo)
+	e.Define("func_of", reflect.FuncOf)
+
 	e.Define("recv_dir", reflect.RecvDir)
 	e.Define("send_dir", reflect.SendDir)
 	e.Define("both_dir", reflect.BothDir)
 
 	RegisterStdLib(e)
+
 	return e
 }
 

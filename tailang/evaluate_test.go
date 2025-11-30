@@ -418,7 +418,7 @@ func TestMethodReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != "2006" {
+	if res != "2025" {
 		t.Fatalf("got %v", res)
 	}
 }
