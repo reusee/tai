@@ -136,6 +136,15 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type, pipe pi
 			return nil, err
 		}
 		tokenizer.Consume()
+
+		if strings.HasSuffix(t.Text, "i") {
+			f, err := strconv.ParseFloat(strings.TrimSuffix(t.Text, "i"), 64)
+			if err == nil && !math.IsInf(f, 0) {
+				return complex(0, f), nil
+			}
+			return nil, WithPos(fmt.Errorf("invalid imaginary literal: %s", t.Text), startPos)
+		}
+
 		if strings.ContainsAny(t.Text, ".eE") {
 			f, err := strconv.ParseFloat(t.Text, 64)
 			if err == nil && !math.IsInf(f, 0) {
