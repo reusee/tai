@@ -64,12 +64,17 @@ func NewEnv() *Env {
 	e.Define("set_index", SetIndex)
 	e.Define("send", Send)
 	e.Define("recv", Recv)
+	e.Define("clear", Clear)
 
 	e.Define("+", Plus)
 	e.Define("-", Minus)
 	e.Define("*", Multiply)
 	e.Define("/", Divide)
 	e.Define("%", Mod)
+	e.Define("neg", Neg)
+	e.Define("min", Min)
+	e.Define("max", Max)
+
 	e.Define("==", Eq)
 	e.Define("!=", Ne)
 	e.Define("<", Lt)
@@ -79,6 +84,7 @@ func NewEnv() *Env {
 
 	e.Define("&", BitAnd)
 	e.Define("bit_or", BitOr)
+	e.Define("|", BitOr)
 	e.Define("^", BitXor)
 	e.Define("&^", BitClear)
 	e.Define("<<", LShift)
@@ -88,6 +94,9 @@ func NewEnv() *Env {
 	e.Define("!", Not)
 	e.Define("&&", LogicAnd)
 	e.Define("||", LogicOr)
+
+	e.Define("print", fmt.Print)
+	e.Define("println", fmt.Println)
 
 	e.Define("int", reflect.TypeFor[int]())
 	e.Define("int8", reflect.TypeFor[int8]())

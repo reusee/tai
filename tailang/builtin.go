@@ -267,3 +267,19 @@ func (g Go) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, 
 	}()
 	return nil, nil
 }
+
+func Clear(c any) {
+	v := reflect.ValueOf(c)
+	switch v.Kind() {
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			v.SetMapIndex(iter.Key(), reflect.Value{})
+		}
+	case reflect.Slice:
+		zero := reflect.Zero(v.Type().Elem())
+		for i := 0; i < v.Len(); i++ {
+			v.Index(i).Set(zero)
+		}
+	}
+}

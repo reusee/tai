@@ -262,3 +262,47 @@ func IsBig(v any) bool {
 	}
 	return false
 }
+
+func Neg(a any) (any, error) {
+	if aInt, ok := AsInt(a); ok {
+		return -aInt, nil
+	}
+	if IsFloat(a) {
+		if !IsBig(a) {
+			f, ok := AsFloat(a)
+			if ok {
+				return -f, nil
+			}
+		}
+		bf, ok := AsBigFloat(a)
+		if ok {
+			return new(big.Float).Neg(bf), nil
+		}
+	}
+	if bi, ok := AsBigInt(a); ok {
+		return new(big.Int).Neg(bi), nil
+	}
+	return nil, fmt.Errorf("invalid operand for neg: %v", a)
+}
+
+func Min(a, b any) (any, error) {
+	isLess, err := Lt(a, b)
+	if err != nil {
+		return nil, err
+	}
+	if isLess {
+		return a, nil
+	}
+	return b, nil
+}
+
+func Max(a, b any) (any, error) {
+	isGreater, err := Gt(a, b)
+	if err != nil {
+		return nil, err
+	}
+	if isGreater {
+		return a, nil
+	}
+	return b, nil
+}
