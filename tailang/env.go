@@ -83,7 +83,6 @@ func NewEnv() *Env {
 	e.Define(">=", Ge)
 
 	e.Define("&", BitAnd)
-	e.Define("bit_or", BitOr)
 	e.Define("|", BitOr)
 	e.Define("^", BitXor)
 	e.Define("&^", BitClear)
