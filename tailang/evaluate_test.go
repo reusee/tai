@@ -437,3 +437,22 @@ func TestTypeAsArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPipes(t *testing.T) {
+	env := NewEnv()
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(`"foo" | strings.to_upper | strings.to_lower`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "foo" {
+		t.Fatal()
+	}
+
+	res, err = env.Evaluate(NewTokenizer(strings.NewReader(`"foo" |> strings.to_upper |> strings.to_lower |> strings.to_upper`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "FOO" {
+		t.Fatal()
+	}
+}
