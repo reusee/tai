@@ -156,7 +156,24 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 			Text: "|",
 			Pos:  startPos,
 		}, nil
-	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}' || r == ':':
+	case r == ':':
+		next, err := t.readRune()
+		if err == nil {
+			if next == ':' {
+				return &Token{
+					Kind: TokenSymbol,
+					Text: "::",
+					Pos:  startPos,
+				}, nil
+			}
+			t.unreadRune()
+		}
+		return &Token{
+			Kind: TokenSymbol,
+			Text: ":",
+			Pos:  startPos,
+		}, nil
+	case r == '[' || r == ']' || r == '(' || r == ')' || r == '{' || r == '}':
 		return &Token{
 			Kind: TokenSymbol,
 			Text: string(r),

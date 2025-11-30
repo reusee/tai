@@ -406,3 +406,19 @@ func TestMethod(t *testing.T) {
 		t.Fatalf("got %v", res)
 	}
 }
+
+func TestMethodReference(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def fmt time.now::Format
+		fmt "2006"
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "2006" {
+		t.Fatalf("got %v", res)
+	}
+}
