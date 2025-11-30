@@ -161,9 +161,6 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Type) (any, error) {
 	name := t.Text
-	if name == "end" {
-		return nil, fmt.Errorf("unexpected identifier 'end'")
-	}
 	if t.Kind == TokenSymbol {
 		switch name {
 		case ")", "]", "}":
@@ -312,65 +309,25 @@ func (e *Env) callFunc(tokenizer TokenStream, fn reflect.Value, name string, exp
 	for i := 0; i < numIn; i++ {
 		argType := methodType.In(i)
 
-		if isVariadic && i == numIn-1 {
-			elemType := argType.Elem()
-
-			for {
-				pt, err := tokenizer.Current()
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					return nil, err
-				}
-
-				if pt.Kind == TokenEOF {
-					break
-				}
-
-				if pt.Kind == TokenIdentifier && pt.Text == "end" {
-					tokenizer.Consume()
-					break
-				}
-				if pt.Kind == TokenSymbol {
-					if pt.Text == "]" {
-						if name == "[" {
-							tokenizer.Consume()
-						}
-						break
-					}
-					if pt.Text == ")" {
-						break
-					}
-				}
-
-				val, err := e.evalExpr(tokenizer, elemType)
-				if err != nil {
-					return nil, err
-				}
-
-				vArg, err := PrepareAssign(val, elemType)
-				if err != nil {
-					return nil, err
-				}
-				args = append(args, vArg)
-			}
-
-		} else {
-			val, err := e.evalExpr(tokenizer, argType)
-			if err != nil {
-				return nil, err
-			}
-
-			vArg, err := PrepareAssign(val, argType)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, vArg)
+		val, err := e.evalExpr(tokenizer, argType)
+		if err != nil {
+			return nil, err
 		}
+
+		vArg, err := PrepareAssign(val, argType)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, vArg)
 	}
 
-	results := fn.Call(args)
+	var results []reflect.Value
+	if isVariadic {
+		results = fn.CallSlice(args)
+	} else {
+		results = fn.Call(args)
+	}
+
 	if len(results) == 0 {
 		return nil, nil
 	}

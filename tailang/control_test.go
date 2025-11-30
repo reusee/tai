@@ -45,7 +45,7 @@ func TestControl(t *testing.T) {
 	run(`
                 def s ""
                 foreach x ["a" "b" "c"] {
-                        set s (fmt.sprintf "%s%s" s x end)
+                        set s (fmt.sprintf "%s%s" [s x])
                 }
         `)
 	if res, _ := env.Lookup("s"); res != "abc" {
@@ -150,7 +150,7 @@ func TestNestedLoops(t *testing.T) {
 		def res ""
 		foreach i ["a" "b"] {
 			foreach j ["1" "2"] {
-				set res (fmt.sprintf "%s%s%s" res i j)
+				set res (fmt.sprintf "%s%s%s" [res i j])
 			}
 		}
 		res

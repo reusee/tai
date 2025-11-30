@@ -50,7 +50,7 @@ func TestGoFunc(t *testing.T) {
 		t.Fatalf("expected 3, got %v", res)
 	}
 
-	res, err = run("sum 1 2 3 4 end")
+	res, err = run("sum [1 2 3 4]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,8 @@ func TestBugPanicTypeMismatch(t *testing.T) {
 	})
 
 	// Case 1: Variadic mismatch
-	src := `sum 1 "string"`
+	// sum expects []int, but we pass []string inside list
+	src := `sum ["string"]`
 	tokenizer := NewTokenizer(strings.NewReader(src))
 	_, err := env.Evaluate(tokenizer)
 	if err == nil {

@@ -117,7 +117,7 @@ func TestFuncAsArg(t *testing.T) {
 	// Test error propagation
 	srcErr := `
 		func fail(x) {
-			fmt.errorf "fail"
+			fmt.errorf "fail" []
 		}
 		apply_err &fail 1
 	`
@@ -167,7 +167,7 @@ func TestVariadicInParens(t *testing.T) {
 	})
 
 	// This previously failed because 'sum' would try to consume ')'
-	src := `(sum 1 2 3)`
+	src := `(sum [1 2 3])`
 	tokenizer := NewTokenizer(strings.NewReader(src))
 	res, err := env.Evaluate(tokenizer)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestVariadicInParens(t *testing.T) {
 	}
 
 	// Test with nested parens
-	src = `(sum 1 (sum 2 3) 4)`
+	src = `(sum [1 (sum [2 3]) 4])`
 	tokenizer = NewTokenizer(strings.NewReader(src))
 	res, err = env.Evaluate(tokenizer)
 	if err != nil {
@@ -205,7 +205,7 @@ func TestClosureCounter(t *testing.T) {
 		def r1 c1
 		def r2 c1
 		def r3 c2
-		(fmt.sprintf "%v %v %v" r1 r2 r3)
+		(fmt.sprintf "%v %v %v" [r1 r2 r3])
 	`
 	tokenizer := NewTokenizer(strings.NewReader(src))
 	res, err := env.Evaluate(tokenizer)

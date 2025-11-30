@@ -15,7 +15,7 @@ func TestStdlib(t *testing.T) {
 	}
 	kases := []kase{
 		{
-			Source:   `fmt.sprintf '%v %v' "hello" "world"`,
+			Source:   `fmt.sprintf '%v %v' ["hello" "world"]`,
 			Expected: "hello world",
 		},
 		{

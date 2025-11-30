@@ -190,7 +190,7 @@ func IsKeyword(name string) bool {
 	switch name {
 	case "def", "set", "func", "if", "else", "do", "while",
 		"switch", "repeat", "foreach", "true", "false", "nil",
-		"break", "continue", "return", "default", "end":
+		"break", "continue", "return", "default":
 		return true
 	}
 	return false
