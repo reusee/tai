@@ -202,3 +202,70 @@ call_undefined
 		t.Errorf("expected caret in error, got: %s", msg)
 	}
 }
+
+// Types for named parameter tests
+type testPtrCommand struct {
+	Val int `tai:"val"`
+}
+
+func (c *testPtrCommand) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
+	return c.Val, nil
+}
+
+type testSimpleStruct struct {
+	Val int `tai:"val"`
+}
+
+func TestNamedParamOnPointerCommand(t *testing.T) {
+	env := NewEnv()
+	env.Define("cmd", &testPtrCommand{Val: 1})
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(`cmd .val 42`)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res != 42 {
+		t.Errorf("expected 42, got %v", res)
+	}
+}
+
+func TestNamedParamOnPointerCommandWithoutParam(t *testing.T) {
+	env := NewEnv()
+	env.Define("cmd", &testPtrCommand{Val: 1})
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(`cmd`)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res != 1 {
+		t.Errorf("expected 1, got %v", res)
+	}
+}
+
+func TestNamedParamOnNilPointer(t *testing.T) {
+	env := NewEnv()
+	env.Define("cmd", (*testPtrCommand)(nil))
+	_, err := env.Evaluate(NewTokenizer(strings.NewReader(`cmd .val 42`)))
+	if err == nil {
+		t.Fatal("expected error for nil pointer")
+	}
+	if !strings.Contains(err.Error(), "nil pointer") {
+		t.Errorf("expected nil pointer error, got: %v", err)
+	}
+}
+
+func TestNamedParamOnPointerToStructWithoutCall(t *testing.T) {
+	env := NewEnv()
+	cmd := &testSimpleStruct{Val: 0}
+	env.Define("cmd", cmd)
+	res, err := env.Evaluate(NewTokenizer(strings.NewReader(`cmd .val 42`)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should return the pointer itself.
+	ptr, ok := res.(*testSimpleStruct)
+	if !ok {
+		t.Fatalf("expected *testSimpleStruct, got %T", res)
+	}
+	if ptr.Val != 42 {
+		t.Errorf("expected Val=42, got %d", ptr.Val)
+	}
+}

@@ -246,8 +246,12 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		}
 		seenParams[paramName] = true
 
-		if !isWrapped {
+		// Ensure v is a pointer to a struct and not nil.
+		if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
 			return nil, fmt.Errorf("cannot use named parameter .%s on non-struct type %v", paramName, v.Type())
+		}
+		if v.IsNil() {
+			return nil, fmt.Errorf("cannot use named parameter .%s on nil pointer", paramName)
 		}
 
 		field := findField(v.Elem(), paramName)
