@@ -148,15 +148,17 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		}
 	}
 
-	isRef := false
-	if strings.HasPrefix(name, "&") && len(name) > 1 {
-		isRef = true
-		name = name[1:]
-	}
-
 	tokenizer.Consume()
 
 	val, ok := e.Lookup(name)
+	isRef := false
+
+	if !ok && strings.HasPrefix(name, "&") && len(name) > 1 {
+		isRef = true
+		name = name[1:]
+		val, ok = e.Lookup(name)
+	}
+
 	if !ok {
 		if t.Kind == TokenUnquotedString {
 			return name, nil
