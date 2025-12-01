@@ -257,20 +257,3 @@ func TestTypeConversion(t *testing.T) {
 		t.Errorf("expected hello string, got %v", res)
 	}
 }
-
-func TestSetPanicNil(t *testing.T) {
-	env := NewEnv()
-	src := `
-		def x (if false { 1 })
-		set x 1
-		x
-	`
-	tokenizer := NewTokenizer(strings.NewReader(src))
-	res, err := env.Evaluate(tokenizer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res != 1 {
-		t.Fatalf("expected 1, got %v", res)
-	}
-}

@@ -24,14 +24,18 @@ func (s Set) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 	name := tok.Text
 	stream.Consume()
 
-	// find old value to get type
+	val, err := env.evalExpr(stream, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update variable in the environment chain
 	found := false
 	e := env
-	var targetType reflect.Type
 	for e != nil {
-		if v, ok := e.Vars[name]; ok {
+		if _, ok := e.Vars[name]; ok {
+			e.Vars[name] = val
 			found = true
-			targetType = reflect.TypeOf(v)
 			break
 		}
 		e = e.Parent
@@ -40,19 +44,6 @@ func (s Set) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 	if !found {
 		return nil, fmt.Errorf("variable not found: %s", name)
 	}
-
-	val, err := env.evalExpr(stream, targetType)
-	if err != nil {
-		return nil, err
-	}
-
-	if targetType != nil {
-		val, err = PrepareAssign(val, targetType)
-		if err != nil {
-			return nil, err
-		}
-	}
-	e.Vars[name] = val
 
 	return val, nil
 }
