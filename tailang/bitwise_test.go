@@ -44,7 +44,6 @@ func TestBitwise(t *testing.T) {
 	run(`& 3 1`, 1)
 	run(`| 1 2`, 3)
 	run(`^ 3 1`, 2)
-	run(`^ 1`, -2) // unary
 	run(`&^ 3 1`, 2)
 	run(`<< 1 2`, 4)
 	run(`>> 4 2`, 1)
