@@ -46,7 +46,28 @@ func (a ActionDo) plan(cont phases.Phase) phases.Phase {
 
 Your first task is to create a comprehensive, step-by-step plan to achieve this goal. First, analyze the provided code to understand its current state. Then, create a plan that outlines only the necessary steps to bridge the gap between the current state and the goal. Do not include steps for tasks that are already completed. Break down the goal into manageable tasks, outlining your strategy and design decisions. Consider potential complexities and how you'll address them.
 
-**CRITICAL: This is a planning-only phase.** Your response must consist *exclusively* of the plan. **Do not include any code, code blocks, or diffs.** The actual code changes will be requested in a subsequent step based on this plan.`),
+**CRITICAL: This is a planning-only phase.** 
+**Your response must consist *exclusively* of the plan.**
+**Do not include any code, code blocks, or diffs.** 
+**Do not write any code implementations.**
+**Do not use code formatting (like backticks or indented blocks).**
+**Do not provide function signatures or type definitions.**
+
+**What you should NOT do in this phase:**
+- Do NOT write any actual code
+- Do NOT provide code examples  
+- Do NOT show diffs or changes
+- Do NOT write function or method implementations
+- Do NOT include code snippets in markdown or any other format
+
+**What you SHOULD do:**
+- Describe the approach in plain text
+- List the steps needed
+- Explain design decisions and rationale
+- Identify potential challenges and solutions
+- Outline the order of operations
+
+The actual code changes will be requested in a subsequent step based on this plan. Any code output in this phase will be ignored and will not be part of the solution.`),
 			},
 		})
 		if err != nil {
