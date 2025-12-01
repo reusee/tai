@@ -84,10 +84,15 @@ func (t *ArgsTokenizer) parse() *Token {
 	}
 
 	if isNumber && len(txt) > 0 && hasDigit {
-		return &Token{
-			Kind: TokenNumber,
-			Text: strings.ReplaceAll(txt, "_", ""),
-			Pos:  Pos{Source: &Source{Name: "args"}},
+		text := strings.ReplaceAll(txt, "_", "")
+		val, err := parseNumberValue(text)
+		if err == nil {
+			return &Token{
+				Kind:  TokenNumber,
+				Text:  text,
+				Pos:   Pos{Source: &Source{Name: "args"}},
+				Value: val,
+			}
 		}
 	}
 

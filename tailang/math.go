@@ -7,6 +7,15 @@ import (
 )
 
 func Plus(a, b any) any {
+	if ia, ok := a.(int); ok {
+		if ib, ok := b.(int); ok {
+			res := ia + ib
+			if (res^ia)&(res^ib) < 0 {
+				return new(big.Int).Add(big.NewInt(int64(ia)), big.NewInt(int64(ib)))
+			}
+			return res
+		}
+	}
 	if aInt, ok := AsInt(a); ok {
 		if bInt, ok := AsInt(b); ok {
 			res := aInt + bInt
@@ -39,6 +48,15 @@ func Plus(a, b any) any {
 }
 
 func Minus(a, b any) (any, error) {
+	if ia, ok := a.(int); ok {
+		if ib, ok := b.(int); ok {
+			res := ia - ib
+			if (ia^ib) < 0 && (ia^res) < 0 {
+				return new(big.Int).Sub(big.NewInt(int64(ia)), big.NewInt(int64(ib))), nil
+			}
+			return res, nil
+		}
+	}
 	if aInt, ok := AsInt(a); ok {
 		if bInt, ok := AsInt(b); ok {
 			res := aInt - bInt
@@ -71,6 +89,15 @@ func Minus(a, b any) (any, error) {
 }
 
 func Multiply(a, b any) (any, error) {
+	if ia, ok := a.(int); ok {
+		if ib, ok := b.(int); ok {
+			res := ia * ib
+			if ia != 0 && res/ia != ib {
+				return new(big.Int).Mul(big.NewInt(int64(ia)), big.NewInt(int64(ib))), nil
+			}
+			return res, nil
+		}
+	}
 	if aInt, ok := AsInt(a); ok {
 		if bInt, ok := AsInt(b); ok {
 			res := aInt * bInt
@@ -123,6 +150,14 @@ func Divide(a, b any) (any, error) {
 			}
 		}
 	}
+	if ia, ok := a.(int); ok {
+		if ib, ok := b.(int); ok {
+			if ib == 0 {
+				return nil, fmt.Errorf("integer division by zero")
+			}
+			return ia / ib, nil
+		}
+	}
 	if aInt, ok := AsInt(a); ok {
 		if bInt, ok := AsInt(b); ok {
 			if bInt == 0 {
@@ -153,17 +188,18 @@ func Mod(a, b any) (any, error) {
 		}
 		if bfA, ok := AsBigFloat(a); ok {
 			if bfB, ok := AsBigFloat(b); ok {
-				// math.Mod style for BigFloat? big.Float doesn't support Mod directly.
-				// Promote to float64 if possible or implement Mod.
-				// Given lack of direct BigFloat Mod, fallback to float64 for now
-				// or use a custom implementation. The prompt asked for "use big type",
-				// but big.Float mod is non-trivial without converting to int or implementing manually.
-				// Let's use float64 fallback for mod if it fits, else error?
-				// Or implementing a simple mod: a - trunc(a/b)*b
 				fA, _ := bfA.Float64()
 				fB, _ := bfB.Float64()
 				return math.Mod(fA, fB), nil
 			}
+		}
+	}
+	if ia, ok := a.(int); ok {
+		if ib, ok := b.(int); ok {
+			if ib == 0 {
+				return nil, fmt.Errorf("integer modulo by zero")
+			}
+			return ia % ib, nil
 		}
 	}
 	if aInt, ok := AsInt(a); ok {

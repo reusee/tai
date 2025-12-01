@@ -1,9 +1,10 @@
 package tailang
 
 type Token struct {
-	Kind TokenKind
-	Text string
-	Pos  Pos
+	Kind  TokenKind
+	Text  string
+	Pos   Pos
+	Value any
 }
 
 var EOFToken = &Token{

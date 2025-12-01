@@ -2,7 +2,12 @@ package tailang
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"math"
+	"math/big"
+	"strconv"
+	"strings"
 	"unicode"
 )
 
@@ -297,11 +302,50 @@ func (t *Tokenizer) parseNumber() (*Token, error) {
 		t.unreadRune()
 		break
 	}
+
+	text := buf.String()
+	val, err := parseNumberValue(text)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Token{
-		Kind: TokenNumber,
-		Text: buf.String(),
-		Pos:  startPos,
+		Kind:  TokenNumber,
+		Text:  text,
+		Pos:   startPos,
+		Value: val,
 	}, nil
+}
+
+func parseNumberValue(text string) (any, error) {
+	if strings.HasSuffix(text, "i") {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(text, "i"), 64)
+		if err == nil && !math.IsInf(f, 0) {
+			return complex(0, f), nil
+		}
+		return nil, fmt.Errorf("invalid imaginary literal: %s", text)
+	}
+
+	if strings.ContainsAny(text, ".eE") {
+		f, err := strconv.ParseFloat(text, 64)
+		if err == nil && !math.IsInf(f, 0) {
+			return f, nil
+		}
+		bf, _, err := big.ParseFloat(text, 10, 128, big.ToNearestEven)
+		if err == nil {
+			return bf, nil
+		}
+		return nil, err
+	}
+	i, err := strconv.ParseInt(text, 10, 0)
+	if err == nil {
+		return int(i), nil
+	}
+	bi := new(big.Int)
+	if _, ok := bi.SetString(text, 10); ok {
+		return bi, nil
+	}
+	return nil, fmt.Errorf("invalid number: %s", text)
 }
 
 func (t *Tokenizer) parseString(quote rune, startPos Pos) (*Token, error) {

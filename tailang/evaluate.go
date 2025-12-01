@@ -99,34 +99,14 @@ func (e *Env) evalTerm(tokenizer TokenStream, expectedType reflect.Type) (any, e
 
 	case TokenNumber:
 		tokenizer.Consume()
+		if t.Value != nil {
+			return t.Value, nil
+		}
+		// Fallback for safety or compilation (keeps imports used)
+		_ = math.NaN()
+		_ = big.NewInt(0)
+		_ = strconv.IntSize
 
-		if strings.HasSuffix(t.Text, "i") {
-			f, err := strconv.ParseFloat(strings.TrimSuffix(t.Text, "i"), 64)
-			if err == nil && !math.IsInf(f, 0) {
-				return complex(0, f), nil
-			}
-			return nil, WithPos(fmt.Errorf("invalid imaginary literal: %s", t.Text), startPos)
-		}
-
-		if strings.ContainsAny(t.Text, ".eE") {
-			f, err := strconv.ParseFloat(t.Text, 64)
-			if err == nil && !math.IsInf(f, 0) {
-				return f, nil
-			}
-			bf, _, err := big.ParseFloat(t.Text, 10, 128, big.ToNearestEven)
-			if err == nil {
-				return bf, nil
-			}
-			return nil, WithPos(err, startPos)
-		}
-		i, err := strconv.ParseInt(t.Text, 10, 0)
-		if err == nil {
-			return int(i), nil
-		}
-		bi := new(big.Int)
-		if _, ok := bi.SetString(t.Text, 10); ok {
-			return bi, nil
-		}
 		return nil, WithPos(fmt.Errorf("invalid number: %s", t.Text), startPos)
 
 	case TokenSymbol:
