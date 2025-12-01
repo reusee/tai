@@ -188,3 +188,67 @@ func TestControlFlowState(t *testing.T) {
 		t.Fatalf("expected 6, got %v", res)
 	}
 }
+
+func TestConcurrency(t *testing.T) {
+	env := NewEnv()
+	// Test go, make chan, send, recv
+	src := `
+		def c (make (chan_of both_dir int) [])
+		go {
+			send c 42
+		}
+		recv c
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 42 {
+		t.Errorf("expected 42, got %v", res)
+	}
+
+	// Test select
+	src = `
+		def c1 (make (chan_of both_dir int) [])
+		def c2 (make (chan_of both_dir int) 1)
+		
+		# Send to c2 (buffered)
+		select {
+			case send c2 100 {
+				"sent"
+			}
+			default {
+				"default"
+			}
+		}
+	`
+	tokenizer = NewTokenizer(strings.NewReader(src))
+	res, err = env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "sent" {
+		t.Errorf("expected sent, got %v", res)
+	}
+
+	// Recv from c2
+	src = `
+		select {
+			case recv v c2 {
+				v
+			}
+			default {
+				0
+			}
+		}
+	`
+	tokenizer = NewTokenizer(strings.NewReader(src))
+	res, err = env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 100 {
+		t.Errorf("expected 100, got %v", res)
+	}
+}

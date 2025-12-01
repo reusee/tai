@@ -188,3 +188,72 @@ func TestTypeAsArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPosErrorFormatting(t *testing.T) {
+	env := NewEnv()
+	// Source with multiple lines
+	src := `
+def x 1
+call_undefined
+`
+	// The tokenizer creates a source. The error should point to call_undefined at line 3.
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Check formatting
+	msg := err.Error()
+	if !strings.Contains(msg, "undefined identifier: call_undefined") {
+		t.Errorf("unexpected error message: %s", msg)
+	}
+	if !strings.Contains(msg, "at :3:1") { // empty filename
+		t.Errorf("expected location info, got: %s", msg)
+	}
+	if !strings.Contains(msg, "call_undefined") {
+		t.Errorf("expected source line in error, got: %s", msg)
+	}
+	if !strings.Contains(msg, "^") {
+		t.Errorf("expected caret in error, got: %s", msg)
+	}
+}
+
+func TestTypeConversion(t *testing.T) {
+	env := NewEnv()
+
+	// string -> []byte
+	src := `
+		def s "hello"
+		def b (make (slice_of byte) 0)
+		set b s
+		b
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs, ok := res.([]byte)
+	if !ok {
+		t.Fatalf("expected []byte, got %T", res)
+	}
+	if string(bs) != "hello" {
+		t.Errorf("expected hello bytes, got %s", string(bs))
+	}
+
+	// []byte -> string
+	src = `
+		def s2 ""
+		set s2 b
+		s2
+	`
+	tokenizer = NewTokenizer(strings.NewReader(src))
+	res, err = env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "hello" {
+		t.Errorf("expected hello string, got %v", res)
+	}
+}

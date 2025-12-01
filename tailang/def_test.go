@@ -61,3 +61,16 @@ func TestRedeclarationError(t *testing.T) {
 		t.Fatalf("expected already defined error, got: %v", err)
 	}
 }
+
+func TestDefineKeywordError(t *testing.T) {
+	env := NewEnv()
+	src := `def if 1`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error defining keyword")
+	}
+	if !strings.Contains(err.Error(), "cannot define keyword") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
