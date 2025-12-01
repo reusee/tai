@@ -29,12 +29,7 @@ type Thought string
 func (Thought) isPart() {}
 
 func (t Thought) ToGemini() (*generativelanguagepb.Part, error) {
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_Text{
-			Text: string(t),
-		},
-		Thought: true,
-	}, nil
+	return nil, nil
 }
 
 type FileURL string

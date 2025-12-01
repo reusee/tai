@@ -319,13 +319,7 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 					}
 
 				case Thought:
-					if len(part) > 0 {
-						// Thoughts are handled as text parts with special tags
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "text",
-							Text: "<thought>" + string(part) + "</thought>",
-						})
-					}
+					// skip
 
 				case FileURL:
 					if len(part) > 0 {
