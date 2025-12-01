@@ -24,26 +24,39 @@ func (s Set) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 	name := tok.Text
 	stream.Consume()
 
-	val, err := env.evalExpr(stream, nil)
-	if err != nil {
-		return nil, err
-	}
+	var targetEnv *Env
+	var exprType reflect.Type
 
-	// Update variable in the environment chain
-	found := false
 	e := env
 	for e != nil {
-		if _, ok := e.Vars[name]; ok {
-			e.Vars[name] = val
-			found = true
+		if val, ok := e.Vars[name]; ok {
+			targetEnv = e
+			if val != nil {
+				exprType = reflect.TypeOf(val)
+			}
 			break
 		}
 		e = e.Parent
 	}
 
-	if !found {
+	if targetEnv == nil {
 		return nil, fmt.Errorf("variable not found: %s", name)
 	}
+
+	val, err := env.evalExpr(stream, exprType)
+	if err != nil {
+		return nil, err
+	}
+
+	if exprType != nil {
+		valV, err := PrepareAssign(val, exprType)
+		if err != nil {
+			return nil, fmt.Errorf("cannot assign to variable %s: %w", name, err)
+		}
+		val = valV.Interface()
+	}
+
+	targetEnv.Vars[name] = val
 
 	return val, nil
 }
