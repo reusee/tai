@@ -10,6 +10,8 @@ import (
 	"unicode"
 )
 
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
+
 type Env struct {
 	Parent      *Env
 	Vars        map[string]any
@@ -138,12 +140,25 @@ func NewEnv() *Env {
 }
 
 func (e *Env) Define(name string, val any) {
-	if val != nil && reflect.TypeOf(val).Kind() == reflect.Func {
-		if _, ok := val.(Function); !ok {
-			val = GoFunc{
+	if val == nil {
+		e.Vars[name] = nil
+		return
+	}
+
+	if gf, ok := val.(GoFunc); ok {
+		pgf := &gf
+		pgf.init()
+		val = gf
+	} else if pgf, ok := val.(*GoFunc); ok {
+		pgf.init()
+	} else if _, ok := val.(Function); !ok {
+		if reflect.TypeOf(val).Kind() == reflect.Func {
+			gf := GoFunc{
 				Name: funcName(val),
 				Func: val,
 			}
+			(&gf).init()
+			val = gf
 		}
 	}
 	e.Vars[name] = val
