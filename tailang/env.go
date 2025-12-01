@@ -196,11 +196,10 @@ func toSnake(s string) string {
 }
 
 func (e *Env) Lookup(name string) (any, bool) {
-	if v, ok := e.Vars[name]; ok {
-		return v, true
-	}
-	if e.Parent != nil {
-		return e.Parent.Lookup(name)
+	for env := e; env != nil; env = env.Parent {
+		if v, ok := env.Vars[name]; ok {
+			return v, true
+		}
 	}
 	return nil, false
 }

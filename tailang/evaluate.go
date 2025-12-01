@@ -203,6 +203,17 @@ func (e *Env) evalCall(tokenizer TokenStream, t *Token, expectedType reflect.Typ
 		return nil, nil
 	}
 
+	// Optimization: Fast path for Function implementation without named parameters
+	if fn, ok := val.(Function); ok {
+		next, err := tokenizer.Current()
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		if next == nil || next.Kind != TokenNamedParam {
+			return fn.Call(e, tokenizer, expectedType)
+		}
+	}
+
 	v := reflect.ValueOf(val)
 	isWrapped := false
 

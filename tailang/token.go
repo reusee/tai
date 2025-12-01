@@ -6,6 +6,10 @@ type Token struct {
 	Pos  Pos
 }
 
+var EOFToken = &Token{
+	Kind: TokenEOF,
+}
+
 type TokenKind uint8
 
 const (

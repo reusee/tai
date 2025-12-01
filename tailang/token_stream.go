@@ -20,7 +20,7 @@ func NewSliceTokenStream(tokens []*Token) *SliceTokenStream {
 
 func (s *SliceTokenStream) Current() (*Token, error) {
 	if s.idx >= len(s.tokens) {
-		return &Token{Kind: TokenEOF}, nil
+		return EOFToken, nil
 	}
 	return s.tokens[s.idx], nil
 }
