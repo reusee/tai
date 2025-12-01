@@ -13,10 +13,12 @@ func (Module) NewOpenRouter(
 	loader configs.Loader,
 ) NewOpenRouter {
 	return func(args GeneratorArgs) *OpenAI {
-		if endpoint := configs.First[string](loader, "openrouter_endpoint"); endpoint != "" {
-			args.BaseURL = endpoint
-		} else {
-			args.BaseURL = "https://openrouter.ai/api/v1"
+		if args.BaseURL == "" {
+			if endpoint := configs.First[string](loader, "openrouter_endpoint"); endpoint != "" {
+				args.BaseURL = endpoint
+			} else {
+				args.BaseURL = "https://openrouter.ai/api/v1"
+			}
 		}
 		args.IsOpenRouter = true
 		return newOpenAI(
@@ -36,7 +38,9 @@ func (Module) NewDeepseek(
 	newOpenAI NewOpenAI,
 ) NewDeepseek {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://api.deepseek.com/"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://api.deepseek.com/"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -54,7 +58,9 @@ func (Module) NewBaidu(
 	newOpenAI NewOpenAI,
 ) NewBaidu {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://qianfan.baidubce.com/v2/"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://qianfan.baidubce.com/v2/"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -72,7 +78,9 @@ func (Module) NewTencent(
 	newOpenAI NewOpenAI,
 ) NewTencent {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://api.hunyuan.cloud.tencent.com/v1"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://api.hunyuan.cloud.tencent.com/v1"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -90,7 +98,9 @@ func (Module) NewHuoshan(
 	newOpenAI NewOpenAI,
 ) NewHuoshan {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -108,7 +118,9 @@ func (Module) NewAliyun(
 	newOpenAI NewOpenAI,
 ) NewAliyun {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -126,7 +138,9 @@ func (Module) NewZhipu(
 	newOpenAI NewOpenAI,
 ) NewZhipu {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://open.bigmodel.cn/api/paas/v4/"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://open.bigmodel.cn/api/paas/v4/"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(
@@ -144,7 +158,9 @@ func (Module) NewVercel(
 	newOpenAI NewOpenAI,
 ) NewVercel {
 	return func(args GeneratorArgs) *OpenAI {
-		args.BaseURL = "https://ai-gateway.vercel.sh/v1/"
+		if args.BaseURL == "" {
+			args.BaseURL = "https://ai-gateway.vercel.sh/v1/"
+		}
 		return newOpenAI(
 			args,
 			vars.FirstNonZero(

@@ -60,7 +60,9 @@ func (Module) GetGenerator(
 			case "zhipu":
 				return newZhipu(spec.GeneratorArgs), nil
 			case "ollama":
-				spec.GeneratorArgs.BaseURL = "http://127.0.0.1:11434/v1"
+				if spec.GeneratorArgs.BaseURL == "" {
+					spec.GeneratorArgs.BaseURL = "http://127.0.0.1:11434/v1"
+				}
 				return newOpenAI(spec.GeneratorArgs, ""), nil
 			case "vercel":
 				return newVercel(spec.GeneratorArgs), nil
