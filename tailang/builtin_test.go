@@ -140,3 +140,31 @@ func TestSliceBuiltins(t *testing.T) {
 		t.Errorf("unexpected copy result: %v", d)
 	}
 }
+
+func TestComplexBuiltins(t *testing.T) {
+	env := NewEnv()
+	run := func(src string) any {
+		t.Helper()
+		tokenizer := NewTokenizer(strings.NewReader(src))
+		res, err := env.Evaluate(tokenizer)
+		if err != nil {
+			t.Fatalf("src: %s, err: %v", src, err)
+		}
+		return res
+	}
+
+	c := run(`complex 1 2`)
+	if cmplx, ok := c.(complex128); !ok || cmplx != 1+2i {
+		t.Errorf("expected 1+2i, got %v", c)
+	}
+
+	r := run(`real (complex 1 2)`)
+	if f, ok := r.(float64); !ok || f != 1 {
+		t.Errorf("expected real 1, got %v", r)
+	}
+
+	i := run(`imag (complex 1 2)`)
+	if f, ok := i.(float64); !ok || f != 2 {
+		t.Errorf("expected imag 2, got %v", i)
+	}
+}
