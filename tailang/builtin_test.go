@@ -168,3 +168,44 @@ func TestComplexBuiltins(t *testing.T) {
 		t.Errorf("expected imag 2, got %v", i)
 	}
 }
+
+func TestBuiltinPanicSafety(t *testing.T) {
+	env := NewEnv()
+	runExpectError := func(name, src, errorSnippet string) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			tokenizer := NewTokenizer(strings.NewReader(src))
+			// We wrap in a recover to ensure the test fails gracefully if the fix isn't working
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panic recovered: %v", r)
+				}
+			}()
+
+			_, err := env.Evaluate(tokenizer)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), errorSnippet) {
+				t.Fatalf("expected error containing %q, got %v", errorSnippet, err)
+			}
+		})
+	}
+
+	// 1. Make with negative size
+	runExpectError("MakeNegativeLen", `make (slice_of int) -1`, "negative")
+	runExpectError("MakeNegativeCap", `make (slice_of int) [0 -1]`, "negative")
+	runExpectError("MakeMapNegative", `make (map_of int int) -5`, "negative")
+
+	// 2. Slice bounds
+	runExpectError("SliceStringHighOutOfBounds", `slice "foo" [0 4]`, "out of bounds")
+	runExpectError("SliceNegativeLow", `slice "foo" [-1 2]`, "out of bounds")
+	runExpectError("SliceLowGtHigh", `slice "foo" [2 1]`, "out of bounds")
+
+	// 3. Slice3 on string
+	runExpectError("Slice3String", `slice "foo" [0 1 2]`, "does not support 3-index slicing")
+
+	// 4. Slice bounds on list
+	runExpectError("SliceListOutOfBounds", `slice [1 2] [0 5]`, "out of bounds")
+	runExpectError("SliceList3OutOfBounds", `slice [1 2] [0 1 5]`, "out of bounds")
+}

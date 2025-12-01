@@ -30,6 +30,9 @@ func Make(t reflect.Type, args ...int) (any, error) {
 		if len(args) > 1 {
 			cap = args[1]
 		}
+		if length < 0 || cap < 0 {
+			return nil, fmt.Errorf("negative length or capacity")
+		}
 		cap = max(cap, length)
 		return reflect.MakeSlice(t, length, cap).Interface(), nil
 	case reflect.Map:
@@ -37,11 +40,17 @@ func Make(t reflect.Type, args ...int) (any, error) {
 		if len(args) > 0 {
 			sz = args[0]
 		}
+		if sz < 0 {
+			return nil, fmt.Errorf("negative map size")
+		}
 		return reflect.MakeMapWithSize(t, sz).Interface(), nil
 	case reflect.Chan:
 		sz := 0
 		if len(args) > 0 {
 			sz = args[0]
+		}
+		if sz < 0 {
+			return nil, fmt.Errorf("negative channel buffer size")
 		}
 		return reflect.MakeChan(t, sz).Interface(), nil
 	default:
@@ -140,12 +149,31 @@ func Slice(container any, args ...any) (any, error) {
 		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("slice indices must be integers")
 		}
+
+		var capLimit int
+		if v.Kind() == reflect.String {
+			capLimit = v.Len()
+		} else {
+			capLimit = v.Cap()
+		}
+
 		if len(args) > 2 {
-			max, ok3 := AsInt(args[2])
+			if v.Kind() == reflect.String {
+				return nil, fmt.Errorf("string does not support 3-index slicing")
+			}
+			maxIdx, ok3 := AsInt(args[2])
 			if !ok3 {
 				return nil, fmt.Errorf("slice max index must be integer")
 			}
-			return v.Slice3(low, high, max).Interface(), nil
+
+			if low < 0 || high < low || maxIdx < high || maxIdx > capLimit {
+				return nil, fmt.Errorf("slice indices out of bounds: [%d:%d:%d] cap %d", low, high, maxIdx, capLimit)
+			}
+			return v.Slice3(low, high, maxIdx).Interface(), nil
+		}
+
+		if low < 0 || high < low || high > capLimit {
+			return nil, fmt.Errorf("slice indices out of bounds: [%d:%d] cap %d", low, high, capLimit)
 		}
 		return v.Slice(low, high).Interface(), nil
 	}
