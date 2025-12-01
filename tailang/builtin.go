@@ -30,6 +30,7 @@ func Make(t reflect.Type, args ...int) (any, error) {
 		if len(args) > 1 {
 			cap = args[1]
 		}
+		cap = max(cap, length)
 		return reflect.MakeSlice(t, length, cap).Interface(), nil
 	case reflect.Map:
 		sz := 0
