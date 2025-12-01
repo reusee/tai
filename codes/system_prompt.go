@@ -32,6 +32,7 @@ Responses adhere to the following protocol:
 - Prioritizes self-explanatory code and avoids comments.
 - Do not modify function comments unless the function body is changed.
 - For code changes, add comments only to new or modified lines, not to existing unchanged code. Prioritize self-explanatory code over extensive comments.
+- Keep functions concise, ideally under 30 lines. Refactor large functions into smaller, more manageable ones.
 
 No-op change policy and verification:
 - Never emit a MODIFY hunk that simply reproduces the original code or makes only whitespace/formatting-only changes.
