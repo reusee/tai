@@ -235,7 +235,7 @@ func TestConcurrency(t *testing.T) {
 	// Recv from c2
 	src = `
 		select {
-			case recv v c2 {
+			case recv c2 v {
 				v
 			}
 			default {
