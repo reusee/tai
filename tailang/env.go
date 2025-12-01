@@ -37,7 +37,6 @@ func NewEnv() *Env {
 	e.Define("if", If{})
 	e.Define("while", While{})
 	e.Define("switch", Switch{})
-	e.Define("repeat", Repeat{})
 	e.Define("foreach", Foreach{})
 	e.Define("select", Select{})
 

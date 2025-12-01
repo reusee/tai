@@ -130,17 +130,6 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 			Pos:  startPos,
 		}, nil
 	case r == ':':
-		next, err := t.readRune()
-		if err == nil {
-			if next == ':' {
-				return &Token{
-					Kind: TokenSymbol,
-					Text: "::",
-					Pos:  startPos,
-				}, nil
-			}
-			t.unreadRune()
-		}
 		return &Token{
 			Kind: TokenSymbol,
 			Text: ":",

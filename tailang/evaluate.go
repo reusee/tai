@@ -42,9 +42,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 		}
 
 		if t.Kind == TokenSymbol {
-			if t.Text == ":" || t.Text == "::" {
-				op := t.Text
-				isRef := op == "::"
+			if t.Text == ":" {
 				tokenizer.Consume()
 				// expect identifier
 				t, err := tokenizer.Current()
@@ -52,7 +50,7 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 					return nil, err
 				}
 				if t.Kind != TokenIdentifier {
-					return nil, fmt.Errorf("expected identifier after %s, got %v", op, t.Kind)
+					return nil, fmt.Errorf("expected identifier after :, got %v", t.Kind)
 				}
 				methodName := t.Text
 				tokenizer.Consume()
@@ -66,15 +64,11 @@ func (e *Env) evalExpr(tokenizer TokenStream, expectedType reflect.Type) (any, e
 					return nil, fmt.Errorf("method %s not found on %T", methodName, lhs)
 				}
 
-				if isRef {
-					lhs = method.Interface()
-				} else {
-					res, err := e.callFunc(tokenizer, method, methodName, nil)
-					if err != nil {
-						return nil, err
-					}
-					lhs = res
+				res, err := e.callFunc(tokenizer, method, methodName, nil)
+				if err != nil {
+					return nil, err
 				}
+				lhs = res
 			} else {
 				break
 			}

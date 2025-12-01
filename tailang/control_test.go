@@ -30,17 +30,6 @@ func TestControl(t *testing.T) {
 		t.Fatalf("while expected sum 10, got %v", res)
 	}
 
-	// repeat
-	run(`
-                def c 0
-                repeat i 5 {
-                        set c (+ c i)
-                }
-        `)
-	if res, _ := env.Lookup("c"); res != 15 {
-		t.Fatalf("repeat expected c 15, got %v", res)
-	}
-
 	// foreach
 	run(`
                 def s ""
