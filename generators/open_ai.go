@@ -276,6 +276,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State) (ret State, err erro
 }
 
 func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err error) {
+
 	if state.SystemPrompt() != "" {
 		messages = append(messages, ChatCompletionMessage{
 			Role:    string(RoleSystem),
@@ -283,129 +284,162 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 		})
 	}
 
-	addPart := func(role string, part ChatMessagePart) {
-		if role == string(RoleModel) {
-			// convert to open ai role
-			role = string(RoleAssistant)
-		}
-		if len(messages) == 0 {
-			messages = append(messages, ChatCompletionMessage{
-				Role: role,
-			})
-		}
-		last := messages[len(messages)-1]
-		if last.Role != role {
-			messages = append(messages, ChatCompletionMessage{
-				Role: role,
-			})
-			last = messages[len(messages)-1]
-		}
-		last.MultiContent = append(last.MultiContent, part)
-		messages[len(messages)-1] = last
-	}
-
-	if contents := state.Contents(); len(contents) > 0 {
-		for _, content := range contents {
-
-			for _, part := range content.Parts {
-				switch part := part.(type) {
-
-				case Text:
-					if len(part) > 0 {
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "text",
-							Text: string(part),
-						})
-					}
-
-				case Thought:
-					// skip
-
-				case FileURL:
-					if len(part) > 0 {
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "image_url",
-							ImageURL: &ChatMessageImageURL{
-								URL: string(part),
-							},
-						})
-					}
-
-				case FileContent:
-					if isTextMIMEType(part.MimeType) {
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "text",
-							Text: string(part.Content),
-						})
-					} else {
-						dataURL := fmt.Sprintf("data:%s;base64,%s",
-							part.MimeType,
-							base64.StdEncoding.EncodeToString(part.Content),
-						)
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "image_url",
-							ImageURL: &ChatMessageImageURL{
-								URL: dataURL,
-							},
-						})
-					}
-
-				case FuncCall:
-					argsBytes, err := json.Marshal(part.Args)
-					if err != nil {
-						return nil, err
-					}
-					messages = append(messages, ChatCompletionMessage{
-						Role: "assistant",
-						ToolCalls: []ToolCall{
-							{
-								ID:   part.ID,
-								Type: "function",
-								Function: FunctionCall{
-									Name:      part.Name,
-									Arguments: string(argsBytes),
-								},
-							},
-						},
-					})
-
-				case CallResult:
-					resultsBytes, err := json.Marshal(part.Results)
-					if err != nil {
-						return nil, err
-					}
-					messages = append(messages, ChatCompletionMessage{
-						Role:       "tool",
-						ToolCallID: part.ID,
-						Content:    string(resultsBytes),
-					})
-
-				}
+	for _, content := range state.Contents() {
+		switch content.Role {
+		case RoleUser:
+			msg, err := buildUserMessage(content)
+			if err != nil {
+				return nil, err
 			}
+			messages = append(messages, msg)
 
+		case RoleModel, RoleAssistant:
+			msg, err := buildAssistantMessage(content)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msg)
+
+		case RoleTool:
+			msgs, err := buildToolMessages(content)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msgs...)
+
+		case RoleLog, RoleSystem:
+			// ignore internal logging and system (already handled)
+			continue
+
+		default:
+			return nil, fmt.Errorf("unknown role: %s", content.Role)
 		}
 	}
-
-	// convert single text part MultiContent to Content
-	for i, msg := range messages {
-		if len(msg.ToolCalls) > 0 {
-			continue
-		}
-		if len(msg.Content) > 0 {
-			continue
-		}
-		if len(msg.MultiContent) != 1 {
-			continue
-		}
-		part := msg.MultiContent[0]
-		if part.Type != "text" {
-			continue
-		}
-		messages[i].Content = part.Text
-		messages[i].MultiContent = nil
-	}
-
 	return
+}
+
+func buildToolMessages(content *Content) ([]ChatCompletionMessage, error) {
+	var msgs []ChatCompletionMessage
+	for _, part := range content.Parts {
+		if result, ok := part.(CallResult); ok {
+			results, err := json.Marshal(result.Results)
+			if err != nil {
+				return nil, err
+			}
+			msgs = append(msgs, ChatCompletionMessage{
+				Role:       "tool",
+				ToolCallID: result.ID,
+				Content:    string(results),
+			})
+		}
+	}
+	return msgs, nil
+}
+
+func buildAssistantMessage(content *Content) (ChatCompletionMessage, error) {
+	var textBuilder strings.Builder
+	var toolCalls []ToolCall
+
+	for _, part := range content.Parts {
+		switch p := part.(type) {
+		case Text:
+			textBuilder.WriteString(string(p))
+		case FileContent:
+			if isTextMIMEType(p.MimeType) {
+				textBuilder.Write(p.Content)
+			} else {
+				// non-text file content cannot be in assistant message; ignore or error?
+				// Usually not sent by assistant. We'll ignore.
+			}
+		case FileURL:
+			// assistant shouldn't send file URLs; ignore
+		case Thought:
+			// skip; internal
+		case FuncCall:
+			args, err := json.Marshal(p.Args)
+			if err != nil {
+				return ChatCompletionMessage{}, err
+			}
+			toolCalls = append(toolCalls, ToolCall{
+				ID:   p.ID,
+				Type: "function",
+				Function: FunctionCall{
+					Name:      p.Name,
+					Arguments: string(args),
+				},
+			})
+		case CallResult, FinishReason, Usage, Error:
+			// skip; not for assistant
+		}
+	}
+
+	msg := ChatCompletionMessage{Role: string(RoleAssistant)}
+	if textBuilder.Len() > 0 {
+		msg.Content = textBuilder.String()
+	}
+	if len(toolCalls) > 0 {
+		msg.ToolCalls = toolCalls
+	}
+	return msg, nil
+}
+
+func buildUserMessage(content *Content) (ChatCompletionMessage, error) {
+	var multiContent []ChatMessagePart
+	var textBuilder strings.Builder
+
+	for _, part := range content.Parts {
+		switch p := part.(type) {
+		case Text:
+			textBuilder.WriteString(string(p))
+		case FileURL:
+			multiContent = append(multiContent, ChatMessagePart{
+				Type: "image_url",
+				ImageURL: &ChatMessageImageURL{
+					URL: string(p),
+				},
+			})
+		case FileContent:
+			if isTextMIMEType(p.MimeType) {
+				textBuilder.Write(p.Content)
+			} else {
+				dataURL := fmt.Sprintf("data:%s;base64,%s", p.MimeType,
+					base64.StdEncoding.EncodeToString(p.Content))
+				multiContent = append(multiContent, ChatMessagePart{
+					Type: "image_url",
+					ImageURL: &ChatMessageImageURL{
+						URL: dataURL,
+					},
+				})
+			}
+		case Thought, FuncCall, CallResult, FinishReason, Usage, Error:
+			// skip; not appropriate for user message
+		}
+	}
+
+	// If we have any text, add a text part
+	if textBuilder.Len() > 0 {
+		if len(multiContent) == 0 {
+			// simple text message
+			return ChatCompletionMessage{
+				Role:    string(RoleUser),
+				Content: textBuilder.String(),
+			}, nil
+		} else {
+			// combine text with other parts
+			multiContent = append([]ChatMessagePart{{
+				Type: "text",
+				Text: textBuilder.String(),
+			}}, multiContent...)
+		}
+	}
+
+	if len(multiContent) == 0 {
+		return ChatCompletionMessage{Role: string(RoleUser)}, nil
+	}
+	return ChatCompletionMessage{
+		Role:         string(RoleUser),
+		MultiContent: multiContent,
+	}, nil
 }
 
 type NewOpenAI func(args GeneratorArgs, apiKey string) *OpenAI
