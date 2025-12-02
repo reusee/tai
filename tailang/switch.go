@@ -30,47 +30,88 @@ func (s Switch) Call(env *Env, stream TokenStream, expectedType reflect.Type) (a
 		return nil, fmt.Errorf("expected block for switch body, got %T", bodyVal)
 	}
 
-	bodyStream := NewSliceTokenStream(bodyBlock.Body)
+	clauses, err := parseSwitchClauses(env, NewSliceTokenStream(bodyBlock.Body))
+	if err != nil {
+		return nil, err
+	}
 
-	var cases []any
+	for _, clause := range clauses {
+		if clause.defaultCase {
+			continue
+		}
+		for _, caseVal := range clause.values {
+			if Eq(val, caseVal) {
+				return env.NewScope().Evaluate(NewSliceTokenStream(clause.block.Body))
+			}
+		}
+	}
+
+	for _, clause := range clauses {
+		if clause.defaultCase {
+			return env.NewScope().Evaluate(NewSliceTokenStream(clause.block.Body))
+		}
+	}
+	return nil, nil
+}
+
+type switchClause struct {
+	values      []any
+	block       *Block
+	defaultCase bool
+}
+
+func parseSwitchClauses(env *Env, bodyStream TokenStream) ([]*switchClause, error) {
+	var clauses []*switchClause
+	var curVals []any
+	var hasDefault bool
 
 	for {
 		tok, err := bodyStream.Current()
-		if err != nil || tok.Kind == TokenEOF {
+		if err != nil {
+			return nil, err
+		}
+		if tok.Kind == TokenEOF {
 			break
 		}
 
 		if tok.Kind == TokenIdentifier && tok.Text == "default" {
 			bodyStream.Consume()
-			cases = append(cases, DefaultCase{})
+			if len(curVals) > 0 {
+				return nil, fmt.Errorf("default case cannot have values")
+			}
+			val, err := env.evalExpr(bodyStream, nil)
+			if err != nil {
+				return nil, err
+			}
+			block, ok := val.(*Block)
+			if !ok {
+				return nil, fmt.Errorf("expected block after default, got %T", val)
+			}
+			if hasDefault {
+				return nil, fmt.Errorf("multiple default clauses")
+			}
+			clauses = append(clauses, &switchClause{defaultCase: true, block: block})
+			hasDefault = true
 			continue
 		}
 
-		exprVal, err := env.evalExpr(bodyStream, nil)
+		val, err := env.evalExpr(bodyStream, nil)
 		if err != nil {
 			return nil, err
 		}
-
-		if block, ok := exprVal.(*Block); ok {
-			matched := false
-			for _, c := range cases {
-				if _, isDef := c.(DefaultCase); isDef {
-					matched = true
-					break
-				}
-				if Eq(val, c) {
-					matched = true
-					break
-				}
+		if block, ok := val.(*Block); ok {
+			if len(curVals) == 0 {
+				return nil, fmt.Errorf("block without preceding case values")
 			}
-
-			if matched {
-				return env.NewScope().Evaluate(NewSliceTokenStream(block.Body))
-			}
-			cases = nil
+			clauses = append(clauses, &switchClause{values: curVals, block: block})
+			curVals = nil
 		} else {
-			cases = append(cases, exprVal)
+			curVals = append(curVals, val)
 		}
 	}
-	return nil, nil
+
+	if len(curVals) > 0 {
+		return nil, fmt.Errorf("case values without a block")
+	}
+	return clauses, nil
 }
