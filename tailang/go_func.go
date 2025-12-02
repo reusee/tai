@@ -52,7 +52,6 @@ func (g GoFunc) FunctionName() string {
 func (g GoFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	c := g.cache
 	if c == nil {
-		// No cache (e.g. struct literal), compute temporary
 		c = &goFuncCache{}
 		c.fnVal = reflect.ValueOf(g.Func)
 		c.fnType = c.fnVal.Type()
@@ -74,19 +73,56 @@ func (g GoFunc) Call(env *Env, stream TokenStream, expectedType reflect.Type) (a
 
 	args := make([]reflect.Value, 0, c.numIn)
 
-	for i := 0; i < c.numIn; i++ {
-		argType := c.inTypes[i]
+	fixedCount := c.numIn
+	if c.isVariadic {
+		fixedCount = c.numIn - 1
+	}
 
+	for i := 0; i < fixedCount; i++ {
+		argType := c.inTypes[i]
 		val, err := env.evalExpr(stream, argType)
 		if err != nil {
 			return nil, err
 		}
-
 		vArg, err := PrepareAssign(val, argType)
 		if err != nil {
 			return nil, err
 		}
 		args = append(args, vArg)
+	}
+
+	if c.isVariadic {
+		var variadicArg reflect.Value
+		tok, err := stream.Current()
+		if err == nil && tok.Kind != TokenEOF {
+			isStart := false
+			switch tok.Kind {
+			case TokenIdentifier, TokenString, TokenNumber, TokenUnquotedString:
+				isStart = true
+			case TokenSymbol:
+				if tok.Text == "(" || tok.Text == "[" || tok.Text == "{" {
+					isStart = true
+				}
+			}
+			if isStart {
+				val, err := env.evalExpr(stream, c.inTypes[c.numIn-1])
+				if err != nil {
+					return nil, err
+				}
+				vArg, err := PrepareAssign(val, c.inTypes[c.numIn-1])
+				if err != nil {
+					return nil, err
+				}
+				variadicArg = vArg
+			} else {
+				sliceType := c.inTypes[c.numIn-1]
+				variadicArg = reflect.MakeSlice(sliceType, 0, 0)
+			}
+		} else {
+			sliceType := c.inTypes[c.numIn-1]
+			variadicArg = reflect.MakeSlice(sliceType, 0, 0)
+		}
+		args = append(args, variadicArg)
 	}
 
 	var results []reflect.Value

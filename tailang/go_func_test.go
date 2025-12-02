@@ -126,3 +126,26 @@ func TestBugPanicTypeMismatch(t *testing.T) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
+
+func TestVariadicEmpty(t *testing.T) {
+	env := NewEnv()
+	env.Define("sum", GoFunc{
+		Name: "sum",
+		Func: func(args ...int) int {
+			s := 0
+			for _, v := range args {
+				s += v
+			}
+			return s
+		},
+	})
+
+	tokenizer := NewTokenizer(strings.NewReader("sum"))
+	res, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != 0 {
+		t.Fatalf("expected 0, got %v", res)
+	}
+}
