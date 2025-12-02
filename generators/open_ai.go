@@ -300,7 +300,18 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 			})
 			last = messages[len(messages)-1]
 		}
-		last.MultiContent = append(last.MultiContent, part)
+
+		if part.Type == "text" && last.Content == "" && len(last.MultiContent) == 0 {
+			// empty
+			last.Content = part.Text
+		} else if part.Type == "text" && last.Content != "" {
+			// append text
+			last.Content += part.Text
+		} else {
+			// append to multi content
+			last.MultiContent = append(last.MultiContent, part)
+		}
+
 		messages[len(messages)-1] = last
 	}
 

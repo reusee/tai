@@ -56,7 +56,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 		if len(messages) != 1 {
 			t.Fatalf("got %+v", messages)
 		}
-		if len(messages[0].MultiContent) != 2 {
+		if messages[0].Content != "foobar" {
 			t.Fatalf("got %+v", messages)
 		}
 
