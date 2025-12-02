@@ -1,6 +1,9 @@
 package tailang
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+)
 
 type Defer struct{}
 
@@ -16,17 +19,15 @@ func (d Defer) Call(env *Env, stream TokenStream, expectedType reflect.Type) (an
 		return nil, err
 	}
 
-	// Find the nearest function environment
-	targetEnv := env
-	for targetEnv != nil {
-		if targetEnv.IsFuncFrame {
+	var targetEnv *Env
+	for e := env; e != nil; e = e.Parent {
+		if e.IsFuncFrame {
+			targetEnv = e
 			break
 		}
-		targetEnv = targetEnv.Parent
 	}
 	if targetEnv == nil {
-		// Fallback to current env if no function frame found (e.g. top level)
-		targetEnv = env
+		return nil, fmt.Errorf("defer must be inside a function")
 	}
 
 	targetEnv.Defers = append(targetEnv.Defers, func() {

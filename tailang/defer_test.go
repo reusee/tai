@@ -49,3 +49,16 @@ func TestDeferScope(t *testing.T) {
 		t.Fatalf("expected 2, got %v", res)
 	}
 }
+
+func TestDeferOutsideFunctionError(t *testing.T) {
+	env := NewEnv()
+	src := `defer { print "should not run" }`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error when defer outside function")
+	}
+	if !strings.Contains(err.Error(), "defer must be inside a function") {
+		t.Fatalf("expected error about defer inside function, got %v", err)
+	}
+}
