@@ -208,8 +208,14 @@ type testPtrCommand struct {
 	Val int `tai:"val"`
 }
 
+var _ Function = new(testPtrCommand)
+
 func (c *testPtrCommand) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any, error) {
 	return c.Val, nil
+}
+
+func (c *testPtrCommand) FunctionName() string {
+	return "testPtrCommand"
 }
 
 type testSimpleStruct struct {
