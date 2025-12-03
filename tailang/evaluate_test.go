@@ -275,3 +275,19 @@ func TestNamedParamOnPointerToStructWithoutCall(t *testing.T) {
 		t.Errorf("expected Val=42, got %d", ptr.Val)
 	}
 }
+
+func TestBugPanicNamedParamOnNilPointer(t *testing.T) {
+	env := NewEnv()
+	env.Define("cmd", (*testPtrCommand)(nil))
+
+	// This should NOT panic, but return an error
+	src := `cmd .val 42`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error for named parameter on nil pointer, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot use named parameter .val on nil pointer") {
+		t.Fatalf("expected nil pointer error, got: %v", err)
+	}
+}
