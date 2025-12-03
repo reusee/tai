@@ -511,6 +511,10 @@ func PrepareAssign(val any, targetType reflect.Type) (reflect.Value, error) {
 	}
 
 	valV := reflect.ValueOf(val)
+	if !valV.IsValid() {
+		return reflect.Value{}, fmt.Errorf("cannot assign invalid reflect.Value to %v", targetType)
+	}
+
 	valV = ConvertType(valV, targetType)
 	if !valV.Type().AssignableTo(targetType) {
 		return reflect.Value{}, fmt.Errorf("cannot assign %v (type %v) to %v", val, valV.Type(), targetType)

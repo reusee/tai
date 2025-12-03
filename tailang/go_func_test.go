@@ -149,3 +149,24 @@ func TestVariadicEmpty(t *testing.T) {
 		t.Fatalf("expected 0, got %v", res)
 	}
 }
+
+func TestBugPanicNilToNonNilable(t *testing.T) {
+	env := NewEnv()
+	env.Define("expect_int", GoFunc{
+		Name: "expect_int",
+		Func: func(i int) int {
+			return i
+		},
+	})
+
+	// This should NOT panic, but return an error
+	src := `expect_int (if false { 42 })`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err == nil {
+		t.Fatal("expected error for nil to int, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot assign nil to int") {
+		t.Fatalf("expected cannot assign nil to int error, got: %v", err)
+	}
+}
