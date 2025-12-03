@@ -1,14 +1,15 @@
-# Tai Lang (`tailang`)
+# tailang
 
-Tai is a lightweight, embeddable, dynamic scripting language for Go. It is designed around the philosophy of "Code as Data" using a prefix notation (Polish notation) style, with deep, seamless integration into Go's type system via reflection.
+**tailang** is a lightweight, embedded scripting language written in Go. It is designed for seamless interoperability with the Go type system, utilizing Go's reflection capabilities to provide a dynamic yet robust scripting environment.
 
-## Core Features
+Its syntax is inspired by Lisp (Polish notation/prefix notation) but tailored for Go's concurrency model and standard library.
 
-*   **Prefix Syntax**: Concise function calls without redundant parentheses (e.g., `+ 1 2` instead of `1 + 2`).
-*   **Go Interoperability**: Direct mapping to Go types (`int`, `string`, `slice`, `map`, `struct`, `chan`).
-*   **Auto-BigMath**: Arithmetic operations automatically promote to `math/big.Int` or `math/big.Float` on overflow, ensuring safety for heavy calculations.
-*   **Structured Concurrency**: First-class keywords for `go` routines, `send`/`recv` on channels, and `select` blocks.
-*   **Embeddable**: Zero-config instantiation with `NewEnv()`.
+## Core Philosophy
+
+1.  **Go-Native**: `tailang` types *are* Go types. `int` is `int`, `map` is `reflect.Map`, and functions are `reflect.Func`. There is no heavy wrapping layer.
+2.  **Concurrency First**: First-class support for `go`, `chan`, `select`, `send`, and `recv`, mimicking Go's concurrency primitives.
+3.  **Reflection-Based**: Calls to Go functions, methods, and field access are resolved dynamically at runtime using `reflect`.
+4.  **Prefix Notation**: Everything is an expression in the form `op arg1 arg2 ...`.
 
 ## Installation
 
@@ -16,184 +17,220 @@ Tai is a lightweight, embeddable, dynamic scripting language for Go. It is desig
 go get github.com/reus/reusee/tai/tailang
 ```
 
-## User Guide
+## Quick Start (For Developers)
 
-### 1. Variables and Types
+To embed `tailang` in your Go application:
 
-Variables are dynamically typed but backed by strong Go types.
+```go
+package main
 
-```tailang
-# Definition
-def x 42
-def s "Hello World"
+import (
+    "fmt"
+    "strings"
+    "github.com/reus/reusee/tai/tailang"
+)
 
-# Assignment
-set x (+ x 1)
+func main() {
+    // 1. Create an Environment
+    env := tailang.NewEnv()
 
-# Lists (Slices) and Maps
-def my_list [1 2 3 "four"]
-def my_map (make (map_of string int))
+    // 2. Define custom Go values or functions
+    env.Define("greet", func(name string) {
+        fmt.Printf("Hello, %s!\n", name)
+    })
+
+    // 3. Evaluate Script
+    src := `
+        def name "World"
+        greet name
+        + 1 2
+    `
+    tokenizer := tailang.NewTokenizer(strings.NewReader(src))
+    result, err := env.Evaluate(tokenizer)
+    if err != nil {
+        panic(err)
+    }
+    
+    fmt.Println("Result:", result) // Result: 3
+}
 ```
 
-### 2. Control Flow
+## Language Tour
 
-Tai supports standard control structures adapted to its prefix style. Blocks are delimited by `{}`.
+### Basic Syntax
+tailang uses prefix notation (Polish notation). The operator or function name always comes first.
 
 ```tailang
-# If / Else
+# Arithmetic
++ 1 2           # 1 + 2
+* 3 (+ 1 1)     # 3 * (1 + 1)
+
+# Method Chaining (Go methods)
+# equivalent to: time.Now().Format("2006-01-02")
+time.now:Format "2006-01-02"
+```
+
+### Variables
+Variables are lexically scoped.
+
+```tailang
+def x 10        # Define x
+set x 20        # Update x
+```
+
+### Data Types
+tailang supports standard Go types and literals.
+
+*   **Numbers**: `1`, `3.14`, `1e9`. Auto-promotes to `big.Int` or `big.Float` on overflow.
+*   **Strings**: `"hello"`, `'world'`, `` `multiline` ``.
+*   **Lists (Slices)**: `[1 2 3]` or `[.elem int 1 2 3]` for typed slices.
+*   **Blocks**: `{ print "hi" }`.
+
+### Control Flow
+
+**If / Else**
+```tailang
 if > x 10 {
-    fmt.println "Large"
+    print "big"
 } else {
-    fmt.println "Small"
-}
-
-# Loops
-while < x 100 {
-    set x (+ x 1)
-}
-
-# Iteration (Slice, Map, Channel, String)
-foreach item ["a" "b" "c"] {
-    fmt.println item
-}
-
-# Switch
-switch x {
-    1 { "Option 1" }
-    default { "Other" }
+    print "small"
 }
 ```
 
-### 3. Functions
+**Loops**
+```tailang
+# While
+while < i 10 {
+    set i (+ i 1)
+}
 
-Functions support closures, named parameters, and recursion.
+# Foreach (iterates slices, maps, strings, channels)
+foreach item ["a" "b"] {
+    print item
+}
+```
+
+**Switch**
+```tailang
+switch val {
+    1 { "one" }
+    2 { "two" }
+    default { "other" }
+}
+```
+
+### Functions
+Functions support closures and recursion.
 
 ```tailang
 func add(a b) {
     + a b
 }
 
-# Function as first-class citizen
-def op &add
-op 10 20
+# Anonymous function
+def sub (func(a b) { - a b })
 ```
 
-### 4. Concurrency
-
-Concurrency primitives map directly to Go's runtime.
+### Concurrency
+tailang exposes Go's concurrency primitives directly.
 
 ```tailang
-def ch (make (chan_of int))
+def c (make (chan_of int) 0)
 
 go {
-    send ch 100
+    time.sleep (time.parse_duration "100ms")
+    send c 42
 }
 
-def val (recv ch)
+def result (recv c)
 ```
 
-## Developer Guide
-
-### Embedding Tai
-
-To run Tai code within a Go application:
-
-```go
-package main
-
-import (
-	"fmt"
-	"strings"
-	"github.com/reus/reusee/tai/tailang"
-)
-
-func main() {
-	env := tailang.NewEnv()
-
-	// 1. Define custom Go functions
-	env.Define("double", func(i int) int {
-		return i * 2
-	})
-
-	// 2. Execute script
-	src := `
-        def x 21
-        double x
-    `
-	tokenizer := tailang.NewTokenizer(strings.NewReader(src))
-	res, err := env.Evaluate(tokenizer)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(res) // 42
-}
-```
-
-### Struct Binding
-
-Tai can write to struct fields using named parameter syntax (`.field value`). Fields must be tagged with `tai`.
-
-```go
-type Config struct {
-    Host string `tai:"host"`
-    Port int    `tai:"port"`
-}
-
-// In Script:
-// config_obj .host "127.0.0.1" .port 8080
-```
-
-## Comprehensive Code Example
-
-This script demonstrates recursion, big-integer math, concurrency (channels and workers), and standard library usage.
+### Stdlib Integration
+Most of Go's standard library is pre-registered (e.g., `fmt`, `strings`, `math`, `os`, `json`).
 
 ```tailang
-# Parallel Factorial Calculator
-# Demonstrates: func, if, math, go, chan, foreach, fmt
+fmt.println (strings.to_upper "hello")
+json.marshal (map_of string int)
+```
 
-# 1. Define recursive factorial function
-# Note: Tai automatically promotes to BigInt for large results
-func factorial(n) {
+## Comprehensive Example
+
+The following script demonstrates the majority of `tailang` features: concurrency, flow control, scoping, recursion, struct usage, and standard library integration.
+
+```tailang
+# 1. Define a recursive function (Fibonacci)
+func fib(n) {
     if <= n 1 {
-        1
+        n
     } else {
-        * n (factorial (- n 1))
+        + (fib (- n 1)) (fib (- n 2))
     }
 }
 
-# 2. Initialize channels
-# 'chan_of' is a helper to reflect a channel type
-def inputs (make (chan_of int) 10)
-def results (make (chan_of string) 10)
+# 2. Concurrency: Worker pool pattern
+def jobs (make (chan_of int) 5)
+def results (make (chan_of int) 5)
 
-# 3. Start a worker goroutine
-go {
-    # foreach on a channel behaves like Go's 'range'
-    foreach n inputs {
-        def res (factorial n)
+# Function to process jobs
+func worker(id) {
+    # 'defer' runs when function exits
+    defer { fmt.printf "Worker %d finished\n" [id] }
+    
+    # Range over channel using foreach
+    foreach n jobs {
+        if == n 0 {
+            # Demonstrate control flow
+            continue
+        }
         
-        # Use stdlib fmt.sprintf for formatting
-        def msg (fmt.sprintf "Factorial of %d is %v" n res)
+        # Calculate result
+        def res (fib n)
         
-        send results msg
+        # Artificial delay using Go stdlib
+        time.sleep (time.parse_duration "10ms")
+        
+        send results res
     }
-    close results
 }
+
+# 3. Start workers
+fmt.println "Starting workers..."
+go { worker 1 }
+go { worker 2 }
 
 # 4. Send jobs
-go {
-    # Calculate factorials for 10, 20, ..., 50
-    foreach i [10 20 30 40 50] {
-        send inputs i
+foreach i [5 8 10 0 12] {
+    send jobs i
+}
+close jobs
+
+# 5. Collect results with Select (with timeout)
+def collected 0
+def timeout (time.after (time.parse_duration "1s"))
+
+# Loop 4 times (we sent 5 items, but 0 is skipped)
+def i 0
+while < i 4 {
+    select {
+        case recv results r {
+            fmt.printf "Got result: %v\n" [r]
+            set collected (+ collected 1)
+        }
+        case recv timeout t {
+            fmt.println "Timed out!"
+            break
+        }
     }
-    close inputs
+    set i (+ i 1)
 }
 
-# 5. Collect and print results
-fmt.println "--- Calculation Results ---"
-foreach line results {
-    fmt.println line
-}
-fmt.println "--- Done ---"
+# 6. Big Integer Math (Auto-promotion)
+# 2^64 is too big for int64, automatically becomes *big.Int
+def big_val (math.pow 2 64) 
+fmt.printf "Big calculation: %v (Type: %s)\n" [big_val (type big_val)]
+
+# 7. List manipulation and Strings
+def parts ["tailang" "is" "fun"]
+def message (strings.join parts " ")
+strings.to_upper message
 ```
-
