@@ -273,3 +273,33 @@ func TestConcurrency(t *testing.T) {
 		t.Errorf("expected 100, got %v", res)
 	}
 }
+
+func TestConcurrentMapAccess(t *testing.T) {
+	env := NewEnv()
+	src := `
+		def n 0
+		func inc() {
+			set n (+ n 1)
+		}
+		# Spawn multiple goroutines to trigger concurrent map writes
+		go { 
+			inc() inc() inc() inc() inc()
+			inc() inc() inc() inc() inc()
+		}
+		go { 
+			inc() inc() inc() inc() inc()
+			inc() inc() inc() inc() inc()
+		}
+		go { 
+			inc() inc() inc() inc() inc()
+			inc() inc() inc() inc() inc()
+		}
+		time.sleep (time.parse_duration "100ms")
+		n
+	`
+	tokenizer := NewTokenizer(strings.NewReader(src))
+	_, err := env.Evaluate(tokenizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -31,7 +31,10 @@ func (d Def) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 		return nil, fmt.Errorf("cannot define keyword: %s", name)
 	}
 
-	if _, ok := env.Vars[name]; ok {
+	env.mu.RLock()
+	_, exists := env.Vars[name]
+	env.mu.RUnlock()
+	if exists {
 		return nil, fmt.Errorf("variable %s already defined", name)
 	}
 

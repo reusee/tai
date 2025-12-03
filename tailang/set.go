@@ -33,11 +33,14 @@ func (s Set) Call(env *Env, stream TokenStream, expectedType reflect.Type) (any,
 	found := false
 	e := env
 	for e != nil {
+		e.mu.Lock()
 		if _, ok := e.Vars[name]; ok {
 			e.Vars[name] = val
+			e.mu.Unlock()
 			found = true
 			break
 		}
+		e.mu.Unlock()
 		e = e.Parent
 	}
 

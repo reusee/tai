@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -17,6 +18,7 @@ type Env struct {
 	Vars        map[string]any
 	Defers      []func()
 	IsFuncFrame bool
+	mu          sync.RWMutex
 }
 
 func NewEnv() *Env {
@@ -139,6 +141,9 @@ func NewEnv() *Env {
 }
 
 func (e *Env) Define(name string, val any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if val == nil {
 		e.Vars[name] = nil
 		return
@@ -196,7 +201,10 @@ func toSnake(s string) string {
 
 func (e *Env) Lookup(name string) (any, bool) {
 	for env := e; env != nil; env = env.Parent {
-		if v, ok := env.Vars[name]; ok {
+		env.mu.RLock()
+		v, ok := env.Vars[name]
+		env.mu.RUnlock()
+		if ok {
 			return v, true
 		}
 	}
