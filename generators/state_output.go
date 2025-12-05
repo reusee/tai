@@ -140,15 +140,23 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 		case FuncCall:
 			if !ret.disableTools {
-				if err := print(false, fmt.Sprintf("[Function Call: %s(%v)]", part.Name, part.Args)); err != nil {
-					return nil, err
+				if part.Name == "apply_change" {
+					// skip
+				} else {
+					if err := print(false, fmt.Sprintf("[Function Call: %s(%v)]", part.Name, part.Args)); err != nil {
+						return nil, err
+					}
 				}
 			}
 
 		case CallResult:
 			if !ret.disableTools {
-				if err := print(false, fmt.Sprintf("[Call Result: %s(%v)]", part.Name, part.Results)); err != nil {
-					return nil, err
+				if part.Name == "apply_change" {
+					// skip
+				} else {
+					if err := print(false, fmt.Sprintf("[Call Result: %s(%v)]", part.Name, part.Results)); err != nil {
+						return nil, err
+					}
 				}
 			}
 
