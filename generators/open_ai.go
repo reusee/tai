@@ -97,7 +97,6 @@ func (o *OpenAI) Generate(ctx context.Context, state State) (ret State, err erro
 		ReasoningEffort:     "high",
 		MaxCompletionTokens: vars.DerefOrZero(o.args.MaxGenerateTokens),
 		Temperature:         temperature,
-		//TODO o.args.ExtraArguments
 	}
 
 	if !o.args.DisableTools {
