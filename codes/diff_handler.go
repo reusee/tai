@@ -31,13 +31,10 @@ func (Module) DefaultDiffHandlerName() DefaultDiffHandlerName {
 func (Module) DiffHandler(
 	name DiffHandlerName,
 	unified UnifiedDiff,
-	unifiedTool UnifiedDiffTool,
 ) codetypes.DiffHandler {
 	switch name {
 	case "unified":
 		return unified
-	case "unified-tool":
-		return unifiedTool
 	case "":
 		return DumbDiffHandler{}
 	}

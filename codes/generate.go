@@ -100,10 +100,6 @@ func (Module) Generate(
 			},
 		)
 		state = generators.NewOutput(state, output, *showThoughts)
-		state = UnifiedDiffState{
-			upstream: state,
-			w:        output,
-		}
 		if !args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
