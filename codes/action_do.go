@@ -7,6 +7,7 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
 )
 
@@ -17,6 +18,7 @@ type ActionDo struct {
 	BuildChat        dscope.Inject[phases.BuildChat]
 	GetPlanGenerator dscope.Inject[GetPlanGenerator]
 	GetCodeGenerator dscope.Inject[GetCodeGenerator]
+	Logger           dscope.Inject[logs.Logger]
 }
 
 var _ Action = ActionDo{}
@@ -101,7 +103,13 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 			}
 		}
 
-		if !hasContent || (foundFinishReason && lastFinishReason != "stop") {
+		if !hasContent {
+			a.Logger().InfoContext(ctx, "no content, retry plan")
+			return a.plan(cont), state, nil
+		}
+
+		if foundFinishReason && lastFinishReason != "stop" {
+			a.Logger().InfoContext(ctx, "unexpected finish reason, retry plan")
 			return a.plan(cont), state, nil
 		}
 
