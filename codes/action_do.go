@@ -81,30 +81,23 @@ The actual code changes will be requested in a subsequent step based on this pla
 
 func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+
 		contents := state.Contents()
 		var lastFinishReason generators.FinishReason
 		foundFinishReason := false
 		hasContent := false
 
-		for i := len(contents) - 1; i >= 0; i-- {
-			content := contents[i]
-			if content.Role == generators.RoleModel || content.Role == generators.RoleAssistant {
-				for j := 0; j < len(content.Parts); j++ {
-					part := content.Parts[j]
-					if fr, ok := part.(generators.FinishReason); ok {
-						lastFinishReason = fr
-						foundFinishReason = true
-					}
-					if text, ok := part.(generators.Text); ok {
-						for _, r := range string(text) {
-							if r > ' ' {
-								hasContent = true
-								break
-							}
-						}
-					}
+		for _, content := range contents {
+			if content.Role != generators.RoleModel && content.Role != generators.RoleAssistant {
+				continue
+			}
+			for _, part := range content.Parts {
+				if reason, ok := part.(generators.FinishReason); ok {
+					lastFinishReason = reason
+					foundFinishReason = true
+				} else if text, ok := part.(generators.Text); ok {
+					hasContent = len(text) > 0 || hasContent
 				}
-				break
 			}
 		}
 
