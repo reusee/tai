@@ -3,9 +3,9 @@ package generators
 import (
 	"sync"
 
-	"cloud.google.com/go/vertexai/genai"
-	geminitokenizer "cloud.google.com/go/vertexai/genai/tokenizer"
 	"github.com/tiktoken-go/tokenizer"
+	"google.golang.org/genai"
+	googletokenizer "google.golang.org/genai/tokenizer"
 )
 
 type TokenCounter = func(text string) (int, error)
@@ -44,8 +44,8 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 			return v.(TokenCounter)
 		}
 
-		getTokenizer := sync.OnceValues(func() (*geminitokenizer.Tokenizer, error) {
-			return geminitokenizer.New(model)
+		getTokenizer := sync.OnceValues(func() (*googletokenizer.LocalTokenizer, error) {
+			return googletokenizer.NewLocalTokenizer(model)
 		})
 
 		counter := func(text string) (int, error) {
@@ -53,7 +53,9 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 			if err != nil {
 				return 0, err
 			}
-			resp, err := tokenizer.CountTokens(genai.Text(text))
+			resp, err := tokenizer.CountTokens([]*genai.Content{
+				genai.NewContentFromText(text, "user"),
+			}, nil)
 			if err != nil {
 				return 0, err
 			}
