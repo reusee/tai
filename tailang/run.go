@@ -347,6 +347,17 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					return
 				}
 			}
+
+		case OpSwap:
+			if v.State.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during swap")) {
+					return
+				}
+				continue
+			}
+			top := v.State.SP - 1
+			under := v.State.SP - 2
+			v.State.OperandStack[top], v.State.OperandStack[under] = v.State.OperandStack[under], v.State.OperandStack[top]
 		}
 	}
 }

@@ -20,4 +20,5 @@ const (
 	OpMakeMap
 	OpGetIndex
 	OpSetIndex
+	OpSwap
 )

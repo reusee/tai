@@ -815,3 +815,87 @@ func TestVM_ListMap(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_Swap(t *testing.T) {
+	main := &Function{
+		Constants: []any{1, 2, "res"},
+		Code: []OpCode{
+			OpLoadConst, 0, 0, // 1
+			OpLoadConst, 0, 1, // 2
+			OpSwap,         // Stack: [2, 1]
+			OpPop,          // Pop 1. Stack: [2]
+			OpDefVar, 0, 2, // res = 2
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, ok := vm.State.Scope.Get("res")
+	if !ok {
+		t.Fatal("res not found")
+	}
+	if res.(int) != 2 {
+		t.Fatalf("expected 2, got %v", res)
+	}
+}
+
+func TestVM_Pipe(t *testing.T) {
+	// 42 | sub(1) => sub(42, 1) = 41
+	sub := NativeFunc(func(vm *VM, args []any) (any, error) {
+		return args[0].(int) - args[1].(int), nil
+	})
+
+	main := &Function{
+		Constants: []any{42, "sub", 1, "res"},
+		Code: []OpCode{
+			OpLoadConst, 0, 0, // 42
+			// Pipe to sub(1)
+			OpLoadVar, 0, 1, // sub. Stack: [42, sub]
+			OpSwap,            // Stack: [sub, 42]
+			OpLoadConst, 0, 2, // 1. Stack: [sub, 42, 1]
+			OpCall, 0, 2, // sub(42, 1) -> 41
+			OpDefVar, 0, 3, // res = 41
+		},
+	}
+
+	vm := NewVM(main)
+	vm.State.Scope.Def("sub", sub)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, ok := vm.State.Scope.Get("res")
+	if !ok {
+		t.Fatal("res not found")
+	}
+	if res.(int) != 41 {
+		t.Fatalf("expected 41, got %v", res)
+	}
+}
+
+func TestVM_Pipe_Error(t *testing.T) {
+	main := &Function{
+		Code: []OpCode{
+			OpLoadConst, 0, 0, // Just 1 item
+			OpSwap,
+		},
+		Constants: []any{1},
+	}
+	vm := NewVM(main)
+	var hasErr bool
+	for _, err := range vm.Run {
+		if err != nil {
+			hasErr = true
+			if err.Error() != "stack underflow during swap" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+	}
+	if !hasErr {
+		t.Fatal("expected error")
+	}
+}
