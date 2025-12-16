@@ -2,10 +2,7 @@ package tailang
 
 import "fmt"
 
-func (v *VM) Run(
-	yield func(*Interrupt, error) bool,
-) {
-
+func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
 		if v.State.IP >= len(v.State.CurrentFun.Code) {
 			return
@@ -15,7 +12,6 @@ func (v *VM) Run(
 		v.State.IP++
 
 		switch op {
-
 		case OpLoadConst:
 			idx := v.readUint16()
 			v.push(v.State.CurrentFun.Constants[idx])
@@ -28,8 +24,6 @@ func (v *VM) Run(
 				if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
 					return
 				}
-				// If yield continues, we assume the error is handled or we stop.
-				// For undefined var, we probably push nil to avoid panic if continuation is forced
 				v.push(nil)
 				continue
 			}
@@ -38,8 +32,7 @@ func (v *VM) Run(
 		case OpDefVar:
 			idx := v.readUint16()
 			name := v.State.CurrentFun.Constants[idx].(string)
-			val := v.pop()
-			v.State.Scope.Def(name, val)
+			v.State.Scope.Def(name, v.pop())
 
 		case OpSetVar:
 			idx := v.readUint16()
@@ -60,91 +53,94 @@ func (v *VM) Run(
 
 		case OpJumpFalse:
 			offset := int16(v.readUint16())
-			cond := v.pop()
-			if cond == nil || cond == false || cond == 0 || cond == "" {
+			val := v.pop()
+			if val == nil || val == false || val == 0 || val == "" {
 				v.State.IP += int(offset)
 			}
 
 		case OpMakeClosure:
 			idx := v.readUint16()
-			funVal := v.State.CurrentFun.Constants[idx]
-			fun, ok := funVal.(*Function)
-			if !ok {
-				if !yield(nil, fmt.Errorf("OpMakeClosure: constant at %d is not a Function", idx)) {
-					return
-				}
-				return
-			}
-			closure := &Closure{
-				Fun: fun,
-				Env: v.State.Scope,
-			}
-			v.push(closure)
+			fun := v.State.CurrentFun.Constants[idx].(*Function)
+			v.push(&Closure{Fun: fun, Env: v.State.Scope})
 
 		case OpCall:
 			argc := int(v.readUint16())
-			callee := v.pop()
+			if v.State.SP < argc+1 {
+				if !yield(nil, fmt.Errorf("stack underflow during call")) {
+					return
+				}
+				continue
+			}
+
+			// Callee is below args on the stack
+			calleeIdx := v.State.SP - argc - 1
+			callee := v.State.OperandStack[calleeIdx]
 
 			switch fn := callee.(type) {
 			case *Closure:
 				if argc != fn.Fun.NumParams {
-					// Handle mismatch or varargs if supported later
-					// For now, simple strict check could be good, or just use what is passed.
-					// Implementation matches provided args to params.
+					if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", fn.Fun.NumParams, argc)) {
+						return
+					}
+					return
 				}
 
-				args := v.popN(argc)
+				newEnv := fn.Env.NewChild()
+				// Bind arguments from stack directly to new environment
+				for i := 0; i < argc; i++ {
+					newEnv.Def(fn.Fun.ParamNames[i], v.State.OperandStack[calleeIdx+1+i])
+				}
 
-				// Save current context
-				v.State.CallStack = append(v.State.CallStack, &Frame{
+				// Recycle stack space used by args and callee
+				v.drop(argc + 1)
+
+				v.State.CallStack = append(v.State.CallStack, Frame{
+					Fun:      v.State.CurrentFun,
 					ReturnIP: v.State.IP,
 					Env:      v.State.Scope,
-					Fun:      v.State.CurrentFun,
+					BaseSP:   v.State.SP,
 				})
 
-				// Switch context
 				v.State.CurrentFun = fn.Fun
 				v.State.IP = 0
-				v.State.Scope = fn.Env.NewChild()
-
-				// Bind arguments
-				for i := 0; i < argc && i < len(fn.Fun.ParamNames); i++ {
-					v.State.Scope.Def(fn.Fun.ParamNames[i], args[i])
-				}
+				v.State.Scope = newEnv
 
 			case NativeFunc:
-				args := v.popN(argc)
+				// Zero-allocation slice view of arguments
+				// Note: Slice is valid only until next Stack modification, which is fine for sync calls
+				args := v.State.OperandStack[calleeIdx+1 : v.State.SP]
 				res, err := fn(v, args)
+
+				// Cleanup stack after call
+				v.drop(argc + 1)
+
 				if err != nil {
 					if !yield(nil, err) {
 						return
 					}
-				}
-				v.push(res)
-
-			default:
-				if !yield(nil, fmt.Errorf("not callable: %T", callee)) {
-					return
+					v.push(nil) // Push nil if error handled
+				} else {
+					v.push(res)
 				}
 			}
 
 		case OpReturn:
-			val := v.pop()
+			retVal := v.pop()
 			n := len(v.State.CallStack)
 			if n == 0 {
-				// End of main function or empty stack
 				return
 			}
-
 			frame := v.State.CallStack[n-1]
 			v.State.CallStack = v.State.CallStack[:n-1]
 
-			// Restore context
+			// Restore Call Frame
+			v.State.CurrentFun = frame.Fun
 			v.State.IP = frame.ReturnIP
 			v.State.Scope = frame.Env
-			v.State.CurrentFun = frame.Fun
+			// Ensure we discard any garbage left on stack by the called function
+			v.drop(v.State.SP - frame.BaseSP)
 
-			v.push(val)
+			v.push(retVal)
 
 		case OpSuspend:
 			if !yield(InterruptSuspend, nil) {
@@ -158,7 +154,6 @@ func (v *VM) Run(
 			if v.State.Scope.Parent != nil {
 				v.State.Scope = v.State.Scope.Parent
 			}
-
 		}
 	}
 }

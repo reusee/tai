@@ -4,4 +4,5 @@ type Frame struct {
 	Fun      *Function
 	ReturnIP int
 	Env      *Env
+	BaseSP   int
 }
