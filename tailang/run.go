@@ -168,6 +168,148 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if v.State.Scope.Parent != nil {
 				v.State.Scope = v.State.Scope.Parent
 			}
+
+		case OpMakeList:
+			n := int(v.readUint16())
+			if v.State.SP < n {
+				if !yield(nil, fmt.Errorf("stack underflow during list creation")) {
+					return
+				}
+				continue
+			}
+			slice := make([]any, n)
+			start := v.State.SP - n
+			copy(slice, v.State.OperandStack[start:v.State.SP])
+			v.drop(n)
+			v.push(slice)
+
+		case OpMakeMap:
+			n := int(v.readUint16())
+			if v.State.SP < n*2 {
+				if !yield(nil, fmt.Errorf("stack underflow during map creation")) {
+					return
+				}
+				continue
+			}
+			m := make(map[any]any, n)
+			start := v.State.SP - n*2
+			for i := 0; i < n; i++ {
+				k := v.State.OperandStack[start+i*2]
+				val := v.State.OperandStack[start+i*2+1]
+				m[k] = val
+			}
+			v.drop(n * 2)
+			v.push(m)
+
+		case OpGetIndex:
+			key := v.pop()
+			target := v.pop()
+			if target == nil {
+				if !yield(nil, fmt.Errorf("indexing nil")) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+
+			var val any
+			switch t := target.(type) {
+			case []any:
+				var idx int
+				var ok bool
+				switch i := key.(type) {
+				case int:
+					idx = i
+					ok = true
+				case int64:
+					idx = int(i)
+					ok = true
+				}
+
+				if !ok {
+					if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
+						return
+					}
+					val = nil
+				} else if idx < 0 || idx >= len(t) {
+					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+						return
+					}
+					val = nil
+				} else {
+					val = t[idx]
+				}
+
+			case map[any]any:
+				val = t[key]
+
+			case map[string]any:
+				if k, ok := key.(string); ok {
+					val = t[k]
+				}
+
+			default:
+				if !yield(nil, fmt.Errorf("type %T is not indexable", target)) {
+					return
+				}
+			}
+			v.push(val)
+
+		case OpSetIndex:
+			val := v.pop()
+			key := v.pop()
+			target := v.pop()
+
+			if target == nil {
+				if !yield(nil, fmt.Errorf("assignment to nil")) {
+					return
+				}
+				continue
+			}
+
+			switch t := target.(type) {
+			case []any:
+				var idx int
+				var ok bool
+				switch i := key.(type) {
+				case int:
+					idx = i
+					ok = true
+				case int64:
+					idx = int(i)
+					ok = true
+				}
+				if !ok {
+					if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
+						return
+					}
+					continue
+				}
+				if idx < 0 || idx >= len(t) {
+					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+						return
+					}
+					continue
+				}
+				t[idx] = val
+
+			case map[any]any:
+				t[key] = val
+
+			case map[string]any:
+				if k, ok := key.(string); ok {
+					t[k] = val
+				} else {
+					if !yield(nil, fmt.Errorf("map key must be string, got %T", key)) {
+						return
+					}
+				}
+
+			default:
+				if !yield(nil, fmt.Errorf("type %T does not support assignment", target)) {
+					return
+				}
+			}
 		}
 	}
 }

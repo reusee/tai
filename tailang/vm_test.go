@@ -720,3 +720,98 @@ func TestVM_ContinueOnError(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_ListMap(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"l", 1, 2, "res"},
+			Code: []OpCode{
+				// list = [1, 2]
+				OpLoadConst, 0, 1,
+				OpLoadConst, 0, 2,
+				OpMakeList, 0, 2,
+				OpDefVar, 0, 0,
+
+				// res = list[1]
+				OpLoadVar, 0, 0,
+				OpLoadConst, 0, 1, // index 1 (value 2) (Wait, const 1 is value 1. Need index. Let's use value 1 as index 1)
+				OpGetIndex,
+				OpDefVar, 0, 3,
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, ok := vm.State.Scope.Get("res")
+		if !ok || res.(int) != 2 {
+			t.Fatalf("expected 2, got %v", res)
+		}
+
+		// Update
+		main = &Function{
+			Constants: []any{"l", 1, 42, "res"},
+			Code: []OpCode{
+				// list = [1, 2] (reusing setup logic or just trust state if simple)
+				// let's do fresh
+				OpLoadConst, 0, 1,
+				OpLoadConst, 0, 1, // list=[1, 1]
+				OpMakeList, 0, 2,
+				OpDefVar, 0, 0,
+
+				OpLoadVar, 0, 0,
+				OpLoadConst, 0, 1, // index 1
+				OpLoadConst, 0, 2, // value 42
+				OpSetIndex,
+
+				OpLoadVar, 0, 0,
+				OpLoadConst, 0, 1, // index 1
+				OpGetIndex,
+				OpDefVar, 0, 3,
+			},
+		}
+		vm = NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, ok = vm.State.Scope.Get("res")
+		if !ok || res.(int) != 42 {
+			t.Fatalf("expected 42, got %v", res)
+		}
+	})
+
+	t.Run("Map", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"m", "foo", 42, "bar", 0, "res"},
+			Code: []OpCode{
+				// m = {foo: 42, bar: 0}
+				OpLoadConst, 0, 1, // foo
+				OpLoadConst, 0, 2, // 42
+				OpLoadConst, 0, 3, // bar
+				OpLoadConst, 0, 4, // 0
+				OpMakeMap, 0, 2, // 2 pairs
+				OpDefVar, 0, 0,
+
+				// res = m.foo
+				OpLoadVar, 0, 0,
+				OpLoadConst, 0, 1, // foo
+				OpGetIndex,
+				OpDefVar, 0, 5,
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, ok := vm.State.Scope.Get("res")
+		if !ok || res.(int) != 42 {
+			t.Fatalf("expected 42, got %v", res)
+		}
+	})
+}
