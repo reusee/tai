@@ -1,5 +1,7 @@
 package tailang
 
+type OpCode byte
+
 const (
 	OpLoadConst OpCode = iota + 8
 	OpLoadVar
