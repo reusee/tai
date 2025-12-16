@@ -4,7 +4,7 @@ import "fmt"
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
-		if v.State.IP >= len(v.State.CurrentFun.Code) {
+		if v.State.IP < 0 || v.State.IP >= len(v.State.CurrentFun.Code) {
 			return
 		}
 
@@ -91,15 +91,22 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					newEnv.Def(fn.Fun.ParamNames[i], v.State.OperandStack[calleeIdx+1+i])
 				}
 
-				// Recycle stack space used by args and callee
-				v.drop(argc + 1)
-
-				v.State.CallStack = append(v.State.CallStack, Frame{
-					Fun:      v.State.CurrentFun,
-					ReturnIP: v.State.IP,
-					Env:      v.State.Scope,
-					BaseSP:   v.State.SP,
-				})
+				// Tail Call Optimization
+				if v.State.IP < len(v.State.CurrentFun.Code) && v.State.CurrentFun.Code[v.State.IP] == OpReturn {
+					var baseSP int
+					if n := len(v.State.CallStack); n > 0 {
+						baseSP = v.State.CallStack[n-1].BaseSP
+					}
+					v.drop(v.State.SP - baseSP)
+				} else {
+					v.drop(argc + 1)
+					v.State.CallStack = append(v.State.CallStack, Frame{
+						Fun:      v.State.CurrentFun,
+						ReturnIP: v.State.IP,
+						Env:      v.State.Scope,
+						BaseSP:   v.State.SP,
+					})
+				}
 
 				v.State.CurrentFun = fn.Fun
 				v.State.IP = 0
@@ -122,6 +129,13 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				} else {
 					v.push(res)
 				}
+
+			default:
+				if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
+					return
+				}
+				v.drop(argc + 1)
+				v.push(nil)
 			}
 
 		case OpReturn:
