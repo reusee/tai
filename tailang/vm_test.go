@@ -153,3 +153,231 @@ func TestVM_Jump(t *testing.T) {
 		t.Fatalf("expected 2, got %v", res)
 	}
 }
+
+func TestVM_Scope(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Constants: []any{
+			"x",
+			1,
+			2,
+		},
+		Code: []OpCode{
+			OpLoadConst, 0, 1,
+			OpDefVar, 0, 0,
+			OpEnterScope,
+			OpLoadConst, 0, 2,
+			OpDefVar, 0, 0,
+			OpLeaveScope,
+		},
+	}
+
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	val, ok := vm.State.Scope.Get("x")
+	if !ok {
+		t.Fatal("x not found")
+	}
+	if val.(int) != 1 {
+		t.Fatalf("expected 1, got %v", val)
+	}
+}
+
+func TestVM_SetVar(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Constants: []any{
+			"x",
+			1,
+			2,
+		},
+		Code: []OpCode{
+			OpLoadConst, 0, 1,
+			OpDefVar, 0, 0,
+			OpLoadConst, 0, 2,
+			OpSetVar, 0, 0,
+		},
+	}
+
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	val, ok := vm.State.Scope.Get("x")
+	if !ok {
+		t.Fatal("x not found")
+	}
+	if val.(int) != 2 {
+		t.Fatalf("expected 2, got %v", val)
+	}
+}
+
+func TestVM_Pop(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Constants: []any{
+			"x",
+			1,
+			2,
+		},
+		Code: []OpCode{
+			OpLoadConst, 0, 1,
+			OpLoadConst, 0, 2,
+			OpPop,
+			OpDefVar, 0, 0,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	val, ok := vm.State.Scope.Get("x")
+	if !ok || val.(int) != 1 {
+		t.Fatalf("expected 1, got %v", val)
+	}
+}
+
+func TestVM_UnconditionalJump(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Constants: []any{
+			"res",
+			1,
+			2,
+		},
+		Code: []OpCode{
+			OpLoadConst, 0, 1,
+			OpJump, 0, 4,
+			OpLoadConst, 0, 2,
+			OpPop,
+			OpDefVar, 0, 0,
+		},
+	}
+
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	val, ok := vm.State.Scope.Get("res")
+	if !ok {
+		t.Fatal("res not found")
+	}
+	if val.(int) != 1 {
+		t.Fatalf("expected 1, got %v", val)
+	}
+}
+
+func TestVM_Suspend(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Code: []OpCode{
+			OpSuspend,
+		},
+	}
+
+	vm := NewVM(main)
+	var suspended bool
+	for i, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == InterruptSuspend {
+			suspended = true
+		}
+	}
+
+	if !suspended {
+		t.Fatal("expected suspend")
+	}
+}
+
+func TestVM_Errors(t *testing.T) {
+	t.Run("UndefinedVar", func(t *testing.T) {
+		main := &Function{
+			Name: "main",
+			Constants: []any{
+				"x",
+			},
+			Code: []OpCode{
+				OpLoadVar, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("SetUndefinedVar", func(t *testing.T) {
+		main := &Function{
+			Name: "main",
+			Constants: []any{
+				"x",
+				1,
+			},
+			Code: []OpCode{
+				OpLoadConst, 0, 1,
+				OpSetVar, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("ArityMismatch", func(t *testing.T) {
+		foo := &Function{
+			Name:      "foo",
+			NumParams: 1,
+			Code: []OpCode{
+				OpReturn,
+			},
+		}
+		main := &Function{
+			Name: "main",
+			Constants: []any{
+				foo,
+			},
+			Code: []OpCode{
+				OpMakeClosure, 0, 0,
+				OpCall, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
