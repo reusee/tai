@@ -5,6 +5,7 @@ type OpCode byte
 type VMState struct {
 	IP           int
 	OperandStack []any
+	SP           int
 	CallStack    []*Frame
 	GlobalEnv    *Environment
 }
