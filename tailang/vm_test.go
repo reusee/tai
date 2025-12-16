@@ -381,3 +381,240 @@ func TestVM_Errors(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_ParentScopeAccess(t *testing.T) {
+	main := &Function{
+		Constants: []any{
+			"x", 1, 2,
+		},
+		Code: []OpCode{
+			OpLoadConst, 0, 1,
+			OpDefVar, 0, 0,
+			OpEnterScope,
+			OpLoadVar, 0, 0,
+			OpPop,
+			OpLoadConst, 0, 2,
+			OpSetVar, 0, 0,
+			OpLeaveScope,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	val, ok := vm.State.Scope.Get("x")
+	if !ok {
+		t.Fatal("x not found")
+	}
+	if val.(int) != 2 {
+		t.Fatalf("expected 2, got %v", val)
+	}
+}
+
+func TestVM_StackGrowth(t *testing.T) {
+	code := make([]OpCode, 0, 3100)
+	for range 1050 {
+		code = append(code, OpLoadConst, 0, 0)
+	}
+	main := &Function{
+		Constants: []any{1},
+		Code:      code,
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(vm.State.OperandStack) <= 1024 {
+		t.Fatal("stack did not grow")
+	}
+}
+
+func TestVM_ErrorControlFlow(t *testing.T) {
+	t.Run("IgnoreNativeError", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"f"},
+			Code: []OpCode{
+				OpLoadVar, 0, 0,
+				OpCall, 0, 0,
+				OpPop,
+			},
+		}
+		vm := NewVM(main)
+		vm.State.Scope.Def("f", NativeFunc(func(*VM, []any) (any, error) {
+			return nil, fmt.Errorf("foo")
+		}))
+
+		errCount := 0
+		for _, err := range vm.Run {
+			if err != nil {
+				errCount++
+			}
+		}
+		if errCount != 1 {
+			t.Fatalf("expected 1 error, got %d", errCount)
+		}
+	})
+
+	t.Run("StopOnNativeError", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"f"},
+			Code: []OpCode{
+				OpLoadVar, 0, 0,
+				OpCall, 0, 0,
+				OpLoadVar, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		callCount := 0
+		vm.State.Scope.Def("f", NativeFunc(func(*VM, []any) (any, error) {
+			callCount++
+			return nil, fmt.Errorf("foo")
+		}))
+
+		for _, err := range vm.Run {
+			if err != nil {
+				break
+			}
+		}
+		if callCount != 1 {
+			t.Fatal("func called wrong number of times")
+		}
+	})
+
+	t.Run("StopOnSuspend", func(t *testing.T) {
+		main := &Function{Code: []OpCode{OpSuspend, OpSuspend}}
+		vm := NewVM(main)
+		count := 0
+		for range vm.Run {
+			count++
+			break
+		}
+		if count != 1 {
+			t.Fatalf("expected 1, got %d", count)
+		}
+	})
+
+	t.Run("StopOnSetVarError", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"x", 1},
+			Code: []OpCode{
+				OpLoadConst, 0, 1,
+				OpSetVar, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("StopOnLoadVarError", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"x"},
+			Code: []OpCode{
+				OpLoadVar, 0, 0,
+				OpLoadVar, 0, 0,
+			},
+		}
+		vm := NewVM(main)
+		count := 0
+		for _, err := range vm.Run {
+			if err != nil {
+				count++
+				break
+			}
+		}
+		if count != 1 {
+			t.Fatal("expected 1 error")
+		}
+	})
+}
+
+func TestVM_CallStackUnderflow(t *testing.T) {
+	main := &Function{
+		Code: []OpCode{
+			OpCall, 0, 5,
+		},
+	}
+	vm := NewVM(main)
+
+	handled := false
+	for _, err := range vm.Run {
+		if err != nil {
+			handled = true
+			if err.Error() != "stack underflow during call" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+	}
+	if !handled {
+		t.Fatal("expected error")
+	}
+}
+
+func TestVM_TopLevelScopeLeave(t *testing.T) {
+	main := &Function{
+		Code: []OpCode{
+			OpLeaveScope,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if vm.State.Scope.Parent != nil {
+		t.Fatal("scope parent should be nil")
+	}
+}
+
+func TestVM_TopLevelReturn(t *testing.T) {
+	main := &Function{
+		Constants: []any{42},
+		Code: []OpCode{
+			OpLoadConst, 0, 0,
+			OpReturn,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestVM_TruncatedRead(t *testing.T) {
+	main := &Function{
+		Constants: []any{"safe"},
+		Code: []OpCode{
+			OpLoadConst,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestVM_PopEmpty(t *testing.T) {
+	main := &Function{
+		Code: []OpCode{OpPop},
+	}
+	for range NewVM(main).Run {
+	}
+}
