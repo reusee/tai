@@ -1,6 +1,6 @@
 package tailang
 
 type Closure struct {
-	EntryIP int
-	Env     *Env
+	Fun *Function
+	Env *Env
 }

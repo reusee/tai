@@ -1,6 +1,7 @@
 package tailang
 
 type VMState struct {
+	CurrentFun   *Function
 	IP           int
 	OperandStack []any
 	SP           int
@@ -9,9 +10,20 @@ type VMState struct {
 }
 
 type VM struct {
-	Code      []OpCode
-	Constants []any
-	State     *VMState
+	State *VMState
+}
+
+func NewVM(main *Function) *VM {
+	// Ensure main has an Env scope
+	scope := &Env{Vars: make(map[string]any)}
+	return &VM{
+		State: &VMState{
+			CurrentFun:   main,
+			Scope:        scope,
+			OperandStack: make([]any, 1024),
+			CallStack:    make([]*Frame, 0, 64),
+		},
+	}
 }
 
 func (v *VM) push(val any) {
@@ -33,9 +45,27 @@ func (v *VM) pop() any {
 	return val
 }
 
+func (v *VM) popN(n int) []any {
+	if v.State.SP < n {
+		return nil
+	}
+	start := v.State.SP - n
+	// Copy slice to avoid memory leaks or reference issues if stack grows/shrinks
+	args := make([]any, n)
+	copy(args, v.State.OperandStack[start:v.State.SP])
+
+	// Clear stack slots
+	for i := start; i < v.State.SP; i++ {
+		v.State.OperandStack[i] = nil
+	}
+	v.State.SP = start
+	return args
+}
+
 func (v *VM) readUint16() uint16 {
-	hi := uint16(v.Code[v.State.IP])
-	lo := uint16(v.Code[v.State.IP+1])
+	code := v.State.CurrentFun.Code
+	hi := uint16(code[v.State.IP])
+	lo := uint16(code[v.State.IP+1])
 	v.State.IP += 2
 	return hi<<8 | lo
 }

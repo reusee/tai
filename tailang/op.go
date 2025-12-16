@@ -15,4 +15,5 @@ const (
 	OpSuspend
 	OpEnterScope
 	OpLeaveScope
+	OpMakeClosure
 )

@@ -1,6 +1,7 @@
 package tailang
 
 type Frame struct {
+	Fun      *Function
 	ReturnIP int
 	Env      *Env
 }
