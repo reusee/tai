@@ -2,33 +2,60 @@ package tailang
 
 type Env struct {
 	Parent *Env
-	Vars   map[string]any
+	Vars   []any
 }
 
 func (e *Env) Get(name string) (any, bool) {
-	if val, ok := e.Vars[name]; ok {
-		return val, true
+	return e.GetSym(Intern(name))
+}
+
+func (e *Env) GetSym(sym Symbol) (any, bool) {
+	idx := int(sym)
+	if idx < len(e.Vars) {
+		val := e.Vars[idx]
+		if val != undefined {
+			return val, true
+		}
 	}
 	if e.Parent != nil {
-		return e.Parent.Get(name)
+		return e.Parent.GetSym(sym)
 	}
 	return nil, false
 }
 
 func (e *Env) Def(name string, val any) {
-	if e.Vars == nil {
-		e.Vars = make(map[string]any)
+	e.DefSym(Intern(name), val)
+}
+
+func (e *Env) DefSym(sym Symbol, val any) {
+	idx := int(sym)
+	if idx >= len(e.Vars) {
+		newCap := idx * 2
+		if newCap < idx+1 {
+			newCap = idx + 1
+		}
+		newVars := make([]any, newCap)
+		copy(newVars, e.Vars)
+		for i := len(e.Vars); i < newCap; i++ {
+			newVars[i] = undefined
+		}
+		e.Vars = newVars
 	}
-	e.Vars[name] = val
+	e.Vars[idx] = val
 }
 
 func (e *Env) Set(name string, val any) bool {
-	if _, ok := e.Vars[name]; ok {
-		e.Vars[name] = val
+	return e.SetSym(Intern(name), val)
+}
+
+func (e *Env) SetSym(sym Symbol, val any) bool {
+	idx := int(sym)
+	if idx < len(e.Vars) && e.Vars[idx] != undefined {
+		e.Vars[idx] = val
 		return true
 	}
 	if e.Parent != nil {
-		return e.Parent.Set(name, val)
+		return e.Parent.SetSym(sym, val)
 	}
 	return false
 }

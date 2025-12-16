@@ -18,10 +18,18 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpLoadVar:
 			idx := v.readUint16()
-			name := v.State.CurrentFun.Constants[idx].(string)
-			val, ok := v.State.Scope.Get(name)
+			c := v.State.CurrentFun.Constants[idx]
+			var sym Symbol
+			if s, ok := c.(Symbol); ok {
+				sym = s
+			} else {
+				sym = Intern(c.(string))
+				v.State.CurrentFun.Constants[idx] = sym
+			}
+			val, ok := v.State.Scope.GetSym(sym)
 			if !ok {
-				if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
+				//TODO symbol to name
+				if !yield(nil, fmt.Errorf("undefined variable")) {
 					return
 				}
 				v.push(nil)
@@ -31,15 +39,29 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpDefVar:
 			idx := v.readUint16()
-			name := v.State.CurrentFun.Constants[idx].(string)
-			v.State.Scope.Def(name, v.pop())
+			c := v.State.CurrentFun.Constants[idx]
+			var sym Symbol
+			if s, ok := c.(Symbol); ok {
+				sym = s
+			} else {
+				sym = Intern(c.(string))
+				v.State.CurrentFun.Constants[idx] = sym
+			}
+			v.State.Scope.DefSym(sym, v.pop())
 
 		case OpSetVar:
 			idx := v.readUint16()
-			name := v.State.CurrentFun.Constants[idx].(string)
+			c := v.State.CurrentFun.Constants[idx]
+			var sym Symbol
+			if s, ok := c.(Symbol); ok {
+				sym = s
+			} else {
+				sym = Intern(c.(string))
+				v.State.CurrentFun.Constants[idx] = sym
+			}
 			val := v.pop()
-			if !v.State.Scope.Set(name, val) {
-				if !yield(nil, fmt.Errorf("variable not found: %s", name)) {
+			if !v.State.Scope.SetSym(sym, val) {
+				if !yield(nil, fmt.Errorf("variable not found")) {
 					return
 				}
 			}
@@ -86,9 +108,12 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 
 				newEnv := fn.Env.NewChild()
+
+				fn.Fun.EnsureParamSymbols()
+
 				// Bind arguments from stack directly to new environment
 				for i := range argc {
-					newEnv.Def(fn.Fun.ParamNames[i], v.State.OperandStack[calleeIdx+1+i])
+					newEnv.DefSym(fn.Fun.ParamSymbols[i], v.State.OperandStack[calleeIdx+1+i])
 				}
 
 				// Tail Call Optimization

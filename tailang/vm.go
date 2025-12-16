@@ -14,7 +14,7 @@ type VM struct {
 }
 
 func NewVM(main *Function) *VM {
-	scope := &Env{Vars: make(map[string]any)}
+	scope := &Env{}
 	return &VM{
 		State: &VMState{
 			CurrentFun:   main,
