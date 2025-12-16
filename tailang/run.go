@@ -87,7 +87,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				newEnv := fn.Env.NewChild()
 				// Bind arguments from stack directly to new environment
-				for i := 0; i < argc; i++ {
+				for i := range argc {
 					newEnv.Def(fn.Fun.ParamNames[i], v.State.OperandStack[calleeIdx+1+i])
 				}
 
