@@ -174,6 +174,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State) (ret State, err erro
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(nil, 1<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
