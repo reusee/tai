@@ -618,3 +618,105 @@ func TestVM_PopEmpty(t *testing.T) {
 	for range NewVM(main).Run {
 	}
 }
+
+func TestVM_StackResize(t *testing.T) {
+	main := &Function{
+		Code:      []OpCode{OpLoadConst, 0, 0},
+		Constants: []any{42},
+	}
+	vm := NewVM(main)
+	vm.State.OperandStack = make([]any, 0)
+	vm.State.SP = 0
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(vm.State.OperandStack) < 1 {
+		t.Fatal("stack should have grown")
+	}
+	if vm.State.OperandStack[0].(int) != 42 {
+		t.Fatal("wrong value on stack")
+	}
+}
+
+func TestVM_JumpFalse_Variations(t *testing.T) {
+	for _, val := range []any{nil, false, 0, ""} {
+		t.Run(fmt.Sprintf("%v", val), func(t *testing.T) {
+			main := &Function{
+				Constants: []any{val},
+				Code: []OpCode{
+					OpLoadConst, 0, 0,
+					OpJumpFalse, 0, 2,
+					OpSuspend,
+				},
+			}
+			var count int
+			for range NewVM(main).Run {
+				count++
+			}
+			if count != 0 {
+				t.Fatal("expected jump")
+			}
+		})
+	}
+}
+
+func TestVM_ContinueOnError(t *testing.T) {
+	t.Run("LoadVar", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"x"},
+			Code:      []OpCode{OpLoadVar, 0, 0},
+		})
+		var n int
+		vm.Run(func(_ *Interrupt, err error) bool {
+			if err != nil {
+				n++
+				return true
+			}
+			return false
+		})
+		if n != 1 {
+			t.Fatal("expected error")
+		}
+		if vm.State.OperandStack[0] != nil {
+			t.Fatal("expected nil")
+		}
+	})
+
+	t.Run("SetVar", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"x", 1},
+			Code:      []OpCode{OpLoadConst, 0, 1, OpSetVar, 0, 0},
+		})
+		var n int
+		vm.Run(func(_ *Interrupt, err error) bool {
+			if err != nil {
+				n++
+				return true
+			}
+			return false
+		})
+		if n != 1 {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("ArityMismatch", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{&Function{NumParams: 1}},
+			Code:      []OpCode{OpMakeClosure, 0, 0, OpCall, 0, 0},
+		})
+		var n int
+		vm.Run(func(_ *Interrupt, err error) bool {
+			if err != nil {
+				n++
+				return true
+			}
+			return false
+		})
+		if n != 1 {
+			t.Fatal("expected error")
+		}
+	})
+}
