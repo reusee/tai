@@ -29,18 +29,7 @@ func (e *Env) Def(name string, val any) {
 
 func (e *Env) DefSym(sym Symbol, val any) {
 	idx := int(sym)
-	if idx >= len(e.Vars) {
-		newCap := idx * 2
-		if newCap < idx+1 {
-			newCap = idx + 1
-		}
-		newVars := make([]any, newCap)
-		copy(newVars, e.Vars)
-		for i := len(e.Vars); i < newCap; i++ {
-			newVars[i] = undefined
-		}
-		e.Vars = newVars
-	}
+	e.Grow(idx)
 	e.Vars[idx] = val
 }
 
@@ -64,4 +53,20 @@ func (e *Env) NewChild() *Env {
 	return &Env{
 		Parent: e,
 	}
+}
+
+func (e *Env) Grow(idx int) {
+	if idx < len(e.Vars) {
+		return
+	}
+	newCap := idx * 2
+	if newCap < idx+1 {
+		newCap = idx + 1
+	}
+	newVars := make([]any, newCap)
+	copy(newVars, e.Vars)
+	for i := len(e.Vars); i < newCap; i++ {
+		newVars[i] = undefined
+	}
+	e.Vars = newVars
 }

@@ -111,6 +111,18 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				fn.Fun.EnsureParamSymbols()
 
+				// Pre-allocate environment storage to avoid repeated resizing
+				var maxSym int = -1
+				for _, sym := range fn.Fun.ParamSymbols {
+					s := int(sym)
+					if s > maxSym {
+						maxSym = s
+					}
+				}
+				if maxSym >= 0 {
+					newEnv.Grow(maxSym)
+				}
+
 				// Bind arguments from stack directly to new environment
 				for i := range argc {
 					newEnv.DefSym(fn.Fun.ParamSymbols[i], v.State.OperandStack[calleeIdx+1+i])
