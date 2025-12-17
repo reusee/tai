@@ -5,7 +5,7 @@ import (
 	"io"
 )
 
-type VMState struct {
+type VM struct {
 	CurrentFun   *Function
 	IP           int
 	OperandStack []any
@@ -14,43 +14,37 @@ type VMState struct {
 	Scope        *Env
 }
 
-type VM struct {
-	State *VMState
-}
-
 func NewVM(main *Function) *VM {
 	scope := &Env{}
 	return &VM{
-		State: &VMState{
-			CurrentFun:   main,
-			Scope:        scope,
-			OperandStack: make([]any, 1024),
-			CallStack:    make([]Frame, 0, 64),
-		},
+		CurrentFun:   main,
+		Scope:        scope,
+		OperandStack: make([]any, 1024),
+		CallStack:    make([]Frame, 0, 64),
 	}
 }
 
 func (v *VM) push(val any) {
-	if v.State.SP >= len(v.State.OperandStack) {
-		newCap := len(v.State.OperandStack) * 2
+	if v.SP >= len(v.OperandStack) {
+		newCap := len(v.OperandStack) * 2
 		if newCap == 0 {
 			newCap = 8
 		}
 		newStack := make([]any, newCap)
-		copy(newStack, v.State.OperandStack)
-		v.State.OperandStack = newStack
+		copy(newStack, v.OperandStack)
+		v.OperandStack = newStack
 	}
-	v.State.OperandStack[v.State.SP] = val
-	v.State.SP++
+	v.OperandStack[v.SP] = val
+	v.SP++
 }
 
 func (v *VM) pop() any {
-	if v.State.SP <= 0 {
+	if v.SP <= 0 {
 		return nil
 	}
-	v.State.SP--
-	val := v.State.OperandStack[v.State.SP]
-	v.State.OperandStack[v.State.SP] = nil
+	v.SP--
+	val := v.OperandStack[v.SP]
+	v.OperandStack[v.SP] = nil
 	return val
 }
 
@@ -58,24 +52,24 @@ func (v *VM) drop(n int) {
 	if n <= 0 {
 		return
 	}
-	if n > v.State.SP {
-		n = v.State.SP
+	if n > v.SP {
+		n = v.SP
 	}
-	start := v.State.SP - n
+	start := v.SP - n
 	for i := 0; i < n; i++ {
-		v.State.OperandStack[start+i] = nil
+		v.OperandStack[start+i] = nil
 	}
-	v.State.SP = start
+	v.SP = start
 }
 
 func (v *VM) readUint16() uint16 {
-	code := v.State.CurrentFun.Code
-	if v.State.IP+1 >= len(code) {
+	code := v.CurrentFun.Code
+	if v.IP+1 >= len(code) {
 		return 0
 	}
-	hi := uint16(code[v.State.IP])
-	lo := uint16(code[v.State.IP+1])
-	v.State.IP += 2
+	hi := uint16(code[v.IP])
+	lo := uint16(code[v.IP+1])
+	v.IP += 2
 	return hi<<8 | lo
 }
 
@@ -87,7 +81,7 @@ func (v *VM) Suspend(w io.Writer) error {
 		return err
 	}
 
-	if err := enc.Encode(v.State); err != nil {
+	if err := enc.Encode(v); err != nil {
 		return err
 	}
 
@@ -105,10 +99,8 @@ func (v *VM) Restore(r io.Reader) error {
 		Intern(s)
 	}
 
-	var state VMState
-	if err := dec.Decode(&state); err != nil {
+	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	v.State = &state
 	return nil
 }

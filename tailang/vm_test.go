@@ -24,7 +24,7 @@ func TestVM_NativeFunc(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("add", NativeFunc{
+	vm.Scope.Def("add", NativeFunc{
 		Name: "add",
 		Func: func(vm *VM, args []any) (any, error) {
 			if len(args) != 2 {
@@ -42,7 +42,7 @@ func TestVM_NativeFunc(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -102,7 +102,7 @@ func TestVM_Closure(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -148,7 +148,7 @@ func TestVM_Jump(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -182,7 +182,7 @@ func TestVM_Scope(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.State.Scope.Get("x")
+	val, ok := vm.Scope.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -214,7 +214,7 @@ func TestVM_SetVar(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.State.Scope.Get("x")
+	val, ok := vm.Scope.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -244,7 +244,7 @@ func TestVM_Pop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	val, ok := vm.State.Scope.Get("x")
+	val, ok := vm.Scope.Get("x")
 	if !ok || val.(int) != 1 {
 		t.Fatalf("expected 1, got %v", val)
 	}
@@ -274,7 +274,7 @@ func TestVM_UnconditionalJump(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.State.Scope.Get("res")
+	val, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -407,7 +407,7 @@ func TestVM_ParentScopeAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	val, ok := vm.State.Scope.Get("x")
+	val, ok := vm.Scope.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -431,7 +431,7 @@ func TestVM_StackGrowth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(vm.State.OperandStack) <= 1024 {
+	if len(vm.OperandStack) <= 1024 {
 		t.Fatal("stack did not grow")
 	}
 }
@@ -447,7 +447,7 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 			},
 		}
 		vm := NewVM(main)
-		vm.State.Scope.Def("f", NativeFunc{
+		vm.Scope.Def("f", NativeFunc{
 			Name: "f",
 			Func: func(*VM, []any) (any, error) {
 				return nil, fmt.Errorf("foo")
@@ -476,7 +476,7 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		}
 		vm := NewVM(main)
 		callCount := 0
-		vm.State.Scope.Def("f", NativeFunc{
+		vm.Scope.Def("f", NativeFunc{
 			Name: "f",
 			Func: func(*VM, []any) (any, error) {
 				callCount++
@@ -584,7 +584,7 @@ func TestVM_TopLevelScopeLeave(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if vm.State.Scope.Parent != nil {
+	if vm.Scope.Parent != nil {
 		t.Fatal("scope parent should be nil")
 	}
 }
@@ -634,17 +634,17 @@ func TestVM_StackResize(t *testing.T) {
 		Constants: []any{42},
 	}
 	vm := NewVM(main)
-	vm.State.OperandStack = make([]any, 0)
-	vm.State.SP = 0
+	vm.OperandStack = make([]any, 0)
+	vm.SP = 0
 	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(vm.State.OperandStack) < 1 {
+	if len(vm.OperandStack) < 1 {
 		t.Fatal("stack should have grown")
 	}
-	if vm.State.OperandStack[0].(int) != 42 {
+	if vm.OperandStack[0].(int) != 42 {
 		t.Fatal("wrong value on stack")
 	}
 }
@@ -688,7 +688,7 @@ func TestVM_ContinueOnError(t *testing.T) {
 		if n != 1 {
 			t.Fatal("expected error")
 		}
-		if vm.State.OperandStack[0] != nil {
+		if vm.OperandStack[0] != nil {
 			t.Fatal("expected nil")
 		}
 	})
@@ -754,7 +754,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok := vm.State.Scope.Get("res")
+		res, ok := vm.Scope.Get("res")
 		if !ok || res.(int) != 2 {
 			t.Fatalf("expected 2, got %v", res)
 		}
@@ -787,7 +787,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok = vm.State.Scope.Get("res")
+		res, ok = vm.Scope.Get("res")
 		if !ok || res.(int) != 42 {
 			t.Fatalf("expected 42, got %v", res)
 		}
@@ -818,7 +818,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok := vm.State.Scope.Get("res")
+		res, ok := vm.Scope.Get("res")
 		if !ok || res.(int) != 42 {
 			t.Fatalf("expected 42, got %v", res)
 		}
@@ -842,7 +842,7 @@ func TestVM_Swap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -874,13 +874,13 @@ func TestVM_Pipe(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("sub", sub)
+	vm.Scope.Def("sub", sub)
 	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -944,12 +944,12 @@ func TestVM_TCO(t *testing.T) {
 		Func: func(vm *VM, args []any) (any, error) {
 			// Expect call stack: Main -> C.
 			// If TCO works, B's frame should have been replaced by C's frame.
-			// Since C is the current function, it is not in vm.State.CallStack (which holds callers).
+			// Since C is the current function, it is not in vm.CallStack (which holds callers).
 			// So CallStack should contain only Main.
-			if len(vm.State.CallStack) != 1 {
-				return nil, fmt.Errorf("expected call stack depth 1, got %d", len(vm.State.CallStack))
+			if len(vm.CallStack) != 1 {
+				return nil, fmt.Errorf("expected call stack depth 1, got %d", len(vm.CallStack))
 			}
-			if vm.State.CallStack[0].Fun.Name != "main" {
+			if vm.CallStack[0].Fun.Name != "main" {
 				return nil, fmt.Errorf("expected caller to be main")
 			}
 			return 42, nil
@@ -987,13 +987,13 @@ func TestVM_TCO(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("check", check)
+	vm.Scope.Def("check", check)
 	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.State.Scope.Get("res")
+	res, ok := vm.Scope.Get("res")
 	if !ok || res.(int) != 42 {
 		t.Fatalf("expected 42, got %v", res)
 	}

@@ -36,8 +36,8 @@ func BenchmarkVM_NativeCall(b *testing.B) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("sub", sub)
-	vm.State.Scope.Def("i", b.N)
+	vm.Scope.Def("sub", sub)
+	vm.Scope.Def("i", b.N)
 
 	b.ResetTimer()
 	for _, err := range vm.Run {
@@ -94,12 +94,12 @@ func BenchmarkVM_ClosureCall(b *testing.B) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("sub", sub)
-	vm.State.Scope.Def("dec", &Closure{
+	vm.Scope.Def("sub", sub)
+	vm.Scope.Def("dec", &Closure{
 		Fun: dec,
-		Env: vm.State.Scope,
+		Env: vm.Scope,
 	})
-	vm.State.Scope.Def("i", b.N)
+	vm.Scope.Def("i", b.N)
 
 	b.ResetTimer()
 	for _, err := range vm.Run {

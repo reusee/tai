@@ -4,29 +4,29 @@ import "fmt"
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
-		if v.State.IP < 0 || v.State.IP >= len(v.State.CurrentFun.Code) {
+		if v.IP < 0 || v.IP >= len(v.CurrentFun.Code) {
 			return
 		}
 
-		op := v.State.CurrentFun.Code[v.State.IP]
-		v.State.IP++
+		op := v.CurrentFun.Code[v.IP]
+		v.IP++
 
 		switch op {
 		case OpLoadConst:
 			idx := v.readUint16()
-			v.push(v.State.CurrentFun.Constants[idx])
+			v.push(v.CurrentFun.Constants[idx])
 
 		case OpLoadVar:
 			idx := v.readUint16()
-			c := v.State.CurrentFun.Constants[idx]
+			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
 				sym = Intern(c.(string))
-				v.State.CurrentFun.Constants[idx] = sym
+				v.CurrentFun.Constants[idx] = sym
 			}
-			val, ok := v.State.Scope.GetSym(sym)
+			val, ok := v.Scope.GetSym(sym)
 			if !ok {
 				//TODO symbol to name
 				if !yield(nil, fmt.Errorf("undefined variable")) {
@@ -39,28 +39,28 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpDefVar:
 			idx := v.readUint16()
-			c := v.State.CurrentFun.Constants[idx]
+			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
 				sym = Intern(c.(string))
-				v.State.CurrentFun.Constants[idx] = sym
+				v.CurrentFun.Constants[idx] = sym
 			}
-			v.State.Scope.DefSym(sym, v.pop())
+			v.Scope.DefSym(sym, v.pop())
 
 		case OpSetVar:
 			idx := v.readUint16()
-			c := v.State.CurrentFun.Constants[idx]
+			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
 				sym = Intern(c.(string))
-				v.State.CurrentFun.Constants[idx] = sym
+				v.CurrentFun.Constants[idx] = sym
 			}
 			val := v.pop()
-			if !v.State.Scope.SetSym(sym, val) {
+			if !v.Scope.SetSym(sym, val) {
 				if !yield(nil, fmt.Errorf("variable not found")) {
 					return
 				}
@@ -71,23 +71,23 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpJump:
 			offset := int16(v.readUint16())
-			v.State.IP += int(offset)
+			v.IP += int(offset)
 
 		case OpJumpFalse:
 			offset := int16(v.readUint16())
 			val := v.pop()
 			if val == nil || val == false || val == 0 || val == "" {
-				v.State.IP += int(offset)
+				v.IP += int(offset)
 			}
 
 		case OpMakeClosure:
 			idx := v.readUint16()
-			fun := v.State.CurrentFun.Constants[idx].(*Function)
-			v.push(&Closure{Fun: fun, Env: v.State.Scope})
+			fun := v.CurrentFun.Constants[idx].(*Function)
+			v.push(&Closure{Fun: fun, Env: v.Scope})
 
 		case OpCall:
 			argc := int(v.readUint16())
-			if v.State.SP < argc+1 {
+			if v.SP < argc+1 {
 				if !yield(nil, fmt.Errorf("stack underflow during call")) {
 					return
 				}
@@ -95,8 +95,8 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 			// Callee is below args on the stack
-			calleeIdx := v.State.SP - argc - 1
-			callee := v.State.OperandStack[calleeIdx]
+			calleeIdx := v.SP - argc - 1
+			callee := v.OperandStack[calleeIdx]
 
 			switch fn := callee.(type) {
 			case *Closure:
@@ -125,34 +125,34 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				// Bind arguments from stack directly to new environment
 				for i := range argc {
-					newEnv.DefSym(fn.Fun.ParamSymbols[i], v.State.OperandStack[calleeIdx+1+i])
+					newEnv.DefSym(fn.Fun.ParamSymbols[i], v.OperandStack[calleeIdx+1+i])
 				}
 
 				// Tail Call Optimization
-				if v.State.IP < len(v.State.CurrentFun.Code) && v.State.CurrentFun.Code[v.State.IP] == OpReturn {
+				if v.IP < len(v.CurrentFun.Code) && v.CurrentFun.Code[v.IP] == OpReturn {
 					var baseSP int
-					if n := len(v.State.CallStack); n > 0 {
-						baseSP = v.State.CallStack[n-1].BaseSP
+					if n := len(v.CallStack); n > 0 {
+						baseSP = v.CallStack[n-1].BaseSP
 					}
-					v.drop(v.State.SP - baseSP)
+					v.drop(v.SP - baseSP)
 				} else {
 					v.drop(argc + 1)
-					v.State.CallStack = append(v.State.CallStack, Frame{
-						Fun:      v.State.CurrentFun,
-						ReturnIP: v.State.IP,
-						Env:      v.State.Scope,
-						BaseSP:   v.State.SP,
+					v.CallStack = append(v.CallStack, Frame{
+						Fun:      v.CurrentFun,
+						ReturnIP: v.IP,
+						Env:      v.Scope,
+						BaseSP:   v.SP,
 					})
 				}
 
-				v.State.CurrentFun = fn.Fun
-				v.State.IP = 0
-				v.State.Scope = newEnv
+				v.CurrentFun = fn.Fun
+				v.IP = 0
+				v.Scope = newEnv
 
 			case NativeFunc:
 				// Zero-allocation slice view of arguments
 				// Note: Slice is valid only until next Stack modification, which is fine for sync calls
-				args := v.State.OperandStack[calleeIdx+1 : v.State.SP]
+				args := v.OperandStack[calleeIdx+1 : v.SP]
 				res, err := fn.Func(v, args)
 
 				// Cleanup stack after call
@@ -177,19 +177,19 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpReturn:
 			retVal := v.pop()
-			n := len(v.State.CallStack)
+			n := len(v.CallStack)
 			if n == 0 {
 				return
 			}
-			frame := v.State.CallStack[n-1]
-			v.State.CallStack = v.State.CallStack[:n-1]
+			frame := v.CallStack[n-1]
+			v.CallStack = v.CallStack[:n-1]
 
 			// Restore Call Frame
-			v.State.CurrentFun = frame.Fun
-			v.State.IP = frame.ReturnIP
-			v.State.Scope = frame.Env
+			v.CurrentFun = frame.Fun
+			v.IP = frame.ReturnIP
+			v.Scope = frame.Env
 			// Ensure we discard any garbage left on stack by the called function
-			v.drop(v.State.SP - frame.BaseSP)
+			v.drop(v.SP - frame.BaseSP)
 
 			v.push(retVal)
 
@@ -199,40 +199,40 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpEnterScope:
-			v.State.Scope = v.State.Scope.NewChild()
+			v.Scope = v.Scope.NewChild()
 
 		case OpLeaveScope:
-			if v.State.Scope.Parent != nil {
-				v.State.Scope = v.State.Scope.Parent
+			if v.Scope.Parent != nil {
+				v.Scope = v.Scope.Parent
 			}
 
 		case OpMakeList:
 			n := int(v.readUint16())
-			if v.State.SP < n {
+			if v.SP < n {
 				if !yield(nil, fmt.Errorf("stack underflow during list creation")) {
 					return
 				}
 				continue
 			}
 			slice := make([]any, n)
-			start := v.State.SP - n
-			copy(slice, v.State.OperandStack[start:v.State.SP])
+			start := v.SP - n
+			copy(slice, v.OperandStack[start:v.SP])
 			v.drop(n)
 			v.push(slice)
 
 		case OpMakeMap:
 			n := int(v.readUint16())
-			if v.State.SP < n*2 {
+			if v.SP < n*2 {
 				if !yield(nil, fmt.Errorf("stack underflow during map creation")) {
 					return
 				}
 				continue
 			}
 			m := make(map[any]any, n)
-			start := v.State.SP - n*2
+			start := v.SP - n*2
 			for i := range n {
-				k := v.State.OperandStack[start+i*2]
-				val := v.State.OperandStack[start+i*2+1]
+				k := v.OperandStack[start+i*2]
+				val := v.OperandStack[start+i*2+1]
 				m[k] = val
 			}
 			v.drop(n * 2)
@@ -349,15 +349,15 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpSwap:
-			if v.State.SP < 2 {
+			if v.SP < 2 {
 				if !yield(nil, fmt.Errorf("stack underflow during swap")) {
 					return
 				}
 				continue
 			}
-			top := v.State.SP - 1
-			under := v.State.SP - 2
-			v.State.OperandStack[top], v.State.OperandStack[under] = v.State.OperandStack[under], v.State.OperandStack[top]
+			top := v.SP - 1
+			under := v.SP - 2
+			v.OperandStack[top], v.OperandStack[under] = v.OperandStack[under], v.OperandStack[top]
 		}
 	}
 }
