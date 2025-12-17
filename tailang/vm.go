@@ -73,7 +73,7 @@ func (v *VM) readUint16() uint16 {
 	return hi<<8 | lo
 }
 
-func (v *VM) Suspend(w io.Writer) error {
+func (v *VM) Snapshot(w io.Writer) error {
 	enc := gob.NewEncoder(w)
 
 	syms := SnapshotSymbols()
