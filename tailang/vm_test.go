@@ -1153,6 +1153,7 @@ func TestVM_Snapshot(t *testing.T) {
 			OpLoadConst.With(3),
 			OpDefVar.With(2),
 
+			OpLoadConst.With(1),
 			OpReturn,
 		},
 	}
