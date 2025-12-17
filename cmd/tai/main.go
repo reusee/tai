@@ -7,9 +7,9 @@ import (
 )
 
 func main() {
-	env := tailang.NewEnv()
 
 	var input = os.Stdin
+	var name string
 	if len(os.Args) > 1 {
 		f, err := os.Open(os.Args[1])
 		if err != nil {
@@ -19,13 +19,23 @@ func main() {
 		}
 		defer f.Close()
 		input = f
+		name = os.Args[1]
 	}
 
-	tokenizer := tailang.NewTokenizer(input)
-	_, err := env.Evaluate(tokenizer)
+	fn, err := tailang.Compile(name, tailang.NewTokenizer(input))
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")
 		os.Exit(-1)
 	}
+
+	vm := tailang.NewVM(fn)
+	for _, err := range vm.Run {
+		if err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Stderr.WriteString("\n")
+			os.Exit(-1)
+		}
+	}
+
 }
