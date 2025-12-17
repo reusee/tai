@@ -24,7 +24,7 @@ func TestVM_NativeFunc(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.Scope.Def("add", NativeFunc{
+	vm.Def("add", NativeFunc{
 		Name: "add",
 		Func: func(vm *VM, args []any) (any, error) {
 			if len(args) != 2 {
@@ -42,7 +42,7 @@ func TestVM_NativeFunc(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -102,7 +102,7 @@ func TestVM_Closure(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -148,7 +148,7 @@ func TestVM_Jump(t *testing.T) {
 		}
 	}
 
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -182,7 +182,7 @@ func TestVM_Scope(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.Scope.Get("x")
+	val, ok := vm.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -214,7 +214,7 @@ func TestVM_SetVar(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.Scope.Get("x")
+	val, ok := vm.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -244,7 +244,7 @@ func TestVM_Pop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	val, ok := vm.Scope.Get("x")
+	val, ok := vm.Get("x")
 	if !ok || val.(int) != 1 {
 		t.Fatalf("expected 1, got %v", val)
 	}
@@ -274,7 +274,7 @@ func TestVM_UnconditionalJump(t *testing.T) {
 		}
 	}
 
-	val, ok := vm.Scope.Get("res")
+	val, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -407,7 +407,7 @@ func TestVM_ParentScopeAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	val, ok := vm.Scope.Get("x")
+	val, ok := vm.Get("x")
 	if !ok {
 		t.Fatal("x not found")
 	}
@@ -447,7 +447,7 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 			},
 		}
 		vm := NewVM(main)
-		vm.Scope.Def("f", NativeFunc{
+		vm.Def("f", NativeFunc{
 			Name: "f",
 			Func: func(*VM, []any) (any, error) {
 				return nil, fmt.Errorf("foo")
@@ -476,7 +476,7 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		}
 		vm := NewVM(main)
 		callCount := 0
-		vm.Scope.Def("f", NativeFunc{
+		vm.Def("f", NativeFunc{
 			Name: "f",
 			Func: func(*VM, []any) (any, error) {
 				callCount++
@@ -754,7 +754,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok := vm.Scope.Get("res")
+		res, ok := vm.Get("res")
 		if !ok || res.(int) != 2 {
 			t.Fatalf("expected 2, got %v", res)
 		}
@@ -787,7 +787,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok = vm.Scope.Get("res")
+		res, ok = vm.Get("res")
 		if !ok || res.(int) != 42 {
 			t.Fatalf("expected 42, got %v", res)
 		}
@@ -818,7 +818,7 @@ func TestVM_ListMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		res, ok := vm.Scope.Get("res")
+		res, ok := vm.Get("res")
 		if !ok || res.(int) != 42 {
 			t.Fatalf("expected 42, got %v", res)
 		}
@@ -842,7 +842,7 @@ func TestVM_Swap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -874,13 +874,13 @@ func TestVM_Pipe(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.Scope.Def("sub", sub)
+	vm.Def("sub", sub)
 	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok {
 		t.Fatal("res not found")
 	}
@@ -914,24 +914,24 @@ func TestVM_Pipe_Error(t *testing.T) {
 
 func TestVM_Env_GetSet_ChildGrowth(t *testing.T) {
 	root := &Env{}
-	root.Def("x", 100)
+	root.DefSym(Symbol(1), 100)
 
 	child := root.NewChild()
 	// Def "z" to ensure child vars slice grows and includes slot for "x"
 	// assuming z's symbol index > x's symbol index
-	child.Def("z", 200)
+	child.DefSym(Symbol(2), 200)
 
 	// Get x from child (slot exists but is undefined, should fallback to parent)
-	val, ok := child.Get("x")
+	val, ok := child.GetSym(Symbol(1))
 	if !ok || val.(int) != 100 {
 		t.Errorf("Get fallback failed: got %v", val)
 	}
 
 	// Set x via child (slot exists but is undefined, should update parent)
-	if !child.Set("x", 101) {
+	if !child.SetSym(Symbol(1), 101) {
 		t.Error("Set returned false")
 	}
-	val, ok = root.Get("x")
+	val, ok = root.GetSym(Symbol(1))
 	if val.(int) != 101 {
 		t.Errorf("Root x not updated: %v", val)
 	}
@@ -987,13 +987,13 @@ func TestVM_TCO(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.Scope.Def("check", check)
+	vm.Def("check", check)
 	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	res, ok := vm.Scope.Get("res")
+	res, ok := vm.Get("res")
 	if !ok || res.(int) != 42 {
 		t.Fatalf("expected 42, got %v", res)
 	}

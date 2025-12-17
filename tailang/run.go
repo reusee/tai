@@ -23,7 +23,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
-				sym = Intern(c.(string))
+				sym = v.Intern(c.(string))
 				v.CurrentFun.Constants[idx] = sym
 			}
 			val, ok := v.Scope.GetSym(sym)
@@ -44,7 +44,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
-				sym = Intern(c.(string))
+				sym = v.Intern(c.(string))
 				v.CurrentFun.Constants[idx] = sym
 			}
 			v.Scope.DefSym(sym, v.pop())
@@ -56,7 +56,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if s, ok := c.(Symbol); ok {
 				sym = s
 			} else {
-				sym = Intern(c.(string))
+				sym = v.Intern(c.(string))
 				v.CurrentFun.Constants[idx] = sym
 			}
 			val := v.pop()
@@ -109,7 +109,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				newEnv := fn.Env.NewChild()
 
-				fn.Fun.EnsureParamSymbols()
+				fn.Fun.EnsureParamSymbols(v.Symbols)
 
 				// Pre-allocate environment storage to avoid repeated resizing
 				var maxSym int = -1

@@ -12,6 +12,7 @@ type VM struct {
 	SP           int
 	CallStack    []Frame
 	Scope        *Env
+	Symbols      *SymbolTable
 }
 
 func NewVM(main *Function) *VM {
@@ -21,7 +22,24 @@ func NewVM(main *Function) *VM {
 		Scope:        scope,
 		OperandStack: make([]any, 1024),
 		CallStack:    make([]Frame, 0, 64),
+		Symbols:      NewSymbolTable(),
 	}
+}
+
+func (v *VM) Intern(name string) Symbol {
+	return v.Symbols.Intern(name)
+}
+
+func (v *VM) Get(name string) (any, bool) {
+	return v.Scope.GetSym(v.Symbols.Intern(name))
+}
+
+func (v *VM) Def(name string, val any) {
+	v.Scope.DefSym(v.Symbols.Intern(name), val)
+}
+
+func (v *VM) Set(name string, val any) bool {
+	return v.Scope.SetSym(v.Symbols.Intern(name), val)
 }
 
 func (v *VM) push(val any) {
@@ -76,7 +94,7 @@ func (v *VM) readUint16() uint16 {
 func (v *VM) Snapshot(w io.Writer) error {
 	enc := gob.NewEncoder(w)
 
-	syms := SnapshotSymbols()
+	syms := v.Symbols.Snapshot()
 	if err := enc.Encode(syms); err != nil {
 		return err
 	}
@@ -95,9 +113,7 @@ func (v *VM) Restore(r io.Reader) error {
 	if err := dec.Decode(&syms); err != nil {
 		return err
 	}
-	for _, s := range syms {
-		Intern(s)
-	}
+	v.Symbols.Restore(syms)
 
 	if err := dec.Decode(v); err != nil {
 		return err

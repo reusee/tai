@@ -13,11 +13,11 @@ type Function struct {
 	symbolsOnce  sync.Once
 }
 
-func (f *Function) EnsureParamSymbols() {
+func (f *Function) EnsureParamSymbols(st *SymbolTable) {
 	f.symbolsOnce.Do(func() {
 		f.ParamSymbols = make([]Symbol, len(f.ParamNames))
 		for i, name := range f.ParamNames {
-			f.ParamSymbols[i] = Intern(name)
+			f.ParamSymbols[i] = st.Intern(name)
 		}
 	})
 }
