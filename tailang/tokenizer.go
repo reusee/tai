@@ -108,6 +108,14 @@ func (t *Tokenizer) parseNext() (*Token, error) {
 		t.skipComment()
 		return t.parseNext()
 	case r == '.':
+		next, err := t.readRune()
+		if err == nil {
+			t.unreadRune()
+			if unicode.IsDigit(next) {
+				t.unreadRune() // unread .
+				return t.parseNumber()
+			}
+		}
 		return t.parseNamedParam(startPos)
 	case r == '\'' || r == '"' || r == '`':
 		return t.parseString(r, startPos)

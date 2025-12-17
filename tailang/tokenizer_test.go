@@ -162,6 +162,12 @@ func TestTokenizerNumbers(t *testing.T) {
 				{TokenNumber, "-1"},
 			},
 		},
+		{
+			input: ".5",
+			tokens: []TokenInfo{
+				{TokenNumber, ".5"},
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.input, func(t *testing.T) {
