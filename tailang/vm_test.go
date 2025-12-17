@@ -899,3 +899,239 @@ func TestVM_Pipe_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestVM_Env_GetSet_ChildGrowth(t *testing.T) {
+	root := &Env{}
+	root.Def("x", 100)
+
+	child := root.NewChild()
+	// Def "z" to ensure child vars slice grows and includes slot for "x"
+	// assuming z's symbol index > x's symbol index
+	child.Def("z", 200)
+
+	// Get x from child (slot exists but is undefined, should fallback to parent)
+	val, ok := child.Get("x")
+	if !ok || val.(int) != 100 {
+		t.Errorf("Get fallback failed: got %v", val)
+	}
+
+	// Set x via child (slot exists but is undefined, should update parent)
+	if !child.Set("x", 101) {
+		t.Error("Set returned false")
+	}
+	val, ok = root.Get("x")
+	if val.(int) != 101 {
+		t.Errorf("Root x not updated: %v", val)
+	}
+}
+
+func TestVM_TCO(t *testing.T) {
+	// Native function to inspect the call stack
+	check := NativeFunc(func(vm *VM, args []any) (any, error) {
+		// Expect call stack: Main -> C.
+		// If TCO works, B's frame should have been replaced by C's frame.
+		// Since C is the current function, it is not in vm.State.CallStack (which holds callers).
+		// So CallStack should contain only Main.
+		if len(vm.State.CallStack) != 1 {
+			return nil, fmt.Errorf("expected call stack depth 1, got %d", len(vm.State.CallStack))
+		}
+		if vm.State.CallStack[0].Fun.Name != "main" {
+			return nil, fmt.Errorf("expected caller to be main")
+		}
+		return 42, nil
+	})
+
+	cFunc := &Function{
+		Name:      "C",
+		Constants: []any{"check"},
+		Code: []OpCode{
+			OpLoadVar, 0, 0,
+			OpCall, 0, 0,
+			OpReturn,
+		},
+	}
+
+	bFunc := &Function{
+		Name:      "B",
+		Constants: []any{cFunc},
+		Code: []OpCode{
+			OpMakeClosure, 0, 0,
+			OpCall, 0, 0, // Tail call to C
+			OpReturn,
+		},
+	}
+
+	main := &Function{
+		Name:      "main",
+		Constants: []any{bFunc, "check", "res"},
+		Code: []OpCode{
+			OpMakeClosure, 0, 0,
+			OpCall, 0, 0,
+			OpDefVar, 0, 2,
+		},
+	}
+
+	vm := NewVM(main)
+	vm.State.Scope.Def("check", check)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, ok := vm.State.Scope.Get("res")
+	if !ok || res.(int) != 42 {
+		t.Fatalf("expected 42, got %v", res)
+	}
+}
+
+func TestVM_OpErrors_Break(t *testing.T) {
+	// This test iterates various error conditions and breaks on the first error.
+	// This ensures the 'return' path (aborting VM) in the error handling blocks is covered.
+	cases := []struct {
+		Name   string
+		Code   []OpCode
+		Consts []any
+	}{
+		{
+			Name:   "LoadVarUndefined",
+			Code:   []OpCode{OpLoadVar, 0, 0},
+			Consts: []any{"undef"},
+		},
+		{
+			Name:   "SetVarUndefined",
+			Code:   []OpCode{OpLoadConst, 0, 0, OpSetVar, 0, 1},
+			Consts: []any{1, "undef"},
+		},
+		{
+			Name: "MakeListStackUnderflow",
+			Code: []OpCode{OpMakeList, 0, 5},
+		},
+		{
+			Name: "MakeMapStackUnderflow",
+			Code: []OpCode{OpMakeMap, 0, 5},
+		},
+		{
+			Name: "CallStackUnderflow",
+			Code: []OpCode{OpCall, 0, 5},
+		},
+		{
+			Name:   "CallNonFunction",
+			Code:   []OpCode{OpLoadConst, 0, 0, OpCall, 0, 0},
+			Consts: []any{1},
+		},
+		{
+			Name:   "ArityMismatch",
+			Consts: []any{&Function{NumParams: 1}},
+			Code:   []OpCode{OpMakeClosure, 0, 0, OpCall, 0, 0},
+		},
+		{
+			Name:   "IndexNil",
+			Consts: []any{nil, 1},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpGetIndex},
+		},
+		{
+			Name:   "IndexSliceBadKey",
+			Consts: []any{"bad"},
+			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+		},
+		{
+			Name:   "IndexSliceOutOfBounds",
+			Consts: []any{0},
+			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+		},
+		{
+			Name:   "IndexUnindexable",
+			Consts: []any{1},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+		},
+		{
+			Name:   "SetIndexNil",
+			Consts: []any{nil},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+		},
+		{
+			Name:   "SetIndexSliceBadKey",
+			Consts: []any{"bad", 1},
+			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpSetIndex},
+		},
+		{
+			Name:   "SetIndexSliceOutOfBounds",
+			Consts: []any{0, 1},
+			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpSetIndex},
+		},
+		{
+			Name:   "SetIndexStringKey",
+			Consts: []any{map[string]any{}, 1, 1},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpLoadConst, 0, 2, OpSetIndex},
+		},
+		{
+			Name:   "SetIndexUnassignable",
+			Consts: []any{1},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+		},
+		{
+			Name:   "SwapUnderflow",
+			Consts: []any{1},
+			Code:   []OpCode{OpLoadConst, 0, 0, OpSwap},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			vm := NewVM(&Function{
+				Code:      c.Code,
+				Constants: c.Consts,
+			})
+			var hit bool
+			for _, err := range vm.Run {
+				if err != nil {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				t.Error("expected error")
+			}
+		})
+	}
+}
+
+func TestVM_ContinueOnError_More(t *testing.T) {
+	// These tests ensure that execution continues (skips the op) when the error is handled
+	// by the yield function returning true.
+	run := func(vm *VM) {
+		vm.Run(func(_ *Interrupt, err error) bool {
+			// Always continue on error
+			return err != nil
+		})
+	}
+
+	t.Run("MakeMapUnderflow", func(t *testing.T) {
+		vm := NewVM(&Function{Code: []OpCode{OpMakeMap, 0, 5}})
+		run(vm) // should not panic
+	})
+
+	t.Run("IndexNil", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{nil, 1},
+			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpGetIndex},
+		})
+		run(vm)
+	})
+
+	t.Run("SetIndexNil", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{nil},
+			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+		})
+		run(vm)
+	})
+
+	t.Run("SetIndexBadKey", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{[]any{}, "bad", 1},
+			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpLoadConst, 0, 2, OpSetIndex},
+		})
+		run(vm)
+	})
+}
