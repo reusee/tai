@@ -2,14 +2,13 @@ package tailang
 
 import (
 	"fmt"
-	"io"
 	"unicode"
 )
 
 type Compiler struct {
-	tokenizer *Tokenizer
-	curr      *Token
-	next      *Token
+	tokenStream TokenStream
+	curr        *Token
+	next        *Token
 
 	fun       *Function
 	constants map[any]int
@@ -17,9 +16,9 @@ type Compiler struct {
 	arities map[string]int
 }
 
-func Compile(name string, r io.Reader) (*Function, error) {
+func Compile(name string, stream TokenStream) (*Function, error) {
 	c := &Compiler{
-		tokenizer: NewTokenizer(r),
+		tokenStream: stream,
 		fun: &Function{
 			Name: name,
 			Code: make([]OpCode, 0),
@@ -63,23 +62,23 @@ func Compile(name string, r io.Reader) (*Function, error) {
 }
 
 func (c *Compiler) init() error {
-	tok, err := c.tokenizer.Current()
+	tok, err := c.tokenStream.Current()
 	if err != nil {
 		return err
 	}
 	c.next = tok
-	c.tokenizer.Consume()
+	c.tokenStream.Consume()
 	return c.advance()
 }
 
 func (c *Compiler) advance() error {
 	c.curr = c.next
-	tok, err := c.tokenizer.Current()
+	tok, err := c.tokenStream.Current()
 	if err != nil {
 		return err
 	}
 	c.next = tok
-	c.tokenizer.Consume()
+	c.tokenStream.Consume()
 	return nil
 }
 

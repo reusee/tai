@@ -11,9 +11,14 @@ func TestCompiler(t *testing.T) {
 		input  string
 		verify func(*VM)
 	}{
+
 		{
-			name:  "Def and Math",
-			input: `Def a 10 Def b 20 Def c Add a b`,
+			name: "Def and Math",
+			input: `
+				Def a 10 
+				Def b 20 
+				Def c (Add a b)
+				`,
 			verify: func(vm *VM) {
 				val, ok := vm.Get("c")
 				if !ok {
@@ -24,9 +29,10 @@ func TestCompiler(t *testing.T) {
 				}
 			},
 		},
+
 		{
 			name:  "Pipe",
-			input: `Def val 10 | Add 5`,
+			input: `Def val (10 | Add 5)`,
 			verify: func(vm *VM) {
 				val, ok := vm.Get("val")
 				if !ok || val.(int) != 15 {
@@ -34,6 +40,7 @@ func TestCompiler(t *testing.T) {
 				}
 			},
 		},
+
 		{
 			name: "Control Flow",
 			input: `
@@ -51,9 +58,10 @@ func TestCompiler(t *testing.T) {
 				}
 			},
 		},
+
 		{
 			name:  "List",
-			input: `Def l [1 2 3] | Len`,
+			input: `Def l ([1 2 3] | Len)`,
 			verify: func(vm *VM) {
 				val, ok := vm.Get("l")
 				if !ok || val.(int) != 3 {
@@ -65,7 +73,7 @@ func TestCompiler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fun, err := Compile("test", strings.NewReader(tt.input))
+			fun, err := Compile("test", NewTokenizer(strings.NewReader(tt.input)))
 			if err != nil {
 				t.Fatalf("compile error: %v", err)
 			}
