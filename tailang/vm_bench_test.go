@@ -3,9 +3,12 @@ package tailang
 import "testing"
 
 func BenchmarkVM_NativeCall(b *testing.B) {
-	sub := NativeFunc(func(_ *VM, args []any) (any, error) {
-		return args[0].(int) - args[1].(int), nil
-	})
+	sub := NativeFunc{
+		Name: "sub",
+		Func: func(_ *VM, args []any) (any, error) {
+			return args[0].(int) - args[1].(int), nil
+		},
+	}
 
 	main := &Function{
 		Name: "main",
@@ -45,9 +48,12 @@ func BenchmarkVM_NativeCall(b *testing.B) {
 }
 
 func BenchmarkVM_ClosureCall(b *testing.B) {
-	sub := NativeFunc(func(_ *VM, args []any) (any, error) {
-		return args[0].(int) - args[1].(int), nil
-	})
+	sub := NativeFunc{
+		Name: "sub",
+		Func: func(_ *VM, args []any) (any, error) {
+			return args[0].(int) - args[1].(int), nil
+		},
+	}
 
 	dec := &Function{
 		Name:       "dec",

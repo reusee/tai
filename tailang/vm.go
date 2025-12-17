@@ -1,5 +1,10 @@
 package tailang
 
+import (
+	"encoding/gob"
+	"io"
+)
+
 type VMState struct {
 	CurrentFun   *Function
 	IP           int
@@ -72,4 +77,38 @@ func (v *VM) readUint16() uint16 {
 	lo := uint16(code[v.State.IP+1])
 	v.State.IP += 2
 	return hi<<8 | lo
+}
+
+func (v *VM) Suspend(w io.Writer) error {
+	enc := gob.NewEncoder(w)
+
+	syms := SnapshotSymbols()
+	if err := enc.Encode(syms); err != nil {
+		return err
+	}
+
+	if err := enc.Encode(v.State); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (v *VM) Restore(r io.Reader) error {
+	dec := gob.NewDecoder(r)
+
+	var syms []string
+	if err := dec.Decode(&syms); err != nil {
+		return err
+	}
+	for _, s := range syms {
+		Intern(s)
+	}
+
+	var state VMState
+	if err := dec.Decode(&state); err != nil {
+		return err
+	}
+	v.State = &state
+	return nil
 }

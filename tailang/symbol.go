@@ -7,6 +7,7 @@ type Symbol int
 var (
 	symbolsMu sync.RWMutex
 	strToSym  = make(map[string]Symbol)
+	symToStr  map[Symbol]string
 )
 
 func Intern(name string) Symbol {
@@ -26,7 +27,23 @@ func Intern(name string) Symbol {
 
 	sym = Symbol(len(strToSym))
 	strToSym[name] = sym
+
+	if symToStr == nil {
+		symToStr = make(map[Symbol]string)
+	}
+	symToStr[sym] = name
+
 	return sym
 }
 
 var undefined = &struct{}{}
+
+func SnapshotSymbols() []string {
+	symbolsMu.RLock()
+	defer symbolsMu.RUnlock()
+	res := make([]string, len(strToSym))
+	for sym, str := range symToStr {
+		res[int(sym)] = str
+	}
+	return res
+}

@@ -153,7 +153,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				// Zero-allocation slice view of arguments
 				// Note: Slice is valid only until next Stack modification, which is fine for sync calls
 				args := v.State.OperandStack[calleeIdx+1 : v.State.SP]
-				res, err := fn(v, args)
+				res, err := fn.Func(v, args)
 
 				// Cleanup stack after call
 				v.drop(argc + 1)

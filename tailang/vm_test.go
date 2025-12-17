@@ -24,14 +24,17 @@ func TestVM_NativeFunc(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	vm.State.Scope.Def("add", NativeFunc(func(vm *VM, args []any) (any, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("bad args")
-		}
-		a := args[0].(int)
-		b := args[1].(int)
-		return a + b, nil
-	}))
+	vm.State.Scope.Def("add", NativeFunc{
+		Name: "add",
+		Func: func(vm *VM, args []any) (any, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("bad args")
+			}
+			a := args[0].(int)
+			b := args[1].(int)
+			return a + b, nil
+		},
+	})
 
 	for _, err := range vm.Run {
 		if err != nil {
@@ -444,9 +447,12 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 			},
 		}
 		vm := NewVM(main)
-		vm.State.Scope.Def("f", NativeFunc(func(*VM, []any) (any, error) {
-			return nil, fmt.Errorf("foo")
-		}))
+		vm.State.Scope.Def("f", NativeFunc{
+			Name: "f",
+			Func: func(*VM, []any) (any, error) {
+				return nil, fmt.Errorf("foo")
+			},
+		})
 
 		errCount := 0
 		for _, err := range vm.Run {
@@ -470,10 +476,13 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		}
 		vm := NewVM(main)
 		callCount := 0
-		vm.State.Scope.Def("f", NativeFunc(func(*VM, []any) (any, error) {
-			callCount++
-			return nil, fmt.Errorf("foo")
-		}))
+		vm.State.Scope.Def("f", NativeFunc{
+			Name: "f",
+			Func: func(*VM, []any) (any, error) {
+				callCount++
+				return nil, fmt.Errorf("foo")
+			},
+		})
 
 		for _, err := range vm.Run {
 			if err != nil {
@@ -844,9 +853,12 @@ func TestVM_Swap(t *testing.T) {
 
 func TestVM_Pipe(t *testing.T) {
 	// 42 | sub(1) => sub(42, 1) = 41
-	sub := NativeFunc(func(vm *VM, args []any) (any, error) {
-		return args[0].(int) - args[1].(int), nil
-	})
+	sub := NativeFunc{
+		Name: "sub",
+		Func: func(vm *VM, args []any) (any, error) {
+			return args[0].(int) - args[1].(int), nil
+		},
+	}
 
 	main := &Function{
 		Constants: []any{42, "sub", 1, "res"},
@@ -927,19 +939,22 @@ func TestVM_Env_GetSet_ChildGrowth(t *testing.T) {
 
 func TestVM_TCO(t *testing.T) {
 	// Native function to inspect the call stack
-	check := NativeFunc(func(vm *VM, args []any) (any, error) {
-		// Expect call stack: Main -> C.
-		// If TCO works, B's frame should have been replaced by C's frame.
-		// Since C is the current function, it is not in vm.State.CallStack (which holds callers).
-		// So CallStack should contain only Main.
-		if len(vm.State.CallStack) != 1 {
-			return nil, fmt.Errorf("expected call stack depth 1, got %d", len(vm.State.CallStack))
-		}
-		if vm.State.CallStack[0].Fun.Name != "main" {
-			return nil, fmt.Errorf("expected caller to be main")
-		}
-		return 42, nil
-	})
+	check := NativeFunc{
+		Name: "check",
+		Func: func(vm *VM, args []any) (any, error) {
+			// Expect call stack: Main -> C.
+			// If TCO works, B's frame should have been replaced by C's frame.
+			// Since C is the current function, it is not in vm.State.CallStack (which holds callers).
+			// So CallStack should contain only Main.
+			if len(vm.State.CallStack) != 1 {
+				return nil, fmt.Errorf("expected call stack depth 1, got %d", len(vm.State.CallStack))
+			}
+			if vm.State.CallStack[0].Fun.Name != "main" {
+				return nil, fmt.Errorf("expected caller to be main")
+			}
+			return 42, nil
+		},
+	}
 
 	cFunc := &Function{
 		Name:      "C",
