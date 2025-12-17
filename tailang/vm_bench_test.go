@@ -28,7 +28,7 @@ func BenchmarkVM_NativeCall(b *testing.B) {
 			OpSetVar.With(0),    // i = result
 
 			// 7: jump back
-			OpJump.With(-7), // (to 0)
+			OpJump.With(-8), // (to 0)
 
 			// 8: end
 			OpReturn,
@@ -86,7 +86,7 @@ func BenchmarkVM_ClosureCall(b *testing.B) {
 			OpSetVar.With(0),  // i = result
 
 			// 6: jump back
-			OpJump.With(-6), // (to 0)
+			OpJump.With(-7), // (to 0)
 
 			// 7: end
 			OpReturn,
