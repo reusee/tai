@@ -248,7 +248,7 @@ func (c *Compiler) parseBlockBody() error {
 }
 
 func (c *Compiler) parseExpression() error {
-	if err := c.parseTerm(); err != nil {
+	if err := c.parseMath(); err != nil {
 		return err
 	}
 
@@ -267,11 +267,19 @@ func (c *Compiler) parseExpression() error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Compiler) parseMath() error {
+	if err := c.parseTerm(); err != nil {
+		return err
+	}
+
 	// Handle infix math: A + B
 	if c.curr.Kind == TokenSymbol && (c.curr.Text == "+" || c.curr.Text == "-" || c.curr.Text == "*" || c.curr.Text == "/") {
 		op := c.curr.Text
 		c.advance()
-		if err := c.parseExpression(); err != nil { // RHS
+		if err := c.parseMath(); err != nil { // RHS
 			return err
 		}
 		// Resolve Op
