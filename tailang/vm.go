@@ -80,17 +80,6 @@ func (v *VM) drop(n int) {
 	v.SP = start
 }
 
-func (v *VM) readUint16() uint16 {
-	code := v.CurrentFun.Code
-	if v.IP+1 >= len(code) {
-		return 0
-	}
-	hi := uint16(code[v.IP])
-	lo := uint16(code[v.IP+1])
-	v.IP += 2
-	return hi<<8 | lo
-}
-
 func (v *VM) Snapshot(w io.Writer) error {
 	enc := gob.NewEncoder(w)
 

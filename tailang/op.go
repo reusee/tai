@@ -1,6 +1,6 @@
 package tailang
 
-type OpCode byte
+type OpCode uint32
 
 const (
 	OpLoadConst OpCode = iota + 8
@@ -22,3 +22,7 @@ const (
 	OpSetIndex
 	OpSwap
 )
+
+func (o OpCode) With(arg int) OpCode {
+	return o | (OpCode(arg) << 8)
+}

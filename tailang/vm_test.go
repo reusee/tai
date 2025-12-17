@@ -16,11 +16,11 @@ func TestVM_NativeFunc(t *testing.T) {
 			"res",
 		},
 		Code: []OpCode{
-			OpLoadVar, 0, 0,
-			OpLoadConst, 0, 1,
-			OpLoadConst, 0, 2,
-			OpCall, 0, 2,
-			OpDefVar, 0, 3,
+			OpLoadVar.With(0),
+			OpLoadConst.With(1),
+			OpLoadConst.With(2),
+			OpCall.With(2),
+			OpDefVar.With(3),
 		},
 	}
 
@@ -59,7 +59,7 @@ func TestVM_Closure(t *testing.T) {
 			"x",
 		},
 		Code: []OpCode{
-			OpLoadVar, 0, 0,
+			OpLoadVar.With(0),
 			OpReturn,
 		},
 	}
@@ -72,9 +72,9 @@ func TestVM_Closure(t *testing.T) {
 			inner,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
-			OpMakeClosure, 0, 2,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
+			OpMakeClosure.With(2),
 			OpReturn,
 		},
 	}
@@ -87,12 +87,12 @@ func TestVM_Closure(t *testing.T) {
 			"res",
 		},
 		Code: []OpCode{
-			OpMakeClosure, 0, 0,
-			OpCall, 0, 0,
-			OpDefVar, 0, 1,
-			OpLoadVar, 0, 1,
-			OpCall, 0, 0,
-			OpDefVar, 0, 2,
+			OpMakeClosure.With(0),
+			OpCall.With(0),
+			OpDefVar.With(1),
+			OpLoadVar.With(1),
+			OpCall.With(0),
+			OpDefVar.With(2),
 		},
 	}
 
@@ -123,22 +123,22 @@ func TestVM_Jump(t *testing.T) {
 		},
 		Code: []OpCode{
 			// res = 0
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
 
-			// if false jump +6
-			OpLoadConst, 0, 1,
-			OpJumpFalse, 0, 6,
+			// if false jump +2 (skip next 2 instructions)
+			OpLoadConst.With(1),
+			OpJumpFalse.With(2),
 			// block 1
-			OpLoadConst, 0, 2,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(2),
+			OpDefVar.With(0),
 
-			// if true jump +6
-			OpLoadConst, 0, 2,
-			OpJumpFalse, 0, 6,
+			// if true jump +2
+			OpLoadConst.With(2),
+			OpJumpFalse.With(2),
 			// block 2
-			OpLoadConst, 0, 3,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(3),
+			OpDefVar.With(0),
 		},
 	}
 
@@ -167,11 +167,11 @@ func TestVM_Scope(t *testing.T) {
 			2,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
 			OpEnterScope,
-			OpLoadConst, 0, 2,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(2),
+			OpDefVar.With(0),
 			OpLeaveScope,
 		},
 	}
@@ -201,10 +201,10 @@ func TestVM_SetVar(t *testing.T) {
 			2,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
-			OpLoadConst, 0, 2,
-			OpSetVar, 0, 0,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
+			OpLoadConst.With(2),
+			OpSetVar.With(0),
 		},
 	}
 
@@ -233,10 +233,10 @@ func TestVM_Pop(t *testing.T) {
 			2,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpLoadConst, 0, 2,
+			OpLoadConst.With(1),
+			OpLoadConst.With(2),
 			OpPop,
-			OpDefVar, 0, 0,
+			OpDefVar.With(0),
 		},
 	}
 	vm := NewVM(main)
@@ -260,11 +260,11 @@ func TestVM_UnconditionalJump(t *testing.T) {
 			2,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpJump, 0, 4,
-			OpLoadConst, 0, 2,
+			OpLoadConst.With(1),
+			OpJump.With(2),
+			OpLoadConst.With(2),
 			OpPop,
-			OpDefVar, 0, 0,
+			OpDefVar.With(0),
 		},
 	}
 
@@ -316,7 +316,7 @@ func TestVM_Errors(t *testing.T) {
 				"x",
 			},
 			Code: []OpCode{
-				OpLoadVar, 0, 0,
+				OpLoadVar.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -339,8 +339,8 @@ func TestVM_Errors(t *testing.T) {
 				1,
 			},
 			Code: []OpCode{
-				OpLoadConst, 0, 1,
-				OpSetVar, 0, 0,
+				OpLoadConst.With(1),
+				OpSetVar.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -369,8 +369,8 @@ func TestVM_Errors(t *testing.T) {
 				foo,
 			},
 			Code: []OpCode{
-				OpMakeClosure, 0, 0,
-				OpCall, 0, 0,
+				OpMakeClosure.With(0),
+				OpCall.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -392,13 +392,13 @@ func TestVM_ParentScopeAccess(t *testing.T) {
 			"x", 1, 2,
 		},
 		Code: []OpCode{
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
 			OpEnterScope,
-			OpLoadVar, 0, 0,
+			OpLoadVar.With(0),
 			OpPop,
-			OpLoadConst, 0, 2,
-			OpSetVar, 0, 0,
+			OpLoadConst.With(2),
+			OpSetVar.With(0),
 			OpLeaveScope,
 		},
 	}
@@ -418,9 +418,9 @@ func TestVM_ParentScopeAccess(t *testing.T) {
 }
 
 func TestVM_StackGrowth(t *testing.T) {
-	code := make([]OpCode, 0, 3100)
+	code := make([]OpCode, 0, 1050)
 	for range 1050 {
-		code = append(code, OpLoadConst, 0, 0)
+		code = append(code, OpLoadConst.With(0))
 	}
 	main := &Function{
 		Constants: []any{1},
@@ -442,8 +442,8 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		main := &Function{
 			Constants: []any{"f"},
 			Code: []OpCode{
-				OpLoadVar, 0, 0,
-				OpCall, 0, 0,
+				OpLoadVar.With(0),
+				OpCall.With(0),
 				OpPop,
 			},
 		}
@@ -470,9 +470,9 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		main := &Function{
 			Constants: []any{"f"},
 			Code: []OpCode{
-				OpLoadVar, 0, 0,
-				OpCall, 0, 0,
-				OpLoadVar, 0, 0,
+				OpLoadVar.With(0),
+				OpCall.With(0),
+				OpLoadVar.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -512,8 +512,8 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		main := &Function{
 			Constants: []any{"x", 1},
 			Code: []OpCode{
-				OpLoadConst, 0, 1,
-				OpSetVar, 0, 0,
+				OpLoadConst.With(1),
+				OpSetVar.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -533,8 +533,8 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 		main := &Function{
 			Constants: []any{"x"},
 			Code: []OpCode{
-				OpLoadVar, 0, 0,
-				OpLoadVar, 0, 0,
+				OpLoadVar.With(0),
+				OpLoadVar.With(0),
 			},
 		}
 		vm := NewVM(main)
@@ -554,7 +554,7 @@ func TestVM_ErrorControlFlow(t *testing.T) {
 func TestVM_CallStackUnderflow(t *testing.T) {
 	main := &Function{
 		Code: []OpCode{
-			OpCall, 0, 5,
+			OpCall.With(5),
 		},
 	}
 	vm := NewVM(main)
@@ -594,23 +594,8 @@ func TestVM_TopLevelReturn(t *testing.T) {
 	main := &Function{
 		Constants: []any{42},
 		Code: []OpCode{
-			OpLoadConst, 0, 0,
+			OpLoadConst.With(0),
 			OpReturn,
-		},
-	}
-	vm := NewVM(main)
-	for _, err := range vm.Run {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestVM_TruncatedRead(t *testing.T) {
-	main := &Function{
-		Constants: []any{"safe"},
-		Code: []OpCode{
-			OpLoadConst,
 		},
 	}
 	vm := NewVM(main)
@@ -631,7 +616,7 @@ func TestVM_PopEmpty(t *testing.T) {
 
 func TestVM_StackResize(t *testing.T) {
 	main := &Function{
-		Code:      []OpCode{OpLoadConst, 0, 0},
+		Code:      []OpCode{OpLoadConst.With(0)},
 		Constants: []any{42},
 	}
 	vm := NewVM(main)
@@ -656,8 +641,8 @@ func TestVM_JumpFalse_Variations(t *testing.T) {
 			main := &Function{
 				Constants: []any{val},
 				Code: []OpCode{
-					OpLoadConst, 0, 0,
-					OpJumpFalse, 0, 2,
+					OpLoadConst.With(0),
+					OpJumpFalse.With(1),
 					OpSuspend,
 				},
 			}
@@ -676,7 +661,7 @@ func TestVM_ContinueOnError(t *testing.T) {
 	t.Run("LoadVar", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{"x"},
-			Code:      []OpCode{OpLoadVar, 0, 0},
+			Code:      []OpCode{OpLoadVar.With(0)},
 		})
 		var n int
 		vm.Run(func(_ *Interrupt, err error) bool {
@@ -697,7 +682,7 @@ func TestVM_ContinueOnError(t *testing.T) {
 	t.Run("SetVar", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{"x", 1},
-			Code:      []OpCode{OpLoadConst, 0, 1, OpSetVar, 0, 0},
+			Code:      []OpCode{OpLoadConst.With(1), OpSetVar.With(0)},
 		})
 		var n int
 		vm.Run(func(_ *Interrupt, err error) bool {
@@ -715,7 +700,7 @@ func TestVM_ContinueOnError(t *testing.T) {
 	t.Run("ArityMismatch", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{&Function{NumParams: 1}},
-			Code:      []OpCode{OpMakeClosure, 0, 0, OpCall, 0, 0},
+			Code:      []OpCode{OpMakeClosure.With(0), OpCall.With(0)},
 		})
 		var n int
 		vm.Run(func(_ *Interrupt, err error) bool {
@@ -737,16 +722,16 @@ func TestVM_ListMap(t *testing.T) {
 			Constants: []any{"l", 1, 2, "res"},
 			Code: []OpCode{
 				// list = [1, 2]
-				OpLoadConst, 0, 1,
-				OpLoadConst, 0, 2,
-				OpMakeList, 0, 2,
-				OpDefVar, 0, 0,
+				OpLoadConst.With(1),
+				OpLoadConst.With(2),
+				OpMakeList.With(2),
+				OpDefVar.With(0),
 
 				// res = list[1]
-				OpLoadVar, 0, 0,
-				OpLoadConst, 0, 1, // index 1 (value 2) (Wait, const 1 is value 1. Need index. Let's use value 1 as index 1)
+				OpLoadVar.With(0),
+				OpLoadConst.With(1), // index 1 (value 2)
 				OpGetIndex,
-				OpDefVar, 0, 3,
+				OpDefVar.With(3),
 			},
 		}
 		vm := NewVM(main)
@@ -764,22 +749,21 @@ func TestVM_ListMap(t *testing.T) {
 		main = &Function{
 			Constants: []any{"l", 1, 42, "res"},
 			Code: []OpCode{
-				// list = [1, 2] (reusing setup logic or just trust state if simple)
-				// let's do fresh
-				OpLoadConst, 0, 1,
-				OpLoadConst, 0, 1, // list=[1, 1]
-				OpMakeList, 0, 2,
-				OpDefVar, 0, 0,
+				// list = [1, 2]
+				OpLoadConst.With(1),
+				OpLoadConst.With(1), // list=[1, 1]
+				OpMakeList.With(2),
+				OpDefVar.With(0),
 
-				OpLoadVar, 0, 0,
-				OpLoadConst, 0, 1, // index 1
-				OpLoadConst, 0, 2, // value 42
+				OpLoadVar.With(0),
+				OpLoadConst.With(1), // index 1
+				OpLoadConst.With(2), // value 42
 				OpSetIndex,
 
-				OpLoadVar, 0, 0,
-				OpLoadConst, 0, 1, // index 1
+				OpLoadVar.With(0),
+				OpLoadConst.With(1), // index 1
 				OpGetIndex,
-				OpDefVar, 0, 3,
+				OpDefVar.With(3),
 			},
 		}
 		vm = NewVM(main)
@@ -799,18 +783,18 @@ func TestVM_ListMap(t *testing.T) {
 			Constants: []any{"m", "foo", 42, "bar", 0, "res"},
 			Code: []OpCode{
 				// m = {foo: 42, bar: 0}
-				OpLoadConst, 0, 1, // foo
-				OpLoadConst, 0, 2, // 42
-				OpLoadConst, 0, 3, // bar
-				OpLoadConst, 0, 4, // 0
-				OpMakeMap, 0, 2, // 2 pairs
-				OpDefVar, 0, 0,
+				OpLoadConst.With(1), // foo
+				OpLoadConst.With(2), // 42
+				OpLoadConst.With(3), // bar
+				OpLoadConst.With(4), // 0
+				OpMakeMap.With(2),   // 2 pairs
+				OpDefVar.With(0),
 
 				// res = m.foo
-				OpLoadVar, 0, 0,
-				OpLoadConst, 0, 1, // foo
+				OpLoadVar.With(0),
+				OpLoadConst.With(1), // foo
 				OpGetIndex,
-				OpDefVar, 0, 5,
+				OpDefVar.With(5),
 			},
 		}
 		vm := NewVM(main)
@@ -830,11 +814,11 @@ func TestVM_Swap(t *testing.T) {
 	main := &Function{
 		Constants: []any{1, 2, "res"},
 		Code: []OpCode{
-			OpLoadConst, 0, 0, // 1
-			OpLoadConst, 0, 1, // 2
-			OpSwap,         // Stack: [2, 1]
-			OpPop,          // Pop 1. Stack: [2]
-			OpDefVar, 0, 2, // res = 2
+			OpLoadConst.With(0), // 1
+			OpLoadConst.With(1), // 2
+			OpSwap,              // Stack: [2, 1]
+			OpPop,               // Pop 1. Stack: [2]
+			OpDefVar.With(2),    // res = 2
 		},
 	}
 	vm := NewVM(main)
@@ -864,13 +848,13 @@ func TestVM_Pipe(t *testing.T) {
 	main := &Function{
 		Constants: []any{42, "sub", 1, "res"},
 		Code: []OpCode{
-			OpLoadConst, 0, 0, // 42
+			OpLoadConst.With(0), // 42
 			// Pipe to sub(1)
-			OpLoadVar, 0, 1, // sub. Stack: [42, sub]
-			OpSwap,            // Stack: [sub, 42]
-			OpLoadConst, 0, 2, // 1. Stack: [sub, 42, 1]
-			OpCall, 0, 2, // sub(42, 1) -> 41
-			OpDefVar, 0, 3, // res = 41
+			OpLoadVar.With(1),   // sub. Stack: [42, sub]
+			OpSwap,              // Stack: [sub, 42]
+			OpLoadConst.With(2), // 1. Stack: [sub, 42, 1]
+			OpCall.With(2),      // sub(42, 1) -> 41
+			OpDefVar.With(3),    // res = 41
 		},
 	}
 
@@ -893,7 +877,7 @@ func TestVM_Pipe(t *testing.T) {
 func TestVM_Pipe_Error(t *testing.T) {
 	main := &Function{
 		Code: []OpCode{
-			OpLoadConst, 0, 0, // Just 1 item
+			OpLoadConst.With(0), // Just 1 item
 			OpSwap,
 		},
 		Constants: []any{1},
@@ -961,8 +945,8 @@ func TestVM_TCO(t *testing.T) {
 		Name:      "C",
 		Constants: []any{"check"},
 		Code: []OpCode{
-			OpLoadVar, 0, 0,
-			OpCall, 0, 0,
+			OpLoadVar.With(0),
+			OpCall.With(0),
 			OpReturn,
 		},
 	}
@@ -971,8 +955,8 @@ func TestVM_TCO(t *testing.T) {
 		Name:      "B",
 		Constants: []any{cFunc},
 		Code: []OpCode{
-			OpMakeClosure, 0, 0,
-			OpCall, 0, 0, // Tail call to C
+			OpMakeClosure.With(0),
+			OpCall.With(0), // Tail call to C
 			OpReturn,
 		},
 	}
@@ -981,9 +965,9 @@ func TestVM_TCO(t *testing.T) {
 		Name:      "main",
 		Constants: []any{bFunc, "check", "res"},
 		Code: []OpCode{
-			OpMakeClosure, 0, 0,
-			OpCall, 0, 0,
-			OpDefVar, 0, 2,
+			OpMakeClosure.With(0),
+			OpCall.With(0),
+			OpDefVar.With(2),
 		},
 	}
 
@@ -1010,85 +994,85 @@ func TestVM_OpErrors_Break(t *testing.T) {
 	}{
 		{
 			Name:   "LoadVarUndefined",
-			Code:   []OpCode{OpLoadVar, 0, 0},
+			Code:   []OpCode{OpLoadVar.With(0)},
 			Consts: []any{"undef"},
 		},
 		{
 			Name:   "SetVarUndefined",
-			Code:   []OpCode{OpLoadConst, 0, 0, OpSetVar, 0, 1},
+			Code:   []OpCode{OpLoadConst.With(0), OpSetVar.With(1)},
 			Consts: []any{1, "undef"},
 		},
 		{
 			Name: "MakeListStackUnderflow",
-			Code: []OpCode{OpMakeList, 0, 5},
+			Code: []OpCode{OpMakeList.With(5)},
 		},
 		{
 			Name: "MakeMapStackUnderflow",
-			Code: []OpCode{OpMakeMap, 0, 5},
+			Code: []OpCode{OpMakeMap.With(5)},
 		},
 		{
 			Name: "CallStackUnderflow",
-			Code: []OpCode{OpCall, 0, 5},
+			Code: []OpCode{OpCall.With(5)},
 		},
 		{
 			Name:   "CallNonFunction",
-			Code:   []OpCode{OpLoadConst, 0, 0, OpCall, 0, 0},
+			Code:   []OpCode{OpLoadConst.With(0), OpCall.With(0)},
 			Consts: []any{1},
 		},
 		{
 			Name:   "ArityMismatch",
 			Consts: []any{&Function{NumParams: 1}},
-			Code:   []OpCode{OpMakeClosure, 0, 0, OpCall, 0, 0},
+			Code:   []OpCode{OpMakeClosure.With(0), OpCall.With(0)},
 		},
 		{
 			Name:   "IndexNil",
 			Consts: []any{nil, 1},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpGetIndex},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
 		},
 		{
 			Name:   "IndexSliceBadKey",
 			Consts: []any{"bad"},
-			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
 		},
 		{
 			Name:   "IndexSliceOutOfBounds",
 			Consts: []any{0},
-			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
 		},
 		{
 			Name:   "IndexUnindexable",
 			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpGetIndex},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpGetIndex},
 		},
 		{
 			Name:   "SetIndexNil",
 			Consts: []any{nil},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
 		},
 		{
 			Name:   "SetIndexSliceBadKey",
 			Consts: []any{"bad", 1},
-			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpSetIndex},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
 		},
 		{
 			Name:   "SetIndexSliceOutOfBounds",
 			Consts: []any{0, 1},
-			Code:   []OpCode{OpMakeList, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpSetIndex},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
 		},
 		{
 			Name:   "SetIndexStringKey",
 			Consts: []any{map[string]any{}, 1, 1},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpLoadConst, 0, 2, OpSetIndex},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpSetIndex},
 		},
 		{
 			Name:   "SetIndexUnassignable",
 			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
 		},
 		{
 			Name:   "SwapUnderflow",
 			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst, 0, 0, OpSwap},
+			Code:   []OpCode{OpLoadConst.With(0), OpSwap},
 		},
 	}
 
@@ -1123,14 +1107,14 @@ func TestVM_ContinueOnError_More(t *testing.T) {
 	}
 
 	t.Run("MakeMapUnderflow", func(t *testing.T) {
-		vm := NewVM(&Function{Code: []OpCode{OpMakeMap, 0, 5}})
+		vm := NewVM(&Function{Code: []OpCode{OpMakeMap.With(5)}})
 		run(vm) // should not panic
 	})
 
 	t.Run("IndexNil", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{nil, 1},
-			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpGetIndex},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
 		})
 		run(vm)
 	})
@@ -1138,7 +1122,7 @@ func TestVM_ContinueOnError_More(t *testing.T) {
 	t.Run("SetIndexNil", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{nil},
-			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpLoadConst, 0, 0, OpSetIndex},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
 		})
 		run(vm)
 	})
@@ -1146,7 +1130,7 @@ func TestVM_ContinueOnError_More(t *testing.T) {
 	t.Run("SetIndexBadKey", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{[]any{}, "bad", 1},
-			Code:      []OpCode{OpLoadConst, 0, 0, OpLoadConst, 0, 1, OpLoadConst, 0, 2, OpSetIndex},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpSetIndex},
 		})
 		run(vm)
 	})
@@ -1160,14 +1144,14 @@ func TestVM_Snapshot(t *testing.T) {
 		},
 		Code: []OpCode{
 			// a = 1
-			OpLoadConst, 0, 1,
-			OpDefVar, 0, 0,
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
 
 			OpSuspend,
 
 			// b = 2
-			OpLoadConst, 0, 3,
-			OpDefVar, 0, 2,
+			OpLoadConst.With(3),
+			OpDefVar.With(2),
 
 			OpReturn,
 		},

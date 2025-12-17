@@ -8,16 +8,17 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			return
 		}
 
-		op := v.CurrentFun.Code[v.IP]
+		inst := v.CurrentFun.Code[v.IP]
 		v.IP++
+		op := inst & 0xff
 
 		switch op {
 		case OpLoadConst:
-			idx := v.readUint16()
+			idx := int(inst >> 8)
 			v.push(v.CurrentFun.Constants[idx])
 
 		case OpLoadVar:
-			idx := v.readUint16()
+			idx := int(inst >> 8)
 			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
@@ -38,7 +39,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			v.push(val)
 
 		case OpDefVar:
-			idx := v.readUint16()
+			idx := int(inst >> 8)
 			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
@@ -50,7 +51,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			v.Scope.DefSym(sym, v.pop())
 
 		case OpSetVar:
-			idx := v.readUint16()
+			idx := int(inst >> 8)
 			c := v.CurrentFun.Constants[idx]
 			var sym Symbol
 			if s, ok := c.(Symbol); ok {
@@ -70,23 +71,23 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			v.pop()
 
 		case OpJump:
-			offset := int16(v.readUint16())
-			v.IP += int(offset)
+			offset := int(int32(inst) >> 8)
+			v.IP += offset
 
 		case OpJumpFalse:
-			offset := int16(v.readUint16())
+			offset := int(int32(inst) >> 8)
 			val := v.pop()
 			if val == nil || val == false || val == 0 || val == "" {
-				v.IP += int(offset)
+				v.IP += offset
 			}
 
 		case OpMakeClosure:
-			idx := v.readUint16()
+			idx := int(inst >> 8)
 			fun := v.CurrentFun.Constants[idx].(*Function)
 			v.push(&Closure{Fun: fun, Env: v.Scope})
 
 		case OpCall:
-			argc := int(v.readUint16())
+			argc := int(inst >> 8)
 			if v.SP < argc+1 {
 				if !yield(nil, fmt.Errorf("stack underflow during call")) {
 					return
@@ -129,7 +130,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 
 				// Tail Call Optimization
-				if v.IP < len(v.CurrentFun.Code) && v.CurrentFun.Code[v.IP] == OpReturn {
+				if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
 					var baseSP int
 					if n := len(v.CallStack); n > 0 {
 						baseSP = v.CallStack[n-1].BaseSP
@@ -207,7 +208,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpMakeList:
-			n := int(v.readUint16())
+			n := int(inst >> 8)
 			if v.SP < n {
 				if !yield(nil, fmt.Errorf("stack underflow during list creation")) {
 					return
@@ -221,7 +222,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			v.push(slice)
 
 		case OpMakeMap:
-			n := int(v.readUint16())
+			n := int(inst >> 8)
 			if v.SP < n*2 {
 				if !yield(nil, fmt.Errorf("stack underflow during map creation")) {
 					return
