@@ -138,7 +138,13 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					src := calleeIdx
 					count := argc + 1
 					copy(v.OperandStack[dst:], v.OperandStack[src:src+count])
-					v.SP = dst + count
+
+					// Nil out use locations to avoid leakage
+					startClean := dst + count
+					endClean := v.SP
+					clear(v.OperandStack[startClean:endClean])
+
+					v.SP = startClean
 					v.BP = dst + 1
 				} else {
 					v.CallStack = append(v.CallStack, Frame{

@@ -1256,3 +1256,72 @@ func TestVM_FunctionReuse(t *testing.T) {
 		t.Fatalf("VM isolation failed: global_var not set correctly in VM2. Got %v", val)
 	}
 }
+
+func TestVM_TCO_Leak(t *testing.T) {
+	// Use a native function to inspect the "garbage" area of the stack
+	checkStack := NativeFunc{
+		Name: "checkStack",
+		Func: func(vm *VM, args []any) (any, error) {
+			// vm.SP points to the next free slot.
+			// In a clean VM, slots >= vm.SP should be nil.
+			// In TCO, if we shrunk the stack, the old slots must be nilled.
+			for i := vm.SP; i < len(vm.OperandStack); i++ {
+				if vm.OperandStack[i] != nil {
+					return nil, fmt.Errorf("stack leak at %d: %v", i, vm.OperandStack[i])
+				}
+			}
+			return nil, nil
+		},
+	}
+
+	// Callee: just call verify
+	target := &Function{
+		Name:      "target",
+		Constants: []any{"checkStack"},
+		Code: []OpCode{
+			OpLoadVar.With(0),
+			OpCall.With(0),
+			OpReturn,
+		},
+	}
+
+	// Caller: Push many values, then tail-call target.
+	// target takes 0 args, so stack should shrink significantly.
+	caller := &Function{
+		Name:      "caller",
+		Constants: []any{target, "garbage"},
+		Code: []OpCode{
+			// Fill stack with garbage
+			OpLoadConst.With(1), // "garbage"
+			OpLoadConst.With(1),
+			OpLoadConst.With(1),
+			OpLoadConst.With(1),
+			OpLoadConst.With(1), // Stack has 5 items
+
+			// Load target closure
+			OpMakeClosure.With(0),
+
+			// Tail call: stack moves from ~6 items down to ~1 item (target frame)
+			// The garbage slots 1..5 should be cleared.
+			OpCall.With(0),
+			OpReturn,
+		},
+	}
+
+	main := &Function{
+		Constants: []any{caller, "checkStack"},
+		Code: []OpCode{
+			OpMakeClosure.With(0),
+			OpCall.With(0),
+		},
+	}
+
+	vm := NewVM(main)
+	vm.Def("checkStack", checkStack)
+
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
