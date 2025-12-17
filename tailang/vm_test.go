@@ -1,6 +1,7 @@
 package tailang
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 )
@@ -1149,4 +1150,75 @@ func TestVM_ContinueOnError_More(t *testing.T) {
 		})
 		run(vm)
 	})
+}
+
+func TestVM_Snapshot(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Constants: []any{
+			"a", 1, "b", 2,
+		},
+		Code: []OpCode{
+			// a = 1
+			OpLoadConst, 0, 1,
+			OpDefVar, 0, 0,
+
+			OpSuspend,
+
+			// b = 2
+			OpLoadConst, 0, 3,
+			OpDefVar, 0, 2,
+
+			OpReturn,
+		},
+	}
+
+	vm1 := NewVM(main)
+	suspended := false
+	for i, err := range vm1.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == InterruptSuspend {
+			suspended = true
+			break
+		}
+	}
+	if !suspended {
+		t.Fatal("expected suspend")
+	}
+
+	val, ok := vm1.Get("a")
+	if !ok || val.(int) != 1 {
+		t.Fatalf("expected a=1, got %v", val)
+	}
+
+	var buf bytes.Buffer
+	if err := vm1.Snapshot(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	vm2 := NewVM(nil)
+	if err := vm2.Restore(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	val, ok = vm2.Get("a")
+	if !ok || val.(int) != 1 {
+		t.Fatalf("restored: expected a=1, got %v", val)
+	}
+	if _, ok := vm2.Get("b"); ok {
+		t.Fatal("restored: b should not be defined")
+	}
+
+	for _, err := range vm2.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	val, ok = vm2.Get("b")
+	if !ok || val.(int) != 2 {
+		t.Fatalf("finished: expected b=2, got %v", val)
+	}
 }
