@@ -13,24 +13,28 @@ func BenchmarkVM_NativeCall(b *testing.B) {
 	main := &Function{
 		Name: "main",
 		Constants: []any{
-			"i", 1, "sub",
+			"sub", "i", 1,
 		},
 		Code: []OpCode{
-			// 0: loop condition check
-			OpLoadVar.With(0),   // i
-			OpJumpFalse.With(6), // jump +6 (to 8)
+			// Setup locals
+			OpLoadVar.With(0), // sub (Local 0)
+			OpLoadVar.With(1), // i (Local 1)
 
-			// 2: loop body
-			OpLoadVar.With(2),   // sub
-			OpLoadVar.With(0),   // i
-			OpLoadConst.With(1), // 1
+			// 2: loop start
+			OpGetLocal.With(1),  // i
+			OpJumpFalse.With(6), // jump to 10
+
+			// 4: body
+			OpGetLocal.With(0),  // sub
+			OpGetLocal.With(1),  // i
+			OpLoadConst.With(2), // 1
 			OpCall.With(2),      // sub(i, 1)
-			OpSetVar.With(0),    // i = result
+			OpSetLocal.With(1),  // i = result
 
-			// 7: jump back
-			OpJump.With(-8), // (to 0)
+			// 9: jump back
+			OpJump.With(-8), // to 2
 
-			// 8: end
+			// 10: end
 			OpReturn,
 		},
 	}
@@ -59,11 +63,11 @@ func BenchmarkVM_ClosureCall(b *testing.B) {
 		Name:       "dec",
 		NumParams:  1,
 		ParamNames: []string{"n"},
-		Constants:  []any{"sub", "n", 1},
+		Constants:  []any{"sub", 1},
 		Code: []OpCode{
 			OpLoadVar.With(0),   // sub
-			OpLoadVar.With(1),   // n
-			OpLoadConst.With(2), // 1
+			OpGetLocal.With(0),  // n (argument 0)
+			OpLoadConst.With(1), // 1
 			OpCall.With(2),      // sub(n, 1)
 			OpReturn,
 		},
@@ -72,23 +76,27 @@ func BenchmarkVM_ClosureCall(b *testing.B) {
 	main := &Function{
 		Name: "main",
 		Constants: []any{
-			"i", "dec",
+			"dec", "i",
 		},
 		Code: []OpCode{
-			// 0: loop check
-			OpLoadVar.With(0),   // i
-			OpJumpFalse.With(5), // jump +5 (to 7)
+			// Setup locals
+			OpLoadVar.With(0), // dec (Local 0)
+			OpLoadVar.With(1), // i (Local 1)
 
-			// 2: body
-			OpLoadVar.With(1), // dec
-			OpLoadVar.With(0), // i
-			OpCall.With(1),    // dec(i)
-			OpSetVar.With(0),  // i = result
+			// 2: loop start
+			OpGetLocal.With(1),  // i
+			OpJumpFalse.With(5), // jump to 9
 
-			// 6: jump back
-			OpJump.With(-7), // (to 0)
+			// 4: body
+			OpGetLocal.With(0), // dec
+			OpGetLocal.With(1), // i
+			OpCall.With(1),     // dec(i)
+			OpSetLocal.With(1), // i = result
 
-			// 7: end
+			// 8: jump back
+			OpJump.With(-7), // to 2
+
+			// 9: end
 			OpReturn,
 		},
 	}
