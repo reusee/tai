@@ -10,6 +10,7 @@ type VM struct {
 	IP           int
 	OperandStack []any
 	SP           int
+	BP           int
 	CallStack    []Frame
 	Scope        *Env
 	Symbols      *SymbolTable

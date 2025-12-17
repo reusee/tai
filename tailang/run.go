@@ -131,19 +131,24 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				// Tail Call Optimization
 				if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
-					var baseSP int
-					if n := len(v.CallStack); n > 0 {
-						baseSP = v.CallStack[n-1].BaseSP
+					dst := v.BP
+					if dst > 0 {
+						dst--
 					}
-					v.drop(v.SP - baseSP)
+					src := calleeIdx
+					count := argc + 1
+					copy(v.OperandStack[dst:], v.OperandStack[src:src+count])
+					v.SP = dst + count
+					v.BP = dst + 1
 				} else {
-					v.drop(argc + 1)
 					v.CallStack = append(v.CallStack, Frame{
 						Fun:      v.CurrentFun,
 						ReturnIP: v.IP,
 						Env:      v.Scope,
-						BaseSP:   v.SP,
+						BaseSP:   calleeIdx,
+						BP:       v.BP,
 					})
+					v.BP = calleeIdx + 1
 				}
 
 				v.CurrentFun = fn.Fun
@@ -189,6 +194,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			v.CurrentFun = frame.Fun
 			v.IP = frame.ReturnIP
 			v.Scope = frame.Env
+			v.BP = frame.BP
 			// Ensure we discard any garbage left on stack by the called function
 			v.drop(v.SP - frame.BaseSP)
 
@@ -359,6 +365,14 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			top := v.SP - 1
 			under := v.SP - 2
 			v.OperandStack[top], v.OperandStack[under] = v.OperandStack[under], v.OperandStack[top]
+
+		case OpGetLocal:
+			idx := int(inst >> 8)
+			v.push(v.OperandStack[v.BP+idx])
+
+		case OpSetLocal:
+			idx := int(inst >> 8)
+			v.OperandStack[v.BP+idx] = v.pop()
 		}
 	}
 }

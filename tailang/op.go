@@ -21,6 +21,8 @@ const (
 	OpGetIndex
 	OpSetIndex
 	OpSwap
+	OpGetLocal
+	OpSetLocal
 )
 
 func (o OpCode) With(arg int) OpCode {
