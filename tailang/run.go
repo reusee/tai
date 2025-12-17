@@ -25,7 +25,6 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				sym = s
 			} else {
 				sym = v.Intern(c.(string))
-				v.CurrentFun.Constants[idx] = sym
 			}
 			val, ok := v.Scope.GetSym(sym)
 			if !ok {
@@ -46,7 +45,6 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				sym = s
 			} else {
 				sym = v.Intern(c.(string))
-				v.CurrentFun.Constants[idx] = sym
 			}
 			v.Scope.DefSym(sym, v.pop())
 
@@ -58,7 +56,6 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				sym = s
 			} else {
 				sym = v.Intern(c.(string))
-				v.CurrentFun.Constants[idx] = sym
 			}
 			val := v.pop()
 			if !v.Scope.SetSym(sym, val) {
@@ -110,23 +107,26 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				newEnv := fn.Env.NewChild()
 
-				fn.Fun.EnsureParamSymbols(v.Symbols)
-
-				// Pre-allocate environment storage to avoid repeated resizing
 				var maxSym int = -1
-				for _, sym := range fn.Fun.ParamSymbols {
+				// Resolve parameter symbols locally
+				paramSyms := make([]Symbol, len(fn.Fun.ParamNames))
+				for i, name := range fn.Fun.ParamNames {
+					sym := v.Intern(name)
+					paramSyms[i] = sym
 					s := int(sym)
 					if s > maxSym {
 						maxSym = s
 					}
 				}
+
+				// Pre-allocate environment storage to avoid repeated resizing
 				if maxSym >= 0 {
 					newEnv.Grow(maxSym)
 				}
 
 				// Bind arguments from stack directly to new environment
 				for i := range argc {
-					newEnv.DefSym(fn.Fun.ParamSymbols[i], v.OperandStack[calleeIdx+1+i])
+					newEnv.DefSym(paramSyms[i], v.OperandStack[calleeIdx+1+i])
 				}
 
 				// Tail Call Optimization

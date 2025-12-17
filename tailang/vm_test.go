@@ -1207,3 +1207,52 @@ func TestVM_Snapshot(t *testing.T) {
 		t.Fatalf("finished: expected b=2, got %v", val)
 	}
 }
+
+func TestVM_FunctionReuse(t *testing.T) {
+	// Function: global_var = 42
+	sharedFunc := &Function{
+		Constants: []any{
+			42, "global_var",
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpDefVar.With(1),
+			OpReturn,
+		},
+	}
+
+	// VM 1: Run the function.
+	// This ensures that execution does not pollute sharedFunc with VM1's symbols.
+	vm1 := NewVM(sharedFunc)
+	for _, err := range vm1.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, ok := vm1.Get("global_var"); !ok || v.(int) != 42 {
+		t.Fatal("vm1 failed to set global_var")
+	}
+
+	// VM 2: A fresh environment.
+	// We occupy the first symbol slot with a different variable to strictly overlap
+	// with where "global_var" would be if it were cached from VM1.
+	vm2 := NewVM(sharedFunc)
+	vm2.Def("other_var", 999)
+
+	for _, err := range vm2.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Verification:
+	// "other_var" (Symbol 0) should remain 999.
+	// "global_var" (should be resolved to Symbol 1 in VM2) is set to 42.
+	if val, ok := vm2.Get("other_var"); !ok || val.(int) != 999 {
+		t.Fatalf("VM isolation failed: other_var corrupted. Expected 999, got %v", val)
+	}
+
+	if val, ok := vm2.Get("global_var"); !ok || val.(int) != 42 {
+		t.Fatalf("VM isolation failed: global_var not set correctly in VM2. Got %v", val)
+	}
+}
