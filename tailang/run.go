@@ -230,7 +230,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			m := make(map[any]any, n)
 			start := v.State.SP - n*2
-			for i := 0; i < n; i++ {
+			for i := range n {
 				k := v.State.OperandStack[start+i*2]
 				val := v.State.OperandStack[start+i*2+1]
 				m[k] = val
