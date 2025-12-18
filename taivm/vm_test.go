@@ -2243,3 +2243,96 @@ func TestVM_DumpTrace(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_Bitwise(t *testing.T) {
+	cases := []struct {
+		Name     string
+		Op       OpCode
+		Operands []any
+		Expected any
+	}{
+		{"And", OpBitAnd, []any{3, 1}, 1},
+		{"Or", OpBitOr, []any{3, 1}, 3},
+		{"Xor", OpBitXor, []any{3, 1}, 2},
+		{"Not", OpBitNot, []any{1}, -2}, // ^1 in Go is -2 (two's complement)
+		{"Lsh", OpBitLsh, []any{1, 1}, 2},
+		{"Rsh", OpBitRsh, []any{2, 1}, 1},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			code := []OpCode{}
+			for i := range c.Operands {
+				code = append(code, OpLoadConst.With(i))
+			}
+			code = append(code, c.Op)
+			// For testing result, we'll return it
+			code = append(code, OpReturn)
+
+			main := &Function{
+				Name:      "main",
+				Constants: c.Operands,
+				Code:      code,
+			}
+
+			vm := NewVM(main)
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if vm.SP != 1 {
+				t.Fatalf("expected stack size 1, got %d", vm.SP)
+			}
+			res := vm.pop()
+			if res != c.Expected {
+				t.Fatalf("expected %v, got %v", c.Expected, res)
+			}
+		})
+	}
+}
+
+func TestVM_BitwiseErrors(t *testing.T) {
+	run := func(vm *VM) error {
+		var lastErr error
+		vm.Run(func(_ *Interrupt, err error) bool {
+			lastErr = err
+			return false // stop
+		})
+		return lastErr
+	}
+
+	t.Run("TypeMismatch", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, "bad"},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitAnd},
+		})
+		err := run(vm)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("NegativeShift", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, -1},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitLsh},
+		})
+		err := run(vm)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("NotTypeMismatch", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"bad"},
+			Code:      []OpCode{OpLoadConst.With(0), OpBitNot},
+		})
+		err := run(vm)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}

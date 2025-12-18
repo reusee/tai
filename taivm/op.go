@@ -24,6 +24,12 @@ const (
 	OpGetLocal
 	OpSetLocal
 	OpDumpTrace
+	OpBitAnd
+	OpBitOr
+	OpBitXor
+	OpBitNot
+	OpBitLsh
+	OpBitRsh
 )
 
 func (o OpCode) With(arg int) OpCode {

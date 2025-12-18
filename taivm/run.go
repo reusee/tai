@@ -475,6 +475,71 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if !yield(nil, fmt.Errorf("%s", msg)) {
 				return
 			}
+
+		case OpBitAnd, OpBitOr, OpBitXor, OpBitLsh, OpBitRsh:
+			if v.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during bitwise op")) {
+					return
+				}
+				continue
+			}
+			b := v.pop()
+			a := v.pop()
+			i1, ok1 := a.(int)
+			i2, ok2 := b.(int)
+			if !ok1 || !ok2 {
+				if !yield(nil, fmt.Errorf("bitwise operands must be int, got %T and %T", a, b)) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+			var res int
+			switch op {
+			case OpBitAnd:
+				res = i1 & i2
+			case OpBitOr:
+				res = i1 | i2
+			case OpBitXor:
+				res = i1 ^ i2
+			case OpBitLsh:
+				if i2 < 0 {
+					if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				res = i1 << i2
+			case OpBitRsh:
+				if i2 < 0 {
+					if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				res = i1 >> i2
+			}
+			v.push(res)
+
+		case OpBitNot:
+			if v.SP < 1 {
+				if !yield(nil, fmt.Errorf("stack underflow during bitwise not")) {
+					return
+				}
+				continue
+			}
+			a := v.pop()
+			i, ok := a.(int)
+			if !ok {
+				if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+			v.push(^i)
 		}
 	}
 }
