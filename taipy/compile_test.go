@@ -316,7 +316,7 @@ for k in d:
 	if val, ok := vm.Get("keys"); !ok {
 		t.Errorf("keys not found")
 	} else {
-		sl := val.([]any)
+		sl := val.(*taivm.List).Elements
 		if len(sl) != 2 {
 			t.Errorf("keys len = %d, want 2", len(sl))
 		}
@@ -369,7 +369,7 @@ res = l[1:4]
 	if val, ok := vm.Get("res"); !ok {
 		t.Errorf("res not found")
 	} else {
-		sl := val.([]any)
+		sl := val.(*taivm.List).Elements
 		if len(sl) != 3 {
 			t.Errorf("len(res) = %d, want 3", len(sl))
 		} else if sl[0] != int64(2) || sl[2] != int64(4) {
@@ -385,14 +385,16 @@ res = t[1:4]
 	if val, ok := vm.Get("res"); !ok {
 		t.Errorf("res not found")
 	} else {
-		sl, ok := val.(taivm.Tuple)
+		sl, ok := val.(*taivm.List)
 		if !ok {
-			t.Errorf("expected tuple, got %T", val)
+			t.Errorf("expected list, got %T", val)
+		} else if !sl.Immutable {
+			t.Error("expected immutable list")
 		} else {
-			if len(sl) != 3 {
-				t.Errorf("len(res) = %d, want 3", len(sl))
-			} else if sl[0] != int64(2) || sl[2] != int64(4) {
-				t.Errorf("res = %v", sl)
+			if len(sl.Elements) != 3 {
+				t.Errorf("len(res) = %d, want 3", len(sl.Elements))
+			} else if sl.Elements[0] != int64(2) || sl.Elements[2] != int64(4) {
+				t.Errorf("res = %v", sl.Elements)
 			}
 		}
 	}
@@ -414,7 +416,7 @@ res = l[::2]
 	if val, ok := vm.Get("res"); !ok {
 		t.Errorf("res not found")
 	} else {
-		sl := val.([]any)
+		sl := val.(*taivm.List).Elements
 		if len(sl) != 3 {
 			t.Errorf("len(res) = %d, want 3", len(sl))
 		} else if sl[0] != int64(1) || sl[1] != int64(3) || sl[2] != int64(5) {
@@ -452,7 +454,7 @@ l[1] -= 5
 	if val, ok := vm.Get("l"); !ok {
 		t.Error("l not found")
 	} else {
-		sl := val.([]any)
+		sl := val.(*taivm.List).Elements
 		if sl[0] != int64(15) {
 			t.Errorf("l[0] = %v, want 15", sl[0])
 		}

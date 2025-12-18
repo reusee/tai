@@ -13,10 +13,11 @@ var ApplyKw = taivm.NativeFunc{
 			return nil, fmt.Errorf("__apply_kw expects 3 arguments")
 		}
 		fnObj := args[0]
-		posArgs, ok := args[1].([]any)
+		posArgsList, ok := args[1].(*taivm.List)
 		if !ok {
 			return nil, fmt.Errorf("pos_args must be list")
 		}
+		posArgs := posArgsList.Elements
 		kwArgs, ok := args[2].(map[any]any)
 		if !ok {
 			return nil, fmt.Errorf("kw_args must be map")
@@ -104,7 +105,10 @@ var ApplyKw = taivm.NativeFunc{
 				} else {
 					extra = []any{}
 				}
-				newEnv.DefSym(paramSyms[numParams-1], extra)
+				newEnv.DefSym(paramSyms[numParams-1], &taivm.List{
+					Elements:  extra,
+					Immutable: true,
+				})
 			}
 
 			calleeIdx := vm.SP - len(args) - 1
@@ -141,14 +145,17 @@ var Concat = taivm.NativeFunc{
 		if len(args) != 2 {
 			return nil, fmt.Errorf("concat expects 2 arguments")
 		}
-		l1, ok1 := args[0].([]any)
-		l2, ok2 := args[1].([]any)
+		l1, ok1 := args[0].(*taivm.List)
+		l2, ok2 := args[1].(*taivm.List)
 		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("concat operands must be lists")
 		}
-		res := make([]any, 0, len(l1)+len(l2))
-		res = append(res, l1...)
-		res = append(res, l2...)
-		return res, nil
+		res := make([]any, 0, len(l1.Elements)+len(l2.Elements))
+		res = append(res, l1.Elements...)
+		res = append(res, l2.Elements...)
+		return &taivm.List{
+			Elements:  res,
+			Immutable: l1.Immutable,
+		}, nil
 	},
 }
