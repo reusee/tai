@@ -15,6 +15,8 @@ func run(t *testing.T, src string) *taivm.VM {
 	}
 
 	vm := taivm.NewVM(fn)
+	vm.Def("__apply_kw", ApplyKw)
+
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
 		if err != nil {
 			t.Fatalf("runtime error: %v", err)
@@ -216,5 +218,78 @@ func TestRuntimeError(t *testing.T) {
 	})
 	if !errOccurred {
 		t.Fatal("expected runtime error")
+	}
+}
+
+func TestCompileKeywordArgs(t *testing.T) {
+	vm := run(t, `
+def sub(a, b):
+	return a - b
+
+res1 = sub(10, 3)
+res2 = sub(a=10, b=3)
+res3 = sub(b=3, a=10)
+res4 = sub(10, b=3)
+`)
+	if val, ok := vm.Get("res1"); !ok || val != int64(7) {
+		t.Errorf("res1 = %v, want 7", val)
+	}
+	if val, ok := vm.Get("res2"); !ok || val != int64(7) {
+		t.Errorf("res2 = %v, want 7", val)
+	}
+	if val, ok := vm.Get("res3"); !ok || val != int64(7) {
+		t.Errorf("res3 = %v, want 7", val)
+	}
+	if val, ok := vm.Get("res4"); !ok || val != int64(7) {
+		t.Errorf("res4 = %v, want 7", val)
+	}
+}
+
+func TestCompileKeywordArgsError(t *testing.T) {
+	// Missing argument
+	src := `
+def f(a, b): return a+b
+f(a=1)
+`
+	fn, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm := taivm.NewVM(fn)
+	vm.Def("__apply_kw", ApplyKw)
+	hasErr := false
+	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+		if err != nil {
+			hasErr = true
+			if !strings.Contains(err.Error(), "missing argument") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}
+		return false
+	})
+	if !hasErr {
+		t.Error("expected runtime error")
+	}
+
+	// Unexpected argument
+	src = `
+def f(a): return a
+f(b=1)
+`
+	fn, _ = Compile("test", strings.NewReader(src))
+	vm = taivm.NewVM(fn)
+	vm.Def("__apply_kw", ApplyKw)
+	hasErr = false
+	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+		if err != nil {
+			hasErr = true
+			if !strings.Contains(err.Error(), "unexpected keyword argument") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}
+		return false
+	})
+	if !hasErr {
+		t.Error("expected runtime error")
 	}
 }

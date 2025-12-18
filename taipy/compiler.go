@@ -236,18 +236,68 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 		if err := c.compileExpr(e.Fn); err != nil {
 			return err
 		}
+
+		hasKw := false
 		for _, arg := range e.Args {
 			if _, ok := arg.(*syntax.BinaryExpr); ok {
-				return fmt.Errorf("keyword arguments not supported yet")
-			}
-			if _, ok := arg.(*syntax.UnaryExpr); ok {
-				return fmt.Errorf("star arguments not supported yet")
-			}
-			if err := c.compileExpr(arg); err != nil {
-				return err
+				hasKw = true
+				break
 			}
 		}
-		c.emit(taivm.OpCall.With(len(e.Args)))
+
+		if !hasKw {
+			for _, arg := range e.Args {
+				if _, ok := arg.(*syntax.UnaryExpr); ok {
+					return fmt.Errorf("star arguments not supported yet")
+				}
+				if err := c.compileExpr(arg); err != nil {
+					return err
+				}
+			}
+			c.emit(taivm.OpCall.With(len(e.Args)))
+		} else {
+			c.emit(taivm.OpLoadVar.With(c.addConst("__apply_kw")))
+			c.emit(taivm.OpSwap)
+
+			var posArgs []syntax.Expr
+			var kwArgs []*syntax.BinaryExpr
+
+			for _, arg := range e.Args {
+				if bin, ok := arg.(*syntax.BinaryExpr); ok {
+					if bin.Op != syntax.EQ {
+						return fmt.Errorf("invalid argument expression")
+					}
+					kwArgs = append(kwArgs, bin)
+				} else {
+					if len(kwArgs) > 0 {
+						return fmt.Errorf("positional argument follows keyword argument")
+					}
+					posArgs = append(posArgs, arg)
+				}
+			}
+
+			for _, arg := range posArgs {
+				if err := c.compileExpr(arg); err != nil {
+					return err
+				}
+			}
+			c.emit(taivm.OpMakeList.With(len(posArgs)))
+
+			for _, kw := range kwArgs {
+				id, ok := kw.X.(*syntax.Ident)
+				if !ok {
+					return fmt.Errorf("keyword argument must be identifier")
+				}
+				c.emit(taivm.OpLoadConst.With(c.addConst(id.Name)))
+				if err := c.compileExpr(kw.Y); err != nil {
+					return err
+				}
+			}
+			c.emit(taivm.OpMakeMap.With(len(kwArgs)))
+
+			c.emit(taivm.OpCall.With(3))
+		}
+
 	case *syntax.ListExpr:
 		for _, elem := range e.List {
 			if err := c.compileExpr(elem); err != nil {
