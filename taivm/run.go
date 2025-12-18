@@ -533,15 +533,37 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				continue
 			}
 			a := v.pop()
-			i, ok := toInt64(a)
-			if !ok {
+
+			var res any
+			switch i := a.(type) {
+			case int:
+				res = ^i
+			case int8:
+				res = ^i
+			case int16:
+				res = ^i
+			case int32:
+				res = ^i
+			case int64:
+				res = ^i
+			case uint:
+				res = ^i
+			case uint8:
+				res = ^i
+			case uint16:
+				res = ^i
+			case uint32:
+				res = ^i
+			case uint64:
+				res = ^i
+			default:
 				if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
 					return
 				}
 				v.push(nil)
 				continue
 			}
-			v.push(^i)
+			v.push(res)
 
 		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
 			if v.SP < 2 {

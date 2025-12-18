@@ -2484,3 +2484,33 @@ func TestVM_Logical(t *testing.T) {
 		})
 	}
 }
+
+func TestVM_Bitwise_TypePreservation(t *testing.T) {
+	cases := []struct {
+		Val      any
+		Expected any
+	}{
+		{int(1), int(^1)},
+		{int8(1), int8(^1)},
+		{int8(1), int8(^1)},
+		{int64(1), int64(^1)},
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%T", c.Val), func(t *testing.T) {
+			vm := NewVM(&Function{
+				Constants: []any{c.Val},
+				Code:      []OpCode{OpLoadConst.With(0), OpBitNot, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			res := vm.pop()
+			if res != c.Expected {
+				t.Fatalf("expected %v (%T), got %v (%T)", c.Expected, c.Expected, res, res)
+			}
+		})
+	}
+}
