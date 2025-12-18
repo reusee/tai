@@ -239,7 +239,7 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 
 		hasKw := false
 		for _, arg := range e.Args {
-			if _, ok := arg.(*syntax.BinaryExpr); ok {
+			if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
 				hasKw = true
 				break
 			}
@@ -247,7 +247,7 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 
 		if !hasKw {
 			for _, arg := range e.Args {
-				if _, ok := arg.(*syntax.UnaryExpr); ok {
+				if unary, ok := arg.(*syntax.UnaryExpr); ok && (unary.Op == syntax.STAR || unary.Op == syntax.STARSTAR) {
 					return fmt.Errorf("star arguments not supported yet")
 				}
 				if err := c.compileExpr(arg); err != nil {
@@ -263,10 +263,7 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 			var kwArgs []*syntax.BinaryExpr
 
 			for _, arg := range e.Args {
-				if bin, ok := arg.(*syntax.BinaryExpr); ok {
-					if bin.Op != syntax.EQ {
-						return fmt.Errorf("invalid argument expression")
-					}
+				if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
 					kwArgs = append(kwArgs, bin)
 				} else {
 					if len(kwArgs) > 0 {

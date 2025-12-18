@@ -96,7 +96,7 @@ def fib(n):
 res = fib(10)
 `)
 	// fib(10) = 55
-	if val, ok := vm.Get("res"); !ok || val != 55 {
+	if val, ok := vm.Get("res"); !ok || val != int64(55) {
 		t.Errorf("res = %v, want 55", val)
 	}
 }
