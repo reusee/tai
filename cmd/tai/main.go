@@ -3,7 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/reusee/tai/tailang"
+	"github.com/reusee/tai/taipy"
+	"github.com/reusee/tai/taivm"
 )
 
 func main() {
@@ -22,14 +23,14 @@ func main() {
 		name = os.Args[1]
 	}
 
-	fn, err := tailang.Compile(name, tailang.NewTokenizer(input))
+	fn, err := taipy.Compile(name, input)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")
 		os.Exit(-1)
 	}
 
-	vm := tailang.NewVM(fn)
+	vm := taivm.NewVM(fn)
 	for _, err := range vm.Run {
 		if err != nil {
 			os.Stderr.WriteString(err.Error())
