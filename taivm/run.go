@@ -193,6 +193,12 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			retVal := v.pop()
 			n := len(v.CallStack)
 			if n == 0 {
+				if v.BP > 0 {
+					v.drop(v.SP - (v.BP - 1))
+				} else {
+					v.drop(v.SP)
+				}
+				v.push(retVal)
 				return
 			}
 			frame := v.CallStack[n-1]
