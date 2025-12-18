@@ -1533,7 +1533,7 @@ func TestVM_Index_Int64(t *testing.T) {
 			}
 		}
 		l, _ := vm.Get("l")
-		sl := l.([]any)
+		sl := l.(*List).Elements
 		if sl[1].(int) != 30 {
 			t.Fatalf("expected 30, got %v", sl[1])
 		}
@@ -2150,10 +2150,14 @@ func TestVM_Variadic(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s not found", name)
 		}
-		slice, ok := val.([]any)
+		list, ok := val.(*List)
 		if !ok {
-			t.Fatalf("%s not slice, got %T", name, val)
+			t.Fatalf("%s not list, got %T", name, val)
 		}
+		if !list.Immutable {
+			t.Fatalf("%s not immutable", name)
+		}
+		slice := list.Elements
 		if len(slice) != expectedLen {
 			t.Fatalf("%s len %d, expected %d", name, len(slice), expectedLen)
 		}

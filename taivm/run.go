@@ -645,10 +645,15 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		base := calleeIdx + 1 + fixed
 		copy(slice, v.OperandStack[base:base+varArgsCount])
 
+		list := &List{
+			Elements:  slice,
+			Immutable: true,
+		}
+
 		if varArgsCount == 0 {
-			v.push(slice)
+			v.push(list)
 		} else {
-			v.OperandStack[base] = slice
+			v.OperandStack[base] = list
 			for i := base + 1; i < v.SP; i++ {
 				v.OperandStack[i] = nil
 			}
@@ -783,7 +788,7 @@ func (v *VM) opMakeList(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	start := v.SP - n
 	copy(slice, v.OperandStack[start:v.SP])
 	v.drop(n)
-	v.push(slice)
+	v.push(&List{Elements: slice, Immutable: false})
 	return true
 }
 
@@ -820,7 +825,34 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 
 	var val any
 	switch t := target.(type) {
+	case *List:
+		var idx int
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = i
+			ok = true
+		case int64:
+			idx = int(i)
+			ok = true
+		}
+
+		if !ok {
+			if !yield(nil, fmt.Errorf("list index must be int, got %T", key)) {
+				return false
+			}
+			val = nil
+		} else if idx < 0 || idx >= len(t.Elements) {
+			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+				return false
+			}
+			val = nil
+		} else {
+			val = t.Elements[idx]
+		}
+
 	case []any:
+		// Backward compatibility for native code returning []any
 		var idx int
 		var ok bool
 		switch i := key.(type) {
@@ -834,32 +866,6 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 
 		if !ok {
 			if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
-				return false
-			}
-			val = nil
-		} else if idx < 0 || idx >= len(t) {
-			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-				return false
-			}
-			val = nil
-		} else {
-			val = t[idx]
-		}
-
-	case Tuple:
-		var idx int
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = i
-			ok = true
-		case int64:
-			idx = int(i)
-			ok = true
-		}
-
-		if !ok {
-			if !yield(nil, fmt.Errorf("tuple index must be int, got %T", key)) {
 				return false
 			}
 			val = nil
@@ -902,7 +908,39 @@ func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
 	}
 
 	switch t := target.(type) {
+	case *List:
+		if t.Immutable {
+			if !yield(nil, fmt.Errorf("tuple is immutable")) {
+				return false
+			}
+			return true
+		}
+		var idx int
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = i
+			ok = true
+		case int64:
+			idx = int(i)
+			ok = true
+		}
+		if !ok {
+			if !yield(nil, fmt.Errorf("list index must be int, got %T", key)) {
+				return false
+			}
+			return true
+		}
+		if idx < 0 || idx >= len(t.Elements) {
+			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+				return false
+			}
+			return true
+		}
+		t.Elements[idx] = val
+
 	case []any:
+		// Backward compatibility
 		var idx int
 		var ok bool
 		switch i := key.(type) {
@@ -1379,10 +1417,10 @@ func (v *VM) opGetIter(yield func(*Interrupt, error) bool) bool {
 	}
 
 	switch t := val.(type) {
-	case []any:
+	case *List:
 		v.push(&ListIterator{List: t})
-	case Tuple:
-		v.push(&ListIterator{List: []any(t)})
+	case []any:
+		v.push(&ListIterator{List: &List{Elements: t, Immutable: false}})
 	case map[any]any:
 		keys := make([]any, 0, len(t))
 		for k := range t {
@@ -1423,8 +1461,8 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 	switch it := iter.(type) {
 	case *ListIterator:
-		if it.Idx < len(it.List) {
-			v.push(it.List[it.Idx])
+		if it.Idx < len(it.List.Elements) {
+			v.push(it.List.Elements[it.Idx])
 			it.Idx++
 		} else {
 			v.pop() // pop iterator
@@ -1458,7 +1496,7 @@ func (v *VM) opMakeTuple(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	start := v.SP - n
 	copy(slice, v.OperandStack[start:v.SP])
 	v.drop(n)
-	v.push(Tuple(slice))
+	v.push(&List{Elements: slice, Immutable: true})
 	return true
 }
 
@@ -1505,6 +1543,27 @@ func (v *VM) opGetSlice(yield func(*Interrupt, error) bool) bool {
 		}
 		v.push(string(res))
 
+	case *List:
+		start, stop, stepInt, err := resolveSliceIndices(len(t.Elements), lo, hi, step)
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res []any
+		if stepInt > 0 {
+			for i := start; i < stop; i += stepInt {
+				res = append(res, t.Elements[i])
+			}
+		} else {
+			for i := start; i > stop; i += stepInt {
+				res = append(res, t.Elements[i])
+			}
+		}
+		v.push(&List{Elements: res, Immutable: t.Immutable})
+
 	case []any:
 		start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
 		if err != nil {
@@ -1525,27 +1584,6 @@ func (v *VM) opGetSlice(yield func(*Interrupt, error) bool) bool {
 			}
 		}
 		v.push(res)
-
-	case Tuple:
-		start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
-		if err != nil {
-			if !yield(nil, err) {
-				return false
-			}
-			v.push(nil)
-			return true
-		}
-		var res []any
-		if stepInt > 0 {
-			for i := start; i < stop; i += stepInt {
-				res = append(res, t[i])
-			}
-		} else {
-			for i := start; i > stop; i += stepInt {
-				res = append(res, t[i])
-			}
-		}
-		v.push(Tuple(res))
 
 	default:
 		if !yield(nil, fmt.Errorf("type %T is not sliceable", target)) {
@@ -1569,8 +1607,19 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 	lo := v.pop()
 	target := v.pop()
 
-	t, ok := target.([]any)
-	if !ok {
+	var t []any
+	switch lst := target.(type) {
+	case *List:
+		if lst.Immutable {
+			if !yield(nil, fmt.Errorf("tuple is immutable")) {
+				return false
+			}
+			return true
+		}
+		t = lst.Elements
+	case []any:
+		t = lst
+	default:
 		if !yield(nil, fmt.Errorf("type %T does not support slice assignment", target)) {
 			return false
 		}
@@ -1588,10 +1637,10 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 	// Convert value to list of items
 	var items []any
 	switch v := val.(type) {
+	case *List:
+		items = v.Elements
 	case []any:
 		items = v
-	case Tuple:
-		items = []any(v)
 	case string:
 		for _, r := range v {
 			items = append(items, string(r))

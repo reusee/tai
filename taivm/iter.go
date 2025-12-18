@@ -1,7 +1,7 @@
 package taivm
 
 type ListIterator struct {
-	List []any
+	List *List
 	Idx  int
 }
 
