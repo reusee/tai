@@ -162,6 +162,15 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 				return err
 			}
 			c.emit(taivm.OpSetSlice)
+		case *syntax.DotExpr:
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+			c.emit(taivm.OpLoadConst.With(c.addConst(lhs.Name.Name)))
+			if err := c.compileExpr(s.RHS); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetAttr)
 
 		default:
 			return fmt.Errorf("unsupported assignment target: %T", s.LHS)
@@ -218,6 +227,23 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 		}
 		c.emit(op)
 		c.emit(taivm.OpSetIndex)
+
+	case *syntax.DotExpr:
+		if err := c.compileExpr(lhs.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadConst.With(c.addConst(lhs.Name.Name)))
+		// Stack: [obj, attr]
+		c.emit(taivm.OpDup2)
+		// Stack: [obj, attr, obj, attr]
+		c.emit(taivm.OpGetAttr)
+		// Stack: [obj, attr, val]
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(op)
+		// Stack: [obj, attr, new_val]
+		c.emit(taivm.OpSetAttr)
 
 	default:
 		return fmt.Errorf("unsupported augmented assignment target: %T", s.LHS)
@@ -451,6 +477,13 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
 		}
 		c.emit(taivm.OpGetSlice)
+
+	case *syntax.DotExpr:
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadConst.With(c.addConst(e.Name.Name)))
+		c.emit(taivm.OpGetAttr)
 
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)

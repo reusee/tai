@@ -477,3 +477,61 @@ d["a"] += 50
 		}
 	}
 }
+
+func TestCompileDotExpr(t *testing.T) {
+	s := &taivm.Struct{
+		Fields: map[string]any{
+			"x": int64(10),
+		},
+	}
+
+	src := `
+res = s.x
+s.y = 20
+s.x = 30
+`
+	fn, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	vm := taivm.NewVM(fn)
+	vm.Def("s", s)
+
+	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+		if err != nil {
+			t.Fatalf("runtime error: %v", err)
+		}
+		return false
+	})
+
+	if val, ok := vm.Get("res"); !ok || val != int64(10) {
+		t.Errorf("res = %v, want 10", val)
+	}
+	if val, ok := s.Fields["y"]; !ok || val != int64(20) {
+		t.Errorf("s.y = %v, want 20", val)
+	}
+	if val, ok := s.Fields["x"]; !ok || val != int64(30) {
+		t.Errorf("s.x = %v, want 30", val)
+	}
+
+	// Augmented assignment
+	src = `
+s.x += 5
+`
+	fn, err = Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	vm = taivm.NewVM(fn)
+	vm.Def("s", s)
+	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+		if err != nil {
+			t.Fatalf("runtime error: %v", err)
+		}
+		return false
+	})
+	if val, ok := s.Fields["x"]; !ok || val != int64(35) {
+		t.Errorf("s.x (augmented) = %v, want 35", val)
+	}
+}
