@@ -12,9 +12,16 @@ func Compile(name string, source io.Reader) (*taivm.Function, error) {
 	if err != nil {
 		return nil, err
 	}
-	//TODO compile file to taivm function
-	_ = file
-	return nil, nil
+
+	c := newCompiler(name)
+	if err := c.compileStmts(file.Stmts); err != nil {
+		return nil, err
+	}
+	// Implicit return nil at end of module/function
+	c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+	c.emit(taivm.OpReturn)
+
+	return c.toFunction(), nil
 }
 
 var fileOptions = &syntax.FileOptions{
