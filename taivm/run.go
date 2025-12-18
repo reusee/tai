@@ -540,6 +540,160 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				continue
 			}
 			v.push(^i)
+
+		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
+			if v.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during math op")) {
+					return
+				}
+				continue
+			}
+			b := v.pop()
+			a := v.pop()
+
+			if op == OpAdd {
+				s1, ok1 := a.(string)
+				s2, ok2 := b.(string)
+				if ok1 && ok2 {
+					v.push(s1 + s2)
+					continue
+				}
+			}
+
+			i1, ok1 := a.(int)
+			i2, ok2 := b.(int)
+			if !ok1 || !ok2 {
+				if !yield(nil, fmt.Errorf("math operands must be int, got %T and %T", a, b)) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+
+			var res int
+			switch op {
+			case OpAdd:
+				res = i1 + i2
+			case OpSub:
+				res = i1 - i2
+			case OpMul:
+				res = i1 * i2
+			case OpDiv:
+				if i2 == 0 {
+					if !yield(nil, fmt.Errorf("division by zero")) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				res = i1 / i2
+			case OpMod:
+				if i2 == 0 {
+					if !yield(nil, fmt.Errorf("division by zero")) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				res = i1 % i2
+			}
+			v.push(res)
+
+		case OpEq, OpNe:
+			if v.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
+					return
+				}
+				continue
+			}
+			b := v.pop()
+			a := v.pop()
+			match := a == b
+			if op == OpEq {
+				v.push(match)
+			} else {
+				v.push(!match)
+			}
+
+		case OpLt, OpLe, OpGt, OpGe:
+			if v.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
+					return
+				}
+				continue
+			}
+			b := v.pop()
+			a := v.pop()
+
+			var res bool
+			switch x := a.(type) {
+			case int:
+				y, ok := b.(int)
+				if !ok {
+					if !yield(nil, fmt.Errorf("comparison type mismatch: int vs %T", b)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				switch op {
+				case OpLt:
+					res = x < y
+				case OpLe:
+					res = x <= y
+				case OpGt:
+					res = x > y
+				case OpGe:
+					res = x >= y
+				}
+			case string:
+				y, ok := b.(string)
+				if !ok {
+					if !yield(nil, fmt.Errorf("comparison type mismatch: string vs %T", b)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				switch op {
+				case OpLt:
+					res = x < y
+				case OpLe:
+					res = x <= y
+				case OpGt:
+					res = x > y
+				case OpGe:
+					res = x >= y
+				}
+			default:
+				if !yield(nil, fmt.Errorf("unsupported type for comparison: %T", a)) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+			v.push(res)
+
+		case OpNot:
+			if v.SP < 1 {
+				if !yield(nil, fmt.Errorf("stack underflow during not")) {
+					return
+				}
+				continue
+			}
+			val := v.pop()
+			var isFalse bool
+			switch x := val.(type) {
+			case nil:
+				isFalse = true
+			case bool:
+				isFalse = !x
+			case int:
+				isFalse = x == 0
+			case string:
+				isFalse = x == ""
+			}
+			v.push(isFalse)
 		}
 	}
 }

@@ -2336,3 +2336,151 @@ func TestVM_BitwiseErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_Math(t *testing.T) {
+	cases := []struct {
+		Name     string
+		Op       OpCode
+		Operands []any
+		Expected any
+	}{
+		{"Add", OpAdd, []any{2, 3}, 5},
+		{"Sub", OpSub, []any{5, 2}, 3},
+		{"Mul", OpMul, []any{3, 4}, 12},
+		{"Div", OpDiv, []any{12, 3}, 4},
+		{"Mod", OpMod, []any{5, 2}, 1},
+		{"AddString", OpAdd, []any{"foo", "bar"}, "foobar"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			code := []OpCode{}
+			for i := range c.Operands {
+				code = append(code, OpLoadConst.With(i))
+			}
+			code = append(code, c.Op, OpReturn)
+
+			vm := NewVM(&Function{
+				Constants: c.Operands,
+				Code:      code,
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if vm.SP != 1 {
+				t.Fatalf("expected stack 1, got %d", vm.SP)
+			}
+			if res := vm.pop(); res != c.Expected {
+				t.Fatalf("expected %v, got %v", c.Expected, res)
+			}
+		})
+	}
+}
+
+func TestVM_MathErrors(t *testing.T) {
+	run := func(vm *VM) error {
+		var lastErr error
+		vm.Run(func(_ *Interrupt, err error) bool {
+			lastErr = err
+			return false
+		})
+		return lastErr
+	}
+
+	t.Run("DivZero", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, 0},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv},
+		})
+		err := run(vm)
+		if err == nil || err.Error() != "division by zero" {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("TypeMismatch", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, "foo"},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpSub},
+		})
+		err := run(vm)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestVM_Comparison(t *testing.T) {
+	cases := []struct {
+		Name     string
+		Op       OpCode
+		Operands []any
+		Expected bool
+	}{
+		{"EqInt", OpEq, []any{1, 1}, true},
+		{"NeInt", OpNe, []any{1, 2}, true},
+		{"EqString", OpEq, []any{"a", "a"}, true},
+		{"LtInt", OpLt, []any{1, 2}, true},
+		{"LeInt", OpLe, []any{2, 2}, true},
+		{"GtInt", OpGt, []any{2, 1}, true},
+		{"GeInt", OpGe, []any{2, 2}, true},
+		{"LtString", OpLt, []any{"a", "b"}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			code := []OpCode{}
+			for i := range c.Operands {
+				code = append(code, OpLoadConst.With(i))
+			}
+			code = append(code, c.Op, OpReturn)
+
+			vm := NewVM(&Function{
+				Constants: c.Operands,
+				Code:      code,
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if res := vm.pop(); res != c.Expected {
+				t.Fatalf("expected %v, got %v", c.Expected, res)
+			}
+		})
+	}
+}
+
+func TestVM_Logical(t *testing.T) {
+	cases := []struct {
+		Val      any
+		Expected bool
+	}{
+		{true, false},
+		{false, true},
+		{nil, true},
+		{0, true},
+		{1, false},
+		{"", true},
+		{"foo", false},
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%v", c.Val), func(t *testing.T) {
+			vm := NewVM(&Function{
+				Constants: []any{c.Val},
+				Code:      []OpCode{OpLoadConst.With(0), OpNot, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if res := vm.pop(); res != c.Expected {
+				t.Fatalf("expected %v, got %v", c.Expected, res)
+			}
+		})
+	}
+}

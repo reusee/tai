@@ -30,6 +30,18 @@ const (
 	OpBitNot
 	OpBitLsh
 	OpBitRsh
+	OpAdd
+	OpSub
+	OpMul
+	OpDiv
+	OpMod
+	OpEq
+	OpNe
+	OpLt
+	OpLe
+	OpGt
+	OpGe
+	OpNot
 )
 
 func (o OpCode) With(arg int) OpCode {
