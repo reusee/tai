@@ -1551,7 +1551,6 @@ func TestVM_PrecomputedSymbols(t *testing.T) {
 	}
 }
 
-// @@ai FIXME vm_test.go:1592: calling non-function: string
 func TestVM_Locals(t *testing.T) {
 	// fun(a) { a = a + 1; return a }
 	fun := &Function{
@@ -1559,9 +1558,9 @@ func TestVM_Locals(t *testing.T) {
 		ParamNames: []string{"a"},
 		Constants:  []any{"add", 1},
 		Code: []OpCode{
+			OpLoadVar.With(0),   // add
 			OpGetLocal.With(0),  // a
 			OpLoadConst.With(1), // 1
-			OpLoadVar.With(0),   // add
 			OpCall.With(2),      // add(a, 1)
 			OpSetLocal.With(0),  // a = result
 			OpGetLocal.With(0),  // a
@@ -1570,12 +1569,12 @@ func TestVM_Locals(t *testing.T) {
 	}
 
 	main := &Function{
-		Constants: []any{fun, "res"},
+		Constants: []any{fun, 1, "res"},
 		Code: []OpCode{
 			OpMakeClosure.With(0),
 			OpLoadConst.With(1), // 1 (arg for fun)
 			OpCall.With(1),
-			OpDefVar.With(1),
+			OpDefVar.With(2),
 		},
 	}
 
@@ -1599,7 +1598,6 @@ func TestVM_Locals(t *testing.T) {
 	}
 }
 
-// FIXME vm_test.go:1649: expected nil, got <nil>
 func TestVM_MapStringAny(t *testing.T) {
 	m := map[string]any{
 		"foo": 42,

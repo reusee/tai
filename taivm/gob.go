@@ -12,4 +12,5 @@ func init() {
 	gob.Register(NativeFunc{})
 	gob.Register([]any{})
 	gob.Register(map[any]any{})
+	gob.Register(Undefined{})
 }

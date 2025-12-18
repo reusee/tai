@@ -5,11 +5,15 @@ type Env struct {
 	Vars   []any
 }
 
+type Undefined struct{}
+
+var undefined = Undefined{}
+
 func (e *Env) GetSym(sym Symbol) (any, bool) {
 	idx := int(sym)
 	if idx < len(e.Vars) {
 		val := e.Vars[idx]
-		if val != nil {
+		if val != undefined {
 			return val, true
 		}
 	}
@@ -27,7 +31,7 @@ func (e *Env) DefSym(sym Symbol, val any) {
 
 func (e *Env) SetSym(sym Symbol, val any) bool {
 	idx := int(sym)
-	if idx < len(e.Vars) && e.Vars[idx] != nil {
+	if idx < len(e.Vars) && e.Vars[idx] != undefined {
 		e.Vars[idx] = val
 		return true
 	}
@@ -47,14 +51,11 @@ func (e *Env) Grow(idx int) {
 	if idx < len(e.Vars) {
 		return
 	}
-	newCap := idx * 2
-	if newCap < idx+1 {
-		newCap = idx + 1
-	}
+	newCap := max(idx*2, idx+1)
 	newVars := make([]any, newCap)
 	copy(newVars, e.Vars)
 	for i := len(e.Vars); i < newCap; i++ {
-		newVars[i] = nil
+		newVars[i] = undefined
 	}
 	e.Vars = newVars
 }
