@@ -474,6 +474,19 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			b := v.pop()
 			a := v.pop()
+
+			if res, ok, err := bitwiseSameType(op, a, b); ok {
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				v.push(res)
+				continue
+			}
+
 			i1, ok1 := toInt64(a)
 			i2, ok2 := toInt64(b)
 			if !ok1 || !ok2 {
@@ -547,6 +560,18 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					v.push(s1 + s2)
 					continue
 				}
+			}
+
+			if res, ok, err := arithmeticSameType(op, a, b); ok {
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				v.push(res)
+				continue
 			}
 
 			if isComplex(a) || isComplex(b) {
@@ -895,4 +920,116 @@ func isZero(v any) bool {
 		return c == 0
 	}
 	return false
+}
+
+func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
+	switch x := a.(type) {
+	case int:
+		if y, ok := b.(int); ok {
+			switch op {
+			case OpAdd:
+				return x + y, true, nil
+			case OpSub:
+				return x - y, true, nil
+			case OpMul:
+				return x * y, true, nil
+			case OpDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return x / y, true, nil
+			case OpMod:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return x % y, true, nil
+			}
+		}
+	case int64:
+		if y, ok := b.(int64); ok {
+			switch op {
+			case OpAdd:
+				return x + y, true, nil
+			case OpSub:
+				return x - y, true, nil
+			case OpMul:
+				return x * y, true, nil
+			case OpDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return x / y, true, nil
+			case OpMod:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return x % y, true, nil
+			}
+		}
+	case float64:
+		if y, ok := b.(float64); ok {
+			switch op {
+			case OpAdd:
+				return x + y, true, nil
+			case OpSub:
+				return x - y, true, nil
+			case OpMul:
+				return x * y, true, nil
+			case OpDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return x / y, true, nil
+			}
+		}
+	}
+	return nil, false, nil
+}
+
+func bitwiseSameType(op OpCode, a, b any) (any, bool, error) {
+	switch x := a.(type) {
+	case int:
+		if y, ok := b.(int); ok {
+			switch op {
+			case OpBitAnd:
+				return x & y, true, nil
+			case OpBitOr:
+				return x | y, true, nil
+			case OpBitXor:
+				return x ^ y, true, nil
+			case OpBitLsh:
+				if y < 0 {
+					return nil, true, fmt.Errorf("negative shift count: %d", y)
+				}
+				return x << uint(y), true, nil
+			case OpBitRsh:
+				if y < 0 {
+					return nil, true, fmt.Errorf("negative shift count: %d", y)
+				}
+				return x >> uint(y), true, nil
+			}
+		}
+	case int64:
+		if y, ok := b.(int64); ok {
+			switch op {
+			case OpBitAnd:
+				return x & y, true, nil
+			case OpBitOr:
+				return x | y, true, nil
+			case OpBitXor:
+				return x ^ y, true, nil
+			case OpBitLsh:
+				if y < 0 {
+					return nil, true, fmt.Errorf("negative shift count: %d", y)
+				}
+				return x << uint(y), true, nil
+			case OpBitRsh:
+				if y < 0 {
+					return nil, true, fmt.Errorf("negative shift count: %d", y)
+				}
+				return x >> uint(y), true, nil
+			}
+		}
+	}
+	return nil, false, nil
 }
