@@ -151,8 +151,9 @@ func (c *compiler) compileBranch(s *syntax.BranchStmt) error {
 		loop.breakIPs = append(loop.breakIPs, c.currentIP())
 		c.emit(taivm.OpJump)
 	case syntax.CONTINUE:
-		offset := loop.continueIP - c.currentIP() - 1
-		c.emit(taivm.OpJump.With(offset))
+		ip := c.currentIP()
+		c.emit(taivm.OpJump)
+		c.patchJump(ip, loop.continueIP)
 	case syntax.PASS:
 		// no-op
 	}
