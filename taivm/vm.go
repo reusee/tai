@@ -45,16 +45,20 @@ func (v *VM) Set(name string, val any) bool {
 
 func (v *VM) push(val any) {
 	if v.SP >= len(v.OperandStack) {
-		newCap := len(v.OperandStack) * 2
-		if newCap == 0 {
-			newCap = 8
-		}
-		newStack := make([]any, newCap)
-		copy(newStack, v.OperandStack)
-		v.OperandStack = newStack
+		v.growOperandStack()
 	}
 	v.OperandStack[v.SP] = val
 	v.SP++
+}
+
+func (v *VM) growOperandStack() {
+	newCap := len(v.OperandStack) * 2
+	if newCap == 0 {
+		newCap = 8
+	}
+	newStack := make([]any, newCap)
+	copy(newStack, v.OperandStack)
+	v.OperandStack = newStack
 }
 
 func (v *VM) pop() any {

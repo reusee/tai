@@ -15,7 +15,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 		switch op {
 		case OpLoadConst:
 			idx := int(inst >> 8)
-			v.push(v.CurrentFun.Constants[idx])
+			if v.SP >= len(v.OperandStack) {
+				v.growOperandStack()
+			}
+			v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
+			v.SP++
 
 		case OpLoadVar:
 			idx := int(inst >> 8)
@@ -65,7 +69,10 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpPop:
-			v.pop()
+			if v.SP > 0 {
+				v.SP--
+				v.OperandStack[v.SP] = nil
+			}
 
 		case OpJump:
 			offset := int(int32(inst) >> 8)
@@ -73,8 +80,24 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpJumpFalse:
 			offset := int(int32(inst) >> 8)
-			val := v.pop()
-			if val == nil || val == false || val == 0 || val == "" {
+			var val any
+			if v.SP > 0 {
+				v.SP--
+				val = v.OperandStack[v.SP]
+				v.OperandStack[v.SP] = nil
+			}
+			var jump bool
+			switch x := val.(type) {
+			case nil:
+				jump = true
+			case bool:
+				jump = !x
+			case int:
+				jump = x == 0
+			case string:
+				jump = x == ""
+			}
+			if jump {
 				v.IP += offset
 			}
 
@@ -213,17 +236,17 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				args := v.OperandStack[calleeIdx+1 : v.SP]
 				res, err := fn.Func(v, args)
 
-				// Cleanup stack after call
-				v.drop(argc + 1)
-
 				if err != nil {
 					if !yield(nil, err) {
 						return
 					}
-					v.push(nil) // Push nil if error handled
-				} else {
-					v.push(res)
+					res = nil
 				}
+				v.OperandStack[calleeIdx] = res
+				for i := calleeIdx + 1; i < v.SP; i++ {
+					v.OperandStack[i] = nil
+				}
+				v.SP = calleeIdx + 1
 
 			default:
 				if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
@@ -426,11 +449,21 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpGetLocal:
 			idx := int(inst >> 8)
-			v.push(v.OperandStack[v.BP+idx])
+			if v.SP >= len(v.OperandStack) {
+				v.growOperandStack()
+			}
+			v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
+			v.SP++
 
 		case OpSetLocal:
 			idx := int(inst >> 8)
-			v.OperandStack[v.BP+idx] = v.pop()
+			var val any
+			if v.SP > 0 {
+				v.SP--
+				val = v.OperandStack[v.SP]
+				v.OperandStack[v.SP] = nil
+			}
+			v.OperandStack[v.BP+idx] = val
 
 		case OpDumpTrace:
 			var msg string
