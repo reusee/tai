@@ -1325,3 +1325,37 @@ func TestVM_TCO_Leak(t *testing.T) {
 		}
 	}
 }
+
+func TestVM_ArityMismatch_Continue(t *testing.T) {
+	// Function expecting 1 arg
+	foo := &Function{
+		NumParams: 1,
+		Code:      []OpCode{OpReturn},
+	}
+	// Call it with 0 args
+	main := &Function{
+		Constants: []any{foo, "res"},
+		Code: []OpCode{
+			OpMakeClosure.With(0),
+			OpCall.With(0), // Arity mismatch
+			OpLoadConst.With(0),
+			OpPop,
+		},
+	}
+	vm := NewVM(main)
+	var errReported bool
+	vm.Run(func(_ *Interrupt, err error) bool {
+		if err != nil {
+			errReported = true
+			return true // Continue execution
+		}
+		return false
+	})
+	if !errReported {
+		t.Fatal("expected error to be reported")
+	}
+	// If continue worked, the VM reached the end of main's code
+	if vm.IP != len(main.Code) {
+		t.Fatalf("expected VM to finish, at IP %d/%d", vm.IP, len(main.Code))
+	}
+}

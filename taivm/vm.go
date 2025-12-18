@@ -83,28 +83,14 @@ func (v *VM) drop(n int) {
 
 func (v *VM) Snapshot(w io.Writer) error {
 	enc := gob.NewEncoder(w)
-
-	syms := v.Symbols.Snapshot()
-	if err := enc.Encode(syms); err != nil {
-		return err
-	}
-
 	if err := enc.Encode(v); err != nil {
 		return err
 	}
-
 	return nil
 }
 
 func (v *VM) Restore(r io.Reader) error {
 	dec := gob.NewDecoder(r)
-
-	var syms []string
-	if err := dec.Decode(&syms); err != nil {
-		return err
-	}
-	v.Symbols.Restore(syms)
-
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
