@@ -12,6 +12,12 @@ type compiler struct {
 	code      []taivm.OpCode
 	constants []any
 	constMap  map[any]int
+	loops     []*loopContext
+}
+
+type loopContext struct {
+	continueIP int
+	breakIPs   []int
 }
 
 func newCompiler(name string) *compiler {
@@ -99,7 +105,7 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 	case *syntax.WhileStmt:
 		return c.compileWhile(s)
 	case *syntax.BranchStmt:
-		return fmt.Errorf("branch statements (break/continue) not yet implemented")
+		return c.compileBranch(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -134,25 +140,97 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 	return nil
 }
 
+func (c *compiler) compileBranch(s *syntax.BranchStmt) error {
+	if len(c.loops) == 0 {
+		return fmt.Errorf("%s outside loop", s.Token.String())
+	}
+	loop := c.loops[len(c.loops)-1]
+
+	switch s.Token {
+	case syntax.BREAK:
+		loop.breakIPs = append(loop.breakIPs, c.currentIP())
+		c.emit(taivm.OpJump)
+	case syntax.CONTINUE:
+		offset := loop.continueIP - c.currentIP() - 1
+		c.emit(taivm.OpJump.With(offset))
+	case syntax.PASS:
+		// no-op
+	}
+	return nil
+}
+
 func (c *compiler) compileExpr(expr syntax.Expr) error {
 	switch e := expr.(type) {
 	case *syntax.Literal:
 		c.emit(taivm.OpLoadConst.With(c.addConst(e.Value)))
 	case *syntax.Ident:
 		c.emit(taivm.OpLoadVar.With(c.addConst(e.Name)))
-	case *syntax.BinaryExpr:
-		fnName, ok := binaryOpMap[e.Op]
-		if !ok {
-			return fmt.Errorf("unsupported binary op: %v", e.Op)
+	case *syntax.UnaryExpr:
+		switch e.Op {
+		case syntax.PLUS:
+			return c.compileExpr(e.X)
+		case syntax.MINUS:
+			c.emit(taivm.OpLoadConst.With(c.addConst(0)))
+			if err := c.compileExpr(e.X); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSub)
+		case syntax.NOT:
+			if err := c.compileExpr(e.X); err != nil {
+				return err
+			}
+			c.emit(taivm.OpNot)
+		case syntax.TILDE:
+			if err := c.compileExpr(e.X); err != nil {
+				return err
+			}
+			c.emit(taivm.OpBitNot)
+		default:
+			return fmt.Errorf("unsupported unary op: %v", e.Op)
 		}
-		c.emit(taivm.OpLoadVar.With(c.addConst(fnName)))
+	case *syntax.BinaryExpr:
 		if err := c.compileExpr(e.X); err != nil {
 			return err
 		}
 		if err := c.compileExpr(e.Y); err != nil {
 			return err
 		}
-		c.emit(taivm.OpCall.With(2))
+		switch e.Op {
+		case syntax.PLUS:
+			c.emit(taivm.OpAdd)
+		case syntax.MINUS:
+			c.emit(taivm.OpSub)
+		case syntax.STAR:
+			c.emit(taivm.OpMul)
+		case syntax.SLASH:
+			c.emit(taivm.OpDiv)
+		case syntax.PERCENT:
+			c.emit(taivm.OpMod)
+		case syntax.EQL:
+			c.emit(taivm.OpEq)
+		case syntax.NEQ:
+			c.emit(taivm.OpNe)
+		case syntax.LT:
+			c.emit(taivm.OpLt)
+		case syntax.LE:
+			c.emit(taivm.OpLe)
+		case syntax.GT:
+			c.emit(taivm.OpGt)
+		case syntax.GE:
+			c.emit(taivm.OpGe)
+		case syntax.PIPE:
+			c.emit(taivm.OpBitOr)
+		case syntax.AMP:
+			c.emit(taivm.OpBitAnd)
+		case syntax.CIRCUMFLEX:
+			c.emit(taivm.OpBitXor)
+		case syntax.LTLT:
+			c.emit(taivm.OpBitLsh)
+		case syntax.GTGT:
+			c.emit(taivm.OpBitRsh)
+		default:
+			return fmt.Errorf("unsupported binary op: %v", e.Op)
+		}
 	case *syntax.CallExpr:
 		if err := c.compileExpr(e.Fn); err != nil {
 			return err
@@ -229,6 +307,10 @@ func (c *compiler) compileIf(s *syntax.IfStmt) error {
 
 func (c *compiler) compileWhile(s *syntax.WhileStmt) error {
 	startIP := c.currentIP()
+	loop := &loopContext{
+		continueIP: startIP,
+	}
+	c.loops = append(c.loops, loop)
 
 	if err := c.compileExpr(s.Cond); err != nil {
 		return err
@@ -246,6 +328,12 @@ func (c *compiler) compileWhile(s *syntax.WhileStmt) error {
 	c.emit(taivm.OpJump.With(offset))
 
 	c.patchJump(jumpExitIP, c.currentIP())
+
+	for _, ip := range loop.breakIPs {
+		c.patchJump(ip, c.currentIP())
+	}
+	c.loops = c.loops[:len(c.loops)-1]
+
 	return nil
 }
 
@@ -273,18 +361,4 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	c.emit(taivm.OpDefVar.With(c.addConst(s.Name.Name)))
 
 	return nil
-}
-
-var binaryOpMap = map[syntax.Token]string{
-	syntax.PLUS:    "__add__",
-	syntax.MINUS:   "__sub__",
-	syntax.STAR:    "__mul__",
-	syntax.SLASH:   "__div__",
-	syntax.PERCENT: "__mod__",
-	syntax.EQL:     "__eq__",
-	syntax.NEQ:     "__ne__",
-	syntax.LT:      "__lt__",
-	syntax.GT:      "__gt__",
-	syntax.LE:      "__le__",
-	syntax.GE:      "__ge__",
 }
