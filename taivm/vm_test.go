@@ -2,6 +2,7 @@ package taivm
 
 import (
 	"bytes"
+	"encoding/gob"
 	"fmt"
 	"testing"
 )
@@ -1357,5 +1358,195 @@ func TestVM_ArityMismatch_Continue(t *testing.T) {
 	// If continue worked, the VM reached the end of main's code
 	if vm.IP != len(main.Code) {
 		t.Fatalf("expected VM to finish, at IP %d/%d", vm.IP, len(main.Code))
+	}
+}
+
+func TestSymbolTable_SnapshotRestore(t *testing.T) {
+	st := NewSymbolTable()
+	st.Intern("a")
+	st.Intern("b")
+	snap := st.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("expected 2, got %d", len(snap))
+	}
+
+	st2 := NewSymbolTable()
+	st2.Restore(snap)
+	if st2.Intern("a") != st.Intern("a") {
+		t.Fatal("symbol mismatch")
+	}
+	if st2.Intern("b") != st.Intern("b") {
+		t.Fatal("symbol mismatch")
+	}
+	if st2.Intern("c") == st.Intern("a") {
+		t.Fatal("new symbol collision")
+	}
+}
+
+func TestNativeFunc_Gob(t *testing.T) {
+	nf := NativeFunc{
+		Name: "test",
+		Func: func(vm *VM, args []any) (any, error) {
+			return 42, nil
+		},
+	}
+
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(nf); err != nil {
+		t.Fatal(err)
+	}
+
+	var nf2 NativeFunc
+	dec := gob.NewDecoder(&buf)
+	if err := dec.Decode(&nf2); err != nil {
+		t.Fatal(err)
+	}
+
+	if nf2.Name != "test" {
+		t.Fatalf("expected name test, got %s", nf2.Name)
+	}
+
+	if nf2.Func == nil {
+		t.Fatal("Func is nil")
+	}
+
+	_, err := nf2.Func(nil, nil)
+	if err == nil {
+		t.Fatal("expected error calling restored native func")
+	}
+	if err.Error() != "native function test is missing" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVM_Drop_EdgeCases(t *testing.T) {
+	vm := NewVM(&Function{})
+	vm.push(1)
+	vm.push(2)
+
+	// drop 0 should do nothing
+	vm.drop(0)
+	if vm.SP != 2 {
+		t.Fatalf("expected SP 2, got %d", vm.SP)
+	}
+
+	// drop negative should do nothing
+	vm.drop(-1)
+	if vm.SP != 2 {
+		t.Fatalf("expected SP 2, got %d", vm.SP)
+	}
+
+	// drop more than SP should empty stack
+	vm.drop(10)
+	if vm.SP != 0 {
+		t.Fatalf("expected SP 0, got %d", vm.SP)
+	}
+}
+
+func TestVM_Index_Int64(t *testing.T) {
+	t.Run("Get", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{
+				10, 20, // List contents
+				int64(1), // Index as int64
+				"res",
+			},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpMakeList.With(2),
+				OpLoadConst.With(2),
+				OpGetIndex,
+				OpDefVar.With(3),
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, ok := vm.Get("res")
+		if !ok || res.(int) != 20 {
+			t.Fatalf("expected 20, got %v", res)
+		}
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{
+				10, 20, // List
+				int64(1), // Index
+				30,       // New value
+				"l",
+			},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpMakeList.With(2), // [10, 20]
+				OpDefVar.With(4),
+
+				OpLoadVar.With(4),
+				OpLoadConst.With(2), // index 1 (int64)
+				OpLoadConst.With(3), // value 30
+				OpSetIndex,
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		l, _ := vm.Get("l")
+		sl := l.([]any)
+		if sl[1].(int) != 30 {
+			t.Fatalf("expected 30, got %v", sl[1])
+		}
+	})
+}
+
+func TestVM_FallOffEnd(t *testing.T) {
+	main := &Function{
+		Code: []OpCode{
+			OpLoadConst.With(0),
+		},
+		Constants: []any{1},
+	}
+	vm := NewVM(main)
+	// This should run one instruction then return because IP >= len(Code)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if vm.SP != 1 {
+		t.Fatal("expected 1 item on stack")
+	}
+}
+
+func TestVM_PrecomputedSymbols(t *testing.T) {
+	vm := NewVM(nil)
+	sym := vm.Intern("y") // Symbol(0)
+
+	main := &Function{
+		Constants: []any{sym, 456},
+		Code: []OpCode{
+			OpLoadConst.With(1),
+			OpDefVar.With(0),
+			OpLoadVar.With(0),
+		},
+	}
+	vm.CurrentFun = main
+
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if val, _ := vm.Get("y"); val.(int) != 456 {
+		t.Fatal("failed")
 	}
 }
