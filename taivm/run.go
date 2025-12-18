@@ -98,8 +98,36 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 			switch fn := callee.(type) {
 			case *Closure:
-				if argc != fn.Fun.NumParams {
-					if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", fn.Fun.NumParams, argc)) {
+				numParams := fn.Fun.NumParams
+				if fn.Fun.Variadic {
+					if argc < numParams-1 {
+						if !yield(nil, fmt.Errorf("arity mismatch: want at least %d, got %d", numParams-1, argc)) {
+							return
+						}
+						v.drop(argc + 1)
+						v.push(nil)
+						continue
+					}
+
+					fixed := numParams - 1
+					varArgsCount := argc - fixed
+					slice := make([]any, varArgsCount)
+					base := calleeIdx + 1 + fixed
+					copy(slice, v.OperandStack[base:base+varArgsCount])
+
+					if varArgsCount == 0 {
+						v.push(slice)
+					} else {
+						v.OperandStack[base] = slice
+						for i := base + 1; i < v.SP; i++ {
+							v.OperandStack[i] = nil
+						}
+						v.SP = base + 1
+					}
+					argc = numParams
+
+				} else if argc != numParams {
+					if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", numParams, argc)) {
 						return
 					}
 					v.drop(argc + 1)

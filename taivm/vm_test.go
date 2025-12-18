@@ -2087,3 +2087,84 @@ type faultyReader struct {
 func (f faultyReader) Read(p []byte) (n int, err error) {
 	return 0, f.err
 }
+
+func TestVM_Variadic(t *testing.T) {
+	f := &Function{
+		NumParams:  2,
+		ParamNames: []string{"x", "rest"},
+		Variadic:   true,
+		Code: []OpCode{
+			OpGetLocal.With(1), // rest
+			OpReturn,
+		},
+	}
+
+	main := &Function{
+		Constants: []any{
+			f,      // 0
+			"f",    // 1
+			"res0", // 2
+			"res1", // 3
+			"res2", // 4
+			1,      // 5
+			2,      // 6
+			3,      // 7
+		},
+		Code: []OpCode{
+			// f = closure
+			OpMakeClosure.With(0),
+			OpDefVar.With(1),
+
+			// res0 = f(1)
+			OpLoadVar.With(1),
+			OpLoadConst.With(5),
+			OpCall.With(1),
+			OpDefVar.With(2),
+
+			// res1 = f(1, 2)
+			OpLoadVar.With(1),
+			OpLoadConst.With(5),
+			OpLoadConst.With(6),
+			OpCall.With(2),
+			OpDefVar.With(3),
+
+			// res2 = f(1, 2, 3)
+			OpLoadVar.With(1),
+			OpLoadConst.With(5),
+			OpLoadConst.With(6),
+			OpLoadConst.With(7),
+			OpCall.With(3),
+			OpDefVar.With(4),
+		},
+	}
+
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	check := func(name string, expectedLen int) {
+		val, ok := vm.Get(name)
+		if !ok {
+			t.Fatalf("%s not found", name)
+		}
+		slice, ok := val.([]any)
+		if !ok {
+			t.Fatalf("%s not slice, got %T", name, val)
+		}
+		if len(slice) != expectedLen {
+			t.Fatalf("%s len %d, expected %d", name, len(slice), expectedLen)
+		}
+		if expectedLen > 0 {
+			if slice[0].(int) != 2 {
+				t.Fatalf("expected 2, got %v", slice[0])
+			}
+		}
+	}
+
+	check("res0", 0)
+	check("res1", 1)
+	check("res2", 2)
+}
