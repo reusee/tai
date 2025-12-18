@@ -1,6 +1,9 @@
 package taivm
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
@@ -834,6 +837,85 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			val := v.pop()
 			v.push(isZero(val))
+
+		case OpGetIter:
+			if v.SP < 1 {
+				if !yield(nil, fmt.Errorf("stack underflow during getiter")) {
+					return
+				}
+				continue
+			}
+			val := v.pop()
+			if val == nil {
+				if !yield(nil, fmt.Errorf("not iterable: nil")) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+
+			switch t := val.(type) {
+			case []any:
+				v.push(&ListIterator{List: t})
+			case map[any]any:
+				keys := make([]any, 0, len(t))
+				for k := range t {
+					keys = append(keys, k)
+				}
+				// Try to sort if all keys are strings to ensure deterministic iteration
+				allStrings := true
+				for _, k := range keys {
+					if _, ok := k.(string); !ok {
+						allStrings = false
+						break
+					}
+				}
+				if allStrings {
+					sort.Slice(keys, func(i, j int) bool {
+						return keys[i].(string) < keys[j].(string)
+					})
+				}
+				v.push(&MapIterator{Keys: keys})
+			default:
+				if !yield(nil, fmt.Errorf("type %T is not iterable", val)) {
+					return
+				}
+				v.push(nil)
+			}
+
+		case OpNextIter:
+			offset := int(int32(inst) >> 8)
+			if v.SP < 1 {
+				if !yield(nil, fmt.Errorf("stack underflow during nextiter")) {
+					return
+				}
+				continue
+			}
+			iter := v.OperandStack[v.SP-1] // Peek iterator
+
+			switch it := iter.(type) {
+			case *ListIterator:
+				if it.Idx < len(it.List) {
+					v.push(it.List[it.Idx])
+					it.Idx++
+				} else {
+					v.pop() // pop iterator
+					v.IP += offset
+				}
+			case *MapIterator:
+				if it.Idx < len(it.Keys) {
+					v.push(it.Keys[it.Idx])
+					it.Idx++
+				} else {
+					v.pop() // pop iterator
+					v.IP += offset
+				}
+			default:
+				if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
+					return
+				}
+			}
+
 		}
 	}
 }

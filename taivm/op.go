@@ -42,6 +42,8 @@ const (
 	OpGt
 	OpGe
 	OpNot
+	OpGetIter
+	OpNextIter
 )
 
 func (o OpCode) With(arg int) OpCode {

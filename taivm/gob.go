@@ -13,4 +13,6 @@ func init() {
 	gob.Register([]any{})
 	gob.Register(map[any]any{})
 	gob.Register(Undefined{})
+	gob.Register(&ListIterator{})
+	gob.Register(&MapIterator{})
 }

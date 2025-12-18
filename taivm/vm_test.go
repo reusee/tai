@@ -2514,3 +2514,164 @@ func TestVM_Bitwise_TypePreservation(t *testing.T) {
 		})
 	}
 }
+
+func TestVM_Iter(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		// sum = 0; for x in [1, 2, 3] { sum += x }
+		main := &Function{
+			Constants: []any{
+				0,       // 0: sum init
+				"sum",   // 1
+				1, 2, 3, // 2, 3, 4: list elements
+			},
+			Code: []OpCode{
+				// sum = 0
+				OpLoadConst.With(0),
+				OpDefVar.With(1),
+
+				// make list [1, 2, 3]
+				OpLoadConst.With(2),
+				OpLoadConst.With(3),
+				OpLoadConst.With(4),
+				OpMakeList.With(3),
+
+				// get iter
+				OpGetIter,
+
+				// Loop start
+				OpNextIter.With(4),
+
+				// Body
+				OpLoadVar.With(1), // sum
+				OpAdd,             // val + sum
+				OpSetVar.With(1),  // sum = result
+
+				OpJump.With(-5), // Jump back to OpNextIter
+			},
+		}
+
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		val, ok := vm.Get("sum")
+		if !ok || val.(int) != 6 {
+			t.Fatalf("expected 6, got %v", val)
+		}
+		if vm.SP != 0 {
+			t.Fatalf("expected empty stack, got %d", vm.SP)
+		}
+	})
+
+	t.Run("Map", func(t *testing.T) {
+		// keys = ""; for k in {"a": 1, "b": 2} { keys += k }
+		// keys should be "ab" because map iter sorts string keys
+		main := &Function{
+			Constants: []any{
+				"", "keys", // 0, 1
+				"a", 1, "b", 2, // 2, 3, 4, 5
+			},
+			Code: []OpCode{
+				// keys = ""
+				OpLoadConst.With(0),
+				OpDefVar.With(1),
+
+				// make map
+				OpLoadConst.With(2),
+				OpLoadConst.With(3),
+				OpLoadConst.With(4),
+				OpLoadConst.With(5),
+				OpMakeMap.With(2),
+
+				OpGetIter,
+
+				// Loop
+				OpNextIter.With(5),
+
+				// Body
+				OpLoadVar.With(1), // keys
+				OpSwap,            // keys, k -> k, keys
+				OpAdd,             // keys + k
+				OpSetVar.With(1),
+
+				OpJump.With(-6), // back to NextIter
+			},
+		}
+
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		val, ok := vm.Get("keys")
+		if !ok || val.(string) != "ab" {
+			t.Fatalf("expected 'ab', got %v", val)
+		}
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		main := &Function{
+			Code: []OpCode{
+				OpMakeList.With(0),
+				OpGetIter,
+				OpNextIter.With(2), // Jump to End
+				OpSuspend,          // Should not reach
+				OpJump.With(-3),
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.SP != 0 {
+			t.Fatal("stack not empty")
+		}
+	})
+
+	t.Run("NotIterable", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpGetIter,
+			},
+		})
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("NextIterNotIterator", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpNextIter.With(1),
+			},
+		})
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
