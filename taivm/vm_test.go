@@ -1550,3 +1550,478 @@ func TestVM_PrecomputedSymbols(t *testing.T) {
 		t.Fatal("failed")
 	}
 }
+
+// @@ai FIXME vm_test.go:1592: calling non-function: string
+func TestVM_Locals(t *testing.T) {
+	// fun(a) { a = a + 1; return a }
+	fun := &Function{
+		NumParams:  1,
+		ParamNames: []string{"a"},
+		Constants:  []any{"add", 1},
+		Code: []OpCode{
+			OpGetLocal.With(0),  // a
+			OpLoadConst.With(1), // 1
+			OpLoadVar.With(0),   // add
+			OpCall.With(2),      // add(a, 1)
+			OpSetLocal.With(0),  // a = result
+			OpGetLocal.With(0),  // a
+			OpReturn,
+		},
+	}
+
+	main := &Function{
+		Constants: []any{fun, "res"},
+		Code: []OpCode{
+			OpMakeClosure.With(0),
+			OpLoadConst.With(1), // 1 (arg for fun)
+			OpCall.With(1),
+			OpDefVar.With(1),
+		},
+	}
+
+	vm := NewVM(main)
+	vm.Def("add", NativeFunc{
+		Name: "add",
+		Func: func(_ *VM, args []any) (any, error) {
+			return args[0].(int) + args[1].(int), nil
+		},
+	})
+
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, ok := vm.Get("res")
+	if !ok || res.(int) != 2 {
+		t.Fatalf("expected 2, got %v", res)
+	}
+}
+
+// FIXME vm_test.go:1649: expected nil, got <nil>
+func TestVM_MapStringAny(t *testing.T) {
+	m := map[string]any{
+		"foo": 42,
+	}
+	getMap := NativeFunc{
+		Name: "getMap",
+		Func: func(_ *VM, _ []any) (any, error) {
+			return m, nil
+		},
+	}
+
+	t.Run("Get", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"getMap", "foo", 123, "res", "res2"},
+			Code: []OpCode{
+				// m = getMap()
+				OpLoadVar.With(0),
+				OpCall.With(0),
+
+				// res = m["foo"]
+				OpLoadConst.With(1),
+				OpGetIndex,
+				OpDefVar.With(3),
+
+				// m = getMap()
+				OpLoadVar.With(0),
+				OpCall.With(0),
+
+				// res2 = m[123] -> nil
+				OpLoadConst.With(2),
+				OpGetIndex,
+				OpDefVar.With(4),
+			},
+		}
+		vm := NewVM(main)
+		vm.Def("getMap", getMap)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if v, ok := vm.Get("res"); !ok || v.(int) != 42 {
+			t.Fatalf("expected 42, got %v", v)
+		}
+		if v, ok := vm.Get("res2"); !ok || v != nil {
+			t.Fatalf("expected nil, got %v", v)
+		}
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		// Set string key
+		main := &Function{
+			Constants: []any{"getMap", "bar", 99},
+			Code: []OpCode{
+				OpLoadVar.With(0),
+				OpCall.With(0),
+				OpLoadConst.With(1),
+				OpLoadConst.With(2),
+				OpSetIndex,
+			},
+		}
+		vm := NewVM(main)
+		vm.Def("getMap", getMap)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if m["bar"] != 99 {
+			t.Fatal("map update failed")
+		}
+
+		// Set int key (error)
+		main = &Function{
+			Constants: []any{"getMap", 123, 99},
+			Code: []OpCode{
+				OpLoadVar.With(0),
+				OpCall.With(0),
+				OpLoadConst.With(1),
+				OpLoadConst.With(2),
+				OpSetIndex,
+			},
+		}
+		vm = NewVM(main)
+		vm.Def("getMap", getMap)
+		var hasErr bool
+		for _, err := range vm.Run {
+			if err != nil {
+				hasErr = true
+				break
+			}
+		}
+		if !hasErr {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestVM_SetVarSymbol(t *testing.T) {
+	vm := NewVM(nil)
+	sym := vm.Intern("x")
+	main := &Function{
+		Constants: []any{sym, 123},
+		Code: []OpCode{
+			OpLoadConst.With(1),
+			OpDefVar.With(0), // Define x=123 using Symbol
+
+			OpLoadConst.With(1),
+			OpSetVar.With(0), // Set x=123 using Symbol
+		},
+	}
+	vm.CurrentFun = main
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, ok := vm.Get("x"); !ok || v.(int) != 123 {
+		t.Fatalf("expected 123, got %v", v)
+	}
+}
+
+func TestVM_Loop(t *testing.T) {
+	// i = 5; while i { i = dec(i) }; return i
+	main := &Function{
+		Constants: []any{5, "i", "dec"},
+		Code: []OpCode{
+			// 0: i = 5
+			OpLoadConst.With(0),
+			OpDefVar.With(1),
+
+			// 2: Loop start
+			// if i == 0 (falsey) jump to end
+			OpLoadVar.With(1),
+			OpJumpFalse.With(5), // 3 -> 9
+
+			// 4: body
+			// i = dec(i)
+			OpLoadVar.With(2),
+			OpLoadVar.With(1),
+			OpCall.With(1),
+			OpSetVar.With(1),
+
+			// 8: jump back to 2
+			OpJump.With(-7), // 9 -> 2
+
+			// 9: End
+			OpLoadVar.With(1),
+			OpReturn,
+		},
+	}
+
+	vm := NewVM(main)
+	vm.Def("dec", NativeFunc{
+		Name: "dec",
+		Func: func(_ *VM, args []any) (any, error) {
+			return args[0].(int) - 1, nil
+		},
+	})
+
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v, ok := vm.Get("i")
+	if !ok || v.(int) != 0 {
+		t.Fatalf("expected 0, got %v", v)
+	}
+}
+
+func TestVM_Coverage_Extras(t *testing.T) {
+	// Helper to run VM in "continue on error" mode
+	runContinue := func(vm *VM) {
+		vm.Run(func(_ *Interrupt, err error) bool {
+			return err != nil // Continue if error
+		})
+	}
+
+	t.Run("SetIndexMapAny", func(t *testing.T) {
+		// Map any keys
+		m := make(map[any]any)
+		vm := NewVM(&Function{
+			Constants: []any{m, 1, 2},
+			Code: []OpCode{
+				OpLoadConst.With(0), // map
+				OpLoadConst.With(1), // key 1
+				OpLoadConst.With(2), // val 2
+				OpSetIndex,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if m[1].(int) != 2 {
+			t.Fatal("map set failed")
+		}
+	})
+
+	t.Run("SetIndexSliceContinue", func(t *testing.T) {
+		sl := []any{10}
+		vm := NewVM(&Function{
+			Constants: []any{sl, "bad", 0, 99}, // sl, bad_index, good_index, val
+			Code: []OpCode{
+				// Bad index type
+				OpLoadConst.With(0),
+				OpLoadConst.With(1), // "bad"
+				OpLoadConst.With(3), // 99
+				OpSetIndex,
+
+				// Out of bounds
+				OpLoadConst.With(0),
+				OpLoadConst.With(3), // 99 (index)
+				OpLoadConst.With(3), // 99 (val)
+				OpSetIndex,
+			},
+		})
+		runContinue(vm)
+		// Verify slice unchanged
+		if sl[0].(int) != 10 {
+			t.Fatal("slice modified")
+		}
+		if len(sl) != 1 {
+			t.Fatal("slice length changed")
+		}
+	})
+
+	t.Run("GetIndexSliceContinue", func(t *testing.T) {
+		sl := []any{10}
+		vm := NewVM(&Function{
+			Constants: []any{sl, "bad", 99},
+			Code: []OpCode{
+				// Bad index type -> pushes nil
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpGetIndex,
+
+				// Out of bounds -> pushes nil
+				OpLoadConst.With(0),
+				OpLoadConst.With(2),
+				OpGetIndex,
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 2 {
+			t.Fatalf("expected 2 items on stack, got %d", vm.SP)
+		}
+		if vm.OperandStack[0] != nil || vm.OperandStack[1] != nil {
+			t.Fatal("expected nils")
+		}
+	})
+
+	t.Run("GetIndexUnindexableContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, 0},
+			Code: []OpCode{
+				OpLoadConst.With(0), // 1 (target)
+				OpLoadConst.With(1), // 0 (key)
+				OpGetIndex,
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 1 {
+			t.Fatalf("expected 1 item, got %d", vm.SP)
+		}
+		if vm.OperandStack[0] != nil {
+			t.Fatal("expected nil")
+		}
+	})
+
+	t.Run("SetIndexUnassignableContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1},
+			Code: []OpCode{
+				OpLoadConst.With(0), // target
+				OpLoadConst.With(0), // key
+				OpLoadConst.With(0), // val
+				OpSetIndex,
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 0 {
+			t.Fatal("stack not empty")
+		}
+	})
+
+	t.Run("CallNonFunctionContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{123},
+			Code: []OpCode{
+				OpLoadConst.With(0), // 123
+				OpCall.With(0),      // call 123() -> pushes nil
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 1 {
+			t.Fatalf("SP %d", vm.SP)
+		}
+		if vm.OperandStack[0] != nil {
+			t.Fatal("expected nil")
+		}
+	})
+
+	t.Run("CallStackUnderflowContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Code: []OpCode{
+				OpCall.With(5),
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 0 {
+			t.Fatal("stack modified")
+		}
+	})
+
+	t.Run("SwapUnderflowContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpSwap, // Underflow -> continue -> next op
+			},
+			Constants: []any{1},
+		})
+		runContinue(vm)
+		// Stack should contain the loaded const
+		if vm.SP != 1 {
+			t.Fatal("stack corrupted")
+		}
+	})
+
+	t.Run("SuspendResume", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Code: []OpCode{
+				OpSuspend,
+				OpLoadConst.With(0),
+			},
+			Constants: []any{1},
+		})
+		vm.Run(func(intr *Interrupt, err error) bool {
+			return intr == InterruptSuspend // Resume on suspend
+		})
+		if vm.SP != 1 {
+			t.Fatal("did not resume")
+		}
+	})
+
+	t.Run("TCO_TopLevel", func(t *testing.T) {
+		// Top level tail call. v.BP is 0.
+		// main calling target. target returns 42.
+		target := &Function{
+			Code:      []OpCode{OpLoadConst.With(0), OpReturn},
+			Constants: []any{42},
+		}
+		vm := NewVM(&Function{
+			Constants: []any{target},
+			Code: []OpCode{
+				OpMakeClosure.With(0),
+				OpCall.With(0), // Tail call
+				OpReturn,
+			},
+		})
+		// We verify that it runs without panic and returns correct value
+		// Also this hits the dst=0 path in TCO
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.SP != 1 || vm.OperandStack[0].(int) != 42 {
+			t.Fatal("result mismatch")
+		}
+	})
+
+	t.Run("LoadVarSymbol", func(t *testing.T) {
+		vm := NewVM(nil)
+		sym := vm.Intern("x")
+		vm.CurrentFun = &Function{
+			Constants: []any{sym, 42},
+			Code: []OpCode{
+				OpLoadConst.With(1),
+				OpDefVar.With(0),  // x = 42
+				OpLoadVar.With(0), // load x
+			},
+		}
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop().(int) != 42 {
+			t.Fatal("failed to load var by symbol")
+		}
+	})
+
+	t.Run("API_Set", func(t *testing.T) {
+		vm := NewVM(&Function{})
+		vm.Def("x", 1)
+		if !vm.Set("x", 2) {
+			t.Fatal("Set failed")
+		}
+		if v, _ := vm.Get("x"); v.(int) != 2 {
+			t.Fatal("Set didn't update")
+		}
+		if vm.Set("y", 3) {
+			t.Fatal("Set y should fail")
+		}
+	})
+
+	t.Run("MakeListMapUnderflowContinue", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Code: []OpCode{
+				OpMakeList.With(5),
+				OpMakeMap.With(5),
+			},
+		})
+		runContinue(vm)
+		if vm.SP != 0 {
+			t.Fatal("stack modified")
+		}
+	})
+}
