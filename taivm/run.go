@@ -415,6 +415,16 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 		case OpSetLocal:
 			idx := int(inst >> 8)
 			v.OperandStack[v.BP+idx] = v.pop()
+
+		case OpDumpTrace:
+			var msg string
+			for _, frame := range v.CallStack {
+				msg += fmt.Sprintf("%s:%d\n", frame.Fun.Name, frame.ReturnIP)
+			}
+			msg += fmt.Sprintf("%s:%d", v.CurrentFun.Name, v.IP-1)
+			if !yield(nil, fmt.Errorf("%s", msg)) {
+				return
+			}
 		}
 	}
 }

@@ -2168,3 +2168,78 @@ func TestVM_Variadic(t *testing.T) {
 	check("res1", 1)
 	check("res2", 2)
 }
+
+func TestVM_DumpTrace(t *testing.T) {
+	t.Run("SingleFrame", func(t *testing.T) {
+		main := &Function{
+			Name: "main",
+			Code: []OpCode{
+				OpDumpTrace,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		expected := "main:0"
+		if err.Error() != expected {
+			t.Fatalf("expected %q, got %q", expected, err.Error())
+		}
+	})
+
+	t.Run("MultiFrame", func(t *testing.T) {
+		func2 := &Function{
+			Name: "func2",
+			Code: []OpCode{
+				OpDumpTrace,
+				OpReturn,
+			},
+		}
+		func1 := &Function{
+			Name: "func1",
+			Constants: []any{
+				func2,
+			},
+			Code: []OpCode{
+				OpMakeClosure.With(0),
+				OpCall.With(0),
+				OpJump.With(0), // Prevent TCO
+				OpReturn,
+			},
+		}
+		main := &Function{
+			Name: "main",
+			Constants: []any{
+				func1,
+			},
+			Code: []OpCode{
+				OpMakeClosure.With(0),
+				OpCall.With(0),
+				OpJump.With(0), // Prevent TCO
+				OpReturn,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		expected := "main:2\nfunc1:2\nfunc2:0"
+		if err.Error() != expected {
+			t.Fatalf("expected %q, got %q", expected, err.Error())
+		}
+	})
+}

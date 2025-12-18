@@ -23,6 +23,7 @@ const (
 	OpSwap
 	OpGetLocal
 	OpSetLocal
+	OpDumpTrace
 )
 
 func (o OpCode) With(arg int) OpCode {
