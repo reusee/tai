@@ -771,6 +771,7 @@ func (v *VM) opReturn() {
 			v.drop(v.SP)
 		}
 		v.push(retVal)
+		v.IP = len(v.CurrentFun.Code)
 		return
 	}
 	frame := v.CallStack[n-1]

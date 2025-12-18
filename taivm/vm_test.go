@@ -3432,3 +3432,150 @@ func TestVM_Bitwise_Uint(t *testing.T) {
 		})
 	}
 }
+
+func TestVM_Coverage_GapFilling(t *testing.T) {
+	// 1. SetSlice on invalid target
+	t.Run("SetSliceInvalidTarget", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{123, 0, 1, 1, []any{9}}, // Target is int(123)
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1), OpLoadConst.With(2), OpLoadConst.With(3), OpLoadConst.With(4),
+				OpSetSlice,
+			},
+		})
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "does not support slice assignment") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// 2. Mod Zero
+	t.Run("ModZero", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{5, 0},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpMod},
+		})
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil || err.Error() != "division by zero" {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// 3. Float Comparison
+	t.Run("FloatCompare", func(t *testing.T) {
+		cases := []struct {
+			Op       OpCode
+			A, B     float64
+			Expected bool
+		}{
+			{OpLt, 1.0, 2.0, true},
+			{OpLt, 2.0, 1.0, false},
+			{OpLe, 1.0, 1.0, true},
+			{OpGt, 2.0, 1.0, true},
+			{OpGe, 1.0, 1.0, true},
+		}
+		for _, c := range cases {
+			vm := NewVM(&Function{
+				Constants: []any{c.A, c.B},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), c.Op, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if res := vm.pop().(bool); res != c.Expected {
+				t.Errorf("%v %v %v: expected %v, got %v", c.A, c.Op, c.B, c.Expected, res)
+			}
+		}
+	})
+
+	// 4. Variadic Underflow
+	t.Run("VariadicUnderflow", func(t *testing.T) {
+		f := &Function{
+			NumParams: 2, // 1 fixed + rest
+			Variadic:  true,
+			Code:      []OpCode{OpReturn},
+		}
+		vm := NewVM(&Function{
+			Constants: []any{f},
+			Code: []OpCode{
+				OpMakeClosure.With(0),
+				OpCall.With(0), // Provide 0 args, need at least 1
+			},
+		})
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "arity mismatch") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// 5. Iterate []any
+	t.Run("IterSlice", func(t *testing.T) {
+		sl := []any{10, 20}
+		vm := NewVM(&Function{
+			Constants: []any{sl},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpGetIter,
+				OpNextIter.With(2),
+				OpReturn, // Should return 10
+				OpPop,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res := vm.pop().(int); res != 10 {
+			t.Fatalf("expected 10, got %v", res)
+		}
+	})
+
+	// 6. GetIndex on []any
+	t.Run("GetIndexSliceAny", func(t *testing.T) {
+		sl := []any{42}
+		vm := NewVM(&Function{
+			Constants: []any{sl, 0},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpGetIndex,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res := vm.pop().(int); res != 42 {
+			t.Fatalf("expected 42, got %v", res)
+		}
+	})
+}
