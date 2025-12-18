@@ -16,6 +16,7 @@ func run(t *testing.T, src string) *taivm.VM {
 
 	vm := taivm.NewVM(fn)
 	vm.Def("__apply_kw", ApplyKw)
+	vm.Def("concat", Concat)
 
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
 		if err != nil {
@@ -291,5 +292,52 @@ f(b=1)
 	})
 	if !hasErr {
 		t.Error("expected runtime error")
+	}
+}
+
+func TestCompileFor(t *testing.T) {
+	// List iteration
+	vm := run(t, `
+sum = 0
+for i in [1, 2, 3]:
+	sum = sum + i
+`)
+	if val, ok := vm.Get("sum"); !ok || val != int64(6) {
+		t.Errorf("sum = %v, want 6", val)
+	}
+
+	// Map iteration
+	vm = run(t, `
+d = {"a": 1, "b": 2}
+keys = []
+for k in d:
+	keys = concat(keys, [k])
+`)
+	if val, ok := vm.Get("keys"); !ok {
+		t.Errorf("keys not found")
+	} else {
+		sl := val.([]any)
+		if len(sl) != 2 {
+			t.Errorf("keys len = %d, want 2", len(sl))
+		}
+		// Since we sort keys in OpGetIter, we expect ["a", "b"]
+		if sl[0] != "a" || sl[1] != "b" {
+			t.Errorf("keys = %v, want ['a', 'b']", sl)
+		}
+	}
+
+	// Break and Continue
+	vm = run(t, `
+sum = 0
+for i in [1, 2, 3, 4, 5]:
+	if i == 2:
+		continue
+	if i == 4:
+		break
+	sum = sum + i
+`)
+	// 1 + 3 = 4 (skip 2, break at 4)
+	if val, ok := vm.Get("sum"); !ok || val != int64(4) {
+		t.Errorf("sum = %v, want 4", val)
 	}
 }

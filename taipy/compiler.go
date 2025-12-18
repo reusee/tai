@@ -104,6 +104,8 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 		return c.compileIf(s)
 	case *syntax.WhileStmt:
 		return c.compileWhile(s)
+	case *syntax.ForStmt:
+		return c.compileFor(s)
 	case *syntax.BranchStmt:
 		return c.compileBranch(s)
 	default:
@@ -122,7 +124,7 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 		if err := c.compileExpr(s.RHS); err != nil {
 			return err
 		}
-		c.emit(taivm.OpDefVar.With(c.addConst(lhs.Name)))
+		return c.compileStore(lhs)
 	case *syntax.IndexExpr:
 		if err := c.compileExpr(lhs.X); err != nil {
 			return err
@@ -138,6 +140,16 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 		return fmt.Errorf("unsupported assignment target: %T", s.LHS)
 	}
 	return nil
+}
+
+func (c *compiler) compileStore(lhs syntax.Expr) error {
+	switch node := lhs.(type) {
+	case *syntax.Ident:
+		c.emit(taivm.OpDefVar.With(c.addConst(node.Name)))
+		return nil
+	default:
+		return fmt.Errorf("unsupported variable type: %T", lhs)
+	}
 }
 
 func (c *compiler) compileBranch(s *syntax.BranchStmt) error {
@@ -382,6 +394,48 @@ func (c *compiler) compileWhile(s *syntax.WhileStmt) error {
 	}
 	c.loops = c.loops[:len(c.loops)-1]
 
+	return nil
+}
+
+func (c *compiler) compileFor(s *syntax.ForStmt) error {
+	if err := c.compileExpr(s.X); err != nil {
+		return err
+	}
+	c.emit(taivm.OpGetIter)
+
+	loopHeadIP := c.currentIP()
+	loop := &loopContext{
+		continueIP: loopHeadIP,
+	}
+	c.loops = append(c.loops, loop)
+
+	// Emit NextIter with placeholder jump
+	nextIterIP := c.currentIP()
+	c.emit(taivm.OpNextIter)
+
+	if err := c.compileStore(s.Vars); err != nil {
+		return err
+	}
+
+	if err := c.compileStmts(s.Body); err != nil {
+		return err
+	}
+
+	// Jump back to NextIter
+	jumpBackIP := c.currentIP()
+	c.emit(taivm.OpJump)
+	c.patchJump(jumpBackIP, loopHeadIP)
+
+	// Patch NextIter to jump to here (end of loop)
+	endIP := c.currentIP()
+	c.patchJump(nextIterIP, endIP)
+
+	// Patch breaks
+	for _, ip := range loop.breakIPs {
+		c.patchJump(ip, endIP)
+	}
+
+	c.loops = c.loops[:len(c.loops)-1]
 	return nil
 }
 
