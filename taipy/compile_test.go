@@ -29,10 +29,10 @@ func TestCompileBasic(t *testing.T) {
 a = 1 + 2
 b = a * 3
 `)
-	if val, ok := vm.Get("a"); !ok || val != 3 {
+	if val, ok := vm.Get("a"); !ok || val != int64(3) {
 		t.Errorf("a = %v, want 3", val)
 	}
-	if val, ok := vm.Get("b"); !ok || val != 9 {
+	if val, ok := vm.Get("b"); !ok || val != int64(9) {
 		t.Errorf("b = %v, want 9", val)
 	}
 }
@@ -69,7 +69,7 @@ while i < 5:
 	sum = sum + i
 	i = i + 1
 `)
-	if val, ok := vm.Get("sum"); !ok || val != 10 {
+	if val, ok := vm.Get("sum"); !ok || val != int64(10) {
 		t.Errorf("sum = %v, want 10", val)
 	}
 }
@@ -80,7 +80,7 @@ def add(a, b):
 	return a + b
 res = add(3, 4)
 `)
-	if val, ok := vm.Get("res"); !ok || val != 7 {
+	if val, ok := vm.Get("res"); !ok || val != int64(7) {
 		t.Errorf("res = %v, want 7", val)
 	}
 }
@@ -157,7 +157,7 @@ def make_adder(x):
 add5 = make_adder(5)
 res = add5(3)
 `)
-	if val, ok := vm.Get("res"); !ok || val != 8 {
+	if val, ok := vm.Get("res"); !ok || val != int64(8) {
 		t.Errorf("res = %v, want 8", val)
 	}
 }
