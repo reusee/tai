@@ -45,8 +45,8 @@ if 1 < 2:
 else:
 	res = 2
 `)
-	if val, ok := vm.Get("res"); !ok || val != 1 {
-		t.Errorf("res = %v, want 1", val)
+	if val, ok := vm.Get("res"); !ok || val != int64(1) {
+		t.Errorf("res = %v %T, want 1", val, val)
 	}
 
 	vm = run(t, `
@@ -56,7 +56,7 @@ if 1 > 2:
 else:
 	res = 2
 `)
-	if val, ok := vm.Get("res"); !ok || val != 2 {
+	if val, ok := vm.Get("res"); !ok || val != int64(2) {
 		t.Errorf("res = %v, want 2", val)
 	}
 }
@@ -106,10 +106,10 @@ res = l[1]
 l[2] = 5
 res2 = l[2]
 `)
-	if val, ok := vm.Get("res"); !ok || val != 2 {
+	if val, ok := vm.Get("res"); !ok || val != int64(2) {
 		t.Errorf("res = %v, want 2", val)
 	}
-	if val, ok := vm.Get("res2"); !ok || val != 5 {
+	if val, ok := vm.Get("res2"); !ok || val != int64(5) {
 		t.Errorf("res2 = %v, want 5", val)
 	}
 }
@@ -121,10 +121,10 @@ res = d["a"]
 d["c"] = 3
 res2 = d["c"]
 `)
-	if val, ok := vm.Get("res"); !ok || val != 1 {
+	if val, ok := vm.Get("res"); !ok || val != int64(1) {
 		t.Errorf("res = %v, want 1", val)
 	}
-	if val, ok := vm.Get("res2"); !ok || val != 3 {
+	if val, ok := vm.Get("res2"); !ok || val != int64(3) {
 		t.Errorf("res2 = %v, want 3", val)
 	}
 }
@@ -142,7 +142,7 @@ while i < 10:
 	sum = sum + i
 `)
 	// 1 + 3 + 5 = 9
-	if val, ok := vm.Get("sum"); !ok || val != 9 {
+	if val, ok := vm.Get("sum"); !ok || val != int64(9) {
 		t.Errorf("sum = %v, want 9", val)
 	}
 }
@@ -178,7 +178,7 @@ res = native_add(10, 20)
 			if len(args) != 2 {
 				return nil, fmt.Errorf("want 2 args")
 			}
-			return args[0].(int) + args[1].(int), nil
+			return args[0].(int64) + args[1].(int64), nil
 		},
 	})
 
@@ -189,7 +189,7 @@ res = native_add(10, 20)
 		return false
 	})
 
-	if val, ok := vm.Get("res"); !ok || val != 30 {
+	if val, ok := vm.Get("res"); !ok || val != int64(30) {
 		t.Errorf("res = %v, want 30", val)
 	}
 }
