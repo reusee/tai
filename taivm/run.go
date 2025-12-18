@@ -81,7 +81,21 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 		case OpMakeClosure:
 			idx := int(inst >> 8)
 			fun := v.CurrentFun.Constants[idx].(*Function)
-			v.push(&Closure{Fun: fun, Env: v.Scope})
+			paramSyms := make([]Symbol, len(fun.ParamNames))
+			var maxSym int
+			for i, name := range fun.ParamNames {
+				sym := v.Intern(name)
+				paramSyms[i] = sym
+				if int(sym) > maxSym {
+					maxSym = int(sym)
+				}
+			}
+			v.push(&Closure{
+				Fun:         fun,
+				Env:         v.Scope,
+				ParamSyms:   paramSyms,
+				MaxParamSym: maxSym,
+			})
 
 		case OpCall:
 			argc := int(inst >> 8)
@@ -137,20 +151,22 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 				newEnv := fn.Env.NewChild()
 
-				var maxSym int = -1
-				// Resolve parameter symbols locally
-				paramSyms := make([]Symbol, len(fn.Fun.ParamNames))
-				for i, name := range fn.Fun.ParamNames {
-					sym := v.Intern(name)
-					paramSyms[i] = sym
-					s := int(sym)
-					if s > maxSym {
-						maxSym = s
+				paramSyms := fn.ParamSyms
+				maxSym := fn.MaxParamSym
+				if paramSyms == nil && len(fn.Fun.ParamNames) > 0 {
+					paramSyms = make([]Symbol, len(fn.Fun.ParamNames))
+					for i, name := range fn.Fun.ParamNames {
+						sym := v.Intern(name)
+						paramSyms[i] = sym
+						if int(sym) > maxSym {
+							maxSym = int(sym)
+						}
 					}
+					fn.ParamSyms = paramSyms
+					fn.MaxParamSym = maxSym
 				}
 
-				// Pre-allocate environment storage to avoid repeated resizing
-				if maxSym >= 0 {
+				if len(paramSyms) > 0 {
 					newEnv.Grow(maxSym)
 				}
 
