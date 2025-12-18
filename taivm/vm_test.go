@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -3260,4 +3261,174 @@ func TestVM_Coverage_Extended(t *testing.T) {
 			t.Fatal("tuple should be immutable")
 		}
 	})
+}
+
+func TestVM_Coverage_More(t *testing.T) {
+	runErr := func(name string, code []OpCode, consts []any, expectedErr string) {
+		t.Run(name, func(t *testing.T) {
+			vm := NewVM(&Function{Code: code, Constants: consts})
+			var lastErr error
+			// Use explicit yield to ensure we return false and stop VM
+			vm.Run(func(_ *Interrupt, err error) bool {
+				lastErr = err
+				return false
+			})
+			if lastErr == nil {
+				t.Error("expected error, got nil")
+				return
+			}
+			if !strings.Contains(lastErr.Error(), expectedErr) {
+				t.Errorf("expected error containing %q, got %v", expectedErr, lastErr)
+			}
+		})
+	}
+
+	runErr("TupleSetIndex",
+		[]OpCode{OpLoadConst.With(0), OpMakeTuple.With(1), OpLoadConst.With(1), OpLoadConst.With(0), OpSetIndex},
+		[]any{1, 0},
+		"tuple is immutable",
+	)
+
+	runErr("TupleSetSlice",
+		[]OpCode{
+			OpLoadConst.With(0), OpMakeTuple.With(1),
+			OpLoadConst.With(1), OpLoadConst.With(1), OpLoadConst.With(1), OpLoadConst.With(2), // lo, hi, step, val
+			OpSetSlice,
+		},
+		[]any{1, 0, []any{1}},
+		"tuple is immutable",
+	)
+
+	runErr("ComplexCompare",
+		[]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLt},
+		[]any{1i, 2i},
+		"complex numbers are not ordered",
+	)
+
+	runErr("ComplexDivZero",
+		[]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv},
+		[]any{1i, 0i},
+		"division by zero",
+	)
+
+	runErr("FloatDivZero",
+		[]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv},
+		[]any{1.0, 0.0},
+		"division by zero",
+	)
+
+	runErr("IterNil",
+		[]OpCode{OpLoadConst.With(0), OpGetIter},
+		[]any{nil},
+		"not iterable: nil",
+	)
+
+	runErr("ExtendedSliceSizeMismatch",
+		[]OpCode{
+			OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpLoadConst.With(3), OpMakeList.With(4), // [1,2,3,4]
+			OpLoadConst.With(4), OpLoadConst.With(5), OpLoadConst.With(6), OpLoadConst.With(7), // lo, hi, step, val
+			OpSetSlice,
+		},
+		[]any{1, 2, 3, 4, 0, 4, 2, []any{9}}, // list[0:4:2] -> len 2. val [9] len 1.
+		"attempt to assign sequence of size",
+	)
+}
+
+func TestVM_StringCompare(t *testing.T) {
+	cases := []struct {
+		Op       OpCode
+		A, B     string
+		Expected bool
+	}{
+		{OpLe, "a", "b", true},
+		{OpLe, "b", "a", false},
+		{OpLe, "a", "a", true},
+		{OpGt, "b", "a", true},
+		{OpGt, "a", "b", false},
+		{OpGe, "b", "a", true},
+		{OpGe, "a", "b", false},
+		{OpGe, "a", "a", true},
+	}
+
+	for _, c := range cases {
+		vm := NewVM(&Function{
+			Constants: []any{c.A, c.B},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), c.Op, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res := vm.pop().(bool); res != c.Expected {
+			t.Errorf("%q %v %q: expected %v, got %v", c.A, c.Op, c.B, c.Expected, res)
+		}
+	}
+}
+
+func TestVM_Slice_NegativeStep(t *testing.T) {
+	// [0, 1, 2, 3, 4]
+	l := &List{Elements: []any{0, 1, 2, 3, 4}}
+
+	cases := []struct {
+		Lo, Hi, Step any
+		Expected     []any
+	}{
+		{nil, nil, -1, []any{4, 3, 2, 1, 0}},
+		{4, 1, -1, []any{4, 3, 2}},
+		{1, 4, -1, []any{}},
+	}
+
+	for i, c := range cases {
+		vm := NewVM(&Function{
+			Constants: []any{l, c.Lo, c.Hi, c.Step},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpLoadConst.With(3), OpGetSlice},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop().(*List).Elements
+		if len(res) != len(c.Expected) {
+			t.Errorf("case %d: len mismatch: %v vs %v", i, res, c.Expected)
+			continue
+		}
+		for j := range res {
+			if res[j] != c.Expected[j] {
+				t.Errorf("case %d: mismatch at %d: %v vs %v", i, j, res[j], c.Expected[j])
+			}
+		}
+	}
+}
+
+func TestVM_Bitwise_Uint(t *testing.T) {
+	cases := []struct {
+		Val      any
+		Expected any
+	}{
+		{uint(1), ^uint(1)},
+		{uint8(1), ^uint8(1)},
+		{uint16(1), ^uint16(1)},
+		{uint32(1), ^uint32(1)},
+		{uint64(1), ^uint64(1)},
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%T", c.Val), func(t *testing.T) {
+			vm := NewVM(&Function{
+				Constants: []any{c.Val},
+				Code:      []OpCode{OpLoadConst.With(0), OpBitNot, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			res := vm.pop()
+			if res != c.Expected {
+				t.Fatalf("expected %v (%T), got %v (%T)", c.Expected, c.Expected, res, res)
+			}
+		})
+	}
 }
