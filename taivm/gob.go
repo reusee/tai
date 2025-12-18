@@ -15,4 +15,5 @@ func init() {
 	gob.Register(Undefined{})
 	gob.Register(&ListIterator{})
 	gob.Register(&MapIterator{})
+	gob.Register(Tuple{})
 }

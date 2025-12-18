@@ -358,6 +358,32 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					val = t[idx]
 				}
 
+			case Tuple:
+				var idx int
+				var ok bool
+				switch i := key.(type) {
+				case int:
+					idx = i
+					ok = true
+				case int64:
+					idx = int(i)
+					ok = true
+				}
+
+				if !ok {
+					if !yield(nil, fmt.Errorf("tuple index must be int, got %T", key)) {
+						return
+					}
+					val = nil
+				} else if idx < 0 || idx >= len(t) {
+					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+						return
+					}
+					val = nil
+				} else {
+					val = t[idx]
+				}
+
 			case map[any]any:
 				val = t[key]
 
@@ -857,6 +883,8 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			switch t := val.(type) {
 			case []any:
 				v.push(&ListIterator{List: t})
+			case Tuple:
+				v.push(&ListIterator{List: []any(t)})
 			case map[any]any:
 				keys := make([]any, 0, len(t))
 				for k := range t {
@@ -916,7 +944,238 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 			}
 
+		case OpMakeTuple:
+			n := int(inst >> 8)
+			if v.SP < n {
+				if !yield(nil, fmt.Errorf("stack underflow during tuple creation")) {
+					return
+				}
+				continue
+			}
+			slice := make([]any, n)
+			start := v.SP - n
+			copy(slice, v.OperandStack[start:v.SP])
+			v.drop(n)
+			v.push(Tuple(slice))
+
+		case OpGetSlice:
+			if v.SP < 4 {
+				if !yield(nil, fmt.Errorf("stack underflow during getslice")) {
+					return
+				}
+				continue
+			}
+			step := v.pop()
+			hi := v.pop()
+			lo := v.pop()
+			target := v.pop()
+
+			if target == nil {
+				if !yield(nil, fmt.Errorf("slicing nil")) {
+					return
+				}
+				v.push(nil)
+				continue
+			}
+
+			switch t := target.(type) {
+			case string:
+				runes := []rune(t)
+				start, stop, stepInt, err := resolveSliceIndices(len(runes), lo, hi, step)
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res []rune
+				if stepInt > 0 {
+					for i := start; i < stop; i += stepInt {
+						res = append(res, runes[i])
+					}
+				} else {
+					for i := start; i > stop; i += stepInt {
+						res = append(res, runes[i])
+					}
+				}
+				v.push(string(res))
+
+			case []any:
+				start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res []any
+				if stepInt > 0 {
+					for i := start; i < stop; i += stepInt {
+						res = append(res, t[i])
+					}
+				} else {
+					for i := start; i > stop; i += stepInt {
+						res = append(res, t[i])
+					}
+				}
+				v.push(res)
+
+			case Tuple:
+				start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res []any
+				if stepInt > 0 {
+					for i := start; i < stop; i += stepInt {
+						res = append(res, t[i])
+					}
+				} else {
+					for i := start; i > stop; i += stepInt {
+						res = append(res, t[i])
+					}
+				}
+				v.push(Tuple(res))
+
+			default:
+				if !yield(nil, fmt.Errorf("type %T is not sliceable", target)) {
+					return
+				}
+				v.push(nil)
+			}
+
+		case OpSetSlice:
+			if v.SP < 5 {
+				if !yield(nil, fmt.Errorf("stack underflow during setslice")) {
+					return
+				}
+				continue
+			}
+			val := v.pop()
+			step := v.pop()
+			hi := v.pop()
+			lo := v.pop()
+			target := v.pop()
+
+			t, ok := target.([]any)
+			if !ok {
+				if !yield(nil, fmt.Errorf("type %T does not support slice assignment", target)) {
+					return
+				}
+				continue
+			}
+
+			start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+			if err != nil {
+				if !yield(nil, err) {
+					return
+				}
+				continue
+			}
+
+			// Convert value to list of items
+			var items []any
+			switch v := val.(type) {
+			case []any:
+				items = v
+			case Tuple:
+				items = []any(v)
+			case string:
+				for _, r := range v {
+					items = append(items, string(r))
+				}
+			default:
+				if !yield(nil, fmt.Errorf("can only assign iterable to slice, got %T", val)) {
+					return
+				}
+				continue
+			}
+
+			if stepInt != 1 {
+				// Extended slice assignment
+				// Target count must match value count
+				n := 0
+				if stepInt > 0 {
+					if stop > start {
+						n = (stop - start + stepInt - 1) / stepInt
+					}
+				} else {
+					if start > stop {
+						n = (start - stop - stepInt - 1) / -stepInt
+					}
+				}
+				if len(items) != n {
+					if !yield(nil, fmt.Errorf("attempt to assign sequence of size %d to extended slice of size %d", len(items), n)) {
+						return
+					}
+					continue
+				}
+				for i := 0; i < n; i++ {
+					t[start+i*stepInt] = items[i]
+				}
+
+			} else {
+				// Standard slice assignment: replace [start:stop] with items
+				// This might resize the list
+				if stop < start {
+					stop = start
+				}
+				// new size = len(t) - (stop-start) + len(items)
+				delta := len(items) - (stop - start)
+				newLen := len(t) + delta
+				newSlice := make([]any, newLen)
+				copy(newSlice[:start], t[:start])
+				copy(newSlice[start:start+len(items)], items)
+				copy(newSlice[start+len(items):], t[stop:])
+				// Update the backing array of the slice on the heap?
+				// Warning: In Go, we cannot easily modify the length of the slice passed by value as []any.
+				// However, OpSetSlice operates on the value popped from stack.
+				// If that value was a reference to a slice, we can modify elements.
+				// But we cannot change the length of the slice visible to other references if we allocate a new slice.
+				// Taipy lists are []any. If we change length, we need to handle reference semantics.
+				// Since we don't have a *List wrapper, we can only modify elements in place if capacity allows,
+				// but 't' here is just the interface{} holding the slice header.
+				// Replacing elements is fine. Resizing is problematic without a wrapper.
+				// Starlark lists are mutable. Python lists are mutable.
+				// If we implement simple slice assignment (replace elements), it works for same size.
+				// For resizing, we technically need a pointer to the slice or a wrapper type.
+				// Given current architecture (using []any directly), we can't implement resizing slice assignment correctly
+				// unless we change how lists are stored (e.g. *[]any or *List).
+				// For now, I will restrict non-step-1 slice assignment to same-size or accept that
+				// resizing won't work for shared references (which is a bug but structural limitation).
+				// Actually, if we only support same-length replacement for now, that's safer.
+				// Or, we assume that for this VM iteration, we only support replacing range if size matches.
+				// Let's implement resizing but knowing it won't affect other variables holding the same list if it's copied.
+				// Wait, if I do `a = [1]; b = a; a[:] = [2,3]`, `b` should see `[2,3]`.
+				// With []any, `b` has a copy of the slice header. Growing `a`'s slice won't update `b`'s header.
+				// This is a known limitation if not using a wrapper.
+				// I'll implement it by creating a new slice and failing if we can't update in place?
+				// No, the instruction is just "update this object".
+				// Since we can't update the header of other references, we should probably throw an error
+				// or just support same-size replacement.
+				// Starlark spec says: "The list must be mutable... length of the slice ... need not be equal to the length of the iterable".
+				// To properly support this, we would need to refactor []any to *[]any or a List type.
+				// For this task, I'll implement resizing logic but knowing it might not propagate if shared.
+				// However, to avoid "silent" failure of sharing, I'll check if delta == 0.
+				if delta != 0 {
+					if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
+						return
+					}
+					continue
+				}
+				for i := range items {
+					t[start+i] = items[i]
+				}
+			}
+
 		}
+
 	}
 }
 
@@ -1136,4 +1395,86 @@ func bitwiseSameType(op OpCode, a, b any) (any, bool, error) {
 		}
 	}
 	return nil, false, nil
+}
+
+func resolveSliceIndices(length int, start, stop, step any) (int, int, int, error) {
+	stepInt := 1
+	if step != nil {
+		s, ok := toInt64(step)
+		if !ok {
+			return 0, 0, 0, fmt.Errorf("slice step must be integer")
+		}
+		stepInt = int(s)
+	}
+	if stepInt == 0 {
+		return 0, 0, 0, fmt.Errorf("slice step cannot be zero")
+	}
+
+	// Clamp start
+	var startInt int
+	if start == nil {
+		if stepInt > 0 {
+			startInt = 0
+		} else {
+			startInt = length - 1
+		}
+	} else {
+		s, ok := toInt64(start)
+		if !ok {
+			return 0, 0, 0, fmt.Errorf("slice start must be integer")
+		}
+		startInt = int(s)
+		if startInt < 0 {
+			startInt += length
+		}
+	}
+	// Bound check start
+	if startInt < 0 {
+		if stepInt > 0 {
+			startInt = 0
+		} else {
+			startInt = -1
+		}
+	} else if startInt >= length {
+		if stepInt > 0 {
+			startInt = length
+		} else {
+			startInt = length - 1
+		}
+	}
+
+	// Clamp stop
+	var stopInt int
+	if stop == nil {
+		if stepInt > 0 {
+			stopInt = length
+		} else {
+			stopInt = -1
+		}
+	} else {
+		s, ok := toInt64(stop)
+		if !ok {
+			return 0, 0, 0, fmt.Errorf("slice stop must be integer")
+		}
+		stopInt = int(s)
+		if stopInt < 0 {
+			stopInt += length
+		}
+	}
+	// Bound check stop
+	if stopInt < 0 {
+		if stepInt > 0 {
+			stopInt = 0
+		} else {
+			stopInt = -1
+		}
+	} else if stopInt >= length {
+		if stepInt > 0 {
+			stopInt = length
+		} else {
+			stopInt = length - 1
+		}
+	}
+
+	return startInt, stopInt, stepInt, nil
 }

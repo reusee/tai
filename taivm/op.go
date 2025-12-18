@@ -44,6 +44,9 @@ const (
 	OpNot
 	OpGetIter
 	OpNextIter
+	OpMakeTuple
+	OpGetSlice
+	OpSetSlice
 )
 
 func (o OpCode) With(arg int) OpCode {
