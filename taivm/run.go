@@ -510,7 +510,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 				res = i1 >> uint(i2)
 			}
-			v.push(int(res))
+			v.push(res)
 
 		case OpBitNot:
 			if v.SP < 1 {
@@ -528,7 +528,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				v.push(nil)
 				continue
 			}
-			v.push(int(^i))
+			v.push(^i)
 
 		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
 			if v.SP < 2 {
@@ -662,7 +662,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 				res = i1 % i2
 			}
-			v.push(int(res))
+			v.push(res)
 
 		case OpEq, OpNe:
 			if v.SP < 2 {
@@ -674,6 +674,20 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			b := v.pop()
 			a := v.pop()
 			match := a == b
+			if !match {
+				i1, ok1 := toInt64(a)
+				i2, ok2 := toInt64(b)
+				if ok1 && ok2 {
+					match = i1 == i2
+				} else {
+					f1, ok1 := toFloat64(a)
+					f2, ok2 := toFloat64(b)
+					if ok1 && ok2 {
+						match = f1 == f2
+					}
+				}
+			}
+
 			if op == OpEq {
 				v.push(match)
 			} else {
