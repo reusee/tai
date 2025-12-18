@@ -87,18 +87,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				val = v.OperandStack[v.SP]
 				v.OperandStack[v.SP] = nil
 			}
-			var jump bool
-			switch x := val.(type) {
-			case nil:
-				jump = true
-			case bool:
-				jump = !x
-			case int:
-				jump = x == 0
-			case string:
-				jump = x == ""
-			}
-			if jump {
+			if isZero(val) {
 				v.IP += offset
 			}
 
@@ -485,16 +474,16 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			b := v.pop()
 			a := v.pop()
-			i1, ok1 := a.(int)
-			i2, ok2 := b.(int)
+			i1, ok1 := toInt64(a)
+			i2, ok2 := toInt64(b)
 			if !ok1 || !ok2 {
-				if !yield(nil, fmt.Errorf("bitwise operands must be int, got %T and %T", a, b)) {
+				if !yield(nil, fmt.Errorf("bitwise operands must be integers, got %T and %T", a, b)) {
 					return
 				}
 				v.push(nil)
 				continue
 			}
-			var res int
+			var res int64
 			switch op {
 			case OpBitAnd:
 				res = i1 & i2
@@ -510,7 +499,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					v.push(nil)
 					continue
 				}
-				res = i1 << i2
+				res = i1 << uint(i2)
 			case OpBitRsh:
 				if i2 < 0 {
 					if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
@@ -519,9 +508,9 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					v.push(nil)
 					continue
 				}
-				res = i1 >> i2
+				res = i1 >> uint(i2)
 			}
-			v.push(res)
+			v.push(int(res))
 
 		case OpBitNot:
 			if v.SP < 1 {
@@ -531,7 +520,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				continue
 			}
 			a := v.pop()
-			i, ok := a.(int)
+			i, ok := toInt64(a)
 			if !ok {
 				if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
 					return
@@ -539,7 +528,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				v.push(nil)
 				continue
 			}
-			v.push(^i)
+			v.push(int(^i))
 
 		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
 			if v.SP < 2 {
@@ -560,17 +549,93 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 			}
 
-			i1, ok1 := a.(int)
-			i2, ok2 := b.(int)
+			if isComplex(a) || isComplex(b) {
+				c1, ok1 := toComplex128(a)
+				c2, ok2 := toComplex128(b)
+				if !ok1 || !ok2 {
+					if !yield(nil, fmt.Errorf("invalid operands for complex math: %T, %T", a, b)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res complex128
+				switch op {
+				case OpAdd:
+					res = c1 + c2
+				case OpSub:
+					res = c1 - c2
+				case OpMul:
+					res = c1 * c2
+				case OpDiv:
+					if c2 == 0 {
+						if !yield(nil, fmt.Errorf("division by zero")) {
+							return
+						}
+						v.push(nil)
+						continue
+					}
+					res = c1 / c2
+				default:
+					if !yield(nil, fmt.Errorf("unsupported operation for complex numbers")) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				v.push(res)
+				continue
+			}
+
+			if isFloat(a) || isFloat(b) {
+				f1, ok1 := toFloat64(a)
+				f2, ok2 := toFloat64(b)
+				if !ok1 || !ok2 {
+					if !yield(nil, fmt.Errorf("invalid operands for float math: %T, %T", a, b)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res float64
+				switch op {
+				case OpAdd:
+					res = f1 + f2
+				case OpSub:
+					res = f1 - f2
+				case OpMul:
+					res = f1 * f2
+				case OpDiv:
+					if f2 == 0 {
+						if !yield(nil, fmt.Errorf("division by zero")) {
+							return
+						}
+						v.push(nil)
+						continue
+					}
+					res = f1 / f2
+				default:
+					if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				v.push(res)
+				continue
+			}
+
+			i1, ok1 := toInt64(a)
+			i2, ok2 := toInt64(b)
 			if !ok1 || !ok2 {
-				if !yield(nil, fmt.Errorf("math operands must be int, got %T and %T", a, b)) {
+				if !yield(nil, fmt.Errorf("math operands must be numeric, got %T and %T", a, b)) {
 					return
 				}
 				v.push(nil)
 				continue
 			}
 
-			var res int
+			var res int64
 			switch op {
 			case OpAdd:
 				res = i1 + i2
@@ -597,7 +662,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				}
 				res = i1 % i2
 			}
-			v.push(res)
+			v.push(int(res))
 
 		case OpEq, OpNe:
 			if v.SP < 2 {
@@ -625,54 +690,79 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			b := v.pop()
 			a := v.pop()
 
-			var res bool
-			switch x := a.(type) {
-			case int:
-				y, ok := b.(int)
-				if !ok {
-					if !yield(nil, fmt.Errorf("comparison type mismatch: int vs %T", b)) {
-						return
+			if s1, ok := a.(string); ok {
+				if s2, ok := b.(string); ok {
+					var res bool
+					switch op {
+					case OpLt:
+						res = s1 < s2
+					case OpLe:
+						res = s1 <= s2
+					case OpGt:
+						res = s1 > s2
+					case OpGe:
+						res = s1 >= s2
 					}
-					v.push(nil)
+					v.push(res)
 					continue
 				}
-				switch op {
-				case OpLt:
-					res = x < y
-				case OpLe:
-					res = x <= y
-				case OpGt:
-					res = x > y
-				case OpGe:
-					res = x >= y
-				}
-			case string:
-				y, ok := b.(string)
-				if !ok {
-					if !yield(nil, fmt.Errorf("comparison type mismatch: string vs %T", b)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				switch op {
-				case OpLt:
-					res = x < y
-				case OpLe:
-					res = x <= y
-				case OpGt:
-					res = x > y
-				case OpGe:
-					res = x >= y
-				}
-			default:
-				if !yield(nil, fmt.Errorf("unsupported type for comparison: %T", a)) {
+			}
+
+			if isComplex(a) || isComplex(b) {
+				if !yield(nil, fmt.Errorf("complex numbers are not ordered")) {
 					return
 				}
 				v.push(nil)
 				continue
 			}
-			v.push(res)
+
+			if isFloat(a) || isFloat(b) {
+				f1, ok1 := toFloat64(a)
+				f2, ok2 := toFloat64(b)
+				if !ok1 || !ok2 {
+					if !yield(nil, fmt.Errorf("invalid operands for float comparison: %T, %T", a, b)) {
+						return
+					}
+					v.push(nil)
+					continue
+				}
+				var res bool
+				switch op {
+				case OpLt:
+					res = f1 < f2
+				case OpLe:
+					res = f1 <= f2
+				case OpGt:
+					res = f1 > f2
+				case OpGe:
+					res = f1 >= f2
+				}
+				v.push(res)
+				continue
+			}
+
+			i1, ok1 := toInt64(a)
+			i2, ok2 := toInt64(b)
+			if ok1 && ok2 {
+				var res bool
+				switch op {
+				case OpLt:
+					res = i1 < i2
+				case OpLe:
+					res = i1 <= i2
+				case OpGt:
+					res = i1 > i2
+				case OpGe:
+					res = i1 >= i2
+				}
+				v.push(res)
+				continue
+			}
+
+			if !yield(nil, fmt.Errorf("unsupported type for comparison: %T vs %T", a, b)) {
+				return
+			}
+			v.push(nil)
 
 		case OpNot:
 			if v.SP < 1 {
@@ -682,18 +772,113 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				continue
 			}
 			val := v.pop()
-			var isFalse bool
-			switch x := val.(type) {
-			case nil:
-				isFalse = true
-			case bool:
-				isFalse = !x
-			case int:
-				isFalse = x == 0
-			case string:
-				isFalse = x == ""
-			}
-			v.push(isFalse)
+			v.push(isZero(val))
 		}
 	}
+}
+
+func toInt64(v any) (int64, bool) {
+	switch i := v.(type) {
+	case int:
+		return int64(i), true
+	case int8:
+		return int64(i), true
+	case int16:
+		return int64(i), true
+	case int32:
+		return int64(i), true
+	case int64:
+		return i, true
+	case uint:
+		return int64(i), true
+	case uint8:
+		return int64(i), true
+	case uint16:
+		return int64(i), true
+	case uint32:
+		return int64(i), true
+	case uint64:
+		return int64(i), true
+	}
+	return 0, false
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch i := v.(type) {
+	case float64:
+		return i, true
+	case float32:
+		return float64(i), true
+	case int:
+		return float64(i), true
+	case int8:
+		return float64(i), true
+	case int16:
+		return float64(i), true
+	case int32:
+		return float64(i), true
+	case int64:
+		return float64(i), true
+	case uint:
+		return float64(i), true
+	case uint8:
+		return float64(i), true
+	case uint16:
+		return float64(i), true
+	case uint32:
+		return float64(i), true
+	case uint64:
+		return float64(i), true
+	}
+	return 0, false
+}
+
+func isFloat(v any) bool {
+	switch v.(type) {
+	case float32, float64:
+		return true
+	}
+	return false
+}
+
+func toComplex128(v any) (complex128, bool) {
+	switch i := v.(type) {
+	case complex128:
+		return i, true
+	case complex64:
+		return complex128(i), true
+	}
+	if f, ok := toFloat64(v); ok {
+		return complex(f, 0), true
+	}
+	return 0, false
+}
+
+func isComplex(v any) bool {
+	switch v.(type) {
+	case complex64, complex128:
+		return true
+	}
+	return false
+}
+
+func isZero(v any) bool {
+	switch i := v.(type) {
+	case bool:
+		return !i
+	case string:
+		return i == ""
+	case nil:
+		return true
+	}
+	if i, ok := toInt64(v); ok {
+		return i == 0
+	}
+	if f, ok := toFloat64(v); ok {
+		return f == 0
+	}
+	if c, ok := toComplex128(v); ok {
+		return c == 0
+	}
+	return false
 }
