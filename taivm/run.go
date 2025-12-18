@@ -32,8 +32,8 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			val, ok := v.Scope.GetSym(sym)
 			if !ok {
-				//TODO symbol to name
-				if !yield(nil, fmt.Errorf("undefined variable")) {
+				name := v.Symbols.SymToStr[sym]
+				if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
 					return
 				}
 				v.push(nil)
@@ -63,7 +63,8 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			val := v.pop()
 			if !v.Scope.SetSym(sym, val) {
-				if !yield(nil, fmt.Errorf("variable not found")) {
+				name := v.Symbols.SymToStr[sym]
+				if !yield(nil, fmt.Errorf("variable not found: %s", name)) {
 					return
 				}
 			}
