@@ -49,6 +49,8 @@ const (
 	OpSetSlice
 	OpDup
 	OpDup2
+	OpGetAttr
+	OpSetAttr
 )
 
 func (o OpCode) With(arg int) OpCode {

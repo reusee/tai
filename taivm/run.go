@@ -160,6 +160,17 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if !v.opSetSlice(yield) {
 				return
 			}
+
+		case OpGetAttr:
+			if !v.opGetAttr(yield) {
+				return
+			}
+
+		case OpSetAttr:
+			if !v.opSetAttr(yield) {
+				return
+			}
+
 		}
 
 	}
@@ -1689,6 +1700,95 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 		}
 		for i := range items {
 			t[start+i] = items[i]
+		}
+	}
+	return true
+}
+
+func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during getattr")) {
+			return false
+		}
+		return true
+	}
+	name := v.pop()
+	target := v.pop()
+
+	nameStr, ok := name.(string)
+	if !ok {
+		if !yield(nil, fmt.Errorf("attribute name must be string, got %T", name)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	if target == nil {
+		if !yield(nil, fmt.Errorf("getattr on nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	switch t := target.(type) {
+	case *Struct:
+		val, ok := t.Fields[nameStr]
+		if !ok {
+			if !yield(nil, fmt.Errorf("struct has no field '%s'", nameStr)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(val)
+
+	default:
+		if !yield(nil, fmt.Errorf("type %T has no attributes", target)) {
+			return false
+		}
+		v.push(nil)
+	}
+	return true
+}
+
+func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 3 {
+		if !yield(nil, fmt.Errorf("stack underflow during setattr")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+	name := v.pop()
+	target := v.pop()
+
+	nameStr, ok := name.(string)
+	if !ok {
+		if !yield(nil, fmt.Errorf("attribute name must be string, got %T", name)) {
+			return false
+		}
+		return true
+	}
+
+	if target == nil {
+		if !yield(nil, fmt.Errorf("setattr on nil")) {
+			return false
+		}
+		return true
+	}
+
+	switch t := target.(type) {
+	case *Struct:
+		if t.Fields == nil {
+			t.Fields = make(map[string]any)
+		}
+		t.Fields[nameStr] = val
+
+	default:
+		if !yield(nil, fmt.Errorf("type %T does not support attribute assignment", target)) {
+			return false
 		}
 	}
 	return true
