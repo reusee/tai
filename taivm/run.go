@@ -17,283 +17,50 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		switch op {
 		case OpLoadConst:
-			idx := int(inst >> 8)
-			if v.SP >= len(v.OperandStack) {
-				v.growOperandStack()
-			}
-			v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
-			v.SP++
+			v.opLoadConst(inst)
 
 		case OpLoadVar:
-			idx := int(inst >> 8)
-			c := v.CurrentFun.Constants[idx]
-			var sym Symbol
-			if s, ok := c.(Symbol); ok {
-				sym = s
-			} else {
-				sym = v.Intern(c.(string))
+			if !v.opLoadVar(inst, yield) {
+				return
 			}
-			val, ok := v.Scope.GetSym(sym)
-			if !ok {
-				name := v.Symbols.SymToStr[sym]
-				if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-			v.push(val)
 
 		case OpDefVar:
-			idx := int(inst >> 8)
-			c := v.CurrentFun.Constants[idx]
-			var sym Symbol
-			if s, ok := c.(Symbol); ok {
-				sym = s
-			} else {
-				sym = v.Intern(c.(string))
-			}
-			v.Scope.DefSym(sym, v.pop())
+			v.opDefVar(inst)
 
 		case OpSetVar:
-			idx := int(inst >> 8)
-			c := v.CurrentFun.Constants[idx]
-			var sym Symbol
-			if s, ok := c.(Symbol); ok {
-				sym = s
-			} else {
-				sym = v.Intern(c.(string))
-			}
-			val := v.pop()
-			if !v.Scope.SetSym(sym, val) {
-				name := v.Symbols.SymToStr[sym]
-				if !yield(nil, fmt.Errorf("variable not found: %s", name)) {
-					return
-				}
+			if !v.opSetVar(inst, yield) {
+				return
 			}
 
 		case OpPop:
-			if v.SP > 0 {
-				v.SP--
-				v.OperandStack[v.SP] = nil
-			}
+			v.opPop()
 
 		case OpDup:
-			if v.SP < 1 {
-				if !yield(nil, fmt.Errorf("stack underflow during dup")) {
-					return
-				}
-				continue
+			if !v.opDup(yield) {
+				return
 			}
-			v.push(v.OperandStack[v.SP-1])
 
 		case OpDup2:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during dup2")) {
-					return
-				}
-				continue
+			if !v.opDup2(yield) {
+				return
 			}
-			b := v.OperandStack[v.SP-1]
-			a := v.OperandStack[v.SP-2]
-			v.push(a)
-			v.push(b)
 
 		case OpJump:
-			offset := int(int32(inst) >> 8)
-			v.IP += offset
+			v.opJump(inst)
 
 		case OpJumpFalse:
-			offset := int(int32(inst) >> 8)
-			var val any
-			if v.SP > 0 {
-				v.SP--
-				val = v.OperandStack[v.SP]
-				v.OperandStack[v.SP] = nil
-			}
-			if isZero(val) {
-				v.IP += offset
-			}
+			v.opJumpFalse(inst)
 
 		case OpMakeClosure:
-			idx := int(inst >> 8)
-			fun := v.CurrentFun.Constants[idx].(*Function)
-			paramSyms := make([]Symbol, len(fun.ParamNames))
-			var maxSym int
-			for i, name := range fun.ParamNames {
-				sym := v.Intern(name)
-				paramSyms[i] = sym
-				if int(sym) > maxSym {
-					maxSym = int(sym)
-				}
-			}
-			v.push(&Closure{
-				Fun:         fun,
-				Env:         v.Scope,
-				ParamSyms:   paramSyms,
-				MaxParamSym: maxSym,
-			})
+			v.opMakeClosure(inst)
 
 		case OpCall:
-			argc := int(inst >> 8)
-			if v.SP < argc+1 {
-				if !yield(nil, fmt.Errorf("stack underflow during call")) {
-					return
-				}
-				continue
-			}
-
-			// Callee is below args on the stack
-			calleeIdx := v.SP - argc - 1
-			callee := v.OperandStack[calleeIdx]
-
-			switch fn := callee.(type) {
-			case *Closure:
-				numParams := fn.Fun.NumParams
-				if fn.Fun.Variadic {
-					if argc < numParams-1 {
-						if !yield(nil, fmt.Errorf("arity mismatch: want at least %d, got %d", numParams-1, argc)) {
-							return
-						}
-						v.drop(argc + 1)
-						v.push(nil)
-						continue
-					}
-
-					fixed := numParams - 1
-					varArgsCount := argc - fixed
-					slice := make([]any, varArgsCount)
-					base := calleeIdx + 1 + fixed
-					copy(slice, v.OperandStack[base:base+varArgsCount])
-
-					if varArgsCount == 0 {
-						v.push(slice)
-					} else {
-						v.OperandStack[base] = slice
-						for i := base + 1; i < v.SP; i++ {
-							v.OperandStack[i] = nil
-						}
-						v.SP = base + 1
-					}
-					argc = numParams
-
-				} else if argc != numParams {
-					if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", numParams, argc)) {
-						return
-					}
-					v.drop(argc + 1)
-					v.push(nil)
-					continue
-				}
-
-				newEnv := fn.Env.NewChild()
-
-				paramSyms := fn.ParamSyms
-				maxSym := fn.MaxParamSym
-				if paramSyms == nil && len(fn.Fun.ParamNames) > 0 {
-					paramSyms = make([]Symbol, len(fn.Fun.ParamNames))
-					for i, name := range fn.Fun.ParamNames {
-						sym := v.Intern(name)
-						paramSyms[i] = sym
-						if int(sym) > maxSym {
-							maxSym = int(sym)
-						}
-					}
-					fn.ParamSyms = paramSyms
-					fn.MaxParamSym = maxSym
-				}
-
-				if len(paramSyms) > 0 {
-					newEnv.Grow(maxSym)
-				}
-
-				// Bind arguments from stack directly to new environment
-				for i := range argc {
-					newEnv.DefSym(paramSyms[i], v.OperandStack[calleeIdx+1+i])
-				}
-
-				// Tail Call Optimization
-				if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
-					dst := v.BP
-					if dst > 0 {
-						dst--
-					}
-					src := calleeIdx
-					count := argc + 1
-					copy(v.OperandStack[dst:], v.OperandStack[src:src+count])
-
-					// Nil out use locations to avoid leakage
-					startClean := dst + count
-					endClean := v.SP
-					clear(v.OperandStack[startClean:endClean])
-
-					v.SP = startClean
-					v.BP = dst + 1
-				} else {
-					v.CallStack = append(v.CallStack, Frame{
-						Fun:      v.CurrentFun,
-						ReturnIP: v.IP,
-						Env:      v.Scope,
-						BaseSP:   calleeIdx,
-						BP:       v.BP,
-					})
-					v.BP = calleeIdx + 1
-				}
-
-				v.CurrentFun = fn.Fun
-				v.IP = 0
-				v.Scope = newEnv
-
-			case NativeFunc:
-				// Zero-allocation slice view of arguments
-				// Note: Slice is valid only until next Stack modification, which is fine for sync calls
-				args := v.OperandStack[calleeIdx+1 : v.SP]
-				res, err := fn.Func(v, args)
-
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					res = nil
-				}
-				v.OperandStack[calleeIdx] = res
-				for i := calleeIdx + 1; i < v.SP; i++ {
-					v.OperandStack[i] = nil
-				}
-				v.SP = calleeIdx + 1
-
-			default:
-				if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
-					return
-				}
-				v.drop(argc + 1)
-				v.push(nil)
+			if !v.opCall(inst, yield) {
+				return
 			}
 
 		case OpReturn:
-			retVal := v.pop()
-			n := len(v.CallStack)
-			if n == 0 {
-				if v.BP > 0 {
-					v.drop(v.SP - (v.BP - 1))
-				} else {
-					v.drop(v.SP)
-				}
-				v.push(retVal)
-				return
-			}
-			frame := v.CallStack[n-1]
-			v.CallStack = v.CallStack[:n-1]
-
-			// Restore Call Frame
-			v.CurrentFun = frame.Fun
-			v.IP = frame.ReturnIP
-			v.Scope = frame.Env
-			v.BP = frame.BP
-			// Ensure we discard any garbage left on stack by the called function
-			v.drop(v.SP - frame.BaseSP)
-
-			v.push(retVal)
+			v.opReturn()
 
 		case OpSuspend:
 			if !yield(InterruptSuspend, nil) {
@@ -309,855 +76,90 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpMakeList:
-			n := int(inst >> 8)
-			if v.SP < n {
-				if !yield(nil, fmt.Errorf("stack underflow during list creation")) {
-					return
-				}
-				continue
+			if !v.opMakeList(inst, yield) {
+				return
 			}
-			slice := make([]any, n)
-			start := v.SP - n
-			copy(slice, v.OperandStack[start:v.SP])
-			v.drop(n)
-			v.push(slice)
 
 		case OpMakeMap:
-			n := int(inst >> 8)
-			if v.SP < n*2 {
-				if !yield(nil, fmt.Errorf("stack underflow during map creation")) {
-					return
-				}
-				continue
+			if !v.opMakeMap(inst, yield) {
+				return
 			}
-			m := make(map[any]any, n)
-			start := v.SP - n*2
-			for i := range n {
-				k := v.OperandStack[start+i*2]
-				val := v.OperandStack[start+i*2+1]
-				m[k] = val
-			}
-			v.drop(n * 2)
-			v.push(m)
 
 		case OpGetIndex:
-			key := v.pop()
-			target := v.pop()
-			if target == nil {
-				if !yield(nil, fmt.Errorf("indexing nil")) {
-					return
-				}
-				v.push(nil)
-				continue
+			if !v.opGetIndex(yield) {
+				return
 			}
-
-			var val any
-			switch t := target.(type) {
-			case []any:
-				var idx int
-				var ok bool
-				switch i := key.(type) {
-				case int:
-					idx = i
-					ok = true
-				case int64:
-					idx = int(i)
-					ok = true
-				}
-
-				if !ok {
-					if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
-						return
-					}
-					val = nil
-				} else if idx < 0 || idx >= len(t) {
-					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-						return
-					}
-					val = nil
-				} else {
-					val = t[idx]
-				}
-
-			case Tuple:
-				var idx int
-				var ok bool
-				switch i := key.(type) {
-				case int:
-					idx = i
-					ok = true
-				case int64:
-					idx = int(i)
-					ok = true
-				}
-
-				if !ok {
-					if !yield(nil, fmt.Errorf("tuple index must be int, got %T", key)) {
-						return
-					}
-					val = nil
-				} else if idx < 0 || idx >= len(t) {
-					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-						return
-					}
-					val = nil
-				} else {
-					val = t[idx]
-				}
-
-			case map[any]any:
-				val = t[key]
-
-			case map[string]any:
-				if k, ok := key.(string); ok {
-					val = t[k]
-				}
-
-			default:
-				if !yield(nil, fmt.Errorf("type %T is not indexable", target)) {
-					return
-				}
-			}
-			v.push(val)
 
 		case OpSetIndex:
-			val := v.pop()
-			key := v.pop()
-			target := v.pop()
-
-			if target == nil {
-				if !yield(nil, fmt.Errorf("assignment to nil")) {
-					return
-				}
-				continue
-			}
-
-			switch t := target.(type) {
-			case []any:
-				var idx int
-				var ok bool
-				switch i := key.(type) {
-				case int:
-					idx = i
-					ok = true
-				case int64:
-					idx = int(i)
-					ok = true
-				}
-				if !ok {
-					if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
-						return
-					}
-					continue
-				}
-				if idx < 0 || idx >= len(t) {
-					if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-						return
-					}
-					continue
-				}
-				t[idx] = val
-
-			case map[any]any:
-				t[key] = val
-
-			case map[string]any:
-				if k, ok := key.(string); ok {
-					t[k] = val
-				} else {
-					if !yield(nil, fmt.Errorf("map key must be string, got %T", key)) {
-						return
-					}
-				}
-
-			default:
-				if !yield(nil, fmt.Errorf("type %T does not support assignment", target)) {
-					return
-				}
+			if !v.opSetIndex(yield) {
+				return
 			}
 
 		case OpSwap:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during swap")) {
-					return
-				}
-				continue
+			if !v.opSwap(yield) {
+				return
 			}
-			top := v.SP - 1
-			under := v.SP - 2
-			v.OperandStack[top], v.OperandStack[under] = v.OperandStack[under], v.OperandStack[top]
 
 		case OpGetLocal:
-			idx := int(inst >> 8)
-			if v.SP >= len(v.OperandStack) {
-				v.growOperandStack()
-			}
-			v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
-			v.SP++
+			v.opGetLocal(inst)
 
 		case OpSetLocal:
-			idx := int(inst >> 8)
-			var val any
-			if v.SP > 0 {
-				v.SP--
-				val = v.OperandStack[v.SP]
-				v.OperandStack[v.SP] = nil
-			}
-			v.OperandStack[v.BP+idx] = val
+			v.opSetLocal(inst)
 
 		case OpDumpTrace:
-			var msg string
-			for _, frame := range v.CallStack {
-				msg += fmt.Sprintf("%s:%d\n", frame.Fun.Name, frame.ReturnIP)
-			}
-			msg += fmt.Sprintf("%s:%d", v.CurrentFun.Name, v.IP-1)
-			if !yield(nil, fmt.Errorf("%s", msg)) {
+			if !v.opDumpTrace(yield) {
 				return
 			}
 
 		case OpBitAnd, OpBitOr, OpBitXor, OpBitLsh, OpBitRsh:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during bitwise op")) {
-					return
-				}
-				continue
-			}
-			b := v.pop()
-			a := v.pop()
-
-			if res, ok, err := bitwiseSameType(op, a, b); ok {
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				v.push(res)
-				continue
-			}
-
-			i1, ok1 := toInt64(a)
-			i2, ok2 := toInt64(b)
-			if !ok1 || !ok2 {
-				if !yield(nil, fmt.Errorf("bitwise operands must be integers, got %T and %T", a, b)) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-			var res int64
-			switch op {
-			case OpBitAnd:
-				res = i1 & i2
-			case OpBitOr:
-				res = i1 | i2
-			case OpBitXor:
-				res = i1 ^ i2
-			case OpBitLsh:
-				if i2 < 0 {
-					if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				res = i1 << uint(i2)
-			case OpBitRsh:
-				if i2 < 0 {
-					if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				res = i1 >> uint(i2)
-			}
-			v.push(res)
-
-		case OpBitNot:
-			if v.SP < 1 {
-				if !yield(nil, fmt.Errorf("stack underflow during bitwise not")) {
-					return
-				}
-				continue
-			}
-			a := v.pop()
-
-			var res any
-			switch i := a.(type) {
-			case int:
-				res = ^i
-			case int8:
-				res = ^i
-			case int16:
-				res = ^i
-			case int32:
-				res = ^i
-			case int64:
-				res = ^i
-			case uint:
-				res = ^i
-			case uint8:
-				res = ^i
-			case uint16:
-				res = ^i
-			case uint32:
-				res = ^i
-			case uint64:
-				res = ^i
-			default:
-				if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-			v.push(res)
-
-		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during math op")) {
-					return
-				}
-				continue
-			}
-			b := v.pop()
-			a := v.pop()
-
-			if op == OpAdd {
-				s1, ok1 := a.(string)
-				s2, ok2 := b.(string)
-				if ok1 && ok2 {
-					v.push(s1 + s2)
-					continue
-				}
-			}
-
-			if res, ok, err := arithmeticSameType(op, a, b); ok {
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				v.push(res)
-				continue
-			}
-
-			if isComplex(a) || isComplex(b) {
-				c1, ok1 := toComplex128(a)
-				c2, ok2 := toComplex128(b)
-				if !ok1 || !ok2 {
-					if !yield(nil, fmt.Errorf("invalid operands for complex math: %T, %T", a, b)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res complex128
-				switch op {
-				case OpAdd:
-					res = c1 + c2
-				case OpSub:
-					res = c1 - c2
-				case OpMul:
-					res = c1 * c2
-				case OpDiv:
-					if c2 == 0 {
-						if !yield(nil, fmt.Errorf("division by zero")) {
-							return
-						}
-						v.push(nil)
-						continue
-					}
-					res = c1 / c2
-				default:
-					if !yield(nil, fmt.Errorf("unsupported operation for complex numbers")) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				v.push(res)
-				continue
-			}
-
-			if isFloat(a) || isFloat(b) {
-				f1, ok1 := toFloat64(a)
-				f2, ok2 := toFloat64(b)
-				if !ok1 || !ok2 {
-					if !yield(nil, fmt.Errorf("invalid operands for float math: %T, %T", a, b)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res float64
-				switch op {
-				case OpAdd:
-					res = f1 + f2
-				case OpSub:
-					res = f1 - f2
-				case OpMul:
-					res = f1 * f2
-				case OpDiv:
-					if f2 == 0 {
-						if !yield(nil, fmt.Errorf("division by zero")) {
-							return
-						}
-						v.push(nil)
-						continue
-					}
-					res = f1 / f2
-				default:
-					if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				v.push(res)
-				continue
-			}
-
-			i1, ok1 := toInt64(a)
-			i2, ok2 := toInt64(b)
-			if !ok1 || !ok2 {
-				if !yield(nil, fmt.Errorf("math operands must be numeric, got %T and %T", a, b)) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-
-			var res int64
-			switch op {
-			case OpAdd:
-				res = i1 + i2
-			case OpSub:
-				res = i1 - i2
-			case OpMul:
-				res = i1 * i2
-			case OpDiv:
-				if i2 == 0 {
-					if !yield(nil, fmt.Errorf("division by zero")) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				res = i1 / i2
-			case OpMod:
-				if i2 == 0 {
-					if !yield(nil, fmt.Errorf("division by zero")) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				res = i1 % i2
-			}
-			v.push(res)
-
-		case OpEq, OpNe:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
-					return
-				}
-				continue
-			}
-			b := v.pop()
-			a := v.pop()
-			match := a == b
-			if !match {
-				i1, ok1 := toInt64(a)
-				i2, ok2 := toInt64(b)
-				if ok1 && ok2 {
-					match = i1 == i2
-				} else {
-					f1, ok1 := toFloat64(a)
-					f2, ok2 := toFloat64(b)
-					if ok1 && ok2 {
-						match = f1 == f2
-					}
-				}
-			}
-
-			if op == OpEq {
-				v.push(match)
-			} else {
-				v.push(!match)
-			}
-
-		case OpLt, OpLe, OpGt, OpGe:
-			if v.SP < 2 {
-				if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
-					return
-				}
-				continue
-			}
-			b := v.pop()
-			a := v.pop()
-
-			if s1, ok := a.(string); ok {
-				if s2, ok := b.(string); ok {
-					var res bool
-					switch op {
-					case OpLt:
-						res = s1 < s2
-					case OpLe:
-						res = s1 <= s2
-					case OpGt:
-						res = s1 > s2
-					case OpGe:
-						res = s1 >= s2
-					}
-					v.push(res)
-					continue
-				}
-			}
-
-			if isComplex(a) || isComplex(b) {
-				if !yield(nil, fmt.Errorf("complex numbers are not ordered")) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-
-			if isFloat(a) || isFloat(b) {
-				f1, ok1 := toFloat64(a)
-				f2, ok2 := toFloat64(b)
-				if !ok1 || !ok2 {
-					if !yield(nil, fmt.Errorf("invalid operands for float comparison: %T, %T", a, b)) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res bool
-				switch op {
-				case OpLt:
-					res = f1 < f2
-				case OpLe:
-					res = f1 <= f2
-				case OpGt:
-					res = f1 > f2
-				case OpGe:
-					res = f1 >= f2
-				}
-				v.push(res)
-				continue
-			}
-
-			i1, ok1 := toInt64(a)
-			i2, ok2 := toInt64(b)
-			if ok1 && ok2 {
-				var res bool
-				switch op {
-				case OpLt:
-					res = i1 < i2
-				case OpLe:
-					res = i1 <= i2
-				case OpGt:
-					res = i1 > i2
-				case OpGe:
-					res = i1 >= i2
-				}
-				v.push(res)
-				continue
-			}
-
-			if !yield(nil, fmt.Errorf("unsupported type for comparison: %T vs %T", a, b)) {
+			if !v.opBitwise(op, yield) {
 				return
 			}
-			v.push(nil)
+
+		case OpBitNot:
+			if !v.opBitNot(yield) {
+				return
+			}
+
+		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
+			if !v.opMath(op, yield) {
+				return
+			}
+
+		case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+			if !v.opCompare(op, yield) {
+				return
+			}
 
 		case OpNot:
-			if v.SP < 1 {
-				if !yield(nil, fmt.Errorf("stack underflow during not")) {
-					return
-				}
-				continue
+			if !v.opNot(yield) {
+				return
 			}
-			val := v.pop()
-			v.push(isZero(val))
 
 		case OpGetIter:
-			if v.SP < 1 {
-				if !yield(nil, fmt.Errorf("stack underflow during getiter")) {
-					return
-				}
-				continue
-			}
-			val := v.pop()
-			if val == nil {
-				if !yield(nil, fmt.Errorf("not iterable: nil")) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-
-			switch t := val.(type) {
-			case []any:
-				v.push(&ListIterator{List: t})
-			case Tuple:
-				v.push(&ListIterator{List: []any(t)})
-			case map[any]any:
-				keys := make([]any, 0, len(t))
-				for k := range t {
-					keys = append(keys, k)
-				}
-				// Try to sort if all keys are strings to ensure deterministic iteration
-				allStrings := true
-				for _, k := range keys {
-					if _, ok := k.(string); !ok {
-						allStrings = false
-						break
-					}
-				}
-				if allStrings {
-					sort.Slice(keys, func(i, j int) bool {
-						return keys[i].(string) < keys[j].(string)
-					})
-				}
-				v.push(&MapIterator{Keys: keys})
-			default:
-				if !yield(nil, fmt.Errorf("type %T is not iterable", val)) {
-					return
-				}
-				v.push(nil)
+			if !v.opGetIter(yield) {
+				return
 			}
 
 		case OpNextIter:
-			offset := int(int32(inst) >> 8)
-			if v.SP < 1 {
-				if !yield(nil, fmt.Errorf("stack underflow during nextiter")) {
-					return
-				}
-				continue
-			}
-			iter := v.OperandStack[v.SP-1] // Peek iterator
-
-			switch it := iter.(type) {
-			case *ListIterator:
-				if it.Idx < len(it.List) {
-					v.push(it.List[it.Idx])
-					it.Idx++
-				} else {
-					v.pop() // pop iterator
-					v.IP += offset
-				}
-			case *MapIterator:
-				if it.Idx < len(it.Keys) {
-					v.push(it.Keys[it.Idx])
-					it.Idx++
-				} else {
-					v.pop() // pop iterator
-					v.IP += offset
-				}
-			default:
-				if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
-					return
-				}
+			if !v.opNextIter(inst, yield) {
+				return
 			}
 
 		case OpMakeTuple:
-			n := int(inst >> 8)
-			if v.SP < n {
-				if !yield(nil, fmt.Errorf("stack underflow during tuple creation")) {
-					return
-				}
-				continue
+			if !v.opMakeTuple(inst, yield) {
+				return
 			}
-			slice := make([]any, n)
-			start := v.SP - n
-			copy(slice, v.OperandStack[start:v.SP])
-			v.drop(n)
-			v.push(Tuple(slice))
 
 		case OpGetSlice:
-			if v.SP < 4 {
-				if !yield(nil, fmt.Errorf("stack underflow during getslice")) {
-					return
-				}
-				continue
-			}
-			step := v.pop()
-			hi := v.pop()
-			lo := v.pop()
-			target := v.pop()
-
-			if target == nil {
-				if !yield(nil, fmt.Errorf("slicing nil")) {
-					return
-				}
-				v.push(nil)
-				continue
-			}
-
-			switch t := target.(type) {
-			case string:
-				runes := []rune(t)
-				start, stop, stepInt, err := resolveSliceIndices(len(runes), lo, hi, step)
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res []rune
-				if stepInt > 0 {
-					for i := start; i < stop; i += stepInt {
-						res = append(res, runes[i])
-					}
-				} else {
-					for i := start; i > stop; i += stepInt {
-						res = append(res, runes[i])
-					}
-				}
-				v.push(string(res))
-
-			case []any:
-				start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res []any
-				if stepInt > 0 {
-					for i := start; i < stop; i += stepInt {
-						res = append(res, t[i])
-					}
-				} else {
-					for i := start; i > stop; i += stepInt {
-						res = append(res, t[i])
-					}
-				}
-				v.push(res)
-
-			case Tuple:
-				start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
-				if err != nil {
-					if !yield(nil, err) {
-						return
-					}
-					v.push(nil)
-					continue
-				}
-				var res []any
-				if stepInt > 0 {
-					for i := start; i < stop; i += stepInt {
-						res = append(res, t[i])
-					}
-				} else {
-					for i := start; i > stop; i += stepInt {
-						res = append(res, t[i])
-					}
-				}
-				v.push(Tuple(res))
-
-			default:
-				if !yield(nil, fmt.Errorf("type %T is not sliceable", target)) {
-					return
-				}
-				v.push(nil)
+			if !v.opGetSlice(yield) {
+				return
 			}
 
 		case OpSetSlice:
-			if v.SP < 5 {
-				if !yield(nil, fmt.Errorf("stack underflow during setslice")) {
-					return
-				}
-				continue
+			if !v.opSetSlice(yield) {
+				return
 			}
-			val := v.pop()
-			step := v.pop()
-			hi := v.pop()
-			lo := v.pop()
-			target := v.pop()
-
-			t, ok := target.([]any)
-			if !ok {
-				if !yield(nil, fmt.Errorf("type %T does not support slice assignment", target)) {
-					return
-				}
-				continue
-			}
-
-			start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
-			if err != nil {
-				if !yield(nil, err) {
-					return
-				}
-				continue
-			}
-
-			// Convert value to list of items
-			var items []any
-			switch v := val.(type) {
-			case []any:
-				items = v
-			case Tuple:
-				items = []any(v)
-			case string:
-				for _, r := range v {
-					items = append(items, string(r))
-				}
-			default:
-				if !yield(nil, fmt.Errorf("can only assign iterable to slice, got %T", val)) {
-					return
-				}
-				continue
-			}
-
-			if stepInt != 1 {
-				// Extended slice assignment
-				// Target count must match value count
-				n := 0
-				if stepInt > 0 {
-					if stop > start {
-						n = (stop - start + stepInt - 1) / stepInt
-					}
-				} else {
-					if start > stop {
-						n = (start - stop - stepInt - 1) / -stepInt
-					}
-				}
-				if len(items) != n {
-					if !yield(nil, fmt.Errorf("attempt to assign sequence of size %d to extended slice of size %d", len(items), n)) {
-						return
-					}
-					continue
-				}
-				for i := 0; i < n; i++ {
-					t[start+i*stepInt] = items[i]
-				}
-
-			} else {
-				// Standard slice assignment: replace [start:stop] with items
-				if stop < start {
-					stop = start
-				}
-				delta := len(items) - (stop - start)
-				if delta != 0 {
-					if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
-						return
-					}
-					continue
-				}
-				for i := range items {
-					t[start+i] = items[i]
-				}
-			}
-
 		}
 
 	}
@@ -1461,4 +463,1184 @@ func resolveSliceIndices(length int, start, stop, step any) (int, int, int, erro
 	}
 
 	return startInt, stopInt, stepInt, nil
+}
+
+func (v *VM) opLoadConst(inst OpCode) {
+	idx := int(inst >> 8)
+	if v.SP >= len(v.OperandStack) {
+		v.growOperandStack()
+	}
+	v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
+	v.SP++
+}
+
+func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	idx := int(inst >> 8)
+	c := v.CurrentFun.Constants[idx]
+	var sym Symbol
+	if s, ok := c.(Symbol); ok {
+		sym = s
+	} else {
+		sym = v.Intern(c.(string))
+	}
+	val, ok := v.Scope.GetSym(sym)
+	if !ok {
+		name := v.Symbols.SymToStr[sym]
+		if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	v.push(val)
+	return true
+}
+
+func (v *VM) opDefVar(inst OpCode) {
+	idx := int(inst >> 8)
+	c := v.CurrentFun.Constants[idx]
+	var sym Symbol
+	if s, ok := c.(Symbol); ok {
+		sym = s
+	} else {
+		sym = v.Intern(c.(string))
+	}
+	v.Scope.DefSym(sym, v.pop())
+}
+
+func (v *VM) opSetVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	idx := int(inst >> 8)
+	c := v.CurrentFun.Constants[idx]
+	var sym Symbol
+	if s, ok := c.(Symbol); ok {
+		sym = s
+	} else {
+		sym = v.Intern(c.(string))
+	}
+	val := v.pop()
+	if !v.Scope.SetSym(sym, val) {
+		name := v.Symbols.SymToStr[sym]
+		if !yield(nil, fmt.Errorf("variable not found: %s", name)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *VM) opPop() {
+	if v.SP > 0 {
+		v.SP--
+		v.OperandStack[v.SP] = nil
+	}
+}
+
+func (v *VM) opDup(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during dup")) {
+			return false
+		}
+		return true
+	}
+	v.push(v.OperandStack[v.SP-1])
+	return true
+}
+
+func (v *VM) opDup2(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during dup2")) {
+			return false
+		}
+		return true
+	}
+	b := v.OperandStack[v.SP-1]
+	a := v.OperandStack[v.SP-2]
+	v.push(a)
+	v.push(b)
+	return true
+}
+
+func (v *VM) opJump(inst OpCode) {
+	offset := int(int32(inst) >> 8)
+	v.IP += offset
+}
+
+func (v *VM) opJumpFalse(inst OpCode) {
+	offset := int(int32(inst) >> 8)
+	var val any
+	if v.SP > 0 {
+		v.SP--
+		val = v.OperandStack[v.SP]
+		v.OperandStack[v.SP] = nil
+	}
+	if isZero(val) {
+		v.IP += offset
+	}
+}
+
+func (v *VM) opMakeClosure(inst OpCode) {
+	idx := int(inst >> 8)
+	fun := v.CurrentFun.Constants[idx].(*Function)
+	paramSyms := make([]Symbol, len(fun.ParamNames))
+	var maxSym int
+	for i, name := range fun.ParamNames {
+		sym := v.Intern(name)
+		paramSyms[i] = sym
+		if int(sym) > maxSym {
+			maxSym = int(sym)
+		}
+	}
+	v.push(&Closure{
+		Fun:         fun,
+		Env:         v.Scope,
+		ParamSyms:   paramSyms,
+		MaxParamSym: maxSym,
+	})
+}
+
+func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	argc := int(inst >> 8)
+	if v.SP < argc+1 {
+		if !yield(nil, fmt.Errorf("stack underflow during call")) {
+			return false
+		}
+		return true
+	}
+
+	// Callee is below args on the stack
+	calleeIdx := v.SP - argc - 1
+	callee := v.OperandStack[calleeIdx]
+
+	switch fn := callee.(type) {
+	case *Closure:
+		return v.callClosure(fn, argc, calleeIdx, yield)
+
+	case NativeFunc:
+		return v.callNative(fn, argc, calleeIdx, yield)
+
+	default:
+		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
+			return false
+		}
+		v.drop(argc + 1)
+		v.push(nil)
+		return true
+	}
+}
+
+func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
+	numParams := fn.Fun.NumParams
+	if fn.Fun.Variadic {
+		if argc < numParams-1 {
+			if !yield(nil, fmt.Errorf("arity mismatch: want at least %d, got %d", numParams-1, argc)) {
+				return false
+			}
+			v.drop(argc + 1)
+			v.push(nil)
+			return true
+		}
+
+		fixed := numParams - 1
+		varArgsCount := argc - fixed
+		slice := make([]any, varArgsCount)
+		base := calleeIdx + 1 + fixed
+		copy(slice, v.OperandStack[base:base+varArgsCount])
+
+		if varArgsCount == 0 {
+			v.push(slice)
+		} else {
+			v.OperandStack[base] = slice
+			for i := base + 1; i < v.SP; i++ {
+				v.OperandStack[i] = nil
+			}
+			v.SP = base + 1
+		}
+		argc = numParams
+
+	} else if argc != numParams {
+		if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", numParams, argc)) {
+			return false
+		}
+		v.drop(argc + 1)
+		v.push(nil)
+		return true
+	}
+
+	newEnv := fn.Env.NewChild()
+
+	paramSyms := fn.ParamSyms
+	maxSym := fn.MaxParamSym
+	if paramSyms == nil && len(fn.Fun.ParamNames) > 0 {
+		paramSyms = make([]Symbol, len(fn.Fun.ParamNames))
+		for i, name := range fn.Fun.ParamNames {
+			sym := v.Intern(name)
+			paramSyms[i] = sym
+			if int(sym) > maxSym {
+				maxSym = int(sym)
+			}
+		}
+		fn.ParamSyms = paramSyms
+		fn.MaxParamSym = maxSym
+	}
+
+	if len(paramSyms) > 0 {
+		newEnv.Grow(maxSym)
+	}
+
+	// Bind arguments from stack directly to new environment
+	for i := range argc {
+		newEnv.DefSym(paramSyms[i], v.OperandStack[calleeIdx+1+i])
+	}
+
+	// Tail Call Optimization
+	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
+		dst := v.BP
+		if dst > 0 {
+			dst--
+		}
+		src := calleeIdx
+		count := argc + 1
+		copy(v.OperandStack[dst:], v.OperandStack[src:src+count])
+
+		// Nil out use locations to avoid leakage
+		startClean := dst + count
+		endClean := v.SP
+		clear(v.OperandStack[startClean:endClean])
+
+		v.SP = startClean
+		v.BP = dst + 1
+	} else {
+		v.CallStack = append(v.CallStack, Frame{
+			Fun:      v.CurrentFun,
+			ReturnIP: v.IP,
+			Env:      v.Scope,
+			BaseSP:   calleeIdx,
+			BP:       v.BP,
+		})
+		v.BP = calleeIdx + 1
+	}
+
+	v.CurrentFun = fn.Fun
+	v.IP = 0
+	v.Scope = newEnv
+	return true
+}
+
+func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
+	// Zero-allocation slice view of arguments
+	// Note: Slice is valid only until next Stack modification, which is fine for sync calls
+	args := v.OperandStack[calleeIdx+1 : v.SP]
+	res, err := fn.Func(v, args)
+
+	if err != nil {
+		if !yield(nil, err) {
+			return false
+		}
+		res = nil
+	}
+	v.OperandStack[calleeIdx] = res
+	for i := calleeIdx + 1; i < v.SP; i++ {
+		v.OperandStack[i] = nil
+	}
+	v.SP = calleeIdx + 1
+	return true
+}
+
+func (v *VM) opReturn() {
+	retVal := v.pop()
+	n := len(v.CallStack)
+	if n == 0 {
+		if v.BP > 0 {
+			v.drop(v.SP - (v.BP - 1))
+		} else {
+			v.drop(v.SP)
+		}
+		v.push(retVal)
+		return
+	}
+	frame := v.CallStack[n-1]
+	v.CallStack = v.CallStack[:n-1]
+
+	// Restore Call Frame
+	v.CurrentFun = frame.Fun
+	v.IP = frame.ReturnIP
+	v.Scope = frame.Env
+	v.BP = frame.BP
+	// Ensure we discard any garbage left on stack by the called function
+	v.drop(v.SP - frame.BaseSP)
+
+	v.push(retVal)
+}
+
+func (v *VM) opMakeList(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	n := int(inst >> 8)
+	if v.SP < n {
+		if !yield(nil, fmt.Errorf("stack underflow during list creation")) {
+			return false
+		}
+		return true
+	}
+	slice := make([]any, n)
+	start := v.SP - n
+	copy(slice, v.OperandStack[start:v.SP])
+	v.drop(n)
+	v.push(slice)
+	return true
+}
+
+func (v *VM) opMakeMap(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	n := int(inst >> 8)
+	if v.SP < n*2 {
+		if !yield(nil, fmt.Errorf("stack underflow during map creation")) {
+			return false
+		}
+		return true
+	}
+	m := make(map[any]any, n)
+	start := v.SP - n*2
+	for i := range n {
+		k := v.OperandStack[start+i*2]
+		val := v.OperandStack[start+i*2+1]
+		m[k] = val
+	}
+	v.drop(n * 2)
+	v.push(m)
+	return true
+}
+
+func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
+	key := v.pop()
+	target := v.pop()
+	if target == nil {
+		if !yield(nil, fmt.Errorf("indexing nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	var val any
+	switch t := target.(type) {
+	case []any:
+		var idx int
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = i
+			ok = true
+		case int64:
+			idx = int(i)
+			ok = true
+		}
+
+		if !ok {
+			if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
+				return false
+			}
+			val = nil
+		} else if idx < 0 || idx >= len(t) {
+			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+				return false
+			}
+			val = nil
+		} else {
+			val = t[idx]
+		}
+
+	case Tuple:
+		var idx int
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = i
+			ok = true
+		case int64:
+			idx = int(i)
+			ok = true
+		}
+
+		if !ok {
+			if !yield(nil, fmt.Errorf("tuple index must be int, got %T", key)) {
+				return false
+			}
+			val = nil
+		} else if idx < 0 || idx >= len(t) {
+			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+				return false
+			}
+			val = nil
+		} else {
+			val = t[idx]
+		}
+
+	case map[any]any:
+		val = t[key]
+
+	case map[string]any:
+		if k, ok := key.(string); ok {
+			val = t[k]
+		}
+
+	default:
+		if !yield(nil, fmt.Errorf("type %T is not indexable", target)) {
+			return false
+		}
+	}
+	v.push(val)
+	return true
+}
+
+func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
+	val := v.pop()
+	key := v.pop()
+	target := v.pop()
+
+	if target == nil {
+		if !yield(nil, fmt.Errorf("assignment to nil")) {
+			return false
+		}
+		return true
+	}
+
+	switch t := target.(type) {
+	case []any:
+		var idx int
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = i
+			ok = true
+		case int64:
+			idx = int(i)
+			ok = true
+		}
+		if !ok {
+			if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
+				return false
+			}
+			return true
+		}
+		if idx < 0 || idx >= len(t) {
+			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+				return false
+			}
+			return true
+		}
+		t[idx] = val
+
+	case map[any]any:
+		t[key] = val
+
+	case map[string]any:
+		if k, ok := key.(string); ok {
+			t[k] = val
+		} else {
+			if !yield(nil, fmt.Errorf("map key must be string, got %T", key)) {
+				return false
+			}
+		}
+
+	default:
+		if !yield(nil, fmt.Errorf("type %T does not support assignment", target)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *VM) opSwap(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during swap")) {
+			return false
+		}
+		return true
+	}
+	top := v.SP - 1
+	under := v.SP - 2
+	v.OperandStack[top], v.OperandStack[under] = v.OperandStack[under], v.OperandStack[top]
+	return true
+}
+
+func (v *VM) opGetLocal(inst OpCode) {
+	idx := int(inst >> 8)
+	if v.SP >= len(v.OperandStack) {
+		v.growOperandStack()
+	}
+	v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
+	v.SP++
+}
+
+func (v *VM) opSetLocal(inst OpCode) {
+	idx := int(inst >> 8)
+	var val any
+	if v.SP > 0 {
+		v.SP--
+		val = v.OperandStack[v.SP]
+		v.OperandStack[v.SP] = nil
+	}
+	v.OperandStack[v.BP+idx] = val
+}
+
+func (v *VM) opDumpTrace(yield func(*Interrupt, error) bool) bool {
+	var msg string
+	for _, frame := range v.CallStack {
+		msg += fmt.Sprintf("%s:%d\n", frame.Fun.Name, frame.ReturnIP)
+	}
+	msg += fmt.Sprintf("%s:%d", v.CurrentFun.Name, v.IP-1)
+	return yield(nil, fmt.Errorf("%s", msg))
+}
+
+func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during bitwise op")) {
+			return false
+		}
+		return true
+	}
+	b := v.pop()
+	a := v.pop()
+
+	if res, ok, err := bitwiseSameType(op, a, b); ok {
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(res)
+		return true
+	}
+
+	i1, ok1 := toInt64(a)
+	i2, ok2 := toInt64(b)
+	if !ok1 || !ok2 {
+		if !yield(nil, fmt.Errorf("bitwise operands must be integers, got %T and %T", a, b)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	var res int64
+	switch op {
+	case OpBitAnd:
+		res = i1 & i2
+	case OpBitOr:
+		res = i1 | i2
+	case OpBitXor:
+		res = i1 ^ i2
+	case OpBitLsh:
+		if i2 < 0 {
+			if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res = i1 << uint(i2)
+	case OpBitRsh:
+		if i2 < 0 {
+			if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res = i1 >> uint(i2)
+	}
+	v.push(res)
+	return true
+}
+
+func (v *VM) opBitNot(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during bitwise not")) {
+			return false
+		}
+		return true
+	}
+	a := v.pop()
+
+	var res any
+	switch i := a.(type) {
+	case int:
+		res = ^i
+	case int8:
+		res = ^i
+	case int16:
+		res = ^i
+	case int32:
+		res = ^i
+	case int64:
+		res = ^i
+	case uint:
+		res = ^i
+	case uint8:
+		res = ^i
+	case uint16:
+		res = ^i
+	case uint32:
+		res = ^i
+	case uint64:
+		res = ^i
+	default:
+		if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	v.push(res)
+	return true
+}
+
+func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during math op")) {
+			return false
+		}
+		return true
+	}
+	b := v.pop()
+	a := v.pop()
+
+	if op == OpAdd {
+		s1, ok1 := a.(string)
+		s2, ok2 := b.(string)
+		if ok1 && ok2 {
+			v.push(s1 + s2)
+			return true
+		}
+	}
+
+	if res, ok, err := arithmeticSameType(op, a, b); ok {
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(res)
+		return true
+	}
+
+	if isComplex(a) || isComplex(b) {
+		c1, ok1 := toComplex128(a)
+		c2, ok2 := toComplex128(b)
+		if !ok1 || !ok2 {
+			if !yield(nil, fmt.Errorf("invalid operands for complex math: %T, %T", a, b)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res complex128
+		switch op {
+		case OpAdd:
+			res = c1 + c2
+		case OpSub:
+			res = c1 - c2
+		case OpMul:
+			res = c1 * c2
+		case OpDiv:
+			if c2 == 0 {
+				if !yield(nil, fmt.Errorf("division by zero")) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			res = c1 / c2
+		default:
+			if !yield(nil, fmt.Errorf("unsupported operation for complex numbers")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(res)
+		return true
+	}
+
+	if isFloat(a) || isFloat(b) {
+		f1, ok1 := toFloat64(a)
+		f2, ok2 := toFloat64(b)
+		if !ok1 || !ok2 {
+			if !yield(nil, fmt.Errorf("invalid operands for float math: %T, %T", a, b)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res float64
+		switch op {
+		case OpAdd:
+			res = f1 + f2
+		case OpSub:
+			res = f1 - f2
+		case OpMul:
+			res = f1 * f2
+		case OpDiv:
+			if f2 == 0 {
+				if !yield(nil, fmt.Errorf("division by zero")) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			res = f1 / f2
+		default:
+			if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(res)
+		return true
+	}
+
+	i1, ok1 := toInt64(a)
+	i2, ok2 := toInt64(b)
+	if !ok1 || !ok2 {
+		if !yield(nil, fmt.Errorf("math operands must be numeric, got %T and %T", a, b)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	var res int64
+	switch op {
+	case OpAdd:
+		res = i1 + i2
+	case OpSub:
+		res = i1 - i2
+	case OpMul:
+		res = i1 * i2
+	case OpDiv:
+		if i2 == 0 {
+			if !yield(nil, fmt.Errorf("division by zero")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res = i1 / i2
+	case OpMod:
+		if i2 == 0 {
+			if !yield(nil, fmt.Errorf("division by zero")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res = i1 % i2
+	}
+	v.push(res)
+	return true
+}
+
+func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
+			return false
+		}
+		return true
+	}
+	b := v.pop()
+	a := v.pop()
+	match := a == b
+	if !match {
+		i1, ok1 := toInt64(a)
+		i2, ok2 := toInt64(b)
+		if ok1 && ok2 {
+			match = i1 == i2
+		} else {
+			f1, ok1 := toFloat64(a)
+			f2, ok2 := toFloat64(b)
+			if ok1 && ok2 {
+				match = f1 == f2
+			}
+		}
+	}
+
+	switch op {
+	case OpEq:
+		v.push(match)
+		return true
+	case OpNe:
+		v.push(!match)
+		return true
+	}
+
+	if s1, ok := a.(string); ok {
+		if s2, ok := b.(string); ok {
+			var res bool
+			switch op {
+			case OpLt:
+				res = s1 < s2
+			case OpLe:
+				res = s1 <= s2
+			case OpGt:
+				res = s1 > s2
+			case OpGe:
+				res = s1 >= s2
+			}
+			v.push(res)
+			return true
+		}
+	}
+
+	if isComplex(a) || isComplex(b) {
+		if !yield(nil, fmt.Errorf("complex numbers are not ordered")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	if isFloat(a) || isFloat(b) {
+		f1, ok1 := toFloat64(a)
+		f2, ok2 := toFloat64(b)
+		if !ok1 || !ok2 {
+			if !yield(nil, fmt.Errorf("invalid operands for float comparison: %T, %T", a, b)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res bool
+		switch op {
+		case OpLt:
+			res = f1 < f2
+		case OpLe:
+			res = f1 <= f2
+		case OpGt:
+			res = f1 > f2
+		case OpGe:
+			res = f1 >= f2
+		}
+		v.push(res)
+		return true
+	}
+
+	i1, ok1 := toInt64(a)
+	i2, ok2 := toInt64(b)
+	if ok1 && ok2 {
+		var res bool
+		switch op {
+		case OpLt:
+			res = i1 < i2
+		case OpLe:
+			res = i1 <= i2
+		case OpGt:
+			res = i1 > i2
+		case OpGe:
+			res = i1 >= i2
+		}
+		v.push(res)
+		return true
+	}
+
+	if !yield(nil, fmt.Errorf("unsupported type for comparison: %T vs %T", a, b)) {
+		return false
+	}
+	v.push(nil)
+	return true
+}
+
+func (v *VM) opNot(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during not")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+	v.push(isZero(val))
+	return true
+}
+
+func (v *VM) opGetIter(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during getiter")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+	if val == nil {
+		if !yield(nil, fmt.Errorf("not iterable: nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	switch t := val.(type) {
+	case []any:
+		v.push(&ListIterator{List: t})
+	case Tuple:
+		v.push(&ListIterator{List: []any(t)})
+	case map[any]any:
+		keys := make([]any, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		// Try to sort if all keys are strings to ensure deterministic iteration
+		allStrings := true
+		for _, k := range keys {
+			if _, ok := k.(string); !ok {
+				allStrings = false
+				break
+			}
+		}
+		if allStrings {
+			sort.Slice(keys, func(i, j int) bool {
+				return keys[i].(string) < keys[j].(string)
+			})
+		}
+		v.push(&MapIterator{Keys: keys})
+	default:
+		if !yield(nil, fmt.Errorf("type %T is not iterable", val)) {
+			return false
+		}
+		v.push(nil)
+	}
+	return true
+}
+
+func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	offset := int(int32(inst) >> 8)
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during nextiter")) {
+			return false
+		}
+		return true
+	}
+	iter := v.OperandStack[v.SP-1] // Peek iterator
+
+	switch it := iter.(type) {
+	case *ListIterator:
+		if it.Idx < len(it.List) {
+			v.push(it.List[it.Idx])
+			it.Idx++
+		} else {
+			v.pop() // pop iterator
+			v.IP += offset
+		}
+	case *MapIterator:
+		if it.Idx < len(it.Keys) {
+			v.push(it.Keys[it.Idx])
+			it.Idx++
+		} else {
+			v.pop() // pop iterator
+			v.IP += offset
+		}
+	default:
+		if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *VM) opMakeTuple(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	n := int(inst >> 8)
+	if v.SP < n {
+		if !yield(nil, fmt.Errorf("stack underflow during tuple creation")) {
+			return false
+		}
+		return true
+	}
+	slice := make([]any, n)
+	start := v.SP - n
+	copy(slice, v.OperandStack[start:v.SP])
+	v.drop(n)
+	v.push(Tuple(slice))
+	return true
+}
+
+func (v *VM) opGetSlice(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 4 {
+		if !yield(nil, fmt.Errorf("stack underflow during getslice")) {
+			return false
+		}
+		return true
+	}
+	step := v.pop()
+	hi := v.pop()
+	lo := v.pop()
+	target := v.pop()
+
+	if target == nil {
+		if !yield(nil, fmt.Errorf("slicing nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	switch t := target.(type) {
+	case string:
+		runes := []rune(t)
+		start, stop, stepInt, err := resolveSliceIndices(len(runes), lo, hi, step)
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res []rune
+		if stepInt > 0 {
+			for i := start; i < stop; i += stepInt {
+				res = append(res, runes[i])
+			}
+		} else {
+			for i := start; i > stop; i += stepInt {
+				res = append(res, runes[i])
+			}
+		}
+		v.push(string(res))
+
+	case []any:
+		start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res []any
+		if stepInt > 0 {
+			for i := start; i < stop; i += stepInt {
+				res = append(res, t[i])
+			}
+		} else {
+			for i := start; i > stop; i += stepInt {
+				res = append(res, t[i])
+			}
+		}
+		v.push(res)
+
+	case Tuple:
+		start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		var res []any
+		if stepInt > 0 {
+			for i := start; i < stop; i += stepInt {
+				res = append(res, t[i])
+			}
+		} else {
+			for i := start; i > stop; i += stepInt {
+				res = append(res, t[i])
+			}
+		}
+		v.push(Tuple(res))
+
+	default:
+		if !yield(nil, fmt.Errorf("type %T is not sliceable", target)) {
+			return false
+		}
+		v.push(nil)
+	}
+	return true
+}
+
+func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 5 {
+		if !yield(nil, fmt.Errorf("stack underflow during setslice")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+	step := v.pop()
+	hi := v.pop()
+	lo := v.pop()
+	target := v.pop()
+
+	t, ok := target.([]any)
+	if !ok {
+		if !yield(nil, fmt.Errorf("type %T does not support slice assignment", target)) {
+			return false
+		}
+		return true
+	}
+
+	start, stop, stepInt, err := resolveSliceIndices(len(t), lo, hi, step)
+	if err != nil {
+		if !yield(nil, err) {
+			return false
+		}
+		return true
+	}
+
+	// Convert value to list of items
+	var items []any
+	switch v := val.(type) {
+	case []any:
+		items = v
+	case Tuple:
+		items = []any(v)
+	case string:
+		for _, r := range v {
+			items = append(items, string(r))
+		}
+	default:
+		if !yield(nil, fmt.Errorf("can only assign iterable to slice, got %T", val)) {
+			return false
+		}
+		return true
+	}
+
+	if stepInt != 1 {
+		// Extended slice assignment
+		// Target count must match value count
+		n := 0
+		if stepInt > 0 {
+			if stop > start {
+				n = (stop - start + stepInt - 1) / stepInt
+			}
+		} else {
+			if start > stop {
+				n = (start - stop - stepInt - 1) / -stepInt
+			}
+		}
+		if len(items) != n {
+			if !yield(nil, fmt.Errorf("attempt to assign sequence of size %d to extended slice of size %d", len(items), n)) {
+				return false
+			}
+			return true
+		}
+		for i := 0; i < n; i++ {
+			t[start+i*stepInt] = items[i]
+		}
+
+	} else {
+		// Standard slice assignment: replace [start:stop] with items
+		if stop < start {
+			stop = start
+		}
+		delta := len(items) - (stop - start)
+		if delta != 0 {
+			if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
+				return false
+			}
+			return true
+		}
+		for i := range items {
+			t[start+i] = items[i]
+		}
+	}
+	return true
 }
