@@ -1,4 +1,4 @@
-package tailang
+package taivm
 
 type Function struct {
 	Name       string

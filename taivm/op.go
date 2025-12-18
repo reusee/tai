@@ -1,4 +1,4 @@
-package tailang
+package taivm
 
 type OpCode uint32
 

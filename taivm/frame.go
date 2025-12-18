@@ -1,4 +1,4 @@
-package tailang
+package taivm
 
 type Frame struct {
 	Fun      *Function

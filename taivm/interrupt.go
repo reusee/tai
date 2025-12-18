@@ -1,4 +1,4 @@
-package tailang
+package taivm
 
 type Interrupt struct {
 	Suspend bool

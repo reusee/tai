@@ -2,6 +2,7 @@ package tailang
 
 import (
 	"fmt"
+	"github.com/reusee/tai/taivm"
 	"unicode"
 )
 
@@ -10,18 +11,18 @@ type Compiler struct {
 	curr        *Token
 	next        *Token
 
-	fun       *Function
+	fun       *taivm.Function
 	constants map[any]int
 
 	arities map[string]int
 }
 
-func Compile(name string, stream TokenStream) (*Function, error) {
+func Compile(name string, stream TokenStream) (*taivm.Function, error) {
 	c := &Compiler{
 		tokenStream: stream,
-		fun: &Function{
+		fun: &taivm.Function{
 			Name: name,
-			Code: make([]OpCode, 0),
+			Code: make([]taivm.OpCode, 0),
 		},
 		constants: make(map[any]int),
 		arities: map[string]int{
@@ -56,7 +57,7 @@ func Compile(name string, stream TokenStream) (*Function, error) {
 		}
 	}
 
-	c.emit(OpReturn)
+	c.emit(taivm.OpReturn)
 
 	return c.fun, nil
 }
@@ -109,7 +110,7 @@ func (c *Compiler) consume(kind TokenKind, errMsg string) error {
 	return fmt.Errorf("%s, got %v (%q)", errMsg, c.curr.Kind, c.curr.Text)
 }
 
-func (c *Compiler) emit(op OpCode) {
+func (c *Compiler) emit(op taivm.OpCode) {
 	c.fun.Code = append(c.fun.Code, op)
 }
 
@@ -141,9 +142,9 @@ func (c *Compiler) parseStatement() error {
 			} else {
 				// Return nil
 				idx := c.makeConstant(nil)
-				c.emit(OpLoadConst.With(idx))
+				c.emit(taivm.OpLoadConst.With(idx))
 			}
-			c.emit(OpReturn)
+			c.emit(taivm.OpReturn)
 			return nil
 		}
 	}
@@ -169,7 +170,7 @@ func (c *Compiler) parseDef() error {
 	}
 
 	idx := c.makeConstant(name)
-	c.emit(OpDefVar.With(idx))
+	c.emit(taivm.OpDefVar.With(idx))
 	return nil
 }
 
@@ -186,7 +187,7 @@ func (c *Compiler) parseSet() error {
 	}
 
 	idx := c.makeConstant(name)
-	c.emit(OpSetVar.With(idx))
+	c.emit(taivm.OpSetVar.With(idx))
 	return nil
 }
 
@@ -200,7 +201,7 @@ func (c *Compiler) parseIf() error {
 
 	// JumpFalse placeholder
 	jumpFalseIdx := len(c.fun.Code)
-	c.emit(OpJumpFalse.With(0))
+	c.emit(taivm.OpJumpFalse.With(0))
 
 	// True Block
 	if err := c.parseBlockBody(); err != nil {
@@ -209,11 +210,11 @@ func (c *Compiler) parseIf() error {
 
 	// Jump placeholder (skip Else)
 	jumpIdx := len(c.fun.Code)
-	c.emit(OpJump.With(0))
+	c.emit(taivm.OpJump.With(0))
 
 	// Patch JumpFalse
 	falseOffset := len(c.fun.Code) - jumpFalseIdx - 1
-	c.fun.Code[jumpFalseIdx] = OpJumpFalse.With(falseOffset)
+	c.fun.Code[jumpFalseIdx] = taivm.OpJumpFalse.With(falseOffset)
 
 	// Else Block
 	if c.curr.Kind == TokenIdentifier && c.curr.Text == "Else" {
@@ -225,7 +226,7 @@ func (c *Compiler) parseIf() error {
 
 	// Patch Jump
 	endOffset := len(c.fun.Code) - jumpIdx - 1
-	c.fun.Code[jumpIdx] = OpJump.With(endOffset)
+	c.fun.Code[jumpIdx] = taivm.OpJump.With(endOffset)
 
 	return nil
 }
@@ -295,8 +296,8 @@ func (c *Compiler) parseMath() error {
 			funcName = "Div"
 		}
 		idx := c.makeConstant(funcName)
-		c.emit(OpLoadVar.With(idx))
-		c.emit(OpCall.With(2))
+		c.emit(taivm.OpLoadVar.With(idx))
+		c.emit(taivm.OpCall.With(2))
 	}
 
 	return nil
@@ -306,12 +307,12 @@ func (c *Compiler) parseTerm() error {
 	switch c.curr.Kind {
 	case TokenNumber:
 		idx := c.makeConstant(c.curr.Value)
-		c.emit(OpLoadConst.With(idx))
+		c.emit(taivm.OpLoadConst.With(idx))
 		c.advance()
 
 	case TokenString:
 		idx := c.makeConstant(c.curr.Text)
-		c.emit(OpLoadConst.With(idx))
+		c.emit(taivm.OpLoadConst.With(idx))
 		c.advance()
 
 	case TokenIdentifier:
@@ -323,7 +324,7 @@ func (c *Compiler) parseTerm() error {
 		}
 		// Variable
 		idx := c.makeConstant(name)
-		c.emit(OpLoadVar.With(idx))
+		c.emit(taivm.OpLoadVar.With(idx))
 		c.advance()
 
 	case TokenSymbol:
@@ -365,13 +366,13 @@ func (c *Compiler) parseCall(pipedArgs int) error {
 	}
 
 	idx := c.makeConstant(name)
-	c.emit(OpLoadVar.With(idx))
+	c.emit(taivm.OpLoadVar.With(idx))
 
 	if pipedArgs > 0 {
 		// Stack state: [Arg0, Func]
 		// We need: [Func, Arg0]
 		// OpSwap swaps top 2 elements.
-		c.emit(OpSwap)
+		c.emit(taivm.OpSwap)
 	}
 
 	for range needed {
@@ -380,7 +381,7 @@ func (c *Compiler) parseCall(pipedArgs int) error {
 		}
 	}
 
-	c.emit(OpCall.With(arity))
+	c.emit(taivm.OpCall.With(arity))
 	return nil
 }
 
@@ -399,7 +400,7 @@ func (c *Compiler) parseList() error {
 		return err
 	}
 
-	c.emit(OpMakeList.With(count))
+	c.emit(taivm.OpMakeList.With(count))
 	return nil
 }
 
@@ -409,9 +410,9 @@ func (c *Compiler) parseClosure() error {
 	parentFun := c.fun
 	parentConsts := c.constants
 
-	newFun := &Function{
+	newFun := &taivm.Function{
 		Name: fmt.Sprintf("%s_lambda_%d", parentFun.Name, len(parentFun.Code)),
-		Code: make([]OpCode, 0),
+		Code: make([]taivm.OpCode, 0),
 	}
 
 	c.fun = newFun
@@ -423,11 +424,11 @@ func (c *Compiler) parseClosure() error {
 	}
 	// Implicit return?
 	// If last opcode is not OpReturn, add OpReturn (nil?)
-	if len(c.fun.Code) == 0 || (c.fun.Code[len(c.fun.Code)-1]&0xff) != OpReturn {
+	if len(c.fun.Code) == 0 || (c.fun.Code[len(c.fun.Code)-1]&0xff) != taivm.OpReturn {
 		// Load nil?
 		idx := c.makeConstant(nil)
-		c.emit(OpLoadConst.With(idx))
-		c.emit(OpReturn)
+		c.emit(taivm.OpLoadConst.With(idx))
+		c.emit(taivm.OpReturn)
 	}
 
 	compiledFun := c.fun
@@ -438,7 +439,7 @@ func (c *Compiler) parseClosure() error {
 
 	// Emit MakeClosure
 	idx := c.makeConstant(compiledFun)
-	c.emit(OpMakeClosure.With(idx))
+	c.emit(taivm.OpMakeClosure.With(idx))
 
 	return nil
 }
