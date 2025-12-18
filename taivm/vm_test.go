@@ -715,6 +715,39 @@ func TestVM_ContinueOnError(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+
+	t.Run("NativeFuncError", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"f"},
+			Code: []OpCode{
+				OpLoadVar.With(0),
+				OpCall.With(0),
+			},
+		})
+		vm.Def("f", NativeFunc{
+			Name: "f",
+			Func: func(*VM, []any) (any, error) {
+				return nil, fmt.Errorf("native error")
+			},
+		})
+		var n int
+		vm.Run(func(_ *Interrupt, err error) bool {
+			if err != nil {
+				n++
+				return true
+			}
+			return false
+		})
+		if n != 1 {
+			t.Fatal("expected error")
+		}
+		if vm.SP != 1 {
+			t.Fatal("expected 1 item on stack (nil)")
+		}
+		if vm.pop() != nil {
+			t.Fatal("expected nil")
+		}
+	})
 }
 
 func TestVM_ListMap(t *testing.T) {
@@ -2022,4 +2055,35 @@ func TestVM_Coverage_Extras(t *testing.T) {
 			t.Fatal("stack modified")
 		}
 	})
+}
+
+func TestVM_SnapshotRestore_Error(t *testing.T) {
+	vm := NewVM(&Function{})
+	vm.Def("foo", 1)
+
+	err := vm.Snapshot(faultyWriter{err: fmt.Errorf("write error")})
+	if err == nil || err.Error() != "write error" {
+		t.Fatalf("expected write error, got %v", err)
+	}
+
+	err = vm.Restore(faultyReader{err: fmt.Errorf("read error")})
+	if err == nil || err.Error() != "read error" {
+		t.Fatalf("expected read error, got %v", err)
+	}
+}
+
+type faultyWriter struct {
+	err error
+}
+
+func (f faultyWriter) Write(p []byte) (n int, err error) {
+	return 0, f.err
+}
+
+type faultyReader struct {
+	err error
+}
+
+func (f faultyReader) Read(p []byte) (n int, err error) {
+	return 0, f.err
 }
