@@ -341,3 +341,84 @@ for i in [1, 2, 3, 4, 5]:
 		t.Errorf("sum = %v, want 4", val)
 	}
 }
+
+func TestCompileTuple(t *testing.T) {
+	vm := run(t, `
+t = (1, 2, 3)
+res = t[1]
+`)
+	if val, ok := vm.Get("res"); !ok || val != int64(2) {
+		t.Errorf("res = %v, want 2", val)
+	}
+
+	vm = run(t, `
+t = (1,)
+res = t[0]
+`)
+	if val, ok := vm.Get("res"); !ok || val != int64(1) {
+		t.Errorf("res = %v, want 1", val)
+	}
+}
+
+func TestCompileSlice(t *testing.T) {
+	// List slice
+	vm := run(t, `
+l = [1, 2, 3, 4, 5]
+res = l[1:4]
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Errorf("res not found")
+	} else {
+		sl := val.([]any)
+		if len(sl) != 3 {
+			t.Errorf("len(res) = %d, want 3", len(sl))
+		} else if sl[0] != int64(2) || sl[2] != int64(4) {
+			t.Errorf("res = %v", sl)
+		}
+	}
+
+	// Tuple slice
+	vm = run(t, `
+t = (1, 2, 3, 4, 5)
+res = t[1:4]
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Errorf("res not found")
+	} else {
+		sl, ok := val.(taivm.Tuple)
+		if !ok {
+			t.Errorf("expected tuple, got %T", val)
+		} else {
+			if len(sl) != 3 {
+				t.Errorf("len(res) = %d, want 3", len(sl))
+			} else if sl[0] != int64(2) || sl[2] != int64(4) {
+				t.Errorf("res = %v", sl)
+			}
+		}
+	}
+
+	// String slice
+	vm = run(t, `
+s = "hello"
+res = s[1:4]
+`)
+	if val, ok := vm.Get("res"); !ok || val != "ell" {
+		t.Errorf("res = %v, want 'ell'", val)
+	}
+
+	// Step
+	vm = run(t, `
+l = [1, 2, 3, 4, 5]
+res = l[::2]
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Errorf("res not found")
+	} else {
+		sl := val.([]any)
+		if len(sl) != 3 {
+			t.Errorf("len(res) = %d, want 3", len(sl))
+		} else if sl[0] != int64(1) || sl[1] != int64(3) || sl[2] != int64(5) {
+			t.Errorf("res = %v", sl)
+		}
+	}
+}

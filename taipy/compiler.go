@@ -136,6 +136,36 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 			return err
 		}
 		c.emit(taivm.OpSetIndex)
+	case *syntax.SliceExpr:
+		if err := c.compileExpr(lhs.X); err != nil {
+			return err
+		}
+		if lhs.Lo != nil {
+			if err := c.compileExpr(lhs.Lo); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		if lhs.Hi != nil {
+			if err := c.compileExpr(lhs.Hi); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		if lhs.Step != nil {
+			if err := c.compileExpr(lhs.Step); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetSlice)
+
 	default:
 		return fmt.Errorf("unsupported assignment target: %T", s.LHS)
 	}
@@ -333,6 +363,42 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 			return err
 		}
 		c.emit(taivm.OpGetIndex)
+	case *syntax.TupleExpr:
+		for _, elem := range e.List {
+			if err := c.compileExpr(elem); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeTuple.With(len(e.List)))
+	case *syntax.ParenExpr:
+		return c.compileExpr(e.X)
+	case *syntax.SliceExpr:
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		if e.Lo != nil {
+			if err := c.compileExpr(e.Lo); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		if e.Hi != nil {
+			if err := c.compileExpr(e.Hi); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		if e.Step != nil {
+			if err := c.compileExpr(e.Step); err != nil {
+				return err
+			}
+		} else {
+			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+		}
+		c.emit(taivm.OpGetSlice)
+
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)
 	}
