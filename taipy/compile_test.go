@@ -422,3 +422,56 @@ res = l[::2]
 		}
 	}
 }
+
+func TestCompileAugmentedAssign(t *testing.T) {
+	// Simple variable
+	vm := run(t, `
+x = 1
+x += 2
+y = 10
+y -= 3
+z = 2
+z *= 4
+`)
+	if val, ok := vm.Get("x"); !ok || val != int64(3) {
+		t.Errorf("x = %v, want 3", val)
+	}
+	if val, ok := vm.Get("y"); !ok || val != int64(7) {
+		t.Errorf("y = %v, want 7", val)
+	}
+	if val, ok := vm.Get("z"); !ok || val != int64(8) {
+		t.Errorf("z = %v, want 8", val)
+	}
+
+	// List index
+	vm = run(t, `
+l = [10, 20]
+l[0] += 5
+l[1] -= 5
+`)
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else {
+		sl := val.([]any)
+		if sl[0] != int64(15) {
+			t.Errorf("l[0] = %v, want 15", sl[0])
+		}
+		if sl[1] != int64(15) {
+			t.Errorf("l[1] = %v, want 15", sl[1])
+		}
+	}
+
+	// Map index
+	vm = run(t, `
+d = {"a": 100}
+d["a"] += 50
+`)
+	if val, ok := vm.Get("d"); !ok {
+		t.Error("d not found")
+	} else {
+		m := val.(map[any]any)
+		if m["a"] != int64(150) {
+			t.Errorf("d['a'] = %v, want 150", m["a"])
+		}
+	}
+}

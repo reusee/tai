@@ -115,16 +115,95 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 }
 
 func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
-	if s.Op != syntax.EQ {
-		return fmt.Errorf("augmented assignment not supported yet")
+	if s.Op == syntax.EQ {
+		switch lhs := s.LHS.(type) {
+		case *syntax.Ident:
+			if err := c.compileExpr(s.RHS); err != nil {
+				return err
+			}
+			return c.compileStore(lhs)
+		case *syntax.IndexExpr:
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+			if err := c.compileExpr(lhs.Y); err != nil {
+				return err
+			}
+			if err := c.compileExpr(s.RHS); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetIndex)
+		case *syntax.SliceExpr:
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+			if lhs.Lo != nil {
+				if err := c.compileExpr(lhs.Lo); err != nil {
+					return err
+				}
+			} else {
+				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+			}
+			if lhs.Hi != nil {
+				if err := c.compileExpr(lhs.Hi); err != nil {
+					return err
+				}
+			} else {
+				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+			}
+			if lhs.Step != nil {
+				if err := c.compileExpr(lhs.Step); err != nil {
+					return err
+				}
+			} else {
+				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+			}
+			if err := c.compileExpr(s.RHS); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetSlice)
+
+		default:
+			return fmt.Errorf("unsupported assignment target: %T", s.LHS)
+		}
+		return nil
+	}
+
+	var op taivm.OpCode
+	switch s.Op {
+	case syntax.PLUS_EQ:
+		op = taivm.OpAdd
+	case syntax.MINUS_EQ:
+		op = taivm.OpSub
+	case syntax.STAR_EQ:
+		op = taivm.OpMul
+	case syntax.SLASH_EQ:
+		op = taivm.OpDiv
+	case syntax.PERCENT_EQ:
+		op = taivm.OpMod
+	case syntax.AMP_EQ:
+		op = taivm.OpBitAnd
+	case syntax.PIPE_EQ:
+		op = taivm.OpBitOr
+	case syntax.CIRCUMFLEX_EQ:
+		op = taivm.OpBitXor
+	case syntax.LTLT_EQ:
+		op = taivm.OpBitLsh
+	case syntax.GTGT_EQ:
+		op = taivm.OpBitRsh
+	default:
+		return fmt.Errorf("augmented assignment op %s not supported", s.Op)
 	}
 
 	switch lhs := s.LHS.(type) {
 	case *syntax.Ident:
+		c.emit(taivm.OpLoadVar.With(c.addConst(lhs.Name)))
 		if err := c.compileExpr(s.RHS); err != nil {
 			return err
 		}
+		c.emit(op)
 		return c.compileStore(lhs)
+
 	case *syntax.IndexExpr:
 		if err := c.compileExpr(lhs.X); err != nil {
 			return err
@@ -132,42 +211,16 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 		if err := c.compileExpr(lhs.Y); err != nil {
 			return err
 		}
+		c.emit(taivm.OpDup2)
+		c.emit(taivm.OpGetIndex)
 		if err := c.compileExpr(s.RHS); err != nil {
 			return err
 		}
+		c.emit(op)
 		c.emit(taivm.OpSetIndex)
-	case *syntax.SliceExpr:
-		if err := c.compileExpr(lhs.X); err != nil {
-			return err
-		}
-		if lhs.Lo != nil {
-			if err := c.compileExpr(lhs.Lo); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		if lhs.Hi != nil {
-			if err := c.compileExpr(lhs.Hi); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		if lhs.Step != nil {
-			if err := c.compileExpr(lhs.Step); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		if err := c.compileExpr(s.RHS); err != nil {
-			return err
-		}
-		c.emit(taivm.OpSetSlice)
 
 	default:
-		return fmt.Errorf("unsupported assignment target: %T", s.LHS)
+		return fmt.Errorf("unsupported augmented assignment target: %T", s.LHS)
 	}
 	return nil
 }
