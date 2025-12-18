@@ -102,7 +102,9 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 					if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", fn.Fun.NumParams, argc)) {
 						return
 					}
-					return
+					v.drop(argc + 1)
+					v.push(nil)
+					continue
 				}
 
 				newEnv := fn.Env.NewChild()
