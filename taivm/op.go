@@ -47,6 +47,8 @@ const (
 	OpMakeTuple
 	OpGetSlice
 	OpSetSlice
+	OpDup
+	OpDup2
 )
 
 func (o OpCode) With(arg int) OpCode {

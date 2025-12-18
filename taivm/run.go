@@ -78,6 +78,27 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				v.OperandStack[v.SP] = nil
 			}
 
+		case OpDup:
+			if v.SP < 1 {
+				if !yield(nil, fmt.Errorf("stack underflow during dup")) {
+					return
+				}
+				continue
+			}
+			v.push(v.OperandStack[v.SP-1])
+
+		case OpDup2:
+			if v.SP < 2 {
+				if !yield(nil, fmt.Errorf("stack underflow during dup2")) {
+					return
+				}
+				continue
+			}
+			b := v.OperandStack[v.SP-1]
+			a := v.OperandStack[v.SP-2]
+			v.push(a)
+			v.push(b)
+
 		case OpJump:
 			offset := int(int32(inst) >> 8)
 			v.IP += offset
@@ -1122,47 +1143,10 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 			} else {
 				// Standard slice assignment: replace [start:stop] with items
-				// This might resize the list
 				if stop < start {
 					stop = start
 				}
-				// new size = len(t) - (stop-start) + len(items)
 				delta := len(items) - (stop - start)
-				newLen := len(t) + delta
-				newSlice := make([]any, newLen)
-				copy(newSlice[:start], t[:start])
-				copy(newSlice[start:start+len(items)], items)
-				copy(newSlice[start+len(items):], t[stop:])
-				// Update the backing array of the slice on the heap?
-				// Warning: In Go, we cannot easily modify the length of the slice passed by value as []any.
-				// However, OpSetSlice operates on the value popped from stack.
-				// If that value was a reference to a slice, we can modify elements.
-				// But we cannot change the length of the slice visible to other references if we allocate a new slice.
-				// Taipy lists are []any. If we change length, we need to handle reference semantics.
-				// Since we don't have a *List wrapper, we can only modify elements in place if capacity allows,
-				// but 't' here is just the interface{} holding the slice header.
-				// Replacing elements is fine. Resizing is problematic without a wrapper.
-				// Starlark lists are mutable. Python lists are mutable.
-				// If we implement simple slice assignment (replace elements), it works for same size.
-				// For resizing, we technically need a pointer to the slice or a wrapper type.
-				// Given current architecture (using []any directly), we can't implement resizing slice assignment correctly
-				// unless we change how lists are stored (e.g. *[]any or *List).
-				// For now, I will restrict non-step-1 slice assignment to same-size or accept that
-				// resizing won't work for shared references (which is a bug but structural limitation).
-				// Actually, if we only support same-length replacement for now, that's safer.
-				// Or, we assume that for this VM iteration, we only support replacing range if size matches.
-				// Let's implement resizing but knowing it won't affect other variables holding the same list if it's copied.
-				// Wait, if I do `a = [1]; b = a; a[:] = [2,3]`, `b` should see `[2,3]`.
-				// With []any, `b` has a copy of the slice header. Growing `a`'s slice won't update `b`'s header.
-				// This is a known limitation if not using a wrapper.
-				// I'll implement it by creating a new slice and failing if we can't update in place?
-				// No, the instruction is just "update this object".
-				// Since we can't update the header of other references, we should probably throw an error
-				// or just support same-size replacement.
-				// Starlark spec says: "The list must be mutable... length of the slice ... need not be equal to the length of the iterable".
-				// To properly support this, we would need to refactor []any to *[]any or a List type.
-				// For this task, I'll implement resizing logic but knowing it might not propagate if shared.
-				// However, to avoid "silent" failure of sharing, I'll check if delta == 0.
 				if delta != 0 {
 					if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
 						return
