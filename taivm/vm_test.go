@@ -4636,3 +4636,68 @@ func TestVM_Coverage_Final(t *testing.T) {
 		runContinue([]OpCode{OpLoadConst.With(0), OpNextIter.With(0)}, []any{1})
 	})
 }
+
+func TestVM_Coverage_Deep(t *testing.T) {
+	// Helper for continue-on-error tests
+	runContinue := func(code []OpCode, consts []any) {
+		vm := NewVM(&Function{Code: code, Constants: consts})
+		vm.Run(func(_ *Interrupt, err error) bool {
+			return err != nil
+		})
+	}
+
+	// Stack underflow continue tests
+	runContinue([]OpCode{OpMakeList.With(1)}, nil)
+	runContinue([]OpCode{OpMakeMap.With(1)}, nil)
+	runContinue([]OpCode{OpNextIter.With(0)}, nil)
+	runContinue([]OpCode{OpMakeTuple.With(1)}, nil)
+	runContinue([]OpCode{OpGetSlice}, nil)
+	runContinue([]OpCode{OpSetSlice}, nil)
+	runContinue([]OpCode{OpGetAttr}, nil)
+	runContinue([]OpCode{OpSetAttr}, nil)
+	runContinue([]OpCode{OpCallKw}, nil)
+	runContinue([]OpCode{OpUnpack.With(1)}, nil)
+
+	// OpSetSlice errors continue
+	// Immutable
+	runContinue([]OpCode{
+		OpLoadConst.With(0), OpMakeTuple.With(1), // Tuple
+		OpLoadConst.With(1), OpLoadConst.With(2), OpLoadConst.With(3), OpLoadConst.With(4),
+		OpSetSlice,
+	}, []any{1, 0, 1, 1, 1})
+
+	// Resize extended
+	runContinue([]OpCode{
+		OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpMakeList.With(3), // [1, 2, 3]
+		OpLoadConst.With(0), // lo 0
+		OpLoadConst.With(1), // hi 2
+		OpLoadConst.With(3), // step 2
+		OpLoadConst.With(4), // val [1, 2]
+		OpSetSlice,
+	}, []any{1, 2, 3, 2, []any{1, 2}})
+
+	// OpSetAttr errors continue
+	// Name not string
+	runContinue([]OpCode{
+		OpLoadConst.With(0), // target
+		OpLoadConst.With(1), // name (int)
+		OpLoadConst.With(2), // val
+		OpSetAttr,
+	}, []any{&Struct{}, 123, 1})
+	// Target nil
+	runContinue([]OpCode{
+		OpLoadConst.With(0), // target nil
+		OpLoadConst.With(1), // name
+		OpLoadConst.With(2), // val
+		OpSetAttr,
+	}, []any{nil, "a", 1})
+
+	// ToInt64 coverage (uint types)
+	// We can force this via OpBitNot on uint types, ensuring we use all uint variants
+	types := []any{
+		uint(1), uint8(1), uint16(1), uint32(1), uint64(1),
+	}
+	for _, v := range types {
+		runContinue([]OpCode{OpLoadConst.With(0), OpBitNot, OpReturn}, []any{v})
+	}
+}
