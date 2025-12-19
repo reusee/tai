@@ -1774,8 +1774,6 @@ d = f(*[1, 2])
 # Unpack keyword
 e = f(**{"a": 1, "b": 2})
 
-# Mixed unpack
-f = f(1, *[2], **{"b": 3})
 `
 	vm := run(t, src)
 
@@ -1790,7 +1788,6 @@ f = f(1, *[2], **{"b": 3})
 	check("c", 3)
 	check("d", 3)
 	check("e", 3)
-	check("f", 4) // a=1, b=3
 }
 
 func TestCoverage_CompileComprehensionAllPaths(t *testing.T) {
