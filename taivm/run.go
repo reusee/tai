@@ -1858,6 +1858,8 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 	target := v.pop()
 
 	var t []any
+	var targetList *List
+
 	switch lst := target.(type) {
 	case *List:
 		if lst.Immutable {
@@ -1867,6 +1869,7 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 		t = lst.Elements
+		targetList = lst
 	case []any:
 		t = lst
 	default:
@@ -1932,6 +1935,15 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 		}
 		delta := len(items) - (stop - start)
 		if delta != 0 {
+			if targetList != nil {
+				newLen := len(t) + delta
+				newElems := make([]any, 0, newLen)
+				newElems = append(newElems, t[:start]...)
+				newElems = append(newElems, items...)
+				newElems = append(newElems, t[stop:]...)
+				targetList.Elements = newElems
+				return true
+			}
 			if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
 				return false
 			}
