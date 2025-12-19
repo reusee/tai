@@ -718,6 +718,62 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("expected positional after keyword error")
 	}
 
+	// Mock types for unreachable default cases
+	type mockStmt struct {
+		syntax.ExprStmt
+	}
+	type mockExpr struct {
+		syntax.Literal
+	}
+	type mockClause struct {
+		syntax.ForClause
+	}
+
+	if err := c.compileStmt(&mockStmt{}); err == nil || !strings.Contains(err.Error(), "unsupported statement type") {
+		t.Error("expected unsupported statement type error")
+	}
+
+	if err := c.compileExpr(&mockExpr{}); err == nil || !strings.Contains(err.Error(), "unsupported expression") {
+		t.Error("expected unsupported expression error")
+	}
+
+	if err := c.compileAssign(&syntax.AssignStmt{Op: syntax.PLUS, LHS: &syntax.Ident{Name: "x"}, RHS: lit}); err == nil || !strings.Contains(err.Error(), "augmented assignment op") {
+		t.Error("expected unsupported augmented assignment op error")
+	}
+
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: lit, RHS: lit}); err == nil || !strings.Contains(err.Error(), "unsupported augmented assignment target") {
+		t.Error("expected unsupported augmented assignment target error")
+	}
+
+	if err := c.compileSimpleAssign(lit, lit); err == nil || !strings.Contains(err.Error(), "unsupported assignment target") {
+		t.Error("expected unsupported assignment target error")
+	}
+
+	if err := c.compileStore(lit); err == nil || !strings.Contains(err.Error(), "unsupported variable type") {
+		t.Error("expected unsupported variable type error")
+	}
+
+	if err := c.compileComprehension(&syntax.Comprehension{
+		Body:    lit,
+		Clauses: []syntax.Node{&mockClause{}},
+	}); err == nil || !strings.Contains(err.Error(), "unsupported comprehension clause") {
+		t.Error("expected unsupported comprehension clause error")
+	}
+
+	// Error propagation in calls
+	if err := c.compileCallExpr(&syntax.CallExpr{Fn: &syntax.Ident{Name: "f"}, Args: []syntax.Expr{&mockExpr{}}}); err == nil || !strings.Contains(err.Error(), "unsupported expression") {
+		t.Error("expected error from args compilation")
+	}
+	// Dynamic call kwarg error
+	if err := c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: &mockExpr{}},
+		},
+	}); err == nil || !strings.Contains(err.Error(), "unsupported expression") {
+		t.Error("expected error from kwarg value compilation")
+	}
+
 	// Native Func Errors
 	vm := taivm.NewVM(&taivm.Function{})
 	if _, err := Len.Func(vm, []any{123}); err == nil {
@@ -731,6 +787,12 @@ func TestInternalCoverage(t *testing.T) {
 	}
 	if _, err := Struct.Func(vm, []any{123}); err == nil {
 		t.Error("struct: expected error")
+	}
+	if _, err := Pow.Func(vm, []any{"a", "b"}); err == nil || !strings.Contains(err.Error(), "unsupported argument types") {
+		t.Error("pow: expected unsupported argument types error")
+	}
+	if _, err := Pow.Func(vm, []any{1}); err == nil || !strings.Contains(err.Error(), "expects 2 arguments") {
+		t.Error("pow: expected arg count error")
 	}
 
 	// Struct map[string]any support
