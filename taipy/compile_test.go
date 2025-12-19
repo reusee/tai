@@ -16,6 +16,7 @@ func run(t *testing.T, src string) *taivm.VM {
 
 	vm := taivm.NewVM(fn)
 	vm.Def("concat", Concat)
+	vm.Def("len", Len)
 
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
 		if err != nil {
@@ -640,5 +641,33 @@ res3 = h(1, *[2], c=3, **{"d": 4})
 `)
 	if val, ok := vm.Get("res3"); !ok || val != int64(10) {
 		t.Errorf("res3 = %v, want 10", val)
+	}
+}
+
+func TestNativeLen(t *testing.T) {
+	vm := run(t, `
+l = [1, 2, 3]
+len_l = len(l)
+len_s = len("hello")
+len_u = len("你好")
+d = {"a": 1}
+len_d = len(d)
+t = (1, 2)
+len_t = len(t)
+`)
+	if val, ok := vm.Get("len_l"); !ok || val != int64(3) {
+		t.Errorf("len_l = %v, want 3", val)
+	}
+	if val, ok := vm.Get("len_s"); !ok || val != int64(5) {
+		t.Errorf("len_s = %v, want 5", val)
+	}
+	if val, ok := vm.Get("len_u"); !ok || val != int64(2) {
+		t.Errorf("len_u = %v, want 2", val)
+	}
+	if val, ok := vm.Get("len_d"); !ok || val != int64(1) {
+		t.Errorf("len_d = %v, want 1", val)
+	}
+	if val, ok := vm.Get("len_t"); !ok || val != int64(2) {
+		t.Errorf("len_t = %v, want 2", val)
 	}
 }
