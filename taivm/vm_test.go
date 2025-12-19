@@ -4232,3 +4232,304 @@ func TestVM_Coverage_GapFilling_2(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_Coverage_More_3(t *testing.T) {
+	// ListAppend: Immutable
+	t.Run("ListAppend_Immutable", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, "append", 2},
+			Code: []OpCode{
+				OpLoadConst.With(0), OpMakeTuple.With(1), // Tuple (1,)
+				OpLoadConst.With(1), OpGetAttr, // .append
+				OpLoadConst.With(2), OpCall.With(1), // .append(2)
+			},
+		})
+		var found bool
+		for _, err := range vm.Run {
+			if err != nil && err.Error() == "list is immutable" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected immutable error")
+		}
+	})
+
+	// ListAppend: Arg count mismatch
+	t.Run("ListAppend_Args", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{1, "append"},
+			Code: []OpCode{
+				OpLoadConst.With(0), OpMakeList.With(1),
+				OpLoadConst.With(1), OpGetAttr,
+				OpCall.With(0), // No args, expects 1 (plus receiver)
+			},
+		})
+		var found bool
+		for _, err := range vm.Run {
+			if err != nil && err.Error() == "append expects 1 argument" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected argument count error")
+		}
+	})
+
+	// ListAppend: Receiver not list
+	t.Run("ListAppend_Receiver", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"append", 1},
+			Code: []OpCode{
+				OpLoadVar.With(0),
+				OpLoadConst.With(1),
+				OpLoadConst.With(1),
+				OpCall.With(2),
+			},
+		})
+		vm.Def("append", NativeFunc{Name: "append", Func: ListAppend})
+		var found bool
+		for _, err := range vm.Run {
+			if err != nil && err.Error() == "receiver must be list" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected receiver error")
+		}
+	})
+
+	// Range Len
+	t.Run("Range_Len", func(t *testing.T) {
+		if (&Range{Start: 10, Stop: 0, Step: 1}).Len() != 0 {
+			t.Error("expected 0")
+		}
+		if (&Range{Start: 0, Stop: 10, Step: -1}).Len() != 0 {
+			t.Error("expected 0")
+		}
+		if (&Range{Step: 0}).Len() != 0 {
+			t.Error("expected 0")
+		}
+	})
+
+	// Int64 Arithmetic & Bitwise
+	t.Run("Int64_Ops", func(t *testing.T) {
+		ops := []struct {
+			Op  OpCode
+			B   int64
+			Res int64
+		}{
+			{OpAdd, 3, 13},
+			{OpSub, 3, 7},
+			{OpMul, 3, 30},
+			{OpDiv, 3, 3},
+			{OpMod, 3, 1},
+			{OpFloorDiv, 3, 3},
+			{OpBitAnd, 3, 2},
+			{OpBitOr, 3, 11},
+			{OpBitXor, 3, 9},
+			{OpBitLsh, 1, 20},
+			{OpBitRsh, 1, 5},
+		}
+		for _, op := range ops {
+			vm := NewVM(&Function{
+				Constants: []any{int64(10), op.B},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), op.Op, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatalf("Op %v failed: %v", op.Op, err)
+				}
+			}
+			res := vm.pop()
+			if res != op.Res {
+				t.Errorf("Op %v: expected %v, got %v", op.Op, op.Res, res)
+			}
+		}
+	})
+
+	// Int64 Div/Mod Zero
+	t.Run("Int64_DivZero", func(t *testing.T) {
+		ops := []OpCode{OpDiv, OpMod, OpFloorDiv}
+		for _, op := range ops {
+			vm := NewVM(&Function{
+				Constants: []any{int64(1), int64(0)},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), op},
+			})
+			var found bool
+			for _, err := range vm.Run {
+				if err != nil && err.Error() == "division by zero" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Op %v expected zero error", op)
+			}
+		}
+	})
+
+	// Int64 Negative Shift
+	t.Run("Int64_ShiftNeg", func(t *testing.T) {
+		ops := []OpCode{OpBitLsh, OpBitRsh}
+		for _, op := range ops {
+			vm := NewVM(&Function{
+				Constants: []any{int64(1), int64(-1)},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), op},
+			})
+			var found bool
+			for _, err := range vm.Run {
+				if err != nil && strings.Contains(err.Error(), "negative shift") {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Op %v expected negative shift error", op)
+			}
+		}
+	})
+
+	// Float64 Math
+	t.Run("Float64_Math", func(t *testing.T) {
+		ops := []struct {
+			Op  OpCode
+			Res float64
+		}{
+			{OpAdd, 12.5},
+			{OpSub, 7.5},
+			{OpMul, 25.0},
+			{OpDiv, 4.0},
+			{OpFloorDiv, 4.0},
+		}
+		for _, op := range ops {
+			vm := NewVM(&Function{
+				Constants: []any{10.0, 2.5},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), op.Op, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			res := vm.pop()
+			if res != op.Res {
+				t.Errorf("Op %v: expected %v, got %v", op.Op, op.Res, res)
+			}
+		}
+	})
+
+	// Float64 Div Zero
+	t.Run("Float64_DivZero", func(t *testing.T) {
+		ops := []OpCode{OpDiv, OpFloorDiv}
+		for _, op := range ops {
+			vm := NewVM(&Function{
+				Constants: []any{1.0, 0.0},
+				Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), op},
+			})
+			var found bool
+			for _, err := range vm.Run {
+				if err != nil && err.Error() == "division by zero" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Op %v expected zero error", op)
+			}
+		}
+	})
+
+	// Native Func KwArgs
+	t.Run("Native_KwArgs", func(t *testing.T) {
+		vm := NewVM(&Function{
+			Constants: []any{"f", "k", 1},
+			Code: []OpCode{
+				OpLoadVar.With(0),
+				OpMakeList.With(0),
+				OpLoadConst.With(1), OpLoadConst.With(2), OpMakeMap.With(1),
+				OpCallKw,
+			},
+		})
+		vm.Def("f", NativeFunc{Name: "f", Func: func(_ *VM, _ []any) (any, error) { return nil, nil }})
+		var found bool
+		for _, err := range vm.Run {
+			if err != nil && strings.Contains(err.Error(), "native functions do not support keyword arguments") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected error")
+		}
+	})
+
+	// ToInt64 Helpers
+	t.Run("ToInt64_Helper", func(t *testing.T) {
+		vals := []any{
+			int(1), int8(1), int16(1), int32(1), int64(1),
+			uint(1), uint8(1), uint16(1), uint32(1), uint64(1),
+		}
+		for _, v := range vals {
+			if i, ok := ToInt64(v); !ok || i != 1 {
+				t.Errorf("failed for %T", v)
+			}
+		}
+		if _, ok := ToInt64("s"); ok {
+			t.Error("should fail for string")
+		}
+	})
+
+	// isZero via OpNot
+	t.Run("IsZero", func(t *testing.T) {
+		zeros := []any{
+			int(0), int64(0), float64(0), complex128(0),
+			"", false, nil,
+		}
+		for _, v := range zeros {
+			vm := NewVM(&Function{
+				Constants: []any{v},
+				Code:      []OpCode{OpLoadConst.With(0), OpNot, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !vm.pop().(bool) {
+				t.Errorf("isZero failed for %v", v)
+			}
+		}
+	})
+
+	// OpCode With
+	t.Run("OpCode_With", func(t *testing.T) {
+		op := OpLoadConst
+		if op.With(255) != op|(255<<8) {
+			t.Error("OpCode.With failed")
+		}
+	})
+
+	// Int BitNot Types
+	t.Run("BitNot_Types", func(t *testing.T) {
+		vals := []any{
+			int(1), int8(1), int16(1), int32(1), int64(1),
+			uint(1), uint8(1), uint16(1), uint32(1), uint64(1),
+		}
+		for _, v := range vals {
+			vm := NewVM(&Function{
+				Constants: []any{v},
+				Code:      []OpCode{OpLoadConst.With(0), OpBitNot, OpReturn},
+			})
+			for _, err := range vm.Run {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			vm.pop()
+		}
+	})
+}
