@@ -710,6 +710,37 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		return true
 	}
 
+	// Prepare locals
+	locals := make([]any, numParams)
+
+	// Bind fixed arguments (from stack or defaults)
+	for i := range numFixed {
+		if i < argc {
+			locals[i] = v.OperandStack[calleeIdx+1+i]
+		} else {
+			// Use default
+			defIdx := i - (numFixed - numDefaults)
+			locals[i] = defaults[defIdx]
+		}
+	}
+
+	// Bind Variadic
+	if isVariadic {
+		var slice []any
+		if argc > numFixed {
+			count := argc - numFixed
+			slice = make([]any, count)
+			base := calleeIdx + 1 + numFixed
+			copy(slice, v.OperandStack[base:base+count])
+		} else {
+			slice = []any{}
+		}
+		locals[numFixed] = &List{
+			Elements:  slice,
+			Immutable: true,
+		}
+	}
+
 	newEnv := fn.Env.NewChild()
 
 	paramSyms := fn.ParamSyms
@@ -729,71 +760,35 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 
 	if len(paramSyms) > 0 {
 		newEnv.Grow(maxSym)
-	}
-
-	// Bind fixed arguments (from stack or defaults)
-	for i := range numFixed {
-		var val any
-		if i < argc {
-			val = v.OperandStack[calleeIdx+1+i]
-		} else {
-			// Use default
-			// Default index calculation:
-			// Defaults cover the last numDefaults of the fixed params.
-			// Index 0 of defaults corresponds to param index (numFixed - numDefaults)
-			defIdx := i - (numFixed - numDefaults)
-			val = defaults[defIdx]
+		for i, val := range locals {
+			if i < len(paramSyms) {
+				newEnv.DefSym(paramSyms[i], val)
+			}
 		}
-		newEnv.DefSym(paramSyms[i], val)
-	}
-
-	// Bind Variadic
-	if isVariadic {
-		var slice []any
-		if argc > numFixed {
-			count := argc - numFixed
-			slice = make([]any, count)
-			base := calleeIdx + 1 + numFixed
-			copy(slice, v.OperandStack[base:base+count])
-		} else {
-			slice = []any{}
-		}
-		newEnv.DefSym(paramSyms[numFixed], &List{
-			Elements:  slice,
-			Immutable: true,
-		})
 	}
 
 	// Tail Call Optimization
 	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
-		dst := v.BP
-		if dst > 0 {
-			dst--
+		// Reuse current frame
+		needed := v.BP + len(locals)
+		if needed > len(v.OperandStack) {
+			newCap := len(v.OperandStack) * 2
+			if newCap < needed {
+				newCap = needed
+			}
+			newStack := make([]any, newCap)
+			copy(newStack, v.OperandStack)
+			v.OperandStack = newStack
 		}
-		// When using defaults or slicing varargs, we can't simply slide the stack
-		// because the new frame arguments might be constructed/different from stack.
-		// However, TCO reuses the Frame slot.
-		// Since we've already bound everything to newEnv, we don't need the args on stack
-		// for execution, but we need to clear them.
-		// TCO assumes arguments are on stack for the NEXT call?
-		// No, TCO in this VM seems to slide arguments for the *callee* frame.
-		// But here we already consumed args into `newEnv`.
-		// The VM execution uses `OpGetLocal` (relative to BP) OR `OpLoadVar` (env lookup).
-		// This VM seems to mix stack-based locals and Env-based vars?
-		// Looking at OpGetLocal: v.OperandStack[v.BP+idx].
-		// But Python-like `def` logic here uses `Env` (OpLoadVar).
-		// `OpGetLocal` is used in benchmarks with manual assembly, but `compileDef` uses `OpLoadVar`.
-		// So strict stack sliding for arguments isn't critical for `Env` based functions,
-		// BUT we must ensure the stack is clean.
+		copy(v.OperandStack[v.BP:], locals)
 
-		// Clean up stack: drop callee and all args
-		// v.SP is currently at end of args.
-		v.drop(v.SP - calleeIdx)
-
-		// Set BP for new frame?
-		// If using Env, BP might not be heavily used for args, but we preserve the convention.
-		// Reuse current frame slot.
-		v.BP = dst + 1
+		oldSP := v.SP
+		v.SP = needed
+		if v.SP < oldSP {
+			for i := v.SP; i < oldSP; i++ {
+				v.OperandStack[i] = nil
+			}
+		}
 	} else {
 		v.CallStack = append(v.CallStack, Frame{
 			Fun:      v.CurrentFun,
@@ -802,6 +797,27 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 			BaseSP:   calleeIdx,
 			BP:       v.BP,
 		})
+
+		needed := calleeIdx + 1 + len(locals)
+		if needed > len(v.OperandStack) {
+			newCap := len(v.OperandStack) * 2
+			if newCap < needed {
+				newCap = needed
+			}
+			newStack := make([]any, newCap)
+			copy(newStack, v.OperandStack)
+			v.OperandStack = newStack
+		}
+		copy(v.OperandStack[calleeIdx+1:], locals)
+
+		oldSP := calleeIdx + 1 + argc
+		v.SP = needed
+		if v.SP < oldSP {
+			for i := v.SP; i < oldSP; i++ {
+				v.OperandStack[i] = nil
+			}
+		}
+
 		v.BP = calleeIdx + 1
 	}
 
