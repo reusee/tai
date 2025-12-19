@@ -183,6 +183,8 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 		return c.compileCondExpr(e)
 	case *syntax.LambdaExpr:
 		return c.compileLambdaExpr(e)
+	case *syntax.Comprehension:
+		return c.compileComprehension(e)
 	//TODO handle all expr types
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)
@@ -277,14 +279,18 @@ func (c *compiler) compileFor(s *syntax.ForStmt) error {
 	c.emit(taivm.OpJump)
 	c.patchJump(jumpBackIP, loopHeadIP)
 
+	// Handle breaks: they jump here, need to pop iterator
+	if len(loop.breakIPs) > 0 {
+		breakIP := c.currentIP()
+		c.emit(taivm.OpPop)
+		for _, ip := range loop.breakIPs {
+			c.patchJump(ip, breakIP)
+		}
+	}
+
 	// Patch NextIter to jump to here (end of loop)
 	endIP := c.currentIP()
 	c.patchJump(nextIterIP, endIP)
-
-	// Patch breaks
-	for _, ip := range loop.breakIPs {
-		c.patchJump(ip, endIP)
-	}
 
 	c.loops = c.loops[:len(c.loops)-1]
 	return nil
@@ -822,5 +828,105 @@ func (c *compiler) compileLambdaExpr(e *syntax.LambdaExpr) error {
 	}
 
 	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
+	return nil
+}
+
+func (c *compiler) compileComprehension(e *syntax.Comprehension) error {
+	c.emit(taivm.OpEnterScope)
+
+	if e.Curly {
+		c.emit(taivm.OpMakeMap.With(0))
+	} else {
+		c.emit(taivm.OpMakeList.With(0))
+	}
+
+	resultName := ".result"
+	c.emit(taivm.OpDefVar.With(c.addConst(resultName)))
+
+	if err := c.compileComprehensionClauses(e, 0, resultName); err != nil {
+		return err
+	}
+
+	c.emit(taivm.OpLoadVar.With(c.addConst(resultName)))
+	c.emit(taivm.OpLeaveScope)
+	return nil
+}
+
+func (c *compiler) compileComprehensionClauses(e *syntax.Comprehension, idx int, resultName string) error {
+	if idx >= len(e.Clauses) {
+		// Base case: emit body
+		if e.Curly {
+			// Dict comprehension: {Key: Value}
+			entry, ok := e.Body.(*syntax.DictEntry)
+			if !ok {
+				return fmt.Errorf("dict comprehension body must be DictEntry")
+			}
+
+			c.emit(taivm.OpLoadVar.With(c.addConst(resultName)))
+			if err := c.compileExpr(entry.Key); err != nil {
+				return err
+			}
+			if err := c.compileExpr(entry.Value); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetIndex)
+		} else {
+			// List comprehension: [Body]
+			c.emit(taivm.OpLoadVar.With(c.addConst(resultName)))
+			if err := c.compileExpr(e.Body); err != nil {
+				return err
+			}
+			c.emit(taivm.OpListAppend)
+			c.emit(taivm.OpPop)
+		}
+		return nil
+	}
+
+	clause := e.Clauses[idx]
+	switch cl := clause.(type) {
+	case *syntax.ForClause:
+		if err := c.compileExpr(cl.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpGetIter)
+
+		loopHeadIP := c.currentIP()
+		nextIterIP := c.currentIP()
+		c.emit(taivm.OpNextIter)
+
+		if err := c.compileStore(cl.Vars); err != nil {
+			return err
+		}
+
+		if err := c.compileComprehensionClauses(e, idx+1, resultName); err != nil {
+			return err
+		}
+
+		// Jump back
+		jumpBackIP := c.currentIP()
+		c.emit(taivm.OpJump)
+		c.patchJump(jumpBackIP, loopHeadIP)
+
+		// Patch NextIter (exit loop)
+		endIP := c.currentIP()
+		c.patchJump(nextIterIP, endIP)
+
+	case *syntax.IfClause:
+		if err := c.compileExpr(cl.Cond); err != nil {
+			return err
+		}
+		jumpFalseIP := c.currentIP()
+		c.emit(taivm.OpJumpFalse)
+
+		if err := c.compileComprehensionClauses(e, idx+1, resultName); err != nil {
+			return err
+		}
+
+		c.patchJump(jumpFalseIP, c.currentIP())
+
+	default:
+		return fmt.Errorf("unsupported comprehension clause: %T", clause)
+	}
+
 	return nil
 }

@@ -52,6 +52,7 @@ const (
 	OpGetAttr
 	OpSetAttr
 	OpCallKw
+	OpListAppend
 )
 
 func (o OpCode) With(arg int) OpCode {

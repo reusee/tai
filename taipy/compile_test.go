@@ -770,3 +770,80 @@ len_l = len(l)
 		t.Errorf("len_l = %v, want 3", val)
 	}
 }
+
+func TestCompileComprehension(t *testing.T) {
+	// List comprehension
+	vm := run(t, `
+res = [x*x for x in range(5)]
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Error("res not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		if len(l) != 5 {
+			t.Errorf("len = %d, want 5", len(l))
+		}
+		if l[4] != int64(16) {
+			t.Errorf("l[4] = %v, want 16", l[4])
+		}
+	}
+
+	// Filter
+	vm = run(t, `
+res = [x for x in range(10) if x % 2 == 0]
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Error("res not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		if len(l) != 5 {
+			t.Errorf("len = %d, want 5", len(l))
+		}
+		if l[1] != int64(2) {
+			t.Errorf("l[1] = %v, want 2", l[1])
+		}
+	}
+
+	// Nested
+	vm = run(t, `
+res = [x+y for x in [1, 2] for y in [10, 20]]
+`)
+	// 1+10, 1+20, 2+10, 2+20 -> 11, 21, 12, 22
+	if val, ok := vm.Get("res"); !ok {
+		t.Error("res not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		if len(l) != 4 {
+			t.Errorf("len = %d, want 4", len(l))
+		}
+		if l[0] != int64(11) || l[3] != int64(22) {
+			t.Errorf("res = %v", l)
+		}
+	}
+
+	// Dict comprehension
+	vm = run(t, `
+res = {x: x*x for x in range(3)}
+`)
+	if val, ok := vm.Get("res"); !ok {
+		t.Error("res not found")
+	} else {
+		m := val.(map[any]any)
+		if len(m) != 3 {
+			t.Errorf("len = %d, want 3", len(m))
+		}
+		if m[int64(2)] != int64(4) {
+			t.Errorf("m[2] = %v, want 4", m[int64(2)])
+		}
+	}
+
+	// Scope isolation
+	vm = run(t, `
+x = 100
+res = [x for x in range(5)]
+after = x
+`)
+	if val, ok := vm.Get("after"); !ok || val != int64(100) {
+		t.Errorf("variable x leaked: %v", val)
+	}
+}

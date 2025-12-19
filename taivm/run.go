@@ -176,6 +176,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
+		case OpListAppend:
+			if !v.opListAppend(yield) {
+				return
+			}
+
 		}
 
 	}
@@ -2140,4 +2145,30 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		v.push(nil)
 		return true
 	}
+}
+
+func (v *VM) opListAppend(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during list append")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+	listObj := v.OperandStack[v.SP-1]
+	l, ok := listObj.(*List)
+	if !ok {
+		if !yield(nil, fmt.Errorf("append target must be list, got %T", listObj)) {
+			return false
+		}
+		return true
+	}
+	if l.Immutable {
+		if !yield(nil, fmt.Errorf("list is immutable")) {
+			return false
+		}
+		return true
+	}
+	l.Elements = append(l.Elements, val)
+	return true
 }
