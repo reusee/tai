@@ -584,8 +584,8 @@ func TestErrors(t *testing.T) {
 	}{
 		{"syntax_error", "if", "syntax error"},
 		{"undefined_var", "a = b", "undefined variable"},
-		{"keyword_arg_missing", "def f(a, b): pass; f(a=1)", "missing argument"},
-		{"keyword_arg_unexpected", "def f(a): pass; f(b=1)", "unexpected keyword argument"},
+		{"keyword_arg_missing", "def f(a, b): pass\nf(a=1)", "missing argument"},
+		{"keyword_arg_unexpected", "def f(a): pass\nf(b=1)", "unexpected keyword argument"},
 		{"aug_assign_paren", "x=1; (x) += 1", "unsupported augmented assignment target"},
 		{"destructure_star", "a, *b = [1, 2]", "unsupported variable type"},
 		{"set_comp", "s = {x for x in []}", "dict comprehension body must be DictEntry"},
