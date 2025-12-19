@@ -108,6 +108,8 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 		return c.compileFor(s)
 	case *syntax.BranchStmt:
 		return c.compileBranch(s)
+	case *syntax.LoadStmt:
+		return fmt.Errorf("load statement not implemented")
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -125,6 +127,24 @@ func (c *compiler) compileStore(lhs syntax.Expr) error {
 	switch node := lhs.(type) {
 	case *syntax.Ident:
 		c.emit(taivm.OpDefVar.With(c.addConst(node.Name)))
+		return nil
+	case *syntax.ParenExpr:
+		return c.compileStore(node.X)
+	case *syntax.ListExpr:
+		c.emit(taivm.OpUnpack.With(len(node.List)))
+		for _, elem := range node.List {
+			if err := c.compileStore(elem); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *syntax.TupleExpr:
+		c.emit(taivm.OpUnpack.With(len(node.List)))
+		for _, elem := range node.List {
+			if err := c.compileStore(elem); err != nil {
+				return err
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported variable type: %T", lhs)
@@ -364,7 +384,7 @@ func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, []syntax.E
 
 func (c *compiler) compileSimpleAssign(lhs, rhs syntax.Expr) error {
 	switch node := lhs.(type) {
-	case *syntax.Ident:
+	case *syntax.Ident, *syntax.ListExpr, *syntax.TupleExpr, *syntax.ParenExpr:
 		if err := c.compileExpr(rhs); err != nil {
 			return err
 		}
@@ -417,6 +437,8 @@ func (c *compiler) compileAugmentedAssign(s *syntax.AssignStmt) error {
 		op = taivm.OpMul
 	case syntax.SLASH_EQ:
 		op = taivm.OpDiv
+	case syntax.SLASHSLASH_EQ:
+		op = taivm.OpFloorDiv
 	case syntax.PERCENT_EQ:
 		op = taivm.OpMod
 	case syntax.AMP_EQ:
@@ -558,6 +580,8 @@ func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
 		c.emit(taivm.OpMul)
 	case syntax.SLASH:
 		c.emit(taivm.OpDiv)
+	case syntax.SLASHSLASH:
+		c.emit(taivm.OpFloorDiv)
 	case syntax.PERCENT:
 		c.emit(taivm.OpMod)
 	case syntax.EQL:

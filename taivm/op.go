@@ -54,6 +54,8 @@ const (
 	OpCallKw
 	OpListAppend
 	OpContains
+	OpFloorDiv
+	OpUnpack
 )
 
 func (o OpCode) With(arg int) OpCode {

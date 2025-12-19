@@ -2,6 +2,7 @@ package taivm
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -122,7 +123,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
-		case OpAdd, OpSub, OpMul, OpDiv, OpMod:
+		case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpFloorDiv:
 			if !v.opMath(op, yield) {
 				return
 			}
@@ -187,6 +188,10 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
+		case OpUnpack:
+			if !v.opUnpack(inst, yield) {
+				return
+			}
 		}
 
 	}
@@ -323,6 +328,15 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 					return nil, true, fmt.Errorf("division by zero")
 				}
 				return x % y, true, nil
+			case OpFloorDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				q := x / y
+				if (x < 0) != (y < 0) && x%y != 0 {
+					q--
+				}
+				return q, true, nil
 			}
 		}
 	case int64:
@@ -344,6 +358,15 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 					return nil, true, fmt.Errorf("division by zero")
 				}
 				return x % y, true, nil
+			case OpFloorDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				q := x / y
+				if (x < 0) != (y < 0) && x%y != 0 {
+					q--
+				}
+				return q, true, nil
 			}
 		}
 	case float64:
@@ -360,6 +383,11 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 					return nil, true, fmt.Errorf("division by zero")
 				}
 				return x / y, true, nil
+			case OpFloorDiv:
+				if y == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return math.Floor(x / y), true, nil
 			}
 		}
 	}
@@ -1382,6 +1410,15 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 				return true
 			}
 			res = f1 / f2
+		case OpFloorDiv:
+			if f2 == 0 {
+				if !yield(nil, fmt.Errorf("division by zero")) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			res = math.Floor(f1 / f2)
 		default:
 			if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
 				return false
@@ -1429,6 +1466,18 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 		res = i1 % i2
+	case OpFloorDiv:
+		if i2 == 0 {
+			if !yield(nil, fmt.Errorf("division by zero")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res = i1 / i2
+		if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
+			res--
+		}
 	}
 	v.push(res)
 	return true
@@ -2271,5 +2320,68 @@ func (v *VM) opContains(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 	v.push(found)
+	return true
+}
+
+func (v *VM) opUnpack(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	count := int(inst >> 8)
+	if v.SP < 1 {
+		if !yield(nil, fmt.Errorf("stack underflow during unpack")) {
+			return false
+		}
+		return true
+	}
+	val := v.pop()
+
+	var items []any
+
+	switch t := val.(type) {
+	case *List:
+		items = t.Elements
+	case []any:
+		items = t
+	case *Range:
+		length := t.Len()
+		items = make([]any, 0, length)
+		curr := t.Start
+		for i := int64(0); i < length; i++ {
+			items = append(items, curr)
+			curr += t.Step
+		}
+	case map[any]any:
+		items = make([]any, 0, len(t))
+		for k := range t {
+			items = append(items, k)
+		}
+		// Sort keys to ensure deterministic unpacking
+		allStrings := true
+		for _, k := range items {
+			if _, ok := k.(string); !ok {
+				allStrings = false
+				break
+			}
+		}
+		if allStrings {
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].(string) < items[j].(string)
+			})
+		}
+	default:
+		if !yield(nil, fmt.Errorf("cannot unpack %T", val)) {
+			return false
+		}
+		return true
+	}
+
+	if len(items) != count {
+		if !yield(nil, fmt.Errorf("unpack error: expected %d values, got %d", count, len(items))) {
+			return false
+		}
+		return true
+	}
+
+	for i := count - 1; i >= 0; i-- {
+		v.push(items[i])
+	}
 	return true
 }
