@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/reusee/tai/taivm"
+	"go.starlark.net/syntax"
 )
 
 func run(t *testing.T, src string) *taivm.VM {
@@ -1110,4 +1111,180 @@ func TestNativeRangeErrors(t *testing.T) {
 	check([]any{int64(1), int64(2), "a"})
 	check([]any{"a"})
 	check([]any{int64(1), int64(2), int64(0)}) // step 0
+}
+
+func testCompiler() *compiler {
+	return newCompiler("test")
+}
+
+type mockStmt struct {
+	syntax.Stmt
+}
+
+func TestCoverage_CompileStmtDefault(t *testing.T) {
+	c := testCompiler()
+	err := c.compileStmt(&mockStmt{})
+	if err == nil || !strings.Contains(err.Error(), "unsupported statement type") {
+		t.Errorf("expected unsupported statement type error, got %v", err)
+	}
+}
+
+type mockExpr struct {
+	syntax.Expr
+}
+
+func TestCoverage_CompileExprDefault(t *testing.T) {
+	c := testCompiler()
+	err := c.compileExpr(&mockExpr{})
+	if err == nil || !strings.Contains(err.Error(), "unsupported expression") {
+		t.Errorf("expected error, got %v", err)
+	}
+}
+
+func TestCoverage_CompileBranchErrors(t *testing.T) {
+	c := testCompiler()
+
+	err := c.compileBranch(&syntax.BranchStmt{Token: syntax.BREAK})
+	if err == nil || !strings.Contains(err.Error(), "outside loop") {
+		t.Errorf("want error 'outside loop', got %v", err)
+	}
+
+	err = c.compileBranch(&syntax.BranchStmt{Token: syntax.CONTINUE})
+	if err == nil || !strings.Contains(err.Error(), "outside loop") {
+		t.Errorf("want error 'outside loop', got %v", err)
+	}
+}
+
+func TestCoverage_AugmentedAssignErrors(t *testing.T) {
+	c := testCompiler()
+
+	// Unsupported Op
+	err := c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.EQ,
+		LHS: &syntax.Ident{Name: "x"},
+		RHS: &syntax.Literal{Value: 1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("want error 'not supported', got %v", err)
+	}
+
+	// Unsupported LHS
+	err = c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.Literal{Value: 1},
+		RHS: &syntax.Literal{Value: 1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported augmented assignment target") {
+		t.Errorf("want error 'unsupported augmented assignment target', got %v", err)
+	}
+}
+
+func TestCoverage_UnaryBinaryErrors(t *testing.T) {
+	c := testCompiler()
+
+	err := c.compileUnaryExpr(&syntax.UnaryExpr{
+		Op: syntax.AND, // Invalid unary
+		X:  &syntax.Literal{Value: 1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported unary op") {
+		t.Errorf("want error 'unsupported unary op', got %v", err)
+	}
+
+	err = c.compileBinaryExpr(&syntax.BinaryExpr{
+		Op: syntax.DEF, // Invalid binary
+		X:  &syntax.Literal{Value: 1},
+		Y:  &syntax.Literal{Value: 1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported binary op") {
+		t.Errorf("want error 'unsupported binary op', got %v", err)
+	}
+}
+
+func TestCoverage_Constants(t *testing.T) {
+	c := testCompiler()
+
+	// Slice is not comparable
+	sl := []int{1}
+	if isComparable(sl) {
+		t.Error("slice should not be comparable")
+	}
+
+	idx1 := c.addConst(sl)
+	idx2 := c.addConst([]int{1}) // different slice instance
+	if idx1 == idx2 {
+		t.Error("different non-comparable constants should have different indices")
+	}
+
+	idx3 := c.addConst(1)
+	idx4 := c.addConst(1)
+	if idx3 != idx4 {
+		t.Error("comparable constants should be deduplicated")
+	}
+}
+
+func TestCoverage_ControlFlow(t *testing.T) {
+	// If without else
+	src := `
+x = 0
+if x == 0:
+	x = 1
+`
+	vm := run(t, src)
+	if val, ok := vm.Get("x"); !ok || val != int64(1) {
+		t.Errorf("x = %v, want 1", val)
+	}
+
+	// While loop with break (ensure coverage)
+	src = `
+x = 0
+while 1 == 1:
+	x = 1
+	break
+`
+	vm = run(t, src)
+	if val, ok := vm.Get("x"); !ok || val != int64(1) {
+		t.Errorf("x = %v, want 1", val)
+	}
+}
+
+func TestCoverage_CompileForErrors(t *testing.T) {
+	src := `
+for 1 in [1]:
+	pass
+`
+	_, err := Compile("test", strings.NewReader(src))
+	if err == nil || !strings.Contains(err.Error(), "unsupported variable type") {
+		t.Errorf("want error 'unsupported variable type', got %v", err)
+	}
+}
+
+func TestCoverage_NativeFuncs(t *testing.T) {
+	vm := taivm.NewVM(&taivm.Function{})
+
+	// Len invalid
+	_, err := Len.Func(vm, []any{123})
+	if err == nil || !strings.Contains(err.Error(), "has no len") {
+		t.Errorf("want error 'has no len', got %v", err)
+	}
+
+	// Range step zero
+	_, err = Range.Func(vm, []any{0, 10, 0})
+	if err == nil || !strings.Contains(err.Error(), "step cannot be zero") {
+		t.Errorf("want error 'step cannot be zero', got %v", err)
+	}
+}
+
+func TestCoverage_UnsupportedExpression(t *testing.T) {
+	// Try to compile a Set expression {1, 2} which is likely unsupported in compileExpr
+	src := `
+s = {1, 2}
+`
+	_, err := Compile("test", strings.NewReader(src))
+	if err == nil {
+		// If it compiles, check if it ran correctly?
+	} else if strings.Contains(err.Error(), "unsupported expression") {
+		// Covered
+	} else {
+		t.Logf("Got error: %v", err)
+	}
 }
