@@ -708,3 +708,50 @@ print("hello", "world")
 print(1, 2, 3)
 `)
 }
+
+func TestNativeRangeSequence(t *testing.T) {
+	// Len
+	vm := run(t, `
+l1 = len(range(10))
+l2 = len(range(1, 11))
+l3 = len(range(0, 10, 2))
+l4 = len(range(10, 0, -1))
+l5 = len(range(10, 0, -2))
+l_empty = len(range(10, 0, 1))
+`)
+	if val, ok := vm.Get("l1"); !ok || val != int64(10) {
+		t.Errorf("l1 = %v, want 10", val)
+	}
+	if val, ok := vm.Get("l2"); !ok || val != int64(10) {
+		t.Errorf("l2 = %v, want 10", val)
+	}
+	if val, ok := vm.Get("l3"); !ok || val != int64(5) {
+		t.Errorf("l3 = %v, want 5", val)
+	}
+	if val, ok := vm.Get("l4"); !ok || val != int64(10) {
+		t.Errorf("l4 = %v, want 10", val)
+	}
+	if val, ok := vm.Get("l5"); !ok || val != int64(5) {
+		t.Errorf("l5 = %v, want 5", val)
+	}
+	if val, ok := vm.Get("l_empty"); !ok || val != int64(0) {
+		t.Errorf("l_empty = %v, want 0", val)
+	}
+
+	// Index
+	vm = run(t, `
+r = range(10, 20, 2)
+v0 = r[0]
+v1 = r[1]
+v_last = r[-1]
+`)
+	if val, ok := vm.Get("v0"); !ok || val != int64(10) {
+		t.Errorf("v0 = %v, want 10", val)
+	}
+	if val, ok := vm.Get("v1"); !ok || val != int64(12) {
+		t.Errorf("v1 = %v, want 12", val)
+	}
+	if val, ok := vm.Get("v_last"); !ok || val != int64(18) {
+		t.Errorf("v_last = %v, want 18", val)
+	}
+}

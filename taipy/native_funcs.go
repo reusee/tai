@@ -21,6 +21,8 @@ var Len = taivm.NativeFunc{
 			return int64(len(v)), nil
 		case map[any]any:
 			return int64(len(v)), nil
+		case *taivm.Range:
+			return v.Len(), nil
 		default:
 			return nil, fmt.Errorf("object of type %T has no len()", v)
 		}

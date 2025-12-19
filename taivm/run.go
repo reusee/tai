@@ -907,6 +907,37 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 			val = t[k]
 		}
 
+	case *Range:
+		var idx int64
+		var ok bool
+		switch i := key.(type) {
+		case int:
+			idx = int64(i)
+			ok = true
+		case int64:
+			idx = i
+			ok = true
+		}
+		if !ok {
+			if !yield(nil, fmt.Errorf("range index must be int, got %T", key)) {
+				return false
+			}
+			val = nil
+		} else {
+			length := t.Len()
+			if idx < 0 {
+				idx += length
+			}
+			if idx < 0 || idx >= length {
+				if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
+					return false
+				}
+				val = nil
+			} else {
+				val = t.Start + idx*t.Step
+			}
+		}
+
 	default:
 		if !yield(nil, fmt.Errorf("type %T is not indexable", target)) {
 			return false
