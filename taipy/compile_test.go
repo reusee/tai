@@ -15,7 +15,6 @@ func run(t *testing.T, src string) *taivm.VM {
 	}
 
 	vm := taivm.NewVM(fn)
-	vm.Def("concat", Concat)
 	vm.Def("len", Len)
 
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
@@ -309,7 +308,7 @@ for i in [1, 2, 3]:
 d = {"a": 1, "b": 2}
 keys = []
 for k in d:
-	keys = concat(keys, [k])
+	keys += [k]
 `)
 	if val, ok := vm.Get("keys"); !ok {
 		t.Errorf("keys not found")
