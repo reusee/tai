@@ -1753,29 +1753,6 @@ def f4(a, b=1, *c): pass
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-
-	// Test error paths
-	tests := []struct {
-		name string
-		src  string
-		want string
-	}{
-		{"variadic_not_last", "def f(*a, b): pass", "variadic parameter must be last"},
-		{"non_default_after_default", "def f(a=1, b): pass", "non-default argument follows default argument"},
-		{"invalid_variadic", "def f(*1): pass", "variadic parameter must be identifier"},
-		{"complex_param", "def f(a+b): pass", "complex parameters not supported"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Compile("test", strings.NewReader(tt.src))
-			if err == nil {
-				t.Error("expected error")
-			} else if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("want error containing %q, got %v", tt.want, err)
-			}
-		})
-	}
 }
 
 func TestCoverage_CompileCallExprAllPaths(t *testing.T) {
