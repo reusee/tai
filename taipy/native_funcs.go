@@ -2,6 +2,7 @@ package taipy
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -97,9 +98,9 @@ var Struct = taivm.NativeFunc{
 					}
 				}
 			case map[string]any:
-				for k, v := range m {
-					fields[k] = v
-				}
+				maps.Copy(fields, m)
+			default:
+				return nil, fmt.Errorf("unknown struct argument type: %T", m)
 			}
 		}
 		return &taivm.Struct{Fields: fields}, nil

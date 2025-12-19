@@ -1305,8 +1305,8 @@ a = 1
 (f) = 6
 
 # DotExpr
-s = {"x": 10}
-s["x"] = 20
+s = struct({"x": 10})
+s.x = 20
 
 # IndexExpr
 l = [100]
@@ -1393,7 +1393,7 @@ j = (1 + 2)
 k = f[0:2]
 
 # DotExpr
-s = {"x": 10}
+s = struct({'x': 10})
 l = s.x
 
 # CondExpr
