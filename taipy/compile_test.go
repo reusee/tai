@@ -564,3 +564,50 @@ res2 = add(5, 7)
 		t.Errorf("res2 = %v, want 12", val)
 	}
 }
+
+func TestCompileVariadic(t *testing.T) {
+	vm := run(t, `
+def f(a, *b):
+	return b
+
+l1 = f(1)
+l2 = f(1, 2)
+l3 = f(1, 2, 3)
+`)
+	if val, ok := vm.Get("l1"); !ok {
+		t.Error("l1 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 0 {
+		t.Errorf("l1 = %v, want []", val)
+	}
+
+	if val, ok := vm.Get("l2"); !ok {
+		t.Error("l2 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 1 || l.Elements[0].(int64) != 2 {
+		t.Errorf("l2 = %v, want [2]", val)
+	}
+
+	if val, ok := vm.Get("l3"); !ok {
+		t.Error("l3 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[1].(int64) != 3 {
+		t.Errorf("l3 = %v, want [2, 3]", val)
+	}
+}
+
+func TestCompileVariadicLambda(t *testing.T) {
+	vm := run(t, `
+f = lambda a, *b: b
+l1 = f(1)
+l2 = f(1, 2, 3)
+`)
+	if val, ok := vm.Get("l1"); !ok {
+		t.Error("l1 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 0 {
+		t.Errorf("l1 = %v, want []", val)
+	}
+
+	if val, ok := vm.Get("l2"); !ok {
+		t.Error("l2 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[0].(int64) != 2 {
+		t.Errorf("l2 = %v, want [2, 3]", val)
+	}
+}

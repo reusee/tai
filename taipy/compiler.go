@@ -516,11 +516,13 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 
 		fn := sub.toFunction()
 		var err error
-		fn.ParamNames, err = c.extractParamNames(e.Params)
+		var isVariadic bool
+		fn.ParamNames, isVariadic, err = c.extractParamNames(e.Params)
 		if err != nil {
 			return err
 		}
-		fn.NumParams = len(e.Params)
+		fn.NumParams = len(fn.ParamNames)
+		fn.Variadic = isVariadic
 
 		c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
 
@@ -640,11 +642,13 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 
 	fn := sub.toFunction()
 	var err error
-	fn.ParamNames, err = c.extractParamNames(s.Params)
+	var isVariadic bool
+	fn.ParamNames, isVariadic, err = c.extractParamNames(s.Params)
 	if err != nil {
 		return err
 	}
-	fn.NumParams = len(s.Params)
+	fn.NumParams = len(fn.ParamNames)
+	fn.Variadic = isVariadic
 
 	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
 	c.emit(taivm.OpDefVar.With(c.addConst(s.Name.Name)))
@@ -652,14 +656,25 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	return nil
 }
 
-func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, error) {
-	names := make([]string, len(params))
-	for i, p := range params {
+func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, bool, error) {
+	names := make([]string, 0, len(params))
+	isVariadic := false
+	for _, p := range params {
+		if isVariadic {
+			return nil, false, fmt.Errorf("variadic parameter must be last")
+		}
 		if id, ok := p.(*syntax.Ident); ok {
-			names[i] = id.Name
+			names = append(names, id.Name)
+		} else if u, ok := p.(*syntax.UnaryExpr); ok && u.Op == syntax.STAR {
+			if id, ok := u.X.(*syntax.Ident); ok {
+				names = append(names, id.Name)
+				isVariadic = true
+			} else {
+				return nil, false, fmt.Errorf("variadic parameter must be identifier")
+			}
 		} else {
-			return nil, fmt.Errorf("complex parameters not supported")
+			return nil, false, fmt.Errorf("complex parameters not supported")
 		}
 	}
-	return names, nil
+	return names, isVariadic, nil
 }
