@@ -1288,3 +1288,649 @@ s = {1, 2}
 		t.Logf("Got error: %v", err)
 	}
 }
+
+func TestCoverage_CompileStoreAllTypes(t *testing.T) {
+	// Test all supported types in compileStore
+	src := `
+# Simple identifier
+a = 1
+
+# List unpacking
+[b, c] = [2, 3]
+
+# Tuple unpacking
+(d, e) = (4, 5)
+
+# ParenExpr
+(f) = 6
+
+# DotExpr
+s = {"x": 10}
+s["x"] = 20
+
+# IndexExpr
+l = [100]
+l[0] = 200
+
+# SliceExpr
+l2 = [1, 2, 3]
+l2[0:2] = [4, 5]
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1)
+	check("b", 2)
+	check("c", 3)
+	check("d", 4)
+	check("e", 5)
+	check("f", 6)
+
+	if val, ok := vm.Get("s"); !ok {
+		t.Error("s not found")
+	} else if s, ok := val.(*taivm.Struct); !ok {
+		t.Errorf("s is %T, want *Struct", val)
+	} else if val, ok := s.Fields["x"]; !ok || val != int64(20) {
+		t.Errorf("s.x = %v, want 20", val)
+	}
+
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else if l, ok := val.(*taivm.List); !ok {
+		t.Errorf("l is %T, want *List", val)
+	} else if l.Elements[0] != int64(200) {
+		t.Errorf("l[0] = %v, want 200", l.Elements[0])
+	}
+
+	if val, ok := vm.Get("l2"); !ok {
+		t.Error("l2 not found")
+	} else if l, ok := val.(*taivm.List); !ok {
+		t.Errorf("l2 is %T, want *List", val)
+	} else if len(l.Elements) != 3 || l.Elements[0] != int64(4) || l.Elements[1] != int64(5) {
+		t.Errorf("l2 = %v", l.Elements)
+	}
+}
+
+func TestCoverage_CompileExprAllTypes(t *testing.T) {
+	// Test all supported types in compileExpr
+	src := `
+# Literal
+a = 1
+
+# Ident
+b = a
+
+# UnaryExpr
+c = -a
+
+# BinaryExpr
+d = a + b
+
+# CallExpr
+e = len([1, 2, 3])
+
+# ListExpr
+f = [1, 2, 3]
+
+# DictExpr
+g = {"a": 1}
+
+# IndexExpr
+h = f[0]
+
+# TupleExpr
+i = (1, 2)
+
+# ParenExpr
+j = (1 + 2)
+
+# SliceExpr
+k = f[0:2]
+
+# DotExpr
+s = {"x": 10}
+l = s.x
+
+# CondExpr
+m = 1 if 1 < 2 else 0
+
+# LambdaExpr
+n = lambda x: x + 1
+
+# Comprehension
+o = [x for x in [1, 2, 3]]
+`
+	vm := run(t, src)
+
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok {
+			t.Errorf("%s not found", name)
+		} else if val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", int64(1))
+	check("b", int64(1))
+	check("c", int64(-1))
+	check("d", int64(2))
+	check("e", int64(3))
+	check("m", int64(1))
+
+	if val, ok := vm.Get("f"); !ok {
+		t.Error("f not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 {
+		t.Errorf("f = %v", val)
+	}
+
+	if val, ok := vm.Get("g"); !ok {
+		t.Error("g not found")
+	} else if m, ok := val.(map[any]any); !ok || m["a"] != int64(1) {
+		t.Errorf("g = %v", val)
+	}
+
+	check("h", int64(1))
+
+	if val, ok := vm.Get("i"); !ok {
+		t.Error("i not found")
+	} else if l, ok := val.(*taivm.List); !ok || !l.Immutable || len(l.Elements) != 2 {
+		t.Errorf("i = %v", val)
+	}
+
+	check("j", int64(3))
+
+	if val, ok := vm.Get("k"); !ok {
+		t.Error("k not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 {
+		t.Errorf("k = %v", val)
+	}
+
+	check("l", int64(10))
+
+	if val, ok := vm.Get("n"); !ok {
+		t.Error("n not found")
+	} else if _, ok := val.(*taivm.Function); !ok {
+		t.Errorf("n is %T, want *Function", val)
+	}
+
+	if val, ok := vm.Get("o"); !ok {
+		t.Error("o not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 {
+		t.Errorf("o = %v", val)
+	}
+}
+
+func TestCoverage_CompileSimpleAssignAllTypes(t *testing.T) {
+	// Test all supported types in compileSimpleAssign
+	src := `
+# Simple identifier
+a = 1
+
+# List unpacking
+[b, c] = [2, 3]
+
+# Tuple unpacking
+(d, e) = (4, 5)
+
+# ParenExpr
+(f) = 6
+
+# IndexExpr
+l = [100]
+l[0] = 200
+
+# SliceExpr
+l2 = [1, 2, 3]
+l2[0:2] = [4, 5]
+
+# DotExpr
+s = {"x": 10}
+s.x = 20
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1)
+	check("b", 2)
+	check("c", 3)
+	check("d", 4)
+	check("e", 5)
+	check("f", 6)
+
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else if l, ok := val.(*taivm.List); !ok || l.Elements[0] != int64(200) {
+		t.Errorf("l[0] = %v, want 200", l.Elements[0])
+	}
+
+	if val, ok := vm.Get("l2"); !ok {
+		t.Error("l2 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 || l.Elements[0] != int64(4) || l.Elements[1] != int64(5) {
+		t.Errorf("l2 = %v", l.Elements)
+	}
+
+	if val, ok := vm.Get("s"); !ok {
+		t.Error("s not found")
+	} else if s, ok := val.(*taivm.Struct); !ok || s.Fields["x"] != int64(20) {
+		t.Errorf("s.x = %v, want 20", s.Fields["x"])
+	}
+}
+
+func TestCoverage_UnaryExprAllOps(t *testing.T) {
+	// Test all supported unary operators
+	src := `
+a = 1
+b = +a
+c = -a
+d = not (a == 0)
+e = ~0
+`
+	vm := run(t, src)
+
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok {
+			t.Errorf("%s not found", name)
+		} else if val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", int64(1))
+	check("b", int64(1))
+	check("c", int64(-1))
+	check("d", true)
+	check("e", int64(-1))
+}
+
+func TestCoverage_BinaryExprAllOps(t *testing.T) {
+	// Test all supported binary operators
+	src := `
+a = 10
+b = 3
+
+# Arithmetic
+c = a + b
+d = a - b
+e = a * b
+f = a / b
+g = a // b
+h = a % b
+i = a ** b
+
+# Comparison
+j = a == b
+k = a != b
+l = a < b
+m = a <= b
+n = a > b
+o = a >= b
+
+# Bitwise
+p = a & b
+q = a | b
+r = a ^ b
+s = a << b
+t = a >> b
+
+# Contains
+u = 1 in [1, 2, 3]
+v = 1 not in [1, 2, 3]
+
+# Short-circuit
+w = (1 < 2) and (2 < 3)
+x = (1 < 2) or (2 > 3)
+`
+	vm := run(t, src)
+
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok {
+			t.Errorf("%s not found", name)
+		} else if val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("c", int64(13))
+	check("d", int64(7))
+	check("e", int64(30))
+	check("f", 10.0/3.0)
+	check("g", int64(3))
+	check("h", int64(1))
+	check("i", int64(1000))
+
+	check("j", false)
+	check("k", true)
+	check("l", false)
+	check("m", false)
+	check("n", true)
+	check("o", true)
+
+	check("p", int64(2))
+	check("q", int64(11))
+	check("r", int64(9))
+	check("s", int64(80))
+	check("t", int64(1))
+
+	check("u", true)
+	check("v", false)
+
+	check("w", true)
+	check("x", true)
+}
+
+func TestCoverage_CompileIfAllPaths(t *testing.T) {
+	// Test all paths in compileIf
+	src := `
+# If with else
+a = 0
+if 1 < 2:
+	a = 1
+else:
+	a = 2
+
+# If without else
+b = 0
+if 1 < 2:
+	b = 1
+
+# If with empty false branch
+c = 0
+if 1 > 2:
+	c = 1
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1)
+	check("b", 1)
+	check("c", 0)
+}
+
+func TestCoverage_CompileWhileAllPaths(t *testing.T) {
+	// Test all paths in compileWhile
+	src := `
+# While with break
+a = 0
+while 1 == 1:
+	a = 1
+	break
+
+# While with continue
+b = 0
+i = 0
+while i < 5:
+	i += 1
+	if i % 2 == 0:
+		continue
+	b += i
+
+# While with no break/continue
+c = 0
+i = 0
+while i < 3:
+	c += i
+	i += 1
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1)
+	check("b", 9) // 1 + 3 + 5
+	check("c", 3) // 0 + 1 + 2
+}
+
+func TestCoverage_CompileForAllPaths(t *testing.T) {
+	// Test all paths in compileFor
+	src := `
+# For with break
+a = 0
+for i in [1, 2, 3]:
+	if i == 2:
+		break
+	a += i
+
+# For with continue
+b = 0
+for i in [1, 2, 3]:
+	if i == 2:
+		continue
+	b += i
+
+# For with no break/continue
+c = 0
+for i in [1, 2, 3]:
+	c += i
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1) // 1 only
+	check("b", 4) // 1 + 3
+	check("c", 6) // 1 + 2 + 3
+}
+
+func TestCoverage_ExtractParamNamesAllPaths(t *testing.T) {
+	// Test all paths in extractParamNames
+	src := `
+# Simple params
+def f1(a, b): pass
+
+# Default params
+def f2(a, b=1): pass
+
+# Variadic param
+def f3(a, *b): pass
+
+# Mixed
+def f4(a, b=1, *c): pass
+`
+	_, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Test error paths
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"variadic_not_last", "def f(*a, b): pass", "variadic parameter must be last"},
+		{"non_default_after_default", "def f(a=1, b): pass", "non-default argument follows default argument"},
+		{"invalid_variadic", "def f(*1): pass", "variadic parameter must be identifier"},
+		{"complex_param", "def f(a+b): pass", "complex parameters not supported"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Compile("test", strings.NewReader(tt.src))
+			if err == nil {
+				t.Error("expected error")
+			} else if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("want error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestCoverage_CompileCallExprAllPaths(t *testing.T) {
+	// Test all paths in compileCallExpr
+	src := `
+# Simple call
+def f(a, b): return a + b
+a = f(1, 2)
+
+# Keyword args
+b = f(a=1, b=2)
+
+# Mixed positional and keyword
+c = f(1, b=2)
+
+# Unpack positional
+d = f(*[1, 2])
+
+# Unpack keyword
+e = f(**{"a": 1, "b": 2})
+
+# Mixed unpack
+f = f(1, *[2], **{"b": 3})
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 3)
+	check("b", 3)
+	check("c", 3)
+	check("d", 3)
+	check("e", 3)
+	check("f", 4) // a=1, b=3
+}
+
+func TestCoverage_CompileComprehensionAllPaths(t *testing.T) {
+	// Test all paths in compileComprehension
+	src := `
+# List comprehension
+a = [x for x in range(3)]
+
+# Dict comprehension
+b = {x: x*x for x in range(3)}
+
+# With if clause
+c = [x for x in range(5) if x % 2 == 0]
+
+# Nested
+d = [x+y for x in [1, 2] for y in [10, 20]]
+
+# Scope isolation
+x = 100
+e = [x for x in range(3)]
+f = x
+`
+	vm := run(t, src)
+
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok {
+			t.Errorf("%s not found", name)
+		} else if val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	if val, ok := vm.Get("a"); !ok {
+		t.Error("a not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 {
+		t.Errorf("a = %v", val)
+	}
+
+	if val, ok := vm.Get("b"); !ok {
+		t.Error("b not found")
+	} else if m, ok := val.(map[any]any); !ok || len(m) != 3 {
+		t.Errorf("b = %v", val)
+	}
+
+	if val, ok := vm.Get("c"); !ok {
+		t.Error("c not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 {
+		t.Errorf("c = %v", val)
+	}
+
+	if val, ok := vm.Get("d"); !ok {
+		t.Error("d not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 4 {
+		t.Errorf("d = %v", val)
+	}
+
+	check("f", int64(100))
+}
+
+func TestCoverage_CompileLambdaExprAllPaths(t *testing.T) {
+	// Test all paths in compileLambdaExpr
+	src := `
+# Simple lambda
+a = lambda x: x + 1
+
+# Multiple params
+b = lambda x, y: x + y
+
+# Default params
+c = lambda x, y=1: x + y
+
+# Variadic
+d = lambda x, *y: len(y)
+
+# Call lambda
+e = a(10)
+f = b(5, 7)
+g = c(5)
+h = d(1, 2, 3)
+`
+	vm := run(t, src)
+
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok {
+			t.Errorf("%s not found", name)
+		} else if val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("e", int64(11))
+	check("f", int64(12))
+	check("g", int64(6))
+	check("h", int64(2))
+}
+
+func TestCoverage_CompileCondExprAllPaths(t *testing.T) {
+	// Test all paths in compileCondExpr
+	src := `
+# True condition
+a = 1 if 1 < 2 else 0
+
+# False condition
+b = 1 if 1 > 2 else 0
+
+# Nested
+c = 1 if 1 < 2 else (2 if 2 < 3 else 0)
+`
+	vm := run(t, src)
+
+	check := func(name string, want int64) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+
+	check("a", 1)
+	check("b", 0)
+	check("c", 1)
+}
