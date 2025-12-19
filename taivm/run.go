@@ -327,7 +327,11 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 				if y == 0 {
 					return nil, true, fmt.Errorf("division by zero")
 				}
-				return x % y, true, nil
+				r := x % y
+				if (r < 0) != (y < 0) && r != 0 {
+					r += y
+				}
+				return r, true, nil
 			case OpFloorDiv:
 				if y == 0 {
 					return nil, true, fmt.Errorf("division by zero")
@@ -357,7 +361,11 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 				if y == 0 {
 					return nil, true, fmt.Errorf("division by zero")
 				}
-				return x % y, true, nil
+				r := x % y
+				if (r < 0) != (y < 0) && r != 0 {
+					r += y
+				}
+				return r, true, nil
 			case OpFloorDiv:
 				if y == 0 {
 					return nil, true, fmt.Errorf("division by zero")
@@ -1466,6 +1474,9 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 		res = i1 % i2
+		if (res < 0) != (i2 < 0) && res != 0 {
+			res += i2
+		}
 	case OpFloorDiv:
 		if i2 == 0 {
 			if !yield(nil, fmt.Errorf("division by zero")) {

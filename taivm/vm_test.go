@@ -4022,3 +4022,213 @@ func TestVM_ExtendedSlice(t *testing.T) {
 		t.Fatalf("extended slice assign failed: %v", elems)
 	}
 }
+
+func TestVM_Coverage_GapFilling_2(t *testing.T) {
+	// List Concatenation
+	t.Run("ListConcat", func(t *testing.T) {
+		l1 := &List{Elements: []any{1}}
+		l2 := &List{Elements: []any{2}}
+		vm := NewVM(&Function{
+			Constants: []any{l1, l2},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop().(*List)
+		if len(res.Elements) != 2 || res.Elements[0].(int) != 1 || res.Elements[1].(int) != 2 {
+			t.Fatal("list concat failed")
+		}
+	})
+
+	// Complex Math
+	t.Run("ComplexMath", func(t *testing.T) {
+		c1 := 1 + 2i
+		c2 := 3 + 4i
+		// (1+2i)*(3+4i) = 3 + 4i + 6i - 8 = -5 + 10i
+		vm := NewVM(&Function{
+			Constants: []any{c1, c2},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpMul, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop().(complex128)
+		if res != -5+10i {
+			t.Fatalf("expected -5+10i, got %v", res)
+		}
+	})
+
+	// Mod/FloorDiv Signs
+	t.Run("ModFloorDivSigns", func(t *testing.T) {
+		// 5 // -2 = -3
+		// 5 % -2 = -1 (Python style: 5 - (-3)*(-2) = 5 - 6 = -1)
+		vm := NewVM(&Function{
+			Constants: []any{5, -2},
+			Code: []OpCode{
+				OpLoadConst.With(0), OpLoadConst.With(1), OpFloorDiv,
+				OpLoadConst.With(0), OpLoadConst.With(1), OpMod,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		mod, _ := ToInt64(vm.pop())
+		div, _ := ToInt64(vm.pop())
+		if div != -3 {
+			t.Errorf("expected div -3, got %v", div)
+		}
+		if mod != -1 {
+			t.Errorf("expected mod -1, got %v", mod)
+		}
+	})
+
+	// BoundMethod with KwArgs
+	t.Run("BoundMethodKw", func(t *testing.T) {
+		// func method(self, val) { return [self, val] }
+		method := &Function{
+			NumParams:  2,
+			ParamNames: []string{"self", "val"},
+			Code: []OpCode{
+				OpGetLocal.With(0), OpGetLocal.With(1), OpMakeList.With(2), OpReturn,
+			},
+		}
+		// bound = BoundMethod(self="obj", fun=method)
+		bm := &BoundMethod{Receiver: "obj", Fun: &Closure{Fun: method, Env: &Env{}}}
+
+		// Call bound(val=42)
+		vm := NewVM(&Function{
+			Constants: []any{bm, "val", 42},
+			Code: []OpCode{
+				OpLoadConst.With(0),                                         // bound method
+				OpMakeList.With(0),                                          // pos args
+				OpLoadConst.With(1), OpLoadConst.With(2), OpMakeMap.With(1), // kw args {val: 42}
+				OpCallKw,
+				OpReturn,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop().(*List)
+		if res.Elements[0] != "obj" || res.Elements[1].(int) != 42 {
+			t.Fatalf("bound method call failed: %v", res.Elements)
+		}
+	})
+
+	// Map Unpack Order
+	t.Run("MapUnpackOrder", func(t *testing.T) {
+		m := map[any]any{"b": 2, "a": 1}
+		vm := NewVM(&Function{
+			Constants: []any{m},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpUnpack.With(2),
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop().(string) != "a" {
+			t.Fatal("expected 'a' at top")
+		}
+		if vm.pop().(string) != "b" {
+			t.Fatal("expected 'b' next")
+		}
+	})
+
+	// Slice Defaults
+	t.Run("SliceDefaults", func(t *testing.T) {
+		// [0,1,2,3][::] -> [0,1,2,3]
+		// [0,1,2,3][::-1] -> [3,2,1,0]
+		l := &List{Elements: []any{0, 1, 2, 3}}
+		vm := NewVM(&Function{
+			Constants: []any{l, nil, -1},
+			Code: []OpCode{
+				// [::]
+				OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(1), OpLoadConst.With(1), OpGetSlice,
+				// [::-1]
+				OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(1), OpLoadConst.With(2), OpGetSlice,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		rev := vm.pop().(*List).Elements
+		fwd := vm.pop().(*List).Elements
+		if len(rev) != 4 || rev[0].(int) != 3 {
+			t.Fatal("reverse slice failed")
+		}
+		if len(fwd) != 4 || fwd[0].(int) != 0 {
+			t.Fatal("forward slice failed")
+		}
+	})
+
+	// Closure with Defaults (Positional)
+	t.Run("ClosureDefaults", func(t *testing.T) {
+		// func f(a, b=2) { return a+b }
+		f := &Function{
+			NumParams:   2,
+			NumDefaults: 1,
+			Code: []OpCode{
+				OpGetLocal.With(0), OpGetLocal.With(1), OpAdd, OpReturn,
+			},
+		}
+		vm := NewVM(&Function{
+			Constants: []any{f, 2, 10},
+			Code: []OpCode{
+				OpLoadConst.With(1), // default val 2
+				OpMakeClosure.With(0),
+				OpLoadConst.With(2), // arg 10
+				OpCall.With(1),      // f(10) -> 10+2 = 12
+				OpReturn,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res := vm.pop().(int); res != 12 {
+			t.Fatalf("expected 12, got %v", res)
+		}
+	})
+
+	// Range Contains Negative Step
+	t.Run("RangeContainsNegative", func(t *testing.T) {
+		// range(5, 0, -2) -> 5, 3, 1
+		r := &Range{Start: 5, Stop: 0, Step: -2}
+		vm := NewVM(&Function{
+			Constants: []any{r, 3, 4},
+			Code: []OpCode{
+				// 3 in r -> true
+				OpLoadConst.With(1), OpLoadConst.With(0), OpContains,
+				// 4 in r -> false
+				OpLoadConst.With(2), OpLoadConst.With(0), OpContains,
+			},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop().(bool) {
+			t.Fatal("4 should not be in range")
+		}
+		if !vm.pop().(bool) {
+			t.Fatal("3 should be in range")
+		}
+	})
+}
