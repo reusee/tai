@@ -669,3 +669,42 @@ len_t = len(t)
 		t.Errorf("len_t = %v, want 2", val)
 	}
 }
+
+func TestNativeRange(t *testing.T) {
+	vm := run(t, `
+sum = 0
+for i in range(5):
+	sum += i
+`)
+	if val, ok := vm.Get("sum"); !ok || val != int64(10) {
+		t.Errorf("sum(range(5)) = %v, want 10", val)
+	}
+
+	vm = run(t, `
+sum = 0
+for i in range(1, 5):
+	sum += i
+`)
+	// 1+2+3+4 = 10
+	if val, ok := vm.Get("sum"); !ok || val != int64(10) {
+		t.Errorf("sum(range(1, 5)) = %v, want 10", val)
+	}
+
+	vm = run(t, `
+sum = 0
+for i in range(0, 10, 2):
+	sum += i
+`)
+	// 0+2+4+6+8 = 20
+	if val, ok := vm.Get("sum"); !ok || val != int64(20) {
+		t.Errorf("sum(range(0, 10, 2)) = %v, want 20", val)
+	}
+}
+
+func TestNativePrint(t *testing.T) {
+	// Just ensure it doesn't crash, as capturing stdout is harder
+	run(t, `
+print("hello", "world")
+print(1, 2, 3)
+`)
+}

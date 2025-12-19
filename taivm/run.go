@@ -207,6 +207,10 @@ func toInt64(v any) (int64, bool) {
 	return 0, false
 }
 
+func ToInt64(v any) (int64, bool) {
+	return toInt64(v)
+}
+
 func toFloat64(v any) (float64, bool) {
 	switch i := v.(type) {
 	case float64:
@@ -1483,6 +1487,11 @@ func (v *VM) opGetIter(yield func(*Interrupt, error) bool) bool {
 			})
 		}
 		v.push(&MapIterator{Keys: keys})
+	case *Range:
+		v.push(&RangeIterator{
+			Range: t,
+			Curr:  t.Start,
+		})
 	default:
 		if !yield(nil, fmt.Errorf("type %T is not iterable", val)) {
 			return false
@@ -1517,6 +1526,14 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			it.Idx++
 		} else {
 			v.pop() // pop iterator
+			v.IP += offset
+		}
+	case *RangeIterator:
+		if (it.Range.Step > 0 && it.Curr < it.Range.Stop) || (it.Range.Step < 0 && it.Curr > it.Range.Stop) {
+			v.push(it.Curr)
+			it.Curr += it.Range.Step
+		} else {
+			v.pop()
 			v.IP += offset
 		}
 	default:
