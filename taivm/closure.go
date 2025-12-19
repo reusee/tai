@@ -5,4 +5,5 @@ type Closure struct {
 	Env         *Env
 	ParamSyms   []Symbol
 	MaxParamSym int
+	Defaults    []any
 }

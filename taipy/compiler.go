@@ -301,12 +301,20 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	fn := sub.toFunction()
 	var err error
 	var isVariadic bool
-	fn.ParamNames, isVariadic, err = c.extractParamNames(s.Params)
+	var defaults []syntax.Expr
+	fn.ParamNames, defaults, isVariadic, err = c.extractParamNames(s.Params)
 	if err != nil {
 		return err
 	}
 	fn.NumParams = len(fn.ParamNames)
+	fn.NumDefaults = len(defaults)
 	fn.Variadic = isVariadic
+
+	for _, d := range defaults {
+		if err := c.compileExpr(d); err != nil {
+			return err
+		}
+	}
 
 	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
 	c.emit(taivm.OpDefVar.With(c.addConst(s.Name.Name)))
@@ -314,28 +322,41 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	return nil
 }
 
-func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, bool, error) {
-	//TODO default argument value
+func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, []syntax.Expr, bool, error) {
 	names := make([]string, 0, len(params))
+	var defaults []syntax.Expr
 	isVariadic := false
+	seenDefault := false
+
 	for _, p := range params {
 		if isVariadic {
-			return nil, false, fmt.Errorf("variadic parameter must be last")
+			return nil, nil, false, fmt.Errorf("variadic parameter must be last")
 		}
 		if id, ok := p.(*syntax.Ident); ok {
+			if seenDefault {
+				return nil, nil, false, fmt.Errorf("non-default argument follows default argument")
+			}
 			names = append(names, id.Name)
 		} else if u, ok := p.(*syntax.UnaryExpr); ok && u.Op == syntax.STAR {
 			if id, ok := u.X.(*syntax.Ident); ok {
 				names = append(names, id.Name)
 				isVariadic = true
 			} else {
-				return nil, false, fmt.Errorf("variadic parameter must be identifier")
+				return nil, nil, false, fmt.Errorf("variadic parameter must be identifier")
+			}
+		} else if bin, ok := p.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+			if id, ok := bin.X.(*syntax.Ident); ok {
+				names = append(names, id.Name)
+				defaults = append(defaults, bin.Y)
+				seenDefault = true
+			} else {
+				return nil, nil, false, fmt.Errorf("parameter name must be identifier")
 			}
 		} else {
-			return nil, false, fmt.Errorf("complex parameters not supported")
+			return nil, nil, false, fmt.Errorf("complex parameters not supported")
 		}
 	}
-	return names, isVariadic, nil
+	return names, defaults, isVariadic, nil
 }
 
 func (c *compiler) compileSimpleAssign(lhs, rhs syntax.Expr) error {
@@ -785,12 +806,20 @@ func (c *compiler) compileLambdaExpr(e *syntax.LambdaExpr) error {
 	fn := sub.toFunction()
 	var err error
 	var isVariadic bool
-	fn.ParamNames, isVariadic, err = c.extractParamNames(e.Params)
+	var defaults []syntax.Expr
+	fn.ParamNames, defaults, isVariadic, err = c.extractParamNames(e.Params)
 	if err != nil {
 		return err
 	}
 	fn.NumParams = len(fn.ParamNames)
+	fn.NumDefaults = len(defaults)
 	fn.Variadic = isVariadic
+
+	for _, d := range defaults {
+		if err := c.compileExpr(d); err != nil {
+			return err
+		}
+	}
 
 	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
 	return nil

@@ -609,11 +609,21 @@ func (v *VM) opMakeClosure(inst OpCode) {
 			maxSym = int(sym)
 		}
 	}
+
+	var defaults []any
+	if fun.NumDefaults > 0 {
+		defaults = make([]any, fun.NumDefaults)
+		for i := fun.NumDefaults - 1; i >= 0; i-- {
+			defaults[i] = v.pop()
+		}
+	}
+
 	v.push(&Closure{
 		Fun:         fun,
 		Env:         v.Scope,
 		ParamSyms:   paramSyms,
 		MaxParamSym: maxSym,
+		Defaults:    defaults,
 	})
 }
 
@@ -660,40 +670,28 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
 	numParams := fn.Fun.NumParams
-	if fn.Fun.Variadic {
-		if argc < numParams-1 {
-			if !yield(nil, fmt.Errorf("arity mismatch: want at least %d, got %d", numParams-1, argc)) {
-				return false
-			}
-			v.drop(argc + 1)
-			v.push(nil)
-			return true
+	isVariadic := fn.Fun.Variadic
+	defaults := fn.Defaults
+	numDefaults := len(defaults)
+
+	// Determine required args
+	numFixed := numParams
+	if isVariadic {
+		numFixed--
+	}
+	minArgs := numFixed - numDefaults
+
+	if argc < minArgs {
+		if !yield(nil, fmt.Errorf("arity mismatch: want at least %d, got %d", minArgs, argc)) {
+			return false
 		}
+		v.drop(argc + 1)
+		v.push(nil)
+		return true
+	}
 
-		fixed := numParams - 1
-		varArgsCount := argc - fixed
-		slice := make([]any, varArgsCount)
-		base := calleeIdx + 1 + fixed
-		copy(slice, v.OperandStack[base:base+varArgsCount])
-
-		list := &List{
-			Elements:  slice,
-			Immutable: true,
-		}
-
-		if varArgsCount == 0 {
-			v.push(list)
-		} else {
-			v.OperandStack[base] = list
-			for i := base + 1; i < v.SP; i++ {
-				v.OperandStack[i] = nil
-			}
-			v.SP = base + 1
-		}
-		argc = numParams
-
-	} else if argc != numParams {
-		if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", numParams, argc)) {
+	if !isVariadic && argc > numFixed {
+		if !yield(nil, fmt.Errorf("arity mismatch: want %d, got %d", numFixed, argc)) {
 			return false
 		}
 		v.drop(argc + 1)
@@ -722,9 +720,37 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		newEnv.Grow(maxSym)
 	}
 
-	// Bind arguments from stack directly to new environment
-	for i := range argc {
-		newEnv.DefSym(paramSyms[i], v.OperandStack[calleeIdx+1+i])
+	// Bind fixed arguments (from stack or defaults)
+	for i := range numFixed {
+		var val any
+		if i < argc {
+			val = v.OperandStack[calleeIdx+1+i]
+		} else {
+			// Use default
+			// Default index calculation:
+			// Defaults cover the last numDefaults of the fixed params.
+			// Index 0 of defaults corresponds to param index (numFixed - numDefaults)
+			defIdx := i - (numFixed - numDefaults)
+			val = defaults[defIdx]
+		}
+		newEnv.DefSym(paramSyms[i], val)
+	}
+
+	// Bind Variadic
+	if isVariadic {
+		var slice []any
+		if argc > numFixed {
+			count := argc - numFixed
+			slice = make([]any, count)
+			base := calleeIdx + 1 + numFixed
+			copy(slice, v.OperandStack[base:base+count])
+		} else {
+			slice = []any{}
+		}
+		newEnv.DefSym(paramSyms[numFixed], &List{
+			Elements:  slice,
+			Immutable: true,
+		})
 	}
 
 	// Tail Call Optimization
@@ -733,16 +759,29 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		if dst > 0 {
 			dst--
 		}
-		src := calleeIdx
-		count := argc + 1
-		copy(v.OperandStack[dst:], v.OperandStack[src:src+count])
+		// When using defaults or slicing varargs, we can't simply slide the stack
+		// because the new frame arguments might be constructed/different from stack.
+		// However, TCO reuses the Frame slot.
+		// Since we've already bound everything to newEnv, we don't need the args on stack
+		// for execution, but we need to clear them.
+		// TCO assumes arguments are on stack for the NEXT call?
+		// No, TCO in this VM seems to slide arguments for the *callee* frame.
+		// But here we already consumed args into `newEnv`.
+		// The VM execution uses `OpGetLocal` (relative to BP) OR `OpLoadVar` (env lookup).
+		// This VM seems to mix stack-based locals and Env-based vars?
+		// Looking at OpGetLocal: v.OperandStack[v.BP+idx].
+		// But Python-like `def` logic here uses `Env` (OpLoadVar).
+		// `OpGetLocal` is used in benchmarks with manual assembly, but `compileDef` uses `OpLoadVar`.
+		// So strict stack sliding for arguments isn't critical for `Env` based functions,
+		// BUT we must ensure the stack is clean.
 
-		// Nil out use locations to avoid leakage
-		startClean := dst + count
-		endClean := v.SP
-		clear(v.OperandStack[startClean:endClean])
+		// Clean up stack: drop callee and all args
+		// v.SP is currently at end of args.
+		v.drop(v.SP - calleeIdx)
 
-		v.SP = startClean
+		// Set BP for new frame?
+		// If using Env, BP might not be heavily used for args, but we preserve the convention.
+		// Reuse current frame slot.
 		v.BP = dst + 1
 	} else {
 		v.CallStack = append(v.CallStack, Frame{
@@ -2028,13 +2067,22 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		if isVariadic {
 			checkLimit = numParams - 1
 		}
+
+		numFixed := checkLimit
+		startDefaults := numFixed - len(fn.Defaults)
+
 		for i := 0; i < checkLimit; i++ {
 			if !isSet[i] {
-				if !yield(nil, fmt.Errorf("missing argument '%s'", paramNames[i])) {
-					return false
+				if i >= startDefaults {
+					newEnv.DefSym(paramSyms[i], fn.Defaults[i-startDefaults])
+					isSet[i] = true
+				} else {
+					if !yield(nil, fmt.Errorf("missing argument '%s'", paramNames[i])) {
+						return false
+					}
+					v.push(nil)
+					return true
 				}
-				v.push(nil)
-				return true
 			}
 		}
 
