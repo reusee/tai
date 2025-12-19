@@ -4,7 +4,6 @@ import (
 	"os"
 
 	"github.com/reusee/tai/taipy"
-	"github.com/reusee/tai/taivm"
 )
 
 func main() {
@@ -23,14 +22,13 @@ func main() {
 		name = os.Args[1]
 	}
 
-	fn, err := taipy.Compile(name, input)
+	vm, err := taipy.NewVM(name, input)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")
 		os.Exit(-1)
 	}
 
-	vm := taivm.NewVM(fn)
 	for _, err := range vm.Run {
 		if err != nil {
 			os.Stderr.WriteString(err.Error())
