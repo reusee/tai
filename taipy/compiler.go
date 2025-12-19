@@ -108,7 +108,6 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 		return c.compileFor(s)
 	case *syntax.BranchStmt:
 		return c.compileBranch(s)
-	//TODO support all statement types
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -127,7 +126,6 @@ func (c *compiler) compileStore(lhs syntax.Expr) error {
 	case *syntax.Ident:
 		c.emit(taivm.OpDefVar.With(c.addConst(node.Name)))
 		return nil
-	//TODO support other lhs types
 	default:
 		return fmt.Errorf("unsupported variable type: %T", lhs)
 	}
@@ -185,7 +183,6 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 		return c.compileLambdaExpr(e)
 	case *syntax.Comprehension:
 		return c.compileComprehension(e)
-	//TODO handle all expr types
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)
 	}
@@ -403,7 +400,6 @@ func (c *compiler) compileSimpleAssign(lhs, rhs syntax.Expr) error {
 			return err
 		}
 		c.emit(taivm.OpSetAttr)
-	//TODO support other assignment targets
 	default:
 		return fmt.Errorf("unsupported assignment target: %T", lhs)
 	}
@@ -500,7 +496,6 @@ func (c *compiler) compileUnaryExpr(e *syntax.UnaryExpr) error {
 			return err
 		}
 		c.emit(taivm.OpBitNot)
-	//TODO support other unary operators
 	default:
 		return fmt.Errorf("unsupported unary op: %v", e.Op)
 	}
@@ -592,7 +587,6 @@ func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
 	case syntax.NOT_IN:
 		c.emit(taivm.OpContains)
 		c.emit(taivm.OpNot)
-	//TODO support other binary operators
 	default:
 		return fmt.Errorf("unsupported binary op: %v", e.Op)
 	}
