@@ -176,9 +176,7 @@ Your goal is to improve code quality and correctness by identifying and fixing t
 
 	cmds.Define("next", cmds.Func(func() {
 		actionNameFlag = a.Name()
-		actionArgumentFlag = `
-理解最终目标和当前进展，确定下一步行动，然后提供行动的帮助。
-		`
+		actionArgumentFlag = `理解最终目标和当前进展，确定下一步行动，然后提供行动的帮助。优先注意 @@ai 标记，然后注意 TODO 标记。`
 	}).Desc("find the best next step and finish it"))
 
 }
