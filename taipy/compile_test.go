@@ -608,3 +608,37 @@ l2 = f(1, 2, 3)
 		t.Errorf("l2 = %v, want [2, 3]", val)
 	}
 }
+
+func TestCompileCallUnpack(t *testing.T) {
+	// Unpack list
+	vm := run(t, `
+def f(a, b):
+	return a + b
+args = [10, 20]
+res = f(*args)
+`)
+	if val, ok := vm.Get("res"); !ok || val != int64(30) {
+		t.Errorf("res = %v, want 30", val)
+	}
+
+	// Unpack map
+	vm = run(t, `
+def g(x, y):
+	return x * y
+kwargs = {"x": 3, "y": 4}
+res2 = g(**kwargs)
+`)
+	if val, ok := vm.Get("res2"); !ok || val != int64(12) {
+		t.Errorf("res2 = %v, want 12", val)
+	}
+
+	// Mixed
+	vm = run(t, `
+def h(a, b, c, d):
+	return a + b + c + d
+res3 = h(1, *[2], c=3, **{"d": 4})
+`)
+	if val, ok := vm.Get("res3"); !ok || val != int64(10) {
+		t.Errorf("res3 = %v, want 10", val)
+	}
+}

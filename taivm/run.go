@@ -1054,6 +1054,22 @@ func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 	b := v.pop()
 	a := v.pop()
 
+	if op == OpBitOr {
+		m1, ok1 := a.(map[any]any)
+		m2, ok2 := b.(map[any]any)
+		if ok1 && ok2 {
+			newMap := make(map[any]any, len(m1)+len(m2))
+			for k, val := range m1 {
+				newMap[k] = val
+			}
+			for k, val := range m2 {
+				newMap[k] = val
+			}
+			v.push(newMap)
+			return true
+		}
+	}
+
 	if res, ok, err := bitwiseSameType(op, a, b); ok {
 		if err != nil {
 			if !yield(nil, err) {
@@ -1163,6 +1179,16 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		s2, ok2 := b.(string)
 		if ok1 && ok2 {
 			v.push(s1 + s2)
+			return true
+		}
+
+		l1, ok1 := a.(*List)
+		l2, ok2 := b.(*List)
+		if ok1 && ok2 {
+			newElems := make([]any, 0, len(l1.Elements)+len(l2.Elements))
+			newElems = append(newElems, l1.Elements...)
+			newElems = append(newElems, l2.Elements...)
+			v.push(&List{Elements: newElems, Immutable: false})
 			return true
 		}
 	}

@@ -525,60 +525,132 @@ func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
 		return err
 	}
 
-	hasKw := false
+	isSimple := true
 	for _, arg := range e.Args {
-		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
-			hasKw = true
+		if _, ok := arg.(*syntax.BinaryExpr); ok {
+			isSimple = false
+			break
+		}
+		if u, ok := arg.(*syntax.UnaryExpr); ok && (u.Op == syntax.STAR || u.Op == syntax.STARSTAR) {
+			isSimple = false
 			break
 		}
 	}
 
-	if !hasKw {
+	if isSimple {
 		for _, arg := range e.Args {
-			if unary, ok := arg.(*syntax.UnaryExpr); ok && (unary.Op == syntax.STAR || unary.Op == syntax.STARSTAR) {
-				return fmt.Errorf("star arguments not supported yet")
-			}
 			if err := c.compileExpr(arg); err != nil {
 				return err
 			}
 		}
 		c.emit(taivm.OpCall.With(len(e.Args)))
-	} else {
-		var posArgs []syntax.Expr
-		var kwArgs []*syntax.BinaryExpr
+		return nil
+	}
 
-		for _, arg := range e.Args {
-			if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
-				kwArgs = append(kwArgs, bin)
-			} else {
-				if len(kwArgs) > 0 {
-					return fmt.Errorf("positional argument follows keyword argument")
-				}
-				posArgs = append(posArgs, arg)
-			}
+	// Dynamic path using OpCallKw (callee is already on stack)
+
+	// 1. Build Positional Args List
+	hasListOnStack := false
+	var pendingPos []syntax.Expr
+
+	flushPos := func() error {
+		if len(pendingPos) == 0 && hasListOnStack {
+			return nil
 		}
-
-		for _, arg := range posArgs {
+		for _, arg := range pendingPos {
 			if err := c.compileExpr(arg); err != nil {
 				return err
 			}
 		}
-		c.emit(taivm.OpMakeList.With(len(posArgs)))
+		c.emit(taivm.OpMakeList.With(len(pendingPos)))
+		if hasListOnStack {
+			c.emit(taivm.OpAdd)
+		}
+		hasListOnStack = true
+		pendingPos = nil
+		return nil
+	}
 
-		for _, kw := range kwArgs {
-			id, ok := kw.X.(*syntax.Ident)
-			if !ok {
-				return fmt.Errorf("keyword argument must be identifier")
+	for _, arg := range e.Args {
+		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+			continue
+		}
+		if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STARSTAR {
+			continue
+		}
+
+		if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STAR {
+			if err := flushPos(); err != nil {
+				return err
 			}
+			if err := c.compileExpr(u.X); err != nil {
+				return err
+			}
+			if hasListOnStack {
+				c.emit(taivm.OpAdd)
+			} else {
+				hasListOnStack = true
+			}
+		} else {
+			pendingPos = append(pendingPos, arg)
+		}
+	}
+	if err := flushPos(); err != nil {
+		return err
+	}
+	if !hasListOnStack {
+		c.emit(taivm.OpMakeList.With(0))
+	}
+
+	// 2. Build Keyword Args Map
+	hasMapOnStack := false
+	var pendingKw []*syntax.BinaryExpr
+
+	flushKw := func() error {
+		if len(pendingKw) == 0 && hasMapOnStack {
+			return nil
+		}
+		for _, kw := range pendingKw {
+			id := kw.X.(*syntax.Ident)
 			c.emit(taivm.OpLoadConst.With(c.addConst(id.Name)))
 			if err := c.compileExpr(kw.Y); err != nil {
 				return err
 			}
 		}
-		c.emit(taivm.OpMakeMap.With(len(kwArgs)))
-
-		c.emit(taivm.OpCallKw)
+		c.emit(taivm.OpMakeMap.With(len(pendingKw)))
+		if hasMapOnStack {
+			c.emit(taivm.OpBitOr)
+		}
+		hasMapOnStack = true
+		pendingKw = nil
+		return nil
 	}
+
+	for _, arg := range e.Args {
+		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+			pendingKw = append(pendingKw, bin)
+		} else if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STARSTAR {
+			if err := flushKw(); err != nil {
+				return err
+			}
+			if err := c.compileExpr(u.X); err != nil {
+				return err
+			}
+			if hasMapOnStack {
+				c.emit(taivm.OpBitOr)
+			} else {
+				hasMapOnStack = true
+			}
+		}
+	}
+	if err := flushKw(); err != nil {
+		return err
+	}
+	if !hasMapOnStack {
+		c.emit(taivm.OpMakeMap.With(0))
+	}
+
+	c.emit(taivm.OpCallKw)
 	return nil
 }
 
