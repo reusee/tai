@@ -116,139 +116,9 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 
 func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 	if s.Op == syntax.EQ {
-		switch lhs := s.LHS.(type) {
-		case *syntax.Ident:
-			if err := c.compileExpr(s.RHS); err != nil {
-				return err
-			}
-			return c.compileStore(lhs)
-		case *syntax.IndexExpr:
-			if err := c.compileExpr(lhs.X); err != nil {
-				return err
-			}
-			if err := c.compileExpr(lhs.Y); err != nil {
-				return err
-			}
-			if err := c.compileExpr(s.RHS); err != nil {
-				return err
-			}
-			c.emit(taivm.OpSetIndex)
-		case *syntax.SliceExpr:
-			if err := c.compileExpr(lhs.X); err != nil {
-				return err
-			}
-			if lhs.Lo != nil {
-				if err := c.compileExpr(lhs.Lo); err != nil {
-					return err
-				}
-			} else {
-				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-			}
-			if lhs.Hi != nil {
-				if err := c.compileExpr(lhs.Hi); err != nil {
-					return err
-				}
-			} else {
-				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-			}
-			if lhs.Step != nil {
-				if err := c.compileExpr(lhs.Step); err != nil {
-					return err
-				}
-			} else {
-				c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-			}
-			if err := c.compileExpr(s.RHS); err != nil {
-				return err
-			}
-			c.emit(taivm.OpSetSlice)
-		case *syntax.DotExpr:
-			if err := c.compileExpr(lhs.X); err != nil {
-				return err
-			}
-			c.emit(taivm.OpLoadConst.With(c.addConst(lhs.Name.Name)))
-			if err := c.compileExpr(s.RHS); err != nil {
-				return err
-			}
-			c.emit(taivm.OpSetAttr)
-
-		default:
-			return fmt.Errorf("unsupported assignment target: %T", s.LHS)
-		}
-		return nil
+		return c.compileSimpleAssign(s.LHS, s.RHS)
 	}
-
-	var op taivm.OpCode
-	switch s.Op {
-	case syntax.PLUS_EQ:
-		op = taivm.OpAdd
-	case syntax.MINUS_EQ:
-		op = taivm.OpSub
-	case syntax.STAR_EQ:
-		op = taivm.OpMul
-	case syntax.SLASH_EQ:
-		op = taivm.OpDiv
-	case syntax.PERCENT_EQ:
-		op = taivm.OpMod
-	case syntax.AMP_EQ:
-		op = taivm.OpBitAnd
-	case syntax.PIPE_EQ:
-		op = taivm.OpBitOr
-	case syntax.CIRCUMFLEX_EQ:
-		op = taivm.OpBitXor
-	case syntax.LTLT_EQ:
-		op = taivm.OpBitLsh
-	case syntax.GTGT_EQ:
-		op = taivm.OpBitRsh
-	default:
-		return fmt.Errorf("augmented assignment op %s not supported", s.Op)
-	}
-
-	switch lhs := s.LHS.(type) {
-	case *syntax.Ident:
-		c.emit(taivm.OpLoadVar.With(c.addConst(lhs.Name)))
-		if err := c.compileExpr(s.RHS); err != nil {
-			return err
-		}
-		c.emit(op)
-		return c.compileStore(lhs)
-
-	case *syntax.IndexExpr:
-		if err := c.compileExpr(lhs.X); err != nil {
-			return err
-		}
-		if err := c.compileExpr(lhs.Y); err != nil {
-			return err
-		}
-		c.emit(taivm.OpDup2)
-		c.emit(taivm.OpGetIndex)
-		if err := c.compileExpr(s.RHS); err != nil {
-			return err
-		}
-		c.emit(op)
-		c.emit(taivm.OpSetIndex)
-
-	case *syntax.DotExpr:
-		if err := c.compileExpr(lhs.X); err != nil {
-			return err
-		}
-		c.emit(taivm.OpLoadConst.With(c.addConst(lhs.Name.Name)))
-		// Stack: [obj, attr]
-		c.emit(taivm.OpDup2)
-		// Stack: [obj, attr, obj, attr]
-		c.emit(taivm.OpGetAttr)
-		// Stack: [obj, attr, val]
-		if err := c.compileExpr(s.RHS); err != nil {
-			return err
-		}
-		c.emit(op)
-		// Stack: [obj, attr, new_val]
-		c.emit(taivm.OpSetAttr)
-
-	default:
-		return fmt.Errorf("unsupported augmented assignment target: %T", s.LHS)
-	}
-	return nil
+	return c.compileAugmentedAssign(s)
 }
 
 func (c *compiler) compileStore(lhs syntax.Expr) error {
@@ -288,241 +158,29 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 	case *syntax.Ident:
 		c.emit(taivm.OpLoadVar.With(c.addConst(e.Name)))
 	case *syntax.UnaryExpr:
-		switch e.Op {
-		case syntax.PLUS:
-			return c.compileExpr(e.X)
-		case syntax.MINUS:
-			c.emit(taivm.OpLoadConst.With(c.addConst(0)))
-			if err := c.compileExpr(e.X); err != nil {
-				return err
-			}
-			c.emit(taivm.OpSub)
-		case syntax.NOT:
-			if err := c.compileExpr(e.X); err != nil {
-				return err
-			}
-			c.emit(taivm.OpNot)
-		case syntax.TILDE:
-			if err := c.compileExpr(e.X); err != nil {
-				return err
-			}
-			c.emit(taivm.OpBitNot)
-		default:
-			return fmt.Errorf("unsupported unary op: %v", e.Op)
-		}
+		return c.compileUnaryExpr(e)
 	case *syntax.BinaryExpr:
-		if err := c.compileExpr(e.X); err != nil {
-			return err
-		}
-		if err := c.compileExpr(e.Y); err != nil {
-			return err
-		}
-		switch e.Op {
-		case syntax.PLUS:
-			c.emit(taivm.OpAdd)
-		case syntax.MINUS:
-			c.emit(taivm.OpSub)
-		case syntax.STAR:
-			c.emit(taivm.OpMul)
-		case syntax.SLASH:
-			c.emit(taivm.OpDiv)
-		case syntax.PERCENT:
-			c.emit(taivm.OpMod)
-		case syntax.EQL:
-			c.emit(taivm.OpEq)
-		case syntax.NEQ:
-			c.emit(taivm.OpNe)
-		case syntax.LT:
-			c.emit(taivm.OpLt)
-		case syntax.LE:
-			c.emit(taivm.OpLe)
-		case syntax.GT:
-			c.emit(taivm.OpGt)
-		case syntax.GE:
-			c.emit(taivm.OpGe)
-		case syntax.PIPE:
-			c.emit(taivm.OpBitOr)
-		case syntax.AMP:
-			c.emit(taivm.OpBitAnd)
-		case syntax.CIRCUMFLEX:
-			c.emit(taivm.OpBitXor)
-		case syntax.LTLT:
-			c.emit(taivm.OpBitLsh)
-		case syntax.GTGT:
-			c.emit(taivm.OpBitRsh)
-		default:
-			return fmt.Errorf("unsupported binary op: %v", e.Op)
-		}
+		return c.compileBinaryExpr(e)
 	case *syntax.CallExpr:
-		if err := c.compileExpr(e.Fn); err != nil {
-			return err
-		}
-
-		hasKw := false
-		for _, arg := range e.Args {
-			if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
-				hasKw = true
-				break
-			}
-		}
-
-		if !hasKw {
-			for _, arg := range e.Args {
-				if unary, ok := arg.(*syntax.UnaryExpr); ok && (unary.Op == syntax.STAR || unary.Op == syntax.STARSTAR) {
-					return fmt.Errorf("star arguments not supported yet")
-				}
-				if err := c.compileExpr(arg); err != nil {
-					return err
-				}
-			}
-			c.emit(taivm.OpCall.With(len(e.Args)))
-		} else {
-			var posArgs []syntax.Expr
-			var kwArgs []*syntax.BinaryExpr
-
-			for _, arg := range e.Args {
-				if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
-					kwArgs = append(kwArgs, bin)
-				} else {
-					if len(kwArgs) > 0 {
-						return fmt.Errorf("positional argument follows keyword argument")
-					}
-					posArgs = append(posArgs, arg)
-				}
-			}
-
-			for _, arg := range posArgs {
-				if err := c.compileExpr(arg); err != nil {
-					return err
-				}
-			}
-			c.emit(taivm.OpMakeList.With(len(posArgs)))
-
-			for _, kw := range kwArgs {
-				id, ok := kw.X.(*syntax.Ident)
-				if !ok {
-					return fmt.Errorf("keyword argument must be identifier")
-				}
-				c.emit(taivm.OpLoadConst.With(c.addConst(id.Name)))
-				if err := c.compileExpr(kw.Y); err != nil {
-					return err
-				}
-			}
-			c.emit(taivm.OpMakeMap.With(len(kwArgs)))
-
-			c.emit(taivm.OpCallKw)
-		}
-
+		return c.compileCallExpr(e)
 	case *syntax.ListExpr:
-		for _, elem := range e.List {
-			if err := c.compileExpr(elem); err != nil {
-				return err
-			}
-		}
-		c.emit(taivm.OpMakeList.With(len(e.List)))
+		return c.compileListExpr(e)
 	case *syntax.DictExpr:
-		for _, entry := range e.List {
-			entry := entry.(*syntax.DictEntry)
-			if err := c.compileExpr(entry.Key); err != nil {
-				return err
-			}
-			if err := c.compileExpr(entry.Value); err != nil {
-				return err
-			}
-		}
-		c.emit(taivm.OpMakeMap.With(len(e.List)))
+		return c.compileDictExpr(e)
 	case *syntax.IndexExpr:
-		if err := c.compileExpr(e.X); err != nil {
-			return err
-		}
-		if err := c.compileExpr(e.Y); err != nil {
-			return err
-		}
-		c.emit(taivm.OpGetIndex)
+		return c.compileIndexExpr(e)
 	case *syntax.TupleExpr:
-		for _, elem := range e.List {
-			if err := c.compileExpr(elem); err != nil {
-				return err
-			}
-		}
-		c.emit(taivm.OpMakeTuple.With(len(e.List)))
+		return c.compileTupleExpr(e)
 	case *syntax.ParenExpr:
 		return c.compileExpr(e.X)
 	case *syntax.SliceExpr:
-		if err := c.compileExpr(e.X); err != nil {
-			return err
-		}
-		if e.Lo != nil {
-			if err := c.compileExpr(e.Lo); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		if e.Hi != nil {
-			if err := c.compileExpr(e.Hi); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		if e.Step != nil {
-			if err := c.compileExpr(e.Step); err != nil {
-				return err
-			}
-		} else {
-			c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
-		}
-		c.emit(taivm.OpGetSlice)
-
+		return c.compileSliceExpr(e)
 	case *syntax.DotExpr:
-		if err := c.compileExpr(e.X); err != nil {
-			return err
-		}
-		c.emit(taivm.OpLoadConst.With(c.addConst(e.Name.Name)))
-		c.emit(taivm.OpGetAttr)
-
+		return c.compileDotExpr(e)
 	case *syntax.CondExpr:
-		if err := c.compileExpr(e.Cond); err != nil {
-			return err
-		}
-		jumpFalseIP := c.currentIP()
-		c.emit(taivm.OpJumpFalse)
-
-		if err := c.compileExpr(e.True); err != nil {
-			return err
-		}
-
-		jumpEndIP := c.currentIP()
-		c.emit(taivm.OpJump)
-
-		c.patchJump(jumpFalseIP, c.currentIP())
-
-		if err := c.compileExpr(e.False); err != nil {
-			return err
-		}
-
-		c.patchJump(jumpEndIP, c.currentIP())
-
+		return c.compileCondExpr(e)
 	case *syntax.LambdaExpr:
-		sub := newCompiler("<lambda>")
-		if err := sub.compileExpr(e.Body); err != nil {
-			return err
-		}
-		sub.emit(taivm.OpReturn)
-
-		fn := sub.toFunction()
-		var err error
-		var isVariadic bool
-		fn.ParamNames, isVariadic, err = c.extractParamNames(e.Params)
-		if err != nil {
-			return err
-		}
-		fn.NumParams = len(fn.ParamNames)
-		fn.Variadic = isVariadic
-
-		c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
-
+		return c.compileLambdaExpr(e)
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)
 	}
@@ -674,4 +332,387 @@ func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, bool, erro
 		}
 	}
 	return names, isVariadic, nil
+}
+
+func (c *compiler) compileSimpleAssign(lhs, rhs syntax.Expr) error {
+	switch node := lhs.(type) {
+	case *syntax.Ident:
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		return c.compileStore(node)
+	case *syntax.IndexExpr:
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(node.Y); err != nil {
+			return err
+		}
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetIndex)
+	case *syntax.SliceExpr:
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		if err := c.compileSliceArgs(node); err != nil {
+			return err
+		}
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetSlice)
+	case *syntax.DotExpr:
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadConst.With(c.addConst(node.Name.Name)))
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetAttr)
+	default:
+		return fmt.Errorf("unsupported assignment target: %T", lhs)
+	}
+	return nil
+}
+
+func (c *compiler) compileAugmentedAssign(s *syntax.AssignStmt) error {
+	var op taivm.OpCode
+	switch s.Op {
+	case syntax.PLUS_EQ:
+		op = taivm.OpAdd
+	case syntax.MINUS_EQ:
+		op = taivm.OpSub
+	case syntax.STAR_EQ:
+		op = taivm.OpMul
+	case syntax.SLASH_EQ:
+		op = taivm.OpDiv
+	case syntax.PERCENT_EQ:
+		op = taivm.OpMod
+	case syntax.AMP_EQ:
+		op = taivm.OpBitAnd
+	case syntax.PIPE_EQ:
+		op = taivm.OpBitOr
+	case syntax.CIRCUMFLEX_EQ:
+		op = taivm.OpBitXor
+	case syntax.LTLT_EQ:
+		op = taivm.OpBitLsh
+	case syntax.GTGT_EQ:
+		op = taivm.OpBitRsh
+	default:
+		return fmt.Errorf("augmented assignment op %s not supported", s.Op)
+	}
+
+	switch lhs := s.LHS.(type) {
+	case *syntax.Ident:
+		c.emit(taivm.OpLoadVar.With(c.addConst(lhs.Name)))
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(op)
+		return c.compileStore(lhs)
+
+	case *syntax.IndexExpr:
+		if err := c.compileExpr(lhs.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(lhs.Y); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDup2)
+		c.emit(taivm.OpGetIndex)
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(op)
+		c.emit(taivm.OpSetIndex)
+
+	case *syntax.DotExpr:
+		if err := c.compileExpr(lhs.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadConst.With(c.addConst(lhs.Name.Name)))
+		c.emit(taivm.OpDup2)
+		c.emit(taivm.OpGetAttr)
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(op)
+		c.emit(taivm.OpSetAttr)
+
+	default:
+		return fmt.Errorf("unsupported augmented assignment target: %T", s.LHS)
+	}
+	return nil
+}
+
+func (c *compiler) compileUnaryExpr(e *syntax.UnaryExpr) error {
+	switch e.Op {
+	case syntax.PLUS:
+		return c.compileExpr(e.X)
+	case syntax.MINUS:
+		c.emit(taivm.OpLoadConst.With(c.addConst(0)))
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSub)
+	case syntax.NOT:
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpNot)
+	case syntax.TILDE:
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpBitNot)
+	default:
+		return fmt.Errorf("unsupported unary op: %v", e.Op)
+	}
+	return nil
+}
+
+func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
+	if err := c.compileExpr(e.X); err != nil {
+		return err
+	}
+	if err := c.compileExpr(e.Y); err != nil {
+		return err
+	}
+	switch e.Op {
+	case syntax.PLUS:
+		c.emit(taivm.OpAdd)
+	case syntax.MINUS:
+		c.emit(taivm.OpSub)
+	case syntax.STAR:
+		c.emit(taivm.OpMul)
+	case syntax.SLASH:
+		c.emit(taivm.OpDiv)
+	case syntax.PERCENT:
+		c.emit(taivm.OpMod)
+	case syntax.EQL:
+		c.emit(taivm.OpEq)
+	case syntax.NEQ:
+		c.emit(taivm.OpNe)
+	case syntax.LT:
+		c.emit(taivm.OpLt)
+	case syntax.LE:
+		c.emit(taivm.OpLe)
+	case syntax.GT:
+		c.emit(taivm.OpGt)
+	case syntax.GE:
+		c.emit(taivm.OpGe)
+	case syntax.PIPE:
+		c.emit(taivm.OpBitOr)
+	case syntax.AMP:
+		c.emit(taivm.OpBitAnd)
+	case syntax.CIRCUMFLEX:
+		c.emit(taivm.OpBitXor)
+	case syntax.LTLT:
+		c.emit(taivm.OpBitLsh)
+	case syntax.GTGT:
+		c.emit(taivm.OpBitRsh)
+	default:
+		return fmt.Errorf("unsupported binary op: %v", e.Op)
+	}
+	return nil
+}
+
+func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
+	if err := c.compileExpr(e.Fn); err != nil {
+		return err
+	}
+
+	hasKw := false
+	for _, arg := range e.Args {
+		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+			hasKw = true
+			break
+		}
+	}
+
+	if !hasKw {
+		for _, arg := range e.Args {
+			if unary, ok := arg.(*syntax.UnaryExpr); ok && (unary.Op == syntax.STAR || unary.Op == syntax.STARSTAR) {
+				return fmt.Errorf("star arguments not supported yet")
+			}
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpCall.With(len(e.Args)))
+	} else {
+		var posArgs []syntax.Expr
+		var kwArgs []*syntax.BinaryExpr
+
+		for _, arg := range e.Args {
+			if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+				kwArgs = append(kwArgs, bin)
+			} else {
+				if len(kwArgs) > 0 {
+					return fmt.Errorf("positional argument follows keyword argument")
+				}
+				posArgs = append(posArgs, arg)
+			}
+		}
+
+		for _, arg := range posArgs {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeList.With(len(posArgs)))
+
+		for _, kw := range kwArgs {
+			id, ok := kw.X.(*syntax.Ident)
+			if !ok {
+				return fmt.Errorf("keyword argument must be identifier")
+			}
+			c.emit(taivm.OpLoadConst.With(c.addConst(id.Name)))
+			if err := c.compileExpr(kw.Y); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeMap.With(len(kwArgs)))
+
+		c.emit(taivm.OpCallKw)
+	}
+	return nil
+}
+
+func (c *compiler) compileListExpr(e *syntax.ListExpr) error {
+	for _, elem := range e.List {
+		if err := c.compileExpr(elem); err != nil {
+			return err
+		}
+	}
+	c.emit(taivm.OpMakeList.With(len(e.List)))
+	return nil
+}
+
+func (c *compiler) compileDictExpr(e *syntax.DictExpr) error {
+	for _, entry := range e.List {
+		entry := entry.(*syntax.DictEntry)
+		if err := c.compileExpr(entry.Key); err != nil {
+			return err
+		}
+		if err := c.compileExpr(entry.Value); err != nil {
+			return err
+		}
+	}
+	c.emit(taivm.OpMakeMap.With(len(e.List)))
+	return nil
+}
+
+func (c *compiler) compileIndexExpr(e *syntax.IndexExpr) error {
+	if err := c.compileExpr(e.X); err != nil {
+		return err
+	}
+	if err := c.compileExpr(e.Y); err != nil {
+		return err
+	}
+	c.emit(taivm.OpGetIndex)
+	return nil
+}
+
+func (c *compiler) compileTupleExpr(e *syntax.TupleExpr) error {
+	for _, elem := range e.List {
+		if err := c.compileExpr(elem); err != nil {
+			return err
+		}
+	}
+	c.emit(taivm.OpMakeTuple.With(len(e.List)))
+	return nil
+}
+
+func (c *compiler) compileSliceArgs(node *syntax.SliceExpr) error {
+	if node.Lo != nil {
+		if err := c.compileExpr(node.Lo); err != nil {
+			return err
+		}
+	} else {
+		c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+	}
+	if node.Hi != nil {
+		if err := c.compileExpr(node.Hi); err != nil {
+			return err
+		}
+	} else {
+		c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+	}
+	if node.Step != nil {
+		if err := c.compileExpr(node.Step); err != nil {
+			return err
+		}
+	} else {
+		c.emit(taivm.OpLoadConst.With(c.addConst(nil)))
+	}
+	return nil
+}
+
+func (c *compiler) compileSliceExpr(e *syntax.SliceExpr) error {
+	if err := c.compileExpr(e.X); err != nil {
+		return err
+	}
+	if err := c.compileSliceArgs(e); err != nil {
+		return err
+	}
+	c.emit(taivm.OpGetSlice)
+	return nil
+}
+
+func (c *compiler) compileDotExpr(e *syntax.DotExpr) error {
+	if err := c.compileExpr(e.X); err != nil {
+		return err
+	}
+	c.emit(taivm.OpLoadConst.With(c.addConst(e.Name.Name)))
+	c.emit(taivm.OpGetAttr)
+	return nil
+}
+
+func (c *compiler) compileCondExpr(e *syntax.CondExpr) error {
+	if err := c.compileExpr(e.Cond); err != nil {
+		return err
+	}
+	jumpFalseIP := c.currentIP()
+	c.emit(taivm.OpJumpFalse)
+
+	if err := c.compileExpr(e.True); err != nil {
+		return err
+	}
+
+	jumpEndIP := c.currentIP()
+	c.emit(taivm.OpJump)
+
+	c.patchJump(jumpFalseIP, c.currentIP())
+
+	if err := c.compileExpr(e.False); err != nil {
+		return err
+	}
+
+	c.patchJump(jumpEndIP, c.currentIP())
+	return nil
+}
+
+func (c *compiler) compileLambdaExpr(e *syntax.LambdaExpr) error {
+	sub := newCompiler("<lambda>")
+	if err := sub.compileExpr(e.Body); err != nil {
+		return err
+	}
+	sub.emit(taivm.OpReturn)
+
+	fn := sub.toFunction()
+	var err error
+	var isVariadic bool
+	fn.ParamNames, isVariadic, err = c.extractParamNames(e.Params)
+	if err != nil {
+		return err
+	}
+	fn.NumParams = len(fn.ParamNames)
+	fn.Variadic = isVariadic
+
+	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
+	return nil
 }
