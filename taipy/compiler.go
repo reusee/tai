@@ -109,10 +109,25 @@ func (c *compiler) compileStmt(stmt syntax.Stmt) error {
 	case *syntax.BranchStmt:
 		return c.compileBranch(s)
 	case *syntax.LoadStmt:
-		return fmt.Errorf("load statement not implemented")
+		return c.compileLoad(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+	return nil
+}
+
+func (c *compiler) compileLoad(s *syntax.LoadStmt) error {
+	moduleName := s.ModuleName()
+	c.emit(taivm.OpImport.With(c.addConst(moduleName)))
+
+	for i, from := range s.From {
+		to := s.To[i]
+		c.emit(taivm.OpDup)
+		c.emit(taivm.OpLoadConst.With(c.addConst(from.Name)))
+		c.emit(taivm.OpGetAttr)
+		c.emit(taivm.OpDefVar.With(c.addConst(to.Name)))
+	}
+	c.emit(taivm.OpPop)
 	return nil
 }
 
@@ -145,6 +160,37 @@ func (c *compiler) compileStore(lhs syntax.Expr) error {
 				return err
 			}
 		}
+		return nil
+	case *syntax.DotExpr:
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp")))
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadConst.With(c.addConst(node.Name.Name)))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp")))
+		c.emit(taivm.OpSetAttr)
+		return nil
+	case *syntax.IndexExpr:
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp")))
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(node.Y); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp")))
+		c.emit(taivm.OpSetIndex)
+		return nil
+	case *syntax.SliceExpr:
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp")))
+		if err := c.compileExpr(node.X); err != nil {
+			return err
+		}
+		if err := c.compileSliceArgs(node); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp")))
+		c.emit(taivm.OpSetSlice)
 		return nil
 	default:
 		return fmt.Errorf("unsupported variable type: %T", lhs)
@@ -492,6 +538,39 @@ func (c *compiler) compileAugmentedAssign(s *syntax.AssignStmt) error {
 		c.emit(op)
 		c.emit(taivm.OpSetAttr)
 
+	case *syntax.SliceExpr:
+		if err := c.compileExpr(lhs.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp_target")))
+
+		if err := c.compileSliceArgs(lhs); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp_step")))
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp_hi")))
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp_lo")))
+
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_target")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_lo")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_hi")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_step")))
+		c.emit(taivm.OpGetSlice)
+
+		if err := c.compileExpr(s.RHS); err != nil {
+			return err
+		}
+		c.emit(op)
+
+		c.emit(taivm.OpDefVar.With(c.addConst(".$tmp_res")))
+
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_target")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_lo")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_hi")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_step")))
+		c.emit(taivm.OpLoadVar.With(c.addConst(".$tmp_res")))
+		c.emit(taivm.OpSetSlice)
+
 	default:
 		return fmt.Errorf("unsupported augmented assignment target: %T", s.LHS)
 	}
@@ -611,6 +690,8 @@ func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
 	case syntax.NOT_IN:
 		c.emit(taivm.OpContains)
 		c.emit(taivm.OpNot)
+	case syntax.STARSTAR:
+		c.emit(taivm.OpPow)
 	default:
 		return fmt.Errorf("unsupported binary op: %v", e.Op)
 	}

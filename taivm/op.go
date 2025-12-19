@@ -56,6 +56,8 @@ const (
 	OpContains
 	OpFloorDiv
 	OpUnpack
+	OpPow
+	OpImport
 )
 
 func (o OpCode) With(arg int) OpCode {

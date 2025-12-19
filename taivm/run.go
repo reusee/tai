@@ -123,7 +123,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
-		case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpFloorDiv:
+		case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpFloorDiv, OpPow:
 			if !v.opMath(op, yield) {
 				return
 			}
@@ -190,6 +190,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpUnpack:
 			if !v.opUnpack(inst, yield) {
+				return
+			}
+
+		case OpImport:
+			if !v.opImport(inst, yield) {
 				return
 			}
 		}
@@ -1380,6 +1385,14 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 				return true
 			}
 			res = c1 / c2
+		case OpPow:
+			// Just cast to real for now as fallback or error?
+			// Without math/cmplx, can't do complex pow easily.
+			if !yield(nil, fmt.Errorf("complex pow not supported")) {
+				return false
+			}
+			v.push(nil)
+			return true
 		default:
 			if !yield(nil, fmt.Errorf("unsupported operation for complex numbers")) {
 				return false
@@ -1427,6 +1440,8 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 				return true
 			}
 			res = math.Floor(f1 / f2)
+		case OpPow:
+			res = math.Pow(f1, f2)
 		default:
 			if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
 				return false
@@ -1489,6 +1504,13 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
 			res--
 		}
+	case OpPow:
+		resFloat := math.Pow(float64(i1), float64(i2))
+		if i2 < 0 {
+			v.push(resFloat)
+			return true
+		}
+		res = int64(resFloat)
 	}
 	v.push(res)
 	return true
@@ -2423,5 +2445,24 @@ func (v *VM) opUnpack(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	for i := count - 1; i >= 0; i-- {
 		v.push(items[i])
 	}
+	return true
+}
+
+func (v *VM) opImport(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	idx := int(inst >> 8)
+	nameObj := v.CurrentFun.Constants[idx]
+	name, ok := nameObj.(string)
+	if !ok {
+		if !yield(nil, fmt.Errorf("import module name must be string")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	if !yield(nil, fmt.Errorf("import not implemented: %s", name)) {
+		return false
+	}
+	v.push(nil)
 	return true
 }
