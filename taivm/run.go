@@ -2038,21 +2038,25 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	posList, ok := posArgObj.(*List)
-	if !ok {
+	var posArgs []any
+	switch l := posArgObj.(type) {
+	case *List:
+		posArgs = l.Elements
+	case []any:
+		posArgs = l
+	default:
 		if !yield(nil, fmt.Errorf("pos_args must be list")) {
 			return false
 		}
 		v.push(nil)
 		return true
 	}
-	posArgs := posList.Elements
 
 	switch fn := callee.(type) {
 	case *BoundMethod:
-		newElems := make([]any, 0, len(posList.Elements)+1)
+		newElems := make([]any, 0, len(posArgs)+1)
 		newElems = append(newElems, fn.Receiver)
-		newElems = append(newElems, posList.Elements...)
+		newElems = append(newElems, posArgs...)
 
 		v.push(fn.Fun)
 		v.push(&List{Elements: newElems, Immutable: true})
@@ -2064,44 +2068,43 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		paramNames := fn.Fun.ParamNames
 		isVariadic := fn.Fun.Variadic
 
-		newEnv := fn.Env.NewChild()
-		paramSyms := fn.ParamSyms
-		maxSym := fn.MaxParamSym
-		if len(paramSyms) == 0 && len(paramNames) > 0 {
-			paramSyms = make([]Symbol, len(paramNames))
-			for i, name := range paramNames {
-				sym := v.Intern(name)
-				paramSyms[i] = sym
-				if int(sym) > maxSym {
-					maxSym = int(sym)
-				}
-			}
-			fn.ParamSyms = paramSyms
-			fn.MaxParamSym = maxSym
-		}
-		if len(paramSyms) > 0 {
-			newEnv.Grow(maxSym)
+		numFixed := numParams
+		if isVariadic {
+			numFixed--
 		}
 
-		if len(posArgs) > numParams && !isVariadic {
-			if !yield(nil, fmt.Errorf("too many arguments: want %d, got %d", numParams, len(posArgs))) {
-				return false
-			}
-			v.push(nil)
-			return true
-		}
-
+		locals := make([]any, numParams)
 		isSet := make([]bool, numParams)
-		nPos := len(posArgs)
-		if isVariadic && nPos > numParams-1 {
-			nPos = numParams - 1
+
+		// Positional arguments
+		if len(posArgs) > numFixed {
+			if !isVariadic {
+				if !yield(nil, fmt.Errorf("too many arguments: want %d, got %d", numFixed, len(posArgs))) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			for i := 0; i < numFixed; i++ {
+				locals[i] = posArgs[i]
+				isSet[i] = true
+			}
+			varargSlice := make([]any, len(posArgs)-numFixed)
+			copy(varargSlice, posArgs[numFixed:])
+			locals[numFixed] = &List{Elements: varargSlice, Immutable: true}
+			isSet[numFixed] = true
+		} else {
+			for i := 0; i < len(posArgs); i++ {
+				locals[i] = posArgs[i]
+				isSet[i] = true
+			}
+			if isVariadic {
+				locals[numFixed] = &List{Elements: []any{}, Immutable: true}
+				isSet[numFixed] = true
+			}
 		}
 
-		for i := 0; i < nPos; i++ {
-			newEnv.DefSym(paramSyms[i], posArgs[i])
-			isSet[i] = true
-		}
-
+		// Keyword arguments
 		for k, val := range kwArgs {
 			name, ok := k.(string)
 			if !ok {
@@ -2111,46 +2114,44 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 				v.push(nil)
 				return true
 			}
-			found := false
+			idx := -1
 			for i, pname := range paramNames {
 				if pname == name {
-					if isVariadic && i == numParams-1 {
-						continue
-					}
-					if isSet[i] {
-						if !yield(nil, fmt.Errorf("multiple values for argument '%s'", name)) {
-							return false
-						}
-						v.push(nil)
-						return true
-					}
-					newEnv.DefSym(paramSyms[i], val)
-					isSet[i] = true
-					found = true
+					idx = i
 					break
 				}
 			}
-			if !found {
+			if idx == -1 {
 				if !yield(nil, fmt.Errorf("unexpected keyword argument '%s'", name)) {
 					return false
 				}
 				v.push(nil)
 				return true
 			}
+			if isVariadic && idx == numFixed {
+				if !yield(nil, fmt.Errorf("unexpected keyword argument '%s' (variadic parameter)", name)) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			if isSet[idx] {
+				if !yield(nil, fmt.Errorf("multiple values for argument '%s'", name)) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			locals[idx] = val
+			isSet[idx] = true
 		}
 
-		checkLimit := numParams
-		if isVariadic {
-			checkLimit = numParams - 1
-		}
-
-		numFixed := checkLimit
+		// Defaults
 		startDefaults := numFixed - len(fn.Defaults)
-
-		for i := 0; i < checkLimit; i++ {
+		for i := 0; i < numFixed; i++ {
 			if !isSet[i] {
 				if i >= startDefaults {
-					newEnv.DefSym(paramSyms[i], fn.Defaults[i-startDefaults])
+					locals[i] = fn.Defaults[i-startDefaults]
 					isSet[i] = true
 				} else {
 					if !yield(nil, fmt.Errorf("missing argument '%s'", paramNames[i])) {
@@ -2162,31 +2163,59 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			}
 		}
 
-		if isVariadic {
-			var extra []any
-			if len(posArgs) > numParams-1 {
-				extra = posArgs[numParams-1:]
-			} else {
-				extra = []any{}
+		newEnv := fn.Env.NewChild()
+		paramSyms := fn.ParamSyms
+		maxSym := fn.MaxParamSym
+		if paramSyms == nil && len(paramNames) > 0 {
+			paramSyms = make([]Symbol, len(paramNames))
+			for i, name := range paramNames {
+				sym := v.Intern(name)
+				paramSyms[i] = sym
+				if int(sym) > maxSym {
+					maxSym = int(sym)
+				}
 			}
-			newEnv.DefSym(paramSyms[numParams-1], &List{
-				Elements:  extra,
-				Immutable: true,
-			})
+			fn.ParamSyms = paramSyms
+			fn.MaxParamSym = maxSym
 		}
+
+		if len(paramSyms) > 0 {
+			newEnv.Grow(maxSym)
+			for i, val := range locals {
+				if i < len(paramSyms) {
+					newEnv.DefSym(paramSyms[i], val)
+				}
+			}
+		}
+
+		v.push(fn)
+		calleeIdx := v.SP - 1
+
+		if v.SP+len(locals) > len(v.OperandStack) {
+			needed := v.SP + len(locals)
+			newCap := len(v.OperandStack) * 2
+			if newCap < needed {
+				newCap = needed
+			}
+			newStack := make([]any, newCap)
+			copy(newStack, v.OperandStack)
+			v.OperandStack = newStack
+		}
+		copy(v.OperandStack[v.SP:], locals)
+		v.SP += len(locals)
 
 		v.CallStack = append(v.CallStack, Frame{
 			Fun:      v.CurrentFun,
 			ReturnIP: v.IP,
 			Env:      v.Scope,
-			BaseSP:   v.SP,
+			BaseSP:   calleeIdx,
 			BP:       v.BP,
 		})
 
 		v.CurrentFun = fn.Fun
 		v.IP = 0
 		v.Scope = newEnv
-		v.BP = v.SP + 1
+		v.BP = calleeIdx + 1
 
 		return true
 

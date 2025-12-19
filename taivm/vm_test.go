@@ -3579,3 +3579,446 @@ func TestVM_Coverage_GapFilling(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_KeywordArgs(t *testing.T) {
+	// func(a, b=10) { return a - b }
+	f := &Function{
+		NumParams:   2,
+		ParamNames:  []string{"a", "b"},
+		NumDefaults: 1,
+		Code: []OpCode{
+			OpGetLocal.With(0),
+			OpGetLocal.With(1),
+			OpSub,
+			OpReturn,
+		},
+	}
+
+	t.Run("Mixed", func(t *testing.T) {
+		// f(20, b=5) -> 20 - 5 = 15
+		main := &Function{
+			Constants: []any{f, 10, 20, "b", 5, "res"},
+			Code: []OpCode{
+				OpLoadConst.With(1),   // default 10
+				OpMakeClosure.With(0), // f
+
+				// Positional: [20]
+				OpLoadConst.With(2),
+				OpMakeList.With(1),
+
+				// Keyword: {b: 5}
+				OpLoadConst.With(3),
+				OpLoadConst.With(4),
+				OpMakeMap.With(1),
+
+				OpCallKw,
+				OpDefVar.With(5),
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res, ok := vm.Get("res"); !ok || res.(int) != 15 {
+			t.Fatalf("expected 15, got %v", res)
+		}
+	})
+
+	t.Run("Defaults", func(t *testing.T) {
+		// f(a=20) -> 20 - 10 = 10
+		main := &Function{
+			Constants: []any{f, 10, "a", 20, "res"},
+			Code: []OpCode{
+				OpLoadConst.With(1),   // default 10
+				OpMakeClosure.With(0), // f
+
+				// Positional: []
+				OpMakeList.With(0),
+
+				// Keyword: {a: 20}
+				OpLoadConst.With(2),
+				OpLoadConst.With(3),
+				OpMakeMap.With(1),
+
+				OpCallKw,
+				OpDefVar.With(4),
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res, ok := vm.Get("res"); !ok || res.(int) != 10 {
+			t.Fatalf("expected 10, got %v", res)
+		}
+	})
+
+	t.Run("Errors", func(t *testing.T) {
+		runErr := func(pos []any, kw map[any]any, expected string) {
+			main := &Function{
+				Constants: []any{f, 10, pos, kw},
+				Code: []OpCode{
+					OpLoadConst.With(1),
+					OpMakeClosure.With(0),
+					OpLoadConst.With(2), // pos
+					OpLoadConst.With(3), // kw
+					OpCallKw,
+				},
+			}
+			vm := NewVM(main)
+			var err error
+			for _, e := range vm.Run {
+				if e != nil {
+					err = e
+					break
+				}
+			}
+			if err == nil {
+				t.Errorf("expected error %q, got nil", expected)
+				return
+			}
+			if !strings.Contains(err.Error(), expected) {
+				t.Errorf("expected error %q, got %v", expected, err)
+			}
+		}
+
+		// Unknown keyword
+		runErr([]any{1}, map[any]any{"z": 1}, "unexpected keyword argument 'z'")
+		// Multiple values
+		runErr([]any{1}, map[any]any{"a": 1}, "multiple values for argument 'a'")
+		// Missing arg
+		runErr([]any{}, map[any]any{}, "missing argument 'a'")
+	})
+}
+
+func TestVM_Unpack(t *testing.T) {
+	t.Run("List", func(t *testing.T) {
+		// a, b = [1, 2]
+		main := &Function{
+			Constants: []any{1, 2, "a", "b"},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpMakeList.With(2),
+				OpUnpack.With(2),
+				OpDefVar.With(2), // a (stack top is 1)
+				OpDefVar.With(3), // b (stack under is 2)
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if v, _ := vm.Get("a"); v.(int) != 1 {
+			t.Fatalf("a: expected 1, got %v", v)
+		}
+		if v, _ := vm.Get("b"); v.(int) != 2 {
+			t.Fatalf("b: expected 2, got %v", v)
+		}
+	})
+
+	t.Run("Range", func(t *testing.T) {
+		// a, b = range(0, 2)
+		r := &Range{Start: 0, Stop: 2, Step: 1}
+		main := &Function{
+			Constants: []any{r, "a", "b"},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpUnpack.With(2),
+				OpDefVar.With(1), // a
+				OpDefVar.With(2), // b
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if v, _ := vm.Get("a"); v.(int64) != 0 {
+			t.Fatalf("a: expected 0, got %v", v)
+		}
+		if v, _ := vm.Get("b"); v.(int64) != 1 {
+			t.Fatalf("b: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("ErrorCount", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{[]any{1}},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpUnpack.With(2),
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		for _, e := range vm.Run {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		if err == nil || !strings.Contains(err.Error(), "expected 2 values, got 1") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestVM_MapMerge(t *testing.T) {
+	// m1 = {a: 1}, m2 = {b: 2}
+	// m3 = m1 | m2
+	m1 := map[any]any{"a": 1}
+	m2 := map[any]any{"b": 2}
+
+	main := &Function{
+		Constants: []any{m1, m2, "res"},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpBitOr,
+			OpDefVar.With(2),
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _ := vm.Get("res")
+	m3 := res.(map[any]any)
+	if len(m3) != 2 {
+		t.Fatal("map merge failed")
+	}
+	if m3["a"].(int) != 1 || m3["b"].(int) != 2 {
+		t.Fatal("map values incorrect")
+	}
+}
+
+func TestVM_FloorDiv(t *testing.T) {
+	cases := []struct {
+		A, B     any
+		Expected any
+	}{
+		{5, 2, 2},
+		{-5, 2, -3},
+		{5.0, 2.0, 2.0},
+		{-5.0, 2.0, -3.0},
+	}
+	for _, c := range cases {
+		vm := NewVM(&Function{
+			Constants: []any{c.A, c.B},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpFloorDiv, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		if res != c.Expected {
+			t.Errorf("%v // %v: expected %v, got %v", c.A, c.B, c.Expected, res)
+		}
+	}
+}
+
+func TestVM_Contains(t *testing.T) {
+	cases := []struct {
+		Container any
+		Item      any
+		Expected  bool
+	}{
+		{"abc", "a", true},
+		{"abc", "d", false},
+		{[]any{1, 2}, 1, true},
+		{[]any{1, 2}, 3, false},
+		{&List{Elements: []any{1, 2}}, 1, true},
+		{map[any]any{"a": 1}, "a", true},
+		{map[string]any{"a": 1}, "a", true},
+		{&Range{Start: 0, Stop: 5, Step: 1}, int64(2), true},
+		{&Range{Start: 0, Stop: 5, Step: 1}, int64(5), false},
+	}
+
+	for _, c := range cases {
+		vm := NewVM(&Function{
+			Constants: []any{c.Container, c.Item},
+			Code:      []OpCode{OpLoadConst.With(1), OpLoadConst.With(0), OpContains, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if res := vm.pop().(bool); res != c.Expected {
+			t.Errorf("%v in %v: expected %v, got %v", c.Item, c.Container, c.Expected, res)
+		}
+	}
+}
+
+func TestVM_Struct(t *testing.T) {
+	s := &Struct{}
+	main := &Function{
+		Constants: []any{s, "x", 42, "y"},
+		Code: []OpCode{
+			// s.x = 42
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpLoadConst.With(2),
+			OpSetAttr,
+
+			// y = s.x
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpGetAttr,
+			OpDefVar.With(3),
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, _ := vm.Get("y"); v.(int) != 42 {
+		t.Fatalf("expected 42, got %v", v)
+	}
+}
+
+func TestVM_ListAppendMethod(t *testing.T) {
+	// l = [1]
+	// l.append(2)
+	main := &Function{
+		Constants: []any{1, 2, "append", "l"},
+		Code: []OpCode{
+			// l = [1]
+			OpLoadConst.With(0),
+			OpMakeList.With(1),
+			OpDefVar.With(3),
+
+			// l.append(2) -> l.append (BoundMethod), call(2)
+			OpLoadVar.With(3),
+			OpLoadConst.With(2),
+			OpGetAttr,
+			OpLoadConst.With(1),
+			OpCall.With(1),
+			OpPop, // Discard return value (nil)
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, _ := vm.Get("l")
+	elems := l.(*List).Elements
+	if len(elems) != 2 || elems[1].(int) != 2 {
+		t.Fatal("append failed")
+	}
+}
+
+func TestVM_Range(t *testing.T) {
+	// r = range(0, 5, 2) -> 0, 2, 4
+	// len(r) == 3
+	r := &Range{Start: 0, Stop: 5, Step: 2}
+	if r.Len() != 3 {
+		t.Fatalf("expected len 3, got %d", r.Len())
+	}
+
+	// r = range(5, 0, -2) -> 5, 3, 1
+	// len(r) == 3
+	r = &Range{Start: 5, Stop: 0, Step: -2}
+	if r.Len() != 3 {
+		t.Fatalf("expected len 3, got %d", r.Len())
+	}
+
+	// Iteration
+	// res = []
+	// for x in range(0, 3): res.append(x)
+	main := &Function{
+		Constants: []any{
+			&Range{Start: 0, Stop: 3, Step: 1},
+			"res", "append",
+		},
+		Code: []OpCode{
+			// res = []
+			OpMakeList.With(0),
+			OpDefVar.With(1),
+
+			// iter
+			OpLoadConst.With(0),
+			OpGetIter,
+
+			// loop
+			OpNextIter.With(7), // jump to end
+
+			// body: res.append(x)
+			OpLoadVar.With(1),
+			OpLoadConst.With(2),
+			OpGetAttr,
+			OpSwap, // method, x
+			OpCall.With(1),
+			OpPop,
+
+			OpJump.With(-8),
+
+			// End
+			OpPop, // iter
+			OpReturn,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _ := vm.Get("res")
+	elems := res.(*List).Elements
+	if len(elems) != 3 {
+		t.Fatal("range iter failed")
+	}
+	if elems[0].(int64) != 0 || elems[2].(int64) != 2 {
+		t.Fatal("range values incorrect")
+	}
+}
+
+func TestVM_ExtendedSlice(t *testing.T) {
+	// l = [0, 0, 0]
+	// l[0:3:2] = [1, 2] -> [1, 0, 2]
+	main := &Function{
+		Constants: []any{
+			0, 1, 2, 3, "l",
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0),
+			OpMakeList.With(3),
+			OpDefVar.With(4),
+
+			OpLoadVar.With(4),                                            // target
+			OpLoadConst.With(0),                                          // start 0
+			OpLoadConst.With(3),                                          // stop 3
+			OpLoadConst.With(2),                                          // step 2
+			OpLoadConst.With(1), OpLoadConst.With(2), OpMakeList.With(2), // val [1, 2]
+			OpSetSlice,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, _ := vm.Get("l")
+	elems := l.(*List).Elements
+	if elems[0].(int) != 1 || elems[2].(int) != 2 {
+		t.Fatalf("extended slice assign failed: %v", elems)
+	}
+}
