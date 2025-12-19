@@ -576,7 +576,17 @@ print("test print")
 			return args[0].(int64) + args[1].(int64), nil
 		},
 	})
-	src = `res = native_add(10, 20)`
+	vm.Def("get_slice", taivm.NativeFunc{
+		Name: "get_slice",
+		Func: func(_ *taivm.VM, _ []any) (any, error) {
+			return []any{1, 2, 3}, nil
+		},
+	})
+
+	src = `
+res = native_add(10, 20)
+res_len = len(get_slice())
+`
 	fn, err := Compile("test", strings.NewReader(src))
 	if err != nil {
 		t.Fatal(err)
@@ -589,6 +599,7 @@ print("test print")
 		}
 	}
 	check(t, vm, "res", int64(30))
+	check(t, vm, "res_len", int64(3))
 }
 
 func TestLoad(t *testing.T) {
@@ -620,10 +631,14 @@ func TestErrors(t *testing.T) {
 		{"assign_paren_literal", "(1) = 1", "unsupported assignment target"},
 		{"assign_invalid_list", "[1] = [1]", "unsupported variable type"},
 		{"assign_invalid_tuple", "(1,) = (1,)", "unsupported variable type"},
+		{"assign_list_binary", "[a+b] = [1]", "unsupported variable type"},
 		{"assign_binary_lhs", "(a+b) = 1", "unsupported assignment target"},
 		{"aug_assign_literal", "1 += 1", "unsupported augmented assignment target"},
 		{"aug_assign_list", "l=[1]; [l[0]] += [1]", "unsupported augmented assignment target"},
 		{"unsupported_for_var", "for 1 in [1]: pass", "unsupported variable type"},
+		{"unsupported_for_var_comp", "[x for 1 in [1]]", "unsupported variable type"},
+		{"unsupported_unary_in_comp_if", "[x for x in [] if *x]", "unsupported unary op"},
+		{"unsupported_unary_in_comp_for", "[x for x in *x]", "unsupported unary op"},
 		{"range_step_zero", "range(1, 10, 0)", "range step cannot be zero"},
 		{"range_args_str", "range('a')", "range argument must be integer"},
 		{"pow_invalid", "pow('a', 1)", "unsupported argument types"},
@@ -737,6 +752,15 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("expected unsupported expression error")
 	}
 
+	// CompileStore errors
+	if err := c.compileStore(lit); err == nil || !strings.Contains(err.Error(), "unsupported variable type") {
+		t.Error("expected unsupported variable type error")
+	}
+	if err := c.compileStore(&syntax.SliceExpr{Lo: &mockExpr{}}); err == nil {
+		t.Error("expected compileStore SliceExpr Lo error")
+	}
+
+	// CompileAssign errors
 	if err := c.compileAssign(&syntax.AssignStmt{Op: syntax.PLUS, LHS: &syntax.Ident{Name: "x"}, RHS: lit}); err == nil || !strings.Contains(err.Error(), "augmented assignment op") {
 		t.Error("expected unsupported augmented assignment op error")
 	}
@@ -745,12 +769,51 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("expected unsupported augmented assignment target error")
 	}
 
+	// Augmented Assign sub-expression errors
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.Ident{Name: "x"}, RHS: &mockExpr{}}); err == nil {
+		t.Error("expected Ident RHS error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.IndexExpr{X: lit, Y: lit}, RHS: &mockExpr{}}); err == nil {
+		t.Error("expected IndexExpr RHS error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.IndexExpr{X: &mockExpr{}, Y: lit}, RHS: lit}); err == nil {
+		t.Error("expected IndexExpr X error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.IndexExpr{X: lit, Y: &mockExpr{}}, RHS: lit}); err == nil {
+		t.Error("expected IndexExpr Y error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.DotExpr{X: lit, Name: &syntax.Ident{Name: "a"}}, RHS: &mockExpr{}}); err == nil {
+		t.Error("expected DotExpr RHS error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.DotExpr{X: &mockExpr{}, Name: &syntax.Ident{Name: "a"}}, RHS: lit}); err == nil {
+		t.Error("expected DotExpr X error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.SliceExpr{X: lit}, RHS: &mockExpr{}}); err == nil {
+		t.Error("expected SliceExpr RHS error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.SliceExpr{X: &mockExpr{}}, RHS: lit}); err == nil {
+		t.Error("expected SliceExpr X error")
+	}
+	if err := c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.SliceExpr{X: lit, Lo: &mockExpr{}}, RHS: lit}); err == nil {
+		t.Error("expected SliceExpr Lo error")
+	}
+
 	if err := c.compileSimpleAssign(lit, lit); err == nil || !strings.Contains(err.Error(), "unsupported assignment target") {
 		t.Error("expected unsupported assignment target error")
 	}
 
-	if err := c.compileStore(lit); err == nil || !strings.Contains(err.Error(), "unsupported variable type") {
-		t.Error("expected unsupported variable type error")
+	// Simple Assign sub-expression errors
+	if err := c.compileSimpleAssign(&syntax.IndexExpr{X: lit, Y: lit}, &mockExpr{}); err == nil {
+		t.Error("expected IndexExpr RHS error")
+	}
+	if err := c.compileSimpleAssign(&syntax.SliceExpr{X: lit}, &mockExpr{}); err == nil {
+		t.Error("expected SliceExpr RHS error")
+	}
+	if err := c.compileSimpleAssign(&syntax.DotExpr{X: lit, Name: &syntax.Ident{Name: "a"}}, &mockExpr{}); err == nil {
+		t.Error("expected DotExpr RHS error")
+	}
+	if err := c.compileSimpleAssign(&syntax.ListExpr{List: []syntax.Expr{&mockExpr{}}}, lit); err == nil {
+		t.Error("expected ListExpr elem error")
 	}
 
 	if err := c.compileComprehension(&syntax.Comprehension{
@@ -773,6 +836,35 @@ func TestInternalCoverage(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "unsupported expression") {
 		t.Error("expected error from kwarg value compilation")
 	}
+	// Dynamic call star arg error
+	if err := c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.UnaryExpr{Op: syntax.STAR, X: &mockExpr{}},
+		},
+	}); err == nil {
+		t.Error("expected error from star arg compilation")
+	}
+	// Dynamic call starstar arg error
+	if err := c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.UnaryExpr{Op: syntax.STARSTAR, X: &mockExpr{}},
+		},
+	}); err == nil {
+		t.Error("expected error from starstar arg compilation")
+	}
+
+	// Slice Args errors
+	if err := c.compileSliceArgs(&syntax.SliceExpr{Lo: &mockExpr{}}); err == nil {
+		t.Error("expected Lo error")
+	}
+	if err := c.compileSliceArgs(&syntax.SliceExpr{Hi: &mockExpr{}}); err == nil {
+		t.Error("expected Hi error")
+	}
+	if err := c.compileSliceArgs(&syntax.SliceExpr{Step: &mockExpr{}}); err == nil {
+		t.Error("expected Step error")
+	}
 
 	// Native Func Errors
 	vm := taivm.NewVM(&taivm.Function{})
@@ -783,6 +875,12 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("range: expected error")
 	}
 	if _, err := Range.Func(vm, []any{"a"}); err == nil {
+		t.Error("range: expected error")
+	}
+	if _, err := Range.Func(vm, []any{1, "a"}); err == nil {
+		t.Error("range: expected error")
+	}
+	if _, err := Range.Func(vm, []any{1, 2, "a"}); err == nil {
 		t.Error("range: expected error")
 	}
 	if _, err := Struct.Func(vm, []any{123}); err == nil {
@@ -835,6 +933,15 @@ r = range(9223372036854775805, 9223372036854775807, 4)
 	} else if err.Error() != "range overflows" {
 		t.Errorf("expected 'range overflows', got %v", err)
 	}
+
+	// Test 3: Range overflow negative
+	// -9223372036854775805, -9223372036854775808, -4
+	_, err = Range.Func(vm, []any{int64(-9223372036854775805), int64(-9223372036854775808), int64(-4)})
+	if err == nil {
+		t.Error("expected range overflow error (negative step)")
+	} else if err.Error() != "range overflows" {
+		t.Errorf("expected 'range overflows', got %v", err)
+	}
 }
 
 func TestMath(t *testing.T) {
@@ -850,4 +957,41 @@ p4 = pow(2, -2)
 	check(t, vm, "p2", 8.0)
 	check(t, vm, "p3", 8.0)
 	check(t, vm, "p4", 0.25)
+}
+
+func TestSliceVariants(t *testing.T) {
+	src := `
+l = [1, 2, 3, 4]
+s1 = l[1:]
+s2 = l[:2]
+s3 = l[:]
+s4 = l[::2]
+s5 = l[1:4:2]
+`
+	vm := run(t, src)
+	if val, ok := vm.Get("s1"); !ok {
+		t.Error("s1 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 3 || l.Elements[0] != int64(2) {
+		t.Errorf("s1 = %v", val)
+	}
+	if val, ok := vm.Get("s2"); !ok {
+		t.Error("s2 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[1] != int64(2) {
+		t.Errorf("s2 = %v", val)
+	}
+	if val, ok := vm.Get("s3"); !ok {
+		t.Error("s3 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 4 {
+		t.Errorf("s3 = %v", val)
+	}
+	if val, ok := vm.Get("s4"); !ok {
+		t.Error("s4 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[1] != int64(3) {
+		t.Errorf("s4 = %v", val)
+	}
+	if val, ok := vm.Get("s5"); !ok {
+		t.Error("s5 not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[1] != int64(4) {
+		t.Errorf("s5 = %v", val)
+	}
 }
