@@ -198,6 +198,10 @@ func (c *compiler) compileStore(lhs syntax.Expr) error {
 }
 
 func (c *compiler) compileBranch(s *syntax.BranchStmt) error {
+	if s.Token == syntax.PASS {
+		return nil
+	}
+
 	if len(c.loops) == 0 {
 		return fmt.Errorf("%s outside loop", s.Token.String())
 	}
@@ -211,8 +215,6 @@ func (c *compiler) compileBranch(s *syntax.BranchStmt) error {
 		ip := c.currentIP()
 		c.emit(taivm.OpJump)
 		c.patchJump(ip, loop.continueIP)
-	case syntax.PASS:
-		// no-op
 	}
 	return nil
 }
