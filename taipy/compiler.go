@@ -508,6 +508,46 @@ func (c *compiler) compileUnaryExpr(e *syntax.UnaryExpr) error {
 }
 
 func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
+	// Handle short-circuit operators
+	if e.Op == syntax.AND {
+		// x and y
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDup)
+		jumpFalseIP := c.currentIP()
+		c.emit(taivm.OpJumpFalse)
+		c.emit(taivm.OpPop)
+		if err := c.compileExpr(e.Y); err != nil {
+			return err
+		}
+		c.patchJump(jumpFalseIP, c.currentIP())
+		return nil
+	}
+	if e.Op == syntax.OR {
+		// x or y
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDup)
+		jumpFalseIP := c.currentIP()
+		c.emit(taivm.OpJumpFalse)
+
+		// X is true, jump to end
+		jumpEndIP := c.currentIP()
+		c.emit(taivm.OpJump)
+
+		// X is false
+		c.patchJump(jumpFalseIP, c.currentIP())
+		c.emit(taivm.OpPop)
+		if err := c.compileExpr(e.Y); err != nil {
+			return err
+		}
+
+		c.patchJump(jumpEndIP, c.currentIP())
+		return nil
+	}
+
 	if err := c.compileExpr(e.X); err != nil {
 		return err
 	}
@@ -547,6 +587,11 @@ func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
 		c.emit(taivm.OpBitLsh)
 	case syntax.GTGT:
 		c.emit(taivm.OpBitRsh)
+	case syntax.IN:
+		c.emit(taivm.OpContains)
+	case syntax.NOT_IN:
+		c.emit(taivm.OpContains)
+		c.emit(taivm.OpNot)
 	//TODO support other binary operators
 	default:
 		return fmt.Errorf("unsupported binary op: %v", e.Op)

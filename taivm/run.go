@@ -3,6 +3,7 @@ package taivm
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
@@ -178,6 +179,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpListAppend:
 			if !v.opListAppend(yield) {
+				return
+			}
+
+		case OpContains:
+			if !v.opContains(yield) {
 				return
 			}
 
@@ -2170,5 +2176,84 @@ func (v *VM) opListAppend(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 	l.Elements = append(l.Elements, val)
+	return true
+}
+
+func (v *VM) opContains(yield func(*Interrupt, error) bool) bool {
+	if v.SP < 2 {
+		if !yield(nil, fmt.Errorf("stack underflow during contains")) {
+			return false
+		}
+		return true
+	}
+	container := v.pop()
+	item := v.pop()
+
+	if container == nil {
+		if !yield(nil, fmt.Errorf("argument of type 'NoneType' is not iterable")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	found := false
+	switch c := container.(type) {
+	case *List:
+		for _, elem := range c.Elements {
+			if elem == item {
+				found = true
+				break
+			}
+			// Fallback numeric check
+			if i1, ok1 := ToInt64(elem); ok1 {
+				if i2, ok2 := ToInt64(item); ok2 && i1 == i2 {
+					found = true
+					break
+				}
+			}
+		}
+	case []any:
+		for _, elem := range c {
+			if elem == item {
+				found = true
+				break
+			}
+			// Fallback numeric check
+			if i1, ok1 := ToInt64(elem); ok1 {
+				if i2, ok2 := ToInt64(item); ok2 && i1 == i2 {
+					found = true
+					break
+				}
+			}
+		}
+	case map[any]any:
+		_, found = c[item]
+	case map[string]any:
+		if s, ok := item.(string); ok {
+			_, found = c[s]
+		}
+	case string:
+		if s, ok := item.(string); ok {
+			found = strings.Contains(c, s)
+		} else {
+			if !yield(nil, fmt.Errorf("'in <string>' requires string as left operand, not %T", item)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+	case *Range:
+		if i, ok := ToInt64(item); ok {
+			found = c.Contains(i)
+		}
+	default:
+		if !yield(nil, fmt.Errorf("argument of type '%T' is not iterable", container)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	v.push(found)
 	return true
 }

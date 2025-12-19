@@ -25,3 +25,10 @@ func (r *Range) Len() int64 {
 	}
 	return 0
 }
+
+func (r *Range) Contains(val int64) bool {
+	if r.Step > 0 {
+		return val >= r.Start && val < r.Stop && (val-r.Start)%r.Step == 0
+	}
+	return val <= r.Start && val > r.Stop && (r.Start-val)%(-r.Step) == 0
+}
