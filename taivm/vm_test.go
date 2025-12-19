@@ -4701,3 +4701,146 @@ func TestVM_Coverage_Deep(t *testing.T) {
 		runContinue([]OpCode{OpLoadConst.With(0), OpBitNot, OpReturn}, []any{v})
 	}
 }
+
+func TestVM_Range_Index(t *testing.T) {
+	// r = range(0, 10, 2) -> 0, 2, 4, 6, 8. Len = 5
+	r := &Range{Start: 0, Stop: 10, Step: 2}
+
+	cases := []struct {
+		Idx      any
+		Expected int64
+	}{
+		{0, 0},
+		{1, 2},
+		{4, 8},
+		{-1, 8},
+		{-5, 0},
+		{int64(1), 2},
+	}
+
+	for _, c := range cases {
+		vm := NewVM(&Function{
+			Constants: []any{r, c.Idx},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Errorf("idx %v: %v", c.Idx, err)
+			}
+		}
+		if res := vm.pop().(int64); res != c.Expected {
+			t.Errorf("idx %v: expected %v, got %v", c.Idx, c.Expected, res)
+		}
+	}
+
+	// Out of bounds
+	runErr := func(idx any) {
+		vm := NewVM(&Function{
+			Constants: []any{r, idx},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
+		})
+		var found bool
+		for _, err := range vm.Run {
+			if err != nil && strings.Contains(err.Error(), "index out of bounds") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("idx %v: expected out of bounds error", idx)
+		}
+	}
+	runErr(5)
+	runErr(-6)
+	runErr(int64(5))
+
+	// Invalid type
+	vm := NewVM(&Function{
+		Constants: []any{r, "bad"},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
+	})
+	var found bool
+	for _, err := range vm.Run {
+		if err != nil && strings.Contains(err.Error(), "range index must be int") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected invalid type error")
+	}
+}
+
+func TestVM_Bitwise_Mixed(t *testing.T) {
+	// int(3) & int64(1) -> 1
+	vm := NewVM(&Function{
+		Constants: []any{3, int64(1)},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitAnd, OpReturn},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := vm.pop().(int64); res != 1 {
+		t.Fatalf("expected 1, got %v (%T)", res, res)
+	}
+
+	// int(1) << int64(1) -> 2
+	vm = NewVM(&Function{
+		Constants: []any{1, int64(1)},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitLsh, OpReturn},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := vm.pop().(int64); res != 2 {
+		t.Fatalf("expected 2, got %v (%T)", res, res)
+	}
+}
+
+func TestVM_Math_Mixed(t *testing.T) {
+	// int(1) + float64(2.5) -> 3.5
+	vm := NewVM(&Function{
+		Constants: []any{1, 2.5},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd, OpReturn},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := vm.pop().(float64); res != 3.5 {
+		t.Fatalf("expected 3.5, got %v", res)
+	}
+
+	// int(5) + int64(2) -> 7 (int64)
+	vm = NewVM(&Function{
+		Constants: []any{5, int64(2)},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd, OpReturn},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := vm.pop().(int64); res != 7 {
+		t.Fatalf("expected 7, got %v", res)
+	}
+
+	// complex + int
+	vm = NewVM(&Function{
+		Constants: []any{1 + 1i, 1},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd, OpReturn},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := vm.pop().(complex128); res != 2+1i {
+		t.Fatalf("expected 2+1i, got %v", res)
+	}
+}
