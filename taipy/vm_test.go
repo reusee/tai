@@ -468,6 +468,10 @@ g = 1
 g <<= 2
 h = 8
 h >>= 2
+i = 5
+i *= 3
+j = 10
+j -= 4
 
 l = [10, 20]
 l[0] += 5
@@ -490,6 +494,8 @@ l2[0:1] += [4]
 	check(t, vm, "f", int64(2))
 	check(t, vm, "g", int64(4))
 	check(t, vm, "h", int64(2))
+	check(t, vm, "i", int64(15))
+	check(t, vm, "j", int64(6))
 
 	if val, ok := vm.Get("l"); !ok {
 		t.Error("l not found")
@@ -531,9 +537,14 @@ for i in r1:
 
 r2 = range(1, 5)
 r3 = range(0, 10, 2)
+r4 = range(10, 0, -1)
+r5 = range(10, 0, -2)
 
 l_range = len(range(10))
 v_range = range(10)[0]
+
+# print (just run it)
+print("test print")
 `
 	vm := run(t, src)
 	check(t, vm, "l1", int64(2))
@@ -542,6 +553,18 @@ v_range = range(10)[0]
 	check(t, vm, "sum", int64(10))
 	check(t, vm, "l_range", int64(10))
 	check(t, vm, "v_range", int64(0))
+
+	if val, ok := vm.Get("r4"); !ok {
+		t.Error("r4 not found")
+	} else if r, ok := val.(*taivm.Range); !ok || r.Len() != 10 {
+		t.Errorf("r4 len = %d, want 10", r.Len())
+	}
+
+	if val, ok := vm.Get("r5"); !ok {
+		t.Error("r5 not found")
+	} else if r, ok := val.(*taivm.Range); !ok || r.Len() != 5 {
+		t.Errorf("r5 len = %d, want 5", r.Len())
+	}
 
 	// Native func calls with VM access
 	vm.Def("native_add", taivm.NativeFunc{
@@ -569,7 +592,7 @@ v_range = range(10)[0]
 }
 
 func TestLoad(t *testing.T) {
-	src := `load("mod", "sym")`
+	src := `load("mod", "sym", alias="sym2")`
 	_, err := Compile("test", strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
@@ -601,11 +624,15 @@ func TestErrors(t *testing.T) {
 		{"aug_assign_literal", "1 += 1", "unsupported augmented assignment target"},
 		{"aug_assign_list", "l=[1]; [l[0]] += [1]", "unsupported augmented assignment target"},
 		{"unsupported_for_var", "for 1 in [1]: pass", "unsupported variable type"},
+		{"range_step_zero", "range(1, 10, 0)", "range step cannot be zero"},
+		{"range_args_str", "range('a')", "range argument must be integer"},
+		{"pow_invalid", "pow('a', 1)", "unsupported argument types"},
+		{"def_invalid_param_assign", "def f(1=1): pass", "parameter name must be identifier"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fn, err := Compile("test", strings.NewReader(tt.src))
+			vm, err := NewVM("test", strings.NewReader(tt.src))
 			if err != nil {
 				// Compile error
 				if !strings.Contains(err.Error(), tt.want) && !strings.Contains(err.Error(), "syntax error") {
@@ -614,7 +641,6 @@ func TestErrors(t *testing.T) {
 				return
 			}
 			// Runtime error
-			vm := taivm.NewVM(fn)
 			hasErr := false
 			for _, err := range vm.Run {
 				if err != nil {
@@ -674,6 +700,24 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("expected unsupported binary op error")
 	}
 
+	// extractParamNames error
+	if _, _, _, err := c.extractParamNames([]syntax.Expr{&syntax.Literal{}}); err == nil || !strings.Contains(err.Error(), "complex parameters not supported") {
+		t.Error("expected complex parameters error")
+	}
+
+	// compileCallExpr positional after keyword
+	// f(a=1, 2)
+	callExpr := &syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: lit},
+			lit,
+		},
+	}
+	if err := c.compileCallExpr(callExpr); err == nil || !strings.Contains(err.Error(), "positional argument follows keyword argument") {
+		t.Error("expected positional after keyword error")
+	}
+
 	// Native Func Errors
 	vm := taivm.NewVM(&taivm.Function{})
 	if _, err := Len.Func(vm, []any{123}); err == nil {
@@ -684,6 +728,16 @@ func TestInternalCoverage(t *testing.T) {
 	}
 	if _, err := Range.Func(vm, []any{"a"}); err == nil {
 		t.Error("range: expected error")
+	}
+	if _, err := Struct.Func(vm, []any{123}); err == nil {
+		t.Error("struct: expected error")
+	}
+
+	// Struct map[string]any support
+	if res, err := Struct.Func(vm, []any{map[string]any{"a": 1}}); err != nil {
+		t.Error(err)
+	} else if s, ok := res.(*taivm.Struct); !ok || s.Fields["a"] != 1 {
+		t.Errorf("struct map[string]any failed: %v", res)
 	}
 }
 
@@ -719,4 +773,19 @@ r = range(9223372036854775805, 9223372036854775807, 4)
 	} else if err.Error() != "range overflows" {
 		t.Errorf("expected 'range overflows', got %v", err)
 	}
+}
+
+func TestMath(t *testing.T) {
+	// Pow variants
+	src := `
+p1 = pow(2.0, 3)
+p2 = pow(2, 3.0)
+p3 = pow(2.0, 3.0)
+p4 = pow(2, -2)
+`
+	vm := run(t, src)
+	check(t, vm, "p1", 8.0)
+	check(t, vm, "p2", 8.0)
+	check(t, vm, "p3", 8.0)
+	check(t, vm, "p4", 0.25)
 }
