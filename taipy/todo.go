@@ -6,3 +6,7 @@ package taipy
 // TODO: support all lhs type in compileSimpleAssign
 // TODO: support all unary operators
 // TODO: support all binary operators
+
+// TODO: builtin methods
+// TODO: structural equality
+// TODO: string format %
