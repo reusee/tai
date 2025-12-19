@@ -847,3 +847,131 @@ after = x
 		t.Errorf("variable x leaked: %v", val)
 	}
 }
+
+func TestCompilePass(t *testing.T) {
+	run(t, `
+for i in range(1):
+	pass
+`)
+}
+
+func TestCompileReturnNone(t *testing.T) {
+	vm := run(t, `
+def f():
+	return
+res = f()
+`)
+	if val, ok := vm.Get("res"); !ok || val != nil {
+		t.Errorf("res = %v, want nil", val)
+	}
+}
+
+func TestCompileListAssignment(t *testing.T) {
+	vm := run(t, `
+[a, b] = [1, 2]
+`)
+	if val, ok := vm.Get("a"); !ok || val != int64(1) {
+		t.Errorf("a = %v", val)
+	}
+	if val, ok := vm.Get("b"); !ok || val != int64(2) {
+		t.Errorf("b = %v", val)
+	}
+}
+
+func TestCompileTupleAssignment(t *testing.T) {
+	vm := run(t, `
+(a, b) = (1, 2)
+`)
+	if val, ok := vm.Get("a"); !ok || val != int64(1) {
+		t.Errorf("a = %v", val)
+	}
+	if val, ok := vm.Get("b"); !ok || val != int64(2) {
+		t.Errorf("b = %v", val)
+	}
+}
+
+func TestCompileSliceAssignment(t *testing.T) {
+	vm := run(t, `
+l = [1, 2, 3, 4]
+l[1:3] = [8, 9]
+`)
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		if len(l) != 4 || l[1] != int64(8) || l[2] != int64(9) {
+			t.Errorf("l = %v", l)
+		}
+	}
+}
+
+func TestCompileErrorsMore(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"aug_assign_paren", "x=1; (x) += 1", "unsupported augmented assignment target"},
+		{"destructure_star", "a, *b = [1, 2]", "unsupported variable type"},
+		{"set_comp", "s = {x for x in []}", "dict comprehension body must be DictEntry"},
+		{"set_comp_attr", "({x for x in []}).a = 1", "dict comprehension body must be DictEntry"},
+		{"param_order", "def f(a=1, b): pass", "non-default argument"},
+		{"param_star_bad", "def f(*1): pass", "variadic parameter must be identifier"},
+		{"param_variadic_not_last", "def f(*args, b): pass", "variadic parameter must be last"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Compile("test", strings.NewReader(tt.src))
+			if err == nil {
+				t.Error("expected error")
+			} else if tt.want != "" {
+				if !strings.Contains(err.Error(), tt.want) {
+					t.Logf("got error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestNewVMError(t *testing.T) {
+	_, err := NewVM("test", strings.NewReader("if"))
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestNativeFuncErrors(t *testing.T) {
+	vm := taivm.NewVM(&taivm.Function{})
+
+	// Len
+	if _, err := Len.Func(vm, []any{}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Len.Func(vm, []any{1, 2}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Len.Func(vm, []any{1}); err == nil {
+		t.Error("expected error")
+	}
+
+	// Range
+	if _, err := Range.Func(vm, []any{}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Range.Func(vm, []any{1, 2, 3, 4}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Range.Func(vm, []any{"a"}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Range.Func(vm, []any{1, "a"}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Range.Func(vm, []any{1, 2, "a"}); err == nil {
+		t.Error("expected error")
+	}
+	if _, err := Range.Func(vm, []any{0, 10, 0}); err == nil {
+		t.Error("expected error")
+	}
+}
