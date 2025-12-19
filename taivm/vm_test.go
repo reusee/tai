@@ -4533,3 +4533,106 @@ func TestVM_Coverage_More_3(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_Coverage_Final(t *testing.T) {
+	runContinue := func(code []OpCode, consts []any) {
+		vm := NewVM(&Function{Code: code, Constants: consts})
+		vm.Run(func(_ *Interrupt, err error) bool {
+			return err != nil
+		})
+	}
+
+	t.Run("Complex64_Ops", func(t *testing.T) {
+		c := complex64(1 + 2i)
+		vm := NewVM(&Function{
+			Constants: []any{c},
+			Code:      []OpCode{OpLoadConst.With(0), OpNot, OpReturn},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop().(bool) {
+			t.Fatal("expected false")
+		}
+	})
+
+	t.Run("ComplexMix", func(t *testing.T) {
+		// Float + Complex
+		vm := NewVM(&Function{
+			Constants: []any{1.0, 2i},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop() != 1+2i {
+			t.Fatal("float+complex failed")
+		}
+
+		// Int + Complex
+		vm = NewVM(&Function{
+			Constants: []any{1, 2i},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd},
+		})
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if vm.pop() != 1+2i {
+			t.Fatal("int+complex failed")
+		}
+	})
+
+	t.Run("SliceStep0", func(t *testing.T) {
+		runContinue(
+			[]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(1), OpLoadConst.With(2), OpGetSlice},
+			[]any{[]any{1}, 0, 0},
+		)
+	})
+
+	t.Run("ContinueOnError", func(t *testing.T) {
+		// Unpack
+		runContinue([]OpCode{OpLoadConst.With(0), OpUnpack.With(1)}, []any{1})        // not iterable
+		runContinue([]OpCode{OpLoadConst.With(0), OpUnpack.With(2)}, []any{[]any{1}}) // size mismatch
+
+		// Compare
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLt}, []any{1i, 2i})        // complex
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLt}, []any{struct{}{}, 1}) // uncomparable
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLt}, []any{struct{}{}, struct{}{}})
+
+		// Div Zero
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv}, []any{1, 0})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv}, []any{int64(1), int64(0)})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv}, []any{1.0, 0.0})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpDiv}, []any{1i, 0i})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpMod}, []any{int64(1), int64(0)})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpFloorDiv}, []any{1.0, 0.0})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpFloorDiv}, []any{int64(1), int64(0)})
+
+		// Bitwise
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitLsh}, []any{1, -1})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitRsh}, []any{int64(1), int64(-1)})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpBitAnd}, []any{1, "s"})
+
+		// List/Map
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpListAppend}, []any{1, 2})                      // not list
+		runContinue([]OpCode{OpLoadConst.With(0), OpMakeTuple.With(1), OpLoadConst.With(1), OpListAppend}, []any{1, 2}) // immutable
+
+		// Contains
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpContains}, []any{1, 2})   // not iterable
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpContains}, []any{"s", 1}) // string contains int
+
+		// Math
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd}, []any{complex128(1), "s"})
+		runContinue([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAdd}, []any{1.0, "s"})
+
+		// Iter
+		runContinue([]OpCode{OpLoadConst.With(0), OpGetIter}, []any{1})
+		runContinue([]OpCode{OpLoadConst.With(0), OpNextIter.With(0)}, []any{1})
+	})
+}
