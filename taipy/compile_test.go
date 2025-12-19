@@ -181,12 +181,11 @@ res = native_add(10, 20)
 		},
 	})
 
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatalf("runtime error: %v", err)
 		}
-		return false
-	})
+	}
 
 	if val, ok := vm.Get("res"); !ok || val != int64(30) {
 		t.Errorf("res = %v, want 30", val)
@@ -207,12 +206,13 @@ func TestRuntimeError(t *testing.T) {
 	}
 	vm := taivm.NewVM(fn)
 	errOccurred := false
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+
+	for _, err := range vm.Run {
 		if err != nil {
 			errOccurred = true
 		}
-		return false
-	})
+	}
+
 	if !errOccurred {
 		t.Fatal("expected runtime error")
 	}
@@ -254,15 +254,16 @@ f(a=1)
 	}
 	vm := taivm.NewVM(fn)
 	hasErr := false
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+
+	for _, err := range vm.Run {
 		if err != nil {
 			hasErr = true
 			if !strings.Contains(err.Error(), "missing argument") {
 				t.Errorf("unexpected error: %v", err)
 			}
 		}
-		return false
-	})
+	}
+
 	if !hasErr {
 		t.Error("expected runtime error")
 	}
@@ -275,15 +276,16 @@ f(b=1)
 	fn, _ = Compile("test", strings.NewReader(src))
 	vm = taivm.NewVM(fn)
 	hasErr = false
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+
+	for _, err := range vm.Run {
 		if err != nil {
 			hasErr = true
 			if !strings.Contains(err.Error(), "unexpected keyword argument") {
 				t.Errorf("unexpected error: %v", err)
 			}
 		}
-		return false
-	})
+	}
+
 	if !hasErr {
 		t.Error("expected runtime error")
 	}
@@ -492,12 +494,11 @@ s.x = 30
 	vm := taivm.NewVM(fn)
 	vm.Def("s", s)
 
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatalf("runtime error: %v", err)
 		}
-		return false
-	})
+	}
 
 	if val, ok := vm.Get("res"); !ok || val != int64(10) {
 		t.Errorf("res = %v, want 10", val)
@@ -519,12 +520,13 @@ s.x += 5
 	}
 	vm = taivm.NewVM(fn)
 	vm.Def("s", s)
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+
+	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatalf("runtime error: %v", err)
 		}
-		return false
-	})
+	}
+
 	if val, ok := s.Fields["x"]; !ok || val != int64(35) {
 		t.Errorf("s.x (augmented) = %v, want 35", val)
 	}
