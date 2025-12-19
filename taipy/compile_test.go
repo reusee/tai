@@ -15,7 +15,6 @@ func run(t *testing.T, src string) *taivm.VM {
 	}
 
 	vm := taivm.NewVM(fn)
-	vm.Def("__apply_kw", ApplyKw)
 	vm.Def("concat", Concat)
 
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
@@ -257,7 +256,6 @@ f(a=1)
 		t.Fatal(err)
 	}
 	vm := taivm.NewVM(fn)
-	vm.Def("__apply_kw", ApplyKw)
 	hasErr := false
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
 		if err != nil {
@@ -279,7 +277,6 @@ f(b=1)
 `
 	fn, _ = Compile("test", strings.NewReader(src))
 	vm = taivm.NewVM(fn)
-	vm.Def("__apply_kw", ApplyKw)
 	hasErr = false
 	vm.Run(func(intr *taivm.Interrupt, err error) bool {
 		if err != nil {

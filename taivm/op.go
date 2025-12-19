@@ -51,6 +51,7 @@ const (
 	OpDup2
 	OpGetAttr
 	OpSetAttr
+	OpCallKw
 )
 
 func (o OpCode) With(arg int) OpCode {

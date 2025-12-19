@@ -377,9 +377,6 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 			}
 			c.emit(taivm.OpCall.With(len(e.Args)))
 		} else {
-			c.emit(taivm.OpLoadVar.With(c.addConst("__apply_kw")))
-			c.emit(taivm.OpSwap)
-
 			var posArgs []syntax.Expr
 			var kwArgs []*syntax.BinaryExpr
 
@@ -413,7 +410,7 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 			}
 			c.emit(taivm.OpMakeMap.With(len(kwArgs)))
 
-			c.emit(taivm.OpCall.With(3))
+			c.emit(taivm.OpCallKw)
 		}
 
 	case *syntax.ListExpr:

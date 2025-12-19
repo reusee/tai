@@ -171,6 +171,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
+		case OpCallKw:
+			if !v.opCallKw(inst, yield) {
+				return
+			}
+
 		}
 
 	}
@@ -1793,4 +1798,186 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 		}
 	}
 	return true
+}
+
+func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	if v.SP < 3 {
+		if !yield(nil, fmt.Errorf("stack underflow during callkw")) {
+			return false
+		}
+		return true
+	}
+
+	kwArgObj := v.pop()
+	posArgObj := v.pop()
+	callee := v.pop()
+
+	kwArgs, ok := kwArgObj.(map[any]any)
+	if !ok {
+		if !yield(nil, fmt.Errorf("kw_args must be map")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+
+	posList, ok := posArgObj.(*List)
+	if !ok {
+		if !yield(nil, fmt.Errorf("pos_args must be list")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	posArgs := posList.Elements
+
+	switch fn := callee.(type) {
+	case *Closure:
+		numParams := fn.Fun.NumParams
+		paramNames := fn.Fun.ParamNames
+		isVariadic := fn.Fun.Variadic
+
+		newEnv := fn.Env.NewChild()
+		paramSyms := fn.ParamSyms
+		maxSym := fn.MaxParamSym
+		if len(paramSyms) == 0 && len(paramNames) > 0 {
+			paramSyms = make([]Symbol, len(paramNames))
+			for i, name := range paramNames {
+				sym := v.Intern(name)
+				paramSyms[i] = sym
+				if int(sym) > maxSym {
+					maxSym = int(sym)
+				}
+			}
+			fn.ParamSyms = paramSyms
+			fn.MaxParamSym = maxSym
+		}
+		if len(paramSyms) > 0 {
+			newEnv.Grow(maxSym)
+		}
+
+		if len(posArgs) > numParams && !isVariadic {
+			if !yield(nil, fmt.Errorf("too many arguments: want %d, got %d", numParams, len(posArgs))) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+
+		isSet := make([]bool, numParams)
+		nPos := len(posArgs)
+		if isVariadic && nPos > numParams-1 {
+			nPos = numParams - 1
+		}
+
+		for i := 0; i < nPos; i++ {
+			newEnv.DefSym(paramSyms[i], posArgs[i])
+			isSet[i] = true
+		}
+
+		for k, val := range kwArgs {
+			name, ok := k.(string)
+			if !ok {
+				if !yield(nil, fmt.Errorf("keyword must be string")) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+			found := false
+			for i, pname := range paramNames {
+				if pname == name {
+					if isVariadic && i == numParams-1 {
+						continue
+					}
+					if isSet[i] {
+						if !yield(nil, fmt.Errorf("multiple values for argument '%s'", name)) {
+							return false
+						}
+						v.push(nil)
+						return true
+					}
+					newEnv.DefSym(paramSyms[i], val)
+					isSet[i] = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				if !yield(nil, fmt.Errorf("unexpected keyword argument '%s'", name)) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+		}
+
+		checkLimit := numParams
+		if isVariadic {
+			checkLimit = numParams - 1
+		}
+		for i := 0; i < checkLimit; i++ {
+			if !isSet[i] {
+				if !yield(nil, fmt.Errorf("missing argument '%s'", paramNames[i])) {
+					return false
+				}
+				v.push(nil)
+				return true
+			}
+		}
+
+		if isVariadic {
+			var extra []any
+			if len(posArgs) > numParams-1 {
+				extra = posArgs[numParams-1:]
+			} else {
+				extra = []any{}
+			}
+			newEnv.DefSym(paramSyms[numParams-1], &List{
+				Elements:  extra,
+				Immutable: true,
+			})
+		}
+
+		v.CallStack = append(v.CallStack, Frame{
+			Fun:      v.CurrentFun,
+			ReturnIP: v.IP,
+			Env:      v.Scope,
+			BaseSP:   v.SP,
+			BP:       v.BP,
+		})
+
+		v.CurrentFun = fn.Fun
+		v.IP = 0
+		v.Scope = newEnv
+		v.BP = v.SP + 1
+
+		return true
+
+	case NativeFunc:
+		if len(kwArgs) > 0 {
+			if !yield(nil, fmt.Errorf("native functions do not support keyword arguments")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		res, err := fn.Func(v, posArgs)
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(res)
+		return true
+
+	default:
+		if !yield(nil, fmt.Errorf("not a function: %T", callee)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
 }
