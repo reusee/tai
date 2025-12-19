@@ -202,7 +202,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	}
 }
 
-func toInt64(v any) (int64, bool) {
+func ToInt64(v any) (int64, bool) {
 	switch i := v.(type) {
 	case int:
 		return int64(i), true
@@ -228,11 +228,7 @@ func toInt64(v any) (int64, bool) {
 	return 0, false
 }
 
-func ToInt64(v any) (int64, bool) {
-	return toInt64(v)
-}
-
-func toFloat64(v any) (float64, bool) {
+func ToFloat64(v any) (float64, bool) {
 	switch i := v.(type) {
 	case float64:
 		return i, true
@@ -277,7 +273,7 @@ func toComplex128(v any) (complex128, bool) {
 	case complex64:
 		return complex128(i), true
 	}
-	if f, ok := toFloat64(v); ok {
+	if f, ok := ToFloat64(v); ok {
 		return complex(f, 0), true
 	}
 	return 0, false
@@ -300,10 +296,10 @@ func isZero(v any) bool {
 	case nil:
 		return true
 	}
-	if i, ok := toInt64(v); ok {
+	if i, ok := ToInt64(v); ok {
 		return i == 0
 	}
-	if f, ok := toFloat64(v); ok {
+	if f, ok := ToFloat64(v); ok {
 		return f == 0
 	}
 	if c, ok := toComplex128(v); ok {
@@ -458,7 +454,7 @@ func bitwiseSameType(op OpCode, a, b any) (any, bool, error) {
 func resolveSliceIndices(length int, start, stop, step any) (int, int, int, error) {
 	stepInt := 1
 	if step != nil {
-		s, ok := toInt64(step)
+		s, ok := ToInt64(step)
 		if !ok {
 			return 0, 0, 0, fmt.Errorf("slice step must be integer")
 		}
@@ -477,7 +473,7 @@ func resolveSliceIndices(length int, start, stop, step any) (int, int, int, erro
 			startInt = length - 1
 		}
 	} else {
-		s, ok := toInt64(start)
+		s, ok := ToInt64(start)
 		if !ok {
 			return 0, 0, 0, fmt.Errorf("slice start must be integer")
 		}
@@ -510,7 +506,7 @@ func resolveSliceIndices(length int, start, stop, step any) (int, int, int, erro
 			stopInt = -1
 		}
 	} else {
-		s, ok := toInt64(stop)
+		s, ok := ToInt64(stop)
 		if !ok {
 			return 0, 0, 0, fmt.Errorf("slice stop must be integer")
 		}
@@ -1235,8 +1231,8 @@ func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	i1, ok1 := toInt64(a)
-	i2, ok2 := toInt64(b)
+	i1, ok1 := ToInt64(a)
+	i2, ok2 := ToInt64(b)
 	if !ok1 || !ok2 {
 		if !yield(nil, fmt.Errorf("bitwise operands must be integers, got %T and %T", a, b)) {
 			return false
@@ -1405,8 +1401,8 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 	}
 
 	if isFloat(a) || isFloat(b) {
-		f1, ok1 := toFloat64(a)
-		f2, ok2 := toFloat64(b)
+		f1, ok1 := ToFloat64(a)
+		f2, ok2 := ToFloat64(b)
 		if !ok1 || !ok2 {
 			if !yield(nil, fmt.Errorf("invalid operands for float math: %T, %T", a, b)) {
 				return false
@@ -1453,8 +1449,8 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	i1, ok1 := toInt64(a)
-	i2, ok2 := toInt64(b)
+	i1, ok1 := ToInt64(a)
+	i2, ok2 := ToInt64(b)
 	if !ok1 || !ok2 {
 		if !yield(nil, fmt.Errorf("math operands must be numeric, got %T and %T", a, b)) {
 			return false
@@ -1527,13 +1523,13 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 	a := v.pop()
 	match := a == b
 	if !match {
-		i1, ok1 := toInt64(a)
-		i2, ok2 := toInt64(b)
+		i1, ok1 := ToInt64(a)
+		i2, ok2 := ToInt64(b)
 		if ok1 && ok2 {
 			match = i1 == i2
 		} else {
-			f1, ok1 := toFloat64(a)
-			f2, ok2 := toFloat64(b)
+			f1, ok1 := ToFloat64(a)
+			f2, ok2 := ToFloat64(b)
 			if ok1 && ok2 {
 				match = f1 == f2
 			}
@@ -1576,8 +1572,8 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 	}
 
 	if isFloat(a) || isFloat(b) {
-		f1, ok1 := toFloat64(a)
-		f2, ok2 := toFloat64(b)
+		f1, ok1 := ToFloat64(a)
+		f2, ok2 := ToFloat64(b)
 		if !ok1 || !ok2 {
 			if !yield(nil, fmt.Errorf("invalid operands for float comparison: %T, %T", a, b)) {
 				return false
@@ -1600,8 +1596,8 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	i1, ok1 := toInt64(a)
-	i2, ok2 := toInt64(b)
+	i1, ok1 := ToInt64(a)
+	i2, ok2 := ToInt64(b)
 	if ok1 && ok2 {
 		var res bool
 		switch op {

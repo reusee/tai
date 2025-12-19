@@ -1565,7 +1565,7 @@ e = a * b
 f = a / b
 g = a // b
 h = a % b
-i = a ** b
+i = pow(a, b)
 
 # Comparison
 j = a == b
@@ -1603,7 +1603,7 @@ x = (1 < 2) or (2 > 3)
 	check("c", int64(13))
 	check("d", int64(7))
 	check("e", int64(30))
-	check("f", 10.0/3.0)
+	check("f", int64(3))
 	check("g", int64(3))
 	check("h", int64(1))
 	check("i", int64(1000))

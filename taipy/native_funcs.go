@@ -3,6 +3,7 @@ package taipy
 import (
 	"fmt"
 	"maps"
+	"math"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -105,4 +106,44 @@ var Struct = taivm.NativeFunc{
 		}
 		return &taivm.Struct{Fields: fields}, nil
 	},
+}
+
+var Pow = taivm.NativeFunc{
+	Name: "pow",
+	Func: func(vm *taivm.VM, args []any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("pow expects 2 arguments")
+		}
+		a := args[0]
+		b := args[1]
+
+		if isFloat(a) || isFloat(b) {
+			f1, ok1 := taivm.ToFloat64(a)
+			f2, ok2 := taivm.ToFloat64(b)
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("invalid arguments for pow: %T, %T", a, b)
+			}
+			return math.Pow(f1, f2), nil
+		}
+
+		i1, ok1 := taivm.ToInt64(a)
+		i2, ok2 := taivm.ToInt64(b)
+		if ok1 && ok2 {
+			resFloat := math.Pow(float64(i1), float64(i2))
+			if i2 < 0 {
+				return resFloat, nil
+			}
+			return int64(resFloat), nil
+		}
+
+		return nil, fmt.Errorf("unsupported argument types for pow: %T, %T", a, b)
+	},
+}
+
+func isFloat(v any) bool {
+	switch v.(type) {
+	case float32, float64:
+		return true
+	}
+	return false
 }
