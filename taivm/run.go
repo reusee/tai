@@ -634,6 +634,17 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	case *Closure:
 		return v.callClosure(fn, argc, calleeIdx, yield)
 
+	case *BoundMethod:
+		if v.SP >= len(v.OperandStack) {
+			v.growOperandStack()
+		}
+		// Shift arguments
+		copy(v.OperandStack[calleeIdx+2:v.SP+1], v.OperandStack[calleeIdx+1:v.SP])
+		v.SP++
+		v.OperandStack[calleeIdx] = fn.Fun
+		v.OperandStack[calleeIdx+1] = fn.Receiver
+		return v.opCall(OpCall.With(argc+1), yield)
+
 	case NativeFunc:
 		return v.callNative(fn, argc, calleeIdx, yield)
 
@@ -1824,6 +1835,23 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		}
 		v.push(val)
 
+	case *List:
+		if nameStr == "append" {
+			v.push(&BoundMethod{
+				Receiver: t,
+				Fun: NativeFunc{
+					Name: "list.append",
+					Func: ListAppend,
+				},
+			})
+			return true
+		}
+		if !yield(nil, fmt.Errorf("list has no attribute '%s'", nameStr)) {
+			return false
+		}
+		v.push(nil)
+		return true
+
 	default:
 		if !yield(nil, fmt.Errorf("type %T has no attributes", target)) {
 			return false
@@ -1906,6 +1934,16 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	posArgs := posList.Elements
 
 	switch fn := callee.(type) {
+	case *BoundMethod:
+		newElems := make([]any, 0, len(posList.Elements)+1)
+		newElems = append(newElems, fn.Receiver)
+		newElems = append(newElems, posList.Elements...)
+
+		v.push(fn.Fun)
+		v.push(&List{Elements: newElems, Immutable: true})
+		v.push(kwArgObj)
+		return v.opCallKw(inst, yield)
+
 	case *Closure:
 		numParams := fn.Fun.NumParams
 		paramNames := fn.Fun.ParamNames

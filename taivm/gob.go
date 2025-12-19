@@ -17,4 +17,5 @@ func init() {
 	gob.Register(&MapIterator{})
 	gob.Register(&List{})
 	gob.Register(&Struct{})
+	gob.Register(&BoundMethod{})
 }

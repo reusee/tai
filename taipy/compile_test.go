@@ -755,3 +755,18 @@ v_last = r[-1]
 		t.Errorf("v_last = %v, want 18", val)
 	}
 }
+
+func TestCompileListMethod(t *testing.T) {
+	vm := run(t, `
+l = [1, 2]
+l.append(3)
+res = l[2]
+len_l = len(l)
+`)
+	if val, ok := vm.Get("res"); !ok || val != int64(3) {
+		t.Errorf("res = %v, want 3", val)
+	}
+	if val, ok := vm.Get("len_l"); !ok || val != int64(3) {
+		t.Errorf("len_l = %v, want 3", val)
+	}
+}

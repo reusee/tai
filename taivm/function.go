@@ -8,3 +8,8 @@ type Function struct {
 	Code       []OpCode
 	Constants  []any
 }
+
+type BoundMethod struct {
+	Receiver any
+	Fun      any
+}
