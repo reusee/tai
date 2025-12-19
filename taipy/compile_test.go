@@ -640,6 +640,16 @@ res3 = h(1, *[2], c=3, **{"d": 4})
 	if val, ok := vm.Get("res3"); !ok || val != int64(10) {
 		t.Errorf("res3 = %v, want 10", val)
 	}
+
+	// Mixed with multiple positional sequences
+	vm = run(t, `
+def k(a, b, c, d):
+	return a + b + c + d
+res4 = k(1, *[2], 3, **{"d": 4})
+`)
+	if val, ok := vm.Get("res4"); !ok || val != int64(10) {
+		t.Errorf("res4 = %v, want 10", val)
+	}
 }
 
 func TestNativeLen(t *testing.T) {
@@ -918,6 +928,13 @@ func TestCompileErrorsMore(t *testing.T) {
 		{"param_order", "def f(a=1, b): pass", "non-default argument"},
 		{"param_star_bad", "def f(*1): pass", "variadic parameter must be identifier"},
 		{"param_variadic_not_last", "def f(*args, b): pass", "variadic parameter must be last"},
+		{"assign_literal", "1 = 1", "unsupported assignment target"},
+		{"assign_paren_literal", "(1) = 1", "unsupported assignment target"},
+		{"assign_invalid_list", "[1] = [1]", "unsupported variable type"},
+		{"assign_invalid_tuple", "(1,) = (1,)", "unsupported variable type"},
+		{"assign_binary_lhs", "(a+b) = 1", "unsupported assignment target"},
+		{"aug_assign_literal", "1 += 1", "unsupported augmented assignment target"},
+		{"aug_assign_list", "l=[1]; [l[0]] += [1]", "unsupported augmented assignment target"},
 	}
 
 	for _, tt := range tests {
@@ -974,4 +991,123 @@ func TestNativeFuncErrors(t *testing.T) {
 	if _, err := Range.Func(vm, []any{0, 10, 0}); err == nil {
 		t.Error("expected error")
 	}
+}
+
+func TestCompileAugmentedAssignAllOps(t *testing.T) {
+	vm := run(t, `
+a = 20.0
+a /= 4
+b = 20
+b //= 3
+c = 10
+c %= 3
+d = 3
+d &= 1
+e = 1
+e |= 2
+f = 3
+f ^= 1
+g = 1
+g <<= 2
+h = 8
+h >>= 2
+`)
+	check := func(name string, want any) {
+		if val, ok := vm.Get(name); !ok || val != want {
+			t.Errorf("%s = %v, want %v", name, val, want)
+		}
+	}
+	// a is float because we started with 20.0 to be safe with division types
+	check("a", 5.0)
+	check("b", int64(6))
+	check("c", int64(1))
+	check("d", int64(1))
+	check("e", int64(3))
+	check("f", int64(2))
+	check("g", int64(4))
+	check("h", int64(2))
+}
+
+func TestCompileAugmentedAssignSlice(t *testing.T) {
+	vm := run(t, `
+l = [1, 2, 3]
+l[0:1] += [4]
+`)
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		// [1] += [4] -> [1, 4], so list becomes [1, 4, 2, 3]
+		if len(l) != 4 {
+			t.Errorf("len = %d, want 4", len(l))
+		} else if l[1] != int64(4) {
+			t.Errorf("l[1] = %v, want 4", l[1])
+		}
+	}
+}
+
+func TestCompileStoreUnpackComplex(t *testing.T) {
+	s := &taivm.Struct{
+		Fields: map[string]any{
+			"x": int64(0),
+		},
+	}
+	src := `
+l = [1, 2]
+[l[0], s.x] = [3, 4]
+`
+	fn, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm := taivm.NewVM(fn)
+	vm.Def("s", s)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else {
+		l := val.(*taivm.List).Elements
+		if l[0] != int64(3) {
+			t.Errorf("l[0] = %v, want 3", l[0])
+		}
+	}
+	if val, ok := s.Fields["x"]; !ok || val != int64(4) {
+		t.Errorf("s.x = %v, want 4", val)
+	}
+}
+
+func TestCompileLoad(t *testing.T) {
+	src := `load("mod", "sym")`
+	_, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+}
+
+func TestNativeLenError(t *testing.T) {
+	vm := taivm.NewVM(&taivm.Function{})
+	// Invalid type
+	if _, err := Len.Func(vm, []any{int64(1)}); err == nil {
+		t.Error("expected error for len(int)")
+	}
+}
+
+func TestNativeRangeErrors(t *testing.T) {
+	vm := taivm.NewVM(&taivm.Function{})
+
+	check := func(args []any) {
+		if _, err := Range.Func(vm, args); err == nil {
+			t.Errorf("expected error for args %v", args)
+		}
+	}
+
+	check([]any{int64(1), "a"})
+	check([]any{int64(1), int64(2), "a"})
+	check([]any{"a"})
+	check([]any{int64(1), int64(2), int64(0)}) // step 0
 }
