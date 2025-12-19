@@ -485,6 +485,45 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 		c.emit(taivm.OpLoadConst.With(c.addConst(e.Name.Name)))
 		c.emit(taivm.OpGetAttr)
 
+	case *syntax.CondExpr:
+		if err := c.compileExpr(e.Cond); err != nil {
+			return err
+		}
+		jumpFalseIP := c.currentIP()
+		c.emit(taivm.OpJumpFalse)
+
+		if err := c.compileExpr(e.True); err != nil {
+			return err
+		}
+
+		jumpEndIP := c.currentIP()
+		c.emit(taivm.OpJump)
+
+		c.patchJump(jumpFalseIP, c.currentIP())
+
+		if err := c.compileExpr(e.False); err != nil {
+			return err
+		}
+
+		c.patchJump(jumpEndIP, c.currentIP())
+
+	case *syntax.LambdaExpr:
+		sub := newCompiler("<lambda>")
+		if err := sub.compileExpr(e.Body); err != nil {
+			return err
+		}
+		sub.emit(taivm.OpReturn)
+
+		fn := sub.toFunction()
+		var err error
+		fn.ParamNames, err = c.extractParamNames(e.Params)
+		if err != nil {
+			return err
+		}
+		fn.NumParams = len(e.Params)
+
+		c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
+
 	default:
 		return fmt.Errorf("unsupported expression: %T", expr)
 	}
@@ -600,19 +639,27 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	sub.emit(taivm.OpReturn)
 
 	fn := sub.toFunction()
-	fn.ParamNames = make([]string, len(s.Params))
-	for i, p := range s.Params {
-		if id, ok := p.(*syntax.Ident); ok {
-			fn.ParamNames[i] = id.Name
-		} else {
-			return fmt.Errorf("complex parameters not supported")
-		}
+	var err error
+	fn.ParamNames, err = c.extractParamNames(s.Params)
+	if err != nil {
+		return err
 	}
 	fn.NumParams = len(s.Params)
 
-	c.emit(taivm.OpLoadConst.With(c.addConst(fn)))
-	c.emit(taivm.OpMakeClosure)
+	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
 	c.emit(taivm.OpDefVar.With(c.addConst(s.Name.Name)))
 
 	return nil
+}
+
+func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, error) {
+	names := make([]string, len(params))
+	for i, p := range params {
+		if id, ok := p.(*syntax.Ident); ok {
+			names[i] = id.Name
+		} else {
+			return nil, fmt.Errorf("complex parameters not supported")
+		}
+	}
+	return names, nil
 }

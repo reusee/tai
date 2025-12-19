@@ -535,3 +535,32 @@ s.x += 5
 		t.Errorf("s.x (augmented) = %v, want 35", val)
 	}
 }
+
+func TestCompileCondExpr(t *testing.T) {
+	vm := run(t, `
+res1 = 1 if 1 < 2 else 0
+res2 = 1 if 1 > 2 else 0
+`)
+	if val, ok := vm.Get("res1"); !ok || val != int64(1) {
+		t.Errorf("res1 = %v, want 1", val)
+	}
+	if val, ok := vm.Get("res2"); !ok || val != int64(0) {
+		t.Errorf("res2 = %v, want 0", val)
+	}
+}
+
+func TestCompileLambda(t *testing.T) {
+	vm := run(t, `
+inc = lambda x: x + 1
+res = inc(10)
+
+add = lambda a, b: a + b
+res2 = add(5, 7)
+`)
+	if val, ok := vm.Get("res"); !ok || val != int64(11) {
+		t.Errorf("res = %v, want 11", val)
+	}
+	if val, ok := vm.Get("res2"); !ok || val != int64(12) {
+		t.Errorf("res2 = %v, want 12", val)
+	}
+}
