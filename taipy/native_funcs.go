@@ -70,6 +70,33 @@ var Range = taivm.NativeFunc{
 			return nil, fmt.Errorf("range step cannot be zero")
 		}
 
+		// Validation to prevent infinite loops in VM due to integer overflow
+		var count int64
+		if step > 0 {
+			if start < stop {
+				count = (stop - start + step - 1) / step
+			}
+		} else {
+			if start > stop {
+				count = (start - stop - step - 1) / -step
+			}
+		}
+
+		if count > 0 {
+			last := start + (count-1)*step
+			next := last + step
+			// Check if 'next' wraps around and re-enters the loop condition
+			if step > 0 {
+				if next < last && next < stop {
+					return nil, fmt.Errorf("range overflows")
+				}
+			} else {
+				if next > last && next > stop {
+					return nil, fmt.Errorf("range overflows")
+				}
+			}
+		}
+
 		return &taivm.Range{
 			Start: start,
 			Stop:  stop,
@@ -129,11 +156,22 @@ var Pow = taivm.NativeFunc{
 		i1, ok1 := taivm.ToInt64(a)
 		i2, ok2 := taivm.ToInt64(b)
 		if ok1 && ok2 {
-			resFloat := math.Pow(float64(i1), float64(i2))
 			if i2 < 0 {
-				return resFloat, nil
+				return math.Pow(float64(i1), float64(i2)), nil
 			}
-			return int64(resFloat), nil
+
+			// Integer exponentiation
+			base := i1
+			exp := i2
+			result := int64(1)
+			for exp > 0 {
+				if exp&1 == 1 {
+					result *= base
+				}
+				base *= base
+				exp >>= 1
+			}
+			return result, nil
 		}
 
 		return nil, fmt.Errorf("unsupported argument types for pow: %T, %T", a, b)

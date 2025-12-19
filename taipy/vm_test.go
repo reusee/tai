@@ -686,3 +686,37 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("range: expected error")
 	}
 }
+
+func TestCriticalFixes(t *testing.T) {
+	// Test 1: Precision of pow(3, 35)
+	// 3^35 = 50031545098999707
+	// float64(3^35) = 50031545098999704 (loss of precision)
+	src := `
+p = pow(3, 35)
+`
+	vm := run(t, src)
+	check(t, vm, "p", int64(50031545098999707))
+
+	// Test 2: Range overflow detection
+	// Construct a range that wraps around MaxInt64 and causes infinite loop in buggy VM
+	// MaxInt64 = 9223372036854775807
+	// Start = MaxInt64 - 2, Step = 4.
+	// Seq: MaxInt64-2, MaxInt64+2 (Wrap to MinInt64+1).
+	// If stop is MaxInt64, then MinInt64+1 < MaxInt64 is True. Loop continues.
+	src = `
+r = range(9223372036854775805, 9223372036854775807, 4)
+`
+	_, err := Compile("test", strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm = taivm.NewVM(&taivm.Function{})
+	// Call Range directly to verify error
+	// 9223372036854775805, 9223372036854775807, 4
+	_, err = Range.Func(vm, []any{int64(9223372036854775805), int64(9223372036854775807), int64(4)})
+	if err == nil {
+		t.Error("expected overflow error from range()")
+	} else if err.Error() != "range overflows" {
+		t.Errorf("expected 'range overflows', got %v", err)
+	}
+}

@@ -701,31 +701,6 @@ func (c *compiler) compileBinaryExpr(e *syntax.BinaryExpr) error {
 }
 
 func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
-	// Optimize pow(a, b) -> OpPow
-	if ident, ok := e.Fn.(*syntax.Ident); ok && ident.Name == "pow" && len(e.Args) == 2 {
-		simple := true
-		for _, arg := range e.Args {
-			if _, ok := arg.(*syntax.BinaryExpr); ok {
-				simple = false
-				break
-			}
-			if u, ok := arg.(*syntax.UnaryExpr); ok && (u.Op == syntax.STAR || u.Op == syntax.STARSTAR) {
-				simple = false
-				break
-			}
-		}
-		if simple {
-			if err := c.compileExpr(e.Args[0]); err != nil {
-				return err
-			}
-			if err := c.compileExpr(e.Args[1]); err != nil {
-				return err
-			}
-			c.emit(taivm.OpPow)
-			return nil
-		}
-	}
-
 	if err := c.compileExpr(e.Fn); err != nil {
 		return err
 	}
