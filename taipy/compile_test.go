@@ -1454,8 +1454,8 @@ o = [x for x in [1, 2, 3]]
 
 	if val, ok := vm.Get("n"); !ok {
 		t.Error("n not found")
-	} else if _, ok := val.(*taivm.Function); !ok {
-		t.Errorf("n is %T, want *Function", val)
+	} else if _, ok := val.(*taivm.Closure); !ok {
+		t.Errorf("n is %T, want *Closure", val)
 	}
 
 	if val, ok := vm.Get("o"); !ok {
@@ -1489,7 +1489,7 @@ l2 = [1, 2, 3]
 l2[0:2] = [4, 5]
 
 # DotExpr
-s = {"x": 10}
+s = struct({"x": 10})
 s.x = 20
 `
 	vm := run(t, src)
