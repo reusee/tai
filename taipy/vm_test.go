@@ -669,7 +669,8 @@ func TestInternalCoverage(t *testing.T) {
 		t.Error("expected unsupported unary op error")
 	}
 
-	if err := c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.DEF}); err == nil || !strings.Contains(err.Error(), "unsupported binary op") {
+	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
+	if err := c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.DEF, X: lit, Y: lit}); err == nil || !strings.Contains(err.Error(), "unsupported binary op") {
 		t.Error("expected unsupported binary op error")
 	}
 
