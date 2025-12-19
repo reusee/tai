@@ -16,6 +16,7 @@ func NewVM(name string, source io.Reader) (*taivm.VM, error) {
 	vm.Def("len", Len)
 	vm.Def("range", Range)
 	vm.Def("print", Print)
+	vm.Def("struct", Struct)
 
 	return vm, nil
 }

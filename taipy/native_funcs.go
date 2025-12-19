@@ -83,3 +83,25 @@ var Print = taivm.NativeFunc{
 		return nil, nil
 	},
 }
+
+var Struct = taivm.NativeFunc{
+	Name: "struct",
+	Func: func(vm *taivm.VM, args []any) (any, error) {
+		fields := make(map[string]any)
+		if len(args) > 0 {
+			switch m := args[0].(type) {
+			case map[any]any:
+				for k, v := range m {
+					if s, ok := k.(string); ok {
+						fields[s] = v
+					}
+				}
+			case map[string]any:
+				for k, v := range m {
+					fields[k] = v
+				}
+			}
+		}
+		return &taivm.Struct{Fields: fields}, nil
+	},
+}
