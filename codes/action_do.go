@@ -174,13 +174,6 @@ Your goal is to improve code quality and correctness by identifying and fixing t
 		}
 	}).Desc("set focus"))
 
-	cmds.Define("todo", cmds.Func(func() {
-		actionNameFlag = a.Name()
-		actionArgumentFlag = `
-Your goal is to resolve any TODO comments located near the '@@ai' marker in the focus files. Implement the required changes to address each TODO and then remove the comment.
-`
-	}).Desc("resolve TODOs near the @@ai mark"))
-
 	cmds.Define("next", cmds.Func(func() {
 		actionNameFlag = a.Name()
 		actionArgumentFlag = `
