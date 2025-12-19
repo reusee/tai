@@ -9,20 +9,17 @@ import (
 )
 
 func run(t *testing.T, src string) *taivm.VM {
-	fn, err := Compile("test", strings.NewReader(src))
+	vm, err := NewVM("test", strings.NewReader(src))
 	if err != nil {
-		t.Fatalf("compile error: %v", err)
+		t.Fatal(err)
 	}
 
-	vm := taivm.NewVM(fn)
-	vm.Def("len", Len)
-
-	vm.Run(func(intr *taivm.Interrupt, err error) bool {
+	for _, err := range vm.Run {
 		if err != nil {
 			t.Fatalf("runtime error: %v", err)
 		}
-		return false
-	})
+	}
+
 	return vm
 }
 
