@@ -753,8 +753,32 @@ func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
 	}
 
 	// Dynamic path using OpCallKw (callee is already on stack)
+	// We must ensure positional arguments precede keyword arguments.
 
-	// 1. Build Positional Args List
+	var posArgs []syntax.Expr
+	var kwArgs []syntax.Expr // BinaryExpr(EQ) or UnaryExpr(STARSTAR)
+	seenKw := false
+
+	for _, arg := range e.Args {
+		isKw := false
+		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
+			isKw = true
+		} else if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STARSTAR {
+			isKw = true
+		}
+
+		if isKw {
+			seenKw = true
+			kwArgs = append(kwArgs, arg)
+		} else {
+			if seenKw {
+				return fmt.Errorf("positional argument follows keyword argument")
+			}
+			posArgs = append(posArgs, arg)
+		}
+	}
+
+	// 1. Compile Positional Args
 	hasListOnStack := false
 	var pendingPos []syntax.Expr
 
@@ -776,14 +800,7 @@ func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
 		return nil
 	}
 
-	for _, arg := range e.Args {
-		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
-			continue
-		}
-		if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STARSTAR {
-			continue
-		}
-
+	for _, arg := range posArgs {
 		if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STAR {
 			if err := flushPos(); err != nil {
 				return err
@@ -807,7 +824,7 @@ func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
 		c.emit(taivm.OpMakeList.With(0))
 	}
 
-	// 2. Build Keyword Args Map
+	// 2. Compile Keyword Args
 	hasMapOnStack := false
 	var pendingKw []*syntax.BinaryExpr
 
@@ -831,7 +848,7 @@ func (c *compiler) compileCallExpr(e *syntax.CallExpr) error {
 		return nil
 	}
 
-	for _, arg := range e.Args {
+	for _, arg := range kwArgs {
 		if bin, ok := arg.(*syntax.BinaryExpr); ok && bin.Op == syntax.EQ {
 			pendingKw = append(pendingKw, bin)
 		} else if u, ok := arg.(*syntax.UnaryExpr); ok && u.Op == syntax.STARSTAR {
