@@ -1288,3 +1288,353 @@ func TestNativeFuncErrors(t *testing.T) {
 		t.Error("struct: expected error for int")
 	}
 }
+
+func TestCoverageFinal(t *testing.T) {
+	c := newCompiler("coverage")
+
+	// Mock failing expression
+	type failExpr struct {
+		syntax.Literal // Embed to satisfy Expr interface
+	}
+	fExpr := &failExpr{}
+
+	// Helper to assert error
+	mustErr := func(err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	}
+
+	// 1. compileStore default
+	mustErr(c.compileStore(&syntax.Literal{Value: 1}))
+
+	// 2. extractParamNames default
+	_, _, _, err := c.extractParamNames([]syntax.Expr{&syntax.Literal{Value: 1}})
+	mustErr(err)
+
+	// 3. compileSimpleAssign default
+	mustErr(c.compileSimpleAssign(&syntax.Literal{Value: 1}, &syntax.Literal{Value: 1}))
+
+	// 4. compileAugmentedAssign errors
+	// Ident RHS error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.Ident{Name: "a"},
+		RHS: fExpr,
+	}))
+	// Index X error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: fExpr, Y: &syntax.Literal{Value: 1}},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Index Y error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: &syntax.Literal{Value: 1}, Y: fExpr},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Index RHS error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: &syntax.Literal{Value: 1}, Y: &syntax.Literal{Value: 1}},
+		RHS: fExpr,
+	}))
+	// Dot X error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Dot RHS error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.DotExpr{X: &syntax.Literal{Value: 1}, Name: &syntax.Ident{Name: "a"}},
+		RHS: fExpr,
+	}))
+	// Slice X error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.SliceExpr{X: fExpr},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Slice args error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.SliceExpr{X: &syntax.Literal{Value: 1}, Lo: fExpr},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Slice RHS error
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.SliceExpr{X: &syntax.Literal{Value: 1}},
+		RHS: fExpr,
+	}))
+	// Default (Literal += 1)
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.Literal{Value: 1},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+
+	// 5. compileCallExpr complex paths
+	// flushPos error via keyword: f(failExpr, a=1)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			fExpr,
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: &syntax.Literal{Value: 1}},
+		},
+	}))
+	// flushPos error via star: f(failExpr, *x)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			fExpr,
+			&syntax.UnaryExpr{Op: syntax.STAR, X: &syntax.Ident{Name: "x"}},
+		},
+	}))
+	// Star arg error: f(*failExpr)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.UnaryExpr{Op: syntax.STAR, X: fExpr},
+		},
+	}))
+	// flushKw error via starstar: f(a=failExpr, **d)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
+			&syntax.UnaryExpr{Op: syntax.STARSTAR, X: &syntax.Ident{Name: "d"}},
+		},
+	}))
+	// Starstar arg error: f(**failExpr)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.UnaryExpr{Op: syntax.STARSTAR, X: fExpr},
+		},
+	}))
+
+	// 6. compileComprehension errors
+	// Dict key error
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Curly:   true,
+		Body:    &syntax.DictEntry{Key: fExpr, Value: &syntax.Literal{Value: 1}},
+		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: &syntax.ListExpr{}}},
+	}))
+	// ForClause X error
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Body:    &syntax.Literal{Value: 1},
+		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: fExpr}},
+	}))
+	// IfClause Cond error
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Body: &syntax.Literal{Value: 1},
+		Clauses: []syntax.Node{
+			&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: &syntax.ListExpr{}},
+			&syntax.IfClause{Cond: fExpr},
+		},
+	}))
+
+	// 7. Native Funcs
+	vm := taivm.NewVM(&taivm.Function{})
+
+	// Len arg count
+	if _, err := Len.Func(vm, []any{}); err == nil {
+		t.Error("len 0 args: expected error")
+	}
+
+	// Pow arg count
+	if _, err := Pow.Func(vm, []any{1, 2, 3}); err == nil {
+		t.Error("pow 3 args: expected error")
+	}
+
+	// 8. Compile errors
+	// Parse error
+	if _, err := Compile("test", strings.NewReader("if")); err == nil {
+		t.Error("Compile parse error: expected error")
+	}
+	// Semantic error
+	if _, err := Compile("test", strings.NewReader("break")); err == nil {
+		t.Error("Compile semantic error: expected error")
+	}
+}
+
+func TestCoverageRefinement(t *testing.T) {
+	c := newCompiler("refine")
+
+	type failExpr struct {
+		syntax.Literal
+	}
+	fExpr := &failExpr{}
+
+	mustErr := func(err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	}
+
+	// 1. compileBranch CONTINUE
+	c.loops = []*loopContext{{continueIP: 0, breakIPs: []int{}}}
+	if err := c.compileBranch(&syntax.BranchStmt{Token: syntax.CONTINUE}); err != nil {
+		t.Errorf("compileBranch continue failed: %v", err)
+	}
+
+	// 2. compileAugmentedAssign invalid op
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.EQ,
+		LHS: &syntax.Ident{Name: "a"},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+
+	// 3. compileAugmentedAssign errors
+	// Ident RHS
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.Ident{Name: "a"},
+		RHS: fExpr,
+	}))
+	// Index X
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: fExpr, Y: &syntax.Literal{Value: 1}},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Index Y
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: &syntax.Literal{Value: 1}, Y: fExpr},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Index RHS
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.IndexExpr{X: &syntax.Literal{Value: 1}, Y: &syntax.Literal{Value: 1}},
+		RHS: fExpr,
+	}))
+	// Dot X
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Dot RHS
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.DotExpr{X: &syntax.Literal{Value: 1}, Name: &syntax.Ident{Name: "a"}},
+		RHS: fExpr,
+	}))
+	// Slice X
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.SliceExpr{X: fExpr},
+		RHS: &syntax.Literal{Value: 1},
+	}))
+	// Slice RHS
+	mustErr(c.compileAugmentedAssign(&syntax.AssignStmt{
+		Op:  syntax.PLUS_EQ,
+		LHS: &syntax.SliceExpr{X: &syntax.Literal{Value: 1}},
+		RHS: fExpr,
+	}))
+
+	// 4. compileCallExpr errors
+	// f(failExpr) -> flushPos error at end (via compileExpr)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn:   &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{fExpr},
+	}))
+	// f(arg, *failExpr) -> STAR expr error
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.Literal{Value: 1},
+			&syntax.UnaryExpr{Op: syntax.STAR, X: fExpr},
+		},
+	}))
+	// f(failExpr, *arg) -> flushPos error in loop
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			fExpr,
+			&syntax.UnaryExpr{Op: syntax.STAR, X: &syntax.Literal{Value: 1}},
+		},
+	}))
+	// f(a=1, **failExpr) -> STARSTAR expr error
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: &syntax.Literal{Value: 1}},
+			&syntax.UnaryExpr{Op: syntax.STARSTAR, X: fExpr},
+		},
+	}))
+	// f(a=failExpr, **d) -> flushKw error in loop
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
+			&syntax.UnaryExpr{Op: syntax.STARSTAR, X: &syntax.Ident{Name: "d"}},
+		},
+	}))
+	// f(a=failExpr) -> flushKw error at end
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
+		},
+	}))
+	// f(*[], failExpr) -> flushPos error at end (dynamic path)
+	mustErr(c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.UnaryExpr{Op: syntax.STAR, X: &syntax.ListExpr{}},
+			fExpr,
+		},
+	}))
+	// Mixed args success path (posArgs append in dynamic path)
+	// f(1, a=2)
+	if err := c.compileCallExpr(&syntax.CallExpr{
+		Fn: &syntax.Ident{Name: "f"},
+		Args: []syntax.Expr{
+			&syntax.Literal{Value: 1},
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: &syntax.Literal{Value: 2}},
+		},
+	}); err != nil {
+		t.Errorf("compileCallExpr mixed args failed: %v", err)
+	}
+
+	// 5. compileSliceArgs errors
+	// Hi error
+	mustErr(c.compileSliceArgs(&syntax.SliceExpr{
+		Hi: fExpr,
+	}))
+	// Step error
+	mustErr(c.compileSliceArgs(&syntax.SliceExpr{
+		Step: fExpr,
+	}))
+
+	// 6. Comprehension errors
+	// Dict Key error (base case)
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Curly:   true,
+		Body:    &syntax.DictEntry{Key: fExpr, Value: &syntax.Literal{Value: 1}},
+		Clauses: []syntax.Node{},
+	}))
+	// Dict Value error (base case)
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Curly:   true,
+		Body:    &syntax.DictEntry{Key: &syntax.Literal{Value: 1}, Value: fExpr},
+		Clauses: []syntax.Node{},
+	}))
+	// IfClause recursion error
+	mustErr(c.compileComprehension(&syntax.Comprehension{
+		Body: &syntax.Literal{Value: 1},
+		Clauses: []syntax.Node{
+			&syntax.IfClause{Cond: &syntax.Literal{Value: 1}},
+			&syntax.IfClause{Cond: fExpr},
+		},
+	}))
+}
