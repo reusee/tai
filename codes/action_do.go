@@ -46,30 +46,25 @@ func (a ActionDo) plan(cont phases.Phase) phases.Phase {
 			Parts: []generators.Part{
 				generators.Text(`The primary goal is: ` + string(a.ActionArgument()) + `
 
-Your first task is to create a comprehensive, step-by-step plan to achieve this goal. First, analyze the provided code to understand its current state. Then, create a plan that outlines only the necessary steps to bridge the gap between the current state and the goal. Do not include steps for tasks that are already completed. Break down the goal into manageable tasks, outlining your strategy and design decisions. Consider potential complexities and how you'll address them.
+You are currently in the **PLANNING PHASE**.
+Your task is to create a detailed execution plan.
+**ABSOLUTELY NO CODE IMPLEMENTATION IS ALLOWED.**
 
-**CRITICAL: This is a planning-only phase.** 
-**Your response must consist *exclusively* of the plan.**
-**Do not include any code, code blocks, or diffs.** 
-**Do not write any code implementations.**
-**Do not use code formatting (like backticks or indented blocks).**
-**Do not provide function signatures or type definitions.**
+Instructions:
+1. **Analyze** the request and the provided code.
+2. **Design** the solution, explaining your strategy and architectural choices in plain language.
+3. **Plan** the step-by-step actions required to achieve the goal.
 
-**What you should NOT do in this phase:**
-- Do NOT write any actual code
-- Do NOT provide code examples  
-- Do NOT show diffs or changes
-- Do NOT write function or method implementations
-- Do NOT include code snippets in markdown or any other format
+**Constraints:**
+- **DO NOT** write any code blocks (no ` + "`" + "```" + "`" + `).
+- **DO NOT** write function bodies or implementations.
+- **DO NOT** provide diffs.
+- **ONLY** use natural language to describe the changes.
 
-**What you SHOULD do:**
-- Describe the approach in plain text
-- List the steps needed
-- Explain design decisions and rationale
-- Identify potential challenges and solutions
-- Outline the order of operations
-
-The actual code changes will be requested in a subsequent step based on this plan. Any code output in this phase will be ignored and will not be part of the solution.`),
+If your response contains code blocks or implementations, it will be rejected.
+The coding will happen in the *next* phase, based on this plan.
+Focus on *what* needs to be done and *why*, not *how* to code it yet.
+`),
 			},
 		})
 		if err != nil {
