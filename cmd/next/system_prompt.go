@@ -40,7 +40,7 @@ func (Module) SystemPrompt(
 	ret += SystemPrompt(prompts.NextStep)
 
 	hasGoFiles := false
-	for info, err := range codeProvider.IterFiles() {
+	for info, err := range codeProvider.IterFiles(patterns) {
 		ce(err)
 		if strings.HasSuffix(info.Path, ".go") {
 			hasGoFiles = true

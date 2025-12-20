@@ -18,23 +18,9 @@ type CodeProvider struct {
 	FileNameOK dscope.Inject[FileNameOK]
 	NameMatch  dscope.Inject[NameMatch]
 	Logger     dscope.Inject[logs.Logger]
-	Files      dscope.Inject[Files]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
-
-func (c CodeProvider) RootDirs() ([]string, error) {
-	if files := c.Files(); len(files) > 0 {
-		return []string(files), nil
-	}
-	dir, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	return []string{
-		dir,
-	}, nil
-}
 
 type FileInfo struct {
 	Path     string
@@ -42,12 +28,22 @@ type FileInfo struct {
 	MimeType string
 }
 
-func (c CodeProvider) IterFiles() iter.Seq2[FileInfo, error] {
+func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 	return func(yield func(FileInfo, error) bool) {
-		queue, err := c.RootDirs()
-		if err != nil {
-			yield(FileInfo{}, err)
-			return
+
+		if len(patterns) == 0 {
+			patterns = []string{"."}
+		}
+
+		var queue []string
+		for _, pattern := range patterns {
+			files, err := filepath.Glob(pattern)
+			if err != nil {
+				// use as-is
+				queue = append(queue, pattern)
+			} else {
+				queue = append(queue, files...)
+			}
 		}
 
 		handlePath := func(path string) (stop bool, err error) {
@@ -139,13 +135,14 @@ func (c CodeProvider) IterFiles() iter.Seq2[FileInfo, error] {
 func (c CodeProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),
+	patterns []string,
 ) (
 	parts []generators.Part,
 	err error,
 ) {
 
 	totalTokens := 0
-	for info, err := range c.IterFiles() {
+	for info, err := range c.IterFiles(patterns) {
 		if err != nil {
 			return nil, err
 		}

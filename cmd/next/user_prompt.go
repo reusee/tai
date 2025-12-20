@@ -32,6 +32,7 @@ func (Module) UserPrompt(
 	parts, err := codeProvider.Parts(
 		maxInputTokens,
 		generator.CountTokens,
+		patterns,
 	)
 	ce(err)
 

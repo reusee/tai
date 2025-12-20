@@ -28,7 +28,7 @@ func TestContextPrompt(t *testing.T) {
 		count generators.GeminiTokenCounter,
 	) {
 
-		parts, err := provider.Parts(256, count("gemini-1.5-pro"))
+		parts, err := provider.Parts(256, count("gemini-1.5-pro"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

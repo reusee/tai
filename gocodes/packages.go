@@ -3,8 +3,6 @@ package gocodes
 import (
 	"errors"
 	"go/token"
-	"maps"
-	"slices"
 	"sync"
 
 	"github.com/reusee/tai/logs"
@@ -17,8 +15,6 @@ type GetPackages = func() ([]*packages.Package, error)
 
 type GetFileSet = func() (*token.FileSet, error)
 
-type GetRootDirs func() ([]string, error)
-
 func (Module) Packages(
 	noTests NoTests,
 	envs Envs,
@@ -28,12 +24,10 @@ func (Module) Packages(
 ) (
 	getPackages GetPackages,
 	getFileSet GetFileSet,
-	getRootDirs GetRootDirs,
 ) {
 
 	fset := token.NewFileSet()
 	var pkgs []*packages.Package
-	var rootDirs []string
 	var err error
 
 	init := sync.OnceFunc(func() {
@@ -80,7 +74,6 @@ func (Module) Packages(
 				dirs[pkg.Module.Dir] = true
 			}
 		}
-		rootDirs = slices.Sorted(maps.Keys(dirs))
 
 		logger.Info("packages", "num", len(pkgs))
 
@@ -94,11 +87,6 @@ func (Module) Packages(
 	getFileSet = func() (*token.FileSet, error) {
 		init()
 		return fset, err
-	}
-
-	getRootDirs = func() ([]string, error) {
-		init()
-		return rootDirs, err
 	}
 
 	return

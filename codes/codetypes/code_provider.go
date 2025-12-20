@@ -6,6 +6,7 @@ type CodeProvider interface {
 	Parts(
 		maxTokens int,
 		countTokens func(string) (int, error),
+		patterns []string,
 	) (
 		parts []generators.Part,
 		err error,
@@ -14,6 +15,4 @@ type CodeProvider interface {
 	Functions() []*generators.Func
 
 	SystemPrompt() string
-
-	RootDirs() ([]string, error)
 }

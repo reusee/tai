@@ -28,6 +28,7 @@ func (Module) Generate(
 	maxTokens taiconfigs.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
+	patterns Patterns,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -65,7 +66,7 @@ func (Module) Generate(
 		)
 
 		// user prompt
-		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens)
+		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
 			return err
 		}

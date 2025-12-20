@@ -100,7 +100,7 @@ module test
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		parts, err := provider.Parts(8192, countTokens)
+		parts, err := provider.Parts(8192, countTokens, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

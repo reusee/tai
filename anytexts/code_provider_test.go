@@ -27,7 +27,7 @@ func TestContextPrompt(t *testing.T) {
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens)
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,15 +63,11 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 		new(Module),
 		dscope.Provide(configs.NewLoader(nil, "")),
 		modes.ForTest(t),
-	).Fork(
-		func() Files {
-			return []string{"."}
-		},
 	).Call(func(
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		parts, err := provider.Parts(math.MaxInt, countTokens)
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
 		if err != nil {
 			t.Fatal(err)
 		}
