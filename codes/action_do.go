@@ -164,7 +164,16 @@ func (a ActionDo) DefineCmds() {
 	cmds.Define("bugs", cmds.Func(func() {
 		actionNameFlag = a.Name()
 		prompt := `
-Your goal is to improve code quality and correctness by identifying and fixing the most critical defects. Analyze the code to identify bugs, potential issues, and security vulnerabilities. From the issues you find, select the one or two most severe ones to address. Then, propose fixes for only those selected issues. For each bug you fix, you must also write a test that reproduces the bug to prove its existence. Focus only on fixing significant problems, not on stylistic improvements or minor optimizations unless they address a specific defect. If no issues are found, state "No issues found" without fabricating problems.
+Your goal is to improve code quality and correctness by identifying and fixing the most critical defects. Analyze the code to identify bugs, potential issues, and security vulnerabilities. From the issues you find, select the one or two most severe ones to address.
+
+**CRITICAL REQUIREMENT:** For every bug you identify, you **must** write a test case that reproduces the bug and proves its existence. The test case is not optional; it is the primary method of validation. If a suspected issue cannot be exposed by a failing test, it is not considered a valid bug for this task.
+
+Your process for each issue should be:
+1. Identify the potential bug.
+2. Create a test case that fails due to this bug (reproduction).
+3. Fix the bug so the test passes.
+
+Focus only on fixing significant problems, not on stylistic improvements or minor optimizations unless they address a specific defect. If no issues are found that can be reproduced with a test, state "No issues found" without fabricating problems.
 `
 		actionArgumentFlag = ActionArgument(prompt)
 	}).Desc("find bugs and fix"))

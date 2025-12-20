@@ -59,7 +59,7 @@ func (Module) Generate(
 		}
 		maxUserPromptTokens := maxInputTokens - systemPromptTokens
 		if maxUserPromptTokens <= 0 {
-			return fmt.Errorf("token limit too low")
+			return fmt.Errorf("token limit too low, need at least %d", -maxUserPromptTokens)
 		}
 		logger.Info("token limits",
 			"max user prompt", maxUserPromptTokens,
