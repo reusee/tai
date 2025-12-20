@@ -995,3 +995,99 @@ s5 = l[1:4:2]
 		t.Errorf("s5 = %v", val)
 	}
 }
+
+func TestMoreInternalCoverage(t *testing.T) {
+	c := newCompiler("test")
+	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
+
+	type mockExpr struct {
+		syntax.Literal
+	}
+	mock := &mockExpr{}
+
+	// compileExpr dispatch errors via sub-functions
+	if err := c.compileExpr(&syntax.UnaryExpr{Op: syntax.AND}); err == nil {
+		t.Error("expected compileExpr -> UnaryExpr error")
+	}
+	if err := c.compileExpr(&syntax.BinaryExpr{Op: syntax.DEF, X: lit, Y: lit}); err == nil {
+		t.Error("expected compileExpr -> BinaryExpr error")
+	}
+
+	// compileStore recursive errors
+	if err := c.compileStore(&syntax.DotExpr{X: mock, Name: &syntax.Ident{Name: "a"}}); err == nil {
+		t.Error("expected DotExpr X error in Store")
+	}
+	if err := c.compileStore(&syntax.IndexExpr{X: mock, Y: lit}); err == nil {
+		t.Error("expected IndexExpr X error in Store")
+	}
+	if err := c.compileStore(&syntax.IndexExpr{X: lit, Y: mock}); err == nil {
+		t.Error("expected IndexExpr Y error in Store")
+	}
+	if err := c.compileStore(&syntax.SliceExpr{X: mock}); err == nil {
+		t.Error("expected SliceExpr X error in Store")
+	}
+
+	// compileDef default value error
+	defStmt := &syntax.DefStmt{
+		Name: &syntax.Ident{Name: "f"},
+		Params: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: mock},
+		},
+		Body: []syntax.Stmt{},
+	}
+	if err := c.compileDef(defStmt); err == nil {
+		t.Error("expected compileDef default value error")
+	}
+
+	// compileLambdaExpr default value error
+	lambdaExpr := &syntax.LambdaExpr{
+		Params: []syntax.Expr{
+			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: mock},
+		},
+		Body: lit,
+	}
+	if err := c.compileLambdaExpr(lambdaExpr); err == nil {
+		t.Error("expected compileLambdaExpr default value error")
+	}
+
+	// compileComprehension clause errors
+	comp := &syntax.Comprehension{
+		Body: lit,
+		Clauses: []syntax.Node{
+			&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: mock},
+		},
+	}
+	if err := c.compileComprehension(comp); err == nil {
+		t.Error("expected ForClause X error")
+	}
+
+	comp.Clauses = []syntax.Node{
+		&syntax.ForClause{Vars: lit, X: lit}, // lit cannot be stored
+	}
+	if err := c.compileComprehension(comp); err == nil {
+		t.Error("expected ForClause Vars error")
+	}
+
+	comp.Clauses = []syntax.Node{
+		&syntax.IfClause{Cond: mock},
+	}
+	if err := c.compileComprehension(comp); err == nil {
+		t.Error("expected IfClause Cond error")
+	}
+
+	// Native Funcs extra coverage
+	vm := taivm.NewVM(&taivm.Function{})
+
+	// Range arg counts
+	if _, err := Range.Func(vm, []any{}); err == nil {
+		t.Error("range: expected error for 0 args")
+	}
+	if _, err := Range.Func(vm, []any{1, 2, 3, 4}); err == nil {
+		t.Error("range: expected error for 4 args")
+	}
+
+	// Pow mixed types
+	if _, err := Pow.Func(vm, []any{2.0, "a"}); err == nil {
+		t.Error("pow: expected error for float + string")
+	}
+}
