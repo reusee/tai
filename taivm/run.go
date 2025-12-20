@@ -1501,15 +1501,27 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			res--
 		}
 	case OpPow:
-		resFloat := math.Pow(float64(i1), float64(i2))
 		if i2 < 0 {
+			resFloat := math.Pow(float64(i1), float64(i2))
 			v.push(resFloat)
 			return true
 		}
-		res = int64(resFloat)
+		res = intPow(i1, i2)
 	}
 	v.push(res)
 	return true
+}
+
+func intPow(base, exp int64) int64 {
+	result := int64(1)
+	for exp > 0 {
+		if exp&1 == 1 {
+			result *= base
+		}
+		base *= base
+		exp >>= 1
+	}
+	return result
 }
 
 func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
@@ -1940,7 +1952,7 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 				targetList.Elements = newElems
 				return true
 			}
-			if !yield(nil, fmt.Errorf("resizing slice assignment not supported yet (lists are fixed-size in this VM version)")) {
+			if !yield(nil, fmt.Errorf("cannot resize raw slice, use List instead")) {
 				return false
 			}
 			return true

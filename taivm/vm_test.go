@@ -4844,3 +4844,120 @@ func TestVM_Math_Mixed(t *testing.T) {
 		t.Fatalf("expected 2+1i, got %v", res)
 	}
 }
+
+func TestVM_Repro_SliceResizing_RawSlice(t *testing.T) {
+	// Create a native function that returns a raw []any
+	makeRawSlice := NativeFunc{
+		Name: "makeRawSlice",
+		Func: func(v *VM, args []any) (any, error) {
+			return []any{1, 2, 3}, nil
+		},
+	}
+
+	main := &Function{
+		Constants: []any{
+			makeRawSlice,
+			int64(0), // start
+			int64(1), // stop
+			// step (nil) is passed as a nil constant? No, we need to handle nil.
+			// The VM doesn't have a specific OpLoadNil. 
+			// We can put nil in constants.
+			nil,      // step
+			&List{Elements: []any{8, 9}, Immutable: false}, // replacement (length 2 vs length 1 slice)
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0), // Load NativeFunc
+			OpCall.With(0),      // Call it -> returns []any{1,2,3}
+			OpLoadConst.With(1), // Load 0 (start)
+			OpLoadConst.With(2), // Load 1 (stop) (exclusive)
+			OpLoadConst.With(3), // Load nil (step)
+			OpLoadConst.With(4), // Load replacement value (list of 2 items)
+			OpSetSlice,
+			OpReturn,
+		},
+	}
+	
+	vm := NewVM(main)
+
+	// We expect an error because raw slices cannot be resized in place
+	vm.Run(func(i *Interrupt, err error) bool {
+		if err != nil {
+			if err.Error() == "cannot resize raw slice, use List instead" {
+				// This is the expected behavior for now
+				return false // Stop VM
+			}
+			t.Errorf("Unexpected error: %v", err)
+			return false
+		}
+		return true
+	})
+}
+
+func TestVM_Repro_IntPowPrecision(t *testing.T) {
+	// Test 3^35, which fits in int64 but might lose precision in float64?
+	// 3^35 = 50031545098999707
+	
+	main := &Function{
+		Constants: []any{
+			int64(3),
+			int64(35),
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpPow,
+			OpReturn,
+		},
+	}
+
+	vm := NewVM(main)
+	
+	vm.Run(func(i *Interrupt, err error) bool {
+		if err != nil {
+			t.Fatalf("VM error: %v", err)
+		}
+		return true
+	})
+	
+	res := vm.OperandStack[0]
+	if resInt, ok := res.(int64); ok {
+		expected := int64(50031545098999707)
+		if resInt != expected {
+			t.Errorf("Precision loss detected: got %d, want %d", resInt, expected)
+		}
+	} else {
+		t.Errorf("Result type mismatch: got %T", res)
+	}
+}
+
+func TestVM_Repro_SliceStepZero(t *testing.T) {
+	main := &Function{
+		Constants: []any{
+			&List{Elements: []any{1, 2, 3}},
+			int64(0), // start
+			int64(2), // stop
+			int64(0), // step (INVALID)
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpLoadConst.With(2),
+			OpLoadConst.With(3),
+			OpGetSlice,
+			OpReturn,
+		},
+	}
+	
+	vm := NewVM(main)
+	
+	vm.Run(func(i *Interrupt, err error) bool {
+		if err != nil {
+			if err.Error() == "slice step cannot be zero" {
+				return false
+			}
+			t.Errorf("Unexpected error: %v", err)
+			return false
+		}
+		return true
+	})
+}
