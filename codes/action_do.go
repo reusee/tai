@@ -121,7 +121,7 @@ func (a ActionDo) do(cont phases.Phase) phases.Phase {
 		state, err = state.AppendContent(&generators.Content{
 			Role: "user",
 			Parts: []generators.Part{
-				generators.Text(`Now, based on the original goal: "` + string(a.ActionArgument()) + `", and the plan from the previous step, execute all remaining steps to achieve the goal. Review the conversation history to understand what has been accomplished so far and implement all uncompleted tasks from the plan. Provide all necessary code modifications to complete as many steps as possible in this single response.
+				generators.Text(`Now, based on the plan from the previous step, execute all remaining steps to achieve the goal. Review the conversation history to understand what has been accomplished so far and implement all uncompleted tasks from the plan. Provide all necessary code modifications to complete as many steps as possible in this single response.
 
 If the remaining tasks involve writing or changing code, provide all necessary code modifications. If they involve analysis, providing information, or asking questions, do that instead.
 
