@@ -325,6 +325,32 @@ res4 = h(1, *[2], 3, **{"d": 4})
 	check(t, vm, "res4", int64(10))
 }
 
+func TestDoubleStarStar(t *testing.T) {
+	src := `
+def f(a, b):
+	return a + b
+d1 = {"a": 1}
+d2 = {"b": 2}
+res = f(**d1, **d2)
+`
+	vm := run(t, src)
+	check(t, vm, "res", int64(3))
+}
+
+func TestMixedStarArgs(t *testing.T) {
+	src := `
+def f(*args): return args
+# star first, then pos
+l = f(*[1], 2)
+`
+	vm := run(t, src)
+	if val, ok := vm.Get("l"); !ok {
+		t.Error("l not found")
+	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[0] != int64(1) || l.Elements[1] != int64(2) {
+		t.Errorf("l = %v", val)
+	}
+}
+
 func TestCollections(t *testing.T) {
 	// List, Map, Tuple, Slice, Comprehensions
 	src := `
