@@ -3,6 +3,7 @@ package gocodes
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"runtime"
@@ -175,9 +176,7 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		wg.Wait()
 
 		if numFilesFromRootPackageDeleted > 0 {
-			logger.Warn("files from root packages deleted",
-				"num", numFilesFromRootPackageDeleted,
-			)
+			return nil, fmt.Errorf("files from root packages deleted: %d", numFilesFromRootPackageDeleted)
 		}
 
 		retFiles := files[:0]
