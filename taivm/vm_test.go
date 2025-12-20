@@ -4860,9 +4860,9 @@ func TestVM_Repro_SliceResizing_RawSlice(t *testing.T) {
 			int64(0), // start
 			int64(1), // stop
 			// step (nil) is passed as a nil constant? No, we need to handle nil.
-			// The VM doesn't have a specific OpLoadNil. 
+			// The VM doesn't have a specific OpLoadNil.
 			// We can put nil in constants.
-			nil,      // step
+			nil, // step
 			&List{Elements: []any{8, 9}, Immutable: false}, // replacement (length 2 vs length 1 slice)
 		},
 		Code: []OpCode{
@@ -4876,7 +4876,7 @@ func TestVM_Repro_SliceResizing_RawSlice(t *testing.T) {
 			OpReturn,
 		},
 	}
-	
+
 	vm := NewVM(main)
 
 	// We expect an error because raw slices cannot be resized in place
@@ -4896,7 +4896,7 @@ func TestVM_Repro_SliceResizing_RawSlice(t *testing.T) {
 func TestVM_Repro_IntPowPrecision(t *testing.T) {
 	// Test 3^35, which fits in int64 but might lose precision in float64?
 	// 3^35 = 50031545098999707
-	
+
 	main := &Function{
 		Constants: []any{
 			int64(3),
@@ -4911,14 +4911,14 @@ func TestVM_Repro_IntPowPrecision(t *testing.T) {
 	}
 
 	vm := NewVM(main)
-	
+
 	vm.Run(func(i *Interrupt, err error) bool {
 		if err != nil {
 			t.Fatalf("VM error: %v", err)
 		}
 		return true
 	})
-	
+
 	res := vm.OperandStack[0]
 	if resInt, ok := res.(int64); ok {
 		expected := int64(50031545098999707)
@@ -4947,9 +4947,9 @@ func TestVM_Repro_SliceStepZero(t *testing.T) {
 			OpReturn,
 		},
 	}
-	
+
 	vm := NewVM(main)
-	
+
 	vm.Run(func(i *Interrupt, err error) bool {
 		if err != nil {
 			if err.Error() == "slice step cannot be zero" {
@@ -4959,5 +4959,73 @@ func TestVM_Repro_SliceStepZero(t *testing.T) {
 			return false
 		}
 		return true
+	})
+}
+
+func TestVM_IntPow_Overflow(t *testing.T) {
+	t.Run("Overflow2Pow63", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(2), int64(63)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := 9.223372036854776e+18
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+
+	t.Run("Overflow10Pow19", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(10), int64(19)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := 1e19
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+
+	t.Run("NoOverflow2Pow10", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(2), int64(10)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resInt, ok := res.(int64)
+		if !ok {
+			t.Fatalf("expected int64 for small power, got %T", res)
+		}
+		expected := int64(1024)
+		if resInt != expected {
+			t.Errorf("expected %v, got %v", expected, resInt)
+		}
 	})
 }

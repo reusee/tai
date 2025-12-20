@@ -1382,8 +1382,6 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			}
 			res = c1 / c2
 		case OpPow:
-			// Just cast to real for now as fallback or error?
-			// Without math/cmplx, can't do complex pow easily.
 			if !yield(nil, fmt.Errorf("complex pow not supported")) {
 				return false
 			}
@@ -1506,22 +1504,56 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			v.push(resFloat)
 			return true
 		}
-		res = intPow(i1, i2)
+		var overflow bool
+		res, overflow = intPow(i1, i2)
+		if overflow {
+			resFloat := math.Pow(float64(i1), float64(i2))
+			v.push(resFloat)
+			return true
+		}
 	}
 	v.push(res)
 	return true
 }
 
-func intPow(base, exp int64) int64 {
-	result := int64(1)
-	for exp > 0 {
-		if exp&1 == 1 {
-			result *= base
-		}
-		base *= base
-		exp >>= 1
+func intPow(base, exp int64) (int64, bool) {
+	if exp == 0 {
+		return 1, false
 	}
-	return result
+	if exp < 0 {
+		return 0, false
+	}
+	result := int64(1)
+	currentBase := base
+	currentExp := exp
+	for currentExp > 0 {
+		if currentExp&1 == 1 {
+			if result > 0 && currentBase > 0 && result > math.MaxInt64/currentBase {
+				return 0, true
+			}
+			if result < 0 && currentBase < 0 && result < math.MaxInt64/currentBase {
+				return 0, true
+			}
+			if result > 0 && currentBase < 0 && currentBase < math.MinInt64/result {
+				return 0, true
+			}
+			if result < 0 && currentBase > 0 && result < math.MinInt64/currentBase {
+				return 0, true
+			}
+			result *= currentBase
+		}
+		if currentExp > 1 {
+			if currentBase > 0 && currentBase > math.MaxInt64/currentBase {
+				return 0, true
+			}
+			if currentBase < 0 && currentBase < math.MaxInt64/currentBase {
+				return 0, true
+			}
+		}
+		currentBase *= currentBase
+		currentExp >>= 1
+	}
+	return result, false
 }
 
 func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
