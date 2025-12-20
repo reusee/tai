@@ -1091,3 +1091,200 @@ func TestMoreInternalCoverage(t *testing.T) {
 		t.Error("pow: expected error for float + string")
 	}
 }
+
+func TestCompilerDeepCoverage(t *testing.T) {
+	c := newCompiler("test")
+	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
+
+	// Mock types that satisfy interfaces but fail type switches
+	type failExpr struct {
+		syntax.Literal
+	}
+	fExpr := &failExpr{}
+
+	type failStmt struct {
+		syntax.ExprStmt
+	}
+	fStmt := &failStmt{}
+
+	// Helper to check error
+	expectError := func(name string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+
+	// 1. compileStmt default case
+	expectError("compileStmt default", c.compileStmt(fStmt))
+
+	// 2. compileExpr default case
+	expectError("compileExpr default", c.compileExpr(fExpr))
+
+	// 3. compileIf errors
+	ifStmt := &syntax.IfStmt{Cond: fExpr}
+	expectError("compileIf cond", c.compileIf(ifStmt))
+
+	ifStmt.Cond = lit
+	ifStmt.True = []syntax.Stmt{fStmt}
+	expectError("compileIf true body", c.compileIf(ifStmt))
+
+	ifStmt.True = []syntax.Stmt{&syntax.ExprStmt{X: lit}}
+	ifStmt.False = []syntax.Stmt{fStmt}
+	expectError("compileIf false body", c.compileIf(ifStmt))
+
+	// 4. compileWhile errors
+	whileStmt := &syntax.WhileStmt{Cond: fExpr}
+	expectError("compileWhile cond", c.compileWhile(whileStmt))
+
+	whileStmt.Cond = lit
+	whileStmt.Body = []syntax.Stmt{fStmt}
+	expectError("compileWhile body", c.compileWhile(whileStmt))
+
+	// 5. compileFor errors
+	forStmt := &syntax.ForStmt{X: fExpr, Vars: &syntax.Ident{Name: "i"}, Body: []syntax.Stmt{}}
+	expectError("compileFor X", c.compileFor(forStmt))
+
+	forStmt.X = lit
+	forStmt.Vars = fExpr // Invalid store target
+	expectError("compileFor Vars", c.compileFor(forStmt))
+
+	forStmt.Vars = &syntax.Ident{Name: "i"}
+	forStmt.Body = []syntax.Stmt{fStmt}
+	expectError("compileFor Body", c.compileFor(forStmt))
+
+	// 6. compileReturn result error
+	retStmt := &syntax.ReturnStmt{Result: fExpr}
+	expectError("compileReturn", c.compileStmt(retStmt))
+
+	// 7. compileDef errors
+	defStmt := &syntax.DefStmt{Name: &syntax.Ident{Name: "f"}, Body: []syntax.Stmt{fStmt}}
+	expectError("compileDef Body", c.compileDef(defStmt))
+
+	defStmt.Body = []syntax.Stmt{}
+	defStmt.Params = []syntax.Expr{
+		&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
+	}
+	expectError("compileDef Defaults", c.compileDef(defStmt))
+
+	// 8. compileStore errors
+	expectError("compileStore List elem", c.compileStore(&syntax.ListExpr{List: []syntax.Expr{fExpr}}))
+	expectError("compileStore Tuple elem", c.compileStore(&syntax.TupleExpr{List: []syntax.Expr{fExpr}}))
+	expectError("compileStore Dot X", c.compileStore(&syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}}))
+	expectError("compileStore Index X", c.compileStore(&syntax.IndexExpr{X: fExpr, Y: lit}))
+	expectError("compileStore Index Y", c.compileStore(&syntax.IndexExpr{X: lit, Y: fExpr}))
+	expectError("compileStore Slice X", c.compileStore(&syntax.SliceExpr{X: fExpr}))
+	expectError("compileStore Slice Lo", c.compileStore(&syntax.SliceExpr{X: lit, Lo: fExpr}))
+
+	// 9. compileSimpleAssign errors
+	// List unpacking recursive error
+	expectError("compileSimpleAssign List", c.compileSimpleAssign(&syntax.ListExpr{List: []syntax.Expr{fExpr}}, lit))
+
+	// 10. compileAugmentedAssign errors
+	expectError("compileAugmentedAssign Ident RHS", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.Ident{Name: "a"}, RHS: fExpr}))
+	expectError("compileAugmentedAssign Index X", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.IndexExpr{X: fExpr, Y: lit}, RHS: lit}))
+	expectError("compileAugmentedAssign Index RHS", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.IndexExpr{X: lit, Y: lit}, RHS: fExpr}))
+	expectError("compileAugmentedAssign Dot X", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}}, RHS: lit}))
+	expectError("compileAugmentedAssign Dot RHS", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.DotExpr{X: lit, Name: &syntax.Ident{Name: "a"}}, RHS: fExpr}))
+	expectError("compileAugmentedAssign Slice X", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.SliceExpr{X: fExpr}, RHS: lit}))
+	expectError("compileAugmentedAssign Slice RHS", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: &syntax.SliceExpr{X: lit}, RHS: fExpr}))
+	expectError("compileAugmentedAssign Default", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: fExpr, RHS: lit}))
+
+	// 11. compileUnaryExpr errors
+	expectError("compileUnaryExpr PLUS", c.compileUnaryExpr(&syntax.UnaryExpr{Op: syntax.PLUS, X: fExpr}))
+	expectError("compileUnaryExpr MINUS", c.compileUnaryExpr(&syntax.UnaryExpr{Op: syntax.MINUS, X: fExpr}))
+	expectError("compileUnaryExpr NOT", c.compileUnaryExpr(&syntax.UnaryExpr{Op: syntax.NOT, X: fExpr}))
+	expectError("compileUnaryExpr TILDE", c.compileUnaryExpr(&syntax.UnaryExpr{Op: syntax.TILDE, X: fExpr}))
+	expectError("compileUnaryExpr Default", c.compileUnaryExpr(&syntax.UnaryExpr{Op: syntax.AND, X: lit})) // AND is binary
+
+	// 12. compileBinaryExpr errors
+	expectError("compileBinaryExpr AND X", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.AND, X: fExpr, Y: lit}))
+	expectError("compileBinaryExpr AND Y", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.AND, X: lit, Y: fExpr}))
+	expectError("compileBinaryExpr OR X", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.OR, X: fExpr, Y: lit}))
+	expectError("compileBinaryExpr OR Y", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.OR, X: lit, Y: fExpr}))
+	expectError("compileBinaryExpr Add X", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.PLUS, X: fExpr, Y: lit}))
+	expectError("compileBinaryExpr Add Y", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.PLUS, X: lit, Y: fExpr}))
+	expectError("compileBinaryExpr Default", c.compileBinaryExpr(&syntax.BinaryExpr{Op: syntax.DEF, X: lit, Y: lit}))
+
+	// 13. compileCallExpr errors
+	expectError("compileCallExpr Fn", c.compileCallExpr(&syntax.CallExpr{Fn: fExpr}))
+	expectError("compileCallExpr Arg", c.compileCallExpr(&syntax.CallExpr{Fn: lit, Args: []syntax.Expr{fExpr}}))
+	// Keyword arg value error
+	expectError("compileCallExpr KwArg", c.compileCallExpr(&syntax.CallExpr{Fn: lit, Args: []syntax.Expr{
+		&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
+	}}))
+	// Star arg error
+	expectError("compileCallExpr Star", c.compileCallExpr(&syntax.CallExpr{Fn: lit, Args: []syntax.Expr{
+		&syntax.UnaryExpr{Op: syntax.STAR, X: fExpr},
+	}}))
+	// StarStar arg error
+	expectError("compileCallExpr StarStar", c.compileCallExpr(&syntax.CallExpr{Fn: lit, Args: []syntax.Expr{
+		&syntax.UnaryExpr{Op: syntax.STARSTAR, X: fExpr},
+	}}))
+
+	// 14. compileComprehension errors
+	// List Comp Body
+	expectError("List Comp Body", c.compileComprehension(&syntax.Comprehension{
+		Body:    fExpr,
+		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: lit}},
+	}))
+	// Dict Comp Key
+	expectError("Dict Comp Key", c.compileComprehension(&syntax.Comprehension{
+		Curly:   true,
+		Body:    &syntax.DictEntry{Key: fExpr, Value: lit},
+		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: lit}},
+	}))
+	// Dict Comp Value
+	expectError("Dict Comp Value", c.compileComprehension(&syntax.Comprehension{
+		Curly:   true,
+		Body:    &syntax.DictEntry{Key: lit, Value: fExpr},
+		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: lit}},
+	}))
+	// Nested clauses error (fail in recursion)
+	expectError("Comp Clause Recursion", c.compileComprehension(&syntax.Comprehension{
+		Body: lit,
+		Clauses: []syntax.Node{
+			&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: lit},
+			&syntax.IfClause{Cond: fExpr},
+		},
+	}))
+
+	// 15. Other Expr types
+	expectError("compileListExpr", c.compileListExpr(&syntax.ListExpr{List: []syntax.Expr{fExpr}}))
+	expectError("compileDictExpr Key", c.compileDictExpr(&syntax.DictExpr{List: []syntax.Expr{&syntax.DictEntry{Key: fExpr, Value: lit}}}))
+	expectError("compileDictExpr Value", c.compileDictExpr(&syntax.DictExpr{List: []syntax.Expr{&syntax.DictEntry{Key: lit, Value: fExpr}}}))
+	expectError("compileIndexExpr X", c.compileIndexExpr(&syntax.IndexExpr{X: fExpr, Y: lit}))
+	expectError("compileIndexExpr Y", c.compileIndexExpr(&syntax.IndexExpr{X: lit, Y: fExpr}))
+	expectError("compileTupleExpr", c.compileTupleExpr(&syntax.TupleExpr{List: []syntax.Expr{fExpr}}))
+	expectError("compileSliceExpr X", c.compileSliceExpr(&syntax.SliceExpr{X: fExpr}))
+	expectError("compileSliceExpr Lo", c.compileSliceExpr(&syntax.SliceExpr{X: lit, Lo: fExpr}))
+	expectError("compileDotExpr X", c.compileDotExpr(&syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}}))
+	expectError("compileCondExpr Cond", c.compileCondExpr(&syntax.CondExpr{Cond: fExpr}))
+	expectError("compileCondExpr True", c.compileCondExpr(&syntax.CondExpr{Cond: lit, True: fExpr}))
+	expectError("compileCondExpr False", c.compileCondExpr(&syntax.CondExpr{Cond: lit, True: lit, False: fExpr}))
+	expectError("compileLambdaExpr Body", c.compileLambdaExpr(&syntax.LambdaExpr{Body: fExpr}))
+
+	// 16. Verify DotExpr store unpacking path (explicitly)
+	// This ensures code coverage for the DotExpr case in compileStore
+	// [s.x] = [1]
+	src := `
+s = struct({"x": 0})
+t = [1]
+[s.x] = t
+`
+	run(t, src)
+}
+
+func TestNativeFuncErrors(t *testing.T) {
+	vm := taivm.NewVM(&taivm.Function{})
+
+	// Len with invalid type
+	if _, err := Len.Func(vm, []any{1}); err == nil || !strings.Contains(err.Error(), "has no len()") {
+		t.Error("len: expected error for int")
+	}
+
+	// Struct with invalid argument
+	if _, err := Struct.Func(vm, []any{1}); err == nil || !strings.Contains(err.Error(), "unknown struct argument type") {
+		t.Error("struct: expected error for int")
+	}
+}
