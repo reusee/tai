@@ -1664,3 +1664,71 @@ func TestCoverageRefinement(t *testing.T) {
 		},
 	}))
 }
+
+func TestAbs(t *testing.T) {
+	src := `
+a = abs(10)
+b = abs(-10)
+c = abs(3.14)
+d = abs(-3.14)
+`
+	vm := run(t, src)
+	check(t, vm, "a", int64(10))
+	check(t, vm, "b", int64(10))
+	check(t, vm, "c", 3.14)
+	check(t, vm, "d", 3.14)
+}
+
+func TestMinMax(t *testing.T) {
+	src := `
+a = min(1, 2, 3)
+b = min([4, 5, 6])
+c = min(range(10))
+d = max(1, 2, 3)
+e = max([4, 5, 6])
+f = max(range(10))
+`
+	vm := run(t, src)
+	check(t, vm, "a", int64(1))
+	check(t, vm, "b", int64(4))
+	check(t, vm, "c", int64(0))
+	check(t, vm, "d", int64(3))
+	check(t, vm, "e", int64(6))
+	check(t, vm, "f", int64(9))
+}
+
+func TestMinMaxErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"min_no_args", "min()", "expected at least 1 argument"},
+		{"max_no_args", "max()", "expected at least 1 argument"},
+		{"min_empty_list", "min([])", "empty sequence"},
+		{"max_empty_list", "max([])", "empty sequence"},
+		{"min_invalid_type", "min(1, 'a')", "unsupported comparison"},
+		{"max_invalid_type", "max(1, 'a')", "unsupported comparison"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm, err := NewVM("test", strings.NewReader(tt.src))
+			if err != nil {
+				t.Fatalf("compile error: %v", err)
+			}
+			hasErr := false
+			for _, err := range vm.Run {
+				if err != nil {
+					hasErr = true
+					if !strings.Contains(err.Error(), tt.want) {
+						t.Errorf("got error: %v, want %s", err, tt.want)
+					}
+				}
+			}
+			if !hasErr {
+				t.Error("expected error but got none")
+			}
+		})
+	}
+}

@@ -185,3 +185,122 @@ func isFloat(v any) bool {
 	}
 	return false
 }
+
+var Abs = taivm.NativeFunc{
+	Name: "abs",
+	Func: func(vm *taivm.VM, args []any) (any, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("abs expects 1 argument")
+		}
+		a := args[0]
+		if i, ok := taivm.ToInt64(a); ok {
+			if i < 0 {
+				return -i, nil
+			}
+			return i, nil
+		}
+		if f, ok := taivm.ToFloat64(a); ok {
+			return math.Abs(f), nil
+		}
+		return nil, fmt.Errorf("bad operand type for abs(): %T", a)
+	},
+}
+
+var Min = taivm.NativeFunc{
+	Name: "min",
+	Func: func(vm *taivm.VM, args []any) (any, error) {
+		return minMax(args, -1)
+	},
+}
+
+var Max = taivm.NativeFunc{
+	Name: "max",
+	Func: func(vm *taivm.VM, args []any) (any, error) {
+		return minMax(args, 1)
+	},
+}
+
+func minMax(args []any, wantCmp int) (any, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("expected at least 1 argument")
+	}
+	var items []any
+	if len(args) == 1 {
+		switch v := args[0].(type) {
+		case *taivm.List:
+			items = v.Elements
+		case []any:
+			items = v
+		case *taivm.Range:
+			n := v.Len()
+			items = make([]any, 0, n)
+			curr := v.Start
+			for i := int64(0); i < n; i++ {
+				items = append(items, curr)
+				curr += v.Step
+			}
+		default:
+			return nil, fmt.Errorf("object of type %T is not iterable", v)
+		}
+	} else {
+		items = args
+	}
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("empty sequence")
+	}
+
+	val := items[0]
+	for _, x := range items[1:] {
+		cmp, err := compare(x, val)
+		if err != nil {
+			return nil, err
+		}
+		if cmp == wantCmp {
+			val = x
+		}
+	}
+	return val, nil
+}
+
+func compare(a, b any) (int, error) {
+	if i1, ok1 := taivm.ToInt64(a); ok1 {
+		if i2, ok2 := taivm.ToInt64(b); ok2 {
+			if i1 < i2 {
+				return -1, nil
+			}
+			if i1 > i2 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	}
+
+	if isFloat(a) || isFloat(b) {
+		f1, ok1 := taivm.ToFloat64(a)
+		f2, ok2 := taivm.ToFloat64(b)
+		if ok1 && ok2 {
+			if f1 < f2 {
+				return -1, nil
+			}
+			if f1 > f2 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	}
+
+	if s1, ok1 := a.(string); ok1 {
+		if s2, ok2 := b.(string); ok2 {
+			if s1 < s2 {
+				return -1, nil
+			}
+			if s1 > s2 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	}
+
+	return 0, fmt.Errorf("unsupported comparison: %T vs %T", a, b)
+}
