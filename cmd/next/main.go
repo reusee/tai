@@ -42,8 +42,8 @@ func main() {
 		)
 		state = generators.NewOutput(state, os.Stdout, true)
 
-		phase := buildGenerate(generator)(
-			buildChat(generator)(
+		phase := buildGenerate(generator, nil)(
+			buildChat(generator, nil)(
 				nil,
 			),
 		)

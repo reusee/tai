@@ -15,7 +15,7 @@ import (
 	"github.com/reusee/tai/logs"
 )
 
-type BuildChat func(generator generators.Generator) PhaseBuilder
+type BuildChat func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder
 
 func (Module) BuildChatPhase(
 	buildGen BuildGenerate,
@@ -31,7 +31,7 @@ func (Module) BuildChatPhase(
 		return filepath.Join(dir, "ai-chat-history.json"), nil
 	})
 
-	buildChat = func(generator generators.Generator) PhaseBuilder {
+	buildChat = func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder {
 		return func(cont Phase) Phase {
 			return func(ctx context.Context, state generators.State) (Phase, generators.State, error) {
 
@@ -87,8 +87,8 @@ func (Module) BuildChatPhase(
 					if !ok {
 						return nil, nil, fmt.Errorf("no redo checkpoint")
 					}
-					return buildGen(checkpoint.generator)(
-						buildChat(generator)(
+					return buildGen(checkpoint.generator, options)(
+						buildChat(generator, options)(
 							cont,
 						),
 					), checkpoint.state0, nil
@@ -114,7 +114,7 @@ func (Module) BuildChatPhase(
 					if err != nil {
 						return nil, nil, err
 					}
-					return buildChat(generator)(cont), state, nil
+					return buildChat(generator, options)(cont), state, nil
 
 				case "/tap":
 					tap(ctx, "tap on chat", map[string]any{
@@ -123,7 +123,7 @@ func (Module) BuildChatPhase(
 						"system_prompt":  state.SystemPrompt(),
 						"func_map":       state.FuncMap(),
 					})
-					return buildChat(generator)(cont), state, nil
+					return buildChat(generator, options)(cont), state, nil
 
 				}
 
@@ -138,8 +138,8 @@ func (Module) BuildChatPhase(
 					return nil, nil, err
 				}
 
-				return buildGen(generator)(
-					buildChat(generator)(
+				return buildGen(generator, options)(
+					buildChat(generator, options)(
 						cont,
 					),
 				), state, nil

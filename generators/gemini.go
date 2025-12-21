@@ -40,7 +40,7 @@ func (g Gemini) CountTokens(text string) (int, error) {
 	return g.Counter()(g.args.Model)(text)
 }
 
-func (g Gemini) Generate(ctx context.Context, state State) (ret State, err error) {
+func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	client, err := g.GetClient()(ctx, g.args.APIKey)
 	if err != nil {
 		return ret, err
@@ -49,11 +49,19 @@ func (g Gemini) Generate(ctx context.Context, state State) (ret State, err error
 	ret = state
 
 	var maxOutputTokens *int32
-	var maxThinkingTokens *int32
 	if g.args.MaxGenerateTokens != nil {
 		max := int32(*g.args.MaxGenerateTokens)
 		maxOutputTokens = &max
-		maxThinking := int32(*g.args.MaxGenerateTokens) / 4
+	}
+	if options != nil && options.MaxGenerateTokens != nil {
+		n := int32(*options.MaxGenerateTokens)
+		n = min(n, *maxOutputTokens)
+		maxOutputTokens = &n
+	}
+
+	var maxThinkingTokens *int32
+	if maxOutputTokens != nil {
+		maxThinking := int32(*maxOutputTokens) / 4
 		maxThinkingTokens = &maxThinking
 	}
 

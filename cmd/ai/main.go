@@ -76,8 +76,8 @@ func main() {
 			state = generators.NewFuncMap(state, updateMemoryFunc)
 		}
 
-		phase := buildGenerate(generator)(
-			buildChat(generator)(
+		phase := buildGenerate(generator, nil)(
+			buildChat(generator, nil)(
 				nil,
 			),
 		)

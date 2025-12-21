@@ -11,7 +11,11 @@ import (
 type Generator interface {
 	Args() GeneratorArgs
 	CountTokens(string) (int, error)
-	Generate(ctx context.Context, state State) (State, error)
+	Generate(ctx context.Context, state State, options *GenerateOptions) (State, error)
+}
+
+type GenerateOptions struct {
+	MaxGenerateTokens *int
 }
 
 type GetGenerator func(name string) (Generator, error)

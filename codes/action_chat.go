@@ -42,14 +42,14 @@ func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
 			if err != nil {
 				return nil, nil, err
 			}
-			return a.BuildGenerate()(generator)(
-				a.BuildChat()(generator)(
+			return a.BuildGenerate()(generator, nil)(
+				a.BuildChat()(generator, nil)(
 					cont,
 				),
 			), state, nil
 		}
 
-		return a.BuildChat()(generator)(cont), state, nil
+		return a.BuildChat()(generator, nil)(cont), state, nil
 	}
 }
 

@@ -70,7 +70,7 @@ Focus on *what* needs to be done and *why*, not *how* to code it yet.
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(generator)(
+		return a.BuildGenerate()(generator, nil)(
 			a.checkPlan(cont),
 		), state, nil
 	}
@@ -136,8 +136,8 @@ Always include a clear rationale for your decisions and the anticipated impact o
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(codeGenerator)(
-			a.BuildChat()(codeGenerator)(
+		return a.BuildGenerate()(codeGenerator, nil)(
+			a.BuildChat()(codeGenerator, nil)(
 				cont,
 			),
 		), state, nil

@@ -45,7 +45,7 @@ func testGenerator(
 		state := State(output)
 
 		var err error
-		state, err = generator.Generate(t.Context(), state)
+		state, err = generator.Generate(t.Context(), state, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func testGenerator(
 			t.Fatal(err)
 		}
 
-		_, err = generator.Generate(t.Context(), state)
+		_, err = generator.Generate(t.Context(), state, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

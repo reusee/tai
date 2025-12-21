@@ -17,7 +17,6 @@ import (
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/vars"
 )
 
 type OpenAI struct {
@@ -41,7 +40,7 @@ func (o *OpenAI) CountTokens(text string) (int, error) {
 	return o.Count()(text)
 }
 
-func (o *OpenAI) Generate(ctx context.Context, state State) (ret State, err error) {
+func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	ret = state
 
 	messages, err := stateToOpenAIMessages(ret)
@@ -90,12 +89,20 @@ func (o *OpenAI) Generate(ctx context.Context, state State) (ret State, err erro
 		"model", o.args.Model,
 	)
 
+	maxCompletionTokens := 0
+	if o.args.MaxGenerateTokens != nil {
+		maxCompletionTokens = *o.args.MaxGenerateTokens
+	}
+	if options != nil && options.MaxGenerateTokens != nil {
+		maxCompletionTokens = min(maxCompletionTokens, *options.MaxGenerateTokens)
+	}
+
 	req := ChatCompletionRequest{
 		Model:               o.args.Model,
 		Messages:            messages,
 		Stream:              true,
 		ReasoningEffort:     "high",
-		MaxCompletionTokens: vars.DerefOrZero(o.args.MaxGenerateTokens),
+		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
 	}
 
