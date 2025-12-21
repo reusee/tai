@@ -5099,7 +5099,7 @@ func TestVM_IntPow_OverflowEdgeCases(t *testing.T) {
 
 	t.Run("BoundaryCase", func(t *testing.T) {
 		main := &Function{
-			Constants: []any{int64(46340), int64(3)},
+			Constants: []any{int64(46340), int64(2)},
 			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
 		}
 		vm := NewVM(main)
@@ -5109,15 +5109,16 @@ func TestVM_IntPow_OverflowEdgeCases(t *testing.T) {
 			}
 		}
 		res := vm.pop()
-		resFloat, ok := res.(float64)
+		resInt, ok := res.(int64)
 		if !ok {
-			t.Fatalf("expected float64 for overflow, got %T", res)
+			t.Fatalf("expected int64 for non-overflow, got %T", res)
 		}
-		expected := 9.950024206764e+13
-		if resFloat != expected {
-			t.Errorf("expected %v, got %v", expected, resFloat)
+		expected := int64(2147395600)
+		if resInt != expected {
+			t.Errorf("expected %v, got %v", expected, resInt)
 		}
 	})
+
 }
 
 func TestVM_ClosureSymbolIsolation(t *testing.T) {

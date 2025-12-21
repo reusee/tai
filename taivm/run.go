@@ -1499,11 +1499,21 @@ func intPow(base, exp int64) (int64, bool) {
 	if exp < 0 {
 		return 0, false
 	}
-
-	absBase := base
-	if base < 0 {
-		absBase = -base
+	if base == 0 {
+		return 0, false
 	}
+	if base == 1 {
+		return 1, false
+	}
+	if base == -1 {
+		if exp%2 == 0 {
+			return 1, false
+		}
+		return -1, false
+	}
+
+	const maxInt64 = math.MaxInt64
+	const minInt64 = math.MinInt64
 
 	result := int64(1)
 	currentBase := base
@@ -1511,20 +1521,20 @@ func intPow(base, exp int64) (int64, bool) {
 
 	for currentExp > 0 {
 		if currentExp&1 == 1 {
-			if absBase > 1 {
-				if result > 0 && absBase > math.MaxInt64/result {
-					return 0, true
-				}
-				if result < 0 && absBase > math.MaxInt64/(-result) {
-					return 0, true
-				}
-				if result > 0 && currentBase < 0 && currentBase < math.MinInt64/result {
-					return 0, true
-				}
-				if result < 0 && currentBase > 0 && result < math.MinInt64/currentBase {
-					return 0, true
-				}
+			// Check overflow before multiplication
+			if result > 0 && currentBase > 0 && result > maxInt64/currentBase {
+				return 0, true
 			}
+			if result > 0 && currentBase < 0 && currentBase < minInt64/result {
+				return 0, true
+			}
+			if result < 0 && currentBase > 0 && result < minInt64/currentBase {
+				return 0, true
+			}
+			if result < 0 && currentBase < 0 && result < maxInt64/currentBase {
+				return 0, true
+			}
+
 			newResult := result * currentBase
 			if currentBase != 0 && newResult/currentBase != result {
 				return 0, true
@@ -1532,16 +1542,8 @@ func intPow(base, exp int64) (int64, bool) {
 			result = newResult
 		}
 
-		if currentExp > 1 {
-			absCurrentBase := currentBase
-			if currentBase < 0 {
-				absCurrentBase = -currentBase
-			}
-			if absCurrentBase > 1 {
-				if absCurrentBase > math.MaxInt64/absCurrentBase {
-					return 0, true
-				}
-			}
+		currentExp >>= 1
+		if currentExp > 0 {
 			newBase := currentBase * currentBase
 			if currentBase != 0 && currentBase != 1 && currentBase != -1 {
 				if newBase/currentBase != currentBase {
@@ -1550,7 +1552,6 @@ func intPow(base, exp int64) (int64, bool) {
 			}
 			currentBase = newBase
 		}
-		currentExp >>= 1
 	}
 
 	return result, false
