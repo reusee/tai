@@ -70,7 +70,10 @@ Focus on *what* needs to be done and *why*, not *how* to code it yet.
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(generator, nil)(
+		maxTokens := 2048
+		return a.BuildGenerate()(generator, &generators.GenerateOptions{
+			MaxGenerateTokens: &maxTokens,
+		})(
 			a.checkPlan(cont),
 		), state, nil
 	}

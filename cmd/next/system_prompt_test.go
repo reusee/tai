@@ -43,7 +43,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, true)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, true)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, true)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +124,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, true)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +153,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, false)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -191,7 +191,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, false)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,7 +221,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, false)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +251,7 @@ func TestSystemPrompt(t *testing.T) {
 			)
 			state = generators.NewOutput(state, buf, false)
 
-			_, err := generator.Generate(t.Context(), state)
+			_, err := generator.Generate(t.Context(), state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
