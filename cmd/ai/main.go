@@ -25,7 +25,7 @@ func main() {
 		new(Module),
 		modes.ForProduction(),
 	).Fork(
-		dscope.Provide(generators.FallbackModelName("gemini")),
+		dscope.Provide(generators.FallbackModelName("gemini3")),
 	).Call(func(
 		logger logs.Logger,
 		getSystemPrompt GetSystemPrompt,
