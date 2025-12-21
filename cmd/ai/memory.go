@@ -90,7 +90,7 @@ func (Module) Memory(
 			return nil, nil
 		}
 
-		model := generator.Args().Model
+		model := filepath.Base(generator.Args().Model)
 		for _, entry := range slices.Backward(memory.Entries) {
 			if entry.Model == model {
 				return entry, nil
@@ -117,7 +117,7 @@ func (Module) Memory(
 		const baseDelay = 100 * time.Millisecond
 		const maxDelay = 2 * time.Second
 
-		for attempt := 0; attempt < maxRetries; attempt++ {
+		for attempt := range maxRetries {
 			if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL, 0600); err == nil {
 				f.Close()
 				locked = true
@@ -128,10 +128,7 @@ func (Module) Memory(
 
 			// Exponential backoff with jitter
 			if attempt < maxRetries-1 {
-				delay := baseDelay * time.Duration(1<<uint(attempt))
-				if delay > maxDelay {
-					delay = maxDelay
-				}
+				delay := min(baseDelay*time.Duration(1<<uint(attempt)), maxDelay)
 				time.Sleep(delay)
 			}
 		}
@@ -201,9 +198,10 @@ func (Module) UpdateMemoryFunc(
 			for _, v := range args["items"].([]any) {
 				items = append(items, v.(string))
 			}
+			model := filepath.Base(generator.Args().Model)
 			if err := appendMemory(&MemoryEntry{
 				Time:  time.Now(),
-				Model: generator.Args().Model,
+				Model: model,
 				Items: items,
 			}); err != nil {
 				return nil, err
