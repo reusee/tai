@@ -648,16 +648,6 @@ func (v *VM) opJumpFalse(inst OpCode) {
 func (v *VM) opMakeClosure(inst OpCode) {
 	idx := int(inst >> 8)
 	fun := v.CurrentFun.Constants[idx].(*Function)
-	paramSyms := make([]Symbol, len(fun.ParamNames))
-	var maxSym int
-	for i, name := range fun.ParamNames {
-		sym := v.Intern(name)
-		paramSyms[i] = sym
-		if int(sym) > maxSym {
-			maxSym = int(sym)
-		}
-	}
-
 	var defaults []any
 	if fun.NumDefaults > 0 {
 		defaults = make([]any, fun.NumDefaults)
@@ -667,11 +657,9 @@ func (v *VM) opMakeClosure(inst OpCode) {
 	}
 
 	v.push(&Closure{
-		Fun:         fun,
-		Env:         v.Scope,
-		ParamSyms:   paramSyms,
-		MaxParamSym: maxSym,
-		Defaults:    defaults,
+		Fun:      fun,
+		Env:      v.Scope,
+		Defaults: defaults,
 	})
 }
 
@@ -722,7 +710,6 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 	defaults := fn.Defaults
 	numDefaults := len(defaults)
 
-	// Determine required args
 	numFixed := numParams
 	if isVariadic {
 		numFixed--
@@ -747,21 +734,17 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		return true
 	}
 
-	// Prepare locals
 	locals := make([]any, numParams)
 
-	// Bind fixed arguments (from stack or defaults)
 	for i := range numFixed {
 		if i < argc {
 			locals[i] = v.OperandStack[calleeIdx+1+i]
 		} else {
-			// Use default
 			defIdx := i - (numFixed - numDefaults)
 			locals[i] = defaults[defIdx]
 		}
 	}
 
-	// Bind Variadic
 	if isVariadic {
 		var slice []any
 		if argc > numFixed {
@@ -780,19 +763,14 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 
 	newEnv := fn.Env.NewChild()
 
-	paramSyms := fn.ParamSyms
-	maxSym := fn.MaxParamSym
-	if paramSyms == nil && len(fn.Fun.ParamNames) > 0 {
-		paramSyms = make([]Symbol, len(fn.Fun.ParamNames))
-		for i, name := range fn.Fun.ParamNames {
-			sym := v.Intern(name)
-			paramSyms[i] = sym
-			if int(sym) > maxSym {
-				maxSym = int(sym)
-			}
+	paramSyms := make([]Symbol, len(fn.Fun.ParamNames))
+	var maxSym int
+	for i, name := range fn.Fun.ParamNames {
+		sym := v.Intern(name)
+		paramSyms[i] = sym
+		if int(sym) > maxSym {
+			maxSym = int(sym)
 		}
-		fn.ParamSyms = paramSyms
-		fn.MaxParamSym = maxSym
 	}
 
 	if len(paramSyms) > 0 {
@@ -804,9 +782,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		}
 	}
 
-	// Tail Call Optimization
 	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
-		// Reuse current frame
 		needed := v.BP + len(locals)
 		if needed > len(v.OperandStack) {
 			newCap := len(v.OperandStack) * 2
@@ -1523,36 +1499,60 @@ func intPow(base, exp int64) (int64, bool) {
 	if exp < 0 {
 		return 0, false
 	}
+
+	absBase := base
+	if base < 0 {
+		absBase = -base
+	}
+
 	result := int64(1)
 	currentBase := base
 	currentExp := exp
+
 	for currentExp > 0 {
 		if currentExp&1 == 1 {
-			if result > 0 && currentBase > 0 && result > math.MaxInt64/currentBase {
+			if absBase > 1 {
+				if result > 0 && absBase > math.MaxInt64/result {
+					return 0, true
+				}
+				if result < 0 && absBase > math.MaxInt64/(-result) {
+					return 0, true
+				}
+				if result > 0 && currentBase < 0 && currentBase < math.MinInt64/result {
+					return 0, true
+				}
+				if result < 0 && currentBase > 0 && result < math.MinInt64/currentBase {
+					return 0, true
+				}
+			}
+			newResult := result * currentBase
+			if currentBase != 0 && newResult/currentBase != result {
 				return 0, true
 			}
-			if result < 0 && currentBase < 0 && result < math.MaxInt64/currentBase {
-				return 0, true
-			}
-			if result > 0 && currentBase < 0 && currentBase < math.MinInt64/result {
-				return 0, true
-			}
-			if result < 0 && currentBase > 0 && result < math.MinInt64/currentBase {
-				return 0, true
-			}
-			result *= currentBase
+			result = newResult
 		}
+
 		if currentExp > 1 {
-			if currentBase > 0 && currentBase > math.MaxInt64/currentBase {
-				return 0, true
+			absCurrentBase := currentBase
+			if currentBase < 0 {
+				absCurrentBase = -currentBase
 			}
-			if currentBase < 0 && currentBase < math.MaxInt64/currentBase {
-				return 0, true
+			if absCurrentBase > 1 {
+				if absCurrentBase > math.MaxInt64/absCurrentBase {
+					return 0, true
+				}
 			}
+			newBase := currentBase * currentBase
+			if currentBase != 0 && currentBase != 1 && currentBase != -1 {
+				if newBase/currentBase != currentBase {
+					return 0, true
+				}
+			}
+			currentBase = newBase
 		}
-		currentBase *= currentBase
 		currentExp >>= 1
 	}
+
 	return result, false
 }
 
@@ -2161,7 +2161,6 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		locals := make([]any, numParams)
 		isSet := make([]bool, numParams)
 
-		// Positional arguments
 		if len(posArgs) > numFixed {
 			if !isVariadic {
 				if !yield(nil, fmt.Errorf("too many arguments: want %d, got %d", numFixed, len(posArgs))) {
@@ -2189,7 +2188,6 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			}
 		}
 
-		// Keyword arguments
 		for k, val := range kwArgs {
 			name, ok := k.(string)
 			if !ok {
@@ -2231,7 +2229,6 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			isSet[idx] = true
 		}
 
-		// Defaults
 		startDefaults := numFixed - len(fn.Defaults)
 		for i := 0; i < numFixed; i++ {
 			if !isSet[i] {
@@ -2249,19 +2246,15 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		}
 
 		newEnv := fn.Env.NewChild()
-		paramSyms := fn.ParamSyms
-		maxSym := fn.MaxParamSym
-		if paramSyms == nil && len(paramNames) > 0 {
-			paramSyms = make([]Symbol, len(paramNames))
-			for i, name := range paramNames {
-				sym := v.Intern(name)
-				paramSyms[i] = sym
-				if int(sym) > maxSym {
-					maxSym = int(sym)
-				}
+
+		paramSyms := make([]Symbol, len(paramNames))
+		var maxSym int
+		for i, name := range paramNames {
+			sym := v.Intern(name)
+			paramSyms[i] = sym
+			if int(sym) > maxSym {
+				maxSym = int(sym)
 			}
-			fn.ParamSyms = paramSyms
-			fn.MaxParamSym = maxSym
 		}
 
 		if len(paramSyms) > 0 {

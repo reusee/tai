@@ -5029,3 +5029,156 @@ func TestVM_IntPow_Overflow(t *testing.T) {
 		}
 	})
 }
+
+func TestVM_IntPow_OverflowEdgeCases(t *testing.T) {
+	t.Run("NegativeBaseEvenExponent", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(-10), int64(19)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := -1e19
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+
+	t.Run("LargeBaseOverflow", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(1000000000), int64(3)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := 1e27
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+
+	t.Run("NegativeBaseOddExponentOverflow", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(-100), int64(13)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := -1e26
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+
+	t.Run("BoundaryCase", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{int64(46340), int64(3)},
+			Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpPow, OpReturn},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := vm.pop()
+		resFloat, ok := res.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for overflow, got %T", res)
+		}
+		expected := 9.950024206764e+13
+		if resFloat != expected {
+			t.Errorf("expected %v, got %v", expected, resFloat)
+		}
+	})
+}
+
+func TestVM_ClosureSymbolIsolation(t *testing.T) {
+	sharedFunc := &Function{
+		NumParams:  2,
+		ParamNames: []string{"x", "y"},
+		Constants:  []any{"x", "y"},
+		Code: []OpCode{
+			OpLoadVar.With(0),
+			OpLoadVar.With(1),
+			OpAdd,
+			OpReturn,
+		},
+	}
+
+	vm1 := NewVM(&Function{})
+	vm1.Def("unrelated_var1", 100)
+	vm1.Def("unrelated_var2", 200)
+
+	closure1 := &Closure{
+		Fun: sharedFunc,
+		Env: vm1.Scope,
+	}
+
+	vm2 := NewVM(&Function{})
+	vm2.Def("different_var1", 300)
+	vm2.Def("different_var2", 400)
+	vm2.Def("different_var3", 500)
+
+	closure2 := &Closure{
+		Fun: sharedFunc,
+		Env: vm2.Scope,
+	}
+
+	testCall := func(vm *VM, closure *Closure, arg1, arg2, expected int) {
+		vm.CurrentFun = &Function{
+			Constants: []any{closure, arg1, arg2},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpLoadConst.With(2),
+				OpCall.With(2),
+				OpReturn,
+			},
+		}
+		vm.IP = 0
+		vm.SP = 0
+
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatalf("VM error: %v", err)
+			}
+		}
+
+		result := vm.OperandStack[0].(int)
+		if result != expected {
+			t.Errorf("Expected %d, got %d", expected, result)
+		}
+	}
+
+	testCall(vm1, closure1, 10, 20, 30)
+	testCall(vm2, closure2, 5, 15, 20)
+	testCall(vm1, closure1, 100, 200, 300)
+}
