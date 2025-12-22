@@ -93,15 +93,22 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 				// mime type
 				mtype := mimetype.Detect(content)
-				isText := false
+				ok := false
+			l:
 				for t := mtype; t != nil; t = t.Parent() {
 					if t.Is("text/plain") {
-						isText = true
+						ok = true
 						break
+					}
+					for m := range includeMimeTypes {
+						if t.Is(m) {
+							ok = true
+							break l
+						}
 					}
 				}
 
-				if !isText {
+				if !ok {
 					return false, nil
 				}
 
@@ -147,34 +154,56 @@ func (c CodeProvider) Parts(
 			return nil, err
 		}
 
-		text := "``` begin of file " + info.Path + "\n" +
-			string(info.Content) + "\n" +
-			"``` end of file " + info.Path + "\n"
+		switch {
 
-		numTokens, err := countTokens(text)
-		if err != nil {
-			return nil, err
-		}
-		if totalTokens+numTokens > maxTokens {
-			c.Logger().Info("file skipped due to token limit",
-				"at file", info.Path,
-				"file tokens", numTokens,
-				"total tokens", totalTokens,
-				"max tokens", maxTokens,
-			)
-			break
-		}
-		totalTokens += numTokens
+		case strings.HasPrefix(info.MimeType, "text/plain"):
+			// text
 
-		if *debug {
-			c.Logger().Info("file",
-				"path", info.Path,
-				"tokens", numTokens,
-				"mime type", info.MimeType,
-			)
+			text := "``` begin of file " + info.Path + "\n" +
+				string(info.Content) + "\n" +
+				"``` end of file " + info.Path + "\n"
+
+			numTokens, err := countTokens(text)
+			if err != nil {
+				return nil, err
+			}
+			if totalTokens+numTokens > maxTokens {
+				c.Logger().Info("file skipped due to token limit",
+					"at file", info.Path,
+					"file tokens", numTokens,
+					"total tokens", totalTokens,
+					"max tokens", maxTokens,
+				)
+				break
+			}
+			totalTokens += numTokens
+
+			parts = append(parts, generators.Text(text))
+
+			if *debug {
+				c.Logger().Info("text file",
+					"path", info.Path,
+					"tokens", numTokens,
+					"mime type", info.MimeType,
+				)
+			}
+
+		default:
+			// binary
+			parts = append(parts, generators.FileContent{
+				Content:  info.Content,
+				MimeType: info.MimeType,
+			})
+
+			if *debug {
+				c.Logger().Info("binary file",
+					"path", info.Path,
+					"mime type", info.MimeType,
+				)
+			}
+
 		}
 
-		parts = append(parts, generators.Text(text))
 	}
 
 	c.Logger().Info("anytexts.CodeProvider",
