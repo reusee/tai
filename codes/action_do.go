@@ -83,17 +83,36 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 		var lastFinishReason generators.FinishReason
 		foundFinishReason := false
 		hasContent := false
+		hasCode := false
 
-		for _, content := range contents {
-			if content.Role != generators.RoleModel && content.Role != generators.RoleAssistant {
-				continue
+		// Check latest model response for forbidden patterns
+		var latestModelContent *generators.Content
+		for i := len(contents) - 1; i >= 0; i-- {
+			c := contents[i]
+			if c.Role == generators.RoleModel || c.Role == generators.RoleAssistant {
+				latestModelContent = c
+				break
 			}
-			for _, part := range content.Parts {
+		}
+
+		if latestModelContent != nil {
+			for _, part := range latestModelContent.Parts {
 				if reason, ok := part.(generators.FinishReason); ok {
 					lastFinishReason = reason
 					foundFinishReason = true
 				} else if text, ok := part.(generators.Text); ok {
-					hasContent = len(text) > 0 || hasContent
+					t := string(text)
+					if len(t) > 0 {
+						hasContent = true
+					}
+					// Detect unified diff hunks or markdown code blocks
+					if strings.Contains(t, "[[[ MODIFY") ||
+						strings.Contains(t, "[[[ ADD_BEFORE") ||
+						strings.Contains(t, "[[[ ADD_AFTER") ||
+						strings.Contains(t, "[[[ DELETE") ||
+						strings.Contains(t, "```") {
+						hasCode = true
+					}
 				}
 			}
 		}
@@ -106,6 +125,16 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 		if foundFinishReason && lastFinishReason != "stop" {
 			a.Logger().InfoContext(ctx, "unexpected finish reason, retry plan")
 			return a.plan(cont), state, nil
+		}
+
+		if hasCode {
+			a.Logger().InfoContext(ctx, "plan contains code, stop auto do and switch to chat")
+			generator, err := a.GetPlanGenerator()()
+			if err != nil {
+				return nil, nil, err
+			}
+			// Interrupt automated flow and switch to interactive chat
+			return a.BuildChat()(generator, nil)(cont), state, nil
 		}
 
 		return a.do(cont), state, nil
