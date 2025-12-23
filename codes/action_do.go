@@ -63,7 +63,6 @@ Instructions:
 - **ONLY** use natural language to describe the changes.
 
 If your response contains code blocks or implementations, it will be rejected.
-The coding will happen in the *next* phase, based on this plan.
 Focus on *what* needs to be done and *why*, not *how* to code it yet.
 `),
 			},
