@@ -98,11 +98,12 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 
 		if latestModelContent != nil {
 			for _, part := range latestModelContent.Parts {
-				if reason, ok := part.(generators.FinishReason); ok {
-					lastFinishReason = reason
+				switch part := part.(type) {
+				case generators.FinishReason:
+					lastFinishReason = part
 					foundFinishReason = true
-				} else if text, ok := part.(generators.Text); ok {
-					t := string(text)
+				case generators.Text:
+					t := string(part)
 					if len(t) > 0 {
 						hasContent = true
 					}
@@ -113,6 +114,12 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 						strings.Contains(t, "[[[ DELETE") ||
 						strings.Contains(t, "```") {
 						hasCode = true
+					}
+				case generators.FuncCall:
+					hasContent = true
+				case generators.Thought:
+					if len(string(part)) > 0 {
+						hasContent = true
 					}
 				}
 			}
