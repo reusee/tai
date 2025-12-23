@@ -2,11 +2,13 @@ package codes
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
@@ -20,6 +22,7 @@ type ActionDo struct {
 	GetPlanGenerator dscope.Inject[GetPlanGenerator]
 	GetCodeGenerator dscope.Inject[GetCodeGenerator]
 	Logger           dscope.Inject[logs.Logger]
+	Tap              dscope.Inject[debugs.Tap]
 }
 
 var _ Action = ActionDo{}
@@ -38,11 +41,9 @@ func (a ActionDo) InitialPhase(cont phases.Phase) phases.Phase {
 
 func (a ActionDo) plan(cont phases.Phase) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
-		generator, err := a.GetPlanGenerator()()
-		if err != nil {
-			return nil, nil, err
-		}
-		state, err = state.AppendContent(&generators.Content{
+		state0 := state
+
+		state, err := state.AppendContent(&generators.Content{
 			Role: "user",
 			Parts: []generators.Part{
 				generators.Text(`The primary goal is: ` + string(a.ActionArgument()) + `
@@ -70,70 +71,63 @@ Focus on *what* needs to be done and *why*, not *how* to code it yet.
 		if err != nil {
 			return nil, nil, err
 		}
+
+		generator, err := a.GetPlanGenerator()()
+		if err != nil {
+			return nil, nil, err
+		}
 		return a.BuildGenerate()(generator, nil)(
-			a.checkPlan(cont),
+			a.checkPlan(state0, cont),
 		), state, nil
 	}
 }
 
-func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
+func (a ActionDo) checkPlan(planState generators.State, cont phases.Phase) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 
 		contents := state.Contents()
-		var lastFinishReason string
-		foundFinishReason := false
-		hasContent := false
-		hasCode := false
 
-		var latestModelContent *generators.Content
-		for i := len(contents) - 1; i >= 0; i-- {
-			c := contents[i]
-			if c.Role == generators.RoleModel || c.Role == generators.RoleAssistant {
-				latestModelContent = c
-				break
-			}
-		}
-
-		if latestModelContent != nil {
-			for _, part := range latestModelContent.Parts {
-				switch part := part.(type) {
-				case generators.FinishReason:
-					lastFinishReason = strings.ToLower(string(part))
-					foundFinishReason = true
-				case generators.Text:
-					t := string(part)
-					if len(t) > 0 {
-						hasContent = true
-					}
-					// Detect unified diff hunks or markdown code blocks
-					if strings.Contains(t, "[[[ MODIFY") ||
-						strings.Contains(t, "[[[ ADD_BEFORE") ||
-						strings.Contains(t, "[[[ ADD_AFTER") ||
-						strings.Contains(t, "[[[ DELETE") {
-						hasCode = true
-					}
-				case generators.FuncCall:
-					hasContent = true
-				case generators.Thought:
-					if len(part) > 0 {
-						hasContent = true
+		// check finish reason
+		for _, content := range slices.Backward(contents) {
+			for _, part := range content.Parts {
+				if f, ok := part.(generators.FinishReason); ok {
+					if !strings.EqualFold(string(f), "stop") {
+						// unexpected finish reason, retry plan
+						return a.plan(cont), planState, nil
 					}
 				}
 			}
 		}
 
-		if !hasContent {
-			a.Logger().InfoContext(ctx, "no content, retry plan")
-			return a.plan(cont), state, nil
+		// check output
+		hasOutput := false
+		var text generators.Text
+		for _, content := range contents {
+			if content.Role != generators.RoleModel && content.Role != generators.RoleAssistant {
+				continue
+			}
+			for _, part := range content.Parts {
+				switch part := part.(type) {
+				case generators.Text:
+					hasOutput = hasOutput || len(part) > 0
+					text += part
+				case generators.Thought:
+					hasOutput = hasOutput || len(part) > 0
+				case generators.FuncCall:
+					hasOutput = true
+				}
+			}
 		}
-
-		if foundFinishReason && lastFinishReason != "stop" {
-			a.Logger().InfoContext(ctx, "unexpected finish reason, retry plan")
-			return a.plan(cont), state, nil
+		if !hasOutput {
+			// no output, retry plan
+			return a.plan(cont), planState, nil
 		}
-
-		if hasCode {
-			a.Logger().InfoContext(ctx, "plan contains code, skip do phase")
+		strText := string(text)
+		if strings.Contains(strText, "[[[ MODIFY") ||
+			strings.Contains(strText, "[[[ ADD_BEFORE") ||
+			strings.Contains(strText, "[[[ ADD_AFTER") ||
+			strings.Contains(strText, "[[[ DELETE") {
+			// has code, skip do phase
 			return cont, state, nil
 		}
 
