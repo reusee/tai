@@ -81,12 +81,11 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 
 		contents := state.Contents()
-		var lastFinishReason generators.FinishReason
+		var lastFinishReason string
 		foundFinishReason := false
 		hasContent := false
 		hasCode := false
 
-		// Check latest model response for forbidden patterns
 		var latestModelContent *generators.Content
 		for i := len(contents) - 1; i >= 0; i-- {
 			c := contents[i]
@@ -100,7 +99,7 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 			for _, part := range latestModelContent.Parts {
 				switch part := part.(type) {
 				case generators.FinishReason:
-					lastFinishReason = part
+					lastFinishReason = strings.ToLower(string(part))
 					foundFinishReason = true
 				case generators.Text:
 					t := string(part)
@@ -111,14 +110,13 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 					if strings.Contains(t, "[[[ MODIFY") ||
 						strings.Contains(t, "[[[ ADD_BEFORE") ||
 						strings.Contains(t, "[[[ ADD_AFTER") ||
-						strings.Contains(t, "[[[ DELETE") ||
-						strings.Contains(t, "```") {
+						strings.Contains(t, "[[[ DELETE") {
 						hasCode = true
 					}
 				case generators.FuncCall:
 					hasContent = true
 				case generators.Thought:
-					if len(string(part)) > 0 {
+					if len(part) > 0 {
 						hasContent = true
 					}
 				}
@@ -136,13 +134,8 @@ func (a ActionDo) checkPlan(cont phases.Phase) phases.Phase {
 		}
 
 		if hasCode {
-			a.Logger().InfoContext(ctx, "plan contains code, stop auto do and switch to chat")
-			generator, err := a.GetPlanGenerator()()
-			if err != nil {
-				return nil, nil, err
-			}
-			// Interrupt automated flow and switch to interactive chat
-			return a.BuildChat()(generator, nil)(cont), state, nil
+			a.Logger().InfoContext(ctx, "plan contains code, skip do phase")
+			return cont, state, nil
 		}
 
 		return a.do(cont), state, nil
