@@ -25,6 +25,7 @@ var _ codetypes.CodeProvider = CodeProvider{}
 type FileInfo struct {
 	Path     string
 	Content  []byte
+	IsText   bool
 	MimeType string
 }
 
@@ -94,13 +95,15 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				// mime type
 				mtype := mimetype.Detect(content)
 				ok := false
+				isText := false
 			l:
 				for t := mtype; t != nil; t = t.Parent() {
 					if t.Is("text/plain") {
 						ok = true
+						isText = true
 						break
 					}
-					for m := range includeMimeTypes {
+					for m := range includeNonTextMimeTypes {
 						if t.Is(m) {
 							ok = true
 							break l
@@ -115,6 +118,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				if !yield(FileInfo{
 					Path:     path,
 					Content:  content,
+					IsText:   isText,
 					MimeType: mtype.String(),
 				}, nil) {
 					return true, nil
@@ -154,10 +158,7 @@ func (c CodeProvider) Parts(
 			return nil, err
 		}
 
-		switch {
-
-		case strings.HasPrefix(info.MimeType, "text/plain"):
-			// text
+		if info.IsText {
 
 			text := "``` begin of file " + info.Path + "\n" +
 				string(info.Content) + "\n" +
@@ -188,8 +189,9 @@ func (c CodeProvider) Parts(
 				)
 			}
 
-		default:
+		} else {
 			// binary
+			parts = append(parts, generators.Text("File: "+info.Path+"\n"))
 			parts = append(parts, generators.FileContent{
 				Content:  info.Content,
 				MimeType: info.MimeType,
