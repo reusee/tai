@@ -1,3 +1,3 @@
 package taigo
 
-//TODO builtins
+//TODO implement all builtins
