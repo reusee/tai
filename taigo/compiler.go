@@ -94,11 +94,38 @@ func (c *compiler) loadConst(val any) {
 }
 
 func (c *compiler) compileFile(file *ast.File) error {
+	var initDecls []*ast.FuncDecl
+	var hasMain bool
+
 	for _, decl := range file.Decls {
+		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+			if funcDecl.Name.Name == "init" {
+				initDecls = append(initDecls, funcDecl)
+				continue
+			}
+			if funcDecl.Name.Name == "main" {
+				hasMain = true
+			}
+		}
+
 		if err := c.compileDecl(decl); err != nil {
 			return err
 		}
 	}
+
+	for _, decl := range initDecls {
+		if err := c.compileInitFunc(decl); err != nil {
+			return err
+		}
+	}
+
+	if hasMain {
+		idx := c.addConst("main")
+		c.emit(taivm.OpLoadVar.With(idx))
+		c.emit(taivm.OpCall.With(0))
+		c.emit(taivm.OpPop)
+	}
+
 	return nil
 }
 
@@ -125,13 +152,42 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 }
 
 func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
+	fn, err := c.compileFunc(decl)
+	if err != nil {
+		return err
+	}
+
+	idx := c.addConst(fn)
+	c.emit(taivm.OpMakeClosure.With(idx))
+
+	nameIdx := c.addConst(decl.Name.Name)
+	c.emit(taivm.OpDefVar.With(nameIdx))
+
+	return nil
+}
+
+func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
+	fn, err := c.compileFunc(decl)
+	if err != nil {
+		return err
+	}
+
+	idx := c.addConst(fn)
+	c.emit(taivm.OpMakeClosure.With(idx))
+	c.emit(taivm.OpCall.With(0))
+	c.emit(taivm.OpPop)
+
+	return nil
+}
+
+func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
 		name: decl.Name.Name,
 	}
 
 	for _, stmt := range decl.Body.List {
 		if err := sub.compileStmt(stmt); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -152,13 +208,7 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 	}
 	fn.NumParams = len(fn.ParamNames)
 
-	idx := c.addConst(fn)
-	c.emit(taivm.OpMakeClosure.With(idx))
-
-	nameIdx := c.addConst(decl.Name.Name)
-	c.emit(taivm.OpDefVar.With(nameIdx))
-
-	return nil
+	return fn, nil
 }
 
 func (c *compiler) compileExpr(expr ast.Expr) error {
