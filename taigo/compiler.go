@@ -10,10 +10,11 @@ import (
 )
 
 type compiler struct {
-	name      string
-	code      []taivm.OpCode
-	constants []any
-	loops     []*loopScope
+	name       string
+	code       []taivm.OpCode
+	constants  []any
+	loops      []*loopScope
+	scopeDepth int
 }
 
 type loopScope struct {
@@ -21,6 +22,7 @@ type loopScope struct {
 	continueTargets []int
 	startPos        int
 	postPos         int // position of post statement if any
+	entryDepth      int
 }
 
 func (c *compiler) getFunction() *taivm.Function {
@@ -51,7 +53,8 @@ func (c *compiler) patchJump(idx int, target int) {
 
 func (c *compiler) enterLoop() *loopScope {
 	scope := &loopScope{
-		startPos: len(c.code),
+		startPos:   len(c.code),
+		entryDepth: c.scopeDepth,
 	}
 	c.loops = append(c.loops, scope)
 	return scope
@@ -668,12 +671,14 @@ func (c *compiler) compileExprStmt(stmt *ast.ExprStmt) error {
 
 func (c *compiler) compileBlockStmt(stmt *ast.BlockStmt) error {
 	c.emit(taivm.OpEnterScope)
+	c.scopeDepth++
 	for _, stmt := range stmt.List {
 		if err := c.compileStmt(stmt); err != nil {
 			return err
 		}
 	}
 	c.emit(taivm.OpLeaveScope)
+	c.scopeDepth--
 	return nil
 }
 
@@ -910,10 +915,14 @@ func (c *compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
 func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	if stmt.Init != nil {
 		c.emit(taivm.OpEnterScope)
+		c.scopeDepth++
 		if err := c.compileStmt(stmt.Init); err != nil {
 			return err
 		}
-		defer c.emit(taivm.OpLeaveScope)
+		defer func() {
+			c.emit(taivm.OpLeaveScope)
+			c.scopeDepth--
+		}()
 	}
 
 	if err := c.compileExpr(stmt.Cond); err != nil {
@@ -943,7 +952,11 @@ func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 
 func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
 	c.emit(taivm.OpEnterScope)
-	defer c.emit(taivm.OpLeaveScope)
+	c.scopeDepth++
+	defer func() {
+		c.emit(taivm.OpLeaveScope)
+		c.scopeDepth--
+	}()
 
 	if stmt.Init != nil {
 		if err := c.compileStmt(stmt.Init); err != nil {
@@ -1031,7 +1044,11 @@ func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
 
 func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 	c.emit(taivm.OpEnterScope)
-	defer c.emit(taivm.OpLeaveScope)
+	c.scopeDepth++
+	defer func() {
+		c.emit(taivm.OpLeaveScope)
+		c.scopeDepth--
+	}()
 
 	if stmt.Init != nil {
 		if err := c.compileStmt(stmt.Init); err != nil {
@@ -1077,6 +1094,13 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 
 	c.emit(taivm.OpGetIter)
 
+	c.emit(taivm.OpEnterScope)
+	c.scopeDepth++
+	defer func() {
+		c.emit(taivm.OpLeaveScope)
+		c.scopeDepth--
+	}()
+
 	loop := c.enterLoop()
 	loop.startPos = len(c.code)
 
@@ -1085,7 +1109,7 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 
 	// Assign value to Key (taivm yields element/key)
 	if stmt.Key != nil {
-		if err := c.compileAssignLHS(stmt.Key); err != nil {
+		if err := c.compileAssignLHS(stmt.Key, stmt.Tok); err != nil {
 			return err
 		}
 	} else {
@@ -1110,6 +1134,10 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 		return fmt.Errorf("branch statement outside loop")
 	}
 	scope := c.loops[len(c.loops)-1]
+	unwind := c.scopeDepth - scope.entryDepth
+	for range unwind {
+		c.emit(taivm.OpLeaveScope)
+	}
 
 	switch stmt.Tok {
 	case token.BREAK:
@@ -1122,17 +1150,17 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 	return nil
 }
 
-func (c *compiler) compileAssignLHS(expr ast.Expr) error {
+func (c *compiler) compileAssignLHS(expr ast.Expr, tok token.Token) error {
 	if ident, ok := expr.(*ast.Ident); ok {
 		if ident.Name == "_" {
 			c.emit(taivm.OpPop)
 		} else {
-			// In range loops, variables are often ShortVarDecl names
-			// We treat them as updates to existing (or newly defined via scope) vars
-			// For simplicity in this VM binding, we use SetVar (assuming var exists or is global dynamic)
-			// TODO: strict scope handling for := in range
 			idx := c.addConst(ident.Name)
-			c.emit(taivm.OpSetVar.With(idx))
+			if tok == token.DEFINE {
+				c.emit(taivm.OpDefVar.With(idx))
+			} else {
+				c.emit(taivm.OpSetVar.With(idx))
+			}
 		}
 		return nil
 	}

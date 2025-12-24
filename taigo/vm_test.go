@@ -167,8 +167,8 @@ func TestVM(t *testing.T) {
 				}
 			}
 
-			func init() {
 			var res2 = 0
+			func init() {
 				switch {
 				case a == 1:
 					res2 = 100
@@ -185,12 +185,12 @@ func TestVM(t *testing.T) {
 		vm := run(t, `
 			package main
 
-			func add(a, b) {
+			func add(a, b any) {
 				return a + b
 			}
 			var res = add(3, 4)
 
-			func fact(n) {
+			func fact(n any) {
 				if n <= 1 { return 1 }
 				return n * fact(n-1)
 			}
@@ -210,8 +210,8 @@ func TestVM(t *testing.T) {
 	t.Run("closures", func(t *testing.T) {
 		vm := run(t, `
 			package main
-			func makeAdder(base) {
-				return func(v) {
+			func makeAdder(base any) {
+				return func(v any) {
 					return base + v
 				}
 			}
@@ -246,10 +246,11 @@ func TestVM(t *testing.T) {
 
 			var l = len(s)
 			var c = cap(s)
+			var last int
 			func init() {
 				s = append(s, 40)
+				last = s[3]
 			}
-			var last = s[3]
 			
 			var part = s[1:3]
 		`)
@@ -267,12 +268,11 @@ func TestVM(t *testing.T) {
 			package main
 
 			var m = make("map[string]int")
+			var v any
 			func init() {
 				m["one"] = 1
-				var v = m["one"]
+				v = m["one"]
 				delete(m, "one")
-				// v2 should be nil/undefined behavior depending on impl, let's just check delete happened
-				// m["one"] returns nil in vm implementation if missing
 			}
 		`)
 		checkInt(t, vm, "v", 1)
@@ -324,7 +324,7 @@ func TestVM(t *testing.T) {
 	t.Run("variadic function", func(t *testing.T) {
 		vm := run(t, `
 			package main
-			func sum(nums...) {
+			func sum(nums ...any) {
 				var s = 0
 				for n := range nums {
 					s += n
