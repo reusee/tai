@@ -194,9 +194,58 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 	case *ast.CompositeLit:
 		return c.compileCompositeLit(e)
 
+	case *ast.StarExpr:
+		return fmt.Errorf("pointer dereference not supported")
+
+	case *ast.TypeAssertExpr:
+		return fmt.Errorf("type assertion not supported")
+
+	case *ast.KeyValueExpr, *ast.Ellipsis, *ast.BadExpr:
+		return fmt.Errorf("expression type %T not supported in this context", expr)
+
 	default:
 		return fmt.Errorf("unknown expr type: %T", expr)
 	}
+}
+
+func (c *compiler) tokenToOp(tok token.Token) (taivm.OpCode, bool) {
+	switch tok {
+	case token.ADD, token.ADD_ASSIGN:
+		return taivm.OpAdd, true
+	case token.SUB, token.SUB_ASSIGN:
+		return taivm.OpSub, true
+	case token.MUL, token.MUL_ASSIGN:
+		return taivm.OpMul, true
+	case token.QUO, token.QUO_ASSIGN:
+		return taivm.OpDiv, true
+	case token.REM, token.REM_ASSIGN:
+		return taivm.OpMod, true
+	case token.EQL:
+		return taivm.OpEq, true
+	case token.NEQ:
+		return taivm.OpNe, true
+	case token.LSS:
+		return taivm.OpLt, true
+	case token.LEQ:
+		return taivm.OpLe, true
+	case token.GTR:
+		return taivm.OpGt, true
+	case token.GEQ:
+		return taivm.OpGe, true
+	case token.AND, token.AND_ASSIGN:
+		return taivm.OpBitAnd, true
+	case token.OR, token.OR_ASSIGN:
+		return taivm.OpBitOr, true
+	case token.XOR, token.XOR_ASSIGN:
+		return taivm.OpBitXor, true
+	case token.SHL, token.SHL_ASSIGN:
+		return taivm.OpBitLsh, true
+	case token.SHR, token.SHR_ASSIGN:
+		return taivm.OpBitRsh, true
+	case token.NOT:
+		return taivm.OpNot, true
+	}
+	return 0, false
 }
 
 func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
@@ -260,42 +309,18 @@ func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 		return err
 	}
 
-	switch expr.Op {
-	case token.ADD:
-		c.emit(taivm.OpAdd)
-	case token.SUB:
-		c.emit(taivm.OpSub)
-	case token.MUL:
-		c.emit(taivm.OpMul)
-	case token.QUO:
-		c.emit(taivm.OpDiv)
-	case token.REM:
-		c.emit(taivm.OpMod)
-	case token.EQL:
-		c.emit(taivm.OpEq)
-	case token.NEQ:
-		c.emit(taivm.OpNe)
-	case token.LSS:
-		c.emit(taivm.OpLt)
-	case token.LEQ:
-		c.emit(taivm.OpLe)
-	case token.GTR:
-		c.emit(taivm.OpGt)
-	case token.GEQ:
-		c.emit(taivm.OpGe)
-	case token.AND:
+	if expr.Op == token.AND_NOT {
+		// x &^ y  ==  x & (^y)
+		c.emit(taivm.OpBitNot)
 		c.emit(taivm.OpBitAnd)
-	case token.OR:
-		c.emit(taivm.OpBitOr)
-	case token.XOR:
-		c.emit(taivm.OpBitXor)
-	case token.SHL:
-		c.emit(taivm.OpBitLsh)
-	case token.SHR:
-		c.emit(taivm.OpBitRsh)
-	default:
+		return nil
+	}
+
+	op, ok := c.tokenToOp(expr.Op)
+	if !ok {
 		return fmt.Errorf("unknown binary operator: %s", expr.Op)
 	}
+	c.emit(op)
 
 	return nil
 }
@@ -485,6 +510,9 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 	case *ast.IfStmt:
 		return c.compileIfStmt(s)
 
+	case *ast.SwitchStmt:
+		return c.compileSwitchStmt(s)
+
 	case *ast.ForStmt:
 		return c.compileForStmt(s)
 
@@ -493,6 +521,15 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 
 	case *ast.BranchStmt:
 		return c.compileBranchStmt(s)
+
+	case *ast.EmptyStmt:
+		return nil
+
+	case *ast.LabeledStmt:
+		return c.compileStmt(s.Stmt)
+
+	case *ast.GoStmt, *ast.DeferStmt, *ast.SelectStmt, *ast.SendStmt, *ast.TypeSwitchStmt:
+		return fmt.Errorf("statement type %T not supported", stmt)
 
 	default:
 		return fmt.Errorf("unknown stmt type: %T", stmt)
@@ -549,66 +586,174 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 	lhs := stmt.Lhs[0]
 	rhs := stmt.Rhs[0]
+	tok := stmt.Tok
+
+	// Simple assignment or definition
+	if tok == token.ASSIGN || tok == token.DEFINE {
+		// Index Assignment: a[i] = v
+		if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
+			if err := c.compileExpr(idxExpr.X); err != nil {
+				return err
+			}
+			if err := c.compileExpr(idxExpr.Index); err != nil {
+				return err
+			}
+			if err := c.compileExpr(rhs); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetIndex)
+			return nil
+		}
+
+		// Selector Assignment: a.f = v
+		if selExpr, ok := lhs.(*ast.SelectorExpr); ok {
+			if err := c.compileExpr(selExpr.X); err != nil {
+				return err
+			}
+			c.loadConst(selExpr.Sel.Name)
+			if err := c.compileExpr(rhs); err != nil {
+				return err
+			}
+			c.emit(taivm.OpSetAttr)
+			return nil
+		}
+
+		// Variable Assignment: x = v
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+
+		if ident, ok := lhs.(*ast.Ident); ok {
+			idx := c.addConst(ident.Name)
+			if tok == token.DEFINE {
+				c.emit(taivm.OpDefVar.With(idx))
+			} else {
+				c.emit(taivm.OpSetVar.With(idx))
+			}
+			return nil
+		}
+
+		return fmt.Errorf("assignment to %T not supported", lhs)
+	}
+
+	// Compound Assignment (+=, -=, etc.)
+	// Read-Modify-Write
 
 	if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
+		// Target[Index] += Val
+		// Stack: Target, Index, Target, Index -> Get -> Target, Index, Old -> + Rhs -> Target, Index, New -> Set
 		if err := c.compileExpr(idxExpr.X); err != nil {
 			return err
 		}
 		if err := c.compileExpr(idxExpr.Index); err != nil {
 			return err
 		}
+		// Duplicate Target, Index
+		if !c.emitOpDup2Check() {
+			return fmt.Errorf("stack check failed for dup2")
+		}
+		c.emit(taivm.OpDup2)
+		c.emit(taivm.OpGetIndex)
+
+		// Eval RHS
 		if err := c.compileExpr(rhs); err != nil {
 			return err
 		}
+
+		// Op
+		if tok == token.AND_NOT_ASSIGN {
+			c.emit(taivm.OpBitNot)
+			c.emit(taivm.OpBitAnd)
+		} else {
+			op, ok := c.tokenToOp(tok)
+			if !ok {
+				return fmt.Errorf("unknown assignment operator: %s", tok)
+			}
+			c.emit(op)
+		}
+
 		c.emit(taivm.OpSetIndex)
 		return nil
 	}
 
 	if selExpr, ok := lhs.(*ast.SelectorExpr); ok {
+		// Target.Sel += Val
+		// Stack: Target -> Dup -> Target, Target -> LoadName, Get -> Target, Old -> + Rhs -> Target, New -> LoadName, Swap -> Target, Name, New -> Set
 		if err := c.compileExpr(selExpr.X); err != nil {
 			return err
 		}
+		c.emit(taivm.OpDup)
 		c.loadConst(selExpr.Sel.Name)
+		c.emit(taivm.OpGetAttr)
+
 		if err := c.compileExpr(rhs); err != nil {
 			return err
 		}
+
+		if tok == token.AND_NOT_ASSIGN {
+			c.emit(taivm.OpBitNot)
+			c.emit(taivm.OpBitAnd)
+		} else {
+			op, ok := c.tokenToOp(tok)
+			if !ok {
+				return fmt.Errorf("unknown assignment operator: %s", tok)
+			}
+			c.emit(op)
+		}
+
+		c.loadConst(selExpr.Sel.Name)
+		c.emit(taivm.OpSwap)
 		c.emit(taivm.OpSetAttr)
 		return nil
 	}
 
-	if err := c.compileExpr(rhs); err != nil {
-		return err
-	}
-
 	if ident, ok := lhs.(*ast.Ident); ok {
 		idx := c.addConst(ident.Name)
-		if stmt.Tok == token.DEFINE {
-			c.emit(taivm.OpDefVar.With(idx))
-		} else {
-			c.emit(taivm.OpSetVar.With(idx))
+		c.emit(taivm.OpLoadVar.With(idx))
+		if err := c.compileExpr(rhs); err != nil {
+			return err
 		}
-	} else {
-		return fmt.Errorf("assignment to %T not supported", lhs)
+
+		if tok == token.AND_NOT_ASSIGN {
+			c.emit(taivm.OpBitNot)
+			c.emit(taivm.OpBitAnd)
+		} else {
+			op, ok := c.tokenToOp(tok)
+			if !ok {
+				return fmt.Errorf("unknown assignment operator: %s", tok)
+			}
+			c.emit(op)
+		}
+
+		c.emit(taivm.OpSetVar.With(idx))
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("compound assignment to %T not supported", lhs)
+}
+
+func (c *compiler) emitOpDup2Check() bool {
+	// Utility for OpDup2 safety if we were tracking stack depth, currently just placeholder or returns true
+	return true
 }
 
 func (c *compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
-	ident, ok := stmt.X.(*ast.Ident)
-	if !ok {
-		return fmt.Errorf("inc/dec only supported on identifiers")
-	}
-	idx := c.addConst(ident.Name)
-	c.emit(taivm.OpLoadVar.With(idx))
-	c.loadConst(1)
+	fakeRhs := &ast.BasicLit{Kind: token.INT, Value: "1"}
+	var tok token.Token
 	if stmt.Tok == token.INC {
-		c.emit(taivm.OpAdd)
+		tok = token.ADD_ASSIGN
 	} else {
-		c.emit(taivm.OpSub)
+		tok = token.SUB_ASSIGN
 	}
-	c.emit(taivm.OpSetVar.With(idx))
-	return nil
+
+	// Synthesize an assignment statement: x += 1 or x -= 1
+	assign := &ast.AssignStmt{
+		Lhs: []ast.Expr{stmt.X},
+		Tok: tok,
+		Rhs: []ast.Expr{fakeRhs},
+	}
+
+	return c.compileAssignStmt(assign)
 }
 
 func (c *compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
@@ -649,6 +794,94 @@ func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	}
 
 	c.patchJump(jumpEnd, len(c.code))
+	return nil
+}
+
+func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
+	c.emit(taivm.OpEnterScope)
+	defer c.emit(taivm.OpLeaveScope)
+
+	if stmt.Init != nil {
+		if err := c.compileStmt(stmt.Init); err != nil {
+			return err
+		}
+	}
+
+	if stmt.Tag != nil {
+		if err := c.compileExpr(stmt.Tag); err != nil {
+			return err
+		}
+	} else {
+		c.loadConst(true)
+	}
+
+	var bodyJumps [][]int // case index -> list of jumps to it
+	var defaultBodyIndex int = -1
+	var endJumps []int
+
+	// 1. Checks
+	for i, clause := range stmt.Body.List {
+		cc, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("switch body must be case clause")
+		}
+
+		if len(cc.List) == 0 {
+			defaultBodyIndex = i
+			bodyJumps = append(bodyJumps, nil)
+			continue
+		}
+
+		var jumps []int
+		for _, expr := range cc.List {
+			c.emit(taivm.OpDup)
+			if err := c.compileExpr(expr); err != nil {
+				return err
+			}
+			c.emit(taivm.OpEq)
+			// If Equal, Jump Body
+			skip := c.emitJump(taivm.OpJumpFalse)
+			jumps = append(jumps, c.emitJump(taivm.OpJump))
+			c.patchJump(skip, len(c.code))
+		}
+		bodyJumps = append(bodyJumps, jumps)
+	}
+
+	// If no match found, jump to default or end
+	var defaultJump int
+	if defaultBodyIndex != -1 {
+		defaultJump = c.emitJump(taivm.OpJump)
+	} else {
+		endJumps = append(endJumps, c.emitJump(taivm.OpJump))
+	}
+
+	// 2. Bodies
+	for i, clause := range stmt.Body.List {
+		cc := clause.(*ast.CaseClause)
+
+		target := len(c.code)
+		if i == defaultBodyIndex {
+			c.patchJump(defaultJump, target)
+		} else {
+			for _, jump := range bodyJumps[i] {
+				c.patchJump(jump, target)
+			}
+		}
+
+		if err := c.compileBlockStmt(&ast.BlockStmt{List: cc.Body}); err != nil {
+			return err
+		}
+		endJumps = append(endJumps, c.emitJump(taivm.OpJump))
+	}
+
+	endPos := len(c.code)
+	for _, jump := range endJumps {
+		c.patchJump(jump, endPos)
+	}
+
+	// Clean up tag
+	c.emit(taivm.OpPop)
+
 	return nil
 }
 
