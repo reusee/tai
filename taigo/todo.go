@@ -1,3 +1,3 @@
 package taigo
 
-//TODO refine compiler
+//TODO builtins

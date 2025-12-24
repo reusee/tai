@@ -22,5 +22,7 @@ func NewVM(name string, source io.Reader) (*taivm.VM, error) {
 
 	vm := taivm.NewVM(mainFunc)
 
+	registerBuiltins(vm)
+
 	return vm, nil
 }
