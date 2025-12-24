@@ -8,7 +8,7 @@ import (
 )
 
 func TestVM(t *testing.T) {
-	run := func(src string) *taivm.VM {
+	run := func(t *testing.T, src string) *taivm.VM {
 		vm, err := NewVM("main", strings.NewReader(src))
 		if err != nil {
 			t.Helper()
@@ -24,7 +24,7 @@ func TestVM(t *testing.T) {
 		return vm
 	}
 
-	checkInt := func(vm *taivm.VM, name string, expected int64) {
+	checkInt := func(t *testing.T, vm *taivm.VM, name string, expected int64) {
 		val, ok := vm.Get(name)
 		if !ok {
 			t.Helper()
@@ -36,7 +36,7 @@ func TestVM(t *testing.T) {
 		}
 	}
 
-	checkString := func(vm *taivm.VM, name string, expected string) {
+	checkString := func(t *testing.T, vm *taivm.VM, name string, expected string) {
 		val, ok := vm.Get(name)
 		if !ok {
 			t.Helper()
@@ -49,16 +49,16 @@ func TestVM(t *testing.T) {
 	}
 
 	t.Run("basic literals", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var a = 1
 			var b = -5
 			var c = "hello"
 			var d = true
 		`)
-		checkInt(vm, "a", 1)
-		checkInt(vm, "b", -5)
-		checkString(vm, "c", "hello")
+		checkInt(t, vm, "a", 1)
+		checkInt(t, vm, "b", -5)
+		checkString(t, vm, "c", "hello")
 		// Check boolean manually
 		if v, _ := vm.Get("d"); v != true {
 			t.Fatalf("expected d=true, got %v", v)
@@ -66,7 +66,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("arithmetic", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var a = 1 + 2
 			var b = 10 - 4
@@ -79,16 +79,16 @@ func TestVM(t *testing.T) {
 				f *= 2
 			}
 		`)
-		checkInt(vm, "a", 3)
-		checkInt(vm, "b", 6)
-		checkInt(vm, "c", 6)
-		checkInt(vm, "d", 5)
-		checkInt(vm, "e", 1)
-		checkInt(vm, "f", 10)
+		checkInt(t, vm, "a", 3)
+		checkInt(t, vm, "b", 6)
+		checkInt(t, vm, "c", 6)
+		checkInt(t, vm, "d", 5)
+		checkInt(t, vm, "e", 1)
+		checkInt(t, vm, "f", 10)
 	})
 
 	t.Run("comparison and logic", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			var res = 0
@@ -111,13 +111,13 @@ func TestVM(t *testing.T) {
 				bit = bit ^ 1 // 3
 			}
 		`)
-		checkInt(vm, "res", 4)
-		checkInt(vm, "neg", 1)
-		checkInt(vm, "bit", 3)
+		checkInt(t, vm, "res", 4)
+		checkInt(t, vm, "neg", 1)
+		checkInt(t, vm, "bit", 3)
 	})
 
 	t.Run("loops", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			var sum = 0
@@ -145,13 +145,13 @@ func TestVM(t *testing.T) {
 				}
 			}
 		`)
-		checkInt(vm, "sum", 10)
-		checkInt(vm, "sum2", 10)
-		checkInt(vm, "sum3", 5+6+7) // 18
+		checkInt(t, vm, "sum", 10)
+		checkInt(t, vm, "sum2", 10)
+		checkInt(t, vm, "sum3", 5+6+7) // 18
 	})
 
 	t.Run("switch", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			var a = 1
@@ -177,12 +177,12 @@ func TestVM(t *testing.T) {
 				}
 			}
 		`)
-		checkInt(vm, "res", 10)
-		checkInt(vm, "res2", 100)
+		checkInt(t, vm, "res", 10)
+		checkInt(t, vm, "res2", 100)
 	})
 
 	t.Run("functions", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			func add(a, b) {
@@ -201,14 +201,14 @@ func TestVM(t *testing.T) {
 			}
 			var x, y = multi()
 		`)
-		checkInt(vm, "res", 7)
-		checkInt(vm, "f", 120)
-		checkInt(vm, "x", 1)
-		checkInt(vm, "y", 2)
+		checkInt(t, vm, "res", 7)
+		checkInt(t, vm, "f", 120)
+		checkInt(t, vm, "x", 1)
+		checkInt(t, vm, "y", 2)
 	})
 
 	t.Run("closures", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			func makeAdder(base) {
 				return func(v) {
@@ -218,23 +218,23 @@ func TestVM(t *testing.T) {
 			var add5 = makeAdder(5)
 			var res = add5(10)
 		`)
-		checkInt(vm, "res", 15)
+		checkInt(t, vm, "res", 15)
 	})
 
 	t.Run("multi assignment", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var a, b = 1, 2
 			func init() {
 				a, b = b, a
 			}
 		`)
-		checkInt(vm, "a", 2)
-		checkInt(vm, "b", 1)
+		checkInt(t, vm, "a", 2)
+		checkInt(t, vm, "b", 1)
 	})
 
 	t.Run("slices", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			var s = make("[]int", 3)
@@ -253,8 +253,8 @@ func TestVM(t *testing.T) {
 			
 			var part = s[1:3]
 		`)
-		checkInt(vm, "l", 3)
-		checkInt(vm, "last", 40)
+		checkInt(t, vm, "l", 3)
+		checkInt(t, vm, "last", 40)
 
 		val, _ := vm.Get("part")
 		if _, ok := val.(*taivm.List); !ok {
@@ -263,7 +263,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("maps", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 
 			var m = make("map[string]int")
@@ -275,7 +275,7 @@ func TestVM(t *testing.T) {
 				// m["one"] returns nil in vm implementation if missing
 			}
 		`)
-		checkInt(vm, "v", 1)
+		checkInt(t, vm, "v", 1)
 		mArg, _ := vm.Get("m")
 		m := mArg.(map[any]any)
 		if len(m) != 0 {
@@ -284,7 +284,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("map literals", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var m = map[string]int{
 				"a": 1,
@@ -292,11 +292,11 @@ func TestVM(t *testing.T) {
 			}
 			var sum = m["a"] + m["b"]
 		`)
-		checkInt(vm, "sum", 3)
+		checkInt(t, vm, "sum", 3)
 	})
 
 	t.Run("range map", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var m = map[string]int{"a": 1, "b": 2}
 			var sum = 0
@@ -306,23 +306,23 @@ func TestVM(t *testing.T) {
 				}
 			}
 		`)
-		checkInt(vm, "sum", 3)
+		checkInt(t, vm, "sum", 3)
 	})
 
 	t.Run("string ops", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			var s = "hello" + " " + "world"
 			var l = len(s)
 			var sub = s[0:5]
 		`)
-		checkString(vm, "s", "hello world")
-		checkInt(vm, "l", 11)
-		checkString(vm, "sub", "hello")
+		checkString(t, vm, "s", "hello world")
+		checkInt(t, vm, "l", 11)
+		checkString(t, vm, "sub", "hello")
 	})
 
 	t.Run("variadic function", func(t *testing.T) {
-		vm := run(`
+		vm := run(t, `
 			package main
 			func sum(nums...) {
 				var s = 0
@@ -333,6 +333,6 @@ func TestVM(t *testing.T) {
 			}
 			var res = sum(1, 2, 3, 4)
 		`)
-		checkInt(vm, "res", 10)
+		checkInt(t, vm, "res", 10)
 	})
 }
