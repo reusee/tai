@@ -2,6 +2,7 @@ package taigo
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -42,6 +43,13 @@ func registerBuiltins(vm *taivm.VM) {
 				return nil, fmt.Errorf("panic")
 			}
 			return nil, fmt.Errorf("%v", args[0])
+		},
+	})
+
+	vm.Def("recover", taivm.NativeFunc{
+		Name: "recover",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			return nil, nil
 		},
 	})
 
@@ -295,6 +303,86 @@ func registerBuiltins(vm *taivm.VM) {
 				return nil, fmt.Errorf("string expects 1 argument")
 			}
 			return fmt.Sprint(args[0]), nil
+		},
+	})
+
+	vm.Def("make", taivm.NativeFunc{
+		Name: "make",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if len(args) < 1 {
+				return nil, fmt.Errorf("make expects type argument")
+			}
+			typ, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("make expects type string as first argument")
+			}
+
+			if strings.HasPrefix(typ, "[]") {
+				if len(args) < 2 {
+					return nil, fmt.Errorf("make slice expects length argument")
+				}
+				l, ok := taivm.ToInt64(args[1])
+				if !ok {
+					return nil, fmt.Errorf("slice length must be integer")
+				}
+				size := int(l)
+				if size < 0 {
+					return nil, fmt.Errorf("negative slice length")
+				}
+				// Cap is arg 2 if present, but we just use slice make logic
+				elements := make([]any, size)
+				// Initialize with zero values based on type
+				var zero any
+				if strings.Contains(typ, "int") || strings.Contains(typ, "float") {
+					zero = int64(0)
+					if strings.Contains(typ, "float") {
+						zero = float64(0)
+					}
+				} else if strings.Contains(typ, "string") {
+					zero = ""
+				} else if strings.Contains(typ, "bool") {
+					zero = false
+				}
+				if zero != nil {
+					for i := range elements {
+						elements[i] = zero
+					}
+				}
+				return &taivm.List{Elements: elements}, nil
+			}
+
+			if strings.HasPrefix(typ, "map[") {
+				return make(map[any]any), nil
+			}
+
+			if strings.HasPrefix(typ, "chan") {
+				return nil, fmt.Errorf("channels not supported")
+			}
+
+			return nil, fmt.Errorf("cannot make type %s", typ)
+		},
+	})
+
+	vm.Def("new", taivm.NativeFunc{
+		Name: "new",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("new expects type argument")
+			}
+			typ, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("new expects type string")
+			}
+			if typ == "int" || typ == "int64" || typ == "float64" {
+				return int64(0), nil
+			}
+			if typ == "string" {
+				return "", nil
+			}
+			if typ == "bool" {
+				return false, nil
+			}
+			return nil, nil // Pointers/Structuring not fully supported, returning nil
 		},
 	})
 
