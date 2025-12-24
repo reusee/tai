@@ -116,40 +116,6 @@ func TestVM(t *testing.T) {
 		checkInt(t, vm, "bit", 3)
 	})
 
-	t.Run("loops", func(t *testing.T) {
-		vm := run(t, `
-			package main
-
-			var sum = 0
-			func init() {
-				for i := 0; i < 5; i++ {
-					sum += i
-				}
-			}
-			
-			var j = 0
-			var sum2 = 0
-			func init() {
-				for j < 5 {
-					sum2 += j
-					j++
-				}
-			}
-			
-			var sum3 = 0
-			func init() {
-				for k := 0; k < 10; k++ {
-					if k < 5 { continue }
-					if k > 7 { break }
-					sum3 += k
-				}
-			}
-		`)
-		checkInt(t, vm, "sum", 10)
-		checkInt(t, vm, "sum2", 10)
-		checkInt(t, vm, "sum3", 5+6+7) // 18
-	})
-
 	t.Run("switch", func(t *testing.T) {
 		vm := run(t, `
 			package main

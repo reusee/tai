@@ -102,7 +102,7 @@ func (c *compiler) compileFile(file *ast.File) error {
 
 	for _, decl := range file.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
-			if funcDecl.Name.Name == "init" {
+			if funcDecl.Recv == nil && funcDecl.Name.Name == "init" {
 				initDecls = append(initDecls, funcDecl)
 				continue
 			}
