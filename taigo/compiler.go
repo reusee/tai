@@ -109,7 +109,7 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 		return c.compileFuncDecl(d)
 
 	case *ast.GenDecl:
-		if d.Tok == token.VAR || d.Tok == token.CONST {
+		if d.Tok == token.VAR || d.Tok == token.CONST || d.Tok == token.IMPORT {
 			return c.compileGenDecl(d)
 		}
 		// TODO type
@@ -644,10 +644,57 @@ func (c *compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
 }
 
 func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
-	if len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
-		return fmt.Errorf("only single assignment supported for now")
+	if len(stmt.Lhs) > 1 {
+		// Multi-assignment
+		for _, lhs := range stmt.Lhs {
+			if _, ok := lhs.(*ast.Ident); !ok {
+				return fmt.Errorf("multi-assignment only supported for variables")
+			}
+		}
+
+		if len(stmt.Rhs) == 1 {
+			// a, b = f()
+			if err := c.compileExpr(stmt.Rhs[0]); err != nil {
+				return err
+			}
+			c.emit(taivm.OpUnpack.With(len(stmt.Lhs)))
+			// OpUnpack puts 1st element at top, assign forward
+			for i := 0; i < len(stmt.Lhs); i++ {
+				ident := stmt.Lhs[i].(*ast.Ident)
+				idx := c.addConst(ident.Name)
+				if stmt.Tok == token.DEFINE {
+					c.emit(taivm.OpDefVar.With(idx))
+				} else {
+					c.emit(taivm.OpSetVar.With(idx))
+				}
+			}
+
+		} else if len(stmt.Rhs) == len(stmt.Lhs) {
+			// a, b = 1, 2
+			for _, r := range stmt.Rhs {
+				if err := c.compileExpr(r); err != nil {
+					return err
+				}
+			}
+			// Stack: 1, 2 (Top). Assign reverse
+			for i := len(stmt.Lhs) - 1; i >= 0; i-- {
+				ident := stmt.Lhs[i].(*ast.Ident)
+				idx := c.addConst(ident.Name)
+				if stmt.Tok == token.DEFINE {
+					c.emit(taivm.OpDefVar.With(idx))
+				} else {
+					c.emit(taivm.OpSetVar.With(idx))
+				}
+			}
+
+		} else {
+			return fmt.Errorf("assignment count mismatch: %d = %d", len(stmt.Lhs), len(stmt.Rhs))
+		}
+
+		return nil
 	}
 
+	// Single assignment
 	lhs := stmt.Lhs[0]
 	rhs := stmt.Rhs[0]
 	tok := stmt.Tok
@@ -1061,21 +1108,46 @@ func (c *compiler) compileAssignLHS(expr ast.Expr) error {
 
 func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 	for _, spec := range decl.Specs {
-		vSpec, ok := spec.(*ast.ValueSpec)
-		if !ok {
-			continue
-		}
-		// Handle values
-		for i, name := range vSpec.Names {
-			if i < len(vSpec.Values) {
-				if err := c.compileExpr(vSpec.Values[i]); err != nil {
+		switch s := spec.(type) {
+
+		case *ast.ImportSpec:
+			path, err := strconv.Unquote(s.Path.Value)
+			if err != nil {
+				return err
+			}
+			idx := c.addConst(path)
+			c.emit(taivm.OpImport.With(idx))
+
+		case *ast.ValueSpec:
+			if len(s.Values) == 1 && len(s.Names) > 1 {
+				// var a, b = f()
+				if err := c.compileExpr(s.Values[0]); err != nil {
 					return err
 				}
+				c.emit(taivm.OpUnpack.With(len(s.Names)))
+				// OpUnpack puts 1st element at top
+				for i := 0; i < len(s.Names); i++ {
+					name := s.Names[i]
+					idx := c.addConst(name.Name)
+					c.emit(taivm.OpDefVar.With(idx))
+				}
+
 			} else {
-				c.loadConst(nil)
+				// var a = 1
+				// var a, b = 1, 2
+				for i, name := range s.Names {
+					if i < len(s.Values) {
+						if err := c.compileExpr(s.Values[i]); err != nil {
+							return err
+						}
+					} else {
+						c.loadConst(nil)
+					}
+					idx := c.addConst(name.Name)
+					c.emit(taivm.OpDefVar.With(idx))
+				}
 			}
-			idx := c.addConst(name.Name)
-			c.emit(taivm.OpDefVar.With(idx))
+
 		}
 	}
 	return nil
