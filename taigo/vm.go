@@ -15,13 +15,12 @@ func NewVM(name string, source io.Reader) (*taivm.VM, error) {
 		return nil, err
 	}
 
-	// TODO compile file to Function and Env
-	_ = file
-	var mainFunc *taivm.Function
-	var globals *taivm.Env
+	mainFunc, err := compile(file)
+	if err != nil {
+		return nil, err
+	}
 
 	vm := taivm.NewVM(mainFunc)
-	vm.Scope = globals
 
 	return vm, nil
 }
