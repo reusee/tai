@@ -126,18 +126,11 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return c.compileExpr(e.X)
 
 	case *ast.IndexExpr:
-		if err := c.compileExpr(e.X); err != nil {
-			return err
-		}
-		if err := c.compileExpr(e.Index); err != nil {
-			return err
-		}
-		c.emit(taivm.OpGetIndex)
+		return c.compileIndexExpr(e)
 
 	default:
 		return fmt.Errorf("unknown expr type: %T", expr)
 	}
-	return nil
 }
 
 func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
@@ -290,96 +283,136 @@ func (c *compiler) compileCallExpr(expr *ast.CallExpr) error {
 	return nil
 }
 
+func (c *compiler) compileIndexExpr(expr *ast.IndexExpr) error {
+	if err := c.compileExpr(expr.X); err != nil {
+		return err
+	}
+	if err := c.compileExpr(expr.Index); err != nil {
+		return err
+	}
+	c.emit(taivm.OpGetIndex)
+	return nil
+}
+
 func (c *compiler) compileStmt(stmt ast.Stmt) error {
 	switch s := stmt.(type) {
+
 	case *ast.ExprStmt:
-		if err := c.compileExpr(s.X); err != nil {
-			return err
-		}
-		c.emit(taivm.OpPop)
+		return c.compileExprStmt(s)
 
 	case *ast.BlockStmt:
-		c.emit(taivm.OpEnterScope)
-		for _, stmt := range s.List {
-			if err := c.compileStmt(stmt); err != nil {
-				return err
-			}
-		}
-		c.emit(taivm.OpLeaveScope)
+		return c.compileBlockStmt(s)
 
 	case *ast.ReturnStmt:
-		if len(s.Results) == 0 {
-			c.loadConst(nil)
-			c.emit(taivm.OpReturn)
-		} else if len(s.Results) == 1 {
-			if err := c.compileExpr(s.Results[0]); err != nil {
-				return err
-			}
-			c.emit(taivm.OpReturn)
-		} else {
-			for _, r := range s.Results {
-				if err := c.compileExpr(r); err != nil {
-					return err
-				}
-			}
-			c.emit(taivm.OpMakeTuple.With(len(s.Results)))
-			c.emit(taivm.OpReturn)
-		}
+		return c.compileReturnStmt(s)
 
 	case *ast.AssignStmt:
-		if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
-			return fmt.Errorf("only single assignment supported for now")
-		}
-
-		lhs := s.Lhs[0]
-		rhs := s.Rhs[0]
-
-		if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
-			if err := c.compileExpr(idxExpr.X); err != nil {
-				return err
-			}
-			if err := c.compileExpr(idxExpr.Index); err != nil {
-				return err
-			}
-			if err := c.compileExpr(rhs); err != nil {
-				return err
-			}
-			c.emit(taivm.OpSetIndex)
-			return nil
-		}
-
-		if err := c.compileExpr(rhs); err != nil {
-			return err
-		}
-
-		if ident, ok := lhs.(*ast.Ident); ok {
-			idx := c.addConst(ident.Name)
-			if s.Tok == token.DEFINE {
-				c.emit(taivm.OpDefVar.With(idx))
-			} else {
-				c.emit(taivm.OpSetVar.With(idx))
-			}
-		} else {
-			return fmt.Errorf("assignment to %T not supported", lhs)
-		}
+		return c.compileAssignStmt(s)
 
 	case *ast.IncDecStmt:
-		ident, ok := s.X.(*ast.Ident)
-		if !ok {
-			return fmt.Errorf("inc/dec only supported on identifiers")
-		}
-		idx := c.addConst(ident.Name)
-		c.emit(taivm.OpLoadVar.With(idx))
-		c.loadConst(1)
-		if s.Tok == token.INC {
-			c.emit(taivm.OpAdd)
-		} else {
-			c.emit(taivm.OpSub)
-		}
-		c.emit(taivm.OpSetVar.With(idx))
+		return c.compileIncDecStmt(s)
 
 	default:
 		return fmt.Errorf("unknown stmt type: %T", stmt)
 	}
+}
+
+func (c *compiler) compileExprStmt(stmt *ast.ExprStmt) error {
+	if err := c.compileExpr(stmt.X); err != nil {
+		return err
+	}
+	c.emit(taivm.OpPop)
+	return nil
+}
+
+func (c *compiler) compileBlockStmt(stmt *ast.BlockStmt) error {
+	c.emit(taivm.OpEnterScope)
+	for _, stmt := range stmt.List {
+		if err := c.compileStmt(stmt); err != nil {
+			return err
+		}
+	}
+	c.emit(taivm.OpLeaveScope)
+	return nil
+}
+
+func (c *compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
+	if len(stmt.Results) == 0 {
+		c.loadConst(nil)
+		c.emit(taivm.OpReturn)
+
+	} else if len(stmt.Results) == 1 {
+		if err := c.compileExpr(stmt.Results[0]); err != nil {
+			return err
+		}
+		c.emit(taivm.OpReturn)
+
+	} else {
+		for _, r := range stmt.Results {
+			if err := c.compileExpr(r); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeTuple.With(len(stmt.Results)))
+		c.emit(taivm.OpReturn)
+	}
+
+	return nil
+}
+
+func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
+	if len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+		return fmt.Errorf("only single assignment supported for now")
+	}
+
+	lhs := stmt.Lhs[0]
+	rhs := stmt.Rhs[0]
+
+	if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
+		if err := c.compileExpr(idxExpr.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(idxExpr.Index); err != nil {
+			return err
+		}
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetIndex)
+		return nil
+	}
+
+	if err := c.compileExpr(rhs); err != nil {
+		return err
+	}
+
+	if ident, ok := lhs.(*ast.Ident); ok {
+		idx := c.addConst(ident.Name)
+		if stmt.Tok == token.DEFINE {
+			c.emit(taivm.OpDefVar.With(idx))
+		} else {
+			c.emit(taivm.OpSetVar.With(idx))
+		}
+	} else {
+		return fmt.Errorf("assignment to %T not supported", lhs)
+	}
+
+	return nil
+}
+
+func (c *compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
+	ident, ok := stmt.X.(*ast.Ident)
+	if !ok {
+		return fmt.Errorf("inc/dec only supported on identifiers")
+	}
+	idx := c.addConst(ident.Name)
+	c.emit(taivm.OpLoadVar.With(idx))
+	c.loadConst(1)
+	if stmt.Tok == token.INC {
+		c.emit(taivm.OpAdd)
+	} else {
+		c.emit(taivm.OpSub)
+	}
+	c.emit(taivm.OpSetVar.With(idx))
 	return nil
 }
