@@ -1,4 +1,3 @@
 package taigo
 
-//TODO implement all builtins
-//TODO split large functions
+//TODO write tests to reach 100% coverage
