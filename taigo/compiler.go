@@ -3,6 +3,8 @@ package taigo
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
+	"strconv"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -57,7 +59,11 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 			name: d.Name.Name,
 		}
 
-		// TODO compile body
+		for _, stmt := range d.Body.List {
+			if err := sub.compileStmt(stmt); err != nil {
+				return err
+			}
+		}
 
 		sub.loadConst(nil)
 		sub.emit(taivm.OpReturn)
@@ -90,5 +96,101 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 
 	}
 
+	return nil
+}
+
+func (c *compiler) compileExpr(expr ast.Expr) error {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		switch e.Kind {
+		case token.INT:
+			v, err := strconv.ParseInt(e.Value, 0, 64)
+			if err != nil {
+				return err
+			}
+			c.loadConst(v)
+		case token.FLOAT:
+			v, err := strconv.ParseFloat(e.Value, 64)
+			if err != nil {
+				return err
+			}
+			c.loadConst(v)
+		case token.STRING:
+			v, err := strconv.Unquote(e.Value)
+			if err != nil {
+				return err
+			}
+			c.loadConst(v)
+		case token.CHAR:
+			v, _, _, err := strconv.UnquoteChar(e.Value, '\'')
+			if err != nil {
+				return err
+			}
+			c.loadConst(int64(v))
+		default:
+			return fmt.Errorf("unknown basic lit kind: %v", e.Kind)
+		}
+
+	case *ast.Ident:
+		switch e.Name {
+		case "true":
+			c.loadConst(true)
+		case "false":
+			c.loadConst(false)
+		case "nil":
+			c.loadConst(nil)
+		default:
+			idx := c.addConst(e.Name)
+			c.emit(taivm.OpLoadVar.With(idx))
+		}
+
+	case *ast.ParenExpr:
+		return c.compileExpr(e.X)
+
+	default:
+		return fmt.Errorf("unknown expr type: %T", expr)
+	}
+	return nil
+}
+
+func (c *compiler) compileStmt(stmt ast.Stmt) error {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt:
+		if err := c.compileExpr(s.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpPop)
+
+	case *ast.BlockStmt:
+		c.emit(taivm.OpEnterScope)
+		for _, stmt := range s.List {
+			if err := c.compileStmt(stmt); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpLeaveScope)
+
+	case *ast.ReturnStmt:
+		if len(s.Results) == 0 {
+			c.loadConst(nil)
+			c.emit(taivm.OpReturn)
+		} else if len(s.Results) == 1 {
+			if err := c.compileExpr(s.Results[0]); err != nil {
+				return err
+			}
+			c.emit(taivm.OpReturn)
+		} else {
+			for _, r := range s.Results {
+				if err := c.compileExpr(r); err != nil {
+					return err
+				}
+			}
+			c.emit(taivm.OpMakeTuple.With(len(s.Results)))
+			c.emit(taivm.OpReturn)
+		}
+
+	default:
+		return fmt.Errorf("unknown stmt type: %T", stmt)
+	}
 	return nil
 }
