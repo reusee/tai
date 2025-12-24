@@ -200,6 +200,9 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	fn := sub.getFunction()
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
+			if _, ok := field.Type.(*ast.Ellipsis); ok {
+				fn.Variadic = true
+			}
 			if len(field.Names) == 0 {
 				fn.ParamNames = append(fn.ParamNames, "")
 			} else {
@@ -542,6 +545,9 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	fn := sub.getFunction()
 	if expr.Type.Params != nil {
 		for _, field := range expr.Type.Params.List {
+			if _, ok := field.Type.(*ast.Ellipsis); ok {
+				fn.Variadic = true
+			}
 			if len(field.Names) == 0 {
 				fn.ParamNames = append(fn.ParamNames, "")
 			} else {
