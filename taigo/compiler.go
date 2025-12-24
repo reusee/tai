@@ -195,13 +195,21 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return c.compileCompositeLit(e)
 
 	case *ast.StarExpr:
-		return fmt.Errorf("pointer dereference not supported")
+		// taivm is dynamic; treat pointer dereference as identity
+		return c.compileExpr(e.X)
 
 	case *ast.TypeAssertExpr:
-		return fmt.Errorf("type assertion not supported")
+		// taivm is dynamic; treat assertion as pass-through
+		return c.compileExpr(e.X)
 
-	case *ast.KeyValueExpr, *ast.Ellipsis, *ast.BadExpr:
-		return fmt.Errorf("expression type %T not supported in this context", expr)
+	case *ast.KeyValueExpr:
+		return fmt.Errorf("key:value expression not supported outside composite literal")
+
+	case *ast.Ellipsis:
+		return fmt.Errorf("ellipsis expression not supported outside call")
+
+	case *ast.BadExpr:
+		return fmt.Errorf("bad expression")
 
 	default:
 		return fmt.Errorf("unknown expr type: %T", expr)
@@ -365,6 +373,34 @@ func (c *compiler) compileCallExpr(expr *ast.CallExpr) error {
 	if err := c.compileExpr(expr.Fun); err != nil {
 		return err
 	}
+
+	if expr.Ellipsis != token.NoPos {
+		// Variadic expansion: f(x, y, z...)
+		// Compile explicit args into a list
+		numExplicit := len(expr.Args) - 1
+		for i := range numExplicit {
+			if err := c.compileExpr(expr.Args[i]); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeList.With(numExplicit))
+
+		// Compile spread argument (must be slice/list)
+		if err := c.compileExpr(expr.Args[numExplicit]); err != nil {
+			return err
+		}
+
+		// Concatenate lists: [x, y] + z
+		c.emit(taivm.OpAdd)
+
+		// Empty kwargs map
+		c.emit(taivm.OpMakeMap.With(0))
+
+		// Call with args list and kw map
+		c.emit(taivm.OpCallKw)
+		return nil
+	}
+
 	for _, arg := range expr.Args {
 		if err := c.compileExpr(arg); err != nil {
 			return err
@@ -456,7 +492,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 }
 
 func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
-	switch t := expr.Type.(type) {
+	switch expr.Type.(type) {
 	case *ast.ArrayType:
 		for _, elt := range expr.Elts {
 			if err := c.compileExpr(elt); err != nil {
@@ -465,23 +501,30 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 		}
 		c.emit(taivm.OpMakeList.With(len(expr.Elts)))
 
-	case *ast.MapType:
+	default:
+		// Treat Structs and Maps similarly
 		for _, elt := range expr.Elts {
 			kv, ok := elt.(*ast.KeyValueExpr)
 			if !ok {
-				return fmt.Errorf("map element must be key:value")
+				// field: value is required for maps/structs in this basic implementation
+				return fmt.Errorf("element must be key:value")
 			}
-			if err := c.compileExpr(kv.Key); err != nil {
-				return err
+			// Key
+			// Struct field names in Go AST are often Idents, but in map literals they are BasicLits
+			// OpMakeMap expects keys on stack.
+			if ident, ok := kv.Key.(*ast.Ident); ok {
+				c.loadConst(ident.Name)
+			} else {
+				if err := c.compileExpr(kv.Key); err != nil {
+					return err
+				}
 			}
+			// Value
 			if err := c.compileExpr(kv.Value); err != nil {
 				return err
 			}
 		}
 		c.emit(taivm.OpMakeMap.With(len(expr.Elts)))
-
-	default:
-		return fmt.Errorf("composite lit type %T not supported", t)
 	}
 	return nil
 }
@@ -528,8 +571,23 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 	case *ast.LabeledStmt:
 		return c.compileStmt(s.Stmt)
 
-	case *ast.GoStmt, *ast.DeferStmt, *ast.SelectStmt, *ast.SendStmt, *ast.TypeSwitchStmt:
-		return fmt.Errorf("statement type %T not supported", stmt)
+	case *ast.GoStmt:
+		return fmt.Errorf("go statement not supported")
+
+	case *ast.DeferStmt:
+		return fmt.Errorf("defer statement not supported")
+
+	case *ast.SelectStmt:
+		return fmt.Errorf("select statement not supported")
+
+	case *ast.SendStmt:
+		return fmt.Errorf("send statement not supported")
+
+	case *ast.TypeSwitchStmt:
+		return fmt.Errorf("type switch statement not supported")
+
+	case *ast.BadStmt:
+		return fmt.Errorf("bad statement")
 
 	default:
 		return fmt.Errorf("unknown stmt type: %T", stmt)
@@ -923,6 +981,10 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 }
 
 func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
+	if stmt.Value != nil {
+		return fmt.Errorf("range with value is not supported (single variable only)")
+	}
+
 	if err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
@@ -933,17 +995,10 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	loop.startPos = len(c.code)
 
 	// NextIter takes jump offset to end as argument
-	// We'll treat it as a jump-false-like instruction here but it's embedded
 	nextIterIdx := c.emitJump(taivm.OpNextIter)
 
-	// Assign value
-	if stmt.Value != nil {
-		// If 2 vars (Key, Value), taivm iter usually yields one.
-		// For map it yields key. logic below assumes simple iteration
-		if err := c.compileAssignLHS(stmt.Value); err != nil {
-			return err
-		}
-	} else if stmt.Key != nil {
+	// Assign value to Key (taivm yields element/key)
+	if stmt.Key != nil {
 		if err := c.compileAssignLHS(stmt.Key); err != nil {
 			return err
 		}
@@ -961,8 +1016,6 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	c.patchJump(nextIterIdx, len(c.code))
 	c.leaveLoop()
 
-	// Pop iterator
-	// Note: OpNextIter pops iterator itself when finished
 	return nil
 }
 
@@ -985,16 +1038,19 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 
 func (c *compiler) compileAssignLHS(expr ast.Expr) error {
 	if ident, ok := expr.(*ast.Ident); ok {
-		idx := c.addConst(ident.Name)
 		if ident.Name == "_" {
 			c.emit(taivm.OpPop)
 		} else {
+			// In range loops, variables are often ShortVarDecl names
+			// We treat them as updates to existing (or newly defined via scope) vars
+			// For simplicity in this VM binding, we use SetVar (assuming var exists or is global dynamic)
+			// TODO: strict scope handling for := in range
+			idx := c.addConst(ident.Name)
 			c.emit(taivm.OpSetVar.With(idx))
 		}
 		return nil
 	}
-	// Simplified assignment for range
-	return fmt.Errorf("complex assignment in range not fully supported yet")
+	return fmt.Errorf("complex assignment in range not supported")
 }
 
 func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
