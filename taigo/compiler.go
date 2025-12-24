@@ -112,7 +112,9 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 		if d.Tok == token.VAR || d.Tok == token.CONST || d.Tok == token.IMPORT {
 			return c.compileGenDecl(d)
 		}
-		// TODO type
+		if d.Tok == token.TYPE {
+			return nil
+		}
 
 	default:
 		return fmt.Errorf("unknown declaration type: %T", decl)
@@ -219,6 +221,20 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 	}
 }
 
+func (c *compiler) emitBinaryOp(tok token.Token) error {
+	if tok == token.AND_NOT || tok == token.AND_NOT_ASSIGN {
+		c.emit(taivm.OpBitNot)
+		c.emit(taivm.OpBitAnd)
+		return nil
+	}
+	op, ok := c.tokenToOp(tok)
+	if !ok {
+		return fmt.Errorf("unknown operator: %s", tok)
+	}
+	c.emit(op)
+	return nil
+}
+
 func (c *compiler) tokenToOp(tok token.Token) (taivm.OpCode, bool) {
 	switch tok {
 	case token.ADD, token.ADD_ASSIGN:
@@ -320,20 +336,7 @@ func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 		return err
 	}
 
-	if expr.Op == token.AND_NOT {
-		// x &^ y  ==  x & (^y)
-		c.emit(taivm.OpBitNot)
-		c.emit(taivm.OpBitAnd)
-		return nil
-	}
-
-	op, ok := c.tokenToOp(expr.Op)
-	if !ok {
-		return fmt.Errorf("unknown binary operator: %s", expr.Op)
-	}
-	c.emit(op)
-
-	return nil
+	return c.emitBinaryOp(expr.Op)
 }
 
 func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
@@ -760,9 +763,6 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			return err
 		}
 		// Duplicate Target, Index
-		if !c.emitOpDup2Check() {
-			return fmt.Errorf("stack check failed for dup2")
-		}
 		c.emit(taivm.OpDup2)
 		c.emit(taivm.OpGetIndex)
 
@@ -771,16 +771,8 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			return err
 		}
 
-		// Op
-		if tok == token.AND_NOT_ASSIGN {
-			c.emit(taivm.OpBitNot)
-			c.emit(taivm.OpBitAnd)
-		} else {
-			op, ok := c.tokenToOp(tok)
-			if !ok {
-				return fmt.Errorf("unknown assignment operator: %s", tok)
-			}
-			c.emit(op)
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
 		}
 
 		c.emit(taivm.OpSetIndex)
@@ -801,15 +793,8 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			return err
 		}
 
-		if tok == token.AND_NOT_ASSIGN {
-			c.emit(taivm.OpBitNot)
-			c.emit(taivm.OpBitAnd)
-		} else {
-			op, ok := c.tokenToOp(tok)
-			if !ok {
-				return fmt.Errorf("unknown assignment operator: %s", tok)
-			}
-			c.emit(op)
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
 		}
 
 		c.loadConst(selExpr.Sel.Name)
@@ -825,15 +810,8 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			return err
 		}
 
-		if tok == token.AND_NOT_ASSIGN {
-			c.emit(taivm.OpBitNot)
-			c.emit(taivm.OpBitAnd)
-		} else {
-			op, ok := c.tokenToOp(tok)
-			if !ok {
-				return fmt.Errorf("unknown assignment operator: %s", tok)
-			}
-			c.emit(op)
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
 		}
 
 		c.emit(taivm.OpSetVar.With(idx))
@@ -841,11 +819,6 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 	}
 
 	return fmt.Errorf("compound assignment to %T not supported", lhs)
-}
-
-func (c *compiler) emitOpDup2Check() bool {
-	// Utility for OpDup2 safety if we were tracking stack depth, currently just placeholder or returns true
-	return true
 }
 
 func (c *compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
@@ -894,17 +867,18 @@ func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 		return err
 	}
 
-	jumpEnd := c.emitJump(taivm.OpJump)
-
-	c.patchJump(jumpElse, len(c.code))
-
 	if stmt.Else != nil {
+		jumpEnd := c.emitJump(taivm.OpJump)
+		c.patchJump(jumpElse, len(c.code))
+
 		if err := c.compileStmt(stmt.Else); err != nil {
 			return err
 		}
+		c.patchJump(jumpEnd, len(c.code))
+	} else {
+		c.patchJump(jumpElse, len(c.code))
 	}
 
-	c.patchJump(jumpEnd, len(c.code))
 	return nil
 }
 
