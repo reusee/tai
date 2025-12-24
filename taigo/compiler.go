@@ -109,10 +109,10 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 		return c.compileFuncDecl(d)
 
 	case *ast.GenDecl:
-		if d.Tok == token.VAR {
+		if d.Tok == token.VAR || d.Tok == token.CONST {
 			return c.compileGenDecl(d)
 		}
-		// TODO const, type
+		// TODO type
 
 	default:
 		return fmt.Errorf("unknown declaration type: %T", decl)
@@ -207,6 +207,9 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 
 	case *ast.Ellipsis:
 		return fmt.Errorf("ellipsis expression not supported outside call")
+
+	case *ast.ArrayType, *ast.StructType, *ast.FuncType, *ast.InterfaceType, *ast.MapType, *ast.ChanType:
+		return fmt.Errorf("type expression %T not supported as value", expr)
 
 	case *ast.BadExpr:
 		return fmt.Errorf("bad expression")
@@ -347,6 +350,9 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 		if err := c.compileExpr(expr.X); err != nil {
 			return err
 		}
+
+	case token.AND:
+		return fmt.Errorf("address-of operator & not supported")
 
 	default:
 		if err := c.compileExpr(expr.X); err != nil {
@@ -816,8 +822,8 @@ func (c *compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 
 func (c *compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
 	decl, ok := stmt.Decl.(*ast.GenDecl)
-	if !ok || decl.Tok != token.VAR {
-		return fmt.Errorf("only var decls supported in function body")
+	if !ok || (decl.Tok != token.VAR && decl.Tok != token.CONST) {
+		return fmt.Errorf("only var/const decls supported in function body")
 	}
 	return c.compileGenDecl(decl)
 }
