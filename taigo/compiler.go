@@ -1266,6 +1266,9 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 			} else {
 				// var a = 1
 				// var a, b = 1, 2
+				if len(s.Values) > 1 && len(s.Values) != len(s.Names) {
+					return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(s.Values))
+				}
 				for i, name := range s.Names {
 					if i < len(s.Values) {
 						if err := c.compileExpr(s.Values[i]); err != nil {

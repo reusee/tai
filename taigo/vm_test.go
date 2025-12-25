@@ -1027,7 +1027,12 @@ func TestCoverageCompilerErrors(t *testing.T) {
 	}{
 		{
 			name:    "multi_assign_count",
-			src:     `package main; func main() { var a, b = 1 }`,
+			src:     `package main; func main() { var a, b = 1, 2, 3 }`,
+			wantErr: "assignment count mismatch",
+		},
+		{
+			name:    "assign_stmt_count_mismatch",
+			src:     `package main; func main() { var a, b any; a, b = 1, 2, 3 }`,
 			wantErr: "assignment count mismatch",
 		},
 		{
@@ -1084,4 +1089,18 @@ func TestCoverageCompilerErrors(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestCoverageVarDecl(t *testing.T) {
+	// Cover var decl with no values (init to nil)
+	src := `
+		package main
+		var a, b any
+		func init() {
+			if a != nil || b != nil {
+				panic("expected nil")
+			}
+		}
+	`
+	runVM(t, src)
 }
