@@ -362,3 +362,307 @@ func TestVMLogicShortCircuit(t *testing.T) {
 	`)
 	checkInt(t, vm, "cnt", 0)
 }
+
+func TestVMExtendedOps(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var resAndNot = 3 &^ 1 // 11 &^ 01 = 10 (2)
+		var resLsh = 1 << 2    // 4
+		var resRsh = 8 >> 1    // 4
+		var resBitNot = ^1     // -2 (assuming 64-bit int logic in taivm)
+
+		var inc = 0
+		var dec = 10
+		func init() {
+			inc++
+			dec--
+		}
+	`)
+	checkInt(t, vm, "resAndNot", 2)
+	checkInt(t, vm, "resLsh", 4)
+	checkInt(t, vm, "resRsh", 4)
+	checkInt(t, vm, "resBitNot", ^int64(1))
+	checkInt(t, vm, "inc", 1)
+	checkInt(t, vm, "dec", 9)
+}
+
+func TestVMLoops(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		
+		var sum = 0
+		func init() {
+			for i := 0; i < 5; i++ {
+				sum += i
+			}
+		}
+
+		var breakVal = 0
+		func init() {
+			for i := 0; i < 10; i++ {
+				breakVal = i
+				if i == 5 {
+					break
+				}
+			}
+		}
+
+		var continueSum = 0
+		func init() {
+			for i := 0; i < 5; i++ {
+				if i == 2 {
+					continue
+				}
+				continueSum += i
+			}
+		}
+
+		var switchMulti = 0
+		func init() {
+			var x = 2
+			switch x {
+			case 1, 2, 3:
+				switchMulti = 1
+			default:
+				switchMulti = 2
+			}
+		}
+	`)
+	checkInt(t, vm, "sum", 10)
+	checkInt(t, vm, "breakVal", 5)
+	// 0 + 1 + 3 + 4 = 8
+	checkInt(t, vm, "continueSum", 8)
+	checkInt(t, vm, "switchMulti", 1)
+}
+
+func TestVMCompositeAndSlice(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		var sLit = []int{1, 2, 3}
+		
+		var sMake = make("[]int", 3) // [0, 0, 0]
+		
+		var copied = 0
+		func init() {
+			// sMake is [0,0,0], sLit is [1,2,3]
+			// copy(dst, src)
+			copy(sMake, sLit)
+			copied = sMake[1]
+		}
+		
+		var sFull = sLit[:]
+		var sHead = sLit[:2]
+		var sTail = sLit[1:]
+	`)
+
+	val, _ := vm.Get("sLit")
+	l := val.(*taivm.List)
+	if len(l.Elements) != 3 {
+		t.Fatalf("expected slice len 3, got %d", len(l.Elements))
+	}
+
+	checkInt(t, vm, "copied", 2)
+
+	valFull, _ := vm.Get("sFull")
+	if len(valFull.(*taivm.List).Elements) != 3 {
+		t.Fatal("sFull length mismatch")
+	}
+
+	valHead, _ := vm.Get("sHead")
+	if len(valHead.(*taivm.List).Elements) != 2 {
+		t.Fatal("sHead length mismatch")
+	}
+
+	valTail, _ := vm.Get("sTail")
+	if len(valTail.(*taivm.List).Elements) != 2 {
+		t.Fatal("sTail length mismatch")
+	}
+}
+
+func TestVMConversionsAndComplex(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		
+		var c = complex(3, 4)
+		var r = real(c)
+		var i = imag(c)
+
+		var iVal = int(1.9)
+		var fVal = float64(10)
+		var bVal1 = bool(1)
+		var bVal2 = bool(0)
+		var sVal = string(123)
+		var sVal2 = string("hello")
+	`)
+
+	// We can't easily check complex directly with helpers, mostly ensuring it compiled and ran
+	checkInt(t, vm, "iVal", 1) // int conversion truncates
+	checkString(t, vm, "sVal", "123")
+	checkString(t, vm, "sVal2", "hello")
+	checkBool(t, vm, "bVal1", true)
+	checkBool(t, vm, "bVal2", false)
+
+	// Check float types manually
+	if f, ok := vm.Get("fVal"); !ok || f.(float64) != 10.0 {
+		t.Errorf("expected float 10.0, got %v", f)
+	}
+	if r, ok := vm.Get("r"); !ok || r.(float64) != 3.0 {
+		t.Errorf("expected real 3.0, got %v", r)
+	}
+	if i, ok := vm.Get("i"); !ok || i.(float64) != 4.0 {
+		t.Errorf("expected imag 4.0, got %v", i)
+	}
+}
+
+func TestVMMiscFeatures(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		var ch = 'a'
+		var ptr *int // *int just string in types, but usage expression:
+		var x = 10
+		var y = 0
+		var z = 0
+
+		var mainRun = false
+		func main() {
+			y = *x      // pointer deref
+			z = x.(int) // type assertion
+			mainRun = true
+		}
+	`)
+
+	checkInt(t, vm, "ch", 'a')
+	checkInt(t, vm, "y", 10)
+	checkInt(t, vm, "z", 10)
+	checkBool(t, vm, "mainRun", true)
+}
+
+func TestVMVariadicCallSpread(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func sum(args ...any) {
+			var t = 0
+			for v := range args {
+				t += v
+			}
+			return t
+		}
+		var s = []int{1, 2, 3}
+		var res = sum(s...)
+	`)
+	checkInt(t, vm, "res", 6)
+}
+
+func TestVMCompileErrors(t *testing.T) {
+	badSources := []string{
+		"package main; func f() { var ch chan int; ch <- 1 }",
+		"package main; func f() { var i any; switch i.(type) {} }",
+		"package main; func f() { type T int }",
+		"package main; func f() { fallthrough }",
+		"package main; func f() { goto L; L: }",
+	}
+
+	for _, src := range badSources {
+		_, err := NewVM("bad", strings.NewReader(src))
+		if err == nil {
+			t.Errorf("expected compilation error for source: %s", src)
+		}
+	}
+}
+
+func TestVMRuntimeImportErrors(t *testing.T) {
+	vm, err := NewVM("main", strings.NewReader(`
+		package main
+		import "fmt"
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil {
+			if strings.Contains(err.Error(), "import not implemented") {
+				return false // Expected error
+			}
+			t.Fatalf("unexpected error: %v", err)
+		}
+		return true
+	})
+}
+
+func TestVMNegativeCases(t *testing.T) {
+	// Test Compilation Errors
+	badSources := []string{
+		"package main; func f() { go f() }",
+		"package main; func f() { defer f() }",
+		"package main; func f() { select {} }",
+	}
+
+	for _, src := range badSources {
+		_, err := NewVM("bad", strings.NewReader(src))
+		if err == nil {
+			t.Errorf("expected compilation error for source: %s", src)
+		}
+	}
+
+	// Test Runtime Errors (Panic, etc)
+	vm, err := NewVM("chk", strings.NewReader(`
+		package main
+		func doPanic() {
+			panic("oops")
+		}
+		func doBadMake() {
+			make("chan int")
+		}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Call Panic
+	panicFuncVal, _ := vm.Get("doPanic")
+	panicFunc := panicFuncVal.(*taivm.Closure)
+	vm.CurrentFun = panicFunc.Fun
+	vm.Scope = panicFunc.Env
+	vm.IP = 0
+
+	panicked := false
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil && strings.Contains(err.Error(), "oops") {
+			panicked = true
+			return false // stop vm
+		}
+		return true
+	})
+	if !panicked {
+		t.Error("expected panic to yield error")
+	}
+
+	// Call Bad Make
+	makeFuncVal, _ := vm.Get("doBadMake")
+	makeFunc := makeFuncVal.(*taivm.Closure)
+	vm.CurrentFun = makeFunc.Fun
+	vm.Scope = makeFunc.Env
+	vm.IP = 0
+
+	makeFailed := false
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil && strings.Contains(err.Error(), "channels not supported") {
+			makeFailed = true
+			return false
+		}
+		return true
+	})
+	if !makeFailed {
+		t.Error("expected make(chan) to fail")
+	}
+}
+
+func TestVMCharVarInvalidSyntax(t *testing.T) {
+	runVM(t, `
+		package main
+		var ch = 'a'
+	`)
+}

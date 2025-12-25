@@ -365,11 +365,15 @@ func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 		c.loadConst(v)
 
 	case token.CHAR:
-		v, _, _, err := strconv.UnquoteChar(expr.Value, '\'')
+		v, err := strconv.Unquote(expr.Value)
 		if err != nil {
 			return err
 		}
-		c.loadConst(int64(v))
+		runes := []rune(v)
+		if len(runes) != 1 {
+			return fmt.Errorf("invalid char literal: %s", expr.Value)
+		}
+		c.loadConst(int64(runes[0]))
 
 	default:
 		return fmt.Errorf("unknown basic lit kind: %v", expr.Kind)

@@ -1,3 +1,3 @@
 package taigo
 
-//TODO more tests
+//TODO refine tests to reach 100% code coverage
