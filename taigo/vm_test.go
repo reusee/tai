@@ -1,6 +1,7 @@
 package taigo
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1313,4 +1314,44 @@ func TestCoverage2(t *testing.T) {
 		}
 	`
 	runVM(t, src)
+}
+
+func TestVMImport(t *testing.T) {
+	opts := &Options{
+		Modules: map[string]any{
+			"fmt": map[string]any{
+				"Sprint": taivm.NativeFunc{
+					Name: "Sprint",
+					Func: func(vm *taivm.VM, args []any) (any, error) {
+						return fmt.Sprint(args...), nil
+					},
+				},
+			},
+		},
+	}
+	src := `
+		package main
+		import "fmt"
+		var s = fmt.Sprint("hello", 42)
+	`
+	vm, err := NewVM("main", strings.NewReader(src), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		return true
+	})
+	checkString(t, vm, "s", "hello42")
+}
+
+func TestVMMethods(t *testing.T) {
+	src := `
+		package main
+		type S struct { val int }
+		func (s S) Get() { return s.val }
+		var obj = S{val: 10}
+		var v = S.Get(obj)
+	`
+	vm := runVM(t, src)
+	checkInt(t, vm, "v", 10)
 }

@@ -165,7 +165,24 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
 
-	nameIdx := c.addConst(decl.Name.Name)
+	name := decl.Name.Name
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		recv := decl.Recv.List[0]
+		var typeName string
+		switch t := recv.Type.(type) {
+		case *ast.Ident:
+			typeName = t.Name
+		case *ast.StarExpr:
+			if id, ok := t.X.(*ast.Ident); ok {
+				typeName = id.Name
+			}
+		}
+		if typeName != "" {
+			name = typeName + "." + name
+		}
+	}
+
+	nameIdx := c.addConst(name)
 	c.emit(taivm.OpDefVar.With(nameIdx))
 
 	return nil
@@ -1285,6 +1302,7 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 			}
 			idx := c.addConst(path)
 			c.emit(taivm.OpImport.With(idx))
+			c.emit(taivm.OpPop) // OpImport pushes nil to stack
 
 		case *ast.ValueSpec:
 			if len(s.Values) == 1 && len(s.Names) > 1 {
@@ -1437,8 +1455,46 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 
 	case *ast.FuncType:
-		//TODO collect param and return types, determine variadic
-		return reflect.FuncOf(nil, nil, false), nil
+		var params []reflect.Type
+		if e.Params != nil {
+			for _, field := range e.Params.List {
+				t, err := c.resolveType(field.Type)
+				if err != nil {
+					return nil, err
+				}
+				n := len(field.Names)
+				if n == 0 {
+					n = 1
+				}
+				for range n {
+					params = append(params, t)
+				}
+			}
+		}
+		var results []reflect.Type
+		if e.Results != nil {
+			for _, field := range e.Results.List {
+				t, err := c.resolveType(field.Type)
+				if err != nil {
+					return nil, err
+				}
+				n := len(field.Names)
+				if n == 0 {
+					n = 1
+				}
+				for range n {
+					results = append(results, t)
+				}
+			}
+		}
+		variadic := false
+		if e.Params != nil && len(e.Params.List) > 0 {
+			last := e.Params.List[len(e.Params.List)-1]
+			if _, ok := last.Type.(*ast.Ellipsis); ok {
+				variadic = true
+			}
+		}
+		return reflect.FuncOf(params, results, variadic), nil
 
 	case *ast.MapType:
 		kt, err := c.resolveType(e.Key)

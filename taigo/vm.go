@@ -24,5 +24,11 @@ func NewVM(name string, source io.Reader, options *Options) (*taivm.VM, error) {
 
 	registerBuiltins(vm, options)
 
+	if options != nil && options.Modules != nil {
+		for path, mod := range options.Modules {
+			vm.Def(path, mod)
+		}
+	}
+
 	return vm, nil
 }
