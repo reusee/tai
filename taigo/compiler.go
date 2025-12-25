@@ -804,6 +804,10 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 		// OpUnpack puts 1st element at top, assign forward
 		for i := 0; i < len(stmt.Lhs); i++ {
 			ident := stmt.Lhs[i].(*ast.Ident)
+			if ident.Name == "_" {
+				c.emit(taivm.OpPop) // Discard value
+				continue
+			}
 			idx := c.addConst(ident.Name)
 			if stmt.Tok == token.DEFINE {
 				c.emit(taivm.OpDefVar.With(idx))
@@ -822,6 +826,10 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 		// Stack: 1, 2 (Top). Assign reverse
 		for i := len(stmt.Lhs) - 1; i >= 0; i-- {
 			ident := stmt.Lhs[i].(*ast.Ident)
+			if ident.Name == "_" {
+				c.emit(taivm.OpPop) // Discard value
+				continue
+			}
 			idx := c.addConst(ident.Name)
 			if stmt.Tok == token.DEFINE {
 				c.emit(taivm.OpDefVar.With(idx))
@@ -872,6 +880,10 @@ func (c *compiler) compileSingleAssign(lhs, rhs ast.Expr, tok token.Token) error
 	}
 
 	if ident, ok := lhs.(*ast.Ident); ok {
+		if ident.Name == "_" {
+			c.emit(taivm.OpPop) // Discard result of rhs
+			return nil
+		}
 		idx := c.addConst(ident.Name)
 		if tok == token.DEFINE {
 			c.emit(taivm.OpDefVar.With(idx))
@@ -1251,25 +1263,36 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 
 		case *ast.ValueSpec:
 			if len(s.Values) == 1 && len(s.Names) > 1 {
-				// var a, b = f()
 				if err := c.compileExpr(s.Values[0]); err != nil {
 					return err
 				}
 				c.emit(taivm.OpUnpack.With(len(s.Names)))
-				// OpUnpack puts 1st element at top
 				for i := 0; i < len(s.Names); i++ {
 					name := s.Names[i]
+					if name.Name == "_" {
+						c.emit(taivm.OpPop) // Discard value
+						continue
+					}
 					idx := c.addConst(name.Name)
 					c.emit(taivm.OpDefVar.With(idx))
 				}
 
 			} else {
-				// var a = 1
-				// var a, b = 1, 2
-				if len(s.Values) > 1 && len(s.Values) != len(s.Names) {
+				if len(s.Values) > 0 && len(s.Values) != len(s.Names) {
 					return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(s.Values))
 				}
 				for i, name := range s.Names {
+					if name.Name == "_" {
+						if i < len(s.Values) {
+							if err := c.compileExpr(s.Values[i]); err != nil {
+								return err
+							}
+						} else {
+							c.loadConst(nil)
+						}
+						c.emit(taivm.OpPop) // Discard value
+						continue
+					}
 					if i < len(s.Values) {
 						if err := c.compileExpr(s.Values[i]); err != nil {
 							return err
@@ -1309,6 +1332,10 @@ func (c *compiler) typeToString(expr ast.Expr) (string, error) {
 			return "", err
 		}
 		return "[]" + elt, nil
+	case *ast.StructType:
+		return "struct{}", nil
+	case *ast.FuncType:
+		return "func", nil
 	case *ast.MapType:
 		key, err := c.typeToString(e.Key)
 		if err != nil {

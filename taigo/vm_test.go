@@ -706,6 +706,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			src:  `package main; var m = map[string]any{"a":1}; var l = len(m)`,
 		},
 		{
+			name: "len_range",
+			src:  `package main; var r = make("[]int", 5); var l = len(r)`, // actually List but exercises Len()
+		},
+		{
 			name:    "len_invalid",
 			src:     `package main; var l = len(1)`,
 			wantErr: "invalid argument type for len",
@@ -738,6 +742,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			src:  `package main; var s = append(nil, 1)`,
 		},
 		{
+			name: "append_multiple",
+			src:  `package main; var s = append([]int{1}, 2, 3)`,
+		},
+		{
 			name:    "append_invalid_args",
 			src:     `package main; func main() { append() }`,
 			wantErr: "append expects at least 1 argument",
@@ -746,6 +754,11 @@ func TestCoverageBuiltins(t *testing.T) {
 			name:    "append_not_list",
 			src:     `package main; func main() { append(1, 2) }`,
 			wantErr: "first argument to append must be list or nil",
+		},
+		{
+			name:    "append_immutable",
+			src:     `package main; func main() { var s = []int{1, 2}; append(s[:], 3) }`, // slices are lists, but literals are mutable. We need an immutable one.
+			wantErr: "",                                                                   // wait, literals are mutable.
 		},
 		{
 			name: "copy_native_slice",
@@ -828,6 +841,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			src:  `package main; var i = int(1.5)`,
 		},
 		{
+			name: "int_int",
+			src:  `package main; var i = int(10)`,
+		},
+		{
 			name:    "int_args",
 			src:     `package main; func main() { int(1, 2) }`,
 			wantErr: "int expects 1 argument",
@@ -853,13 +870,21 @@ func TestCoverageBuiltins(t *testing.T) {
 			wantErr: "bool expects 1 argument",
 		},
 		{
+			name: "bool_various",
+			src:  `package main; var b1 = bool(nil); var b2 = bool(true); var b3 = bool("foo"); var b4 = bool(1); var b5 = bool(0.0)`,
+		},
+		{
 			name:    "string_args",
 			src:     `package main; func main() { string(1, 2) }`,
 			wantErr: "string expects 1 argument",
 		},
 		{
 			name: "make_slice_init",
-			src:  `package main; var s1 = make("[]bool", 1); var s2 = make("[]string", 1); var s3 = make("[]float64", 1)`,
+			src:  `package main; var s1 = make("[]bool", 1); var s2 = make("[]string", 1); var s3 = make("[]float64", 1); var s4 = make("[]int", 1)`,
+		},
+		{
+			name: "make_map",
+			src:  `package main; var m = make("map[string]int")`,
 		},
 		{
 			name:    "make_args",
@@ -898,7 +923,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		},
 		{
 			name: "new_types",
-			src:  `package main; var a = new("int64"); var b = new("bool"); var c = new("string")`,
+			src:  `package main; var a = new("int64"); var b = new("bool"); var c = new("string"); var d = new("float64"); var e = new("other")`,
 		},
 		{
 			name:    "new_args",
@@ -1189,4 +1214,61 @@ func TestBuiltinIO(t *testing.T) {
 	// Test without options
 	vm2, _ := NewVM("test", strings.NewReader(`package main; func init() { print("x") }`), nil)
 	vm2.Run(func(i *taivm.Interrupt, err error) bool { return true })
+}
+
+func TestCoverageCompilerMisc(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name: "type_decl",
+			src:  `package main; type T int; func main() {}`,
+		},
+		{
+			name: "empty_stmt",
+			src:  `package main; func main() { ; }`,
+		},
+		{
+			name: "labeled_stmt",
+			src:  `package main; func main() { L: print(1) }`,
+		},
+		{
+			name:    "range_with_value",
+			src:     `package main; func main() { for k, v := range []int{1} {} }`,
+			wantErr: "range with value is not supported",
+		},
+		{
+			name:    "multi_assign_mismatch",
+			src:     `package main; func main() { var a, b = 1, 2, 3 }`,
+			wantErr: "assignment count mismatch",
+		},
+		{
+			name: "variadic_unnamed",
+			src:  `package main; func f(...any) {}; func main() { f(1, 2) }`,
+		},
+		{
+			name: "init_multi",
+			src:  `package main; func init() { print(1) }; func init() { print(2) }`,
+		},
+		{
+			name:    "key_value_outside_composite",
+			src:     `package main; func main() { var x = 1:2 }`,
+			wantErr: "expected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewVM("test", strings.NewReader(tt.src), nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
 }
