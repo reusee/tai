@@ -608,7 +608,7 @@ func TestVMNegativeCases(t *testing.T) {
 	}
 
 	// Test Runtime Errors (Panic, etc)
-	vm, err := NewVM("chk", strings.NewReader(`
+	vm := runVM(t, `
 		package main
 		func doPanic() {
 			panic("oops")
@@ -616,13 +616,13 @@ func TestVMNegativeCases(t *testing.T) {
 		func doBadMake() {
 			make("chan int")
 		}
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	`)
 
 	// Call Panic
-	panicFuncVal, _ := vm.Get("doPanic")
+	panicFuncVal, ok := vm.Get("doPanic")
+	if !ok {
+		t.Fatal("doPanic not found")
+	}
 	panicFunc := panicFuncVal.(*taivm.Closure)
 	vm.CurrentFun = panicFunc.Fun
 	vm.Scope = panicFunc.Env
