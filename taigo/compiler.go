@@ -45,7 +45,10 @@ func (c *compiler) emitJump(op taivm.OpCode) int {
 }
 
 func (c *compiler) patchJump(idx int, target int) {
-	offset := target - idx
+	// The immediate offset in OpJump is added to IP *after* IP is incremented.
+	// target = (idx + 1) + offset
+	// offset = target - idx - 1
+	offset := target - idx - 1
 	inst := c.code[idx]
 	// Preserve opcode, set offset in upper 24 bits
 	op := inst & 0xff
@@ -391,6 +394,13 @@ func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 }
 
 func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
+	if expr.Op == token.LAND {
+		return c.compileLogicAnd(expr)
+	}
+	if expr.Op == token.LOR {
+		return c.compileLogicOr(expr)
+	}
+
 	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
@@ -399,6 +409,51 @@ func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 	}
 
 	return c.emitBinaryOp(expr.Op)
+}
+
+func (c *compiler) compileLogicAnd(expr *ast.BinaryExpr) error {
+	// a && b
+	if err := c.compileExpr(expr.X); err != nil {
+		return err
+	}
+	// Stack: [a]
+	c.emit(taivm.OpDup)
+	// Stack: [a, a]
+	jumpEnd := c.emitJump(taivm.OpJumpFalse)
+
+	// Fallthrough: a is true. Result is result of b.
+	c.emit(taivm.OpPop) // Pop a
+	if err := c.compileExpr(expr.Y); err != nil {
+		return err
+	}
+
+	c.patchJump(jumpEnd, len(c.code))
+	return nil
+}
+
+func (c *compiler) compileLogicOr(expr *ast.BinaryExpr) error {
+	// a || b
+	if err := c.compileExpr(expr.X); err != nil {
+		return err
+	}
+	// Stack: [a]
+	c.emit(taivm.OpDup)
+	// Stack: [a, a]
+	// If a is false, jump to eval b
+	jumpEvalB := c.emitJump(taivm.OpJumpFalse)
+
+	// Fallthrough: a is true. Result is a.
+	jumpEnd := c.emitJump(taivm.OpJump)
+
+	// Eval b
+	c.patchJump(jumpEvalB, len(c.code))
+	c.emit(taivm.OpPop) // Pop a (which was false)
+	if err := c.compileExpr(expr.Y); err != nil {
+		return err
+	}
+
+	c.patchJump(jumpEnd, len(c.code))
+	return nil
 }
 
 func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {

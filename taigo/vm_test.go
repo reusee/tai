@@ -48,6 +48,18 @@ func TestVM(t *testing.T) {
 		}
 	}
 
+	checkBool := func(t *testing.T, vm *taivm.VM, name string, expected bool) {
+		val, ok := vm.Get(name)
+		if !ok {
+			t.Helper()
+			t.Fatalf("variable %s not found", name)
+		}
+		if b, ok := val.(bool); !ok || b != expected {
+			t.Helper()
+			t.Fatalf("variable %s: expected %v, got %v", name, expected, val)
+		}
+	}
+
 	t.Run("basic literals", func(t *testing.T) {
 		vm := run(t, `
 			package main
@@ -300,6 +312,59 @@ func TestVM(t *testing.T) {
 			var res = sum(1, 2, 3, 4)
 		`)
 		checkInt(t, vm, "res", 10)
+	})
+
+	t.Run("if-else jump offset", func(t *testing.T) {
+		// This tests the off-by-one bug in patchJump.
+		// If the jump lands at target+1, it skips 'x = 5' and executes what follows.
+		vm := run(t, `
+			package main
+			var x = 0
+			func init() {
+				if false {
+					x = 1
+				} else {
+					x = 5
+				}
+			}
+		`)
+		checkInt(t, vm, "x", 5)
+	})
+
+	t.Run("logic operators", func(t *testing.T) {
+		vm := run(t, `
+			package main
+			var t1 = true && true
+			var f1 = true && false
+			var f2 = false && true
+			var t2 = true || false
+			var t3 = false || true
+			var f3 = false || false
+		`)
+		checkBool(t, vm, "t1", true)
+		checkBool(t, vm, "f1", false)
+		checkBool(t, vm, "f2", false)
+		checkBool(t, vm, "t2", true)
+		checkBool(t, vm, "t3", true)
+		checkBool(t, vm, "f3", false)
+	})
+
+	t.Run("logic short circuit", func(t *testing.T) {
+		vm := run(t, `
+			package main
+			var cnt = 0
+			func inc() {
+				cnt += 1
+				return true
+			}
+			func init() {
+				// Should not call inc
+				var x = false && inc()
+				// Should not call inc
+				var y = true || inc()
+			}
+		`)
+		checkInt(t, vm, "cnt", 0)
 	})
 }
 
