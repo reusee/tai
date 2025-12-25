@@ -1265,3 +1265,52 @@ func TestCoverageCompilerMisc(t *testing.T) {
 		})
 	}
 }
+
+func TestCoverage2(t *testing.T) {
+	src := `
+		package main
+		
+		var _, x = 1, 2
+		var a, _ = 3, 4
+		var _ = 5
+		
+		func init() {
+			var ch = 'A'
+			var pos = +1
+			
+			for range []int{1} {
+				{
+					break
+				}
+			}
+			
+			for range []int{1} {}
+			
+			var (
+				_ [0]int
+				_ <-chan int
+				_ chan<- int
+				_ struct {
+					A, B int
+				}
+			)
+			
+			var c64 complex64 = complex(1, 2)
+			var r = real(c64)
+			var i = imag(c64)
+			var r2 = real(1.5)
+			var i2 = imag(1.5)
+			
+			var _ = make([]bool, 1)
+			var _ = make([]string, 1)
+			var _ = make([]float64, 1)
+			var _ = make([]int, 1)
+			var _ = make(map[string]int)
+			
+			var s1 = []int{1}
+			var s2 = []int{2}
+			copy(s1, s2)
+		}
+	`
+	runVM(t, src)
+}

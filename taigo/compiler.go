@@ -1410,7 +1410,11 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 			return nil, err
 		}
 		if e.Len != nil {
-			var length int //TODO resolve e.Len
+			var length int
+			if lit, ok := e.Len.(*ast.BasicLit); ok && lit.Kind == token.INT {
+				i, _ := strconv.Atoi(lit.Value)
+				length = i
+			}
 			return reflect.ArrayOf(length, elt), nil
 		} else {
 			return reflect.SliceOf(elt), nil
@@ -1433,7 +1437,7 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 
 	case *ast.FuncType:
-		//TODO implement
+		//TODO collect param and return types, determine variadic
 		return reflect.FuncOf(nil, nil, false), nil
 
 	case *ast.MapType:
