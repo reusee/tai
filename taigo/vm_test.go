@@ -690,6 +690,22 @@ func TestCoverageBuiltins(t *testing.T) {
 			src:  `package main; var l = len("abc")`,
 		},
 		{
+			name: "len_nil",
+			src:  `package main; var l = len(nil)`,
+		},
+		{
+			name: "len_native_slice",
+			src:  `package main; func f(s []any) { return len(s) }; var l = f([]int{1, 2})`,
+		},
+		{
+			name: "len_map_any",
+			src:  `package main; var m = map[any]any{1:1}; var l = len(m)`,
+		},
+		{
+			name: "len_map_string",
+			src:  `package main; var m = map[string]any{"a":1}; var l = len(m)`,
+		},
+		{
 			name:    "len_invalid",
 			src:     `package main; var l = len(1)`,
 			wantErr: "invalid argument type for len",
@@ -698,6 +714,14 @@ func TestCoverageBuiltins(t *testing.T) {
 			name:    "len_args",
 			src:     `package main; var l = len()`,
 			wantErr: "len expects 1 argument",
+		},
+		{
+			name: "cap_nil",
+			src:  `package main; var c = cap(nil)`,
+		},
+		{
+			name: "cap_native_slice",
+			src:  `package main; func f(s []any) { return cap(s) }; var c = f([]int{1, 2})`,
 		},
 		{
 			name:    "cap_invalid",
@@ -710,6 +734,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			wantErr: "cap expects 1 argument",
 		},
 		{
+			name: "append_nil",
+			src:  `package main; var s = append(nil, 1)`,
+		},
+		{
 			name:    "append_invalid_args",
 			src:     `package main; func main() { append() }`,
 			wantErr: "append expects at least 1 argument",
@@ -718,6 +746,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			name:    "append_not_list",
 			src:     `package main; func main() { append(1, 2) }`,
 			wantErr: "first argument to append must be list or nil",
+		},
+		{
+			name: "copy_native_slice",
+			src:  `package main; var a = []int{1}; var b = []int{2}; var n = copy(a, b)`,
 		},
 		{
 			name:    "copy_args",
@@ -733,6 +765,18 @@ func TestCoverageBuiltins(t *testing.T) {
 			name:    "copy_invalid_src",
 			src:     `package main; func main() { copy([]int{42}, 1) }`,
 			wantErr: "copy expects list or slice as second argument",
+		},
+		{
+			name: "delete_nil",
+			src:  `package main; func main() { delete(nil, "k") }`,
+		},
+		{
+			name: "delete_map_any",
+			src:  `package main; func main() { var m = map[any]any{1:2}; delete(m, 1) }`,
+		},
+		{
+			name: "delete_map_string",
+			src:  `package main; func main() { var m = map[string]int{"a":1}; delete(m, "a") }`,
 		},
 		{
 			name:    "delete_args",
@@ -780,6 +824,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			wantErr: "imag expects numeric argument",
 		},
 		{
+			name: "int_float",
+			src:  `package main; var i = int(1.5)`,
+		},
+		{
 			name:    "int_args",
 			src:     `package main; func main() { int(1, 2) }`,
 			wantErr: "int expects 1 argument",
@@ -808,6 +856,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			name:    "string_args",
 			src:     `package main; func main() { string(1, 2) }`,
 			wantErr: "string expects 1 argument",
+		},
+		{
+			name: "make_slice_init",
+			src:  `package main; var s1 = make("[]bool", 1); var s2 = make("[]string", 1); var s3 = make("[]float64", 1)`,
 		},
 		{
 			name:    "make_args",
@@ -845,6 +897,10 @@ func TestCoverageBuiltins(t *testing.T) {
 			wantErr: "cannot make type unknown",
 		},
 		{
+			name: "new_types",
+			src:  `package main; var a = new("int64"); var b = new("bool"); var c = new("string")`,
+		},
+		{
 			name:    "new_args",
 			src:     `package main; func main() { new() }`,
 			wantErr: "new expects type argument",
@@ -877,7 +933,6 @@ func TestCoverageBuiltins(t *testing.T) {
 				Stderr: t.Output(),
 			})
 			if err != nil {
-				// Compilation error not expected for runtime checks unless specified
 				t.Fatalf("unexpected compilation error: %v", err)
 			}
 			err = nil
@@ -1109,4 +1164,29 @@ func TestCoverageVarDecl(t *testing.T) {
 		}
 	`
 	runVM(t, src)
+}
+
+func TestBuiltinIO(t *testing.T) {
+	var buf strings.Builder
+	opts := &Options{
+		Stdout: &buf,
+	}
+	src := `package main; func init() { print("a", "b"); println("c", "d") }`
+	vm, err := NewVM("test", strings.NewReader(src), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		return true
+	})
+	got := buf.String()
+	// print("a", "b") -> "a b"
+	// println("c", "d") -> " c d\n" because print didn't add newline
+	if !strings.Contains(got, "a bc d\n") {
+		t.Errorf("expected 'a bc d\n', got %q", got)
+	}
+
+	// Test without options
+	vm2, _ := NewVM("test", strings.NewReader(`package main; func init() { print("x") }`), nil)
+	vm2.Run(func(i *taivm.Interrupt, err error) bool { return true })
 }
