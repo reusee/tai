@@ -16,6 +16,7 @@ type compiler struct {
 	constants  []any
 	loops      []*loopScope
 	scopeDepth int
+	tmpCount   int // counter for internal temporary variables
 }
 
 type loopScope struct {
@@ -94,6 +95,11 @@ func (c *compiler) addConst(val any) int {
 	}
 	c.constants = append(c.constants, val)
 	return len(c.constants) - 1
+}
+
+func (c *compiler) nextTmp() string {
+	c.tmpCount++
+	return fmt.Sprintf("$tmp%d", c.tmpCount)
 }
 
 func (c *compiler) loadConst(val any) {
@@ -831,30 +837,15 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 }
 
 func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
-	for _, lhs := range stmt.Lhs {
-		if _, ok := lhs.(*ast.Ident); !ok {
-			return fmt.Errorf("multi-assignment only supported for variables")
-		}
-	}
-
 	if len(stmt.Rhs) == 1 {
 		// a, b = f()
 		if err := c.compileExpr(stmt.Rhs[0]); err != nil {
 			return err
 		}
 		c.emit(taivm.OpUnpack.With(len(stmt.Lhs)))
-		// OpUnpack puts 1st element at top, assign forward
 		for i := 0; i < len(stmt.Lhs); i++ {
-			ident := stmt.Lhs[i].(*ast.Ident)
-			if ident.Name == "_" {
-				c.emit(taivm.OpPop) // Discard value
-				continue
-			}
-			idx := c.addConst(ident.Name)
-			if stmt.Tok == token.DEFINE {
-				c.emit(taivm.OpDefVar.With(idx))
-			} else {
-				c.emit(taivm.OpSetVar.With(idx))
+			if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok); err != nil {
+				return err
 			}
 		}
 
@@ -865,18 +856,9 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 				return err
 			}
 		}
-		// Stack: 1, 2 (Top). Assign reverse
 		for i := len(stmt.Lhs) - 1; i >= 0; i-- {
-			ident := stmt.Lhs[i].(*ast.Ident)
-			if ident.Name == "_" {
-				c.emit(taivm.OpPop) // Discard value
-				continue
-			}
-			idx := c.addConst(ident.Name)
-			if stmt.Tok == token.DEFINE {
-				c.emit(taivm.OpDefVar.With(idx))
-			} else {
-				c.emit(taivm.OpSetVar.With(idx))
+			if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok); err != nil {
+				return err
 			}
 		}
 
@@ -888,54 +870,10 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 }
 
 func (c *compiler) compileSingleAssign(lhs, rhs ast.Expr, tok token.Token) error {
-	// Index Assignment: a[i] = v
-	if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
-		if err := c.compileExpr(idxExpr.X); err != nil {
-			return err
-		}
-		if err := c.compileExpr(idxExpr.Index); err != nil {
-			return err
-		}
-		if err := c.compileExpr(rhs); err != nil {
-			return err
-		}
-		c.emit(taivm.OpSetIndex)
-		return nil
-	}
-
-	// Selector Assignment: a.f = v
-	if selExpr, ok := lhs.(*ast.SelectorExpr); ok {
-		if err := c.compileExpr(selExpr.X); err != nil {
-			return err
-		}
-		c.loadConst(selExpr.Sel.Name)
-		if err := c.compileExpr(rhs); err != nil {
-			return err
-		}
-		c.emit(taivm.OpSetAttr)
-		return nil
-	}
-
-	// Variable Assignment: x = v
 	if err := c.compileExpr(rhs); err != nil {
 		return err
 	}
-
-	if ident, ok := lhs.(*ast.Ident); ok {
-		if ident.Name == "_" {
-			c.emit(taivm.OpPop) // Discard result of rhs
-			return nil
-		}
-		idx := c.addConst(ident.Name)
-		if tok == token.DEFINE {
-			c.emit(taivm.OpDefVar.With(idx))
-		} else {
-			c.emit(taivm.OpSetVar.With(idx))
-		}
-		return nil
-	}
-
-	return fmt.Errorf("assignment to %T not supported", lhs)
+	return c.compileAssignFromStack(lhs, tok)
 }
 
 func (c *compiler) compileCompoundAssign(lhs, rhs ast.Expr, tok token.Token) error {
@@ -1204,14 +1142,14 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 }
 
 func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
-	if stmt.Value != nil {
-		return fmt.Errorf("range with value is not supported (single variable only)")
-	}
-
 	if err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
+	containerTmp := c.nextTmp()
+	containerIdx := c.addConst(containerTmp)
+	c.emit(taivm.OpDefVar.With(containerIdx))
 
+	c.emit(taivm.OpLoadVar.With(containerIdx))
 	c.emit(taivm.OpGetIter)
 
 	c.emit(taivm.OpEnterScope)
@@ -1225,12 +1163,20 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	loop.isRange = true
 	loop.startPos = len(c.code)
 
-	// NextIter takes jump offset to end as argument
 	nextIterIdx := c.emitJump(taivm.OpNextIter)
 
-	// Assign value to Key (taivm yields element/key)
+	if stmt.Value != nil {
+		c.emit(taivm.OpDup)
+		c.emit(taivm.OpLoadVar.With(containerIdx))
+		c.emit(taivm.OpSwap)
+		c.emit(taivm.OpGetIndex)
+		if err := c.compileAssignFromStack(stmt.Value, stmt.Tok); err != nil {
+			return err
+		}
+	}
+
 	if stmt.Key != nil {
-		if err := c.compileAssignLHS(stmt.Key, stmt.Tok); err != nil {
+		if err := c.compileAssignFromStack(stmt.Key, stmt.Tok); err != nil {
 			return err
 		}
 	} else {
@@ -1243,7 +1189,6 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 
 	c.emitJump(taivm.OpJump.With(loop.startPos - len(c.code) - 1))
 
-	// Patch NextIter to jump here
 	c.patchJump(nextIterIdx, len(c.code))
 	c.leaveLoop()
 
@@ -1272,23 +1217,6 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 		return fmt.Errorf("unsupported branch token: %s", stmt.Tok)
 	}
 	return nil
-}
-
-func (c *compiler) compileAssignLHS(expr ast.Expr, tok token.Token) error {
-	if ident, ok := expr.(*ast.Ident); ok {
-		if ident.Name == "_" {
-			c.emit(taivm.OpPop)
-		} else {
-			idx := c.addConst(ident.Name)
-			if tok == token.DEFINE {
-				c.emit(taivm.OpDefVar.With(idx))
-			} else {
-				c.emit(taivm.OpSetVar.With(idx))
-			}
-		}
-		return nil
-	}
-	return fmt.Errorf("complex assignment in range not supported")
 }
 
 func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
@@ -1534,5 +1462,52 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 
 	default:
 		return nil, fmt.Errorf("unsupported type expression: %T", expr)
+	}
+}
+
+func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
+	switch e := lhs.(type) {
+	case *ast.Ident:
+		if e.Name == "_" {
+			c.emit(taivm.OpPop)
+			return nil
+		}
+		idx := c.addConst(e.Name)
+		if tok == token.DEFINE {
+			c.emit(taivm.OpDefVar.With(idx))
+		} else {
+			c.emit(taivm.OpSetVar.With(idx))
+		}
+		return nil
+
+	case *ast.IndexExpr, *ast.SelectorExpr:
+		// Save value to temp to evaluate LHS components
+		tmp := c.nextTmp()
+		tmpIdx := c.addConst(tmp)
+		c.emit(taivm.OpDefVar.With(tmpIdx))
+		if idxExpr, ok := e.(*ast.IndexExpr); ok {
+			if err := c.compileExpr(idxExpr.X); err != nil {
+				return err
+			}
+			if err := c.compileExpr(idxExpr.Index); err != nil {
+				return err
+			}
+			c.emit(taivm.OpLoadVar.With(tmpIdx))
+			c.emit(taivm.OpSetIndex)
+		} else if selExpr, ok := e.(*ast.SelectorExpr); ok {
+			if err := c.compileExpr(selExpr.X); err != nil {
+				return err
+			}
+			c.loadConst(selExpr.Sel.Name)
+			c.emit(taivm.OpLoadVar.With(tmpIdx))
+			c.emit(taivm.OpSetAttr)
+		}
+		return nil
+
+	case *ast.StarExpr:
+		return c.compileAssignFromStack(e.X, tok)
+
+	default:
+		return fmt.Errorf("assignment to %T not supported", lhs)
 	}
 }

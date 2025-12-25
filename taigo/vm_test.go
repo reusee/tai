@@ -1228,9 +1228,8 @@ func TestCoverageCompilerMisc(t *testing.T) {
 			src:  `package main; func main() { L: print(1) }`,
 		},
 		{
-			name:    "range_with_value",
-			src:     `package main; func main() { for k, v := range []int{1} {} }`,
-			wantErr: "range with value is not supported",
+			name: "range_with_value",
+			src:  `package main; func main() { for k, v := range []int{1} {} }`,
 		},
 		{
 			name:    "multi_assign_mismatch",
