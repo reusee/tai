@@ -333,7 +333,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			}
 			t, ok := args[0].(reflect.Type)
 			if !ok {
-				return nil, fmt.Errorf("make expects reflect.Type as first argument")
+				return nil, fmt.Errorf("make expects reflect.Type as first argument, got %T", args[0])
 			}
 
 			if t.Kind() == reflect.Slice {
@@ -392,19 +392,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if !ok {
 				return nil, fmt.Errorf("new expects reflect.Type")
 			}
-			switch t.Kind() {
-			case reflect.Int, reflect.Int64:
-				return int64(0), nil
-			case reflect.Float64:
-				return 0.0, nil
-			case reflect.String:
-				return "", nil
-			case reflect.Bool:
-				return false, nil
-			case reflect.Struct:
-				return &taivm.Struct{Fields: make(map[string]any)}, nil
-			}
-			return nil, nil
+			return reflect.New(t), nil
 		},
 	})
 

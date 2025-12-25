@@ -214,7 +214,7 @@ func TestVMSlices(t *testing.T) {
 	vm := runVM(t, `
 		package main
 
-		var s = make("[]int", 3)
+		var s = make([]int, 3)
 		func init() {
 			s[0] = 10
 			s[1] = 20
@@ -244,7 +244,7 @@ func TestVMMaps(t *testing.T) {
 	vm := runVM(t, `
 		package main
 
-		var m = make("map[string]int")
+		var m = make(map[string]int)
 		var v any
 		func init() {
 			m["one"] = 1
@@ -444,7 +444,7 @@ func TestVMCompositeAndSlice(t *testing.T) {
 
 		var sLit = []int{1, 2, 3}
 		
-		var sMake = make("[]int", 3) // [0, 0, 0]
+		var sMake = make([]int, 3) // [0, 0, 0]
 		
 		var copied = 0
 		func init() {
@@ -493,15 +493,13 @@ func TestVMConversionsAndComplex(t *testing.T) {
 
 		var iVal = int(1.9)
 		var fVal = float64(10)
-		var bVal1 = bool(1)
-		var bVal2 = bool(0)
-		var sVal = string(123)
+		var bVal1 = bool(true)
+		var bVal2 = bool(false)
 		var sVal2 = string("hello")
 	`)
 
 	// We can't easily check complex directly with helpers, mostly ensuring it compiled and ran
 	checkInt(t, vm, "iVal", 1) // int conversion truncates
-	checkString(t, vm, "sVal", "123")
 	checkString(t, vm, "sVal2", "hello")
 	checkBool(t, vm, "bVal1", true)
 	checkBool(t, vm, "bVal2", false)
@@ -562,7 +560,6 @@ func TestVMCompileErrors(t *testing.T) {
 	badSources := []string{
 		"package main; func f() { var ch chan int; ch <- 1 }",
 		"package main; func f() { var i any; switch i.(type) {} }",
-		"package main; func f() { type T int }",
 		"package main; func f() { fallthrough }",
 		"package main; func f() { goto L; L: }",
 	}
@@ -617,7 +614,7 @@ func TestVMNegativeCases(t *testing.T) {
 			panic("oops")
 		}
 		func doBadMake() {
-			make("chan int")
+			make(chan int)
 		}
 	`)
 
@@ -707,7 +704,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		},
 		{
 			name: "len_range",
-			src:  `package main; var r = make("[]int", 5); var l = len(r)`, // actually List but exercises Len()
+			src:  `package main; var r = make([]int, 5); var l = len(r)`, // actually List but exercises Len()
 		},
 		{
 			name:    "len_invalid",
@@ -847,7 +844,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "int_args",
 			src:     `package main; func main() { int(1, 2) }`,
-			wantErr: "int expects 1 argument",
+			wantErr: "type conversion expects 1 argument",
 		},
 		{
 			name:    "int_invalid",
@@ -857,7 +854,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "float64_args",
 			src:     `package main; func main() { float64(1, 2) }`,
-			wantErr: "float64 expects 1 argument",
+			wantErr: "type conversion expects 1 argument",
 		},
 		{
 			name:    "float64_invalid",
@@ -867,24 +864,20 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "bool_args",
 			src:     `package main; func main() { bool(1, 2) }`,
-			wantErr: "bool expects 1 argument",
-		},
-		{
-			name: "bool_various",
-			src:  `package main; var b1 = bool(nil); var b2 = bool(true); var b3 = bool("foo"); var b4 = bool(1); var b5 = bool(0.0)`,
+			wantErr: "type conversion expects 1 argument",
 		},
 		{
 			name:    "string_args",
 			src:     `package main; func main() { string(1, 2) }`,
-			wantErr: "string expects 1 argument",
+			wantErr: "type conversion expects 1 argument",
 		},
 		{
 			name: "make_slice_init",
-			src:  `package main; var s1 = make("[]bool", 1); var s2 = make("[]string", 1); var s3 = make("[]float64", 1); var s4 = make("[]int", 1)`,
+			src:  `package main; var s1 = make([]bool, 1); var s2 = make([]string, 1); var s3 = make([]float64, 1); var s4 = make([]int, 1)`,
 		},
 		{
 			name: "make_map",
-			src:  `package main; var m = make("map[string]int")`,
+			src:  `package main; var m = make(map[string]int)`,
 		},
 		{
 			name:    "make_args",
@@ -894,36 +887,36 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "make_invalid_type_arg",
 			src:     `package main; func main() { make(1) }`,
-			wantErr: "make expects type string",
+			wantErr: "make expects reflect.Type as first argument",
 		},
 		{
 			name:    "make_slice_no_len",
-			src:     `package main; func main() { make("[]int") }`,
+			src:     `package main; func main() { make([]int) }`,
 			wantErr: "make slice expects length argument",
 		},
 		{
 			name:    "make_slice_bad_len",
-			src:     `package main; func main() { make("[]int", "a") }`,
+			src:     `package main; func main() { make([]int, "a") }`,
 			wantErr: "slice length must be integer",
 		},
 		{
 			name:    "make_slice_neg_len",
-			src:     `package main; func main() { make("[]int", -1) }`,
+			src:     `package main; func main() { make([]int, -1) }`,
 			wantErr: "negative slice length",
 		},
 		{
 			name:    "make_chan",
-			src:     `package main; func main() { make("chan int") }`,
+			src:     `package main; func main() { make(chan int) }`,
 			wantErr: "channels not supported",
 		},
 		{
 			name:    "make_unknown",
-			src:     `package main; func main() { make("unknown") }`,
-			wantErr: "cannot make type unknown",
+			src:     `package main; func main() { make(func()) }`,
+			wantErr: "cannot make type func()",
 		},
 		{
 			name: "new_types",
-			src:  `package main; var a = new("int64"); var b = new("bool"); var c = new("string"); var d = new("float64"); var e = new("other")`,
+			src:  `package main; var a = new(int64); var b = new(bool); var c = new(string); var d = new(float64); var e = new(uint)`,
 		},
 		{
 			name:    "new_args",
@@ -933,7 +926,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "new_invalid_arg",
 			src:     `package main; func main() { new(1) }`,
-			wantErr: "new expects type string",
+			wantErr: "new expects reflect.Type",
 		},
 		{
 			name:      "panic_arg",

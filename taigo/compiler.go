@@ -382,22 +382,39 @@ func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 
 func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 	switch expr.Name {
+
 	case "true":
 		c.loadConst(true)
 	case "false":
 		c.loadConst(false)
+
 	case "nil":
 		c.loadConst(nil)
-	case "int", "int64":
-		c.loadConst(reflect.TypeOf(int64(0)))
-	case "float64":
-		c.loadConst(reflect.TypeOf(0.0))
-	case "string":
-		c.loadConst(reflect.TypeOf(""))
-	case "bool":
-		c.loadConst(reflect.TypeOf(false))
-	case "any":
-		c.loadConst(reflect.TypeOf((*any)(nil)).Elem())
+
+	case "int",
+		"int8",
+		"int16",
+		"int32", "rune",
+		"int64",
+		"uint",
+		"uint8", "byte",
+		"uint16",
+		"uint32",
+		"uint64",
+		"float32",
+		"float64",
+		"string",
+		"any",
+		"error",
+		"bool",
+		"complex64",
+		"complex128":
+		t, err := c.resolveType(expr)
+		if err != nil {
+			return err
+		}
+		c.loadConst(t)
+
 	default:
 		idx := c.addConst(expr.Name)
 		c.emit(taivm.OpLoadVar.With(idx))
@@ -1336,27 +1353,107 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 
 func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 	switch e := expr.(type) {
+
 	case *ast.Ident:
 		switch e.Name {
-		case "int", "int64":
-			return reflect.TypeOf(int64(0)), nil
+
+		case "int":
+			return reflect.TypeFor[int](), nil
+		case "int8":
+			return reflect.TypeFor[int8](), nil
+		case "int16":
+			return reflect.TypeFor[int16](), nil
+		case "int32", "rune":
+			return reflect.TypeFor[int32](), nil
+		case "int64":
+			return reflect.TypeFor[int64](), nil
+
+		case "uint":
+			return reflect.TypeFor[uint](), nil
+		case "uint8", "byte":
+			return reflect.TypeFor[uint8](), nil
+		case "uint16":
+			return reflect.TypeFor[uint16](), nil
+		case "uint32":
+			return reflect.TypeFor[uint32](), nil
+		case "uint64":
+			return reflect.TypeFor[uint64](), nil
+
+		case "float32":
+			return reflect.TypeFor[float32](), nil
 		case "float64":
-			return reflect.TypeOf(0.0), nil
+			return reflect.TypeFor[float64](), nil
+
 		case "string":
-			return reflect.TypeOf(""), nil
-		case "bool":
-			return reflect.TypeOf(false), nil
+			return reflect.TypeFor[string](), nil
+
 		case "any":
-			return reflect.TypeOf((*any)(nil)).Elem(), nil
+			return reflect.TypeFor[any](), nil
+		case "error":
+			return reflect.TypeFor[error](), nil
+
+		case "bool":
+			return reflect.TypeFor[bool](), nil
+
+		case "complex64":
+			return reflect.TypeFor[complex64](), nil
+		case "complex128":
+			return reflect.TypeFor[complex128](), nil
+
 		default:
 			return nil, fmt.Errorf("unknown basic type: %s", e.Name)
 		}
+
 	case *ast.ArrayType:
 		elt, err := c.resolveType(e.Elt)
 		if err != nil {
 			return nil, err
 		}
-		return reflect.SliceOf(elt), nil
+		if e.Len != nil {
+			var length int //TODO resolve e.Len
+			return reflect.ArrayOf(length, elt), nil
+		} else {
+			return reflect.SliceOf(elt), nil
+		}
+
+	case *ast.ChanType:
+		t, err := c.resolveType(e.Value)
+		if err != nil {
+			return nil, err
+		}
+		switch e.Dir {
+		case ast.RECV | ast.SEND:
+			return reflect.ChanOf(reflect.BothDir, t), nil
+		case ast.RECV:
+			return reflect.ChanOf(reflect.RecvDir, t), nil
+		case ast.SEND:
+			return reflect.ChanOf(reflect.SendDir, t), nil
+		default:
+			return nil, fmt.Errorf("unknown dir: %v", e.Dir)
+		}
+
+	case *ast.FuncType:
+		//TODO implement
+		return reflect.FuncOf(nil, nil, false), nil
+
+	case *ast.MapType:
+		kt, err := c.resolveType(e.Key)
+		if err != nil {
+			return nil, err
+		}
+		vt, err := c.resolveType(e.Value)
+		if err != nil {
+			return nil, err
+		}
+		return reflect.MapOf(kt, vt), nil
+
+	case *ast.StarExpr:
+		t, err := c.resolveType(e.X)
+		if err != nil {
+			return nil, err
+		}
+		return reflect.PointerTo(t), nil
+
 	case *ast.StructType:
 		var fields []reflect.StructField
 		if e.Fields != nil {
@@ -1374,26 +1471,7 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 			}
 		}
 		return reflect.StructOf(fields), nil
-	case *ast.MapType:
-		kt, err := c.resolveType(e.Key)
-		if err != nil {
-			return nil, err
-		}
-		vt, err := c.resolveType(e.Value)
-		if err != nil {
-			return nil, err
-		}
-		return reflect.MapOf(kt, vt), nil
-	case *ast.StarExpr:
-		t, err := c.resolveType(e.X)
-		if err != nil {
-			return nil, err
-		}
-		return reflect.PtrTo(t), nil
-	case *ast.InterfaceType:
-		return reflect.TypeOf((*any)(nil)).Elem(), nil
-	case *ast.FuncType:
-		return reflect.TypeOf((func())(nil)), nil
+
 	default:
 		return nil, fmt.Errorf("unsupported type expression: %T", expr)
 	}
