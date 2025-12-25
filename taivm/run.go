@@ -3,6 +3,7 @@ package taivm
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -694,6 +695,9 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	case NativeFunc:
 		return v.callNative(fn, argc, calleeIdx, yield)
 
+	case reflect.Type: // Handle type conversion calls: T(x)
+		return v.callTypeConversion(fn, argc, calleeIdx, yield)
+
 	default:
 		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
 			return false
@@ -857,6 +861,34 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 		v.OperandStack[i] = nil
 	}
 	v.SP = calleeIdx + 1
+	return true
+}
+
+func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
+	if argc != 1 {
+		if !yield(nil, fmt.Errorf("type conversion expects 1 argument")) {
+			return false
+		}
+		v.drop(argc + 1)
+		v.push(nil)
+		return true
+	}
+	arg := v.OperandStack[calleeIdx+1]
+	var res any
+	if arg == nil {
+		res = reflect.Zero(t).Interface()
+	} else {
+		val := reflect.ValueOf(arg)
+		if val.Type().ConvertibleTo(t) {
+			res = val.Convert(t).Interface()
+		} else {
+			if !yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t)) {
+				return false
+			}
+		}
+	}
+	v.OperandStack[calleeIdx] = res
+	v.drop(argc)
 	return true
 }
 
