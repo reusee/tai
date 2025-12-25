@@ -22,7 +22,7 @@ func main() {
 		name = os.Args[1]
 	}
 
-	vm, err := taigo.NewVM(name, input)
+	vm, err := taigo.NewVM(name, input, nil)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")
