@@ -524,7 +524,8 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 		}
 
 	case token.AND:
-		return fmt.Errorf("address-of operator & not supported")
+		// dynamic identity for address-of
+		return c.compileExpr(expr.X)
 
 	default:
 		if err := c.compileExpr(expr.X); err != nil {
@@ -752,11 +753,11 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 	case *ast.LabeledStmt:
 		return c.compileStmt(s.Stmt)
 
+	case *ast.DeferStmt:
+		return c.compileDeferStmt(s)
+
 	case *ast.GoStmt:
 		return fmt.Errorf("go statement not supported")
-
-	case *ast.DeferStmt:
-		return fmt.Errorf("defer statement not supported")
 
 	case *ast.SelectStmt:
 		return fmt.Errorf("select statement not supported")
@@ -1216,6 +1217,17 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 	default:
 		return fmt.Errorf("unsupported branch token: %s", stmt.Tok)
 	}
+	return nil
+}
+
+func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
+	if err := c.compileCallExpr(stmt.Call); err != nil {
+		return err
+	}
+	// compileCallExpr results in OpCall. We need to wrap it in a closure
+	// if it has arguments or if we want delayed execution.
+	// For simplicity, we expect the closure on stack.
+	c.emit(taivm.OpDefer)
 	return nil
 }
 

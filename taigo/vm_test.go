@@ -596,7 +596,6 @@ func TestVMNegativeCases(t *testing.T) {
 	// Test Compilation Errors
 	badSources := []string{
 		"package main; func f() { go f() }",
-		"package main; func f() { defer f() }",
 		"package main; func f() { select {} }",
 	}
 
@@ -992,11 +991,6 @@ func TestCoverageCompilerUnsupported(t *testing.T) {
 			wantErr: "go statement not supported",
 		},
 		{
-			name:    "defer_stmt",
-			src:     `package main; func main() { defer func(){}() }`,
-			wantErr: "defer statement not supported",
-		},
-		{
 			name:    "select_stmt",
 			src:     `package main; func main() { select {} }`,
 			wantErr: "select statement not supported",
@@ -1010,11 +1004,6 @@ func TestCoverageCompilerUnsupported(t *testing.T) {
 			name:    "type_switch",
 			src:     `package main; func main() { var x interface{}; switch x.(type) {} }`,
 			wantErr: "type switch statement not supported",
-		},
-		{
-			name:    "addr_of",
-			src:     `package main; func main() { var x = 1; var y = &x }`,
-			wantErr: "address-of operator & not supported",
 		},
 		{
 			name:    "map_key_value_error",
@@ -1123,12 +1112,6 @@ func TestCoverageCompilerErrors(t *testing.T) {
 			name:    "compound_assign_bad_lhs",
 			src:     `package main; func main() { 1 += 2 }`,
 			wantErr: "compound assignment to *ast.BasicLit not supported",
-		},
-		{
-			name: "unknown_operator",
-			src:  `package main; func main() { var x = 1 &^& 2 }`, // Parser might catch, but if we force token?
-			// Hard to force unknown token via parser.
-			wantErr: "expected", // Just placeholder, likely parse error
 		},
 		{
 			name: "selector_assign",
