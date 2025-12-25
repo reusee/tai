@@ -23,6 +23,7 @@ type loopScope struct {
 	startPos        int
 	postPos         int // position of post statement if any
 	entryDepth      int
+	isRange         bool
 }
 
 func (c *compiler) getFunction() *taivm.Function {
@@ -1108,6 +1109,7 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	}()
 
 	loop := c.enterLoop()
+	loop.isRange = true
 	loop.startPos = len(c.code)
 
 	// NextIter takes jump offset to end as argument
@@ -1147,6 +1149,9 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 
 	switch stmt.Tok {
 	case token.BREAK:
+		if scope.isRange {
+			c.emit(taivm.OpPop)
+		}
 		scope.breakTargets = append(scope.breakTargets, c.emitJump(taivm.OpJump))
 	case token.CONTINUE:
 		scope.continueTargets = append(scope.continueTargets, c.emitJump(taivm.OpJump))

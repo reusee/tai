@@ -302,3 +302,31 @@ func TestVM(t *testing.T) {
 		checkInt(t, vm, "res", 10)
 	})
 }
+
+func TestRangeBreakStackLeak(t *testing.T) {
+	// This test ensures that breaking out of a range loop does not leak
+	// the iterator on the stack. If it leaks, this loop will eventually
+	// overflow the operand stack (default 1024).
+	src := `
+	package main
+	func main() {
+		var list = make("[]int", 1)
+		for i := 0; i < 4096; i++ {
+			for k := range list {
+				break
+			}
+		}
+	}
+	`
+	vm, err := NewVM("main", strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil {
+			t.Helper()
+			t.Fatalf("vm error: %v", err)
+		}
+		return true
+	})
+}
