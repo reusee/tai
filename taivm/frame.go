@@ -6,4 +6,5 @@ type Frame struct {
 	Env      *Env
 	BaseSP   int
 	BP       int
+	Defers   []*Closure // stack of deferred functions for this frame
 }

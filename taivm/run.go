@@ -63,7 +63,9 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpReturn:
-			v.opReturn()
+			if !v.opReturn(yield) {
+				return
+			}
 
 		case OpSuspend:
 			if !yield(InterruptSuspend, nil) {
@@ -198,6 +200,9 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if !v.opImport(inst, yield) {
 				return
 			}
+
+		case OpDefer:
+			v.opDefer()
 		}
 
 	}
@@ -892,7 +897,22 @@ func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(
 	return true
 }
 
-func (v *VM) opReturn() {
+func (v *VM) opReturn(yield func(*Interrupt, error) bool) bool {
+	// Execute defers if present
+	if len(v.CallStack) > 0 {
+		frame := &v.CallStack[len(v.CallStack)-1]
+		if len(frame.Defers) > 0 {
+			last := len(frame.Defers) - 1
+			d := frame.Defers[last]
+			frame.Defers = frame.Defers[:last]
+			// re-execute return after defer
+			v.IP--
+			// push closure and call it
+			v.push(d)
+			return v.opCall(OpCall.With(0), yield)
+		}
+	}
+
 	retVal := v.pop()
 	n := len(v.CallStack)
 	if n == 0 {
@@ -903,20 +923,18 @@ func (v *VM) opReturn() {
 		}
 		v.push(retVal)
 		v.IP = len(v.CurrentFun.Code)
-		return
+		return true
 	}
 	frame := v.CallStack[n-1]
 	v.CallStack = v.CallStack[:n-1]
 
-	// Restore Call Frame
 	v.CurrentFun = frame.Fun
 	v.IP = frame.ReturnIP
 	v.Scope = frame.Env
 	v.BP = frame.BP
-	// Ensure we discard any garbage left on stack by the called function
 	v.drop(v.SP - frame.BaseSP)
-
 	v.push(retVal)
+	return true
 }
 
 func (v *VM) opMakeList(inst OpCode, yield func(*Interrupt, error) bool) bool {
@@ -2543,4 +2561,12 @@ func (v *VM) opImport(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	}
 	v.push(nil)
 	return true
+}
+
+func (v *VM) opDefer() {
+	val := v.pop()
+	if d, ok := val.(*Closure); ok && len(v.CallStack) > 0 {
+		frame := &v.CallStack[len(v.CallStack)-1]
+		frame.Defers = append(frame.Defers, d)
+	}
 }

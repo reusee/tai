@@ -58,6 +58,7 @@ const (
 	OpUnpack
 	OpPow
 	OpImport
+	OpDefer
 )
 
 func (o OpCode) With(arg int) OpCode {
