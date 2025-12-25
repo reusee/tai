@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strconv"
 
 	"github.com/reusee/tai/taivm"
@@ -143,11 +144,8 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 		return c.compileFuncDecl(d)
 
 	case *ast.GenDecl:
-		if d.Tok == token.VAR || d.Tok == token.CONST || d.Tok == token.IMPORT {
+		if d.Tok == token.VAR || d.Tok == token.CONST || d.Tok == token.IMPORT || d.Tok == token.TYPE {
 			return c.compileGenDecl(d)
-		}
-		if d.Tok == token.TYPE {
-			return nil
 		}
 
 	default:
@@ -271,11 +269,11 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return fmt.Errorf("ellipsis expression not supported outside call")
 
 	case *ast.ArrayType, *ast.StructType, *ast.FuncType, *ast.InterfaceType, *ast.MapType, *ast.ChanType:
-		s, err := c.typeToString(e)
+		t, err := c.resolveType(e)
 		if err != nil {
 			return err
 		}
-		c.loadConst(s)
+		c.loadConst(t)
 		return nil
 
 	case *ast.BadExpr:
@@ -390,6 +388,16 @@ func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 		c.loadConst(false)
 	case "nil":
 		c.loadConst(nil)
+	case "int", "int64":
+		c.loadConst(reflect.TypeOf(int64(0)))
+	case "float64":
+		c.loadConst(reflect.TypeOf(0.0))
+	case "string":
+		c.loadConst(reflect.TypeOf(""))
+	case "bool":
+		c.loadConst(reflect.TypeOf(false))
+	case "any":
+		c.loadConst(reflect.TypeOf((*any)(nil)).Elem())
 	default:
 		idx := c.addConst(expr.Name)
 		c.emit(taivm.OpLoadVar.With(idx))
@@ -984,8 +992,8 @@ func (c *compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 
 func (c *compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
 	decl, ok := stmt.Decl.(*ast.GenDecl)
-	if !ok || (decl.Tok != token.VAR && decl.Tok != token.CONST) {
-		return fmt.Errorf("only var/const decls supported in function body")
+	if !ok || (decl.Tok != token.VAR && decl.Tok != token.CONST && decl.Tok != token.TYPE) {
+		return fmt.Errorf("unsupported decl in function body")
 	}
 	return c.compileGenDecl(decl)
 }
@@ -1305,52 +1313,88 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 				}
 			}
 
+		case *ast.TypeSpec:
+			if err := c.compileTypeSpec(s); err != nil {
+				return err
+			}
+
 		}
 	}
 	return nil
 }
 
-func (c *compiler) typeToString(expr ast.Expr) (string, error) {
+func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
+	t, err := c.resolveType(spec.Type)
+	if err != nil {
+		return err
+	}
+	c.loadConst(t)
+	idx := c.addConst(spec.Name.Name)
+	c.emit(taivm.OpDefVar.With(idx))
+	return nil
+}
+
+func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		return e.Name, nil
-	case *ast.SelectorExpr:
-		x, err := c.typeToString(e.X)
-		if err != nil {
-			return "", err
+		switch e.Name {
+		case "int", "int64":
+			return reflect.TypeOf(int64(0)), nil
+		case "float64":
+			return reflect.TypeOf(0.0), nil
+		case "string":
+			return reflect.TypeOf(""), nil
+		case "bool":
+			return reflect.TypeOf(false), nil
+		case "any":
+			return reflect.TypeOf((*any)(nil)).Elem(), nil
+		default:
+			return nil, fmt.Errorf("unknown basic type: %s", e.Name)
 		}
-		return x + "." + e.Sel.Name, nil
-	case *ast.StarExpr:
-		x, err := c.typeToString(e.X)
-		if err != nil {
-			return "", err
-		}
-		return "*" + x, nil
 	case *ast.ArrayType:
-		elt, err := c.typeToString(e.Elt)
+		elt, err := c.resolveType(e.Elt)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return "[]" + elt, nil
+		return reflect.SliceOf(elt), nil
 	case *ast.StructType:
-		return "struct{}", nil
-	case *ast.FuncType:
-		return "func", nil
+		var fields []reflect.StructField
+		if e.Fields != nil {
+			for _, field := range e.Fields.List {
+				ft, err := c.resolveType(field.Type)
+				if err != nil {
+					return nil, err
+				}
+				for _, name := range field.Names {
+					fields = append(fields, reflect.StructField{
+						Name: name.Name,
+						Type: ft,
+					})
+				}
+			}
+		}
+		return reflect.StructOf(fields), nil
 	case *ast.MapType:
-		key, err := c.typeToString(e.Key)
+		kt, err := c.resolveType(e.Key)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		val, err := c.typeToString(e.Value)
+		vt, err := c.resolveType(e.Value)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return "map[" + key + "]" + val, nil
+		return reflect.MapOf(kt, vt), nil
+	case *ast.StarExpr:
+		t, err := c.resolveType(e.X)
+		if err != nil {
+			return nil, err
+		}
+		return reflect.PtrTo(t), nil
 	case *ast.InterfaceType:
-		return "interface{}", nil
-	case *ast.ChanType:
-		return "chan", nil
+		return reflect.TypeOf((*any)(nil)).Elem(), nil
+	case *ast.FuncType:
+		return reflect.TypeOf((func())(nil)), nil
 	default:
-		return "", fmt.Errorf("unknown type expr: %T", expr)
+		return nil, fmt.Errorf("unsupported type expression: %T", expr)
 	}
 }

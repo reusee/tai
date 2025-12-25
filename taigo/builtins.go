@@ -2,7 +2,7 @@ package taigo
 
 import (
 	"fmt"
-	"strings"
+	"reflect"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -331,12 +331,12 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if len(args) < 1 {
 				return nil, fmt.Errorf("make expects type argument")
 			}
-			typ, ok := args[0].(string)
+			t, ok := args[0].(reflect.Type)
 			if !ok {
-				return nil, fmt.Errorf("make expects type string as first argument")
+				return nil, fmt.Errorf("make expects reflect.Type as first argument")
 			}
 
-			if strings.HasPrefix(typ, "[]") {
+			if t.Kind() == reflect.Slice {
 				if len(args) < 2 {
 					return nil, fmt.Errorf("make slice expects length argument")
 				}
@@ -348,18 +348,18 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 				if size < 0 {
 					return nil, fmt.Errorf("negative slice length")
 				}
-				// Cap is arg 2 if present, but we just use slice make logic
 				elements := make([]any, size)
-				// Initialize with zero values based on type
+				// Initialize with zero values based on element type
 				var zero any
-				if strings.Contains(typ, "int") || strings.Contains(typ, "float") {
+				et := t.Elem()
+				switch et.Kind() {
+				case reflect.Int, reflect.Int64:
 					zero = int64(0)
-					if strings.Contains(typ, "float") {
-						zero = float64(0)
-					}
-				} else if strings.Contains(typ, "string") {
+				case reflect.Float64:
+					zero = 0.0
+				case reflect.String:
 					zero = ""
-				} else if strings.Contains(typ, "bool") {
+				case reflect.Bool:
 					zero = false
 				}
 				if zero != nil {
@@ -370,15 +370,15 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 				return &taivm.List{Elements: elements}, nil
 			}
 
-			if strings.HasPrefix(typ, "map[") {
+			if t.Kind() == reflect.Map {
 				return make(map[any]any), nil
 			}
 
-			if strings.HasPrefix(typ, "chan") {
+			if t.Kind() == reflect.Chan {
 				return nil, fmt.Errorf("channels not supported")
 			}
 
-			return nil, fmt.Errorf("cannot make type %s", typ)
+			return nil, fmt.Errorf("cannot make type %v", t)
 		},
 	})
 
@@ -388,20 +388,23 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("new expects type argument")
 			}
-			typ, ok := args[0].(string)
+			t, ok := args[0].(reflect.Type)
 			if !ok {
-				return nil, fmt.Errorf("new expects type string")
+				return nil, fmt.Errorf("new expects reflect.Type")
 			}
-			if typ == "int" || typ == "int64" || typ == "float64" {
+			switch t.Kind() {
+			case reflect.Int, reflect.Int64:
 				return int64(0), nil
-			}
-			if typ == "string" {
+			case reflect.Float64:
+				return 0.0, nil
+			case reflect.String:
 				return "", nil
-			}
-			if typ == "bool" {
+			case reflect.Bool:
 				return false, nil
+			case reflect.Struct:
+				return &taivm.Struct{Fields: make(map[string]any)}, nil
 			}
-			return nil, nil // Pointers/Structuring not fully supported, returning nil
+			return nil, nil
 		},
 	})
 
