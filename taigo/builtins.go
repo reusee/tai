@@ -7,16 +7,24 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func registerBuiltins(vm *taivm.VM) {
+func registerBuiltins(vm *taivm.VM, options *Options) {
 
 	vm.Def("print", taivm.NativeFunc{
 		Name: "print",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
 			for i, arg := range args {
 				if i > 0 {
-					fmt.Print(" ")
+					if options != nil && options.Stdout != nil {
+						fmt.Fprint(options.Stdout, " ")
+					} else {
+						fmt.Print(" ")
+					}
 				}
-				fmt.Print(arg)
+				if options != nil && options.Stdout != nil {
+					fmt.Fprint(options.Stdout, arg)
+				} else {
+					fmt.Print(arg)
+				}
 			}
 			return nil, nil
 		},
@@ -26,12 +34,23 @@ func registerBuiltins(vm *taivm.VM) {
 		Name: "println",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
 			for i, arg := range args {
-				if i > 0 {
-					fmt.Print(" ")
+				if options != nil && options.Stdout != nil {
+					if i > 0 {
+						fmt.Fprint(options.Stdout, " ")
+					}
+					fmt.Fprint(options.Stdout, arg)
+				} else {
+					if i > 0 {
+						fmt.Print(" ")
+					}
+					fmt.Print(arg)
 				}
-				fmt.Print(arg)
 			}
-			fmt.Println()
+			if options != nil && options.Stdout != nil {
+				fmt.Fprintln(options.Stdout)
+			} else {
+				fmt.Println()
+			}
 			return nil, nil
 		},
 	})

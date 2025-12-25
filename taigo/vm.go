@@ -8,7 +8,7 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func NewVM(name string, source io.Reader) (*taivm.VM, error) {
+func NewVM(name string, source io.Reader, options *Options) (*taivm.VM, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, name, source, parser.SkipObjectResolution)
 	if err != nil {
@@ -22,7 +22,7 @@ func NewVM(name string, source io.Reader) (*taivm.VM, error) {
 
 	vm := taivm.NewVM(mainFunc)
 
-	registerBuiltins(vm)
+	registerBuiltins(vm, options)
 
 	return vm, nil
 }

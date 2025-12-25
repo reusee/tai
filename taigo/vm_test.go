@@ -8,7 +8,10 @@ import (
 )
 
 func runVM(t *testing.T, src string) *taivm.VM {
-	vm, err := NewVM("main", strings.NewReader(src))
+	vm, err := NewVM("main", strings.NewReader(src), &Options{
+		Stdout: t.Output(),
+		Stderr: t.Output(),
+	})
 	if err != nil {
 		t.Helper()
 		t.Fatal(err)
@@ -565,7 +568,7 @@ func TestVMCompileErrors(t *testing.T) {
 	}
 
 	for _, src := range badSources {
-		_, err := NewVM("bad", strings.NewReader(src))
+		_, err := NewVM("bad", strings.NewReader(src), nil)
 		if err == nil {
 			t.Errorf("expected compilation error for source: %s", src)
 		}
@@ -576,7 +579,7 @@ func TestVMRuntimeImportErrors(t *testing.T) {
 	vm, err := NewVM("main", strings.NewReader(`
 		package main
 		import "fmt"
-	`))
+	`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +604,7 @@ func TestVMNegativeCases(t *testing.T) {
 	}
 
 	for _, src := range badSources {
-		_, err := NewVM("bad", strings.NewReader(src))
+		_, err := NewVM("bad", strings.NewReader(src), nil)
 		if err == nil {
 			t.Errorf("expected compilation error for source: %s", src)
 		}
@@ -869,7 +872,10 @@ func TestCoverageBuiltins(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vm, err := NewVM("test", strings.NewReader(tt.src))
+			vm, err := NewVM("test", strings.NewReader(tt.src), &Options{
+				Stdout: t.Output(),
+				Stderr: t.Output(),
+			})
 			if err != nil {
 				// Compilation error not expected for runtime checks unless specified
 				t.Fatalf("unexpected compilation error: %v", err)
@@ -946,7 +952,7 @@ func TestCoverageCompilerUnsupported(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewVM("test", strings.NewReader(tt.src))
+			_, err := NewVM("test", strings.NewReader(tt.src), nil)
 			if err == nil {
 				t.Error("expected compilation error")
 			} else if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
@@ -1067,7 +1073,7 @@ func TestCoverageCompilerErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vm, err := NewVM("test", strings.NewReader(tt.src))
+			vm, err := NewVM("test", strings.NewReader(tt.src), nil)
 			if tt.wantErr == "expected" {
 				if err == nil {
 					t.Error("expected error")
