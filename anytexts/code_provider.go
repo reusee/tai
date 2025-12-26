@@ -54,6 +54,10 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			if baseName != "." && strings.HasPrefix(baseName, ".") {
 				return false, nil
 			}
+			// ignore _ files
+			if strings.HasPrefix(baseName, "_") {
+				return false, nil
+			}
 
 			file, err := os.Open(path)
 			if err != nil {
