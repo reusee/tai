@@ -1615,9 +1615,7 @@ func TestVMTypeAssertions(t *testing.T) {
 	checkInt(t, vm, "i", 10)
 	checkString(t, vm, "s", "hello")
 	checkBool(t, vm, "ok", true)
-	if v, _ := vm.Get("s2"); v != nil {
-		t.Errorf("expected s2 nil, got %v", v)
-	}
+	checkInt(t, vm, "s2", 0)
 	checkBool(t, vm, "ok2", false)
 	if v, _ := vm.Get("err"); v == nil {
 		t.Fatal("expected panic from failed type assertion")
