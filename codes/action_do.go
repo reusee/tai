@@ -150,6 +150,8 @@ If the remaining tasks involve writing or changing code, provide all necessary c
 
 **IMPORTANT**: Focus exclusively on the tasks outlined in your plan and the original goal. Do not make any changes to code that are not directly related to achieving this goal, even if you identify other potential improvements or errors.
 
+**TESTING REQUIREMENT**: If your solution involves implementing new functionality or fixing a bug, you **MUST** provide or update relevant tests to verify the correctness of your changes. For bug fixes, prioritize creating a reproduction test case that fails without your changes.
+
 If the goal is fully achieved, state "Goal achieved." and then you may propose further optimizations or enhancements relevant to the original objective.
 
 Always include a clear rationale for your decisions and the anticipated impact of the steps.
@@ -184,14 +186,13 @@ func (a ActionDo) DefineCmds() {
 		prompt := `
 Your goal is to improve code quality and correctness by identifying and fixing the most critical defects. Analyze the code to identify bugs, potential issues, and security vulnerabilities. From the issues you find, select the one or two most severe ones to address.
 
-**CRITICAL REQUIREMENT:** For every bug you identify, you **must** write a test case that reproduces the bug and proves its existence. The test case is not optional; it is the primary method of validation. If a suspected issue cannot be exposed by a failing test, it is not considered a valid bug for this task.
+**CRITICAL REQUIREMENT: TEST-DRIVEN BUG FIXING**
+For every bug you identify, you **must** follow this strict sequence:
+1. **Identify**: Describe the bug and why it happens.
+2. **Reproduce**: Write a test case that fails because of this bug. The test is **mandatory**. If you cannot write a failing test for it, do not attempt to fix it as a bug.
+3. **Fix**: Implement the fix such that the reproduction test now passes.
 
-Your process for each issue should be:
-1. Identify the potential bug.
-2. Create a test case that fails due to this bug (reproduction).
-3. Fix the bug so the test passes.
-
-Focus only on fixing significant problems, not on stylistic improvements or minor optimizations unless they address a specific defect. If no issues are found that can be reproduced with a test, state "No issues found" without fabricating problems.
+Your response must include both the reproduction test and the fix. Focus only on significant problems that can be objectively verified through testing. If no such issues are found, state "No verifiable issues found."
 `
 		actionArgumentFlag = ActionArgument(prompt)
 	}).Desc("find bugs and fix"))
