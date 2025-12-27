@@ -14,15 +14,11 @@ func NewVM(name string, source io.Reader, options *Options) (*taivm.VM, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	mainFunc, err := compile(file)
 	if err != nil {
 		return nil, err
 	}
-
 	vm := taivm.NewVM(mainFunc)
-
 	registerBuiltins(vm, options)
-
 	return vm, nil
 }

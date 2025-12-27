@@ -2,30 +2,37 @@ package taigo
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 
 	"github.com/reusee/tai/taivm"
 )
 
 func registerBuiltins(vm *taivm.VM, options *Options) {
+	fprint := func(w io.Writer, args []any, newline bool) {
+		for i, arg := range args {
+			if i > 0 {
+				fmt.Fprint(w, " ")
+			}
+			fmt.Fprint(w, arg)
+		}
+		if newline {
+			fmt.Fprintln(w)
+		}
+	}
+
+	stdout := func() io.Writer {
+		if options != nil && options.Stdout != nil {
+			return options.Stdout
+		}
+		return os.Stdout
+	}
 
 	vm.Def("print", taivm.NativeFunc{
 		Name: "print",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
-			for i, arg := range args {
-				if i > 0 {
-					if options != nil && options.Stdout != nil {
-						fmt.Fprint(options.Stdout, " ")
-					} else {
-						fmt.Print(" ")
-					}
-				}
-				if options != nil && options.Stdout != nil {
-					fmt.Fprint(options.Stdout, arg)
-				} else {
-					fmt.Print(arg)
-				}
-			}
+			fprint(stdout(), args, false)
 			return nil, nil
 		},
 	})
@@ -33,24 +40,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 	vm.Def("println", taivm.NativeFunc{
 		Name: "println",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
-			for i, arg := range args {
-				if options != nil && options.Stdout != nil {
-					if i > 0 {
-						fmt.Fprint(options.Stdout, " ")
-					}
-					fmt.Fprint(options.Stdout, arg)
-				} else {
-					if i > 0 {
-						fmt.Print(" ")
-					}
-					fmt.Print(arg)
-				}
-			}
-			if options != nil && options.Stdout != nil {
-				fmt.Fprintln(options.Stdout)
-			} else {
-				fmt.Println()
-			}
+			fprint(stdout(), args, true)
 			return nil, nil
 		},
 	})
@@ -64,8 +54,8 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			}
 			vm.IsPanicking = true
 			vm.PanicValue = val
-			vm.IP = len(vm.CurrentFun.Code) // force immediate transition to unwinding
-			return nil, fmt.Errorf("panic") // signal error to callNative
+			vm.IP = len(vm.CurrentFun.Code)
+			return nil, fmt.Errorf("panic")
 		},
 	})
 
@@ -158,7 +148,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if len(args) != 2 {
 				return nil, fmt.Errorf("copy expects 2 arguments")
 			}
-			var dst []any
+			var dst, src []any
 			switch v := args[0].(type) {
 			case *taivm.List:
 				if v.Immutable {
@@ -170,8 +160,6 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			default:
 				return nil, fmt.Errorf("copy expects list or slice as first argument, got %T", args[0])
 			}
-
-			var src []any
 			switch v := args[1].(type) {
 			case *taivm.List:
 				src = v.Elements
@@ -180,7 +168,6 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			default:
 				return nil, fmt.Errorf("copy expects list or slice as second argument, got %T", args[1])
 			}
-
 			return copy(dst, src), nil
 		},
 	})
@@ -345,7 +332,6 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if !ok {
 				return nil, fmt.Errorf("make expects reflect.Type as first argument, got %T", args[0])
 			}
-
 			if t.Kind() == reflect.Slice {
 				if len(args) < 2 {
 					return nil, fmt.Errorf("make slice expects length argument")
@@ -359,19 +345,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 					return nil, fmt.Errorf("negative slice length")
 				}
 				elements := make([]any, size)
-				// Initialize with zero values based on element type
-				var zero any
-				et := t.Elem()
-				switch et.Kind() {
-				case reflect.Int, reflect.Int64:
-					zero = int64(0)
-				case reflect.Float64:
-					zero = 0.0
-				case reflect.String:
-					zero = ""
-				case reflect.Bool:
-					zero = false
-				}
+				zero := getZeroValue(t.Elem())
 				if zero != nil {
 					for i := range elements {
 						elements[i] = zero
@@ -379,15 +353,12 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 				}
 				return &taivm.List{Elements: elements}, nil
 			}
-
 			if t.Kind() == reflect.Map {
 				return make(map[any]any), nil
 			}
-
 			if t.Kind() == reflect.Chan {
 				return nil, fmt.Errorf("channels not supported")
 			}
-
 			return nil, fmt.Errorf("cannot make type %v", t)
 		},
 	})
@@ -402,8 +373,21 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if !ok {
 				return nil, fmt.Errorf("new expects reflect.Type")
 			}
-			return reflect.New(t), nil
+			return reflect.New(t).Interface(), nil
 		},
 	})
+}
 
+func getZeroValue(t reflect.Type) any {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int64:
+		return int64(0)
+	case reflect.Float64:
+		return 0.0
+	case reflect.String:
+		return ""
+	case reflect.Bool:
+		return false
+	}
+	return nil
 }
