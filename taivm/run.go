@@ -205,6 +205,31 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		case OpDefer:
 			v.opDefer()
+
+		case OpAddrOf:
+			if !v.opAddrOf(inst, yield) {
+				return
+			}
+
+		case OpAddrOfIndex:
+			if !v.opAddrOfIndex(yield) {
+				return
+			}
+
+		case OpAddrOfAttr:
+			if !v.opAddrOfAttr(yield) {
+				return
+			}
+
+		case OpDeref:
+			if !v.opDeref(yield) {
+				return
+			}
+
+		case OpSetDeref:
+			if !v.opSetDeref(yield) {
+				return
+			}
 		}
 
 	}
@@ -2533,4 +2558,105 @@ func (v *VM) opDefer() {
 		frame := &v.CallStack[len(v.CallStack)-1]
 		frame.Defers = append(frame.Defers, d)
 	}
+}
+
+func (v *VM) opAddrOf(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	idx := int(inst >> 8)
+	name := v.CurrentFun.Constants[idx].(string)
+	for e := v.Scope; e != nil; e = e.Parent {
+		for _, vr := range e.Vars {
+			if vr.Name == name {
+				e.MarkCaptured()
+				v.push(&Pointer{Target: e, Key: name})
+				return true
+			}
+		}
+	}
+	if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
+		return false
+	}
+	v.push(nil)
+	return true
+}
+
+func (v *VM) opAddrOfIndex(yield func(*Interrupt, error) bool) bool {
+	key := v.pop()
+	target := v.pop()
+	if target == nil {
+		if !yield(nil, fmt.Errorf("indexing nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	v.push(&Pointer{Target: target, Key: key})
+	return true
+}
+
+func (v *VM) opAddrOfAttr(yield func(*Interrupt, error) bool) bool {
+	name := v.pop()
+	target := v.pop()
+	if target == nil {
+		if !yield(nil, fmt.Errorf("getattr on nil")) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	v.push(&Pointer{Target: target, Key: name})
+	return true
+}
+
+func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
+	ptr := v.pop()
+	p, ok := ptr.(*Pointer)
+	if !ok {
+		if !yield(nil, fmt.Errorf("not a pointer: %T", ptr)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	if e, ok := p.Target.(*Env); ok {
+		name := p.Key.(string)
+		val, ok := e.Get(name)
+		if !ok {
+			if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(val)
+		return true
+	}
+	v.push(p.Target)
+	v.push(p.Key)
+	if _, ok := p.Target.(*Struct); ok {
+		return v.opGetAttr(yield)
+	}
+	return v.opGetIndex(yield)
+}
+
+func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
+	val := v.pop()
+	ptr := v.pop()
+	p, ok := ptr.(*Pointer)
+	if !ok {
+		if !yield(nil, fmt.Errorf("not a pointer: %T", ptr)) {
+			return false
+		}
+		return true
+	}
+	if e, ok := p.Target.(*Env); ok {
+		e.Def(p.Key.(string), val)
+		return true
+	}
+	v.push(p.Target)
+	v.push(p.Key)
+	v.push(val)
+	if _, ok := p.Target.(*Struct); ok {
+		return v.opSetAttr(yield)
+	}
+	return v.opSetIndex(yield)
 }

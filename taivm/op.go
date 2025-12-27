@@ -59,6 +59,11 @@ const (
 	OpPow
 	OpImport
 	OpDefer
+	OpAddrOf
+	OpAddrOfIndex
+	OpAddrOfAttr
+	OpDeref
+	OpSetDeref
 )
 
 func (o OpCode) With(arg int) OpCode {
