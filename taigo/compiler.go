@@ -16,7 +16,8 @@ type compiler struct {
 	constants  []any
 	loops      []*loopScope
 	scopeDepth int
-	tmpCount   int // counter for internal temporary variables
+	tmpCount   int            // counter for internal temporary variables
+	params     map[string]int // map parameter name to stack index
 }
 
 type loopScope struct {
@@ -210,7 +211,21 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
-		name: decl.Name.Name,
+		name:   decl.Name.Name,
+		params: make(map[string]int),
+	}
+
+	if decl.Type.Params != nil {
+		idx := 0
+		for _, field := range decl.Type.Params.List {
+			for _, name := range field.Names {
+				sub.params[name.Name] = idx
+				idx++
+			}
+			if len(field.Names) == 0 { // unnamed parameter
+				idx++
+			}
+		}
 	}
 
 	for _, stmt := range decl.Body.List {
@@ -439,8 +454,13 @@ func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 		c.loadConst(t)
 
 	default:
-		idx := c.addConst(expr.Name)
-		c.emit(taivm.OpLoadVar.With(idx))
+		// Check if it's a parameter in the current function scope
+		if idx, ok := c.params[expr.Name]; ok {
+			c.emit(taivm.OpGetLocal.With(idx))
+		} else {
+			idx := c.addConst(expr.Name)
+			c.emit(taivm.OpLoadVar.With(idx))
+		}
 	}
 	return nil
 }
@@ -639,7 +659,21 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	sub := &compiler{
-		name: "anon",
+		name:   "anon",
+		params: make(map[string]int),
+	}
+
+	if expr.Type.Params != nil {
+		idx := 0
+		for _, field := range expr.Type.Params.List {
+			for _, name := range field.Names {
+				sub.params[name.Name] = idx
+				idx++
+			}
+			if len(field.Names) == 0 {
+				idx++
+			}
+		}
 	}
 
 	for _, stmt := range expr.Body.List {
