@@ -1071,8 +1071,9 @@ func TestCoverageCompilerExpressions(t *testing.T) {
 			f(2)
 		}
 		
-		var ptr *int
-		var deref = *ptr // nil ptr deref at runtime? No, taivm ptrs are dynamic, *ptr is identity
+		var x = 42
+		var ptr = &x
+		var deref = *ptr
 		
 		var assertVal = 1
 		var asserted = assertVal.(int)
@@ -1091,6 +1092,7 @@ func TestCoverageCompilerExpressions(t *testing.T) {
 	`
 	vm := runVM(t, src)
 	checkInt(t, vm, "spreadRes", 2)
+	checkInt(t, vm, "deref", 42)
 }
 
 func TestCoverageCompilerAssign(t *testing.T) {
