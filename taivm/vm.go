@@ -127,5 +127,6 @@ func (v *VM) Reset() {
 	v.BP = 0
 	clear(v.OperandStack)
 	v.CallStack = v.CallStack[:0]
+	v.freeEnv(v.Scope)
 	v.Scope = v.allocEnv(nil)
 }

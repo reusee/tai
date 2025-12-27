@@ -26,16 +26,17 @@ func BenchmarkFib15(b *testing.B) {
 			_ = fib(15)
 		}
 	`
+	vm, err := NewVM("main", strings.NewReader(src), nil)
+	if err != nil {
+		b.Fatal(err)
+	}
 	for b.Loop() {
-		vm, err := NewVM("main", strings.NewReader(src), nil)
-		if err != nil {
-			b.Fatal(err)
-		}
 		for _, err := range vm.Run {
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
+		vm.Reset()
 	}
 }
 
@@ -49,15 +50,16 @@ func BenchmarkLoop10000(b *testing.B) {
 			}
 		}
 	`
+	vm, err := NewVM("main", strings.NewReader(src), nil)
+	if err != nil {
+		b.Fatal(err)
+	}
 	for b.Loop() {
-		vm, err := NewVM("main", strings.NewReader(src), nil)
-		if err != nil {
-			b.Fatal(err)
-		}
 		for _, err := range vm.Run {
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
+		vm.Reset()
 	}
 }
