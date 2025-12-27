@@ -1007,6 +1007,7 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 			}
 			c.loadConst(t)
 			c.emit(taivm.OpTypeAssertOk)
+			c.emit(taivm.OpSwap) // Fix stack order for TypeAssertOk
 		} else {
 			if err := c.compileExpr(rhs); err != nil {
 				return err
@@ -1481,6 +1482,7 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 					}
 					c.loadConst(t)
 					c.emit(taivm.OpTypeAssertOk)
+					c.emit(taivm.OpSwap) // Fix stack order for TypeAssertOk
 				} else {
 					if err := c.compileExpr(rhs); err != nil {
 						return err
