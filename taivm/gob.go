@@ -7,6 +7,7 @@ func init() {
 	gob.Register(&Closure{})
 	gob.Register(Frame{})
 	gob.Register(&Env{})
+	gob.Register(EnvVar{})
 	gob.Register(OpCode(0))
 	gob.Register(NativeFunc{})
 	gob.Register([]any{})

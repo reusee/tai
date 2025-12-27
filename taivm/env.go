@@ -2,12 +2,19 @@ package taivm
 
 type Env struct {
 	Parent *Env
-	Vars   map[string]any
+	Vars   []EnvVar
+}
+
+type EnvVar struct {
+	Name string
+	Val  any
 }
 
 func (e *Env) Get(name string) (any, bool) {
-	if v, ok := e.Vars[name]; ok {
-		return v, true
+	for _, v := range e.Vars {
+		if v.Name == name {
+			return v.Val, true
+		}
 	}
 	if e.Parent != nil {
 		return e.Parent.Get(name)
@@ -16,16 +23,24 @@ func (e *Env) Get(name string) (any, bool) {
 }
 
 func (e *Env) Def(name string, val any) {
-	if e.Vars == nil {
-		e.Vars = make(map[string]any)
+	for i, v := range e.Vars {
+		if v.Name == name {
+			e.Vars[i].Val = val
+			return
+		}
 	}
-	e.Vars[name] = val
+	e.Vars = append(e.Vars, EnvVar{
+		Name: name,
+		Val:  val,
+	})
 }
 
 func (e *Env) Set(name string, val any) bool {
-	if _, ok := e.Vars[name]; ok {
-		e.Vars[name] = val
-		return true
+	for i, v := range e.Vars {
+		if v.Name == name {
+			e.Vars[i].Val = val
+			return true
+		}
 	}
 	if e.Parent != nil {
 		return e.Parent.Set(name, val)
