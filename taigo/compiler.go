@@ -16,8 +16,8 @@ type compiler struct {
 	constants  []any
 	loops      []*loopScope
 	scopeDepth int
-	tmpCount   int            // counter for internal temporary variables
-	params     map[string]int // map parameter name to stack index
+	tmpCount   int
+	params     map[string]int
 	iotaVal    int
 	labels     map[string]int
 	unresolved map[string][]int
@@ -220,62 +220,76 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
+	if err := sub.setupParams(decl); err != nil {
+		return nil, err
+	}
+	for _, stmt := range decl.Body.List {
+		if err := sub.compileStmt(stmt); err != nil {
+			return nil, err
+		}
+	}
+	sub.loadConst(nil)
+	sub.emit(taivm.OpReturn)
+	if err := sub.resolveLabels(); err != nil {
+		return nil, err
+	}
+	fn := sub.getFunction()
+	if err := c.setFuncMetadata(fn, decl); err != nil {
+		return nil, err
+	}
+	return fn, nil
+}
 
+func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	idx := 0
-	// Add receiver as first parameter for methods
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
 		for _, name := range recv.Names {
-			sub.params[name.Name] = idx
+			c.params[name.Name] = idx
 			idx++
 		}
 		if len(recv.Names) == 0 {
 			idx++
 		}
 	}
-
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			for _, name := range field.Names {
-				sub.params[name.Name] = idx
+				c.params[name.Name] = idx
 				idx++
 			}
-			if len(field.Names) == 0 { // unnamed parameter
+			if len(field.Names) == 0 {
 				idx++
 			}
 		}
 	}
+	return nil
+}
 
-	for _, stmt := range decl.Body.List {
-		if err := sub.compileStmt(stmt); err != nil {
-			return nil, err
-		}
-	}
-
-	sub.loadConst(nil)
-	sub.emit(taivm.OpReturn)
-
-	for name, indices := range sub.unresolved {
-		target, ok := sub.labels[name]
+func (c *compiler) resolveLabels() error {
+	for name, indices := range c.unresolved {
+		target, ok := c.labels[name]
 		if !ok {
-			return nil, fmt.Errorf("label %s not defined", name)
+			return fmt.Errorf("label %s not defined", name)
 		}
 		for _, idx := range indices {
-			sub.patchJump(idx, target)
+			c.patchJump(idx, target)
 		}
 	}
+	return nil
+}
 
-	fn := sub.getFunction()
+func (c *compiler) setFuncMetadata(fn *taivm.Function, decl *ast.FuncDecl) error {
 	tObj, err := c.resolveType(decl.Type)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ft := tObj.(reflect.Type)
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
 		rtObj, err := c.resolveType(recv.Type)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		rt := rtObj.(reflect.Type)
 		ins := make([]reflect.Type, 0, ft.NumIn()+1)
@@ -290,7 +304,6 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		ft = reflect.FuncOf(ins, outs, ft.IsVariadic())
 	}
 	fn.Type = ft
-	// Build ParamNames from decl (including receiver)
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
 		for _, name := range recv.Names {
@@ -315,8 +328,7 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		}
 	}
 	fn.NumParams = len(fn.ParamNames)
-
-	return fn, nil
+	return nil
 }
 
 func (c *compiler) compileExpr(expr ast.Expr) error {
