@@ -1760,6 +1760,12 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 		return reflect.StructOf(fields), nil
 
+	case *ast.InterfaceType, *ast.SelectorExpr:
+		// Go reflect doesn't support creating interfaces with methods at runtime.
+		// For now, return any to allow compilation.
+		// VM level interface check might be limited or require custom logic.
+		return reflect.TypeFor[any](), nil
+
 	default:
 		return nil, fmt.Errorf("unsupported type expression: %T", expr)
 	}
