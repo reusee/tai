@@ -1595,3 +1595,82 @@ func TestVMPanicRecoverDefer(t *testing.T) {
 	}
 	checkInt(t, vm, "nestedRecover", 2)
 }
+
+func TestVMTypeAssertions(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var x any = 10
+		var i = x.(int)
+		var y any = "hello"
+		var s, ok = y.(string)
+		var s2, ok2 = y.(int)
+		var err any
+		func init() {
+			defer func() {
+				err = recover()
+			}()
+			_ = y.(int)
+		}
+	`)
+	checkInt(t, vm, "i", 10)
+	checkString(t, vm, "s", "hello")
+	checkBool(t, vm, "ok", true)
+	if v, _ := vm.Get("s2"); v != nil {
+		t.Errorf("expected s2 nil, got %v", v)
+	}
+	checkBool(t, vm, "ok2", false)
+	if v, _ := vm.Get("err"); v == nil {
+		t.Fatal("expected panic from failed type assertion")
+	}
+}
+
+func TestVMEmbedding(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type Base struct {
+			Val int
+		}
+		func (b Base) GetVal() any { return b.Val }
+		func (b *Base) SetVal(v any) { b.Val = v }
+		type Derived struct {
+			Base
+			Extra string
+		}
+		var d = Derived{Base: Base{Val: 10}, Extra: "ext"}
+		var v1 = d.Val
+		var v2 = d.GetVal()
+		func init() {
+			d.SetVal(20)
+			d.Val = 30
+		}
+		var v3 = d.Val
+	`)
+	checkInt(t, vm, "v1", 10)
+	checkInt(t, vm, "v2", 10)
+	checkInt(t, vm, "v3", 30)
+}
+
+func TestVMInterfaces(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type Reader interface {
+			Read() any
+		}
+		type MyFile struct {
+			Name string
+		}
+		func (f MyFile) Read() any { return "data" }
+		var f = MyFile{Name: "test"}
+		var r Reader = f.(Reader)
+		var res = r.Read()
+		var x any = f
+		var _, ok = x.(Reader)
+		type Writer interface {
+			Write(any)
+		}
+		var _, ok2 = x.(Writer)
+	`)
+	checkString(t, vm, "res", "data")
+	checkBool(t, vm, "ok", true)
+	checkBool(t, vm, "ok2", false)
+}

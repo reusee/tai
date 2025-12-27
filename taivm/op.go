@@ -65,6 +65,8 @@ const (
 	OpAddrOfAttr
 	OpDeref
 	OpSetDeref
+	OpTypeAssert
+	OpTypeAssertOk
 )
 
 func (o OpCode) With(arg int) OpCode {

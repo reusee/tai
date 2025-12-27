@@ -343,8 +343,19 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return nil
 
 	case *ast.TypeAssertExpr:
-		// taivm is dynamic; treat assertion as pass-through
-		return c.compileExpr(e.X)
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		if e.Type == nil {
+			return fmt.Errorf("type switch not supported")
+		}
+		t, err := c.resolveType(e.Type)
+		if err != nil {
+			return err
+		}
+		c.loadConst(t)
+		c.emit(taivm.OpTypeAssert)
+		return nil
 
 	case *ast.KeyValueExpr:
 		return fmt.Errorf("key:value expression not supported outside composite literal")
@@ -797,65 +808,48 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 		}
 		c.emit(taivm.OpMakeList.With(len(expr.Elts)))
 
-	case *ast.Ident:
-		// Named struct type - use OpMakeStruct to support methods
-		for _, elt := range expr.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				return fmt.Errorf("struct element must be key:value")
-			}
-			if ident, ok := kv.Key.(*ast.Ident); ok {
-				c.loadConst(ident.Name)
-			} else {
-				if err := c.compileExpr(kv.Key); err != nil {
-					return err
-				}
-			}
-			if err := c.compileExpr(kv.Value); err != nil {
-				return err
-			}
-		}
-		// Push type name, then emit OpMakeStruct
-		c.loadConst(t.Name)
-		c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
-
-	case *ast.SelectorExpr:
-		// Package.TypeName - treat as named struct type
-		for _, elt := range expr.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				return fmt.Errorf("struct element must be key:value")
-			}
-			if ident, ok := kv.Key.(*ast.Ident); ok {
-				c.loadConst(ident.Name)
-			} else {
-				if err := c.compileExpr(kv.Key); err != nil {
-					return err
-				}
-			}
-			if err := c.compileExpr(kv.Value); err != nil {
-				return err
-			}
-		}
-		// Push type name (just the identifier part)
-		if ident, ok := t.X.(*ast.Ident); ok {
-			c.loadConst(ident.Name + "." + t.Sel.Name)
+	case *ast.Ident, *ast.SelectorExpr:
+		var typeName string
+		var rawName string
+		if ident, ok := t.(*ast.Ident); ok {
+			typeName = ident.Name
+			rawName = ident.Name
 		} else {
-			c.loadConst(t.Sel.Name)
+			sel := t.(*ast.SelectorExpr)
+			if id, ok := sel.X.(*ast.Ident); ok {
+				typeName = id.Name + "." + sel.Sel.Name
+			} else {
+				typeName = sel.Sel.Name
+			}
+			rawName = sel.Sel.Name
 		}
+		for _, elt := range expr.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				return fmt.Errorf("struct element must be key:value")
+			}
+			if ident, ok := kv.Key.(*ast.Ident); ok {
+				c.loadConst(ident.Name)
+			} else {
+				if err := c.compileExpr(kv.Key); err != nil {
+					return err
+				}
+			}
+			if err := c.compileExpr(kv.Value); err != nil {
+				return err
+			}
+		}
+		idx := c.addConst("_embedded_info_" + rawName)
+		c.emit(taivm.OpLoadVar.With(idx))
+		c.loadConst(typeName)
 		c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
 
 	default:
-		// Treat anonymous Structs and Maps similarly
 		for _, elt := range expr.Elts {
 			kv, ok := elt.(*ast.KeyValueExpr)
 			if !ok {
-				// field: value is required for maps/structs in this basic implementation
 				return fmt.Errorf("element must be key:value")
 			}
-			// Key
-			// Struct field names in Go AST are often Idents, but in map literals they are BasicLits
-			// OpMakeMap expects keys on stack.
 			if ident, ok := kv.Key.(*ast.Ident); ok {
 				c.loadConst(ident.Name)
 			} else {
@@ -863,7 +857,6 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 					return err
 				}
 			}
-			// Value
 			if err := c.compileExpr(kv.Value); err != nil {
 				return err
 			}
@@ -1002,19 +995,30 @@ func (c *compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 	if len(stmt.Rhs) == 1 {
-		// a, b = f()
-		if err := c.compileExpr(stmt.Rhs[0]); err != nil {
-			return err
+		rhs := stmt.Rhs[0]
+		// Handle v, ok := x.(T)
+		if ta, ok := rhs.(*ast.TypeAssertExpr); ok && len(stmt.Lhs) == 2 {
+			if err := c.compileExpr(ta.X); err != nil {
+				return err
+			}
+			t, err := c.resolveType(ta.Type)
+			if err != nil {
+				return err
+			}
+			c.loadConst(t)
+			c.emit(taivm.OpTypeAssertOk)
+		} else {
+			if err := c.compileExpr(rhs); err != nil {
+				return err
+			}
+			c.emit(taivm.OpUnpack.With(len(stmt.Lhs)))
 		}
-		c.emit(taivm.OpUnpack.With(len(stmt.Lhs)))
 		for i := 0; i < len(stmt.Lhs); i++ {
 			if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok); err != nil {
 				return err
 			}
 		}
-
 	} else if len(stmt.Rhs) == len(stmt.Lhs) {
-		// a, b = 1, 2
 		for _, r := range stmt.Rhs {
 			if err := c.compileExpr(r); err != nil {
 				return err
@@ -1025,11 +1029,9 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 				return err
 			}
 		}
-
 	} else {
 		return fmt.Errorf("assignment count mismatch: %d = %d", len(stmt.Lhs), len(stmt.Rhs))
 	}
-
 	return nil
 }
 
@@ -1446,10 +1448,8 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 	isConst := decl.Tok == token.CONST
 	var lastExprs []ast.Expr
-
 	for i, spec := range decl.Specs {
 		switch s := spec.(type) {
-
 		case *ast.ImportSpec:
 			path, err := strconv.Unquote(s.Path.Value)
 			if err != nil {
@@ -1457,8 +1457,7 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 			}
 			idx := c.addConst(path)
 			c.emit(taivm.OpImport.With(idx))
-			c.emit(taivm.OpPop) // OpImport pushes nil to stack
-
+			c.emit(taivm.OpPop)
 		case *ast.ValueSpec:
 			if isConst {
 				c.iotaVal = i
@@ -1469,22 +1468,34 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 			} else if isConst {
 				lastExprs = values
 			}
-
 			if len(values) == 1 && len(s.Names) > 1 {
-				if err := c.compileExpr(values[0]); err != nil {
-					return err
+				rhs := values[0]
+				// Handle var v, ok = x.(T)
+				if ta, ok := rhs.(*ast.TypeAssertExpr); ok && len(s.Names) == 2 {
+					if err := c.compileExpr(ta.X); err != nil {
+						return err
+					}
+					t, err := c.resolveType(ta.Type)
+					if err != nil {
+						return err
+					}
+					c.loadConst(t)
+					c.emit(taivm.OpTypeAssertOk)
+				} else {
+					if err := c.compileExpr(rhs); err != nil {
+						return err
+					}
+					c.emit(taivm.OpUnpack.With(len(s.Names)))
 				}
-				c.emit(taivm.OpUnpack.With(len(s.Names)))
 				for i := 0; i < len(s.Names); i++ {
 					name := s.Names[i]
 					if name.Name == "_" {
-						c.emit(taivm.OpPop) // Discard value
+						c.emit(taivm.OpPop)
 						continue
 					}
 					idx := c.addConst(name.Name)
 					c.emit(taivm.OpDefVar.With(idx))
 				}
-
 			} else {
 				if len(values) > 0 && len(values) != len(s.Names) {
 					return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(values))
@@ -1498,7 +1509,7 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 						} else {
 							c.loadConst(nil)
 						}
-						c.emit(taivm.OpPop) // Discard value
+						c.emit(taivm.OpPop)
 						continue
 					}
 					if i < len(values) {
@@ -1512,12 +1523,10 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 					c.emit(taivm.OpDefVar.With(idx))
 				}
 			}
-
 		case *ast.TypeSpec:
 			if err := c.compileTypeSpec(s); err != nil {
 				return err
 			}
-
 		}
 	}
 	return nil
@@ -1531,6 +1540,34 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	c.loadConst(t)
 	idx := c.addConst(spec.Name.Name)
 	c.emit(taivm.OpDefVar.With(idx))
+	// Record embedding information for struct field promotion
+	if st, ok := spec.Type.(*ast.StructType); ok {
+		var embedded []any
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				switch ft := field.Type.(type) {
+				case *ast.Ident:
+					embedded = append(embedded, ft.Name)
+				case *ast.SelectorExpr:
+					embedded = append(embedded, ft.Sel.Name)
+				case *ast.StarExpr:
+					if id, ok := ft.X.(*ast.Ident); ok {
+						embedded = append(embedded, id.Name)
+					} else if sel, ok := ft.X.(*ast.SelectorExpr); ok {
+						embedded = append(embedded, sel.Sel.Name)
+					}
+				}
+			}
+		}
+		if len(embedded) > 0 {
+			idx := c.addConst("_embedded_info_" + spec.Name.Name)
+			for _, e := range embedded {
+				c.loadConst(e)
+			}
+			c.emit(taivm.OpMakeList.With(len(embedded)))
+			c.emit(taivm.OpDefVar.With(idx))
+		}
+	}
 	return nil
 }
 

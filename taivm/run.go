@@ -241,6 +241,16 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if !v.opSetDeref(yield) {
 				return
 			}
+
+		case OpTypeAssert:
+			if !v.opTypeAssert(yield) {
+				return
+			}
+
+		case OpTypeAssertOk:
+			if !v.opTypeAssertOk(yield) {
+				return
+			}
 		}
 
 	}
@@ -591,6 +601,11 @@ func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	name := v.CurrentFun.Constants[idx].(string)
 	val, ok := v.Scope.Get(name)
 	if !ok {
+		// Handle virtual embedding info lookup
+		if strings.HasPrefix(name, "_embedded_info_") {
+			v.push(&List{})
+			return true
+		}
 		if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
 			return false
 		}
@@ -993,13 +1008,23 @@ func (v *VM) opMakeMap(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	n := int(inst >> 8)
-	if v.SP < n*2+1 {
+	if v.SP < n*2+2 {
 		if !yield(nil, fmt.Errorf("stack underflow during struct creation")) {
 			return false
 		}
 		return true
 	}
-	// Pop type name
+
+	embObj := v.pop()
+	var embedded []string
+	if l, ok := embObj.(*List); ok {
+		for _, e := range l.Elements {
+			if s, ok := e.(string); ok {
+				embedded = append(embedded, s)
+			}
+		}
+	}
+
 	typeName := v.pop()
 	typeNameStr, ok := typeName.(string)
 	if !ok {
@@ -1009,7 +1034,6 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 		v.push(nil)
 		return true
 	}
-	// Pop key-value pairs
 	m := make(map[string]any, n)
 	start := v.SP - n*2
 	for i := range n {
@@ -1026,7 +1050,7 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 		m[keyStr] = val
 	}
 	v.drop(n * 2)
-	v.push(&Struct{TypeName: typeNameStr, Fields: m})
+	v.push(&Struct{TypeName: typeNameStr, Fields: m, Embedded: embedded})
 	return true
 }
 
@@ -2133,26 +2157,19 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 
 	switch t := target.(type) {
 	case *Struct:
-		val, ok := t.Fields[nameStr]
-		if ok {
+		if val, ok := t.Fields[nameStr]; ok {
 			v.push(val)
 			return true
 		}
-		// Not a field, check for method
 		if t.TypeName != "" {
-			// Check for pointer receiver method first (*TypeName.Method)
-			// Methods defined with pointer receivers are stored as *TypeName.methodName
 			ptrMethodName := "*" + t.TypeName + "." + nameStr
 			if method, ok := v.Get(ptrMethodName); ok {
-				// Pointer receiver method - wrap struct in a dereferenceable pointer
-				// We use a special Pointer with nil Key that opDeref handles
 				v.push(&BoundMethod{
 					Receiver: &Pointer{Target: t, Key: ""},
 					Fun:      method,
 				})
 				return true
 			}
-			// Check for value receiver method
 			methodName := t.TypeName + "." + nameStr
 			if method, ok := v.Get(methodName); ok {
 				v.push(&BoundMethod{
@@ -2160,6 +2177,20 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 					Fun:      method,
 				})
 				return true
+			}
+		}
+		// Search promoted attributes recursively
+		for _, emb := range t.Embedded {
+			if fieldVal, ok := t.Fields[emb]; ok && fieldVal != nil {
+				v.push(fieldVal)
+				v.push(name)
+				if v.opGetAttr(yield) {
+					res := v.OperandStack[v.SP-1]
+					if res != nil {
+						return true
+					}
+					v.pop()
+				}
 			}
 		}
 		if !yield(nil, fmt.Errorf("struct has no field or method '%s'", nameStr)) {
@@ -2186,8 +2217,6 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		return true
 
 	case *Pointer:
-		// Automatically dereference and get attribute
-		// Push the target and name, then call opGetAttr recursively
 		v.push(t.Target)
 		v.push(name)
 		return v.opGetAttr(yield)
@@ -2229,13 +2258,27 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 
 	switch t := target.(type) {
 	case *Struct:
+		if _, ok := t.Fields[nameStr]; ok {
+			t.Fields[nameStr] = val
+			return true
+		}
+		// Try to set promoted field
+		for _, emb := range t.Embedded {
+			if fieldVal, ok := t.Fields[emb]; ok && fieldVal != nil {
+				v.push(fieldVal)
+				v.push(name)
+				v.push(val)
+				if v.opSetAttr(yield) {
+					return true
+				}
+			}
+		}
 		if t.Fields == nil {
 			t.Fields = make(map[string]any)
 		}
 		t.Fields[nameStr] = val
 
 	case *Pointer:
-		// Automatically dereference and set attribute
 		v.push(t.Target)
 		v.push(name)
 		v.push(val)
@@ -2758,6 +2801,141 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 		return v.opSetAttr(yield)
 	}
 	return v.opSetIndex(yield)
+}
+
+func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
+	tObj := v.pop()
+	val := v.pop()
+	t, ok := tObj.(reflect.Type)
+	if !ok {
+		if !yield(nil, fmt.Errorf("invalid type for type assertion: %T", tObj)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	if val == nil {
+		if !yield(nil, fmt.Errorf("interface is nil, not %v", t)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	if t.Kind() == reflect.Interface {
+		if s, ok := val.(*Struct); ok {
+			if v.checkStructImplements(s, t) {
+				v.push(val)
+				return true
+			}
+		} else if reflect.TypeOf(val).Implements(t) {
+			v.push(val)
+			return true
+		}
+		if !yield(nil, fmt.Errorf("cannot convert %T to %v", val, t)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	valType := reflect.TypeOf(val)
+	if valType.AssignableTo(t) {
+		v.push(val)
+		return true
+	}
+	if s, ok := val.(*Struct); ok {
+		if t.Kind() == reflect.Ptr || t.Kind() == reflect.Struct {
+			if s.TypeName == t.Name() {
+				v.push(val)
+				return true
+			}
+		}
+	}
+	if !yield(nil, fmt.Errorf("cannot convert %T to %v", val, t)) {
+		return false
+	}
+	v.push(nil)
+	return true
+}
+
+func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
+	tObj := v.pop()
+	val := v.pop()
+	t, ok := tObj.(reflect.Type)
+	if !ok {
+		v.push(nil)
+		v.push(false)
+		return true
+	}
+	if val == nil {
+		v.push(reflect.Zero(t).Interface())
+		v.push(false)
+		return true
+	}
+	if t.Kind() == reflect.Interface {
+		if s, ok := val.(*Struct); ok {
+			if v.checkStructImplements(s, t) {
+				v.push(val)
+				v.push(true)
+				return true
+			}
+		} else if reflect.TypeOf(val).Implements(t) {
+			v.push(val)
+			v.push(true)
+			return true
+		}
+		v.push(reflect.Zero(t).Interface())
+		v.push(false)
+		return true
+	}
+	valType := reflect.TypeOf(val)
+	if valType.AssignableTo(t) {
+		v.push(val)
+		v.push(true)
+		return true
+	}
+	if s, ok := val.(*Struct); ok {
+		if t.Kind() == reflect.Ptr || t.Kind() == reflect.Struct {
+			if s.TypeName == t.Name() {
+				v.push(val)
+				v.push(true)
+				return true
+			}
+		}
+	}
+	v.push(reflect.Zero(t).Interface())
+	v.push(false)
+	return true
+}
+
+func (v *VM) checkStructImplements(s *Struct, it reflect.Type) bool {
+	for i := 0; i < it.NumMethod(); i++ {
+		m := it.Method(i)
+		if !v.structHasMethod(s, m.Name) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *VM) structHasMethod(s *Struct, name string) bool {
+	methodName := s.TypeName + "." + name
+	ptrMethodName := "*" + s.TypeName + "." + name
+	if _, ok := v.Get(methodName); ok {
+		return true
+	}
+	if _, ok := v.Get(ptrMethodName); ok {
+		return true
+	}
+	for _, emb := range s.Embedded {
+		if fieldVal, ok := s.Fields[emb]; ok {
+			if embStruct, ok := fieldVal.(*Struct); ok {
+				if v.structHasMethod(embStruct, name) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (v *VM) handleUnwind(yield func(*Interrupt, error) bool) bool {
