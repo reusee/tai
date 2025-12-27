@@ -839,9 +839,9 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 				return err
 			}
 		}
+		c.loadConst(typeName)
 		idx := c.addConst("_embedded_info_" + rawName)
 		c.emit(taivm.OpLoadVar.With(idx))
-		c.loadConst(typeName)
 		c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
 
 	default:
