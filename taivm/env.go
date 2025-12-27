@@ -1,8 +1,9 @@
 package taivm
 
 type Env struct {
-	Parent *Env
-	Vars   []EnvVar
+	Parent   *Env
+	Vars     []EnvVar
+	Captured bool
 }
 
 type EnvVar struct {
@@ -51,5 +52,11 @@ func (e *Env) Set(name string, val any) bool {
 func (e *Env) NewChild() *Env {
 	return &Env{
 		Parent: e,
+	}
+}
+
+func (e *Env) MarkCaptured() {
+	for curr := e; curr != nil && !curr.Captured; curr = curr.Parent {
+		curr.Captured = true
 	}
 }

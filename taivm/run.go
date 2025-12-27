@@ -73,11 +73,13 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpEnterScope:
-			v.Scope = v.Scope.NewChild()
+			v.Scope = v.allocEnv(v.Scope)
 
 		case OpLeaveScope:
 			if v.Scope.Parent != nil {
+				old := v.Scope
 				v.Scope = v.Scope.Parent
+				v.freeEnv(old)
 			}
 
 		case OpMakeList:
@@ -642,6 +644,7 @@ func (v *VM) opMakeClosure(inst OpCode) {
 		}
 	}
 
+	v.Scope.MarkCaptured()
 	v.push(&Closure{
 		Fun:      fun,
 		Env:      v.Scope,
@@ -750,7 +753,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		}
 	}
 
-	newEnv := fn.Env.NewChild()
+	newEnv := v.allocEnv(fn.Env)
 	for i, name := range fn.Fun.ParamNames {
 		if i < len(locals) {
 			newEnv.Def(name, locals[i])
@@ -777,6 +780,13 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 				v.OperandStack[i] = nil
 			}
 		}
+
+		oldScope := v.Scope
+		v.CurrentFun = fn.Fun
+		v.IP = 0
+		v.Scope = newEnv
+		v.freeEnv(oldScope)
+		return true
 	} else {
 		v.CallStack = append(v.CallStack, Frame{
 			Fun:      v.CurrentFun,
@@ -894,12 +904,14 @@ func (v *VM) opReturn(yield func(*Interrupt, error) bool) bool {
 	frame := v.CallStack[n-1]
 	v.CallStack = v.CallStack[:n-1]
 
+	oldScope := v.Scope
 	v.CurrentFun = frame.Fun
 	v.IP = frame.ReturnIP
 	v.Scope = frame.Env
 	v.BP = frame.BP
 	v.drop(v.SP - frame.BaseSP)
 	v.push(retVal)
+	v.freeEnv(oldScope)
 	return true
 }
 
@@ -2262,7 +2274,7 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			}
 		}
 
-		newEnv := fn.Env.NewChild()
+		newEnv := v.allocEnv(fn.Env)
 		for i, name := range paramNames {
 			if i < len(locals) {
 				newEnv.Def(name, locals[i])

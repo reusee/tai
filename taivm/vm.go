@@ -13,6 +13,7 @@ type VM struct {
 	BP           int
 	CallStack    []Frame
 	Scope        *Env
+	envPool      []*Env
 }
 
 func NewVM(main *Function) *VM {
@@ -93,4 +94,26 @@ func (v *VM) Restore(r io.Reader) error {
 		return err
 	}
 	return nil
+}
+
+func (v *VM) allocEnv(parent *Env) *Env {
+	if n := len(v.envPool); n > 0 {
+		e := v.envPool[n-1]
+		v.envPool = v.envPool[:n-1]
+		e.Parent = parent
+		e.Vars = e.Vars[:0]
+		e.Captured = false
+		return e
+	}
+	return &Env{
+		Parent: parent,
+	}
+}
+
+func (v *VM) freeEnv(e *Env) {
+	if e == nil || e.Captured {
+		return
+	}
+	clear(e.Vars)
+	v.envPool = append(v.envPool, e)
 }
