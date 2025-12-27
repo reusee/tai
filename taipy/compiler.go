@@ -51,7 +51,7 @@ func (c *compiler) addConst(val any) int {
 
 func isComparable(v any) bool {
 	switch v.(type) {
-	case int, int64, float64, string, bool, nil, taivm.Symbol:
+	case int, int64, float64, string, bool, nil:
 		return true
 	}
 	return false

@@ -934,24 +934,20 @@ func TestVM_Pipe_Error(t *testing.T) {
 
 func TestVM_Env_GetSet_ChildGrowth(t *testing.T) {
 	root := &Env{}
-	root.DefSym(Symbol(1), 100)
+	root.Def("x", 100)
 
 	child := root.NewChild()
-	// Def "z" to ensure child vars slice grows and includes slot for "x"
-	// assuming z's symbol index > x's symbol index
-	child.DefSym(Symbol(2), 200)
+	child.Def("z", 200)
 
-	// Get x from child (slot exists but is undefined, should fallback to parent)
-	val, ok := child.GetSym(Symbol(1))
+	val, ok := child.Get("x")
 	if !ok || val.(int) != 100 {
 		t.Errorf("Get fallback failed: got %v", val)
 	}
 
-	// Set x via child (slot exists but is undefined, should update parent)
-	if !child.SetSym(Symbol(1), 101) {
+	if !child.Set("x", 101) {
 		t.Error("Set returned false")
 	}
-	val, ok = root.GetSym(Symbol(1))
+	val, ok = root.Get("x")
 	if val.(int) != 101 {
 		t.Errorf("Root x not updated: %v", val)
 	}
@@ -1016,118 +1012,6 @@ func TestVM_TCO(t *testing.T) {
 	res, ok := vm.Get("res")
 	if !ok || res.(int) != 42 {
 		t.Fatalf("expected 42, got %v", res)
-	}
-}
-
-func TestVM_OpErrors_Break(t *testing.T) {
-	// This test iterates various error conditions and breaks on the first error.
-	// This ensures the 'return' path (aborting VM) in the error handling blocks is covered.
-	cases := []struct {
-		Name   string
-		Code   []OpCode
-		Consts []any
-	}{
-		{
-			Name:   "LoadVarUndefined",
-			Code:   []OpCode{OpLoadVar.With(0)},
-			Consts: []any{"undef"},
-		},
-		{
-			Name:   "SetVarUndefined",
-			Code:   []OpCode{OpLoadConst.With(0), OpSetVar.With(1)},
-			Consts: []any{1, "undef"},
-		},
-		{
-			Name: "MakeListStackUnderflow",
-			Code: []OpCode{OpMakeList.With(5)},
-		},
-		{
-			Name: "MakeMapStackUnderflow",
-			Code: []OpCode{OpMakeMap.With(5)},
-		},
-		{
-			Name: "CallStackUnderflow",
-			Code: []OpCode{OpCall.With(5)},
-		},
-		{
-			Name:   "CallNonFunction",
-			Code:   []OpCode{OpLoadConst.With(0), OpCall.With(0)},
-			Consts: []any{1},
-		},
-		{
-			Name:   "ArityMismatch",
-			Consts: []any{&Function{NumParams: 1}},
-			Code:   []OpCode{OpMakeClosure.With(0), OpCall.With(0)},
-		},
-		{
-			Name:   "IndexNil",
-			Consts: []any{nil, 1},
-			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
-		},
-		{
-			Name:   "IndexSliceBadKey",
-			Consts: []any{"bad"},
-			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
-		},
-		{
-			Name:   "IndexSliceOutOfBounds",
-			Consts: []any{0},
-			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
-		},
-		{
-			Name:   "IndexUnindexable",
-			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpGetIndex},
-		},
-		{
-			Name:   "SetIndexNil",
-			Consts: []any{nil},
-			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
-		},
-		{
-			Name:   "SetIndexSliceBadKey",
-			Consts: []any{"bad", 1},
-			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
-		},
-		{
-			Name:   "SetIndexSliceOutOfBounds",
-			Consts: []any{0, 1},
-			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
-		},
-		{
-			Name:   "SetIndexStringKey",
-			Consts: []any{map[string]any{}, 1, 1},
-			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpSetIndex},
-		},
-		{
-			Name:   "SetIndexUnassignable",
-			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
-		},
-		{
-			Name:   "SwapUnderflow",
-			Consts: []any{1},
-			Code:   []OpCode{OpLoadConst.With(0), OpSwap},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.Name, func(t *testing.T) {
-			vm := NewVM(&Function{
-				Code:      c.Code,
-				Constants: c.Consts,
-			})
-			var hit bool
-			for _, err := range vm.Run {
-				if err != nil {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				t.Error("expected error")
-			}
-		})
 	}
 }
 
@@ -1395,25 +1279,112 @@ func TestVM_ArityMismatch_Continue(t *testing.T) {
 	}
 }
 
-func TestSymbolTable_SnapshotRestore(t *testing.T) {
-	st := NewSymbolTable()
-	st.Intern("a")
-	st.Intern("b")
-	snap := st.Snapshot()
-	if len(snap) != 2 {
-		t.Fatalf("expected 2, got %d", len(snap))
+func TestVM_OpErrors_Break(t *testing.T) {
+	cases := []struct {
+		Name   string
+		Code   []OpCode
+		Consts []any
+	}{
+		{
+			Name:   "LoadVarUndefined",
+			Code:   []OpCode{OpLoadVar.With(0)},
+			Consts: []any{"undef"},
+		},
+		{
+			Name:   "SetVarUndefined",
+			Code:   []OpCode{OpLoadConst.With(0), OpSetVar.With(1)},
+			Consts: []any{1, "undef"},
+		},
+		{
+			Name: "MakeListStackUnderflow",
+			Code: []OpCode{OpMakeList.With(5)},
+		},
+		{
+			Name: "MakeMapStackUnderflow",
+			Code: []OpCode{OpMakeMap.With(5)},
+		},
+		{
+			Name: "CallStackUnderflow",
+			Code: []OpCode{OpCall.With(5)},
+		},
+		{
+			Name:   "CallNonFunction",
+			Code:   []OpCode{OpLoadConst.With(0), OpCall.With(0)},
+			Consts: []any{1},
+		},
+		{
+			Name:   "ArityMismatch",
+			Consts: []any{&Function{NumParams: 1}},
+			Code:   []OpCode{OpMakeClosure.With(0), OpCall.With(0)},
+		},
+		{
+			Name:   "IndexNil",
+			Consts: []any{nil, 1},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetIndex},
+		},
+		{
+			Name:   "IndexSliceBadKey",
+			Consts: []any{"bad"},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
+		},
+		{
+			Name:   "IndexSliceOutOfBounds",
+			Consts: []any{0},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpGetIndex},
+		},
+		{
+			Name:   "IndexUnindexable",
+			Consts: []any{1},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpGetIndex},
+		},
+		{
+			Name:   "SetIndexNil",
+			Consts: []any{nil},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
+		},
+		{
+			Name:   "SetIndexSliceBadKey",
+			Consts: []any{"bad", 1},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
+		},
+		{
+			Name:   "SetIndexSliceOutOfBounds",
+			Consts: []any{0, 1},
+			Code:   []OpCode{OpMakeList.With(0), OpLoadConst.With(0), OpLoadConst.With(1), OpSetIndex},
+		},
+		{
+			Name:   "SetIndexStringKey",
+			Consts: []any{map[string]any{}, 1, 1},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpLoadConst.With(2), OpSetIndex},
+		},
+		{
+			Name:   "SetIndexUnassignable",
+			Consts: []any{1},
+			Code:   []OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpLoadConst.With(0), OpSetIndex},
+		},
+		{
+			Name: "SwapUnderflow",
+			Code: []OpCode{OpSwap},
+		},
 	}
 
-	st2 := NewSymbolTable()
-	st2.Restore(snap)
-	if st2.Intern("a") != st.Intern("a") {
-		t.Fatal("symbol mismatch")
-	}
-	if st2.Intern("b") != st.Intern("b") {
-		t.Fatal("symbol mismatch")
-	}
-	if st2.Intern("c") == st.Intern("a") {
-		t.Fatal("new symbol collision")
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			vm := NewVM(&Function{
+				Code:      c.Code,
+				Constants: c.Consts,
+			})
+			var hit bool
+			for _, err := range vm.Run {
+				if err != nil {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				t.Error("expected error")
+			}
+		})
 	}
 }
 
@@ -1557,31 +1528,6 @@ func TestVM_FallOffEnd(t *testing.T) {
 	}
 	if vm.SP != 1 {
 		t.Fatal("expected 1 item on stack")
-	}
-}
-
-func TestVM_PrecomputedSymbols(t *testing.T) {
-	vm := NewVM(nil)
-	sym := vm.Intern("y") // Symbol(0)
-
-	main := &Function{
-		Constants: []any{sym, 456},
-		Code: []OpCode{
-			OpLoadConst.With(1),
-			OpDefVar.With(0),
-			OpLoadVar.With(0),
-		},
-	}
-	vm.CurrentFun = main
-
-	for _, err := range vm.Run {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if val, _ := vm.Get("y"); val.(int) != 456 {
-		t.Fatal("failed")
 	}
 }
 
@@ -1729,30 +1675,6 @@ func TestVM_MapStringAny(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
-}
-
-func TestVM_SetVarSymbol(t *testing.T) {
-	vm := NewVM(nil)
-	sym := vm.Intern("x")
-	main := &Function{
-		Constants: []any{sym, 123},
-		Code: []OpCode{
-			OpLoadConst.With(1),
-			OpDefVar.With(0), // Define x=123 using Symbol
-
-			OpLoadConst.With(1),
-			OpSetVar.With(0), // Set x=123 using Symbol
-		},
-	}
-	vm.CurrentFun = main
-	for _, err := range vm.Run {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if v, ok := vm.Get("x"); !ok || v.(int) != 123 {
-		t.Fatalf("expected 123, got %v", v)
-	}
 }
 
 func TestVM_Loop(t *testing.T) {
@@ -2011,9 +1933,8 @@ func TestVM_Coverage_Extras(t *testing.T) {
 
 	t.Run("LoadVarSymbol", func(t *testing.T) {
 		vm := NewVM(nil)
-		sym := vm.Intern("x")
 		vm.CurrentFun = &Function{
-			Constants: []any{sym, 42},
+			Constants: []any{"x", 42},
 			Code: []OpCode{
 				OpLoadConst.With(1),
 				OpDefVar.With(0),  // x = 42
@@ -2887,9 +2808,8 @@ func TestVM_Coverage_Extended(t *testing.T) {
 
 	t.Run("LoadVarSymbol", func(t *testing.T) {
 		vm := NewVM(nil)
-		sym := vm.Intern("x")
 		vm.CurrentFun = &Function{
-			Constants: []any{sym, 42},
+			Constants: []any{"x", 42},
 			Code: []OpCode{
 				OpLoadConst.With(1),
 				OpDefVar.With(0),  // x = 42

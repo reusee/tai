@@ -13,7 +13,6 @@ type VM struct {
 	BP           int
 	CallStack    []Frame
 	Scope        *Env
-	Symbols      *SymbolTable
 }
 
 func NewVM(main *Function) *VM {
@@ -23,24 +22,19 @@ func NewVM(main *Function) *VM {
 		Scope:        scope,
 		OperandStack: make([]any, 1024),
 		CallStack:    make([]Frame, 0, 64),
-		Symbols:      NewSymbolTable(),
 	}
 }
 
-func (v *VM) Intern(name string) Symbol {
-	return v.Symbols.Intern(name)
-}
-
 func (v *VM) Get(name string) (any, bool) {
-	return v.Scope.GetSym(v.Symbols.Intern(name))
+	return v.Scope.Get(name)
 }
 
 func (v *VM) Def(name string, val any) {
-	v.Scope.DefSym(v.Symbols.Intern(name), val)
+	v.Scope.Def(name, val)
 }
 
 func (v *VM) Set(name string, val any) bool {
-	return v.Scope.SetSym(v.Symbols.Intern(name), val)
+	return v.Scope.Set(name, val)
 }
 
 func (v *VM) push(val any) {

@@ -550,16 +550,9 @@ func (v *VM) opLoadConst(inst OpCode) {
 
 func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	idx := int(inst >> 8)
-	c := v.CurrentFun.Constants[idx]
-	var sym Symbol
-	if s, ok := c.(Symbol); ok {
-		sym = s
-	} else {
-		sym = v.Intern(c.(string))
-	}
-	val, ok := v.Scope.GetSym(sym)
+	name := v.CurrentFun.Constants[idx].(string)
+	val, ok := v.Scope.Get(name)
 	if !ok {
-		name := v.Symbols.SymToStr[sym]
 		if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
 			return false
 		}
@@ -572,28 +565,15 @@ func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opDefVar(inst OpCode) {
 	idx := int(inst >> 8)
-	c := v.CurrentFun.Constants[idx]
-	var sym Symbol
-	if s, ok := c.(Symbol); ok {
-		sym = s
-	} else {
-		sym = v.Intern(c.(string))
-	}
-	v.Scope.DefSym(sym, v.pop())
+	name := v.CurrentFun.Constants[idx].(string)
+	v.Scope.Def(name, v.pop())
 }
 
 func (v *VM) opSetVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	idx := int(inst >> 8)
-	c := v.CurrentFun.Constants[idx]
-	var sym Symbol
-	if s, ok := c.(Symbol); ok {
-		sym = s
-	} else {
-		sym = v.Intern(c.(string))
-	}
+	name := v.CurrentFun.Constants[idx].(string)
 	val := v.pop()
-	if !v.Scope.SetSym(sym, val) {
-		name := v.Symbols.SymToStr[sym]
+	if !v.Scope.Set(name, val) {
 		if !yield(nil, fmt.Errorf("variable not found: %s", name)) {
 			return false
 		}
@@ -771,23 +751,9 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 	}
 
 	newEnv := fn.Env.NewChild()
-
-	paramSyms := make([]Symbol, len(fn.Fun.ParamNames))
-	var maxSym int
 	for i, name := range fn.Fun.ParamNames {
-		sym := v.Intern(name)
-		paramSyms[i] = sym
-		if int(sym) > maxSym {
-			maxSym = int(sym)
-		}
-	}
-
-	if len(paramSyms) > 0 {
-		newEnv.Grow(maxSym)
-		for i, val := range locals {
-			if i < len(paramSyms) {
-				newEnv.DefSym(paramSyms[i], val)
-			}
+		if i < len(locals) {
+			newEnv.Def(name, locals[i])
 		}
 	}
 
@@ -2297,23 +2263,9 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		}
 
 		newEnv := fn.Env.NewChild()
-
-		paramSyms := make([]Symbol, len(paramNames))
-		var maxSym int
 		for i, name := range paramNames {
-			sym := v.Intern(name)
-			paramSyms[i] = sym
-			if int(sym) > maxSym {
-				maxSym = int(sym)
-			}
-		}
-
-		if len(paramSyms) > 0 {
-			newEnv.Grow(maxSym)
-			for i, val := range locals {
-				if i < len(paramSyms) {
-					newEnv.DefSym(paramSyms[i], val)
-				}
+			if i < len(locals) {
+				newEnv.Def(name, locals[i])
 			}
 		}
 
