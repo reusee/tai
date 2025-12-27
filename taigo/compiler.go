@@ -1578,7 +1578,7 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		switch e.Name {
 
 		case "int":
-			return reflect.TypeFor[int](), nil
+			return reflect.TypeFor[int64](), nil
 		case "int8":
 			return reflect.TypeFor[int8](), nil
 		case "int16":
@@ -1589,7 +1589,7 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 			return reflect.TypeFor[int64](), nil
 
 		case "uint":
-			return reflect.TypeFor[uint](), nil
+			return reflect.TypeFor[uint64](), nil
 		case "uint8", "byte":
 			return reflect.TypeFor[uint8](), nil
 		case "uint16":
