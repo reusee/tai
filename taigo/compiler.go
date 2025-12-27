@@ -344,11 +344,9 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		if e.Type == nil {
 			return fmt.Errorf("type switch not supported")
 		}
-		t, err := c.resolveType(e.Type)
-		if err != nil {
+		if err := c.compileExpr(e.Type); err != nil {
 			return err
 		}
-		c.loadConst(t)
 		c.emit(taivm.OpTypeAssert)
 		return nil
 
@@ -996,11 +994,9 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 			if err := c.compileExpr(ta.X); err != nil {
 				return err
 			}
-			t, err := c.resolveType(ta.Type)
-			if err != nil {
+			if err := c.compileExpr(ta.Type); err != nil {
 				return err
 			}
-			c.loadConst(t)
 			c.emit(taivm.OpTypeAssertOk)
 			c.emit(taivm.OpSwap) // Fix stack order for TypeAssertOk
 		} else {
@@ -1471,11 +1467,9 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 					if err := c.compileExpr(ta.X); err != nil {
 						return err
 					}
-					t, err := c.resolveType(ta.Type)
-					if err != nil {
+					if err := c.compileExpr(ta.Type); err != nil {
 						return err
 					}
-					c.loadConst(t)
 					c.emit(taivm.OpTypeAssertOk)
 					c.emit(taivm.OpSwap) // Fix stack order for TypeAssertOk
 				} else {
@@ -1568,7 +1562,7 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	return nil
 }
 
-func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
+func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 	switch e := expr.(type) {
 
 	case *ast.Ident:
@@ -1624,10 +1618,11 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 
 	case *ast.ArrayType:
-		elt, err := c.resolveType(e.Elt)
+		eltObj, err := c.resolveType(e.Elt)
 		if err != nil {
 			return nil, err
 		}
+		elt := eltObj.(reflect.Type)
 		if e.Len != nil {
 			var length int
 			if lit, ok := e.Len.(*ast.BasicLit); ok && lit.Kind == token.INT {
@@ -1640,10 +1635,11 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 
 	case *ast.ChanType:
-		t, err := c.resolveType(e.Value)
+		tObj, err := c.resolveType(e.Value)
 		if err != nil {
 			return nil, err
 		}
+		t := tObj.(reflect.Type)
 		switch e.Dir {
 		case ast.RECV | ast.SEND:
 			return reflect.ChanOf(reflect.BothDir, t), nil
@@ -1659,10 +1655,11 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		var params []reflect.Type
 		if e.Params != nil {
 			for _, field := range e.Params.List {
-				t, err := c.resolveType(field.Type)
+				tObj, err := c.resolveType(field.Type)
 				if err != nil {
 					return nil, err
 				}
+				t := tObj.(reflect.Type)
 				n := len(field.Names)
 				if n == 0 {
 					n = 1
@@ -1675,10 +1672,11 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		var results []reflect.Type
 		if e.Results != nil {
 			for _, field := range e.Results.List {
-				t, err := c.resolveType(field.Type)
+				tObj, err := c.resolveType(field.Type)
 				if err != nil {
 					return nil, err
 				}
+				t := tObj.(reflect.Type)
 				n := len(field.Names)
 				if n == 0 {
 					n = 1
@@ -1698,31 +1696,35 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		return reflect.FuncOf(params, results, variadic), nil
 
 	case *ast.MapType:
-		kt, err := c.resolveType(e.Key)
+		ktObj, err := c.resolveType(e.Key)
 		if err != nil {
 			return nil, err
 		}
-		vt, err := c.resolveType(e.Value)
+		kt := ktObj.(reflect.Type)
+		vtObj, err := c.resolveType(e.Value)
 		if err != nil {
 			return nil, err
 		}
+		vt := vtObj.(reflect.Type)
 		return reflect.MapOf(kt, vt), nil
 
 	case *ast.StarExpr:
-		t, err := c.resolveType(e.X)
+		tObj, err := c.resolveType(e.X)
 		if err != nil {
 			return nil, err
 		}
+		t := tObj.(reflect.Type)
 		return reflect.PointerTo(t), nil
 
 	case *ast.StructType:
 		var fields []reflect.StructField
 		if e.Fields != nil {
 			for _, field := range e.Fields.List {
-				ft, err := c.resolveType(field.Type)
+				ftObj, err := c.resolveType(field.Type)
 				if err != nil {
 					return nil, err
 				}
+				ft := ftObj.(reflect.Type)
 				if len(field.Names) == 0 {
 					// Handle embedded fields
 					var name string
@@ -1760,7 +1762,18 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 		}
 		return reflect.StructOf(fields), nil
 
-	case *ast.InterfaceType, *ast.SelectorExpr:
+	case *ast.InterfaceType:
+		var methods []string
+		if e.Methods != nil {
+			for _, field := range e.Methods.List {
+				for _, name := range field.Names {
+					methods = append(methods, name.Name)
+				}
+			}
+		}
+		return &taivm.Interface{Methods: methods}, nil
+
+	case *ast.SelectorExpr:
 		// Go reflect doesn't support creating interfaces with methods at runtime.
 		// For now, return any to allow compilation.
 		// VM level interface check might be limited or require custom logic.

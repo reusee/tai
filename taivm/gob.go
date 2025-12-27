@@ -22,4 +22,5 @@ func init() {
 	gob.Register(&Range{})
 	gob.Register(&RangeIterator{})
 	gob.Register(&Interrupt{})
+	gob.Register(&Interface{})
 }

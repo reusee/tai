@@ -2806,23 +2806,33 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
-	t, ok := tObj.(reflect.Type)
-	if !ok {
-		if !yield(nil, fmt.Errorf("invalid type for type assertion: %T", tObj)) {
-			return false
-		}
-		v.push(nil)
-		return true
-	}
 	fail := func(err error) {
 		v.IsPanicking = true
 		v.PanicValue = err.Error()
 		v.IP = len(v.CurrentFun.Code) // ensure we transition to unwinding immediately
 	}
 	if val == nil {
-		fail(fmt.Errorf("interface is nil, not %v", t))
+		fail(fmt.Errorf("interface is nil"))
 		return true
 	}
+
+	if it, ok := tObj.(*Interface); ok {
+		if s, ok := val.(*Struct); ok {
+			if v.checkStructImplements(s, it) {
+				v.push(val)
+				return true
+			}
+		}
+		fail(fmt.Errorf("cannot convert %T to interface", val))
+		return true
+	}
+
+	t, ok := tObj.(reflect.Type)
+	if !ok {
+		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
+		return true
+	}
+
 	if t.Kind() == reflect.Interface {
 		if s, ok := val.(*Struct); ok {
 			if v.checkStructImplements(s, t) {
@@ -2836,6 +2846,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		fail(fmt.Errorf("cannot convert %T to %v", val, t))
 		return true
 	}
+
 	valType := reflect.TypeOf(val)
 	if valType.AssignableTo(t) {
 		v.push(val)
@@ -2856,6 +2867,25 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
+
+	if it, ok := tObj.(*Interface); ok {
+		if val == nil {
+			v.push(nil)
+			v.push(false)
+			return true
+		}
+		if s, ok := val.(*Struct); ok {
+			if v.checkStructImplements(s, it) {
+				v.push(val)
+				v.push(true)
+				return true
+			}
+		}
+		v.push(nil)
+		v.push(false)
+		return true
+	}
+
 	t, ok := tObj.(reflect.Type)
 	if !ok {
 		v.push(nil)
@@ -2903,14 +2933,25 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) checkStructImplements(s *Struct, it reflect.Type) bool {
-	for i := 0; i < it.NumMethod(); i++ {
-		m := it.Method(i)
-		if !v.structHasMethod(s, m.Name) {
-			return false
+func (v *VM) checkStructImplements(s *Struct, it any) bool {
+	if rif, ok := it.(reflect.Type); ok {
+		for i := 0; i < rif.NumMethod(); i++ {
+			m := rif.Method(i)
+			if !v.structHasMethod(s, m.Name) {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	if cif, ok := it.(*Interface); ok {
+		for _, name := range cif.Methods {
+			if !v.structHasMethod(s, name) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (v *VM) structHasMethod(s *Struct, name string) bool {
