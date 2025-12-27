@@ -10,6 +10,15 @@ import (
 )
 
 func registerBuiltins(vm *taivm.VM, options *Options) {
+	registerIO(vm, options)
+	registerPanic(vm)
+	registerCollections(vm)
+	registerMath(vm)
+	registerConversions(vm)
+	registerMemory(vm)
+}
+
+func registerIO(vm *taivm.VM, options *Options) {
 	fprint := func(w io.Writer, args []any, newline bool) {
 		for i, arg := range args {
 			if i > 0 {
@@ -44,7 +53,9 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			return nil, nil
 		},
 	})
+}
 
+func registerPanic(vm *taivm.VM) {
 	vm.Def("panic", taivm.NativeFunc{
 		Name: "panic",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -71,7 +82,9 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			return nil, nil
 		},
 	})
+}
 
+func registerCollections(vm *taivm.VM) {
 	vm.Def("len", taivm.NativeFunc{
 		Name: "len",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -203,7 +216,9 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			return nil, fmt.Errorf("channels not supported")
 		},
 	})
+}
 
+func registerMath(vm *taivm.VM) {
 	vm.Def("complex", taivm.NativeFunc{
 		Name: "complex",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -256,7 +271,9 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			return nil, fmt.Errorf("imag expects numeric argument")
 		},
 	})
+}
 
+func registerConversions(vm *taivm.VM) {
 	vm.Def("int", taivm.NativeFunc{
 		Name: "int",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -321,7 +338,9 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			return fmt.Sprint(args[0]), nil
 		},
 	})
+}
 
+func registerMemory(vm *taivm.VM) {
 	vm.Def("make", taivm.NativeFunc{
 		Name: "make",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -333,25 +352,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 				return nil, fmt.Errorf("make expects reflect.Type as first argument, got %T", args[0])
 			}
 			if t.Kind() == reflect.Slice {
-				if len(args) < 2 {
-					return nil, fmt.Errorf("make slice expects length argument")
-				}
-				l, ok := taivm.ToInt64(args[1])
-				if !ok {
-					return nil, fmt.Errorf("slice length must be integer")
-				}
-				size := int(l)
-				if size < 0 {
-					return nil, fmt.Errorf("negative slice length")
-				}
-				elements := make([]any, size)
-				zero := getZeroValue(t.Elem())
-				if zero != nil {
-					for i := range elements {
-						elements[i] = zero
-					}
-				}
-				return &taivm.List{Elements: elements}, nil
+				return makeSlice(args, t)
 			}
 			if t.Kind() == reflect.Map {
 				return make(map[any]any), nil
@@ -381,6 +382,28 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			}, nil
 		},
 	})
+}
+
+func makeSlice(args []any, t reflect.Type) (any, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("make slice expects length argument")
+	}
+	l, ok := taivm.ToInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("slice length must be integer")
+	}
+	size := int(l)
+	if size < 0 {
+		return nil, fmt.Errorf("negative slice length")
+	}
+	elements := make([]any, size)
+	zero := getZeroValue(t.Elem())
+	if zero != nil {
+		for i := range elements {
+			elements[i] = zero
+		}
+	}
+	return &taivm.List{Elements: elements}, nil
 }
 
 func getZeroValue(t reflect.Type) any {
