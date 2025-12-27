@@ -112,13 +112,14 @@ func (c *compiler) loadConst(val any) {
 }
 
 func (c *compiler) compileFile(file *ast.File) error {
-	var initDecls []*ast.FuncDecl
 	var hasMain bool
 
 	for _, decl := range file.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
 			if funcDecl.Recv == nil && funcDecl.Name.Name == "init" {
-				initDecls = append(initDecls, funcDecl)
+				if err := c.compileInitFunc(funcDecl); err != nil {
+					return err
+				}
 				continue
 			}
 			if funcDecl.Name.Name == "main" {
@@ -127,12 +128,6 @@ func (c *compiler) compileFile(file *ast.File) error {
 		}
 
 		if err := c.compileDecl(decl); err != nil {
-			return err
-		}
-	}
-
-	for _, decl := range initDecls {
-		if err := c.compileInitFunc(decl); err != nil {
 			return err
 		}
 	}
