@@ -2937,15 +2937,23 @@ func (v *VM) checkStructImplements(s *Struct, it any) bool {
 	if rif, ok := it.(reflect.Type); ok {
 		for i := 0; i < rif.NumMethod(); i++ {
 			m := rif.Method(i)
-			if !v.structHasMethod(s, m.Name) {
+			method := v.getStructMethod(s, m.Name)
+			if method == nil {
+				return false
+			}
+			if !v.checkMethodType(method, m.Type) {
 				return false
 			}
 		}
 		return true
 	}
 	if cif, ok := it.(*Interface); ok {
-		for _, name := range cif.Methods {
-			if !v.structHasMethod(s, name) {
+		for name, targetType := range cif.Methods {
+			method := v.getStructMethod(s, name)
+			if method == nil {
+				return false
+			}
+			if !v.checkMethodType(method, targetType) {
 				return false
 			}
 		}
@@ -2955,24 +2963,60 @@ func (v *VM) checkStructImplements(s *Struct, it any) bool {
 }
 
 func (v *VM) structHasMethod(s *Struct, name string) bool {
+	return v.getStructMethod(s, name) != nil
+}
+
+func (v *VM) getStructMethod(s *Struct, name string) any {
 	methodName := s.TypeName + "." + name
 	ptrMethodName := "*" + s.TypeName + "." + name
-	if _, ok := v.Get(methodName); ok {
-		return true
+	if method, ok := v.Get(methodName); ok {
+		return method
 	}
-	if _, ok := v.Get(ptrMethodName); ok {
-		return true
+	if method, ok := v.Get(ptrMethodName); ok {
+		return method
 	}
 	for _, emb := range s.Embedded {
 		if fieldVal, ok := s.Fields[emb]; ok {
 			if embStruct, ok := fieldVal.(*Struct); ok {
-				if v.structHasMethod(embStruct, name) {
-					return true
+				if method := v.getStructMethod(embStruct, name); method != nil {
+					return method
 				}
 			}
 		}
 	}
-	return false
+	return nil
+}
+
+func (v *VM) checkMethodType(method any, target reflect.Type) bool {
+	var actual reflect.Type
+	switch m := method.(type) {
+	case *Closure:
+		actual = m.Fun.Type
+	case NativeFunc:
+		return true
+	default:
+		return false
+	}
+	if actual == nil {
+		return true
+	}
+	if actual.NumIn() != target.NumIn()+1 {
+		return false
+	}
+	if actual.NumOut() != target.NumOut() {
+		return false
+	}
+	for i := 0; i < target.NumIn(); i++ {
+		if actual.In(i+1) != target.In(i) {
+			return false
+		}
+	}
+	for i := 0; i < target.NumOut(); i++ {
+		if actual.Out(i) != target.Out(i) {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *VM) handleUnwind(yield func(*Interrupt, error) bool) bool {

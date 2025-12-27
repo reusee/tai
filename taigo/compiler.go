@@ -266,6 +266,30 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	}
 
 	fn := sub.getFunction()
+	tObj, err := c.resolveType(decl.Type)
+	if err != nil {
+		return nil, err
+	}
+	ft := tObj.(reflect.Type)
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		recv := decl.Recv.List[0]
+		rtObj, err := c.resolveType(recv.Type)
+		if err != nil {
+			return nil, err
+		}
+		rt := rtObj.(reflect.Type)
+		ins := make([]reflect.Type, 0, ft.NumIn()+1)
+		ins = append(ins, rt)
+		for i := 0; i < ft.NumIn(); i++ {
+			ins = append(ins, ft.In(i))
+		}
+		outs := make([]reflect.Type, ft.NumOut())
+		for i := 0; i < ft.NumOut(); i++ {
+			outs[i] = ft.Out(i)
+		}
+		ft = reflect.FuncOf(ins, outs, ft.IsVariadic())
+	}
+	fn.Type = ft
 	// Build ParamNames from decl (including receiver)
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
@@ -770,6 +794,11 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	}
 
 	fn := sub.getFunction()
+	tObj, err := c.resolveType(expr.Type)
+	if err != nil {
+		return err
+	}
+	fn.Type = tObj.(reflect.Type)
 	if expr.Type.Params != nil {
 		for _, field := range expr.Type.Params.List {
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
@@ -1763,11 +1792,16 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 		return reflect.StructOf(fields), nil
 
 	case *ast.InterfaceType:
-		var methods []string
+		methods := make(map[string]reflect.Type)
 		if e.Methods != nil {
 			for _, field := range e.Methods.List {
+				tObj, err := c.resolveType(field.Type)
+				if err != nil {
+					return nil, err
+				}
+				ft := tObj.(reflect.Type)
 				for _, name := range field.Names {
-					methods = append(methods, name.Name)
+					methods[name.Name] = ft
 				}
 			}
 		}

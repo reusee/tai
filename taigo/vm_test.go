@@ -1667,8 +1667,12 @@ func TestVMInterfaces(t *testing.T) {
 			Write(any)
 		}
 		var _, ok2 = x.(Writer)
+		type MyFile2 struct{}
+		func (f MyFile2) Read() int {}
+		var _, ok3 = (MyFile2{}).(Reader)
 	`)
 	checkString(t, vm, "res", "data")
 	checkBool(t, vm, "ok", true)
 	checkBool(t, vm, "ok2", false)
+	checkBool(t, vm, "ok3", false)
 }
