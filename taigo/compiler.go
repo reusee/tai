@@ -1623,7 +1623,9 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 			return reflect.TypeFor[complex128](), nil
 
 		default:
-			return nil, fmt.Errorf("unknown basic type: %s", e.Name)
+			// Treat unknown identifiers as any to allow compilation of user-defined types and embedding.
+			// The VM handles actual field/method resolution dynamically by name.
+			return reflect.TypeFor[any](), nil
 		}
 
 	case *ast.ArrayType:
@@ -1726,12 +1728,34 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 				if err != nil {
 					return nil, err
 				}
+				if len(field.Names) == 0 {
+					// Handle embedded fields
+					var name string
+					switch t := field.Type.(type) {
+					case *ast.Ident:
+						name = t.Name
+					case *ast.StarExpr:
+						if id, ok := t.X.(*ast.Ident); ok {
+							name = id.Name
+						}
+					}
+					if name != "" {
+						sf := reflect.StructField{
+							Name:      name,
+							Type:      ft,
+							Anonymous: true,
+						}
+						if name[0] >= 'a' && name[0] <= 'z' {
+							sf.PkgPath = "main"
+						}
+						fields = append(fields, sf)
+					}
+				}
 				for _, name := range field.Names {
 					sf := reflect.StructField{
 						Name: name.Name,
 						Type: ft,
 					}
-					// Set PkgPath for unexported fields
 					if name.Name[0] >= 'a' && name.Name[0] <= 'z' {
 						sf.PkgPath = "main"
 					}
