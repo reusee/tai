@@ -1504,3 +1504,94 @@ func TestVMFallthrough(t *testing.T) {
 	checkInt(t, vm, "res", 3)
 	checkInt(t, vm, "res2", 14)
 }
+
+func TestVMPanicRecoverDefer(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var res = 0
+		func testRecover() {
+			defer func() {
+				if r := recover(); r != nil {
+					res = 1
+				}
+			}()
+			panic("oops")
+		}
+
+		var seq = ""
+		func testOrder() {
+			defer func() {
+				if r := recover(); r != nil {
+					seq += "C"
+				}
+			}()
+			defer func() { seq += "B" }()
+			seq += "A"
+			panic("oops")
+		}
+
+		var recoveredValue any
+		func testRecoverValue() {
+			defer func() {
+				recoveredValue = recover()
+			}()
+			panic(42)
+		}
+
+		var normalDefer = 0
+		func testNormal() {
+			defer func() {
+				normalDefer = 100
+			}()
+		}
+
+		var recNil any
+		func testRecoverNil() {
+			recNil = recover()
+		}
+
+		var recPanicNil any
+		func testPanicNil() {
+			defer func() {
+				recPanicNil = recover()
+			}()
+			panic(nil)
+		}
+
+		var nestedRecover = 0
+		func testNestedPanic() {
+			defer func() {
+				if r := recover(); r == "panic2" {
+					nestedRecover = 2
+				}
+			}()
+			defer func() {
+				panic("panic2")
+			}()
+			panic("panic1")
+		}
+
+		func init() {
+			testRecover()
+			testOrder()
+			testRecoverValue()
+			testNormal()
+			testRecoverNil()
+			testPanicNil()
+			testNestedPanic()
+		}
+	`)
+	checkInt(t, vm, "res", 1)
+	checkString(t, vm, "seq", "ABC")
+	checkInt(t, vm, "recoveredValue", 42)
+	checkInt(t, vm, "normalDefer", 100)
+	val, ok := vm.Get("recNil")
+	if !ok || val != nil {
+		t.Errorf("expected recNil to be nil, got %v", val)
+	}
+	val2, ok := vm.Get("recPanicNil")
+	if !ok || val2 != nil {
+		t.Errorf("expected recPanicNil to be nil, got %v", val2)
+	}
+	checkInt(t, vm, "nestedRecover", 2)
+}

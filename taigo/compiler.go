@@ -1412,12 +1412,33 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 }
 
 func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
-	if err := c.compileCallExpr(stmt.Call); err != nil {
+	sub := &compiler{
+		name:       "defer",
+		params:     make(map[string]int),
+		labels:     make(map[string]int),
+		unresolved: make(map[string][]int),
+	}
+
+	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
 		return err
 	}
-	// compileCallExpr results in OpCall. We need to wrap it in a closure
-	// if it has arguments or if we want delayed execution.
-	// For simplicity, we expect the closure on stack.
+
+	sub.loadConst(nil)
+	sub.emit(taivm.OpReturn)
+
+	for name, indices := range sub.unresolved {
+		target, ok := sub.labels[name]
+		if !ok {
+			return fmt.Errorf("label %s not defined", name)
+		}
+		for _, idx := range indices {
+			sub.patchJump(idx, target)
+		}
+	}
+
+	fn := sub.getFunction()
+	idx := c.addConst(fn)
+	c.emit(taivm.OpMakeClosure.With(idx))
 	c.emit(taivm.OpDefer)
 	return nil
 }

@@ -11,6 +11,12 @@ import (
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
 		if v.IP < 0 || v.IP >= len(v.CurrentFun.Code) {
+			if v.IsPanicking || len(v.CallStack) > 0 {
+				if !v.handleUnwind(yield) {
+					return
+				}
+				continue
+			}
 			return
 		}
 
@@ -222,7 +228,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpAddrOfAttr:
-			if !v.opAddrOfAttr(yield) {
+			if !v.opAddrOfIndex(yield) {
 				return
 			}
 
@@ -790,7 +796,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		}
 	}
 
-	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn {
+	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn && len(v.Defers) == 0 {
 		needed := v.BP + len(locals)
 		if needed > len(v.OperandStack) {
 			newCap := len(v.OperandStack) * 2
@@ -824,6 +830,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 			Env:      v.Scope,
 			BaseSP:   calleeIdx,
 			BP:       v.BP,
+			Defers:   v.Defers,
 		})
 
 		needed := calleeIdx + 1 + len(locals)
@@ -847,6 +854,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		}
 
 		v.BP = calleeIdx + 1
+		v.Defers = nil // Clear current defers for the new function
 	}
 
 	v.CurrentFun = fn.Fun
@@ -862,6 +870,10 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 	res, err := fn.Func(v, args)
 
 	if err != nil {
+		if v.IsPanicking {
+			v.IP = len(v.CurrentFun.Code) // ensure we transition to unwinding immediately
+			return true
+		}
 		if !yield(nil, err) {
 			return false
 		}
@@ -905,18 +917,15 @@ func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(
 
 func (v *VM) opReturn(yield func(*Interrupt, error) bool) bool {
 	// Execute defers if present
-	if len(v.CallStack) > 0 {
-		frame := &v.CallStack[len(v.CallStack)-1]
-		if len(frame.Defers) > 0 {
-			last := len(frame.Defers) - 1
-			d := frame.Defers[last]
-			frame.Defers = frame.Defers[:last]
-			// re-execute return after defer
-			v.IP--
-			// push closure and call it
-			v.push(d)
-			return v.opCall(OpCall.With(0), yield)
-		}
+	if len(v.Defers) > 0 {
+		last := len(v.Defers) - 1
+		d := v.Defers[last]
+		v.Defers = v.Defers[:last]
+		// re-execute return after defer
+		v.IP--
+		// push closure and call it
+		v.push(d)
+		return v.opCall(OpCall.With(0), yield)
 	}
 
 	retVal := v.pop()
@@ -939,6 +948,7 @@ func (v *VM) opReturn(yield func(*Interrupt, error) bool) bool {
 	v.IP = frame.ReturnIP
 	v.Scope = frame.Env
 	v.BP = frame.BP
+	v.Defers = frame.Defers // Restore saved defers
 	v.drop(v.SP - frame.BaseSP)
 	v.push(retVal)
 	v.freeEnv(oldScope)
@@ -2411,12 +2421,14 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			Env:      v.Scope,
 			BaseSP:   calleeIdx,
 			BP:       v.BP,
+			Defers:   v.Defers,
 		})
 
 		v.CurrentFun = fn.Fun
 		v.IP = 0
 		v.Scope = newEnv
 		v.BP = calleeIdx + 1
+		v.Defers = nil
 
 		return true
 
@@ -2637,9 +2649,8 @@ func (v *VM) opImport(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opDefer() {
 	val := v.pop()
-	if d, ok := val.(*Closure); ok && len(v.CallStack) > 0 {
-		frame := &v.CallStack[len(v.CallStack)-1]
-		frame.Defers = append(frame.Defers, d)
+	if d, ok := val.(*Closure); ok {
+		v.Defers = append(v.Defers, d)
 	}
 }
 
@@ -2747,4 +2758,49 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 		return v.opSetAttr(yield)
 	}
 	return v.opSetIndex(yield)
+}
+
+func (v *VM) handleUnwind(yield func(*Interrupt, error) bool) bool {
+	// Execute defers for the current function
+	if len(v.Defers) > 0 {
+		last := len(v.Defers) - 1
+		d := v.Defers[last]
+		v.Defers = v.Defers[:last]
+		// Push closure and call it. Unwinding continues after caller return.
+		v.push(d)
+		return v.opCall(OpCall.With(0), yield)
+	}
+
+	// Panic reached top level or all defers for frame are executed
+	if len(v.CallStack) == 0 {
+		err := fmt.Errorf("panic: %v", v.PanicValue)
+		v.IsPanicking = false
+		v.IP = len(v.CurrentFun.Code) // Ensure next loop exits
+		yield(nil, err)
+		return false
+	}
+
+	// Pop one frame and continue unwinding in the caller
+	n := len(v.CallStack)
+	frame := v.CallStack[n-1]
+	v.CallStack = v.CallStack[:n-1]
+
+	oldScope := v.Scope
+	v.CurrentFun = frame.Fun
+	v.IP = frame.ReturnIP
+	v.Scope = frame.Env
+	v.BP = frame.BP
+	v.Defers = frame.Defers // Restore saved defers
+	v.drop(v.SP - frame.BaseSP)
+	v.freeEnv(oldScope)
+
+	// If recovered during defer execution, resume normal return flow
+	if !v.IsPanicking {
+		v.push(nil) // return nil as a placeholder for recovered function result
+		return true
+	}
+
+	// Still panicking. Force this function to exit to continue unwinding.
+	v.IP = len(v.CurrentFun.Code)
+	return true
 }

@@ -15,6 +15,9 @@ type VM struct {
 	CallStack    []Frame
 	Scope        *Env
 	envPool      []*Env
+	IsPanicking  bool       // whether currently unwinding from a panic
+	PanicValue   any        // value passed to panic()
+	Defers       []*Closure // stack of deferred functions for the current function
 }
 
 func NewVM(main *Function) *VM {
@@ -127,6 +130,7 @@ func (v *VM) Reset() {
 	v.BP = 0
 	clear(v.OperandStack)
 	v.CallStack = v.CallStack[:0]
+	v.Defers = nil // Clear current defers
 	v.freeEnv(v.Scope)
 	v.Scope = v.allocEnv(nil)
 }

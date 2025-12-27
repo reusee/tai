@@ -58,16 +58,26 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 	vm.Def("panic", taivm.NativeFunc{
 		Name: "panic",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
-			if len(args) == 0 {
-				return nil, fmt.Errorf("panic")
+			val := any(nil)
+			if len(args) > 0 {
+				val = args[0]
 			}
-			return nil, fmt.Errorf("%v", args[0])
+			vm.IsPanicking = true
+			vm.PanicValue = val
+			vm.IP = len(vm.CurrentFun.Code) // force immediate transition to unwinding
+			return nil, fmt.Errorf("panic") // signal error to callNative
 		},
 	})
 
 	vm.Def("recover", taivm.NativeFunc{
 		Name: "recover",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if vm.IsPanicking {
+				v := vm.PanicValue
+				vm.IsPanicking = false
+				vm.PanicValue = nil
+				return v, nil
+			}
 			return nil, nil
 		},
 	})
