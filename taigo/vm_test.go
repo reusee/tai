@@ -596,8 +596,6 @@ func TestVMCompileErrors(t *testing.T) {
 	badSources := []string{
 		"package main; func f() { var ch chan int; ch <- 1 }",
 		"package main; func f() { var i any; switch i.(type) {} }",
-		"package main; func f() { fallthrough }",
-		"package main; func f() { goto L; L: }",
 	}
 
 	for _, src := range badSources {
@@ -1423,4 +1421,86 @@ func TestVMMethodsMultipleTypes(t *testing.T) {
 	// Circle: 3 * 5 * 5 = 75
 	checkInt(t, vm, "rectArea", 12)
 	checkInt(t, vm, "circleArea", 75)
+}
+
+func TestVMIota(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		const (
+			a = iota
+			b
+			c = iota + 10
+			d
+		)
+		var resA = a
+		var resB = b
+		var resC = c
+		var resD = d
+	`)
+	checkInt(t, vm, "resA", 0)
+	checkInt(t, vm, "resB", 1)
+	checkInt(t, vm, "resC", 12)
+	checkInt(t, vm, "resD", 13)
+}
+
+func TestVMGoto(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var x = 0
+		func init() {
+			goto L1
+			x = 1
+		L1:
+			x = 2
+		}
+		
+		var y = 0
+		func init() {
+			i := 0
+		L2:
+			y += i
+			i++
+			if i < 3 {
+				goto L2
+			}
+		}
+	`)
+	checkInt(t, vm, "x", 2)
+	checkInt(t, vm, "y", 3)
+}
+
+func TestVMFallthrough(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var res = 0
+		func init() {
+			switch 1 {
+			case 1:
+				res += 1
+				fallthrough
+			case 2:
+				res += 2
+			case 3:
+				res += 4
+			}
+		}
+
+		var res2 = 0
+		func init() {
+			switch 2 {
+			case 1:
+				res2 += 1
+			case 2:
+				res2 += 2
+				fallthrough
+			case 3:
+				res2 += 4
+				fallthrough
+			default:
+				res2 += 8
+			}
+		}
+	`)
+	checkInt(t, vm, "res", 3)
+	checkInt(t, vm, "res2", 14)
 }

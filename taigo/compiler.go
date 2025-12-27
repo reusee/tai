@@ -18,6 +18,9 @@ type compiler struct {
 	scopeDepth int
 	tmpCount   int            // counter for internal temporary variables
 	params     map[string]int // map parameter name to stack index
+	iotaVal    int
+	labels     map[string]int
+	unresolved map[string][]int
 }
 
 type loopScope struct {
@@ -217,8 +220,10 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
-		name:   decl.Name.Name,
-		params: make(map[string]int),
+		name:       decl.Name.Name,
+		params:     make(map[string]int),
+		labels:     make(map[string]int),
+		unresolved: make(map[string][]int),
 	}
 
 	idx := 0
@@ -254,6 +259,16 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 
 	sub.loadConst(nil)
 	sub.emit(taivm.OpReturn)
+
+	for name, indices := range sub.unresolved {
+		target, ok := sub.labels[name]
+		if !ok {
+			return nil, fmt.Errorf("label %s not defined", name)
+		}
+		for _, idx := range indices {
+			sub.patchJump(idx, target)
+		}
+	}
 
 	fn := sub.getFunction()
 	// Build ParamNames from decl (including receiver)
@@ -451,6 +466,9 @@ func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 
 func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 	switch expr.Name {
+
+	case "iota":
+		c.loadConst(int64(c.iotaVal))
 
 	case "true":
 		c.loadConst(true)
@@ -709,8 +727,10 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	sub := &compiler{
-		name:   "anon",
-		params: make(map[string]int),
+		name:       "anon",
+		params:     make(map[string]int),
+		labels:     make(map[string]int),
+		unresolved: make(map[string][]int),
 	}
 
 	if expr.Type.Params != nil {
@@ -734,6 +754,16 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 
 	sub.loadConst(nil)
 	sub.emit(taivm.OpReturn)
+
+	for name, indices := range sub.unresolved {
+		target, ok := sub.labels[name]
+		if !ok {
+			return fmt.Errorf("label %s not defined", name)
+		}
+		for _, idx := range indices {
+			sub.patchJump(idx, target)
+		}
+	}
 
 	fn := sub.getFunction()
 	if expr.Type.Params != nil {
@@ -883,6 +913,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 		return nil
 
 	case *ast.LabeledStmt:
+		c.labels[s.Label.Name] = len(c.code)
 		return c.compileStmt(s.Stmt)
 
 	case *ast.DeferStmt:
@@ -1219,7 +1250,17 @@ func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
 		if err := c.compileBlockStmt(&ast.BlockStmt{List: cc.Body}); err != nil {
 			return err
 		}
-		endJumps = append(endJumps, c.emitJump(taivm.OpJump))
+
+		hasFallthrough := false
+		if len(cc.Body) > 0 {
+			if br, ok := cc.Body[len(cc.Body)-1].(*ast.BranchStmt); ok && br.Tok == token.FALLTHROUGH {
+				hasFallthrough = true
+			}
+		}
+
+		if !hasFallthrough {
+			endJumps = append(endJumps, c.emitJump(taivm.OpJump))
+		}
 	}
 
 	endPos := len(c.code)
@@ -1329,6 +1370,24 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 }
 
 func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
+	if stmt.Tok == token.GOTO {
+		if stmt.Label == nil {
+			return fmt.Errorf("goto requires label")
+		}
+		name := stmt.Label.Name
+		if target, ok := c.labels[name]; ok {
+			c.emitJump(taivm.OpJump.With(target - len(c.code) - 1))
+		} else {
+			idx := c.emitJump(taivm.OpJump)
+			c.unresolved[name] = append(c.unresolved[name], idx)
+		}
+		return nil
+	}
+
+	if stmt.Tok == token.FALLTHROUGH {
+		return nil // implementation-specific: SwitchStmt handles it
+	}
+
 	if len(c.loops) == 0 {
 		return fmt.Errorf("branch statement outside loop")
 	}
@@ -1364,7 +1423,10 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 }
 
 func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
-	for _, spec := range decl.Specs {
+	isConst := decl.Tok == token.CONST
+	var lastExprs []ast.Expr
+
+	for i, spec := range decl.Specs {
 		switch s := spec.(type) {
 
 		case *ast.ImportSpec:
@@ -1377,8 +1439,18 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 			c.emit(taivm.OpPop) // OpImport pushes nil to stack
 
 		case *ast.ValueSpec:
-			if len(s.Values) == 1 && len(s.Names) > 1 {
-				if err := c.compileExpr(s.Values[0]); err != nil {
+			if isConst {
+				c.iotaVal = i
+			}
+			values := s.Values
+			if isConst && len(values) == 0 {
+				values = lastExprs
+			} else if isConst {
+				lastExprs = values
+			}
+
+			if len(values) == 1 && len(s.Names) > 1 {
+				if err := c.compileExpr(values[0]); err != nil {
 					return err
 				}
 				c.emit(taivm.OpUnpack.With(len(s.Names)))
@@ -1393,13 +1465,13 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 				}
 
 			} else {
-				if len(s.Values) > 0 && len(s.Values) != len(s.Names) {
-					return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(s.Values))
+				if len(values) > 0 && len(values) != len(s.Names) {
+					return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(values))
 				}
 				for i, name := range s.Names {
 					if name.Name == "_" {
-						if i < len(s.Values) {
-							if err := c.compileExpr(s.Values[i]); err != nil {
+						if i < len(values) {
+							if err := c.compileExpr(values[i]); err != nil {
 								return err
 							}
 						} else {
@@ -1408,8 +1480,8 @@ func (c *compiler) compileGenDecl(decl *ast.GenDecl) error {
 						c.emit(taivm.OpPop) // Discard value
 						continue
 					}
-					if i < len(s.Values) {
-						if err := c.compileExpr(s.Values[i]); err != nil {
+					if i < len(values) {
+						if err := c.compileExpr(values[i]); err != nil {
 							return err
 						}
 					} else {
