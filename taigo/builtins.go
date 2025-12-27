@@ -373,21 +373,19 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 			if !ok {
 				return nil, fmt.Errorf("new expects reflect.Type")
 			}
-			return reflect.New(t).Interface(), nil
+			return &taivm.Pointer{
+				Target: &taivm.List{
+					Elements: []any{getZeroValue(t)},
+				},
+				Key: 0,
+			}, nil
 		},
 	})
 }
 
 func getZeroValue(t reflect.Type) any {
-	switch t.Kind() {
-	case reflect.Int, reflect.Int64:
-		return int64(0)
-	case reflect.Float64:
-		return 0.0
-	case reflect.String:
-		return ""
-	case reflect.Bool:
-		return false
+	if t == nil {
+		return nil
 	}
-	return nil
+	return reflect.Zero(t).Interface()
 }

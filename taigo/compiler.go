@@ -1605,59 +1605,8 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 
 func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 	switch e := expr.(type) {
-
 	case *ast.Ident:
-		switch e.Name {
-
-		case "int":
-			return reflect.TypeFor[int64](), nil
-		case "int8":
-			return reflect.TypeFor[int8](), nil
-		case "int16":
-			return reflect.TypeFor[int16](), nil
-		case "int32", "rune":
-			return reflect.TypeFor[int32](), nil
-		case "int64":
-			return reflect.TypeFor[int64](), nil
-
-		case "uint":
-			return reflect.TypeFor[uint64](), nil
-		case "uint8", "byte":
-			return reflect.TypeFor[uint8](), nil
-		case "uint16":
-			return reflect.TypeFor[uint16](), nil
-		case "uint32":
-			return reflect.TypeFor[uint32](), nil
-		case "uint64":
-			return reflect.TypeFor[uint64](), nil
-
-		case "float32":
-			return reflect.TypeFor[float32](), nil
-		case "float64":
-			return reflect.TypeFor[float64](), nil
-
-		case "string":
-			return reflect.TypeFor[string](), nil
-
-		case "any":
-			return reflect.TypeFor[any](), nil
-		case "error":
-			return reflect.TypeFor[error](), nil
-
-		case "bool":
-			return reflect.TypeFor[bool](), nil
-
-		case "complex64":
-			return reflect.TypeFor[complex64](), nil
-		case "complex128":
-			return reflect.TypeFor[complex128](), nil
-
-		default:
-			// Treat unknown identifiers as any to allow compilation of user-defined types and embedding.
-			// The VM handles actual field/method resolution dynamically by name.
-			return reflect.TypeFor[any](), nil
-		}
-
+		return c.resolveIdentType(e)
 	case *ast.ArrayType:
 		eltObj, err := c.resolveType(e.Elt)
 		if err != nil {
@@ -1671,10 +1620,8 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 				length = i
 			}
 			return reflect.ArrayOf(length, elt), nil
-		} else {
-			return reflect.SliceOf(elt), nil
 		}
-
+		return reflect.SliceOf(elt), nil
 	case *ast.Ellipsis:
 		if e.Elt == nil {
 			return reflect.TypeFor[[]any](), nil
@@ -1684,7 +1631,6 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 			return nil, err
 		}
 		return reflect.SliceOf(eltObj.(reflect.Type)), nil
-
 	case *ast.ChanType:
 		tObj, err := c.resolveType(e.Value)
 		if err != nil {
@@ -1701,51 +1647,8 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 		default:
 			return nil, fmt.Errorf("unknown dir: %v", e.Dir)
 		}
-
 	case *ast.FuncType:
-		var params []reflect.Type
-		if e.Params != nil {
-			for _, field := range e.Params.List {
-				tObj, err := c.resolveType(field.Type)
-				if err != nil {
-					return nil, err
-				}
-				t := tObj.(reflect.Type)
-				n := len(field.Names)
-				if n == 0 {
-					n = 1
-				}
-				for range n {
-					params = append(params, t)
-				}
-			}
-		}
-		var results []reflect.Type
-		if e.Results != nil {
-			for _, field := range e.Results.List {
-				tObj, err := c.resolveType(field.Type)
-				if err != nil {
-					return nil, err
-				}
-				t := tObj.(reflect.Type)
-				n := len(field.Names)
-				if n == 0 {
-					n = 1
-				}
-				for range n {
-					results = append(results, t)
-				}
-			}
-		}
-		variadic := false
-		if e.Params != nil && len(e.Params.List) > 0 {
-			last := e.Params.List[len(e.Params.List)-1]
-			if _, ok := last.Type.(*ast.Ellipsis); ok {
-				variadic = true
-			}
-		}
-		return reflect.FuncOf(params, results, variadic), nil
-
+		return c.resolveFuncType(e)
 	case *ast.MapType:
 		ktObj, err := c.resolveType(e.Key)
 		if err != nil {
@@ -1758,7 +1661,6 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 		}
 		vt := vtObj.(reflect.Type)
 		return reflect.MapOf(kt, vt), nil
-
 	case *ast.StarExpr:
 		tObj, err := c.resolveType(e.X)
 		if err != nil {
@@ -1766,78 +1668,166 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 		}
 		t := tObj.(reflect.Type)
 		return reflect.PointerTo(t), nil
-
 	case *ast.StructType:
-		var fields []reflect.StructField
-		if e.Fields != nil {
-			for _, field := range e.Fields.List {
-				ftObj, err := c.resolveType(field.Type)
-				if err != nil {
-					return nil, err
-				}
-				ft := ftObj.(reflect.Type)
-				if len(field.Names) == 0 {
-					// Handle embedded fields
-					var name string
-					switch t := field.Type.(type) {
-					case *ast.Ident:
-						name = t.Name
-					case *ast.StarExpr:
-						if id, ok := t.X.(*ast.Ident); ok {
-							name = id.Name
-						}
+		return c.resolveStructType(e)
+	case *ast.InterfaceType:
+		return c.resolveInterfaceType(e)
+	case *ast.SelectorExpr:
+		return reflect.TypeFor[any](), nil
+	default:
+		return nil, fmt.Errorf("unsupported type expression: %T", expr)
+	}
+}
+
+func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
+	switch e.Name {
+	case "int":
+		return reflect.TypeFor[int64](), nil
+	case "int8":
+		return reflect.TypeFor[int8](), nil
+	case "int16":
+		return reflect.TypeFor[int16](), nil
+	case "int32", "rune":
+		return reflect.TypeFor[int32](), nil
+	case "int64":
+		return reflect.TypeFor[int64](), nil
+	case "uint":
+		return reflect.TypeFor[uint64](), nil
+	case "uint8", "byte":
+		return reflect.TypeFor[uint8](), nil
+	case "uint16":
+		return reflect.TypeFor[uint16](), nil
+	case "uint32":
+		return reflect.TypeFor[uint32](), nil
+	case "uint64":
+		return reflect.TypeFor[uint64](), nil
+	case "float32":
+		return reflect.TypeFor[float32](), nil
+	case "float64":
+		return reflect.TypeFor[float64](), nil
+	case "string":
+		return reflect.TypeFor[string](), nil
+	case "any":
+		return reflect.TypeFor[any](), nil
+	case "error":
+		return reflect.TypeFor[error](), nil
+	case "bool":
+		return reflect.TypeFor[bool](), nil
+	case "complex64":
+		return reflect.TypeFor[complex64](), nil
+	case "complex128":
+		return reflect.TypeFor[complex128](), nil
+	default:
+		return reflect.TypeFor[any](), nil
+	}
+}
+
+func (c *compiler) resolveFuncType(e *ast.FuncType) (reflect.Type, error) {
+	var params []reflect.Type
+	if e.Params != nil {
+		for _, field := range e.Params.List {
+			tObj, err := c.resolveType(field.Type)
+			if err != nil {
+				return nil, err
+			}
+			t := tObj.(reflect.Type)
+			n := len(field.Names)
+			if n == 0 {
+				n = 1
+			}
+			for range n {
+				params = append(params, t)
+			}
+		}
+	}
+	var results []reflect.Type
+	if e.Results != nil {
+		for _, field := range e.Results.List {
+			tObj, err := c.resolveType(field.Type)
+			if err != nil {
+				return nil, err
+			}
+			t := tObj.(reflect.Type)
+			n := len(field.Names)
+			if n == 0 {
+				n = 1
+			}
+			for range n {
+				results = append(results, t)
+			}
+		}
+	}
+	variadic := false
+	if e.Params != nil && len(e.Params.List) > 0 {
+		last := e.Params.List[len(e.Params.List)-1]
+		if _, ok := last.Type.(*ast.Ellipsis); ok {
+			variadic = true
+		}
+	}
+	return reflect.FuncOf(params, results, variadic), nil
+}
+
+func (c *compiler) resolveStructType(e *ast.StructType) (reflect.Type, error) {
+	var fields []reflect.StructField
+	if e.Fields != nil {
+		for _, field := range e.Fields.List {
+			ftObj, err := c.resolveType(field.Type)
+			if err != nil {
+				return nil, err
+			}
+			ft := ftObj.(reflect.Type)
+			if len(field.Names) == 0 {
+				var name string
+				switch t := field.Type.(type) {
+				case *ast.Ident:
+					name = t.Name
+				case *ast.StarExpr:
+					if id, ok := t.X.(*ast.Ident); ok {
+						name = id.Name
 					}
-					if name != "" {
-						sf := reflect.StructField{
-							Name:      name,
-							Type:      ft,
-							Anonymous: true,
-						}
-						if name[0] >= 'a' && name[0] <= 'z' {
-							sf.PkgPath = "main"
-						}
-						fields = append(fields, sf)
-					}
 				}
-				for _, name := range field.Names {
+				if name != "" {
 					sf := reflect.StructField{
-						Name: name.Name,
-						Type: ft,
+						Name:      name,
+						Type:      ft,
+						Anonymous: true,
 					}
-					if name.Name[0] >= 'a' && name.Name[0] <= 'z' {
+					if name[0] >= 'a' && name[0] <= 'z' {
 						sf.PkgPath = "main"
 					}
 					fields = append(fields, sf)
 				}
 			}
-		}
-		return reflect.StructOf(fields), nil
-
-	case *ast.InterfaceType:
-		methods := make(map[string]reflect.Type)
-		if e.Methods != nil {
-			for _, field := range e.Methods.List {
-				tObj, err := c.resolveType(field.Type)
-				if err != nil {
-					return nil, err
+			for _, name := range field.Names {
+				sf := reflect.StructField{
+					Name: name.Name,
+					Type: ft,
 				}
-				ft := tObj.(reflect.Type)
-				for _, name := range field.Names {
-					methods[name.Name] = ft
+				if name.Name[0] >= 'a' && name.Name[0] <= 'z' {
+					sf.PkgPath = "main"
 				}
+				fields = append(fields, sf)
 			}
 		}
-		return &taivm.Interface{Methods: methods}, nil
-
-	case *ast.SelectorExpr:
-		// Go reflect doesn't support creating interfaces with methods at runtime.
-		// For now, return any to allow compilation.
-		// VM level interface check might be limited or require custom logic.
-		return reflect.TypeFor[any](), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported type expression: %T", expr)
 	}
+	return reflect.StructOf(fields), nil
+}
+
+func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Interface, error) {
+	methods := make(map[string]reflect.Type)
+	if e.Methods != nil {
+		for _, field := range e.Methods.List {
+			tObj, err := c.resolveType(field.Type)
+			if err != nil {
+				return nil, err
+			}
+			ft := tObj.(reflect.Type)
+			for _, name := range field.Names {
+				methods[name.Name] = ft
+			}
+		}
+	}
+	return &taivm.Interface{Methods: methods}, nil
 }
 
 func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {

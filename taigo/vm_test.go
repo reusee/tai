@@ -1676,3 +1676,15 @@ func TestVMInterfaces(t *testing.T) {
 	checkBool(t, vm, "ok2", false)
 	checkBool(t, vm, "ok3", false)
 }
+
+func TestVMNewBuiltin(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var p = new(int)
+		func init() {
+			*p = 42
+		}
+		var res = *p
+	`)
+	checkInt(t, vm, "res", 42)
+}
