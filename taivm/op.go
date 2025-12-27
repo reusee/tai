@@ -17,6 +17,7 @@ const (
 	OpLeaveScope
 	OpMakeClosure
 	OpMakeList
+	OpMakeStruct
 	OpMakeMap
 	OpGetIndex
 	OpSetIndex

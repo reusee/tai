@@ -87,6 +87,11 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 				return
 			}
 
+		case OpMakeStruct:
+			if !v.opMakeStruct(inst, yield) {
+				return
+			}
+
 		case OpMakeMap:
 			if !v.opMakeMap(inst, yield) {
 				return
@@ -973,6 +978,45 @@ func (v *VM) opMakeMap(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	}
 	v.drop(n * 2)
 	v.push(m)
+	return true
+}
+
+func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool {
+	n := int(inst >> 8)
+	if v.SP < n*2+1 {
+		if !yield(nil, fmt.Errorf("stack underflow during struct creation")) {
+			return false
+		}
+		return true
+	}
+	// Pop type name
+	typeName := v.pop()
+	typeNameStr, ok := typeName.(string)
+	if !ok {
+		if !yield(nil, fmt.Errorf("struct type name must be string, got %T", typeName)) {
+			return false
+		}
+		v.push(nil)
+		return true
+	}
+	// Pop key-value pairs
+	m := make(map[string]any, n)
+	start := v.SP - n*2
+	for i := range n {
+		k := v.OperandStack[start+i*2]
+		val := v.OperandStack[start+i*2+1]
+		keyStr, ok := k.(string)
+		if !ok {
+			if !yield(nil, fmt.Errorf("struct field key must be string, got %T", k)) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		m[keyStr] = val
+	}
+	v.drop(n * 2)
+	v.push(&Struct{TypeName: typeNameStr, Fields: m})
 	return true
 }
 
@@ -2080,14 +2124,39 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
 	case *Struct:
 		val, ok := t.Fields[nameStr]
-		if !ok {
-			if !yield(nil, fmt.Errorf("struct has no field '%s'", nameStr)) {
-				return false
-			}
-			v.push(nil)
+		if ok {
+			v.push(val)
 			return true
 		}
-		v.push(val)
+		// Not a field, check for method
+		if t.TypeName != "" {
+			// Check for pointer receiver method first (*TypeName.Method)
+			// Methods defined with pointer receivers are stored as *TypeName.methodName
+			ptrMethodName := "*" + t.TypeName + "." + nameStr
+			if method, ok := v.Get(ptrMethodName); ok {
+				// Pointer receiver method - wrap struct in a dereferenceable pointer
+				// We use a special Pointer with nil Key that opDeref handles
+				v.push(&BoundMethod{
+					Receiver: &Pointer{Target: t, Key: ""},
+					Fun:      method,
+				})
+				return true
+			}
+			// Check for value receiver method
+			methodName := t.TypeName + "." + nameStr
+			if method, ok := v.Get(methodName); ok {
+				v.push(&BoundMethod{
+					Receiver: t,
+					Fun:      method,
+				})
+				return true
+			}
+		}
+		if !yield(nil, fmt.Errorf("struct has no field or method '%s'", nameStr)) {
+			return false
+		}
+		v.push(nil)
+		return true
 
 	case *List:
 		if nameStr == "append" {
@@ -2105,6 +2174,13 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		}
 		v.push(nil)
 		return true
+
+	case *Pointer:
+		// Automatically dereference and get attribute
+		// Push the target and name, then call opGetAttr recursively
+		v.push(t.Target)
+		v.push(name)
+		return v.opGetAttr(yield)
 
 	default:
 		if !yield(nil, fmt.Errorf("type %T has no attributes", target)) {
@@ -2147,6 +2223,13 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 			t.Fields = make(map[string]any)
 		}
 		t.Fields[nameStr] = val
+
+	case *Pointer:
+		// Automatically dereference and set attribute
+		v.push(t.Target)
+		v.push(name)
+		v.push(val)
+		return v.opSetAttr(yield)
 
 	default:
 		if !yield(nil, fmt.Errorf("type %T does not support attribute assignment", target)) {
@@ -2628,6 +2711,11 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 		v.push(val)
+		return true
+	}
+	// Handle pointer to entire struct (empty Key)
+	if p.Key == "" {
+		v.push(p.Target)
 		return true
 	}
 	v.push(p.Target)

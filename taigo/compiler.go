@@ -176,16 +176,22 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
 		var typeName string
+		var isPointer bool
 		switch t := recv.Type.(type) {
 		case *ast.Ident:
 			typeName = t.Name
 		case *ast.StarExpr:
 			if id, ok := t.X.(*ast.Ident); ok {
 				typeName = id.Name
+				isPointer = true
 			}
 		}
 		if typeName != "" {
-			name = typeName + "." + name
+			if isPointer {
+				name = "*" + typeName + "." + name
+			} else {
+				name = typeName + "." + name
+			}
 		}
 	}
 
@@ -215,8 +221,20 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		params: make(map[string]int),
 	}
 
+	idx := 0
+	// Add receiver as first parameter for methods
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		recv := decl.Recv.List[0]
+		for _, name := range recv.Names {
+			sub.params[name.Name] = idx
+			idx++
+		}
+		if len(recv.Names) == 0 {
+			idx++
+		}
+	}
+
 	if decl.Type.Params != nil {
-		idx := 0
 		for _, field := range decl.Type.Params.List {
 			for _, name := range field.Names {
 				sub.params[name.Name] = idx
@@ -238,6 +256,16 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub.emit(taivm.OpReturn)
 
 	fn := sub.getFunction()
+	// Build ParamNames from decl (including receiver)
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		recv := decl.Recv.List[0]
+		for _, name := range recv.Names {
+			fn.ParamNames = append(fn.ParamNames, name.Name)
+		}
+		if len(recv.Names) == 0 {
+			fn.ParamNames = append(fn.ParamNames, "")
+		}
+	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
@@ -730,7 +758,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 }
 
 func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
-	switch expr.Type.(type) {
+	switch t := expr.Type.(type) {
 	case *ast.ArrayType:
 		for _, elt := range expr.Elts {
 			if err := c.compileExpr(elt); err != nil {
@@ -739,8 +767,56 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 		}
 		c.emit(taivm.OpMakeList.With(len(expr.Elts)))
 
+	case *ast.Ident:
+		// Named struct type - use OpMakeStruct to support methods
+		for _, elt := range expr.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				return fmt.Errorf("struct element must be key:value")
+			}
+			if ident, ok := kv.Key.(*ast.Ident); ok {
+				c.loadConst(ident.Name)
+			} else {
+				if err := c.compileExpr(kv.Key); err != nil {
+					return err
+				}
+			}
+			if err := c.compileExpr(kv.Value); err != nil {
+				return err
+			}
+		}
+		// Push type name, then emit OpMakeStruct
+		c.loadConst(t.Name)
+		c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
+
+	case *ast.SelectorExpr:
+		// Package.TypeName - treat as named struct type
+		for _, elt := range expr.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				return fmt.Errorf("struct element must be key:value")
+			}
+			if ident, ok := kv.Key.(*ast.Ident); ok {
+				c.loadConst(ident.Name)
+			} else {
+				if err := c.compileExpr(kv.Key); err != nil {
+					return err
+				}
+			}
+			if err := c.compileExpr(kv.Value); err != nil {
+				return err
+			}
+		}
+		// Push type name (just the identifier part)
+		if ident, ok := t.X.(*ast.Ident); ok {
+			c.loadConst(ident.Name + "." + t.Sel.Name)
+		} else {
+			c.loadConst(t.Sel.Name)
+		}
+		c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
+
 	default:
-		// Treat Structs and Maps similarly
+		// Treat anonymous Structs and Maps similarly
 		for _, elt := range expr.Elts {
 			kv, ok := elt.(*ast.KeyValueExpr)
 			if !ok {
@@ -1519,10 +1595,15 @@ func (c *compiler) resolveType(expr ast.Expr) (reflect.Type, error) {
 					return nil, err
 				}
 				for _, name := range field.Names {
-					fields = append(fields, reflect.StructField{
+					sf := reflect.StructField{
 						Name: name.Name,
 						Type: ft,
-					})
+					}
+					// Set PkgPath for unexported fields
+					if name.Name[0] >= 'a' && name.Name[0] <= 'z' {
+						sf.PkgPath = "main"
+					}
+					fields = append(fields, sf)
 				}
 			}
 		}

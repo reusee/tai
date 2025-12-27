@@ -1334,3 +1334,93 @@ func TestCoverage2(t *testing.T) {
 	`
 	runVM(t, src)
 }
+
+func TestVMMethods(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		type Counter struct {
+			count int
+		}
+
+		func (c Counter) getValue() any {
+			return c.count
+		}
+
+		func (c Counter) add(n any) any {
+			return c.count + n
+		}
+
+		var c = Counter{count: 5}
+		var result = c.getValue()
+		var result2 = c.add(3)
+	`)
+	checkInt(t, vm, "result", 5)
+	checkInt(t, vm, "result2", 8)
+}
+
+func TestVMMethodsWithPointerReceiver(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		type Counter struct {
+			count int
+		}
+
+		func (c *Counter) increment() {
+			c.count = c.count + 1
+		}
+
+		func (c *Counter) get() any {
+			return c.count
+		}
+
+		var c = Counter{count: 0}
+		var result = 0
+		func init() {
+			c.increment()
+			c.increment()
+			result = c.get()
+		}
+	`)
+	// Pointer receiver methods can modify the struct
+	checkInt(t, vm, "result", 2)
+}
+
+func TestVMMethodsMultipleTypes(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		type Rectangle struct {
+			width, height int
+		}
+
+		type Circle struct {
+			radius int
+		}
+
+		func (r Rectangle) Area() any {
+			return r.width * r.height
+		}
+
+		func (c Circle) Area() any {
+			return 3 * c.radius * c.radius
+		}
+
+		var rectArea = ""
+		func init() {
+			r := Rectangle{width: 3, height: 4}
+			rectArea = r.Area()
+		}
+
+		var circleArea = ""
+		func init() {
+			c := Circle{radius: 5}
+			circleArea = c.Area()
+		}
+	`)
+	// Rectangle: 3 * 4 = 12
+	// Circle: 3 * 5 * 5 = 75
+	checkInt(t, vm, "rectArea", 12)
+	checkInt(t, vm, "circleArea", 75)
+}

@@ -1,5 +1,6 @@
 package taivm
 
 type Struct struct {
-	Fields map[string]any
+	TypeName string
+	Fields   map[string]any
 }
