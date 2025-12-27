@@ -1663,6 +1663,16 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 			return reflect.SliceOf(elt), nil
 		}
 
+	case *ast.Ellipsis:
+		if e.Elt == nil {
+			return reflect.TypeFor[[]any](), nil
+		}
+		eltObj, err := c.resolveType(e.Elt)
+		if err != nil {
+			return nil, err
+		}
+		return reflect.SliceOf(eltObj.(reflect.Type)), nil
+
 	case *ast.ChanType:
 		tObj, err := c.resolveType(e.Value)
 		if err != nil {
