@@ -293,8 +293,11 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return c.compileCompositeLit(e)
 
 	case *ast.StarExpr:
-		// taivm is dynamic; treat pointer dereference as identity
-		return c.compileExpr(e.X)
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDeref)
+		return nil
 
 	case *ast.TypeAssertExpr:
 		// taivm is dynamic; treat assertion as pass-through
@@ -544,8 +547,27 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 		}
 
 	case token.AND:
-		// dynamic identity for address-of
-		return c.compileExpr(expr.X)
+		switch x := expr.X.(type) {
+		case *ast.Ident:
+			idx := c.addConst(x.Name)
+			c.emit(taivm.OpAddrOf.With(idx))
+		case *ast.IndexExpr:
+			if err := c.compileExpr(x.X); err != nil {
+				return err
+			}
+			if err := c.compileExpr(x.Index); err != nil {
+				return err
+			}
+			c.emit(taivm.OpAddrOfIndex)
+		case *ast.SelectorExpr:
+			if err := c.compileExpr(x.X); err != nil {
+				return err
+			}
+			c.loadConst(x.Sel.Name)
+			c.emit(taivm.OpAddrOfAttr)
+		default:
+			return fmt.Errorf("cannot take address of %T", expr.X)
+		}
 
 	default:
 		if err := c.compileExpr(expr.X); err != nil {
@@ -1551,7 +1573,12 @@ func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
 		return nil
 
 	case *ast.StarExpr:
-		return c.compileAssignFromStack(e.X, tok)
+		if err := c.compileExpr(e.X); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSwap)
+		c.emit(taivm.OpSetDeref)
+		return nil
 
 	default:
 		return fmt.Errorf("assignment to %T not supported", lhs)

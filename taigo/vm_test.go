@@ -521,14 +521,15 @@ func TestVMMiscFeatures(t *testing.T) {
 		package main
 
 		var ch = 'a'
-		var ptr *int // *int just string in types, but usage expression:
+		var ptr *int
 		var x = 10
+		var xp = &x
 		var y = 0
 		var z = 0
 
 		var mainRun = false
 		func main() {
-			y = *x      // pointer deref
+			y = *xp      // pointer deref
 			z = x.(int) // type assertion
 			mainRun = true
 		}
@@ -538,6 +539,41 @@ func TestVMMiscFeatures(t *testing.T) {
 	checkInt(t, vm, "y", 10)
 	checkInt(t, vm, "z", 10)
 	checkBool(t, vm, "mainRun", true)
+}
+
+func TestVMPointers(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var x = 1
+		var y = 0
+		var z = 0
+		var w = 0
+
+		func modify(p any) {
+			*p = 42
+		}
+
+		func init() {
+			var p = &x
+			*p = 10
+			
+			var s = []int{0, 100}
+			var sp = &s[1]
+			*sp = 200
+			y = s[1]
+			
+			var m = map[string]int{"a": 1}
+			var mp = &m["a"]
+			*mp = 500
+			z = m["a"]
+
+			modify(&w)
+		}
+	`)
+	checkInt(t, vm, "x", 10)
+	checkInt(t, vm, "y", 200)
+	checkInt(t, vm, "z", 500)
+	checkInt(t, vm, "w", 42)
 }
 
 func TestVMVariadicCallSpread(t *testing.T) {

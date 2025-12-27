@@ -1,3 +1,9 @@
 package taigo
 
-//TODO refine language support
+//TODO pointer support
+//TODO methods
+
+/*
+intentional not supported:
+- modules and imports
+*/
