@@ -228,7 +228,7 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 
 		case OpAddrOfAttr:
-			if !v.opAddrOfIndex(yield) {
+			if !v.opAddrOfAttr(yield) {
 				return
 			}
 
@@ -2814,11 +2814,13 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		v.push(nil)
 		return true
 	}
+	fail := func(err error) {
+		v.IsPanicking = true
+		v.PanicValue = err.Error()
+		v.IP = len(v.CurrentFun.Code) // ensure we transition to unwinding immediately
+	}
 	if val == nil {
-		if !yield(nil, fmt.Errorf("interface is nil, not %v", t)) {
-			return false
-		}
-		v.push(nil)
+		fail(fmt.Errorf("interface is nil, not %v", t))
 		return true
 	}
 	if t.Kind() == reflect.Interface {
@@ -2831,10 +2833,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 			v.push(val)
 			return true
 		}
-		if !yield(nil, fmt.Errorf("cannot convert %T to %v", val, t)) {
-			return false
-		}
-		v.push(nil)
+		fail(fmt.Errorf("cannot convert %T to %v", val, t))
 		return true
 	}
 	valType := reflect.TypeOf(val)
@@ -2850,10 +2849,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 			}
 		}
 	}
-	if !yield(nil, fmt.Errorf("cannot convert %T to %v", val, t)) {
-		return false
-	}
-	v.push(nil)
+	fail(fmt.Errorf("cannot convert %T to %v", val, t))
 	return true
 }
 
