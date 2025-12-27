@@ -6,6 +6,7 @@ import (
 )
 
 type VM struct {
+	mainFun      *Function
 	CurrentFun   *Function
 	IP           int
 	OperandStack []any
@@ -19,6 +20,7 @@ type VM struct {
 func NewVM(main *Function) *VM {
 	scope := &Env{}
 	return &VM{
+		mainFun:      main,
 		CurrentFun:   main,
 		Scope:        scope,
 		OperandStack: make([]any, 1024),
@@ -116,4 +118,14 @@ func (v *VM) freeEnv(e *Env) {
 	}
 	clear(e.Vars)
 	v.envPool = append(v.envPool, e)
+}
+
+func (v *VM) Reset() {
+	v.CurrentFun = v.mainFun
+	v.IP = 0
+	v.SP = 0
+	v.BP = 0
+	clear(v.OperandStack)
+	v.CallStack = v.CallStack[:0]
+	v.Scope = v.allocEnv(nil)
 }
