@@ -5103,3 +5103,100 @@ func TestVM_ClosureSymbolIsolation(t *testing.T) {
 	testCall(vm2, closure2, 5, 15, 20)
 	testCall(vm1, closure1, 100, 200, 300)
 }
+
+func TestVM_Pointer(t *testing.T) {
+	t.Run("Variable", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"x", 10, 20, "y", "p"},
+			Code: []OpCode{
+				OpLoadConst.With(1), OpDefVar.With(0), // x = 10
+				OpAddrOf.With(0), OpDefVar.With(4), // p = &x
+				OpLoadVar.With(4), OpDeref, OpDefVar.With(3), // y = *p
+				OpLoadVar.With(4), OpLoadConst.With(2), OpSetDeref, // *p = 20
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if x, _ := vm.Get("x"); x.(int) != 20 {
+			t.Errorf("x: expected 20, got %v", x)
+		}
+		if y, _ := vm.Get("y"); y.(int) != 10 {
+			t.Errorf("y: expected 10, got %v", y)
+		}
+	})
+
+	t.Run("ListIndex", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{"l", 1, 2, 3, 1, 42, "y", "p"},
+			Code: []OpCode{
+				OpLoadConst.With(1), OpLoadConst.With(2), OpLoadConst.With(3), OpMakeList.With(3),
+				OpDefVar.With(0),                                                        // l = [1, 2, 3]
+				OpLoadVar.With(0), OpLoadConst.With(4), OpAddrOfIndex, OpDefVar.With(7), // p = &l[1]
+				OpLoadVar.With(7), OpDeref, OpDefVar.With(6), // y = *p
+				OpLoadVar.With(7), OpLoadConst.With(5), OpSetDeref, // *p = 42
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		l, _ := vm.Get("l")
+		elems := l.(*List).Elements
+		if elems[1].(int) != 42 {
+			t.Errorf("l[1]: expected 42, got %v", elems[1])
+		}
+		if y, _ := vm.Get("y"); y.(int) != 2 {
+			t.Errorf("y: expected 2, got %v", y)
+		}
+	})
+
+	t.Run("StructAttr", func(t *testing.T) {
+		s := &Struct{Fields: map[string]any{"a": 1}}
+		main := &Function{
+			Constants: []any{s, "a", 42, "y", "p"},
+			Code: []OpCode{
+				OpLoadConst.With(0), OpLoadConst.With(1), OpAddrOfAttr, OpDefVar.With(4), // p = &s.a
+				OpLoadVar.With(4), OpDeref, OpDefVar.With(3), // y = *p
+				OpLoadVar.With(4), OpLoadConst.With(2), OpSetDeref, // *p = 42
+			},
+		}
+		vm := NewVM(main)
+		for _, err := range vm.Run {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if s.Fields["a"].(int) != 42 {
+			t.Errorf("s.a: expected 42, got %v", s.Fields["a"])
+		}
+		if y, _ := vm.Get("y"); y.(int) != 1 {
+			t.Errorf("y: expected 1, got %v", y)
+		}
+	})
+
+	t.Run("Errors", func(t *testing.T) {
+		runErr := func(code []OpCode, consts []any, expected string) {
+			vm := NewVM(&Function{Code: code, Constants: consts})
+			var lastErr error
+			vm.Run(func(_ *Interrupt, err error) bool {
+				lastErr = err
+				return false
+			})
+			if lastErr == nil || !strings.Contains(lastErr.Error(), expected) {
+				t.Errorf("expected error %q, got %v", expected, lastErr)
+			}
+		}
+
+		runErr([]OpCode{OpLoadConst.With(0), OpDeref}, []any{1}, "not a pointer")
+		runErr([]OpCode{OpLoadConst.With(0), OpLoadConst.With(0), OpSetDeref}, []any{1}, "not a pointer")
+		runErr([]OpCode{OpAddrOf.With(0)}, []any{"undef"}, "undefined variable")
+		runErr([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAddrOfIndex}, []any{nil, 0}, "indexing nil")
+		runErr([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAddrOfAttr}, []any{nil, "a"}, "getattr on nil")
+	})
+}
