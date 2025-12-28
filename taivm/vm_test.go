@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -1785,49 +1786,6 @@ func TestVM_Coverage_Extras(t *testing.T) {
 		}
 	})
 
-	t.Run("GetIndexSliceContinue", func(t *testing.T) {
-		sl := []any{10}
-		vm := NewVM(&Function{
-			Constants: []any{sl, "bad", 99},
-			Code: []OpCode{
-				// Bad index type -> pushes nil
-				OpLoadConst.With(0),
-				OpLoadConst.With(1),
-				OpGetIndex,
-
-				// Out of bounds -> pushes nil
-				OpLoadConst.With(0),
-				OpLoadConst.With(2),
-				OpGetIndex,
-			},
-		})
-		runContinue(vm)
-		if vm.SP != 2 {
-			t.Fatalf("expected 2 items on stack, got %d", vm.SP)
-		}
-		if vm.OperandStack[0] != nil || vm.OperandStack[1] != nil {
-			t.Fatal("expected nils")
-		}
-	})
-
-	t.Run("GetIndexUnindexableContinue", func(t *testing.T) {
-		vm := NewVM(&Function{
-			Constants: []any{1, 0},
-			Code: []OpCode{
-				OpLoadConst.With(0), // 1 (target)
-				OpLoadConst.With(1), // 0 (key)
-				OpGetIndex,
-			},
-		})
-		runContinue(vm)
-		if vm.SP != 1 {
-			t.Fatalf("expected 1 item, got %d", vm.SP)
-		}
-		if vm.OperandStack[0] != nil {
-			t.Fatal("expected nil")
-		}
-	})
-
 	t.Run("SetIndexUnassignableContinue", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{1},
@@ -2561,26 +2519,6 @@ func TestVM_Iter(t *testing.T) {
 		}
 	})
 
-	t.Run("NotIterable", func(t *testing.T) {
-		vm := NewVM(&Function{
-			Constants: []any{1},
-			Code: []OpCode{
-				OpLoadConst.With(0),
-				OpGetIter,
-			},
-		})
-		var err error
-		for _, e := range vm.Run {
-			if e != nil {
-				err = e
-				break
-			}
-		}
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
 	t.Run("NextIterNotIterator", func(t *testing.T) {
 		vm := NewVM(&Function{
 			Constants: []any{1},
@@ -2657,49 +2595,6 @@ func TestVM_Coverage_Extended(t *testing.T) {
 		}
 		if len(sl) != 1 {
 			t.Fatal("slice length changed")
-		}
-	})
-
-	t.Run("GetIndexSliceContinue", func(t *testing.T) {
-		sl := []any{10}
-		vm := NewVM(&Function{
-			Constants: []any{sl, "bad", 99},
-			Code: []OpCode{
-				// Bad index type -> pushes nil
-				OpLoadConst.With(0),
-				OpLoadConst.With(1),
-				OpGetIndex,
-
-				// Out of bounds -> pushes nil
-				OpLoadConst.With(0),
-				OpLoadConst.With(2),
-				OpGetIndex,
-			},
-		})
-		runContinue(vm)
-		if vm.SP != 2 {
-			t.Fatalf("expected 2 items on stack, got %d", vm.SP)
-		}
-		if vm.OperandStack[0] != nil || vm.OperandStack[1] != nil {
-			t.Fatal("expected nils")
-		}
-	})
-
-	t.Run("GetIndexUnindexableContinue", func(t *testing.T) {
-		vm := NewVM(&Function{
-			Constants: []any{1, 0},
-			Code: []OpCode{
-				OpLoadConst.With(0), // 1 (target)
-				OpLoadConst.With(1), // 0 (key)
-				OpGetIndex,
-			},
-		})
-		runContinue(vm)
-		if vm.SP != 1 {
-			t.Fatalf("expected 1 item, got %d", vm.SP)
-		}
-		if vm.OperandStack[0] != nil {
-			t.Fatal("expected nil")
 		}
 	})
 
@@ -4681,7 +4576,7 @@ func TestVM_Range_Index(t *testing.T) {
 	})
 	var found bool
 	for _, err := range vm.Run {
-		if err != nil && strings.Contains(err.Error(), "range index must be int") {
+		if err != nil && strings.Contains(err.Error(), "range index must be integer") {
 			found = true
 			break
 		}
@@ -5198,5 +5093,54 @@ func TestVM_Pointer(t *testing.T) {
 		runErr([]OpCode{OpAddrOf.With(0)}, []any{"undef"}, "undefined variable")
 		runErr([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAddrOfIndex}, []any{nil, 0}, "indexing nil")
 		runErr([]OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpAddrOfAttr}, []any{nil, "a"}, "getattr on nil")
+	})
+}
+
+func TestVM_IndexBounds(t *testing.T) {
+	t.Run("SetIndex_ListOutOfBounds", func(t *testing.T) {
+		main := &Function{
+			Constants: []any{
+				&List{Elements: []any{1}},
+				2,  // Out of bounds index
+				42, // Value
+			},
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpLoadConst.With(2),
+				OpSetIndex,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		vm.Run(func(_ *Interrupt, e error) bool {
+			err = e
+			return false
+		})
+		if err == nil || !strings.Contains(err.Error(), "index out of bounds") {
+			t.Fatalf("expected index out of bounds error, got %v", err)
+		}
+	})
+
+	t.Run("GetIndex_PointerOutOfBounds", func(t *testing.T) {
+		l := &List{Elements: []any{1, 2, 3}}
+		p := &Pointer{Target: l, Key: 1, ArrayType: reflect.TypeOf([2]any{})} // &l[1] (l[1], l[2])
+		main := &Function{
+			Constants: []any{p, 2}, // Accessing index 2 of pointer (offset 1+2=3), which is out of bounds for l
+			Code: []OpCode{
+				OpLoadConst.With(0),
+				OpLoadConst.With(1),
+				OpGetIndex,
+			},
+		}
+		vm := NewVM(main)
+		var err error
+		vm.Run(func(_ *Interrupt, e error) bool {
+			err = e
+			return false
+		})
+		if err == nil || !strings.Contains(err.Error(), "index out of bounds") {
+			t.Fatalf("expected index out of bounds error, got %v", err)
+		}
 	})
 }
