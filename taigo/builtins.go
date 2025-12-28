@@ -179,32 +179,55 @@ func registerCollections(vm *taivm.VM) {
 			if len(args) != 2 {
 				return nil, fmt.Errorf("copy expects 2 arguments")
 			}
-			var dst, src []any
-			switch v := args[0].(type) {
+			dst := args[0]
+			src := args[1]
+			if dst == nil || src == nil {
+				return 0, nil
+			}
+
+			if s, ok := src.(string); ok {
+				switch d := dst.(type) {
+				case *taivm.List:
+					if d.Immutable {
+						return nil, fmt.Errorf("copy destination is immutable")
+					}
+					return copyAnyString(d.Elements, s), nil
+				case []any:
+					return copyAnyString(d, s), nil
+				default:
+					rv := reflect.ValueOf(dst)
+					if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+						return copy(rv.Bytes(), s), nil
+					}
+				}
+			}
+
+			var dstSlice, srcSlice []any
+			switch v := dst.(type) {
 			case *taivm.List:
 				if v.Immutable {
 					return nil, fmt.Errorf("copy destination is immutable")
 				}
-				dst = v.Elements
+				dstSlice = v.Elements
 			case []any:
-				dst = v
+				dstSlice = v
 			default:
-				rvDst := reflect.ValueOf(args[0])
-				rvSrc := reflect.ValueOf(args[1])
+				rvDst := reflect.ValueOf(dst)
+				rvSrc := reflect.ValueOf(src)
 				if rvDst.Kind() == reflect.Slice && rvSrc.Kind() == reflect.Slice {
 					return reflect.Copy(rvDst, rvSrc), nil
 				}
-				return nil, fmt.Errorf("copy expects list or slice as first argument, got %T", args[0])
+				return nil, fmt.Errorf("copy expects list or slice, got %T", dst)
 			}
-			switch v := args[1].(type) {
+			switch v := src.(type) {
 			case *taivm.List:
-				src = v.Elements
+				srcSlice = v.Elements
 			case []any:
-				src = v
+				srcSlice = v
 			default:
-				return nil, fmt.Errorf("copy expects list or slice as second argument, got %T", args[1])
+				return nil, fmt.Errorf("copy source must be list or slice, got %T", src)
 			}
-			return copy(dst, src), nil
+			return copy(dstSlice, srcSlice), nil
 		},
 	})
 
@@ -499,16 +522,22 @@ func registerMemory(vm *taivm.VM) {
 			if !ok {
 				return nil, fmt.Errorf("make expects reflect.Type as first argument, got %T", args[0])
 			}
-			if t.Kind() == reflect.Slice {
+			switch t.Kind() {
+			case reflect.Slice:
 				return makeSlice(args, t)
-			}
-			if t.Kind() == reflect.Map {
-				return reflect.MakeMap(t).Interface(), nil
-			}
-			if t.Kind() == reflect.Chan {
+			case reflect.Map:
+				size := 0
+				if len(args) >= 2 {
+					if s, ok := taivm.ToInt64(args[1]); ok {
+						size = int(s)
+					}
+				}
+				return reflect.MakeMapWithSize(t, size).Interface(), nil
+			case reflect.Chan:
 				return nil, fmt.Errorf("channels not supported")
+			default:
+				return nil, fmt.Errorf("cannot make type %v", t)
 			}
-			return nil, fmt.Errorf("cannot make type %v", t)
 		},
 	})
 
@@ -544,7 +573,18 @@ func makeSlice(args []any, t reflect.Type) (any, error) {
 	if size < 0 {
 		return nil, fmt.Errorf("negative slice length")
 	}
-	elements := make([]any, size)
+	capacity := size
+	if len(args) >= 3 {
+		c, ok := taivm.ToInt64(args[2])
+		if !ok {
+			return nil, fmt.Errorf("slice capacity must be integer")
+		}
+		capacity = int(c)
+	}
+	if capacity < size {
+		return nil, fmt.Errorf("len larger than cap in make([]T)")
+	}
+	elements := make([]any, size, capacity)
 	zero := getZeroValue(t.Elem())
 	if zero != nil {
 		for i := range elements {
@@ -559,4 +599,15 @@ func getZeroValue(t reflect.Type) any {
 		return nil
 	}
 	return reflect.Zero(t).Interface()
+}
+
+func copyAnyString(dst []any, src string) int {
+	n := len(src)
+	if len(dst) < n {
+		n = len(dst)
+	}
+	for i := 0; i < n; i++ {
+		dst[i] = int(src[i])
+	}
+	return n
 }

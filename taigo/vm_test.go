@@ -805,12 +805,12 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "copy_invalid_dst",
 			src:     `package main; func main() { copy(1, []int{42}) }`,
-			wantErr: "copy expects list or slice as first argument",
+			wantErr: "copy expects list or slice, got int",
 		},
 		{
 			name:    "copy_invalid_src",
 			src:     `package main; func main() { copy([]int{42}, 1) }`,
-			wantErr: "copy expects list or slice as second argument",
+			wantErr: "copy source must be list or slice, got int",
 		},
 		{
 			name: "delete_nil",
