@@ -1077,6 +1077,7 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 		case *ast.Ident:
 			idx := c.addConst(x.Name)
 			c.emit(taivm.OpAddrOf.With(idx))
+
 		case *ast.IndexExpr:
 			if err := c.compileExpr(x.X); err != nil {
 				return err
@@ -1085,12 +1086,34 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 				return err
 			}
 			c.emit(taivm.OpAddrOfIndex)
+
 		case *ast.SelectorExpr:
 			if err := c.compileExpr(x.X); err != nil {
 				return err
 			}
 			c.loadConst(x.Sel.Name)
 			c.emit(taivm.OpAddrOfAttr)
+
+		case *ast.StarExpr:
+			if err := c.compileExpr(x.X); err != nil {
+				return err
+			}
+			c.emit(taivm.OpDeref)
+			tmpIdx := c.addConst(c.nextTmp())
+			c.emit(taivm.OpDefVar.With(tmpIdx))
+			c.emit(taivm.OpAddrOf.With(tmpIdx))
+
+		case *ast.CompositeLit:
+			if err := c.compileCompositeLit(x); err != nil {
+				return err
+			}
+			tmpIdx := c.addConst(c.nextTmp())
+			c.emit(taivm.OpDefVar.With(tmpIdx))
+			c.emit(taivm.OpAddrOf.With(tmpIdx))
+
+		case *ast.ParenExpr:
+			return c.compileUnaryExpr(&ast.UnaryExpr{Op: token.AND, X: x.X})
+
 		default:
 			return fmt.Errorf("cannot take address of %T", expr.X)
 		}
@@ -1287,6 +1310,10 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 }
 
 func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
+	if expr.Type == nil {
+		return c.compileMapLit(expr)
+	}
+
 	switch t := expr.Type.(type) {
 	case *ast.ArrayType:
 		return c.compileArrayLit(expr)
@@ -2387,6 +2414,9 @@ func (c *compiler) recordEmbeddedInfo(typeName string, st *ast.StructType) {
 }
 
 func (c *compiler) resolveType(expr ast.Expr) (any, error) {
+	if expr == nil {
+		return reflect.TypeFor[any](), nil
+	}
 	switch e := expr.(type) {
 	case *ast.Ident:
 		return c.resolveIdentType(e)
@@ -2411,6 +2441,8 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 	case *ast.IndexExpr:
 		return c.resolveType(e.X)
 	case *ast.IndexListExpr:
+		return c.resolveType(e.X)
+	case *ast.ParenExpr:
 		return c.resolveType(e.X)
 	default:
 		return nil, fmt.Errorf("unsupported type expression: %T", expr)
