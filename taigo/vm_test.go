@@ -1835,3 +1835,40 @@ func TestVMConstantFolding(t *testing.T) {
 	checkBool(t, vm, "d", true)
 	checkInt(t, vm, "res", 20)
 }
+
+func TestVMSliceToArrayConversion(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var s = []int{1, 2, 3}
+		var a = [3]int(s)
+		var p = (*[2]int)(s)
+		var v1 = a[1]
+		var v2 = p[1]
+		func init() {
+			p[0] = 10
+		}
+		var v3 = s[0]
+	`)
+	checkInt(t, vm, "v1", 2)
+	checkInt(t, vm, "v2", 2)
+	checkInt(t, vm, "v3", 10)
+}
+
+func TestVMSliceToArrayConversionError(t *testing.T) {
+	src := `
+		package main
+		func main() {
+			s := []int{1}
+			_ = [2]int(s)
+		}
+	`
+	vm, _ := NewVM("test", strings.NewReader(src), nil)
+	var err error
+	vm.Run(func(i *taivm.Interrupt, e error) bool {
+		err = e
+		return false
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot convert slice with length 1 to array of length 2") {
+		t.Fatalf("expected conversion error, got %v", err)
+	}
+}

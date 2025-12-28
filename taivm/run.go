@@ -907,24 +907,42 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 
 func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
 	if argc != 1 {
-		if !yield(nil, fmt.Errorf("type conversion expects 1 argument")) {
-			return false
-		}
-		v.drop(argc + 1)
-		v.push(nil)
-		return true
+		return yield(nil, fmt.Errorf("type conversion expects 1 argument"))
 	}
 	arg := v.OperandStack[calleeIdx+1]
 	var res any
 	if arg == nil {
 		res = reflect.Zero(t).Interface()
 	} else {
-		val := reflect.ValueOf(arg)
-		if val.Type().ConvertibleTo(t) {
-			res = val.Convert(t).Interface()
-		} else {
-			if !yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t)) {
-				return false
+		if list, ok := arg.(*List); ok {
+			if t.Kind() == reflect.Array {
+				n := t.Len()
+				if len(list.Elements) < n {
+					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array of length %d", len(list.Elements), n)
+					v.IP = len(v.CurrentFun.Code)
+					return true
+				}
+				arr := reflect.New(t).Elem()
+				for i := 0; i < n; i++ {
+					arr.Index(i).Set(reflect.ValueOf(list.Elements[i]))
+				}
+				res = arr.Interface()
+			} else if t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Array {
+				n := t.Elem().Len()
+				if len(list.Elements) < n {
+					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array pointer of length %d", len(list.Elements), n)
+					v.IP = len(v.CurrentFun.Code)
+					return true
+				}
+				res = &Pointer{Target: list, Key: 0, ArrayType: t.Elem()}
+			}
+		}
+		if res == nil {
+			val := reflect.ValueOf(arg)
+			if val.Type().ConvertibleTo(t) {
+				res = val.Convert(t).Interface()
+			} else {
+				return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t))
 			}
 		}
 	}
@@ -1061,129 +1079,67 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 	key := v.pop()
 	target := v.pop()
 	if target == nil {
-		if !yield(nil, fmt.Errorf("indexing nil")) {
-			return false
-		}
-		v.push(nil)
-		return true
+		return yield(nil, fmt.Errorf("indexing nil"))
 	}
-
+	if p, ok := target.(*Pointer); ok && p.ArrayType != nil {
+		if list, ok := p.Target.(*List); ok {
+			base, _ := ToInt64(p.Key)
+			offset, _ := ToInt64(key)
+			v.push(list.Elements[int(base+offset)])
+			return true
+		}
+	}
 	type indexer interface {
 		GetIndex(any) (any, bool)
 	}
 	if it, ok := target.(indexer); ok {
 		val, ok := it.GetIndex(key)
 		if !ok {
-			if !yield(nil, fmt.Errorf("index out of bounds")) {
-				return false
-			}
-			v.push(nil)
-			return true
+			return yield(nil, fmt.Errorf("index out of bounds"))
 		}
 		v.push(val)
 		return true
 	}
+	return v.opGetIndexFallbacks(target, key, yield)
+}
 
-	var val any
+func (v *VM) opGetIndexFallbacks(target, key any, yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
 	case *List:
-		var idx int
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = i
-			ok = true
-		case int64:
-			idx = int(i)
-			ok = true
+		idx, _ := ToInt64(key)
+		if idx < 0 || idx >= int64(len(t.Elements)) {
+			return yield(nil, fmt.Errorf("index out of bounds"))
 		}
-
-		if !ok {
-			if !yield(nil, fmt.Errorf("list index must be int, got %T", key)) {
-				return false
-			}
-			val = nil
-		} else if idx < 0 || idx >= len(t.Elements) {
-			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-				return false
-			}
-			val = nil
-		} else {
-			val = t.Elements[idx]
-		}
-
+		v.push(t.Elements[idx])
 	case []any:
-		// Backward compatibility for native code returning []any
-		var idx int
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = i
-			ok = true
-		case int64:
-			idx = int(i)
-			ok = true
+		idx, _ := ToInt64(key)
+		if idx < 0 || idx >= int64(len(t)) {
+			return yield(nil, fmt.Errorf("index out of bounds"))
 		}
-
-		if !ok {
-			if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
-				return false
-			}
-			val = nil
-		} else if idx < 0 || idx >= len(t) {
-			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-				return false
-			}
-			val = nil
-		} else {
-			val = t[idx]
-		}
-
+		v.push(t[idx])
 	case map[any]any:
-		val = t[key]
-
+		v.push(t[key])
 	case map[string]any:
 		if k, ok := key.(string); ok {
-			val = t[k]
-		}
-
-	case *Range:
-		var idx int64
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = int64(i)
-			ok = true
-		case int64:
-			idx = i
-			ok = true
-		}
-		if !ok {
-			if !yield(nil, fmt.Errorf("range index must be int, got %T", key)) {
-				return false
-			}
-			val = nil
+			v.push(t[k])
 		} else {
-			length := t.Len()
-			if idx < 0 {
-				idx += length
-			}
-			if idx < 0 || idx >= length {
-				if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-					return false
-				}
-				val = nil
-			} else {
-				val = t.Start + idx*t.Step
-			}
+			v.push(nil)
 		}
-
+	case *Range:
+		idx, _ := ToInt64(key)
+		if idx < 0 || idx >= t.Len() {
+			return yield(nil, fmt.Errorf("index out of bounds"))
+		}
+		v.push(t.Start + idx*t.Step)
 	default:
-		if !yield(nil, fmt.Errorf("type %T is not indexable", target)) {
-			return false
+		rv := reflect.ValueOf(target)
+		if rv.Kind() == reflect.Array || rv.Kind() == reflect.Slice {
+			idx, _ := ToInt64(key)
+			v.push(rv.Index(int(idx)).Interface())
+			return true
 		}
+		return yield(nil, fmt.Errorf("type %T is not indexable", target))
 	}
-	v.push(val)
 	return true
 }
 
@@ -1191,88 +1147,45 @@ func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
 	val := v.pop()
 	key := v.pop()
 	target := v.pop()
-
 	if target == nil {
-		if !yield(nil, fmt.Errorf("assignment to nil")) {
-			return false
-		}
-		return true
+		return yield(nil, fmt.Errorf("assignment to nil"))
 	}
+	if p, ok := target.(*Pointer); ok && p.ArrayType != nil {
+		if list, ok := p.Target.(*List); ok {
+			base, _ := ToInt64(p.Key)
+			offset, _ := ToInt64(key)
+			list.Elements[int(base+offset)] = val
+			return true
+		}
+	}
+	return v.opSetIndexFallbacks(target, key, val, yield)
+}
 
+func (v *VM) opSetIndexFallbacks(target, key, val any, yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
 	case *List:
 		if t.Immutable {
-			if !yield(nil, fmt.Errorf("tuple is immutable")) {
-				return false
-			}
-			return true
+			return yield(nil, fmt.Errorf("tuple is immutable"))
 		}
-		var idx int
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = i
-			ok = true
-		case int64:
-			idx = int(i)
-			ok = true
-		}
-		if !ok {
-			if !yield(nil, fmt.Errorf("list index must be int, got %T", key)) {
-				return false
-			}
-			return true
-		}
-		if idx < 0 || idx >= len(t.Elements) {
-			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-				return false
-			}
-			return true
-		}
+		idx, _ := ToInt64(key)
 		t.Elements[idx] = val
-
 	case []any:
-		// Backward compatibility
-		var idx int
-		var ok bool
-		switch i := key.(type) {
-		case int:
-			idx = i
-			ok = true
-		case int64:
-			idx = int(i)
-			ok = true
-		}
-		if !ok {
-			if !yield(nil, fmt.Errorf("slice index must be int, got %T", key)) {
-				return false
-			}
-			return true
-		}
-		if idx < 0 || idx >= len(t) {
-			if !yield(nil, fmt.Errorf("index out of bounds: %d", idx)) {
-				return false
-			}
-			return true
-		}
+		idx, _ := ToInt64(key)
 		t[idx] = val
-
 	case map[any]any:
 		t[key] = val
-
 	case map[string]any:
 		if k, ok := key.(string); ok {
 			t[k] = val
-		} else {
-			if !yield(nil, fmt.Errorf("map key must be string, got %T", key)) {
-				return false
-			}
 		}
-
 	default:
-		if !yield(nil, fmt.Errorf("type %T does not support assignment", target)) {
-			return false
+		rv := reflect.ValueOf(target)
+		if rv.Kind() == reflect.Array || rv.Kind() == reflect.Slice {
+			idx, _ := ToInt64(key)
+			rv.Index(int(idx)).Set(reflect.ValueOf(val))
+			return true
 		}
+		return yield(nil, fmt.Errorf("type %T does not support assignment", target))
 	}
 	return true
 }
@@ -2777,28 +2690,35 @@ func (v *VM) opAddrOfAttr(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	ptr := v.pop()
-	p, ok := ptr.(*Pointer)
-	if !ok {
-		if !yield(nil, fmt.Errorf("not a pointer: %T", ptr)) {
-			return false
-		}
-		v.push(nil)
+	if t, ok := ptr.(reflect.Type); ok {
+		// If operand is a type, return a pointer to that type
+		v.push(reflect.PointerTo(t))
 		return true
 	}
-	if e, ok := p.Target.(*Env); ok {
-		name := p.Key.(string)
-		val, ok := e.Get(name)
-		if !ok {
-			if !yield(nil, fmt.Errorf("undefined variable: %s", name)) {
-				return false
+	p, ok := ptr.(*Pointer)
+	if !ok {
+		return yield(nil, fmt.Errorf("not a pointer: %T", ptr))
+	}
+	if p.ArrayType != nil {
+		if list, ok := p.Target.(*List); ok {
+			idx, _ := ToInt64(p.Key)
+			n := p.ArrayType.Len()
+			arr := reflect.New(p.ArrayType).Elem()
+			for i := 0; i < n; i++ {
+				arr.Index(i).Set(reflect.ValueOf(list.Elements[int(idx)+i]))
 			}
-			v.push(nil)
+			v.push(arr.Interface())
 			return true
+		}
+	}
+	if e, ok := p.Target.(*Env); ok {
+		val, ok := e.Get(p.Key.(string))
+		if !ok {
+			return yield(nil, fmt.Errorf("undefined variable: %s", p.Key))
 		}
 		v.push(val)
 		return true
 	}
-	// Handle pointer to entire struct (empty Key)
 	if p.Key == "" {
 		v.push(p.Target)
 		return true
@@ -2816,10 +2736,18 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 	ptr := v.pop()
 	p, ok := ptr.(*Pointer)
 	if !ok {
-		if !yield(nil, fmt.Errorf("not a pointer: %T", ptr)) {
-			return false
+		return yield(nil, fmt.Errorf("not a pointer: %T", ptr))
+	}
+	if p.ArrayType != nil {
+		if list, ok := p.Target.(*List); ok {
+			idx, _ := ToInt64(p.Key)
+			n := p.ArrayType.Len()
+			vval := reflect.ValueOf(val)
+			for i := 0; i < n; i++ {
+				list.Elements[int(idx)+i] = vval.Index(i).Interface()
+			}
+			return true
 		}
-		return true
 	}
 	if e, ok := p.Target.(*Env); ok {
 		e.Def(p.Key.(string), val)
