@@ -256,7 +256,7 @@ func TestVMMaps(t *testing.T) {
 	mArg, _ := vm.Get("m")
 	// Convert the map to map[any]any for length check
 	m := make(map[any]any)
-	for k, v := range mArg.(map[string]int64) {
+	for k, v := range mArg.(map[string]int) {
 		m[k] = v
 	}
 	if len(m) != 0 {
@@ -1927,4 +1927,22 @@ func TestVMMapCommaOk(t *testing.T) {
 	checkBool(t, vm, "ok2", false)
 	checkInt(t, vm, "val3", 1)
 	checkBool(t, vm, "ok3", true)
+}
+
+func TestVMIntType(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var p = new(int)
+		var t = ""
+		func init() {
+			v := *p
+			switch v.(type) {
+			case int:
+				t = "int"
+			case int64:
+				t = "int64"
+			}
+		}
+	`)
+	checkString(t, vm, "t", "int")
 }

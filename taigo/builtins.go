@@ -163,7 +163,7 @@ func registerCollections(vm *taivm.VM) {
 			if len(args) > 1 {
 				if s, ok := args[1].(string); ok && len(args) == 2 {
 					for _, b := range []byte(s) {
-						list.Elements = append(list.Elements, int64(b))
+						list.Elements = append(list.Elements, int(b))
 					}
 				} else {
 					list.Elements = append(list.Elements, args[1:]...)
@@ -411,10 +411,10 @@ func registerConversions(vm *taivm.VM) {
 				return nil, fmt.Errorf("int expects 1 argument")
 			}
 			if i, ok := taivm.ToInt64(args[0]); ok {
-				return i, nil
+				return int(i), nil
 			}
 			if f, ok := taivm.ToFloat64(args[0]); ok {
-				return int64(f), nil
+				return int(f), nil
 			}
 			return nil, fmt.Errorf("cannot convert %T to int", args[0])
 		},

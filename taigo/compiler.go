@@ -137,11 +137,15 @@ func (c *compiler) evalConst(expr ast.Expr) (any, bool) {
 func (c *compiler) evalBasicLit(expr *ast.BasicLit) (any, bool) {
 	switch expr.Kind {
 	case token.INT:
-		v, err := strconv.ParseInt(expr.Value, 0, 64)
-		if err != nil {
-			return nil, false
+		v, err := strconv.ParseInt(expr.Value, 0, 0)
+		if err == nil {
+			return int(v), true
 		}
-		return v, true
+		v64, err := strconv.ParseInt(expr.Value, 0, 64)
+		if err == nil {
+			return v64, true
+		}
+		return nil, false
 	case token.FLOAT:
 		v, err := strconv.ParseFloat(expr.Value, 64)
 		if err != nil {
@@ -169,7 +173,7 @@ func (c *compiler) evalBasicLit(expr *ast.BasicLit) (any, bool) {
 		if len(runes) != 1 {
 			return nil, false
 		}
-		return int64(runes[0]), true
+		return int(runes[0]), true
 	}
 	return nil, false
 }
@@ -183,7 +187,7 @@ func (c *compiler) evalIdentConst(expr *ast.Ident) (any, bool) {
 	case "nil":
 		return nil, true
 	case "iota":
-		return int64(c.iotaVal), true
+		return c.iotaVal, true
 	}
 	return nil, false
 }
@@ -197,7 +201,10 @@ func (c *compiler) evalUnaryConst(expr *ast.UnaryExpr) (any, bool) {
 	case token.ADD:
 		return val, true
 	case token.SUB:
-		if i, ok := taivm.ToInt64(val); ok {
+		if i, ok := val.(int); ok {
+			return -i, true
+		}
+		if i, ok := val.(int64); ok {
 			return -i, true
 		}
 		if f, ok := taivm.ToFloat64(val); ok {
@@ -206,7 +213,10 @@ func (c *compiler) evalUnaryConst(expr *ast.UnaryExpr) (any, bool) {
 	case token.NOT:
 		return c.isZero(val), true
 	case token.XOR:
-		if i, ok := taivm.ToInt64(val); ok {
+		if i, ok := val.(int); ok {
+			return ^i, true
+		}
+		if i, ok := val.(int64); ok {
 			return ^i, true
 		}
 	}
@@ -366,35 +376,42 @@ func (c *compiler) evalCompareOp(tok token.Token, x, y any) (any, bool) {
 func (c *compiler) evalIntOp(tok token.Token, x, y int64) (any, bool) {
 	switch tok {
 	case token.ADD:
-		return x + y, true
+		return c.intResult(x + y), true
 	case token.SUB:
-		return x - y, true
+		return c.intResult(x - y), true
 	case token.MUL:
-		return x * y, true
+		return c.intResult(x * y), true
 	case token.QUO:
 		if y == 0 {
 			return nil, false
 		}
-		return x / y, true
+		return c.intResult(x / y), true
 	case token.REM:
 		if y == 0 {
 			return nil, false
 		}
-		return x % y, true
+		return c.intResult(x % y), true
 	case token.AND:
-		return x & y, true
+		return c.intResult(x & y), true
 	case token.OR:
-		return x | y, true
+		return c.intResult(x | y), true
 	case token.XOR:
-		return x ^ y, true
+		return c.intResult(x ^ y), true
 	case token.AND_NOT:
-		return x &^ y, true
+		return c.intResult(x &^ y), true
 	case token.SHL:
-		return x << uint(y), true
+		return c.intResult(x << uint(y)), true
 	case token.SHR:
-		return x >> uint(y), true
+		return c.intResult(x >> uint(y)), true
 	}
 	return nil, false
+}
+
+func (c *compiler) intResult(v int64) any {
+	if int64(int(v)) == v {
+		return int(v)
+	}
+	return v
 }
 
 func (c *compiler) evalFloatOp(tok token.Token, x, y float64) (any, bool) {
@@ -2450,7 +2467,7 @@ func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
 	}
 	switch e.Name {
 	case "int":
-		return reflect.TypeFor[int64](), nil
+		return reflect.TypeFor[int](), nil
 	case "int8":
 		return reflect.TypeFor[int8](), nil
 	case "int16":
@@ -2460,7 +2477,7 @@ func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
 	case "int64":
 		return reflect.TypeFor[int64](), nil
 	case "uint":
-		return reflect.TypeFor[uint64](), nil
+		return reflect.TypeFor[uint](), nil
 	case "uint8", "byte":
 		return reflect.TypeFor[uint8](), nil
 	case "uint16":
