@@ -225,7 +225,10 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	if err := sub.setupParams(decl); err != nil {
 		return nil, err
 	}
-	sub.setupResults(decl)
+	sub.setupResults(decl.Type)
+	if err := sub.defineNamedResults(decl.Type); err != nil {
+		return nil, err
+	}
 	for _, stmt := range decl.Body.List {
 		if err := sub.compileStmt(stmt); err != nil {
 			return nil, err
@@ -269,14 +272,35 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	return nil
 }
 
-func (c *compiler) setupResults(decl *ast.FuncDecl) {
-	if decl.Type.Results != nil {
-		for _, field := range decl.Type.Results.List {
+func (c *compiler) setupResults(fType *ast.FuncType) {
+	if fType.Results != nil {
+		for _, field := range fType.Results.List {
 			for _, name := range field.Names {
 				c.resultNames = append(c.resultNames, name.Name)
 			}
 		}
 	}
+}
+
+func (c *compiler) defineNamedResults(fType *ast.FuncType) error {
+	if fType.Results != nil {
+		for _, field := range fType.Results.List {
+			if len(field.Names) == 0 {
+				continue
+			}
+			t, err := c.resolveType(field.Type)
+			if err != nil {
+				return err
+			}
+			rt := t.(reflect.Type)
+			zero := reflect.Zero(rt).Interface()
+			for _, name := range field.Names {
+				c.loadConst(zero)
+				c.emit(taivm.OpDefVar.With(c.addConst(name.Name)))
+			}
+		}
+	}
+	return nil
 }
 
 func (c *compiler) resolveLabels() error {
@@ -788,7 +812,6 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
-
 	if expr.Type.Params != nil {
 		idx := 0
 		for _, field := range expr.Type.Params.List {
@@ -801,26 +824,20 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 			}
 		}
 	}
-
+	sub.setupResults(expr.Type)
+	if err := sub.defineNamedResults(expr.Type); err != nil {
+		return err
+	}
 	for _, stmt := range expr.Body.List {
 		if err := sub.compileStmt(stmt); err != nil {
 			return err
 		}
 	}
-
 	sub.loadConst(nil)
 	sub.emit(taivm.OpReturn)
-
-	for name, indices := range sub.unresolved {
-		target, ok := sub.labels[name]
-		if !ok {
-			return fmt.Errorf("label %s not defined", name)
-		}
-		for _, idx := range indices {
-			sub.patchJump(idx, target)
-		}
+	if err := sub.resolveLabels(); err != nil {
+		return err
 	}
-
 	fn := sub.getFunction()
 	tObj, err := c.resolveType(expr.Type)
 	if err != nil {
@@ -842,7 +859,6 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		}
 	}
 	fn.NumParams = len(fn.ParamNames)
-
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
 	return nil

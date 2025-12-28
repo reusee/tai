@@ -595,7 +595,6 @@ func TestVMVariadicCallSpread(t *testing.T) {
 func TestVMCompileErrors(t *testing.T) {
 	badSources := []string{
 		"package main; func f() { var ch chan int; ch <- 1 }",
-		"package main; func f() { var i any; switch i.(type) {} }",
 	}
 
 	for _, src := range badSources {
@@ -1033,11 +1032,6 @@ func TestCoverageCompilerUnsupported(t *testing.T) {
 			name:    "send_stmt",
 			src:     `package main; func main() { var ch chan int; ch <- 1 }`,
 			wantErr: "send statement not supported",
-		},
-		{
-			name:    "type_switch",
-			src:     `package main; func main() { var x interface{}; switch x.(type) {} }`,
-			wantErr: "type switch statement not supported",
 		},
 		{
 			name:    "map_key_value_error",
