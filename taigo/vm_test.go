@@ -1815,3 +1815,23 @@ func TestVMRangeFunc1Arg(t *testing.T) {
 	`)
 	checkInt(t, vm, "sum", 30)
 }
+
+func TestVMConstantFolding(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var a = 1 + 2 * 3
+		var b = "hello " + "world"
+		var c = true && (1 < 2)
+		var d = (10 / 2) == 5
+		const (
+			x = 10
+			y = x * 2
+		)
+		var res = y
+	`)
+	checkInt(t, vm, "a", 7)
+	checkString(t, vm, "b", "hello world")
+	checkBool(t, vm, "c", true)
+	checkBool(t, vm, "d", true)
+	checkInt(t, vm, "res", 20)
+}

@@ -1,8 +1,6 @@
 package taigo
 
 /*
-range over function, iterator
-constant evaluation/fold at compile time
 generics
 comparable
 slice to array and array pointer conversion

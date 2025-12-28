@@ -109,33 +109,307 @@ func (c *compiler) nextTmp() string {
 }
 
 func (c *compiler) evalInt(expr ast.Expr) (int64, bool) {
+	val, ok := c.evalConst(expr)
+	if !ok {
+		return 0, false
+	}
+	return taivm.ToInt64(val)
+}
+
+func (c *compiler) evalConst(expr ast.Expr) (any, bool) {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
-		if e.Kind == token.INT {
-			v, err := strconv.ParseInt(e.Value, 0, 64)
-			if err == nil {
-				return v, true
-			}
-		}
+		return c.evalBasicLit(e)
 	case *ast.Ident:
-		if e.Name == "iota" {
-			return int64(c.iotaVal), true
-		}
+		return c.evalIdentConst(e)
 	case *ast.ParenExpr:
-		return c.evalInt(e.X)
+		return c.evalConst(e.X)
 	case *ast.UnaryExpr:
-		if v, ok := c.evalInt(e.X); ok {
-			switch e.Op {
-			case token.SUB:
-				return -v, true
-			case token.ADD:
-				return v, true
-			case token.XOR:
-				return ^v, true
+		return c.evalUnaryConst(e)
+	case *ast.BinaryExpr:
+		return c.evalBinaryConst(e)
+	}
+	return nil, false
+}
+
+func (c *compiler) evalBasicLit(expr *ast.BasicLit) (any, bool) {
+	switch expr.Kind {
+	case token.INT:
+		v, err := strconv.ParseInt(expr.Value, 0, 64)
+		if err != nil {
+			return nil, false
+		}
+		return v, true
+	case token.FLOAT:
+		v, err := strconv.ParseFloat(expr.Value, 64)
+		if err != nil {
+			return nil, false
+		}
+		return v, true
+	case token.IMAG:
+		v, err := strconv.ParseFloat(expr.Value[:len(expr.Value)-1], 64)
+		if err != nil {
+			return nil, false
+		}
+		return complex(0, v), true
+	case token.STRING:
+		v, err := strconv.Unquote(expr.Value)
+		if err != nil {
+			return nil, false
+		}
+		return v, true
+	case token.CHAR:
+		v, err := strconv.Unquote(expr.Value)
+		if err != nil {
+			return nil, false
+		}
+		runes := []rune(v)
+		if len(runes) != 1 {
+			return nil, false
+		}
+		return int64(runes[0]), true
+	}
+	return nil, false
+}
+
+func (c *compiler) evalIdentConst(expr *ast.Ident) (any, bool) {
+	switch expr.Name {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	case "nil":
+		return nil, true
+	case "iota":
+		return int64(c.iotaVal), true
+	}
+	return nil, false
+}
+
+func (c *compiler) evalUnaryConst(expr *ast.UnaryExpr) (any, bool) {
+	val, ok := c.evalConst(expr.X)
+	if !ok {
+		return nil, false
+	}
+	switch expr.Op {
+	case token.ADD:
+		return val, true
+	case token.SUB:
+		if i, ok := taivm.ToInt64(val); ok {
+			return -i, true
+		}
+		if f, ok := taivm.ToFloat64(val); ok {
+			return -f, true
+		}
+	case token.NOT:
+		return c.isZero(val), true
+	case token.XOR:
+		if i, ok := taivm.ToInt64(val); ok {
+			return ^i, true
+		}
+	}
+	return nil, false
+}
+
+func (c *compiler) isZero(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case bool:
+		return !val
+	case string:
+		return val == ""
+	}
+	if i, ok := taivm.ToInt64(v); ok {
+		return i == 0
+	}
+	if f, ok := taivm.ToFloat64(v); ok {
+		return f == 0
+	}
+	return false
+}
+
+func (c *compiler) evalBinaryConst(expr *ast.BinaryExpr) (any, bool) {
+	if expr.Op == token.LAND {
+		return c.evalLogicAndConst(expr)
+	}
+	if expr.Op == token.LOR {
+		return c.evalLogicOrConst(expr)
+	}
+	x, ok1 := c.evalConst(expr.X)
+	if !ok1 {
+		return nil, false
+	}
+	y, ok2 := c.evalConst(expr.Y)
+	if !ok2 {
+		return nil, false
+	}
+	return c.evalBinaryOp(expr.Op, x, y)
+}
+
+func (c *compiler) evalLogicAndConst(expr *ast.BinaryExpr) (any, bool) {
+	x, ok := c.evalConst(expr.X)
+	if !ok {
+		return nil, false
+	}
+	if bx, ok := x.(bool); ok {
+		if !bx {
+			return false, true
+		}
+		y, ok := c.evalConst(expr.Y)
+		if !ok {
+			return nil, false
+		}
+		if by, ok := y.(bool); ok {
+			return by, true
+		}
+	}
+	return nil, false
+}
+
+func (c *compiler) evalLogicOrConst(expr *ast.BinaryExpr) (any, bool) {
+	x, ok := c.evalConst(expr.X)
+	if !ok {
+		return nil, false
+	}
+	if bx, ok := x.(bool); ok {
+		if bx {
+			return true, true
+		}
+		y, ok := c.evalConst(expr.Y)
+		if !ok {
+			return nil, false
+		}
+		if by, ok := y.(bool); ok {
+			return by, true
+		}
+	}
+	return nil, false
+}
+
+func (c *compiler) evalBinaryOp(tok token.Token, x, y any) (any, bool) {
+	switch tok {
+	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+		return c.evalCompareOp(tok, x, y)
+	}
+	if s1, ok1 := x.(string); ok1 {
+		if s2, ok2 := y.(string); ok2 && tok == token.ADD {
+			return s1 + s2, true
+		}
+	}
+	if i1, ok1 := taivm.ToInt64(x); ok1 {
+		if i2, ok2 := taivm.ToInt64(y); ok2 {
+			return c.evalIntOp(tok, i1, i2)
+		}
+	}
+	if f1, ok1 := taivm.ToFloat64(x); ok1 {
+		if f2, ok2 := taivm.ToFloat64(y); ok2 {
+			return c.evalFloatOp(tok, f1, f2)
+		}
+	}
+	return nil, false
+}
+
+func (c *compiler) evalCompareOp(tok token.Token, x, y any) (any, bool) {
+	match := x == y
+	if !match {
+		if i1, ok1 := taivm.ToInt64(x); ok1 {
+			if i2, ok2 := taivm.ToInt64(y); ok2 {
+				match = i1 == i2
+			}
+		} else if f1, ok1 := taivm.ToFloat64(x); ok1 {
+			if f2, ok2 := taivm.ToFloat64(y); ok2 {
+				match = f1 == f2
 			}
 		}
 	}
-	return 0, false
+	switch tok {
+	case token.EQL:
+		return match, true
+	case token.NEQ:
+		return !match, true
+	}
+	if s1, ok1 := x.(string); ok1 {
+		if s2, ok2 := y.(string); ok2 {
+			switch tok {
+			case token.LSS:
+				return s1 < s2, true
+			case token.LEQ:
+				return s1 <= s2, true
+			case token.GTR:
+				return s1 > s2, true
+			case token.GEQ:
+				return s1 >= s2, true
+			}
+		}
+	}
+	if f1, ok1 := taivm.ToFloat64(x); ok1 {
+		if f2, ok2 := taivm.ToFloat64(y); ok2 {
+			switch tok {
+			case token.LSS:
+				return f1 < f2, true
+			case token.LEQ:
+				return f1 <= f2, true
+			case token.GTR:
+				return f1 > f2, true
+			case token.GEQ:
+				return f1 >= f2, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (c *compiler) evalIntOp(tok token.Token, x, y int64) (any, bool) {
+	switch tok {
+	case token.ADD:
+		return x + y, true
+	case token.SUB:
+		return x - y, true
+	case token.MUL:
+		return x * y, true
+	case token.QUO:
+		if y == 0 {
+			return nil, false
+		}
+		return x / y, true
+	case token.REM:
+		if y == 0 {
+			return nil, false
+		}
+		return x % y, true
+	case token.AND:
+		return x & y, true
+	case token.OR:
+		return x | y, true
+	case token.XOR:
+		return x ^ y, true
+	case token.AND_NOT:
+		return x &^ y, true
+	case token.SHL:
+		return x << uint(y), true
+	case token.SHR:
+		return x >> uint(y), true
+	}
+	return nil, false
+}
+
+func (c *compiler) evalFloatOp(tok token.Token, x, y float64) (any, bool) {
+	switch tok {
+	case token.ADD:
+		return x + y, true
+	case token.SUB:
+		return x - y, true
+	case token.MUL:
+		return x * y, true
+	case token.QUO:
+		if y == 0 {
+			return nil, false
+		}
+		return x / y, true
+	}
+	return nil, false
 }
 
 func (c *compiler) loadConst(val any) {
@@ -417,6 +691,10 @@ func (c *compiler) getFuncParamNames(decl *ast.FuncDecl) []string {
 }
 
 func (c *compiler) compileExpr(expr ast.Expr) error {
+	if val, ok := c.evalConst(expr); ok {
+		c.loadConst(val)
+		return nil
+	}
 	switch e := expr.(type) {
 	case *ast.BasicLit:
 		return c.compileBasicLiteral(e)
@@ -541,44 +819,11 @@ func (c *compiler) tokenToOp(tok token.Token) (taivm.OpCode, bool) {
 }
 
 func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
-	switch expr.Kind {
-	case token.INT:
-		v, err := strconv.ParseInt(expr.Value, 0, 64)
-		if err != nil {
-			return err
-		}
-		c.loadConst(v)
-	case token.FLOAT:
-		v, err := strconv.ParseFloat(expr.Value, 64)
-		if err != nil {
-			return err
-		}
-		c.loadConst(v)
-	case token.IMAG:
-		v, err := strconv.ParseFloat(expr.Value[:len(expr.Value)-1], 64)
-		if err != nil {
-			return err
-		}
-		c.loadConst(complex(0, v))
-	case token.STRING:
-		v, err := strconv.Unquote(expr.Value)
-		if err != nil {
-			return err
-		}
-		c.loadConst(v)
-	case token.CHAR:
-		v, err := strconv.Unquote(expr.Value)
-		if err != nil {
-			return err
-		}
-		runes := []rune(v)
-		if len(runes) != 1 {
-			return fmt.Errorf("invalid char literal: %s", expr.Value)
-		}
-		c.loadConst(int64(runes[0]))
-	default:
-		return fmt.Errorf("unknown basic lit kind: %v", expr.Kind)
+	val, ok := c.evalBasicLit(expr)
+	if !ok {
+		return fmt.Errorf("invalid basic literal: %s", expr.Value)
 	}
+	c.loadConst(val)
 	return nil
 }
 
