@@ -1400,7 +1400,7 @@ func (c *compiler) compileTypeSwitchClauses(stmt *ast.TypeSwitchStmt, valTmpIdx 
 			defaultCase = cc
 			continue
 		}
-		var nextCaseJumps []int
+		var matchJumps []int
 		for _, typeExpr := range cc.List {
 			c.emit(taivm.OpLoadVar.With(valTmpIdx))
 			if id, ok := typeExpr.(*ast.Ident); ok && id.Name == "nil" {
@@ -1411,15 +1411,22 @@ func (c *compiler) compileTypeSwitchClauses(stmt *ast.TypeSwitchStmt, valTmpIdx 
 					return err
 				}
 				c.emit(taivm.OpTypeAssertOk)
-				c.emit(taivm.OpPop)
+				c.emit(taivm.OpSwap)
+				c.emit(taivm.OpPop) // Pop result, keep ok
 			}
-			nextCaseJumps = append(nextCaseJumps, c.emitJump(taivm.OpJump))
+			skipMatch := c.emitJump(taivm.OpJumpFalse)
+			matchJumps = append(matchJumps, c.emitJump(taivm.OpJump))
+			c.patchJump(skipMatch, len(c.code))
 		}
+
+		// If no types in this case matched, jump to next case
 		nextClauseJump := c.emitJump(taivm.OpJump)
+
 		bodyTarget := len(c.code)
-		for _, jump := range nextCaseJumps {
+		for _, jump := range matchJumps {
 			c.patchJump(jump, bodyTarget)
 		}
+
 		if boundVar != "" {
 			c.emit(taivm.OpLoadVar.With(valTmpIdx))
 			c.emit(taivm.OpDefVar.With(c.addConst(boundVar)))
