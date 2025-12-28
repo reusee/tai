@@ -1598,13 +1598,14 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 }
 
 func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
-	containerIdx := c.addConst(c.nextTmp())
 	if err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
+	c.emit(taivm.OpGetIter)
+	c.emit(taivm.OpDup) // Keep iterator for OpNextIter
+	containerIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(containerIdx))
 	c.emit(taivm.OpLoadVar.With(containerIdx))
-	c.emit(taivm.OpGetIter)
 	c.emit(taivm.OpEnterScope)
 	c.scopeDepth++
 	defer func() {

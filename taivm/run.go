@@ -1,12 +1,15 @@
 package taivm
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
 	"sort"
 	"strings"
 )
+
+var ErrYield = errors.New("yield")
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
@@ -1065,6 +1068,22 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
+	type indexer interface {
+		GetIndex(any) (any, bool)
+	}
+	if it, ok := target.(indexer); ok {
+		val, ok := it.GetIndex(key)
+		if !ok {
+			if !yield(nil, fmt.Errorf("index out of bounds")) {
+				return false
+			}
+			v.push(nil)
+			return true
+		}
+		v.push(val)
+		return true
+	}
+
 	var val any
 	switch t := target.(type) {
 	case *List:
@@ -1831,29 +1850,18 @@ func (v *VM) opGetIter(yield func(*Interrupt, error) bool) bool {
 	case []any:
 		v.push(&ListIterator{List: &List{Elements: t, Immutable: false}})
 	case map[any]any:
-		keys := make([]any, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		// Try to sort if all keys are strings to ensure deterministic iteration
-		allStrings := true
-		for _, k := range keys {
-			if _, ok := k.(string); !ok {
-				allStrings = false
-				break
-			}
-		}
-		if allStrings {
-			sort.Slice(keys, func(i, j int) bool {
-				return keys[i].(string) < keys[j].(string)
-			})
-		}
-		v.push(&MapIterator{Keys: keys})
+		keys := v.getMapKeys(t)
+		v.push(&MapIterator{Map: t, Keys: keys})
+	case map[string]any:
+		keys := v.getMapStringKeys(t)
+		v.push(&MapIterator{Map: t, Keys: keys})
 	case *Range:
 		v.push(&RangeIterator{
 			Range: t,
 			Curr:  t.Start,
 		})
+	case *Closure, NativeFunc:
+		v.push(v.newFuncIterator(t))
 	default:
 		if i, ok := ToInt64(val); ok {
 			v.push(&RangeIterator{
@@ -1905,6 +1913,22 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			v.pop()
 			v.IP += offset
 		}
+	case *FuncIterator:
+		it.Resumed = true
+		it.InnerVM.Run(func(intr *Interrupt, err error) bool {
+			if err == ErrYield {
+				it.Resumed = false
+				return false
+			}
+			return true
+		})
+		if !it.Resumed {
+			v.push(it.K)
+			return true
+		}
+		it.Done = true
+		v.pop()
+		v.IP += offset
 	default:
 		if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
 			return false
@@ -2938,6 +2962,64 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	v.push(reflect.Zero(t).Interface())
 	v.push(false)
 	return true
+}
+
+func (v *VM) getMapKeys(m map[any]any) []any {
+	keys := make([]any, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	allStrings := true
+	for _, k := range keys {
+		if _, ok := k.(string); !ok {
+			allStrings = false
+			break
+		}
+	}
+	if allStrings {
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].(string) < keys[j].(string)
+		})
+	}
+	return keys
+}
+
+func (v *VM) getMapStringKeys(m map[string]any) []any {
+	keys := make([]any, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].(string) < keys[j].(string)
+	})
+	return keys
+}
+
+func (v *VM) newFuncIterator(fn any) *FuncIterator {
+	it := &FuncIterator{}
+	svm := NewVM(nil)
+	it.InnerVM = svm
+	yieldFunc := NativeFunc{
+		Name: "yield",
+		Func: func(svm *VM, args []any) (any, error) {
+			if len(args) > 0 {
+				it.K = args[0]
+			}
+			if len(args) > 1 {
+				it.V = args[1]
+			}
+			it.Resumed = false
+			return true, ErrYield
+		},
+	}
+	svm.Def("yield", yieldFunc)
+	svm.push(fn)
+	svm.push(yieldFunc)
+	svm.CurrentFun = &Function{
+		Code: []OpCode{OpCall.With(1), OpReturn},
+	}
+	svm.IP = 0
+	return it
 }
 
 func (v *VM) checkStructImplements(s *Struct, it any) bool {

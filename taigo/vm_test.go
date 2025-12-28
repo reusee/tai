@@ -1781,3 +1781,37 @@ func TestVMRangeInt(t *testing.T) {
 	`)
 	checkInt(t, vm, "sum", 45)
 }
+
+func TestVMRangeFunc(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func myIter(yield func(any, any) bool) {
+			yield(1, "one")
+			yield(2, "two")
+		}
+		var res = ""
+		func init() {
+			for k, v := range myIter {
+				res += v
+			}
+		}
+	`)
+	checkString(t, vm, "res", "onetwo")
+}
+
+func TestVMRangeFunc1Arg(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func myIter(yield func(any) bool) {
+			yield(10)
+			yield(20)
+		}
+		var sum = 0
+		func init() {
+			for v := range myIter {
+				sum += v
+			}
+		}
+	`)
+	checkInt(t, vm, "sum", 30)
+}

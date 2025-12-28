@@ -15,6 +15,7 @@ func init() {
 	gob.Register(map[string]any{})
 	gob.Register(&ListIterator{})
 	gob.Register(&MapIterator{})
+	gob.Register(&FuncIterator{})
 	gob.Register(&List{})
 	gob.Register(&Struct{})
 	gob.Register(&Pointer{})

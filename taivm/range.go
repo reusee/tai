@@ -11,6 +11,10 @@ type RangeIterator struct {
 	Curr  int64
 }
 
+func (it *RangeIterator) GetIndex(key any) (any, bool) {
+	return key, true
+}
+
 func (r *Range) Len() int64 {
 	if r.Step > 0 {
 		if r.Start >= r.Stop {
