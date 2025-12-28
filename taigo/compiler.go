@@ -1513,6 +1513,15 @@ func (c *compiler) compileMultiAssignFromSingleRHS(stmt *ast.AssignStmt) error {
 		}
 		c.emit(taivm.OpTypeAssertOk)
 		c.emit(taivm.OpSwap)
+	} else if ie, ok := rhs.(*ast.IndexExpr); ok && len(stmt.Lhs) == 2 {
+		if err := c.compileExpr(ie.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(ie.Index); err != nil {
+			return err
+		}
+		c.emit(taivm.OpGetIndexOk)
+		c.emit(taivm.OpSwap)
 	} else {
 		if err := c.compileExpr(rhs); err != nil {
 			return err
@@ -2123,6 +2132,15 @@ func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr) err
 			return err
 		}
 		c.emit(taivm.OpTypeAssertOk)
+		c.emit(taivm.OpSwap)
+	} else if ie, ok := rhs.(*ast.IndexExpr); ok && len(s.Names) == 2 {
+		if err := c.compileExpr(ie.X); err != nil {
+			return err
+		}
+		if err := c.compileExpr(ie.Index); err != nil {
+			return err
+		}
+		c.emit(taivm.OpGetIndexOk)
 		c.emit(taivm.OpSwap)
 	} else {
 		if err := c.compileExpr(rhs); err != nil {

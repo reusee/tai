@@ -67,6 +67,7 @@ const (
 	OpSetDeref
 	OpTypeAssert
 	OpTypeAssertOk
+	OpGetIndexOk
 )
 
 func (o OpCode) With(arg int) OpCode {

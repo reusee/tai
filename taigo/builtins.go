@@ -106,6 +106,12 @@ func registerCollections(vm *taivm.VM) {
 				return v.Len(), nil
 			case nil:
 				return 0, nil
+			default:
+				rv := reflect.ValueOf(v)
+				kind := rv.Kind()
+				if kind == reflect.Map || kind == reflect.Slice || kind == reflect.Array || kind == reflect.String || kind == reflect.Chan {
+					return rv.Len(), nil
+				}
 			}
 			return nil, fmt.Errorf("invalid argument type for len: %T", args[0])
 		},
@@ -124,6 +130,12 @@ func registerCollections(vm *taivm.VM) {
 				return cap(v), nil
 			case nil:
 				return 0, nil
+			default:
+				rv := reflect.ValueOf(v)
+				kind := rv.Kind()
+				if kind == reflect.Slice || kind == reflect.Array || kind == reflect.Chan {
+					return rv.Cap(), nil
+				}
 			}
 			return nil, fmt.Errorf("invalid argument type for cap: %T", args[0])
 		},
@@ -177,6 +189,11 @@ func registerCollections(vm *taivm.VM) {
 			case []any:
 				dst = v
 			default:
+				rvDst := reflect.ValueOf(args[0])
+				rvSrc := reflect.ValueOf(args[1])
+				if rvDst.Kind() == reflect.Slice && rvSrc.Kind() == reflect.Slice {
+					return reflect.Copy(rvDst, rvSrc), nil
+				}
 				return nil, fmt.Errorf("copy expects list or slice as first argument, got %T", args[0])
 			}
 			switch v := args[1].(type) {
@@ -210,6 +227,17 @@ func registerCollections(vm *taivm.VM) {
 					delete(m, k)
 				}
 			default:
+				rv := reflect.ValueOf(target)
+				if rv.Kind() == reflect.Map {
+					rk := reflect.ValueOf(key)
+					if !rk.IsValid() {
+						rk = reflect.Zero(rv.Type().Key())
+					}
+					if rk.Type().AssignableTo(rv.Type().Key()) {
+						rv.SetMapIndex(rk, reflect.Value{})
+						return nil, nil
+					}
+				}
 				return nil, fmt.Errorf("delete expects map, got %T", target)
 			}
 			return nil, nil
@@ -238,6 +266,17 @@ func registerCollections(vm *taivm.VM) {
 			case map[string]any:
 				for k := range v {
 					delete(v, k)
+				}
+			default:
+				rv := reflect.ValueOf(arg)
+				if rv.Kind() == reflect.Map {
+					for _, k := range rv.MapKeys() {
+						rv.SetMapIndex(k, reflect.Value{})
+					}
+				} else if rv.Kind() == reflect.Slice {
+					for i := 0; i < rv.Len(); i++ {
+						rv.Index(i).Set(reflect.Zero(rv.Type().Elem()))
+					}
 				}
 			}
 			return nil, nil
@@ -464,7 +503,7 @@ func registerMemory(vm *taivm.VM) {
 				return makeSlice(args, t)
 			}
 			if t.Kind() == reflect.Map {
-				return make(map[any]any), nil
+				return reflect.MakeMap(t).Interface(), nil
 			}
 			if t.Kind() == reflect.Chan {
 				return nil, fmt.Errorf("channels not supported")

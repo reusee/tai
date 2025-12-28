@@ -254,12 +254,20 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			if !v.opTypeAssertOk(yield) {
 				return
 			}
+
+		case OpGetIndexOk:
+			if !v.opGetIndexOk(yield) {
+				return
+			}
 		}
 
 	}
 }
 
 func ToInt64(v any) (int64, bool) {
+	if v == nil {
+		return 0, true
+	}
 	switch i := v.(type) {
 	case int:
 		return int64(i), true
@@ -286,6 +294,9 @@ func ToInt64(v any) (int64, bool) {
 }
 
 func ToFloat64(v any) (float64, bool) {
+	if v == nil {
+		return 0, true
+	}
 	switch i := v.(type) {
 	case float64:
 		return i, true
@@ -1138,7 +1149,71 @@ func (v *VM) opGetIndexFallbacks(target, key any, yield func(*Interrupt, error) 
 			v.push(rv.Index(int(idx)).Interface())
 			return true
 		}
+		if rv.Kind() == reflect.Map {
+			rk := reflect.ValueOf(key)
+			if !rk.IsValid() {
+				rk = reflect.Zero(rv.Type().Key())
+			}
+			if rk.Type().AssignableTo(rv.Type().Key()) {
+				mv := rv.MapIndex(rk)
+				if mv.IsValid() {
+					v.push(mv.Interface())
+				} else {
+					v.push(reflect.Zero(rv.Type().Elem()).Interface())
+				}
+				return true
+			}
+		}
 		return yield(nil, fmt.Errorf("type %T is not indexable", target))
+	}
+	return true
+}
+
+func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
+	key := v.pop()
+	target := v.pop()
+	if target == nil {
+		v.push(nil)
+		v.push(false)
+		return true
+	}
+	switch m := target.(type) {
+	case map[any]any:
+		val, ok := m[key]
+		v.push(val)
+		v.push(ok)
+	case map[string]any:
+		if s, ok := key.(string); ok {
+			val, ok := m[s]
+			v.push(val)
+			v.push(ok)
+		} else {
+			v.push(nil)
+			v.push(false)
+		}
+	default:
+		rv := reflect.ValueOf(target)
+		if rv.Kind() == reflect.Map {
+			rk := reflect.ValueOf(key)
+			if !rk.IsValid() {
+				rk = reflect.Zero(rv.Type().Key())
+			}
+			if rk.Type().AssignableTo(rv.Type().Key()) {
+				mv := rv.MapIndex(rk)
+				if mv.IsValid() {
+					v.push(mv.Interface())
+					v.push(true)
+				} else {
+					v.push(reflect.Zero(rv.Type().Elem()).Interface())
+					v.push(false)
+				}
+				return true
+			}
+		}
+		// Go allows indexing other types, but comma-ok is map only.
+		// For consistency in our dynamic VM, non-maps return false.
+		v.push(nil)
+		v.push(false)
 	}
 	return true
 }
@@ -1182,8 +1257,26 @@ func (v *VM) opSetIndexFallbacks(target, key, val any, yield func(*Interrupt, er
 		rv := reflect.ValueOf(target)
 		if rv.Kind() == reflect.Array || rv.Kind() == reflect.Slice {
 			idx, _ := ToInt64(key)
-			rv.Index(int(idx)).Set(reflect.ValueOf(val))
+			rvv := reflect.ValueOf(val)
+			if !rvv.IsValid() {
+				rvv = reflect.Zero(rv.Type().Elem())
+			}
+			rv.Index(int(idx)).Set(rvv)
 			return true
+		}
+		if rv.Kind() == reflect.Map {
+			rk := reflect.ValueOf(key)
+			if !rk.IsValid() {
+				rk = reflect.Zero(rv.Type().Key())
+			}
+			rvv := reflect.ValueOf(val)
+			if !rvv.IsValid() {
+				rvv = reflect.Zero(rv.Type().Elem())
+			}
+			if rk.Type().AssignableTo(rv.Type().Key()) && rvv.Type().AssignableTo(rv.Type().Elem()) {
+				rv.SetMapIndex(rk, rvv)
+				return true
+			}
 		}
 		return yield(nil, fmt.Errorf("type %T does not support assignment", target))
 	}

@@ -254,7 +254,11 @@ func TestVMMaps(t *testing.T) {
 	`)
 	checkInt(t, vm, "v", 1)
 	mArg, _ := vm.Get("m")
-	m := mArg.(map[any]any)
+	// Convert the map to map[any]any for length check
+	m := make(map[any]any)
+	for k, v := range mArg.(map[string]int64) {
+		m[k] = v
+	}
 	if len(m) != 0 {
 		t.Fatal("delete failed")
 	}
@@ -1902,4 +1906,25 @@ func TestVMGenerics(t *testing.T) {
 	checkString(t, vm, "res2", "hello")
 	checkInt(t, vm, "r1", 1)
 	checkString(t, vm, "r2", "x")
+}
+
+func TestVMMapCommaOk(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var m = map[string]int{"a": 1}
+		var val1, ok1 = m["a"]
+		var val2, ok2 = m["b"]
+		
+		var val3 any
+		var ok3 bool
+		func init() {
+			val3, ok3 = m["a"]
+		}
+	`)
+	checkInt(t, vm, "val1", 1)
+	checkBool(t, vm, "ok1", true)
+	checkInt(t, vm, "val2", 0)
+	checkBool(t, vm, "ok2", false)
+	checkInt(t, vm, "val3", 1)
+	checkBool(t, vm, "ok3", true)
 }
