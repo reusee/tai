@@ -1872,3 +1872,34 @@ func TestVMSliceToArrayConversionError(t *testing.T) {
 		t.Fatalf("expected conversion error, got %v", err)
 	}
 }
+
+func TestVMGenerics(t *testing.T) {
+	vm := runVM(t, `
+		package main
+
+		func f[T any](x T) T {
+			return x
+		}
+
+		type Box[T any] struct {
+			Val T
+		}
+
+		func (b Box[T]) Get() any {
+			return b.Val
+		}
+
+		var res1 = f[int](42)
+		var b = Box[string]{Val: "hello"}
+		var res2 = b.Get()
+
+		func multi[T1, T2 any](a T1, b T2) {
+			return a, b
+		}
+		var r1, r2 = multi[int, string](1, "x")
+	`)
+	checkInt(t, vm, "res1", 42)
+	checkString(t, vm, "res2", "hello")
+	checkInt(t, vm, "r1", 1)
+	checkString(t, vm, "r2", "x")
+}

@@ -23,6 +23,8 @@ type compiler struct {
 	unresolved     map[string][]int
 	lastConstExprs []ast.Expr
 	resultNames    []string
+	generics       map[string]bool // Top-level generic names
+	typeParams     map[string]bool // Current function/type parameters
 }
 
 type loopScope struct {
@@ -468,6 +470,13 @@ func (c *compiler) compileDecl(decl ast.Decl) error {
 }
 
 func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
+	if decl.Type.TypeParams != nil && len(decl.Type.TypeParams.List) > 0 {
+		if c.generics == nil {
+			c.generics = make(map[string]bool)
+		}
+		c.generics[decl.Name.Name] = true
+	}
+
 	fn, err := c.compileFunc(decl)
 	if err != nil {
 		return err
@@ -488,6 +497,24 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 			if id, ok := t.X.(*ast.Ident); ok {
 				typeName = id.Name
 				isPointer = true
+			} else if idx, ok := t.X.(*ast.IndexExpr); ok {
+				if id, ok := idx.X.(*ast.Ident); ok {
+					typeName = id.Name
+					isPointer = true
+				}
+			} else if idx, ok := t.X.(*ast.IndexListExpr); ok {
+				if id, ok := idx.X.(*ast.Ident); ok {
+					typeName = id.Name
+					isPointer = true
+				}
+			}
+		case *ast.IndexExpr:
+			if id, ok := t.X.(*ast.Ident); ok {
+				typeName = id.Name
+			}
+		case *ast.IndexListExpr:
+			if id, ok := t.X.(*ast.Ident); ok {
+				typeName = id.Name
 			}
 		}
 		if typeName != "" {
@@ -525,6 +552,15 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		params:     make(map[string]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
+		generics:   c.generics,
+		typeParams: make(map[string]bool),
+	}
+	if decl.Type.TypeParams != nil {
+		for _, field := range decl.Type.TypeParams.List {
+			for _, name := range field.Names {
+				sub.typeParams[name.Name] = true
+			}
+		}
 	}
 	if err := sub.setupParams(decl); err != nil {
 		return nil, err
@@ -710,6 +746,8 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 		return c.compileExpr(e.X)
 	case *ast.IndexExpr:
 		return c.compileIndexExpr(e)
+	case *ast.IndexListExpr:
+		return c.compileIndexListExpr(e)
 	case *ast.SelectorExpr:
 		return c.compileSelectorExpr(e)
 	case *ast.SliceExpr:
@@ -1033,6 +1071,9 @@ func (c *compiler) compileVariadicCall(expr *ast.CallExpr) error {
 }
 
 func (c *compiler) compileIndexExpr(expr *ast.IndexExpr) error {
+	if id, ok := expr.X.(*ast.Ident); ok && c.generics != nil && c.generics[id.Name] {
+		return c.compileExpr(expr.X)
+	}
 	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
@@ -1041,6 +1082,13 @@ func (c *compiler) compileIndexExpr(expr *ast.IndexExpr) error {
 	}
 	c.emit(taivm.OpGetIndex)
 	return nil
+}
+
+func (c *compiler) compileIndexListExpr(expr *ast.IndexListExpr) error {
+	if id, ok := expr.X.(*ast.Ident); ok && c.generics != nil && c.generics[id.Name] {
+		return c.compileExpr(expr.X)
+	}
+	return c.compileExpr(expr.X)
 }
 
 func (c *compiler) compileSelectorExpr(expr *ast.SelectorExpr) error {
@@ -1091,6 +1139,20 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		params:     make(map[string]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
+		generics:   c.generics,
+		typeParams: c.typeParams,
+	}
+	if expr.Type.TypeParams != nil && len(expr.Type.TypeParams.List) > 0 {
+		newTypeParams := make(map[string]bool)
+		for k, v := range c.typeParams {
+			newTypeParams[k] = v
+		}
+		for _, field := range expr.Type.TypeParams.List {
+			for _, name := range field.Names {
+				newTypeParams[name.Name] = true
+			}
+		}
+		sub.typeParams = newTypeParams
 	}
 	if expr.Type.Params != nil {
 		idx := 0
@@ -1150,6 +1212,10 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 		return c.compileArrayLit(expr)
 	case *ast.Ident, *ast.SelectorExpr:
 		return c.compileStructLit(expr, t)
+	case *ast.IndexExpr:
+		return c.compileStructLit(expr, t.X)
+	case *ast.IndexListExpr:
+		return c.compileStructLit(expr, t.X)
 	default:
 		return c.compileMapLit(expr)
 	}
@@ -1938,6 +2004,8 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		params:     make(map[string]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
+		generics:   c.generics,
+		typeParams: c.typeParams,
 	}
 
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
@@ -2073,11 +2141,37 @@ func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr) err
 }
 
 func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
-	t, err := c.resolveType(spec.Type)
-	if err != nil {
-		return err
+	if spec.TypeParams != nil && len(spec.TypeParams.List) > 0 {
+		if c.generics == nil {
+			c.generics = make(map[string]bool)
+		}
+		c.generics[spec.Name.Name] = true
 	}
-	c.loadConst(t)
+
+	if spec.TypeParams != nil && len(spec.TypeParams.List) > 0 {
+		sub := &compiler{
+			name:       spec.Name.Name,
+			generics:   c.generics,
+			typeParams: make(map[string]bool),
+		}
+		for _, field := range spec.TypeParams.List {
+			for _, name := range field.Names {
+				sub.typeParams[name.Name] = true
+			}
+		}
+		t, err := sub.resolveType(spec.Type)
+		if err != nil {
+			return err
+		}
+		c.loadConst(t)
+	} else {
+		t, err := c.resolveType(spec.Type)
+		if err != nil {
+			return err
+		}
+		c.loadConst(t)
+	}
+
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		c.recordEmbeddedInfo(spec.Name.Name, st)
@@ -2099,6 +2193,14 @@ func (c *compiler) recordEmbeddedInfo(typeName string, st *ast.StructType) {
 					embedded = append(embedded, id.Name)
 				} else if sel, ok := ft.X.(*ast.SelectorExpr); ok {
 					embedded = append(embedded, sel.Sel.Name)
+				}
+			case *ast.IndexExpr:
+				if id, ok := ft.X.(*ast.Ident); ok {
+					embedded = append(embedded, id.Name)
+				}
+			case *ast.IndexListExpr:
+				if id, ok := ft.X.(*ast.Ident); ok {
+					embedded = append(embedded, id.Name)
 				}
 			}
 		}
@@ -2134,6 +2236,10 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 		return c.resolveInterfaceType(e)
 	case *ast.SelectorExpr:
 		return reflect.TypeFor[any](), nil
+	case *ast.IndexExpr:
+		return c.resolveType(e.X)
+	case *ast.IndexListExpr:
+		return c.resolveType(e.X)
 	default:
 		return nil, fmt.Errorf("unsupported type expression: %T", expr)
 	}
@@ -2295,6 +2401,18 @@ func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast
 	case *ast.StarExpr:
 		if id, ok := t.X.(*ast.Ident); ok {
 			name = id.Name
+		} else if idx, ok := t.X.(*ast.IndexExpr); ok {
+			if id, ok := idx.X.(*ast.Ident); ok {
+				name = id.Name
+			}
+		}
+	case *ast.IndexExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			name = id.Name
+		}
+	case *ast.IndexListExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			name = id.Name
 		}
 	}
 	if name != "" {
@@ -2309,6 +2427,9 @@ func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast
 }
 
 func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
+	if c.typeParams != nil && c.typeParams[e.Name] {
+		return reflect.TypeFor[any](), nil
+	}
 	switch e.Name {
 	case "int":
 		return reflect.TypeFor[int64](), nil
