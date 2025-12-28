@@ -1768,3 +1768,16 @@ func TestVMKeyedSliceLiteral(t *testing.T) {
 	checkInt(t, vm, "v3", 30)
 	checkInt(t, vm, "v4", 40)
 }
+
+func TestVMRangeInt(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var sum = 0
+		func init() {
+			for i := range 10 {
+				sum += i
+			}
+		}
+	`)
+	checkInt(t, vm, "sum", 45)
+}

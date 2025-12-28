@@ -1,7 +1,6 @@
 package taigo
 
 /*
-range over int
 range over function, iterator
 constant evaluation/fold at compile time
 generics

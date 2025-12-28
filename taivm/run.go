@@ -1855,6 +1855,13 @@ func (v *VM) opGetIter(yield func(*Interrupt, error) bool) bool {
 			Curr:  t.Start,
 		})
 	default:
+		if i, ok := ToInt64(val); ok {
+			v.push(&RangeIterator{
+				Range: &Range{Start: 0, Stop: i, Step: 1},
+				Curr:  0,
+			})
+			return true
+		}
 		if !yield(nil, fmt.Errorf("type %T is not iterable", val)) {
 			return false
 		}
