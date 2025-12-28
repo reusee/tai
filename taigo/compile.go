@@ -11,6 +11,7 @@ func compile(file *ast.File) (*taivm.Function, error) {
 	c := &compiler{
 		name:       "main",
 		consts:     make(map[any]int),
+		locals:     make(map[string]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}

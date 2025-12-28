@@ -12,9 +12,9 @@ type EnvVar struct {
 }
 
 func (e *Env) Get(name string) (any, bool) {
-	for _, v := range e.Vars {
-		if v.Name == name {
-			return v.Val, true
+	for i := len(e.Vars) - 1; i >= 0; i-- {
+		if e.Vars[i].Name == name {
+			return e.Vars[i].Val, true
 		}
 	}
 	if e.Parent != nil {
@@ -37,8 +37,8 @@ func (e *Env) Def(name string, val any) {
 }
 
 func (e *Env) Set(name string, val any) bool {
-	for i, v := range e.Vars {
-		if v.Name == name {
+	for i := len(e.Vars) - 1; i >= 0; i-- {
+		if e.Vars[i].Name == name {
 			e.Vars[i].Val = val
 			return true
 		}

@@ -12,13 +12,14 @@ import (
 
 type compiler struct {
 	name           string
+	isFunc         bool
 	code           []taivm.OpCode
 	constants      []any
 	consts         map[any]int // For fast constant lookup
 	loops          []*loopScope
 	scopeDepth     int
 	tmpCount       int
-	params         map[string]int
+	locals         map[string]int
 	iotaVal        int
 	labels         map[string]int
 	unresolved     map[string][]int
@@ -104,24 +105,44 @@ func (c *compiler) addConst(val any) int {
 	if c.consts == nil {
 		c.consts = make(map[any]int)
 	}
-	rv := reflect.ValueOf(val)
-	if !rv.IsValid() {
+	switch v := val.(type) {
+	case string:
+		if idx, ok := c.consts[v]; ok {
+			return idx
+		}
+	case int:
+		if idx, ok := c.consts[v]; ok {
+			return idx
+		}
+	case int64:
+		if idx, ok := c.consts[v]; ok {
+			return idx
+		}
+	case bool:
+		if idx, ok := c.consts[v]; ok {
+			return idx
+		}
+	case nil:
 		if idx, ok := c.consts[nil]; ok {
 			return idx
 		}
-	} else if rv.Type().Comparable() {
-		if idx, ok := c.consts[val]; ok {
-			return idx
-		}
-	} else {
-		for i, v := range c.constants {
-			if reflect.DeepEqual(v, val) {
-				return i
+	default:
+		rv := reflect.ValueOf(val)
+		if rv.IsValid() && rv.Type().Comparable() {
+			if idx, ok := c.consts[val]; ok {
+				return idx
+			}
+		} else {
+			for i, cv := range c.constants {
+				if reflect.DeepEqual(cv, val) {
+					return i
+				}
 			}
 		}
 	}
 	idx := len(c.constants)
 	c.constants = append(c.constants, val)
+	rv := reflect.ValueOf(val)
 	if !rv.IsValid() {
 		c.consts[nil] = idx
 	} else if rv.Type().Comparable() {
@@ -656,8 +677,9 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
 		name:         decl.Name.Name,
+		isFunc:       true,
 		consts:       make(map[any]int),
-		params:       make(map[string]int),
+		locals:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
@@ -692,6 +714,7 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	if err := c.setFuncMetadata(fn, decl); err != nil {
 		return nil, err
 	}
+	fn.NumLocals = len(sub.locals)
 	return fn, nil
 }
 
@@ -700,7 +723,7 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
 		for _, name := range recv.Names {
-			c.params[name.Name] = idx
+			c.locals[name.Name] = idx
 			idx++
 		}
 		if len(recv.Names) == 0 {
@@ -710,7 +733,7 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			for _, name := range field.Names {
-				c.params[name.Name] = idx
+				c.locals[name.Name] = idx
 				idx++
 			}
 			if len(field.Names) == 0 {
@@ -990,7 +1013,7 @@ func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 		c.loadConst(nil)
 		return nil
 	}
-	if idx, ok := c.params[name]; ok {
+	if idx, ok := c.locals[name]; ok {
 		c.emit(taivm.OpGetLocal.With(idx))
 		return nil
 	}
@@ -1255,8 +1278,9 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	sub := &compiler{
 		name:         "anon",
+		isFunc:       true,
 		consts:       make(map[any]int),
-		params:       make(map[string]int),
+		locals:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
@@ -1279,7 +1303,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		idx := 0
 		for _, field := range expr.Type.Params.List {
 			for _, name := range field.Names {
-				sub.params[name.Name] = idx
+				sub.locals[name.Name] = idx
 				idx++
 			}
 			if len(field.Names) == 0 {
@@ -1302,6 +1326,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		return err
 	}
 	fn := sub.getFunction()
+	fn.NumLocals = len(sub.locals)
 	tObj, err := c.resolveType(expr.Type)
 	if err != nil {
 		return err
@@ -1765,7 +1790,19 @@ func (c *compiler) compileSelectorCompoundAssign(lhs *ast.SelectorExpr, rhs ast.
 }
 
 func (c *compiler) compileIdentCompoundAssign(lhs *ast.Ident, rhs ast.Expr, tok token.Token) error {
-	idx := c.addConst(lhs.Name)
+	name := lhs.Name
+	if idx, ok := c.locals[name]; ok {
+		c.emit(taivm.OpGetLocal.With(idx))
+		if err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetLocal.With(idx))
+		return nil
+	}
+	idx := c.addConst(name)
 	c.emit(taivm.OpLoadVar.With(idx))
 	if err := c.compileExpr(rhs); err != nil {
 		return err
@@ -2191,8 +2228,9 @@ func (c *compiler) compileGoto(stmt *ast.BranchStmt) error {
 func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 	sub := &compiler{
 		name:         "defer",
+		isFunc:       true,
 		consts:       make(map[any]int),
-		params:       make(map[string]int),
+		locals:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
@@ -2214,6 +2252,7 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		}
 	}
 	fn := sub.getFunction()
+	fn.NumLocals = len(sub.locals)
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
 	c.emit(taivm.OpDefer)
@@ -2728,6 +2767,16 @@ func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token) error {
 	name := e.Name
 	if name == "_" {
 		c.emit(taivm.OpPop)
+		return nil
+	}
+	if idx, ok := c.locals[name]; ok {
+		c.emit(taivm.OpSetLocal.With(idx))
+		return nil
+	}
+	if tok == token.DEFINE && c.isFunc {
+		idx := len(c.locals)
+		c.locals[name] = idx
+		c.emit(taivm.OpSetLocal.With(idx))
 		return nil
 	}
 	idx := c.addConst(name)

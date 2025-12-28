@@ -29,263 +29,330 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 
 		switch op {
 		case OpLoadConst:
-			v.opLoadConst(inst)
+			idx := int(inst >> 8)
+			if v.SP >= len(v.OperandStack) {
+				v.growOperandStack()
+			}
+			v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
+			v.SP++
+
+		case OpGetLocal:
+			idx := int(inst >> 8)
+			if v.SP >= len(v.OperandStack) {
+				v.growOperandStack()
+			}
+			v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
+			v.SP++
+
+		case OpSetLocal:
+			idx := int(inst >> 8)
+			if v.SP > 0 {
+				v.SP--
+				val := v.OperandStack[v.SP]
+				v.OperandStack[v.SP] = nil
+				v.OperandStack[v.BP+idx] = val
+			}
+
+		case OpPop:
+			if v.SP > 0 {
+				v.SP--
+				v.OperandStack[v.SP] = nil
+			}
+
+		case OpJump:
+			offset := int(int32(inst) >> 8)
+			v.IP += offset
+
+		case OpJumpFalse:
+			var val any
+			if v.SP > 0 {
+				v.SP--
+				val = v.OperandStack[v.SP]
+				v.OperandStack[v.SP] = nil
+			}
+			if isZero(val) {
+				v.IP += int(int32(inst) >> 8)
+			}
+
+		case OpAdd:
+			if v.SP >= 2 {
+				b := v.OperandStack[v.SP-1]
+				a := v.OperandStack[v.SP-2]
+				if x, ok := a.(int); ok {
+					if y, ok := b.(int); ok {
+						v.OperandStack[v.SP-2] = x + y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+				if x, ok := a.(float64); ok {
+					if y, ok := b.(float64); ok {
+						v.OperandStack[v.SP-2] = x + y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+			}
+			if !v.opMath(op, yield) {
+				return
+			}
+
+		case OpSub:
+			if v.SP >= 2 {
+				b := v.OperandStack[v.SP-1]
+				a := v.OperandStack[v.SP-2]
+				if x, ok := a.(int); ok {
+					if y, ok := b.(int); ok {
+						v.OperandStack[v.SP-2] = x - y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+				if x, ok := a.(float64); ok {
+					if y, ok := b.(float64); ok {
+						v.OperandStack[v.SP-2] = x - y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+			}
+			if !v.opMath(op, yield) {
+				return
+			}
+
+		case OpEq:
+			if v.SP >= 2 {
+				b := v.OperandStack[v.SP-1]
+				a := v.OperandStack[v.SP-2]
+				if x, ok := a.(int); ok {
+					if y, ok := b.(int); ok {
+						v.OperandStack[v.SP-2] = x == y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+			}
+			if !v.opCompare(op, yield) {
+				return
+			}
+
+		case OpLt:
+			if v.SP >= 2 {
+				b := v.OperandStack[v.SP-1]
+				a := v.OperandStack[v.SP-2]
+				if x, ok := a.(int); ok {
+					if y, ok := b.(int); ok {
+						v.OperandStack[v.SP-2] = x < y
+						v.SP--
+						v.OperandStack[v.SP] = nil
+						continue
+					}
+				}
+			}
+			if !v.opCompare(op, yield) {
+				return
+			}
 
 		case OpLoadVar:
 			if !v.opLoadVar(inst, yield) {
 				return
 			}
-
 		case OpDefVar:
 			v.opDefVar(inst)
-
 		case OpSetVar:
 			if !v.opSetVar(inst, yield) {
 				return
 			}
-
-		case OpPop:
-			v.opPop()
-
 		case OpDup:
 			if !v.opDup(yield) {
 				return
 			}
-
 		case OpDup2:
 			if !v.opDup2(yield) {
 				return
 			}
-
-		case OpJump:
-			v.opJump(inst)
-
-		case OpJumpFalse:
-			v.opJumpFalse(inst)
-
 		case OpMakeClosure:
 			v.opMakeClosure(inst)
-
 		case OpCall:
 			if !v.opCall(inst, yield) {
 				return
 			}
-
 		case OpReturn:
 			if !v.opReturn(yield) {
 				return
 			}
-
 		case OpSuspend:
 			if !yield(InterruptSuspend, nil) {
 				return
 			}
-
 		case OpEnterScope:
 			v.Scope = v.allocEnv(v.Scope)
-
 		case OpLeaveScope:
 			if v.Scope.Parent != nil {
 				old := v.Scope
 				v.Scope = v.Scope.Parent
 				v.freeEnv(old)
 			}
-
 		case OpMakeList:
 			if !v.opMakeList(inst, yield) {
 				return
 			}
-
 		case OpMakeStruct:
 			if !v.opMakeStruct(inst, yield) {
 				return
 			}
-
 		case OpMakeMap:
 			if !v.opMakeMap(inst, yield) {
 				return
 			}
-
 		case OpGetIndex:
 			if !v.opGetIndex(yield) {
 				return
 			}
-
 		case OpSetIndex:
 			if !v.opSetIndex(yield) {
 				return
 			}
-
 		case OpSwap:
 			if !v.opSwap(yield) {
 				return
 			}
-
-		case OpGetLocal:
-			v.opGetLocal(inst)
-
-		case OpSetLocal:
-			v.opSetLocal(inst)
-
 		case OpDumpTrace:
 			if !v.opDumpTrace(yield) {
 				return
 			}
-
 		case OpBitAnd, OpBitOr, OpBitXor, OpBitLsh, OpBitRsh:
 			if !v.opBitwise(op, yield) {
 				return
 			}
-
 		case OpBitNot:
 			if !v.opBitNot(yield) {
 				return
 			}
-
-		case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpFloorDiv, OpPow:
+		case OpMul, OpDiv, OpMod, OpFloorDiv, OpPow:
 			if !v.opMath(op, yield) {
 				return
 			}
-
-		case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+		case OpNe, OpLe, OpGt, OpGe:
 			if !v.opCompare(op, yield) {
 				return
 			}
-
 		case OpNot:
 			if !v.opNot(yield) {
 				return
 			}
-
 		case OpGetIter:
 			if !v.opGetIter(yield) {
 				return
 			}
-
 		case OpNextIter:
 			if !v.opNextIter(inst, yield) {
 				return
 			}
-
 		case OpMakeTuple:
 			if !v.opMakeTuple(inst, yield) {
 				return
 			}
-
 		case OpGetSlice:
 			if !v.opGetSlice(yield) {
 				return
 			}
-
 		case OpSetSlice:
 			if !v.opSetSlice(yield) {
 				return
 			}
-
 		case OpGetAttr:
 			if !v.opGetAttr(yield) {
 				return
 			}
-
 		case OpSetAttr:
 			if !v.opSetAttr(yield) {
 				return
 			}
-
 		case OpCallKw:
 			if !v.opCallKw(inst, yield) {
 				return
 			}
-
 		case OpListAppend:
 			if !v.opListAppend(yield) {
 				return
 			}
-
 		case OpContains:
 			if !v.opContains(yield) {
 				return
 			}
-
 		case OpUnpack:
 			if !v.opUnpack(inst, yield) {
 				return
 			}
-
 		case OpImport:
 			if !v.opImport(inst, yield) {
 				return
 			}
-
 		case OpDefer:
 			v.opDefer()
-
 		case OpAddrOf:
 			if !v.opAddrOf(inst, yield) {
 				return
 			}
-
 		case OpAddrOfIndex:
 			if !v.opAddrOfIndex(yield) {
 				return
 			}
-
 		case OpAddrOfAttr:
 			if !v.opAddrOfAttr(yield) {
 				return
 			}
-
 		case OpDeref:
 			if !v.opDeref(yield) {
 				return
 			}
-
 		case OpSetDeref:
 			if !v.opSetDeref(yield) {
 				return
 			}
-
 		case OpTypeAssert:
 			if !v.opTypeAssert(yield) {
 				return
 			}
-
 		case OpTypeAssertOk:
 			if !v.opTypeAssertOk(yield) {
 				return
 			}
-
 		case OpGetIndexOk:
 			if !v.opGetIndexOk(yield) {
 				return
 			}
 		}
-
 	}
 }
 
 func ToInt64(v any) (int64, bool) {
-	if v == nil {
-		return 0, true
-	}
 	switch i := v.(type) {
 	case int:
+		return int64(i), true
+	case int64:
+		return i, true
+	case nil:
+		return 0, true
+	case uint8:
+		return int64(i), true
+	case int32:
+		return int64(i), true
+	case uint32:
 		return int64(i), true
 	case int8:
 		return int64(i), true
 	case int16:
 		return int64(i), true
-	case int32:
-		return int64(i), true
-	case int64:
-		return i, true
 	case uint:
 		return int64(i), true
-	case uint8:
-		return int64(i), true
 	case uint16:
-		return int64(i), true
-	case uint32:
 		return int64(i), true
 	case uint64:
 		return int64(i), true
@@ -294,23 +361,22 @@ func ToInt64(v any) (int64, bool) {
 }
 
 func ToFloat64(v any) (float64, bool) {
-	if v == nil {
-		return 0, true
-	}
 	switch i := v.(type) {
 	case float64:
 		return i, true
-	case float32:
-		return float64(i), true
 	case int:
+		return float64(i), true
+	case int64:
+		return float64(i), true
+	case nil:
+		return 0, true
+	case float32:
 		return float64(i), true
 	case int8:
 		return float64(i), true
 	case int16:
 		return float64(i), true
 	case int32:
-		return float64(i), true
-	case int64:
 		return float64(i), true
 	case uint:
 		return float64(i), true
@@ -359,10 +425,18 @@ func isZero(v any) bool {
 	switch i := v.(type) {
 	case bool:
 		return !i
+	case int:
+		return i == 0
+	case int64:
+		return i == 0
 	case string:
 		return i == ""
 	case nil:
 		return true
+	case float64:
+		return i == 0
+	case complex128:
+		return i == 0
 	}
 	if i, ok := ToInt64(v); ok {
 		return i == 0
@@ -466,6 +540,10 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 				}
 				return math.Floor(x / y), true, nil
 			}
+		}
+	case string:
+		if y, ok := b.(string); ok && op == OpAdd {
+			return x + y, true, nil
 		}
 	}
 	return nil, false, nil
@@ -794,7 +872,11 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		return true
 	}
 
-	locals := make([]any, numParams)
+	numLocals := fn.Fun.NumLocals
+	if numLocals < numParams {
+		numLocals = numParams
+	}
+	locals := make([]any, numLocals)
 
 	for i := range numFixed {
 		if i < argc {
@@ -1411,79 +1493,63 @@ func (v *VM) opDumpTrace(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 	if v.SP < 2 {
-		if !yield(nil, fmt.Errorf("stack underflow during bitwise op")) {
-			return false
-		}
-		return true
+		return yield(nil, fmt.Errorf("stack underflow during bitwise op"))
 	}
 	b := v.pop()
 	a := v.pop()
-
 	if op == OpBitOr {
-		m1, ok1 := a.(map[any]any)
-		m2, ok2 := b.(map[any]any)
-		if ok1 && ok2 {
-			newMap := make(map[any]any, len(m1)+len(m2))
-			for k, val := range m1 {
-				newMap[k] = val
+		if m1, ok1 := a.(map[any]any); ok1 {
+			if m2, ok2 := b.(map[any]any); ok2 {
+				newMap := make(map[any]any, len(m1)+len(m2))
+				for k, val := range m1 {
+					newMap[k] = val
+				}
+				for k, val := range m2 {
+					newMap[k] = val
+				}
+				v.push(newMap)
+				return true
 			}
-			for k, val := range m2 {
-				newMap[k] = val
-			}
-			v.push(newMap)
-			return true
 		}
 	}
-
 	if res, ok, err := bitwiseSameType(op, a, b); ok {
 		if err != nil {
-			if !yield(nil, err) {
-				return false
-			}
+			yield(nil, err)
 			v.push(nil)
 			return true
 		}
 		v.push(res)
 		return true
 	}
-
 	i1, ok1 := ToInt64(a)
 	i2, ok2 := ToInt64(b)
 	if !ok1 || !ok2 {
-		if !yield(nil, fmt.Errorf("bitwise operands must be integers, got %T and %T", a, b)) {
-			return false
-		}
+		yield(nil, fmt.Errorf("bitwise operands must be integers"))
 		v.push(nil)
 		return true
 	}
-	var res int64
 	switch op {
 	case OpBitAnd:
-		res = i1 & i2
+		v.push(i1 & i2)
 	case OpBitOr:
-		res = i1 | i2
+		v.push(i1 | i2)
 	case OpBitXor:
-		res = i1 ^ i2
+		v.push(i1 ^ i2)
 	case OpBitLsh:
 		if i2 < 0 {
-			if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
-				return false
-			}
+			yield(nil, fmt.Errorf("negative shift count"))
 			v.push(nil)
-			return true
+		} else {
+			v.push(i1 << uint(i2))
 		}
-		res = i1 << uint(i2)
 	case OpBitRsh:
 		if i2 < 0 {
-			if !yield(nil, fmt.Errorf("negative shift count: %d", i2)) {
-				return false
-			}
+			yield(nil, fmt.Errorf("negative shift count"))
 			v.push(nil)
-			return true
+		} else {
+			v.push(i1 >> uint(i2))
 		}
-		res = i1 >> uint(i2)
 	}
-	v.push(res)
 	return true
 }
 
@@ -1531,38 +1597,14 @@ func (v *VM) opBitNot(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 	if v.SP < 2 {
-		if !yield(nil, fmt.Errorf("stack underflow during math op")) {
-			return false
-		}
-		return true
+		return yield(nil, fmt.Errorf("stack underflow during math op"))
 	}
 	b := v.pop()
 	a := v.pop()
 
-	if op == OpAdd {
-		s1, ok1 := a.(string)
-		s2, ok2 := b.(string)
-		if ok1 && ok2 {
-			v.push(s1 + s2)
-			return true
-		}
-
-		l1, ok1 := a.(*List)
-		l2, ok2 := b.(*List)
-		if ok1 && ok2 {
-			newElems := make([]any, 0, len(l1.Elements)+len(l2.Elements))
-			newElems = append(newElems, l1.Elements...)
-			newElems = append(newElems, l2.Elements...)
-			v.push(&List{Elements: newElems, Immutable: false})
-			return true
-		}
-	}
-
 	if res, ok, err := arithmeticSameType(op, a, b); ok {
 		if err != nil {
-			if !yield(nil, err) {
-				return false
-			}
+			yield(nil, err)
 			v.push(nil)
 			return true
 		}
@@ -1570,13 +1612,23 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
+	if op == OpAdd {
+		if l1, ok := a.(*List); ok {
+			if l2, ok := b.(*List); ok {
+				res := make([]any, 0, len(l1.Elements)+len(l2.Elements))
+				res = append(res, l1.Elements...)
+				res = append(res, l2.Elements...)
+				v.push(&List{Elements: res})
+				return true
+			}
+		}
+	}
+
 	if isComplex(a) || isComplex(b) {
 		c1, ok1 := toComplex128(a)
 		c2, ok2 := toComplex128(b)
 		if !ok1 || !ok2 {
-			if !yield(nil, fmt.Errorf("invalid operands for complex math: %T, %T", a, b)) {
-				return false
-			}
+			yield(nil, fmt.Errorf("invalid operands for complex math"))
 			v.push(nil)
 			return true
 		}
@@ -1590,23 +1642,13 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 			res = c1 * c2
 		case OpDiv:
 			if c2 == 0 {
-				if !yield(nil, fmt.Errorf("division by zero")) {
-					return false
-				}
+				yield(nil, fmt.Errorf("division by zero"))
 				v.push(nil)
 				return true
 			}
 			res = c1 / c2
-		case OpPow:
-			if !yield(nil, fmt.Errorf("complex pow not supported")) {
-				return false
-			}
-			v.push(nil)
-			return true
 		default:
-			if !yield(nil, fmt.Errorf("unsupported operation for complex numbers")) {
-				return false
-			}
+			yield(nil, fmt.Errorf("unsupported operation for complex numbers"))
 			v.push(nil)
 			return true
 		}
@@ -1618,117 +1660,96 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		f1, ok1 := ToFloat64(a)
 		f2, ok2 := ToFloat64(b)
 		if !ok1 || !ok2 {
-			if !yield(nil, fmt.Errorf("invalid operands for float math: %T, %T", a, b)) {
-				return false
-			}
+			yield(nil, fmt.Errorf("invalid operands for float math"))
 			v.push(nil)
 			return true
 		}
-		var res float64
 		switch op {
 		case OpAdd:
-			res = f1 + f2
+			v.push(f1 + f2)
 		case OpSub:
-			res = f1 - f2
+			v.push(f1 - f2)
 		case OpMul:
-			res = f1 * f2
+			v.push(f1 * f2)
 		case OpDiv:
 			if f2 == 0 {
-				if !yield(nil, fmt.Errorf("division by zero")) {
-					return false
-				}
+				yield(nil, fmt.Errorf("division by zero"))
 				v.push(nil)
 				return true
 			}
-			res = f1 / f2
+			v.push(f1 / f2)
 		case OpFloorDiv:
 			if f2 == 0 {
-				if !yield(nil, fmt.Errorf("division by zero")) {
-					return false
-				}
+				yield(nil, fmt.Errorf("division by zero"))
 				v.push(nil)
 				return true
 			}
-			res = math.Floor(f1 / f2)
+			v.push(math.Floor(f1 / f2))
 		case OpPow:
-			res = math.Pow(f1, f2)
+			v.push(math.Pow(f1, f2))
 		default:
-			if !yield(nil, fmt.Errorf("unsupported operation for floats")) {
-				return false
-			}
+			yield(nil, fmt.Errorf("unsupported operation for floats"))
 			v.push(nil)
-			return true
 		}
-		v.push(res)
 		return true
 	}
 
 	i1, ok1 := ToInt64(a)
 	i2, ok2 := ToInt64(b)
 	if !ok1 || !ok2 {
-		if !yield(nil, fmt.Errorf("math operands must be numeric, got %T and %T", a, b)) {
-			return false
-		}
+		yield(nil, fmt.Errorf("math operands must be numeric"))
 		v.push(nil)
 		return true
 	}
 
-	var res int64
 	switch op {
 	case OpAdd:
-		res = i1 + i2
+		v.push(i1 + i2)
 	case OpSub:
-		res = i1 - i2
+		v.push(i1 - i2)
 	case OpMul:
-		res = i1 * i2
+		v.push(i1 * i2)
 	case OpDiv:
 		if i2 == 0 {
-			if !yield(nil, fmt.Errorf("division by zero")) {
-				return false
-			}
+			yield(nil, fmt.Errorf("division by zero"))
 			v.push(nil)
-			return true
+		} else {
+			v.push(i1 / i2)
 		}
-		res = i1 / i2
 	case OpMod:
 		if i2 == 0 {
-			if !yield(nil, fmt.Errorf("division by zero")) {
-				return false
-			}
+			yield(nil, fmt.Errorf("division by zero"))
 			v.push(nil)
-			return true
-		}
-		res = i1 % i2
-		if (res < 0) != (i2 < 0) && res != 0 {
-			res += i2
+		} else {
+			res := i1 % i2
+			if (res < 0) != (i2 < 0) && res != 0 {
+				res += i2
+			}
+			v.push(res)
 		}
 	case OpFloorDiv:
 		if i2 == 0 {
-			if !yield(nil, fmt.Errorf("division by zero")) {
-				return false
-			}
+			yield(nil, fmt.Errorf("division by zero"))
 			v.push(nil)
-			return true
-		}
-		res = i1 / i2
-		if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
-			res--
+		} else {
+			res := i1 / i2
+			if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
+				res--
+			}
+			v.push(res)
 		}
 	case OpPow:
 		if i2 < 0 {
-			resFloat := math.Pow(float64(i1), float64(i2))
-			v.push(resFloat)
-			return true
-		}
-		var overflow bool
-		res, overflow = intPow(i1, i2)
-		if overflow {
-			resFloat := math.Pow(float64(i1), float64(i2))
-			v.push(resFloat)
-			return true
+			v.push(math.Pow(float64(i1), float64(i2)))
+		} else {
+			res, overflow := intPow(i1, i2)
+			if overflow {
+				v.push(math.Pow(float64(i1), float64(i2)))
+			} else {
+				v.push(res)
+			}
 		}
 	}
-	v.push(res)
 	return true
 }
 
@@ -1799,111 +1820,90 @@ func intPow(base, exp int64) (int64, bool) {
 
 func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 	if v.SP < 2 {
-		if !yield(nil, fmt.Errorf("stack underflow during comparison")) {
-			return false
-		}
-		return true
+		return yield(nil, fmt.Errorf("stack underflow during comparison"))
 	}
 	b := v.pop()
 	a := v.pop()
-	match := a == b
-	if !match {
-		i1, ok1 := ToInt64(a)
-		i2, ok2 := ToInt64(b)
-		if ok1 && ok2 {
-			match = i1 == i2
-		} else {
-			f1, ok1 := ToFloat64(a)
-			f2, ok2 := ToFloat64(b)
-			if ok1 && ok2 {
-				match = f1 == f2
-			}
-		}
-	}
-
-	switch op {
-	case OpEq:
-		v.push(match)
-		return true
-	case OpNe:
-		v.push(!match)
+	if op == OpEq {
+		v.push(a == b || v.compareEqFallback(a, b))
 		return true
 	}
-
+	if op == OpNe {
+		v.push(a != b && !v.compareEqFallback(a, b))
+		return true
+	}
 	if s1, ok := a.(string); ok {
 		if s2, ok := b.(string); ok {
-			var res bool
 			switch op {
 			case OpLt:
-				res = s1 < s2
+				v.push(s1 < s2)
 			case OpLe:
-				res = s1 <= s2
+				v.push(s1 <= s2)
 			case OpGt:
-				res = s1 > s2
+				v.push(s1 > s2)
 			case OpGe:
-				res = s1 >= s2
+				v.push(s1 >= s2)
 			}
-			v.push(res)
 			return true
 		}
 	}
-
 	if isComplex(a) || isComplex(b) {
-		if !yield(nil, fmt.Errorf("complex numbers are not ordered")) {
-			return false
-		}
+		yield(nil, fmt.Errorf("complex numbers are not ordered"))
 		v.push(nil)
 		return true
 	}
-
 	if isFloat(a) || isFloat(b) {
 		f1, ok1 := ToFloat64(a)
 		f2, ok2 := ToFloat64(b)
 		if !ok1 || !ok2 {
-			if !yield(nil, fmt.Errorf("invalid operands for float comparison: %T, %T", a, b)) {
-				return false
-			}
+			yield(nil, fmt.Errorf("invalid operands for float comparison"))
 			v.push(nil)
 			return true
 		}
-		var res bool
 		switch op {
 		case OpLt:
-			res = f1 < f2
+			v.push(f1 < f2)
 		case OpLe:
-			res = f1 <= f2
+			v.push(f1 <= f2)
 		case OpGt:
-			res = f1 > f2
+			v.push(f1 > f2)
 		case OpGe:
-			res = f1 >= f2
+			v.push(f1 >= f2)
 		}
-		v.push(res)
 		return true
 	}
-
 	i1, ok1 := ToInt64(a)
 	i2, ok2 := ToInt64(b)
 	if ok1 && ok2 {
-		var res bool
 		switch op {
 		case OpLt:
-			res = i1 < i2
+			v.push(i1 < i2)
 		case OpLe:
-			res = i1 <= i2
+			v.push(i1 <= i2)
 		case OpGt:
-			res = i1 > i2
+			v.push(i1 > i2)
 		case OpGe:
-			res = i1 >= i2
+			v.push(i1 >= i2)
 		}
-		v.push(res)
 		return true
 	}
-
-	if !yield(nil, fmt.Errorf("unsupported type for comparison: %T vs %T", a, b)) {
-		return false
-	}
+	yield(nil, fmt.Errorf("unsupported type for comparison"))
 	v.push(nil)
 	return true
+}
+
+func (v *VM) compareEqFallback(a, b any) bool {
+	i1, ok1 := ToInt64(a)
+	i2, ok2 := ToInt64(b)
+	if ok1 && ok2 {
+		return i1 == i2
+	}
+	f1, ok1 := ToFloat64(a)
+	f2, ok2 := ToFloat64(b)
+	if ok1 && ok2 {
+		return f1 == f2
+	}
+	return false
 }
 
 func (v *VM) opNot(yield func(*Interrupt, error) bool) bool {

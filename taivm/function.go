@@ -7,6 +7,7 @@ type Function struct {
 	Type        reflect.Type
 	NumParams   int
 	ParamNames  []string
+	NumLocals   int
 	NumDefaults int
 	Variadic    bool
 	Code        []OpCode
