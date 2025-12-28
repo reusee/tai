@@ -545,15 +545,21 @@ func registerMemory(vm *taivm.VM) {
 		Name: "new",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
 			if len(args) != 1 {
-				return nil, fmt.Errorf("new expects type argument")
+				return nil, fmt.Errorf("new expects 1 argument")
 			}
-			t, ok := args[0].(reflect.Type)
-			if !ok {
-				return nil, fmt.Errorf("new expects reflect.Type")
+			arg := args[0]
+			var t reflect.Type
+			var val any
+			if rt, ok := arg.(reflect.Type); ok {
+				t = rt
+				val = getZeroValue(t)
+			} else {
+				t = reflect.TypeOf(arg)
+				val = arg
 			}
 			return &taivm.Pointer{
 				Target: &taivm.List{
-					Elements: []any{getZeroValue(t)},
+					Elements: []any{val},
 				},
 				Key: 0,
 			}, nil

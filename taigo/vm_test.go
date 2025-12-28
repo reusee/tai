@@ -957,12 +957,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "new_args",
 			src:     `package main; func main() { new() }`,
-			wantErr: "new expects type argument",
-		},
-		{
-			name:    "new_invalid_arg",
-			src:     `package main; func main() { new(1) }`,
-			wantErr: "new expects reflect.Type",
+			wantErr: "new expects 1 argument",
 		},
 		{
 			name:      "panic_arg",

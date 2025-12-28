@@ -29,12 +29,14 @@ type compiler struct {
 }
 
 type loopScope struct {
+	label           string // label of the statement
 	breakTargets    []int
 	continueTargets []int
 	startPos        int
 	postPos         int // position of post statement if any
 	entryDepth      int
 	isRange         bool
+	isLoop          bool // true for for/range, false for switch
 }
 
 func (c *compiler) getFunction() *taivm.Function {
@@ -66,8 +68,9 @@ func (c *compiler) patchJump(idx int, target int) {
 	c.code[idx] = op | (taivm.OpCode(offset) << 8)
 }
 
-func (c *compiler) enterLoop() *loopScope {
+func (c *compiler) enterLoop(label string) *loopScope {
 	scope := &loopScope{
+		label:      label,
 		startPos:   len(c.code),
 		entryDepth: c.scopeDepth,
 	}
@@ -131,6 +134,60 @@ func (c *compiler) evalConst(expr ast.Expr) (any, bool) {
 		return c.evalUnaryConst(e)
 	case *ast.BinaryExpr:
 		return c.evalBinaryConst(e)
+	case *ast.CallExpr:
+		return c.evalCallConst(e)
+	}
+	return nil, false
+}
+
+func (c *compiler) evalCallConst(expr *ast.CallExpr) (any, bool) {
+	id, ok := expr.Fun.(*ast.Ident)
+	if !ok || len(expr.Args) == 0 {
+		return nil, false
+	}
+	switch id.Name {
+	case "len":
+		if len(expr.Args) == 1 {
+			if v, ok := c.evalConst(expr.Args[0]); ok {
+				if s, ok := v.(string); ok {
+					return len(s), true
+				}
+			}
+		}
+	case "real":
+		if len(expr.Args) == 1 {
+			if v, ok := c.evalConst(expr.Args[0]); ok {
+				if cv, ok := v.(complex128); ok {
+					return real(cv), true
+				}
+				if f, ok := taivm.ToFloat64(v); ok {
+					return f, true
+				}
+			}
+		}
+	case "imag":
+		if len(expr.Args) == 1 {
+			if v, ok := c.evalConst(expr.Args[0]); ok {
+				if cv, ok := v.(complex128); ok {
+					return imag(cv), true
+				}
+				if _, ok := taivm.ToFloat64(v); ok {
+					return 0.0, true
+				}
+			}
+		}
+	case "complex":
+		if len(expr.Args) == 2 {
+			r, ok1 := c.evalConst(expr.Args[0])
+			i, ok2 := c.evalConst(expr.Args[1])
+			if ok1 && ok2 {
+				rf, ok1 := taivm.ToFloat64(r)
+				_if, ok2 := taivm.ToFloat64(i)
+				if ok1 && ok2 {
+					return complex(rf, _if), true
+				}
+			}
+		}
 	}
 	return nil, false
 }
@@ -1422,13 +1479,13 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileIfStmt(s)
 
 	case *ast.SwitchStmt:
-		return c.compileSwitchStmt(s)
+		return c.compileSwitchStmt(s, "")
 
 	case *ast.ForStmt:
-		return c.compileForStmt(s)
+		return c.compileForStmt(s, "")
 
 	case *ast.RangeStmt:
-		return c.compileRangeStmt(s)
+		return c.compileRangeStmt(s, "")
 
 	case *ast.BranchStmt:
 		return c.compileBranchStmt(s)
@@ -1437,8 +1494,20 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 		return nil
 
 	case *ast.LabeledStmt:
-		c.labels[s.Label.Name] = len(c.code)
-		return c.compileStmt(s.Stmt)
+		label := s.Label.Name
+		c.labels[label] = len(c.code)
+		switch st := s.Stmt.(type) {
+		case *ast.ForStmt:
+			return c.compileForStmt(st, label)
+		case *ast.RangeStmt:
+			return c.compileRangeStmt(st, label)
+		case *ast.SwitchStmt:
+			return c.compileSwitchStmt(st, label)
+		case *ast.TypeSwitchStmt:
+			return c.compileTypeSwitchStmt(st, label)
+		default:
+			return c.compileStmt(s.Stmt)
+		}
 
 	case *ast.DeferStmt:
 		return c.compileDeferStmt(s)
@@ -1453,7 +1522,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 		return fmt.Errorf("send statement not supported")
 
 	case *ast.TypeSwitchStmt:
-		return c.compileTypeSwitchStmt(s)
+		return c.compileTypeSwitchStmt(s, "")
 
 	case *ast.BadStmt:
 		return fmt.Errorf("bad statement")
@@ -1728,7 +1797,7 @@ func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	return nil
 }
 
-func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
+func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt, label string) error {
 	c.emit(taivm.OpEnterScope)
 	c.scopeDepth++
 	defer func() {
@@ -1740,6 +1809,8 @@ func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
 			return err
 		}
 	}
+	c.enterLoop(label)
+	defer c.leaveLoop()
 	if stmt.Tag != nil {
 		if err := c.compileExpr(stmt.Tag); err != nil {
 			return err
@@ -1829,7 +1900,7 @@ func (c *compiler) compileSwitchBodies(stmt *ast.SwitchStmt, bodyJumps [][]int, 
 	return endJumps, nil
 }
 
-func (c *compiler) compileTypeSwitchStmt(stmt *ast.TypeSwitchStmt) error {
+func (c *compiler) compileTypeSwitchStmt(stmt *ast.TypeSwitchStmt, label string) error {
 	c.emit(taivm.OpEnterScope)
 	c.scopeDepth++
 	defer func() {
@@ -1841,6 +1912,8 @@ func (c *compiler) compileTypeSwitchStmt(stmt *ast.TypeSwitchStmt) error {
 			return err
 		}
 	}
+	c.enterLoop(label)
+	defer c.leaveLoop()
 	var xExpr ast.Expr
 	var boundVar string
 	if assign, ok := stmt.Assign.(*ast.AssignStmt); ok {
@@ -1918,7 +1991,7 @@ func (c *compiler) compileTypeSwitchClauses(stmt *ast.TypeSwitchStmt, valTmpIdx 
 	return nil
 }
 
-func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
+func (c *compiler) compileForStmt(stmt *ast.ForStmt, label string) error {
 	c.emit(taivm.OpEnterScope)
 	c.scopeDepth++
 	defer func() {
@@ -1932,7 +2005,8 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 		}
 	}
 
-	loop := c.enterLoop()
+	loop := c.enterLoop(label)
+	loop.isLoop = true
 	loop.startPos = len(c.code)
 
 	if stmt.Cond != nil {
@@ -1953,18 +2027,18 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
 		}
 	}
 
-	c.emitJump(taivm.OpJump.With(loop.startPos - len(c.code) - 1)) // Jump back (relative)
+	c.emitJump(taivm.OpJump.With(loop.startPos - len(c.code) - 1))
 
 	c.leaveLoop()
 	return nil
 }
 
-func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
+func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt, label string) error {
 	if err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
 	c.emit(taivm.OpGetIter)
-	c.emit(taivm.OpDup) // Keep iterator for OpNextIter
+	c.emit(taivm.OpDup)
 	containerIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(containerIdx))
 	c.emit(taivm.OpLoadVar.With(containerIdx))
@@ -1974,12 +2048,13 @@ func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 		c.emit(taivm.OpLeaveScope)
 		c.scopeDepth--
 	}()
-	return c.compileRangeLoop(stmt, containerIdx)
+	return c.compileRangeLoop(stmt, containerIdx, label)
 }
 
-func (c *compiler) compileRangeLoop(stmt *ast.RangeStmt, containerIdx int) error {
-	loop := c.enterLoop()
+func (c *compiler) compileRangeLoop(stmt *ast.RangeStmt, containerIdx int, label string) error {
+	loop := c.enterLoop(label)
 	loop.isRange = true
+	loop.isLoop = true
 	loop.startPos = len(c.code)
 	nextIterIdx := c.emitJump(taivm.OpNextIter)
 	if stmt.Value != nil {
@@ -2014,18 +2089,37 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 	if stmt.Tok == token.FALLTHROUGH {
 		return nil
 	}
-	if len(c.loops) == 0 {
-		return fmt.Errorf("branch statement outside loop")
+	targetIdx := -1
+	if stmt.Label != nil {
+		for i := len(c.loops) - 1; i >= 0; i-- {
+			if c.loops[i].label == stmt.Label.Name {
+				targetIdx = i
+				break
+			}
+		}
+		if targetIdx == -1 {
+			return fmt.Errorf("label %s not found", stmt.Label.Name)
+		}
+	} else {
+		targetIdx = len(c.loops) - 1
 	}
-	scope := c.loops[len(c.loops)-1]
+	if targetIdx == -1 {
+		return fmt.Errorf("branch statement outside loop or switch")
+	}
+	scope := c.loops[targetIdx]
+	if stmt.Tok == token.CONTINUE && !scope.isLoop {
+		return fmt.Errorf("continue label %s not on loop", stmt.Label.Name)
+	}
+	for i := len(c.loops) - 1; i >= targetIdx; i-- {
+		if c.loops[i].isRange {
+			c.emit(taivm.OpPop)
+		}
+	}
 	for range c.scopeDepth - scope.entryDepth {
 		c.emit(taivm.OpLeaveScope)
 	}
 	switch stmt.Tok {
 	case token.BREAK:
-		if scope.isRange {
-			c.emit(taivm.OpPop)
-		}
 		scope.breakTargets = append(scope.breakTargets, c.emitJump(taivm.OpJump))
 	case token.CONTINUE:
 		scope.continueTargets = append(scope.continueTargets, c.emitJump(taivm.OpJump))
