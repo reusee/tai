@@ -108,6 +108,36 @@ func (c *compiler) nextTmp() string {
 	return fmt.Sprintf("$tmp%d", c.tmpCount)
 }
 
+func (c *compiler) evalInt(expr ast.Expr) (int64, bool) {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.INT {
+			v, err := strconv.ParseInt(e.Value, 0, 64)
+			if err == nil {
+				return v, true
+			}
+		}
+	case *ast.Ident:
+		if e.Name == "iota" {
+			return int64(c.iotaVal), true
+		}
+	case *ast.ParenExpr:
+		return c.evalInt(e.X)
+	case *ast.UnaryExpr:
+		if v, ok := c.evalInt(e.X); ok {
+			switch e.Op {
+			case token.SUB:
+				return -v, true
+			case token.ADD:
+				return v, true
+			case token.XOR:
+				return ^v, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func (c *compiler) loadConst(val any) {
 	idx := c.addConst(val)
 	c.emit(taivm.OpLoadConst.With(idx))
@@ -881,12 +911,81 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 }
 
 func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
+	hasKey := false
 	for _, elt := range expr.Elts {
-		if err := c.compileExpr(elt); err != nil {
-			return err
+		if _, ok := elt.(*ast.KeyValueExpr); ok {
+			hasKey = true
+			break
 		}
 	}
-	c.emit(taivm.OpMakeList.With(len(expr.Elts)))
+
+	if !hasKey {
+		for _, elt := range expr.Elts {
+			if err := c.compileExpr(elt); err != nil {
+				return err
+			}
+		}
+		c.emit(taivm.OpMakeList.With(len(expr.Elts)))
+		return nil
+	}
+
+	c.emit(taivm.OpMakeList.With(0))
+	var nextIndex int64 = 0
+	var currentLen int64 = 0
+	for _, elt := range expr.Elts {
+		var idx int64
+		var valExpr ast.Expr
+		var hasEvalIdx bool
+
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			valExpr = kv.Value
+			if i, ok := c.evalInt(kv.Key); ok {
+				idx = i
+				hasEvalIdx = true
+			} else {
+				// Fallback for dynamic/complex keys
+				c.emit(taivm.OpDup)
+				if err := c.compileExpr(kv.Key); err != nil {
+					return err
+				}
+				if err := c.compileExpr(kv.Value); err != nil {
+					return err
+				}
+				c.emit(taivm.OpSetIndex)
+				continue
+			}
+		} else {
+			idx = nextIndex
+			valExpr = elt
+			hasEvalIdx = true
+		}
+
+		if hasEvalIdx {
+			// Pad with nils to reach index
+			for currentLen < idx {
+				c.loadConst(nil)
+				c.emit(taivm.OpListAppend)
+				currentLen++
+			}
+			if idx < currentLen {
+				// Overwrite existing index
+				c.emit(taivm.OpDup)
+				c.loadConst(idx)
+				if err := c.compileExpr(valExpr); err != nil {
+					return err
+				}
+				c.emit(taivm.OpSetIndex)
+			} else {
+				// Append at current end
+				if err := c.compileExpr(valExpr); err != nil {
+					return err
+				}
+				c.emit(taivm.OpListAppend)
+				currentLen++
+			}
+			nextIndex = idx + 1
+		}
+	}
 	return nil
 }
 

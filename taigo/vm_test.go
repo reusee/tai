@@ -1753,3 +1753,18 @@ func TestVMClearMinMax(t *testing.T) {
 		t.Errorf("expected nil after clear, got %v", val)
 	}
 }
+
+func TestVMKeyedSliceLiteral(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var s = []int{1: 10, 3: 30, 40}
+		var l = len(s)
+		var v1 = s[1]
+		var v3 = s[3]
+		var v4 = s[4]
+	`)
+	checkInt(t, vm, "l", 5)
+	checkInt(t, vm, "v1", 10)
+	checkInt(t, vm, "v3", 30)
+	checkInt(t, vm, "v4", 40)
+}
