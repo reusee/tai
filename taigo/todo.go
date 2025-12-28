@@ -1,10 +1,5 @@
 package taigo
 
-/* TODO
-method value
-unkeyed struct literal
-*/
-
 /*
 not supported intentionally:
 - modules and imports

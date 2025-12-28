@@ -25,6 +25,7 @@ type compiler struct {
 	resultNames    []string
 	generics       map[string]bool // Top-level generic names
 	typeParams     map[string]bool // Current function/type parameters
+	structFields   map[string][]string
 }
 
 type loopScope struct {
@@ -438,6 +439,9 @@ func (c *compiler) loadConst(val any) {
 
 func (c *compiler) compileFile(file *ast.File) error {
 	var hasMain bool
+	if c.structFields == nil {
+		c.structFields = make(map[string][]string)
+	}
 
 	for _, decl := range file.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
@@ -565,12 +569,13 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
-		name:       decl.Name.Name,
-		params:     make(map[string]int),
-		labels:     make(map[string]int),
-		unresolved: make(map[string][]int),
-		generics:   c.generics,
-		typeParams: make(map[string]bool),
+		name:         decl.Name.Name,
+		params:       make(map[string]int),
+		labels:       make(map[string]int),
+		unresolved:   make(map[string][]int),
+		generics:     c.generics,
+		typeParams:   make(map[string]bool),
+		structFields: c.structFields,
 	}
 	if decl.Type.TypeParams != nil {
 		for _, field := range decl.Type.TypeParams.List {
@@ -1152,12 +1157,13 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	sub := &compiler{
-		name:       "anon",
-		params:     make(map[string]int),
-		labels:     make(map[string]int),
-		unresolved: make(map[string][]int),
-		generics:   c.generics,
-		typeParams: c.typeParams,
+		name:         "anon",
+		params:       make(map[string]int),
+		labels:       make(map[string]int),
+		unresolved:   make(map[string][]int),
+		generics:     c.generics,
+		typeParams:   c.typeParams,
+		structFields: c.structFields,
 	}
 	if expr.Type.TypeParams != nil && len(expr.Type.TypeParams.List) > 0 {
 		newTypeParams := make(map[string]bool)
@@ -1329,14 +1335,33 @@ func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
 		}
 		rawName = sel.Sel.Name
 	}
-	for _, elt := range expr.Elts {
-		if err := c.compileStructElement(elt); err != nil {
-			return err
+	numElts := len(expr.Elts)
+	if numElts > 0 {
+		if _, ok := expr.Elts[0].(*ast.KeyValueExpr); ok {
+			for _, elt := range expr.Elts {
+				if err := c.compileStructElement(elt); err != nil {
+					return err
+				}
+			}
+		} else {
+			fields, ok := c.structFields[rawName]
+			if !ok {
+				return fmt.Errorf("struct fields unknown for unkeyed literal of %s", rawName)
+			}
+			if len(fields) < numElts {
+				return fmt.Errorf("too many values in unkeyed struct literal")
+			}
+			for i, elt := range expr.Elts {
+				c.loadConst(fields[i])
+				if err := c.compileExpr(elt); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	c.loadConst(typeName)
 	c.emit(taivm.OpLoadVar.With(c.addConst("_embedded_info_" + rawName)))
-	c.emit(taivm.OpMakeStruct.With(len(expr.Elts)))
+	c.emit(taivm.OpMakeStruct.With(numElts))
 	return nil
 }
 
@@ -2026,12 +2051,13 @@ func (c *compiler) compileGoto(stmt *ast.BranchStmt) error {
 
 func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 	sub := &compiler{
-		name:       "defer",
-		params:     make(map[string]int),
-		labels:     make(map[string]int),
-		unresolved: make(map[string][]int),
-		generics:   c.generics,
-		typeParams: c.typeParams,
+		name:         "defer",
+		params:       make(map[string]int),
+		labels:       make(map[string]int),
+		unresolved:   make(map[string][]int),
+		generics:     c.generics,
+		typeParams:   c.typeParams,
+		structFields: c.structFields,
 	}
 
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
@@ -2183,32 +2209,49 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		c.generics[spec.Name.Name] = true
 	}
 
+	sub := c
 	if spec.TypeParams != nil && len(spec.TypeParams.List) > 0 {
-		sub := &compiler{
-			name:       spec.Name.Name,
-			generics:   c.generics,
-			typeParams: make(map[string]bool),
+		sub = &compiler{
+			name:         spec.Name.Name,
+			generics:     c.generics,
+			typeParams:   make(map[string]bool),
+			structFields: c.structFields,
 		}
 		for _, field := range spec.TypeParams.List {
 			for _, name := range field.Names {
 				sub.typeParams[name.Name] = true
 			}
 		}
-		t, err := sub.resolveType(spec.Type)
-		if err != nil {
-			return err
-		}
-		c.loadConst(t)
+	}
+	t, err := sub.resolveType(spec.Type)
+	if err != nil {
+		return err
+	}
+	if rt, ok := t.(reflect.Type); ok {
+		c.loadConst(&taivm.Type{Name: spec.Name.Name, Type: rt})
 	} else {
-		t, err := c.resolveType(spec.Type)
-		if err != nil {
-			return err
-		}
 		c.loadConst(t)
 	}
 
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
 	if st, ok := spec.Type.(*ast.StructType); ok {
+		var fields []string
+		for _, f := range st.Fields.List {
+			for _, n := range f.Names {
+				fields = append(fields, n.Name)
+			}
+			if len(f.Names) == 0 {
+				switch ft := f.Type.(type) {
+				case *ast.Ident:
+					fields = append(fields, ft.Name)
+				case *ast.StarExpr:
+					if id, ok := ft.X.(*ast.Ident); ok {
+						fields = append(fields, id.Name)
+					}
+				}
+			}
+		}
+		c.structFields[spec.Name.Name] = fields
 		c.recordEmbeddedInfo(spec.Name.Name, st)
 	}
 	return nil

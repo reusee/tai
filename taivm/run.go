@@ -751,6 +751,9 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	case reflect.Type: // Handle type conversion calls: T(x)
 		return v.callTypeConversion(fn, argc, calleeIdx, yield)
 
+	case *Type:
+		return v.callTypeConversion(fn.Type, argc, calleeIdx, yield)
+
 	default:
 		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
 			return false
@@ -2167,104 +2170,203 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	if v.SP < 2 {
-		if !yield(nil, fmt.Errorf("stack underflow during getattr")) {
-			return false
-		}
-		return true
+		return yield(nil, fmt.Errorf("stack underflow during getattr"))
 	}
 	name := v.pop()
 	target := v.pop()
-
 	nameStr, ok := name.(string)
 	if !ok {
-		if !yield(nil, fmt.Errorf("attribute name must be string, got %T", name)) {
-			return false
-		}
 		v.push(nil)
-		return true
+		return yield(nil, fmt.Errorf("attribute name must be string, got %T", name))
 	}
-
 	if target == nil {
-		if !yield(nil, fmt.Errorf("getattr on nil")) {
-			return false
-		}
 		v.push(nil)
-		return true
+		return yield(nil, fmt.Errorf("getattr on nil"))
 	}
-
 	switch t := target.(type) {
 	case *Struct:
-		if val, ok := t.Fields[nameStr]; ok {
-			v.push(val)
-			return true
-		}
-		if t.TypeName != "" {
-			ptrMethodName := "*" + t.TypeName + "." + nameStr
-			if method, ok := v.Get(ptrMethodName); ok {
-				v.push(&BoundMethod{
-					Receiver: &Pointer{Target: t, Key: ""},
-					Fun:      method,
-				})
-				return true
-			}
-			methodName := t.TypeName + "." + nameStr
-			if method, ok := v.Get(methodName); ok {
-				v.push(&BoundMethod{
-					Receiver: t,
-					Fun:      method,
-				})
-				return true
-			}
-		}
-		// Search promoted attributes recursively
-		for _, emb := range t.Embedded {
-			if fieldVal, ok := t.Fields[emb]; ok && fieldVal != nil {
-				v.push(fieldVal)
-				v.push(name)
-				if v.opGetAttr(yield) {
-					res := v.OperandStack[v.SP-1]
-					if res != nil {
-						return true
-					}
-					v.pop()
-				}
-			}
-		}
-		if !yield(nil, fmt.Errorf("struct has no field or method '%s'", nameStr)) {
-			return false
-		}
-		v.push(nil)
-		return true
-
+		return v.opGetStructAttr(t, nameStr, name, yield)
 	case *List:
-		if nameStr == "append" {
-			v.push(&BoundMethod{
-				Receiver: t,
-				Fun: NativeFunc{
-					Name: "list.append",
-					Func: ListAppend,
-				},
-			})
-			return true
-		}
-		if !yield(nil, fmt.Errorf("list has no attribute '%s'", nameStr)) {
-			return false
-		}
-		v.push(nil)
-		return true
-
+		return v.opGetListAttr(t, nameStr, yield)
 	case *Pointer:
 		v.push(t.Target)
 		v.push(name)
 		return v.opGetAttr(yield)
-
+	case reflect.Type:
+		return v.opGetReflectTypeAttr(t, nameStr, yield)
+	case *Type:
+		return v.opGetTypeAttr(t, nameStr, yield)
 	default:
-		if !yield(nil, fmt.Errorf("type %T has no attributes", target)) {
-			return false
-		}
-		v.push(nil)
+		return v.opGetNativeAttr(target, nameStr, yield)
 	}
-	return true
+}
+
+func (v *VM) opGetStructAttr(s *Struct, nameStr string, name any, yield func(*Interrupt, error) bool) bool {
+	if val, ok := s.Fields[nameStr]; ok {
+		v.push(val)
+		return true
+	}
+	if s.TypeName != "" {
+		if v.tryGetStructMethod(s, nameStr) {
+			return true
+		}
+	}
+	for _, emb := range s.Embedded {
+		if fieldVal, ok := s.Fields[emb]; ok && fieldVal != nil {
+			v.push(fieldVal)
+			v.push(name)
+			if v.opGetAttr(yield) {
+				if v.OperandStack[v.SP-1] != nil {
+					return true
+				}
+				v.pop()
+			}
+		}
+	}
+	return yield(nil, fmt.Errorf("struct has no field or method '%s'", nameStr))
+}
+
+func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error) bool) bool {
+	if t.Name != "" {
+		if method, ok := v.Get(t.Name + "." + nameStr); ok {
+			v.push(method)
+			return true
+		}
+		if method, ok := v.Get("*" + t.Name + "." + nameStr); ok {
+			v.push(method)
+			return true
+		}
+	}
+	return v.opGetReflectTypeAttr(t.Type, nameStr, yield)
+}
+
+func (v *VM) tryGetStructMethod(s *Struct, nameStr string) bool {
+	ptrMethodName := "*" + s.TypeName + "." + nameStr
+	if method, ok := v.Get(ptrMethodName); ok {
+		v.push(&BoundMethod{
+			Receiver: &Pointer{Target: s, Key: ""},
+			Fun:      method,
+		})
+		return true
+	}
+	methodName := s.TypeName + "." + nameStr
+	if method, ok := v.Get(methodName); ok {
+		v.push(&BoundMethod{
+			Receiver: s,
+			Fun:      method,
+		})
+		return true
+	}
+	return false
+}
+
+func (v *VM) opGetListAttr(l *List, nameStr string, yield func(*Interrupt, error) bool) bool {
+	if nameStr == "append" {
+		v.push(&BoundMethod{
+			Receiver: l,
+			Fun: NativeFunc{
+				Name: "list.append",
+				Func: ListAppend,
+			},
+		})
+		return true
+	}
+	return yield(nil, fmt.Errorf("list has no attribute '%s'", nameStr))
+}
+
+func (v *VM) opGetReflectTypeAttr(t reflect.Type, nameStr string, yield func(*Interrupt, error) bool) bool {
+	typeName := t.Name()
+	if t.Kind() == reflect.Ptr {
+		typeName = t.Elem().Name()
+	}
+	if typeName != "" {
+		if method, ok := v.Get(typeName + "." + nameStr); ok {
+			v.push(method)
+			return true
+		}
+		if method, ok := v.Get("*" + typeName + "." + nameStr); ok {
+			v.push(method)
+			return true
+		}
+	}
+	if m, ok := t.MethodByName(nameStr); ok {
+		v.push(v.newNativeMethodExpr(m))
+		return true
+	}
+	return yield(nil, fmt.Errorf("type %v has no attribute '%s'", t, nameStr))
+}
+
+func (v *VM) newNativeMethodExpr(m reflect.Method) NativeFunc {
+	return NativeFunc{
+		Name: m.Name,
+		Func: func(vm *VM, args []any) (any, error) {
+			if len(args) == 0 {
+				return nil, fmt.Errorf("method expression requires receiver as first argument")
+			}
+			in := make([]reflect.Value, len(args))
+			for i, arg := range args {
+				var argType reflect.Type
+				if i < m.Type.NumIn() {
+					argType = m.Type.In(i)
+				} else if m.Type.IsVariadic() {
+					argType = m.Type.In(m.Type.NumIn() - 1).Elem()
+				}
+				if arg == nil {
+					in[i] = reflect.Zero(argType)
+				} else {
+					in[i] = reflect.ValueOf(arg)
+				}
+			}
+			return vm.handleNativeReturn(m.Func.Call(in))
+		},
+	}
+}
+
+func (v *VM) opGetNativeAttr(target any, nameStr string, yield func(*Interrupt, error) bool) bool {
+	rv := reflect.ValueOf(target)
+	m := rv.MethodByName(nameStr)
+	if m.IsValid() {
+		v.push(&BoundMethod{
+			Receiver: target,
+			Fun: NativeFunc{
+				Name: nameStr,
+				Func: func(vm *VM, args []any) (any, error) {
+					// BoundMethod prepends receiver, skip it for already bound native method
+					in := make([]reflect.Value, len(args)-1)
+					mt := m.Type()
+					for i := 1; i < len(args); i++ {
+						var argType reflect.Type
+						if i-1 < mt.NumIn() {
+							argType = mt.In(i - 1)
+						} else if mt.IsVariadic() {
+							argType = mt.In(mt.NumIn() - 1).Elem()
+						}
+						if args[i] == nil {
+							in[i-1] = reflect.Zero(argType)
+						} else {
+							in[i-1] = reflect.ValueOf(args[i])
+						}
+					}
+					return vm.handleNativeReturn(m.Call(in))
+				},
+			},
+		})
+		return true
+	}
+	return v.opGetNativeField(rv, nameStr, target, yield)
+}
+
+func (v *VM) opGetNativeField(rv reflect.Value, nameStr string, target any, yield func(*Interrupt, error) bool) bool {
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct {
+		if f := rv.FieldByName(nameStr); f.IsValid() {
+			v.push(f.Interface())
+			return true
+		}
+	}
+	return yield(nil, fmt.Errorf("type %T has no attributes", target))
 }
 
 func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
@@ -2788,6 +2890,13 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 		v.push(reflect.PointerTo(t))
 		return true
 	}
+	if t, ok := ptr.(*Type); ok {
+		v.push(&Type{
+			Name: "*" + t.Name,
+			Type: reflect.PointerTo(t.Type),
+		})
+		return true
+	}
 	p, ok := ptr.(*Pointer)
 	if !ok {
 		return yield(nil, fmt.Errorf("not a pointer: %T", ptr))
@@ -2879,8 +2988,15 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	t, ok := tObj.(reflect.Type)
-	if !ok {
+	var t reflect.Type
+	var expectedName string
+	if rt, ok := tObj.(reflect.Type); ok {
+		t = rt
+		expectedName = rt.Name()
+	} else if dt, ok := tObj.(*Type); ok {
+		t = dt.Type
+		expectedName = dt.Name
+	} else {
 		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
 		return true
 	}
@@ -2905,11 +3021,9 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 	if s, ok := val.(*Struct); ok {
-		if t.Kind() == reflect.Ptr || t.Kind() == reflect.Struct {
-			if s.TypeName == t.Name() {
-				v.push(val)
-				return true
-			}
+		if expectedName != "" && s.TypeName == expectedName {
+			v.push(val)
+			return true
 		}
 	}
 	fail(fmt.Errorf("cannot convert %T to %v", val, t))
@@ -2938,17 +3052,26 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	t, ok := tObj.(reflect.Type)
-	if !ok {
+	var t reflect.Type
+	var expectedName string
+	if rt, ok := tObj.(reflect.Type); ok {
+		t = rt
+		expectedName = rt.Name()
+	} else if dt, ok := tObj.(*Type); ok {
+		t = dt.Type
+		expectedName = dt.Name
+	} else {
 		v.push(nil)
 		v.push(false)
 		return true
 	}
+
 	if val == nil {
 		v.push(reflect.Zero(t).Interface())
 		v.push(false)
 		return true
 	}
+
 	if t.Kind() == reflect.Interface {
 		if s, ok := val.(*Struct); ok {
 			if v.checkStructImplements(s, t) {
@@ -2965,6 +3088,7 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		v.push(false)
 		return true
 	}
+
 	valType := reflect.TypeOf(val)
 	if valType.AssignableTo(t) {
 		v.push(val)
@@ -2972,12 +3096,10 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 	if s, ok := val.(*Struct); ok {
-		if t.Kind() == reflect.Ptr || t.Kind() == reflect.Struct {
-			if s.TypeName == t.Name() {
-				v.push(val)
-				v.push(true)
-				return true
-			}
+		if expectedName != "" && s.TypeName == expectedName {
+			v.push(val)
+			v.push(true)
+			return true
 		}
 	}
 	v.push(reflect.Zero(t).Interface())

@@ -1946,3 +1946,61 @@ func TestVMIntType(t *testing.T) {
 	`)
 	checkString(t, vm, "t", "int")
 }
+
+func TestVMMethodValue(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type T struct { x int }
+		func (t T) Foo(y any) { return t.x + y }
+		var tObj = T{x: 40}
+		var f = tObj.Foo
+		var res = f(2)
+	`)
+	checkInt(t, vm, "res", 42)
+}
+
+func TestVMMethodExpression(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type T struct { x int }
+		func (t T) Foo(y any) { return t.x + y }
+		var tObj = T{x: 40}
+		var f = T.Foo
+		var res = f(tObj, 2)
+	`)
+	checkInt(t, vm, "res", 42)
+}
+
+func TestVMUnkeyedStructLiteral(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type T struct { A, B int }
+		var tObj = T{1, 2}
+		var res = tObj.A + tObj.B
+	`)
+	checkInt(t, vm, "res", 3)
+}
+
+func TestVMNativeMethodValue(t *testing.T) {
+	var buf strings.Builder
+	vm, err := NewVM("main", strings.NewReader(`
+		package main
+		func main() {
+			f := buf.WriteString
+			f("hello")
+		}
+	`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Def("buf", &buf)
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
+	if buf.String() != "hello" {
+		t.Errorf("expected 'hello', got %q", buf.String())
+	}
+}

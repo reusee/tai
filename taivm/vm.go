@@ -3,6 +3,7 @@ package taivm
 import (
 	"encoding/gob"
 	"io"
+	"reflect"
 )
 
 type VM struct {
@@ -133,4 +134,36 @@ func (v *VM) Reset() {
 	v.Defers = nil // Clear current defers
 	v.freeEnv(v.Scope)
 	v.Scope = v.allocEnv(nil)
+}
+
+func (v *VM) handleNativeReturn(out []reflect.Value) (any, error) {
+	if len(out) == 0 {
+		return nil, nil
+	}
+	last := out[len(out)-1]
+	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		var err error
+		if !last.IsNil() {
+			err = last.Interface().(error)
+		}
+		if len(out) == 1 {
+			return nil, err
+		}
+		if len(out) == 2 {
+			return out[0].Interface(), err
+		}
+		res := make([]any, len(out)-1)
+		for i := 0; i < len(out)-1; i++ {
+			res[i] = out[i].Interface()
+		}
+		return &List{Elements: res, Immutable: true}, err
+	}
+	if len(out) == 1 {
+		return out[0].Interface(), nil
+	}
+	res := make([]any, len(out))
+	for i, val := range out {
+		res[i] = val.Interface()
+	}
+	return &List{Elements: res, Immutable: true}, nil
 }
