@@ -149,7 +149,13 @@ func registerCollections(vm *taivm.VM) {
 				}
 			}
 			if len(args) > 1 {
-				list.Elements = append(list.Elements, args[1:]...)
+				if s, ok := args[1].(string); ok && len(args) == 2 {
+					for _, b := range []byte(s) {
+						list.Elements = append(list.Elements, int64(b))
+					}
+				} else {
+					list.Elements = append(list.Elements, args[1:]...)
+				}
 			}
 			return list, nil
 		},
@@ -420,7 +426,25 @@ func registerConversions(vm *taivm.VM) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string expects 1 argument")
 			}
-			return fmt.Sprint(args[0]), nil
+			arg := args[0]
+			switch v := arg.(type) {
+			case *taivm.List:
+				var buf []byte
+				for _, e := range v.Elements {
+					if i, ok := taivm.ToInt64(e); ok {
+						buf = append(buf, byte(i))
+					}
+				}
+				return string(buf), nil
+			case []byte:
+				return string(v), nil
+			case []rune:
+				return string(v), nil
+			}
+			if i, ok := taivm.ToInt64(arg); ok {
+				return string(rune(i)), nil
+			}
+			return fmt.Sprint(arg), nil
 		},
 	})
 }

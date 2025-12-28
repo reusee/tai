@@ -512,28 +512,30 @@ func (c *compiler) tokenToOp(tok token.Token) (taivm.OpCode, bool) {
 
 func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 	switch expr.Kind {
-
 	case token.INT:
 		v, err := strconv.ParseInt(expr.Value, 0, 64)
 		if err != nil {
 			return err
 		}
 		c.loadConst(v)
-
 	case token.FLOAT:
 		v, err := strconv.ParseFloat(expr.Value, 64)
 		if err != nil {
 			return err
 		}
 		c.loadConst(v)
-
+	case token.IMAG:
+		v, err := strconv.ParseFloat(expr.Value[:len(expr.Value)-1], 64)
+		if err != nil {
+			return err
+		}
+		c.loadConst(complex(0, v))
 	case token.STRING:
 		v, err := strconv.Unquote(expr.Value)
 		if err != nil {
 			return err
 		}
 		c.loadConst(v)
-
 	case token.CHAR:
 		v, err := strconv.Unquote(expr.Value)
 		if err != nil {
@@ -544,11 +546,9 @@ func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 			return fmt.Errorf("invalid char literal: %s", expr.Value)
 		}
 		c.loadConst(int64(runes[0]))
-
 	default:
 		return fmt.Errorf("unknown basic lit kind: %v", expr.Kind)
 	}
-
 	return nil
 }
 
@@ -781,7 +781,6 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
-	// Low
 	if expr.Low != nil {
 		if err := c.compileExpr(expr.Low); err != nil {
 			return err
@@ -789,7 +788,6 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 	} else {
 		c.loadConst(nil)
 	}
-	// High
 	if expr.High != nil {
 		if err := c.compileExpr(expr.High); err != nil {
 			return err
@@ -797,10 +795,17 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 	} else {
 		c.loadConst(nil)
 	}
-	// Step (implicit 1 for simple slice, explicit not supported in Go syntax directly without 3-index slice which is cap)
-	// taivm expects step. Pushing nil lets taivm default to 1
-	c.loadConst(nil)
-
+	if expr.Slice3 {
+		if expr.Max != nil {
+			if err := c.compileExpr(expr.Max); err != nil {
+				return err
+			}
+		} else {
+			c.loadConst(nil)
+		}
+	} else {
+		c.loadConst(nil)
+	}
 	c.emit(taivm.OpGetSlice)
 	return nil
 }
@@ -1908,11 +1913,21 @@ func (c *compiler) resolveStructType(e *ast.StructType) (reflect.Type, error) {
 				return nil, err
 			}
 			ft := ftObj.(reflect.Type)
+			var tag string
+			if field.Tag != nil {
+				t, err := strconv.Unquote(field.Tag.Value)
+				if err != nil {
+					return nil, err
+				}
+				tag = t
+			}
 			if len(field.Names) == 0 {
-				fields = c.appendAnonymousField(fields, field, ft)
+				fields = c.appendAnonymousField(fields, field, ft, tag)
 			}
 			for _, name := range field.Names {
-				fields = append(fields, c.createStructField(name.Name, ft))
+				sf := c.createStructField(name.Name, ft)
+				sf.Tag = reflect.StructTag(tag)
+				fields = append(fields, sf)
 			}
 		}
 	}
@@ -1927,7 +1942,7 @@ func (c *compiler) createStructField(name string, ft reflect.Type) reflect.Struc
 	return sf
 }
 
-func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast.Field, ft reflect.Type) []reflect.StructField {
+func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast.Field, ft reflect.Type, tag string) []reflect.StructField {
 	var name string
 	switch t := field.Type.(type) {
 	case *ast.Ident:
@@ -1939,6 +1954,7 @@ func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast
 	}
 	if name != "" {
 		sf := reflect.StructField{Name: name, Type: ft, Anonymous: true}
+		sf.Tag = reflect.StructTag(tag)
 		if name[0] >= 'a' && name[0] <= 'z' {
 			sf.PkgPath = "main"
 		}
