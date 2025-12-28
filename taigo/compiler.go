@@ -14,6 +14,7 @@ type compiler struct {
 	name           string
 	code           []taivm.OpCode
 	constants      []any
+	consts         map[any]int // For fast constant lookup
 	loops          []*loopScope
 	scopeDepth     int
 	tmpCount       int
@@ -100,13 +101,33 @@ func (c *compiler) leaveLoop() {
 }
 
 func (c *compiler) addConst(val any) int {
-	for i, v := range c.constants {
-		if v == val {
-			return i
+	if c.consts == nil {
+		c.consts = make(map[any]int)
+	}
+	rv := reflect.ValueOf(val)
+	if !rv.IsValid() {
+		if idx, ok := c.consts[nil]; ok {
+			return idx
+		}
+	} else if rv.Type().Comparable() {
+		if idx, ok := c.consts[val]; ok {
+			return idx
+		}
+	} else {
+		for i, v := range c.constants {
+			if reflect.DeepEqual(v, val) {
+				return i
+			}
 		}
 	}
+	idx := len(c.constants)
 	c.constants = append(c.constants, val)
-	return len(c.constants) - 1
+	if !rv.IsValid() {
+		c.consts[nil] = idx
+	} else if rv.Type().Comparable() {
+		c.consts[val] = idx
+	}
+	return idx
 }
 
 func (c *compiler) nextTmp() string {
@@ -290,6 +311,14 @@ func (c *compiler) isZero(v any) bool {
 		return !val
 	case string:
 		return val == ""
+	case int:
+		return val == 0
+	case int64:
+		return val == 0
+	case float64:
+		return val == 0
+	case complex128:
+		return val == 0
 	}
 	if i, ok := taivm.ToInt64(v); ok {
 		return i == 0
@@ -627,6 +656,7 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	sub := &compiler{
 		name:         decl.Name.Name,
+		consts:       make(map[any]int),
 		params:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
@@ -945,52 +975,39 @@ func (c *compiler) compileBasicLiteral(expr *ast.BasicLit) error {
 }
 
 func (c *compiler) compileIdentifier(expr *ast.Ident) error {
-	switch expr.Name {
-
+	name := expr.Name
+	switch name {
 	case "iota":
 		c.loadConst(int64(c.iotaVal))
-
+		return nil
 	case "true":
 		c.loadConst(true)
+		return nil
 	case "false":
 		c.loadConst(false)
-
+		return nil
 	case "nil":
 		c.loadConst(nil)
-
-	case "int",
-		"int8",
-		"int16",
-		"int32", "rune",
-		"int64",
-		"uint",
-		"uint8", "byte",
-		"uint16",
-		"uint32",
-		"uint64",
-		"float32",
-		"float64",
-		"string",
-		"any",
-		"error",
-		"bool",
-		"complex64",
-		"complex128":
+		return nil
+	}
+	if idx, ok := c.params[name]; ok {
+		c.emit(taivm.OpGetLocal.With(idx))
+		return nil
+	}
+	switch name {
+	case "int", "int8", "int16", "int32", "rune", "int64",
+		"uint", "uint8", "byte", "uint16", "uint32", "uint64",
+		"float32", "float64", "string", "any", "error", "bool",
+		"complex64", "complex128":
 		t, err := c.resolveType(expr)
 		if err != nil {
 			return err
 		}
 		c.loadConst(t)
-
-	default:
-		// Check if it's a parameter in the current function scope
-		if idx, ok := c.params[expr.Name]; ok {
-			c.emit(taivm.OpGetLocal.With(idx))
-		} else {
-			idx := c.addConst(expr.Name)
-			c.emit(taivm.OpLoadVar.With(idx))
-		}
+		return nil
 	}
+	idx := c.addConst(name)
+	c.emit(taivm.OpLoadVar.With(idx))
 	return nil
 }
 
@@ -1238,6 +1255,7 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	sub := &compiler{
 		name:         "anon",
+		consts:       make(map[any]int),
 		params:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
@@ -2173,6 +2191,7 @@ func (c *compiler) compileGoto(stmt *ast.BranchStmt) error {
 func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 	sub := &compiler{
 		name:         "defer",
+		consts:       make(map[any]int),
 		params:       make(map[string]int),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
@@ -2180,14 +2199,11 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		typeParams:   c.typeParams,
 		structFields: c.structFields,
 	}
-
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
 		return err
 	}
-
 	sub.loadConst(nil)
 	sub.emit(taivm.OpReturn)
-
 	for name, indices := range sub.unresolved {
 		target, ok := sub.labels[name]
 		if !ok {
@@ -2197,7 +2213,6 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 			sub.patchJump(idx, target)
 		}
 	}
-
 	fn := sub.getFunction()
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
@@ -2329,11 +2344,11 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		}
 		c.generics[spec.Name.Name] = true
 	}
-
 	sub := c
 	if spec.TypeParams != nil && len(spec.TypeParams.List) > 0 {
 		sub = &compiler{
 			name:         spec.Name.Name,
+			consts:       make(map[any]int),
 			generics:     c.generics,
 			typeParams:   make(map[string]bool),
 			structFields: c.structFields,
@@ -2353,7 +2368,6 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	} else {
 		c.loadConst(t)
 	}
-
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		var fields []string
@@ -2711,11 +2725,12 @@ func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
 }
 
 func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token) error {
-	if e.Name == "_" {
+	name := e.Name
+	if name == "_" {
 		c.emit(taivm.OpPop)
 		return nil
 	}
-	idx := c.addConst(e.Name)
+	idx := c.addConst(name)
 	if tok == token.DEFINE {
 		c.emit(taivm.OpDefVar.With(idx))
 	} else {

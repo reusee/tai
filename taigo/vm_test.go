@@ -1999,3 +1999,27 @@ func TestVMNativeMethodValue(t *testing.T) {
 		t.Errorf("expected 'hello', got %q", buf.String())
 	}
 }
+
+func TestVMConstantDeduplication(t *testing.T) {
+	src := `
+		package main
+		var a = "foo"
+		var b = "foo"
+		var c = "bar"
+	`
+	vm, err := NewVM("main", strings.NewReader(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Reset()
+	fun := vm.CurrentFun
+	fooCount := 0
+	for _, c := range fun.Constants {
+		if s, ok := c.(string); ok && s == "foo" {
+			fooCount++
+		}
+	}
+	if fooCount != 1 {
+		t.Errorf("expected 1 'foo' constant, got %d", fooCount)
+	}
+}

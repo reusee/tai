@@ -402,6 +402,39 @@ func registerMath(vm *taivm.VM) {
 }
 
 func isLess(a, b any) bool {
+	switch v1 := a.(type) {
+	case int:
+		switch v2 := b.(type) {
+		case int:
+			return v1 < v2
+		case int64:
+			return int64(v1) < v2
+		case float64:
+			return float64(v1) < v2
+		}
+	case int64:
+		switch v2 := b.(type) {
+		case int:
+			return v1 < int64(v2)
+		case int64:
+			return v1 < v2
+		case float64:
+			return float64(v1) < v2
+		}
+	case float64:
+		switch v2 := b.(type) {
+		case int:
+			return v1 < float64(v2)
+		case int64:
+			return v1 < float64(v2)
+		case float64:
+			return v1 < v2
+		}
+	case string:
+		if v2, ok := b.(string); ok {
+			return v1 < v2
+		}
+	}
 	if i1, ok1 := taivm.ToInt64(a); ok1 {
 		if i2, ok2 := taivm.ToInt64(b); ok2 {
 			return i1 < i2
@@ -418,11 +451,6 @@ func isLess(a, b any) bool {
 			return f1 < float64(i2)
 		}
 	}
-	if s1, ok1 := a.(string); ok1 {
-		if s2, ok2 := b.(string); ok2 {
-			return s1 < s2
-		}
-	}
 	return false
 }
 
@@ -433,6 +461,14 @@ func registerConversions(vm *taivm.VM) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("int expects 1 argument")
 			}
+			switch v := args[0].(type) {
+			case int:
+				return v, nil
+			case int64:
+				return int(v), nil
+			case float64:
+				return int(v), nil
+			}
 			if i, ok := taivm.ToInt64(args[0]); ok {
 				return int(i), nil
 			}
@@ -442,12 +478,19 @@ func registerConversions(vm *taivm.VM) {
 			return nil, fmt.Errorf("cannot convert %T to int", args[0])
 		},
 	})
-
 	vm.Def("float64", taivm.NativeFunc{
 		Name: "float64",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("float64 expects 1 argument")
+			}
+			switch v := args[0].(type) {
+			case float64:
+				return v, nil
+			case int:
+				return float64(v), nil
+			case int64:
+				return float64(v), nil
 			}
 			if f, ok := taivm.ToFloat64(args[0]); ok {
 				return f, nil
@@ -455,7 +498,6 @@ func registerConversions(vm *taivm.VM) {
 			return nil, fmt.Errorf("cannot convert %T to float64", args[0])
 		},
 	})
-
 	vm.Def("bool", taivm.NativeFunc{
 		Name: "bool",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -471,6 +513,12 @@ func registerConversions(vm *taivm.VM) {
 				return v, nil
 			case string:
 				return v != "", nil
+			case int:
+				return v != 0, nil
+			case int64:
+				return v != 0, nil
+			case float64:
+				return v != 0, nil
 			}
 			if i, ok := taivm.ToInt64(val); ok {
 				return i != 0, nil
@@ -481,7 +529,6 @@ func registerConversions(vm *taivm.VM) {
 			return true, nil
 		},
 	})
-
 	vm.Def("string", taivm.NativeFunc{
 		Name: "string",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -490,6 +537,8 @@ func registerConversions(vm *taivm.VM) {
 			}
 			arg := args[0]
 			switch v := arg.(type) {
+			case string:
+				return v, nil
 			case *taivm.List:
 				var buf []byte
 				for _, e := range v.Elements {
@@ -502,9 +551,10 @@ func registerConversions(vm *taivm.VM) {
 				return string(v), nil
 			case []rune:
 				return string(v), nil
-			}
-			if i, ok := taivm.ToInt64(arg); ok {
-				return string(rune(i)), nil
+			case int:
+				return string(rune(v)), nil
+			case int64:
+				return string(rune(v)), nil
 			}
 			return fmt.Sprint(arg), nil
 		},

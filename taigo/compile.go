@@ -10,6 +10,7 @@ import (
 func compile(file *ast.File) (*taivm.Function, error) {
 	c := &compiler{
 		name:       "main",
+		consts:     make(map[any]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
@@ -19,7 +20,6 @@ func compile(file *ast.File) (*taivm.Function, error) {
 	// Implicit return at end of script
 	c.loadConst(nil)
 	c.emit(taivm.OpReturn)
-
 	for name, indices := range c.unresolved {
 		target, ok := c.labels[name]
 		if !ok {
@@ -29,6 +29,5 @@ func compile(file *ast.File) (*taivm.Function, error) {
 			c.patchJump(idx, target)
 		}
 	}
-
 	return c.getFunction(), nil
 }
