@@ -210,6 +210,34 @@ func registerCollections(vm *taivm.VM) {
 		},
 	})
 
+	vm.Def("clear", taivm.NativeFunc{
+		Name: "clear",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("clear expects 1 argument")
+			}
+			arg := args[0]
+			if arg == nil {
+				return nil, nil
+			}
+			switch v := arg.(type) {
+			case *taivm.List:
+				for i := range v.Elements {
+					v.Elements[i] = nil
+				}
+			case map[any]any:
+				for k := range v {
+					delete(v, k)
+				}
+			case map[string]any:
+				for k := range v {
+					delete(v, k)
+				}
+			}
+			return nil, nil
+		},
+	})
+
 	vm.Def("close", taivm.NativeFunc{
 		Name: "close",
 		Func: func(vm *taivm.VM, args []any) (any, error) {
@@ -271,6 +299,63 @@ func registerMath(vm *taivm.VM) {
 			return nil, fmt.Errorf("imag expects numeric argument")
 		},
 	})
+
+	vm.Def("min", taivm.NativeFunc{
+		Name: "min",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if len(args) == 0 {
+				return nil, fmt.Errorf("min expects at least 1 argument")
+			}
+			min := args[0]
+			for _, v := range args[1:] {
+				if isLess(v, min) {
+					min = v
+				}
+			}
+			return min, nil
+		},
+	})
+
+	vm.Def("max", taivm.NativeFunc{
+		Name: "max",
+		Func: func(vm *taivm.VM, args []any) (any, error) {
+			if len(args) == 0 {
+				return nil, fmt.Errorf("max expects at least 1 argument")
+			}
+			max := args[0]
+			for _, v := range args[1:] {
+				if isLess(max, v) {
+					max = v
+				}
+			}
+			return max, nil
+		},
+	})
+}
+
+func isLess(a, b any) bool {
+	if i1, ok1 := taivm.ToInt64(a); ok1 {
+		if i2, ok2 := taivm.ToInt64(b); ok2 {
+			return i1 < i2
+		}
+		if f2, ok2 := taivm.ToFloat64(b); ok2 {
+			return float64(i1) < f2
+		}
+	}
+	if f1, ok1 := taivm.ToFloat64(a); ok1 {
+		if f2, ok2 := taivm.ToFloat64(b); ok2 {
+			return f1 < f2
+		}
+		if i2, ok2 := taivm.ToInt64(b); ok2 {
+			return f1 < float64(i2)
+		}
+	}
+	if s1, ok1 := a.(string); ok1 {
+		if s2, ok2 := b.(string); ok2 {
+			return s1 < s2
+		}
+	}
+	return false
 }
 
 func registerConversions(vm *taivm.VM) {

@@ -22,6 +22,7 @@ type compiler struct {
 	labels         map[string]int
 	unresolved     map[string][]int
 	lastConstExprs []ast.Expr
+	resultNames    []string
 }
 
 type loopScope struct {
@@ -224,6 +225,7 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 	if err := sub.setupParams(decl); err != nil {
 		return nil, err
 	}
+	sub.setupResults(decl)
 	for _, stmt := range decl.Body.List {
 		if err := sub.compileStmt(stmt); err != nil {
 			return nil, err
@@ -265,6 +267,16 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 		}
 	}
 	return nil
+}
+
+func (c *compiler) setupResults(decl *ast.FuncDecl) {
+	if decl.Type.Results != nil {
+		for _, field := range decl.Type.Results.List {
+			for _, name := range field.Names {
+				c.resultNames = append(c.resultNames, name.Name)
+			}
+		}
+	}
 }
 
 func (c *compiler) resolveLabels() error {
@@ -968,7 +980,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 		return fmt.Errorf("send statement not supported")
 
 	case *ast.TypeSwitchStmt:
-		return fmt.Errorf("type switch statement not supported")
+		return c.compileTypeSwitchStmt(s)
 
 	case *ast.BadStmt:
 		return fmt.Errorf("bad statement")
@@ -1001,7 +1013,17 @@ func (c *compiler) compileBlockStmt(stmt *ast.BlockStmt) error {
 
 func (c *compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
 	if len(stmt.Results) == 0 {
-		c.loadConst(nil)
+		if len(c.resultNames) > 0 {
+			for _, name := range c.resultNames {
+				idx := c.addConst(name)
+				c.emit(taivm.OpLoadVar.With(idx))
+			}
+			if len(c.resultNames) > 1 {
+				c.emit(taivm.OpMakeTuple.With(len(c.resultNames)))
+			}
+		} else {
+			c.loadConst(nil)
+		}
 		c.emit(taivm.OpReturn)
 
 	} else if len(stmt.Results) == 1 {
@@ -1323,6 +1345,88 @@ func (c *compiler) compileSwitchBodies(stmt *ast.SwitchStmt, bodyJumps [][]int, 
 		}
 	}
 	return endJumps, nil
+}
+
+func (c *compiler) compileTypeSwitchStmt(stmt *ast.TypeSwitchStmt) error {
+	c.emit(taivm.OpEnterScope)
+	c.scopeDepth++
+	defer func() {
+		c.emit(taivm.OpLeaveScope)
+		c.scopeDepth--
+	}()
+	if stmt.Init != nil {
+		if err := c.compileStmt(stmt.Init); err != nil {
+			return err
+		}
+	}
+	var xExpr ast.Expr
+	var boundVar string
+	if assign, ok := stmt.Assign.(*ast.AssignStmt); ok {
+		boundVar = assign.Lhs[0].(*ast.Ident).Name
+		xExpr = assign.Rhs[0].(*ast.TypeAssertExpr).X
+	} else if expr, ok := stmt.Assign.(*ast.ExprStmt); ok {
+		xExpr = expr.X.(*ast.TypeAssertExpr).X
+	}
+	if err := c.compileExpr(xExpr); err != nil {
+		return err
+	}
+	valTmpIdx := c.addConst(c.nextTmp())
+	c.emit(taivm.OpDefVar.With(valTmpIdx))
+	return c.compileTypeSwitchClauses(stmt, valTmpIdx, boundVar)
+}
+
+func (c *compiler) compileTypeSwitchClauses(stmt *ast.TypeSwitchStmt, valTmpIdx int, boundVar string) error {
+	var endJumps []int
+	var defaultCase *ast.CaseClause
+	for _, clause := range stmt.Body.List {
+		cc := clause.(*ast.CaseClause)
+		if len(cc.List) == 0 {
+			defaultCase = cc
+			continue
+		}
+		var nextCaseJumps []int
+		for _, typeExpr := range cc.List {
+			c.emit(taivm.OpLoadVar.With(valTmpIdx))
+			if id, ok := typeExpr.(*ast.Ident); ok && id.Name == "nil" {
+				c.loadConst(nil)
+				c.emit(taivm.OpEq)
+			} else {
+				if err := c.compileExpr(typeExpr); err != nil {
+					return err
+				}
+				c.emit(taivm.OpTypeAssertOk)
+				c.emit(taivm.OpPop)
+			}
+			nextCaseJumps = append(nextCaseJumps, c.emitJump(taivm.OpJump))
+		}
+		nextClauseJump := c.emitJump(taivm.OpJump)
+		bodyTarget := len(c.code)
+		for _, jump := range nextCaseJumps {
+			c.patchJump(jump, bodyTarget)
+		}
+		if boundVar != "" {
+			c.emit(taivm.OpLoadVar.With(valTmpIdx))
+			c.emit(taivm.OpDefVar.With(c.addConst(boundVar)))
+		}
+		if err := c.compileBlockStmt(&ast.BlockStmt{List: cc.Body}); err != nil {
+			return err
+		}
+		endJumps = append(endJumps, c.emitJump(taivm.OpJump))
+		c.patchJump(nextClauseJump, len(c.code))
+	}
+	if defaultCase != nil {
+		if boundVar != "" {
+			c.emit(taivm.OpLoadVar.With(valTmpIdx))
+			c.emit(taivm.OpDefVar.With(c.addConst(boundVar)))
+		}
+		if err := c.compileBlockStmt(&ast.BlockStmt{List: defaultCase.Body}); err != nil {
+			return err
+		}
+	}
+	for _, jump := range endJumps {
+		c.patchJump(jump, len(c.code))
+	}
+	return nil
 }
 
 func (c *compiler) compileForStmt(stmt *ast.ForStmt) error {
@@ -1858,6 +1962,8 @@ func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
 		return reflect.TypeFor[complex64](), nil
 	case "complex128":
 		return reflect.TypeFor[complex128](), nil
+	case "comparable":
+		return reflect.TypeFor[any](), nil
 	default:
 		return reflect.TypeFor[any](), nil
 	}

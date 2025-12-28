@@ -1688,3 +1688,74 @@ func TestVMNewBuiltin(t *testing.T) {
 	`)
 	checkInt(t, vm, "res", 42)
 }
+
+func TestVMNakedReturn(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func named() (res int) {
+			res = 42
+			return
+		}
+		func multi() (a, b int) {
+			a = 10
+			b = 20
+			return
+		}
+		var x = named()
+		var y, z = multi()
+	`)
+	checkInt(t, vm, "x", 42)
+	checkInt(t, vm, "y", 10)
+	checkInt(t, vm, "z", 20)
+}
+
+func TestVMTypeSwitch(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func check(x any) string {
+			switch v := x.(type) {
+			case int:
+				return "int"
+			case string:
+				return "string"
+			case nil:
+				return "nil"
+			default:
+				return "other"
+			}
+		}
+		var r1 = check(1)
+		var r2 = check("a")
+		var r3 = check(nil)
+		var r4 = check(true)
+	`)
+	checkString(t, vm, "r1", "int")
+	checkString(t, vm, "r2", "string")
+	checkString(t, vm, "r3", "nil")
+	checkString(t, vm, "r4", "other")
+}
+
+func TestVMClearMinMax(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var s = []int{1, 2, 3}
+		var m = map[string]int{"a": 1}
+		func init() {
+			clear(s)
+			clear(m)
+		}
+		var minVal = min(10, 5, 8)
+		var maxVal = max(10, 5, 8)
+		var sLen = len(s)
+		var mLen = len(m)
+		var s0 = s[0]
+	`)
+	checkInt(t, vm, "minVal", 5)
+	checkInt(t, vm, "maxVal", 10)
+	checkInt(t, vm, "sLen", 3)
+	checkInt(t, vm, "mLen", 0)
+	val, _ := vm.Get("s0")
+	if val != nil {
+		t.Errorf("expected nil after clear, got %v", val)
+	}
+}
