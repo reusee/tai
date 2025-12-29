@@ -1,7 +1,6 @@
 package taivm
 
 import (
-	"bytes"
 	"encoding/gob"
 	"io"
 	"reflect"
@@ -36,81 +35,6 @@ func NewVM(main *Function) *VM {
 		OperandStack: make([]any, 1024),
 		CallStack:    make([]Frame, 0, 64),
 	}
-}
-
-var _ gob.GobEncoder = (*VM)(nil)
-var _ gob.GobDecoder = (*VM)(nil)
-
-func (v *VM) GobEncode() ([]byte, error) {
-	// Use a proxy struct to control which fields are serialized
-	type snapshot struct {
-		MainFun      *Function
-		CurrentFun   *Function
-		IP           int
-		OperandStack []any
-		SP           int
-		BP           int
-		CallStack    []Frame
-		Scope        *Env
-		IsPanicking  bool
-		PanicValue   any
-		Defers       []*Closure
-		YieldTicks   int
-	}
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(snapshot{
-		MainFun:      v.MainFun,
-		CurrentFun:   v.CurrentFun,
-		IP:           v.IP,
-		OperandStack: v.OperandStack[:v.SP], // Only serialize used stack
-		SP:           v.SP,
-		BP:           v.BP,
-		CallStack:    v.CallStack,
-		Scope:        v.Scope,
-		IsPanicking:  v.IsPanicking,
-		PanicValue:   v.PanicValue,
-		Defers:       v.Defers,
-		YieldTicks:   v.YieldTicks,
-	})
-	return buf.Bytes(), err
-}
-
-func (v *VM) GobDecode(data []byte) error {
-	type snapshot struct {
-		MainFun      *Function
-		CurrentFun   *Function
-		IP           int
-		OperandStack []any
-		SP           int
-		BP           int
-		CallStack    []Frame
-		Scope        *Env
-		IsPanicking  bool
-		PanicValue   any
-		Defers       []*Closure
-		YieldTicks   int
-	}
-	dec := gob.NewDecoder(bytes.NewReader(data))
-	var s snapshot
-	if err := dec.Decode(&s); err != nil {
-		return err
-	}
-	v.MainFun = s.MainFun
-	v.CurrentFun = s.CurrentFun
-	v.IP = s.IP
-	v.SP = s.SP
-	v.BP = s.BP
-	v.CallStack = s.CallStack
-	v.Scope = s.Scope
-	v.IsPanicking = s.IsPanicking
-	v.PanicValue = s.PanicValue
-	v.Defers = s.Defers
-	v.YieldTicks = s.YieldTicks
-	// Restore OperandStack with capacity
-	v.OperandStack = make([]any, max(1024, v.SP))
-	copy(v.OperandStack, s.OperandStack)
-	return nil
 }
 
 func (v *VM) Get(name string) (any, bool) {
