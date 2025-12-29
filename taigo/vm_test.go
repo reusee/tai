@@ -2062,3 +2062,65 @@ func TestVMInitOrder(t *testing.T) {
 	`)
 	checkString(t, vm, "res", "ABC")
 }
+
+func TestVMInterfaceImplementationPromoted(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type Reader interface {
+			Read() any
+		}
+		type Base struct{}
+		func (b Base) Read() any { return "ok" }
+		type Derived struct {
+			Base
+		}
+		var d = Derived{}
+		var _, ok = any(d).(Reader)
+		var r Reader = any(d).(Reader)
+		var res = r.Read()
+	`)
+	checkBool(t, vm, "ok", true)
+	checkString(t, vm, "res", "ok")
+}
+
+func TestVMInterfaceImplementationNative(t *testing.T) {
+	vm, err := NewVM("main", strings.NewReader(`
+		package main
+		type Writer interface {
+			Write([]any) any
+		}
+		var ok bool
+		func init() {
+			_, ok = buf.(Writer)
+		}
+	`), &Options{
+		Stdout: t.Output(),
+		Stderr: t.Output(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	vm.Def("buf", &buf)
+	vm.Run(func(i *taivm.Interrupt, err error) bool {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
+	checkBool(t, vm, "ok", true)
+}
+
+func TestVMMethodShadowing(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type Base struct{}
+		func (b Base) Name() string { return "base" }
+		type Derived struct {
+			Base
+		}
+		func (d Derived) Name() string { return "derived" }
+		var res = Derived{}.Name()
+	`)
+	checkString(t, vm, "res", "derived")
+}

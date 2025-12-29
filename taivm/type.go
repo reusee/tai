@@ -293,7 +293,14 @@ func (t *Type) Zero() any {
 	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface, KindUnsafePointer:
 		return nil
 	case KindStruct:
-		return &Struct{TypeName: t.Name, Fields: make(map[string]any)}
+		s := &Struct{TypeName: t.Name, Fields: make(map[string]any)}
+		for _, f := range t.Fields {
+			if f.Anonymous {
+				s.Embedded = append(s.Embedded, f.Name)
+			}
+			s.Fields[f.Name] = f.Type.Zero()
+		}
+		return s
 	}
 	if rt := t.ToReflectType(); rt != nil {
 		return reflect.Zero(rt).Interface()
@@ -308,7 +315,19 @@ func (t *Type) Match(val any) bool {
 	if t == nil {
 		return false
 	}
-	if t.Kind == KindInterface && len(t.Methods) == 0 {
+	if t.Kind == KindInterface {
+		if len(t.Methods) == 0 {
+			return true
+		}
+		if _, ok := val.(*Struct); ok {
+			return false // Must be handled by VM.checkStructImplements
+		}
+		rv := reflect.ValueOf(val)
+		for name := range t.Methods {
+			if !rv.MethodByName(name).IsValid() {
+				return false
+			}
+		}
 		return true
 	}
 	if s, ok := val.(*Struct); ok {

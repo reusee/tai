@@ -1208,6 +1208,30 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 		m[keyStr] = val
 	}
 	v.drop(n * 2)
+
+	// Fill missing fields and Embedded info from Type if available in scope
+	if tObj, ok := v.Get(typeNameStr); ok {
+		if t, ok := tObj.(*Type); ok && t.Kind == KindStruct {
+			for _, f := range t.Fields {
+				if f.Anonymous {
+					found := false
+					for _, e := range embedded {
+						if e == f.Name {
+							found = true
+							break
+						}
+					}
+					if !found {
+						embedded = append(embedded, f.Name)
+					}
+				}
+				if _, ok := m[f.Name]; !ok {
+					m[f.Name] = f.Type.Zero()
+				}
+			}
+		}
+	}
+
 	v.push(&Struct{TypeName: typeNameStr, Fields: m, Embedded: embedded})
 	return true
 }
@@ -2447,19 +2471,18 @@ func (v *VM) opGetStructAttr(s *Struct, nameStr string, name any, yield func(*In
 			return true
 		}
 	}
+	// Recursive search for promoted fields
 	for _, emb := range s.Embedded {
 		if fieldVal, ok := s.Fields[emb]; ok && fieldVal != nil {
-			v.push(fieldVal)
-			v.push(name)
-			if v.opGetAttr(yield) {
-				if v.OperandStack[v.SP-1] != nil {
+			if embStruct, ok := fieldVal.(*Struct); ok {
+				// Use internal call to avoid stack push/pop overhead and side effects
+				if v.opGetStructAttr(embStruct, nameStr, name, func(*Interrupt, error) bool { return true }) {
 					return true
 				}
-				v.pop()
 			}
 		}
 	}
-	return yield(nil, fmt.Errorf("struct has no field or method '%s'", nameStr))
+	return yield(nil, fmt.Errorf("struct %s has no field or method '%s'", s.TypeName, nameStr))
 }
 
 func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error) bool) bool {
@@ -2502,6 +2525,19 @@ func (v *VM) tryGetStructMethod(s *Struct, nameStr string) bool {
 			Fun:      method,
 		})
 		return true
+	}
+	// Recursive search for promoted methods
+	for _, emb := range s.Embedded {
+		if fieldVal, ok := s.Fields[emb]; ok {
+			if embStruct, ok := fieldVal.(*Struct); ok {
+				if v.tryGetStructMethod(embStruct, nameStr) {
+					// tryGetStructMethod pushed a BoundMethod. If it was a promoted method,
+					// the receiver might need adjustment, but since we use namespaced keys,
+					// BoundMethod already has the correct embedded receiver.
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
