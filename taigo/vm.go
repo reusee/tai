@@ -20,5 +20,10 @@ func NewVM(name string, source io.Reader, options *Options) (*taivm.VM, error) {
 	}
 	vm := taivm.NewVM(mainFunc)
 	registerBuiltins(vm, options)
+	if options != nil {
+		for key, val := range options.Globals {
+			vm.Def(key, val)
+		}
+	}
 	return vm, nil
 }

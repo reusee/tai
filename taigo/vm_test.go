@@ -2084,6 +2084,7 @@ func TestVMInterfaceImplementationPromoted(t *testing.T) {
 }
 
 func TestVMInterfaceImplementationNative(t *testing.T) {
+	var buf strings.Builder
 	vm, err := NewVM("main", strings.NewReader(`
 		package main
 		type Writer interface {
@@ -2096,12 +2097,13 @@ func TestVMInterfaceImplementationNative(t *testing.T) {
 	`), &Options{
 		Stdout: t.Output(),
 		Stderr: t.Output(),
+		Globals: map[string]any{
+			"buf": &buf,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf strings.Builder
-	vm.Def("buf", &buf)
 	vm.Run(func(i *taivm.Interrupt, err error) bool {
 		if err != nil {
 			t.Fatal(err)
