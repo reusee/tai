@@ -173,6 +173,18 @@ func (v *VM) opArithmeticFast(op OpCode) bool {
 			return true
 		}
 	}
+	if x, ok := a.(int64); ok {
+		if y, ok := b.(int64); ok {
+			if op == OpAdd {
+				v.OperandStack[v.SP-2] = x + y
+			} else {
+				v.OperandStack[v.SP-2] = x - y
+			}
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
 	if x, ok := a.(float64); ok {
 		if y, ok := b.(float64); ok {
 			if op == OpAdd {
@@ -195,11 +207,74 @@ func (v *VM) opCompareFast(op OpCode) bool {
 	b, a := v.OperandStack[v.SP-1], v.OperandStack[v.SP-2]
 	if x, ok := a.(int); ok {
 		if y, ok := b.(int); ok {
-			if op == OpEq {
-				v.OperandStack[v.SP-2] = x == y
-			} else {
-				v.OperandStack[v.SP-2] = x < y
+			var res bool
+			switch op {
+			case OpEq:
+				res = x == y
+			case OpNe:
+				res = x != y
+			case OpLt:
+				res = x < y
+			case OpLe:
+				res = x <= y
+			case OpGt:
+				res = x > y
+			case OpGe:
+				res = x >= y
+			default:
+				return false
 			}
+			v.OperandStack[v.SP-2] = res
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
+	if x, ok := a.(int64); ok {
+		if y, ok := b.(int64); ok {
+			var res bool
+			switch op {
+			case OpEq:
+				res = x == y
+			case OpNe:
+				res = x != y
+			case OpLt:
+				res = x < y
+			case OpLe:
+				res = x <= y
+			case OpGt:
+				res = x > y
+			case OpGe:
+				res = x >= y
+			default:
+				return false
+			}
+			v.OperandStack[v.SP-2] = res
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
+	if x, ok := a.(float64); ok {
+		if y, ok := b.(float64); ok {
+			var res bool
+			switch op {
+			case OpEq:
+				res = x == y
+			case OpNe:
+				res = x != y
+			case OpLt:
+				res = x < y
+			case OpLe:
+				res = x <= y
+			case OpGt:
+				res = x > y
+			case OpGe:
+				res = x >= y
+			default:
+				return false
+			}
+			v.OperandStack[v.SP-2] = res
 			v.SP--
 			v.OperandStack[v.SP] = nil
 			return true
@@ -1460,6 +1535,38 @@ func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 		v.push(res)
 		return true
 	}
+
+	// Mixed integer bitwise
+	if i1, ok1 := ToInt64(a); ok1 && a != nil {
+		if i2, ok2 := ToInt64(b); ok2 && b != nil {
+			var res any
+			switch op {
+			case OpBitAnd:
+				res = i1 & i2
+			case OpBitOr:
+				res = i1 | i2
+			case OpBitXor:
+				res = i1 ^ i2
+			case OpBitLsh:
+				if i2 < 0 {
+					yield(nil, fmt.Errorf("negative shift count: %d", i2))
+					v.push(nil)
+					return true
+				}
+				res = i1 << uint(i2)
+			case OpBitRsh:
+				if i2 < 0 {
+					yield(nil, fmt.Errorf("negative shift count: %d", i2))
+					v.push(nil)
+					return true
+				}
+				res = i1 >> uint(i2)
+			}
+			v.push(res)
+			return true
+		}
+	}
+
 	i1, ok1 := ToIntBig(a)
 	i2, ok2 := ToIntBig(b)
 	if !ok1 || !ok2 {
@@ -1603,6 +1710,100 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
+	// Mixed integer math to avoid float conversion for (int, int64) etc.
+	if i1, ok1 := ToInt64(a); ok1 && a != nil {
+		if i2, ok2 := ToInt64(b); ok2 && b != nil {
+			// Ensure neither is a float type to avoid losing precision/type
+			_, isFloatA := a.(float64)
+			if !isFloatA {
+				_, isFloatA = a.(float32)
+			}
+			_, isFloatB := b.(float64)
+			if !isFloatB {
+				_, isFloatB = b.(float32)
+			}
+			if !isFloatA && !isFloatB && op != OpPow {
+				switch op {
+				case OpAdd:
+					v.push(i1 + i2)
+					return true
+				case OpSub:
+					v.push(i1 - i2)
+					return true
+				case OpMul:
+					v.push(i1 * i2)
+					return true
+				case OpDiv:
+					if i2 == 0 {
+						yield(nil, fmt.Errorf("division by zero"))
+						v.push(nil)
+					} else {
+						v.push(i1 / i2)
+					}
+					return true
+				case OpMod:
+					if i2 == 0 {
+						yield(nil, fmt.Errorf("division by zero"))
+						v.push(nil)
+					} else {
+						r := i1 % i2
+						if (r < 0) != (i2 < 0) && r != 0 {
+							r += i2
+						}
+						v.push(r)
+					}
+					return true
+				case OpFloorDiv:
+					if i2 == 0 {
+						yield(nil, fmt.Errorf("division by zero"))
+						v.push(nil)
+					} else {
+						q := i1 / i2
+						if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
+							q--
+						}
+						v.push(q)
+					}
+					return true
+				}
+			}
+		}
+	}
+
+	// Try non-allocating numeric math for mixed scalar types
+	if fa, ok1 := ToFloat64(a); ok1 {
+		if fb, ok2 := ToFloat64(b); ok2 {
+			_, isBigA := a.(*big.Float)
+			_, isBigB := b.(*big.Float)
+			_, isBigIntA := a.(*big.Int)
+			_, isBigIntB := b.(*big.Int)
+			if !isBigA && !isBigB && !isBigIntA && !isBigIntB {
+				switch op {
+				case OpAdd:
+					v.push(fa + fb)
+					return true
+				case OpSub:
+					v.push(fa - fb)
+					return true
+				case OpMul:
+					v.push(fa * fb)
+					return true
+				case OpDiv:
+					if fb == 0 {
+						yield(nil, fmt.Errorf("division by zero"))
+						v.push(nil)
+					} else {
+						v.push(fa / fb)
+					}
+					return true
+				case OpPow:
+					v.push(math.Pow(fa, fb))
+					return true
+				}
+			}
+		}
+	}
+
 	i1, ok1 := ToIntBig(a)
 	i2, ok2 := ToIntBig(b)
 	if ok1 && ok2 {
@@ -1731,6 +1932,64 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 		v.push(nil)
 		return true
 	}
+
+	// Mixed integer comparison
+	if i1, ok1 := ToInt64(a); ok1 && a != nil {
+		if i2, ok2 := ToInt64(b); ok2 && b != nil {
+			_, isFloatA := a.(float64)
+			if !isFloatA {
+				_, isFloatA = a.(float32)
+			}
+			_, isFloatB := b.(float64)
+			if !isFloatB {
+				_, isFloatB = b.(float32)
+			}
+			if !isFloatA && !isFloatB {
+				var res bool
+				switch op {
+				case OpLt:
+					res = i1 < i2
+				case OpLe:
+					res = i1 <= i2
+				case OpGt:
+					res = i1 > i2
+				case OpGe:
+					res = i1 >= i2
+				default:
+					return false
+				}
+				v.push(res)
+				return true
+			}
+		}
+	}
+
+	// Try non-allocating float64 comparison for mixed numeric types
+	if !isComplex(a) && !isComplex(b) {
+		if fa, ok1 := ToFloat64(a); ok1 {
+			if fb, ok2 := ToFloat64(b); ok2 {
+				// Only use float64 if neither is a big type to preserve precision
+				_, isBigA := a.(*big.Float)
+				_, isBigB := b.(*big.Float)
+				_, isBigIntA := a.(*big.Int)
+				_, isBigIntB := b.(*big.Int)
+				if !isBigA && !isBigB && !isBigIntA && !isBigIntB {
+					switch op {
+					case OpLt:
+						v.push(fa < fb)
+					case OpLe:
+						v.push(fa <= fb)
+					case OpGt:
+						v.push(fa > fb)
+					case OpGe:
+						v.push(fa >= fb)
+					}
+					return true
+				}
+			}
+		}
+	}
+
 	if fa, ok1 := ToFloatBig(a); ok1 {
 		if fb, ok2 := ToFloatBig(b); ok2 {
 			cmp := fa.Cmp(fb)
