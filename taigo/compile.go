@@ -32,3 +32,21 @@ func compile(file *ast.File) (*taivm.Function, error) {
 	}
 	return c.getFunction(), nil
 }
+
+func compileExpr(expr ast.Expr) (*taivm.Function, error) {
+	c := &compiler{
+		name:       "eval",
+		consts:     make(map[any]int),
+		locals:     make(map[string]int),
+		labels:     make(map[string]int),
+		unresolved: make(map[string][]int),
+	}
+	if err := c.compileExpr(expr); err != nil {
+		return nil, err
+	}
+	c.emit(taivm.OpReturn)
+	if err := c.resolveLabels(); err != nil {
+		return nil, err
+	}
+	return c.getFunction(), nil
+}

@@ -2184,3 +2184,28 @@ func TestVMBitAndNot(t *testing.T) {
 	`)
 	checkInt(t, vm, "x", 2)
 }
+
+func TestExec(t *testing.T) {
+	vm := runVM(t, `package main; var a = 1`)
+	val, err := Exec(vm, `a + 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := val.(int)
+	if !ok {
+		t.Fatalf("got %T %v", val, val)
+	}
+	if res != 2 {
+		t.Fatal()
+	}
+
+	_, err = Exec(vm, `package main; func inc() { a++ }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Exec(vm, `inc()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkInt(t, vm, "a", 2)
+}
