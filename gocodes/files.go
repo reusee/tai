@@ -95,9 +95,10 @@ func (Module) Files(
 				continue
 			}
 			f := &File{
-				Path:      path,
-				IsGoFile:  true,
-				TokenFile: file,
+				Path:          path,
+				IsGoFile:      true,
+				TokenFile:     file,
+				transformCond: sync.NewCond(new(sync.Mutex)),
 			}
 			files = append(files, f)
 			tokenFileToFile[file] = f
@@ -232,6 +233,7 @@ func (Module) Files(
 				Module:                  pkg.Module,
 				ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
 				ModuleIsNil:             pkg.Module == nil,
+				transformCond:           sync.NewCond(new(sync.Mutex)),
 			}
 			files = append(files, f)
 		}

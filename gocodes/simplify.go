@@ -48,7 +48,6 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		startTokenCounters(ctx, jobChan, fset, countTokens, wg)
 
 		for _, file := range files {
-			file.transformCond = sync.NewCond(new(sync.Mutex))
 			if file.IsGoFile {
 				// initial transform
 				file.Transform = &Transform{
