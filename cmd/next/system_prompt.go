@@ -3,7 +3,6 @@ package main
 import (
 	_ "embed"
 	"strings"
-	"time"
 
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/cmds"
@@ -31,11 +30,6 @@ func (Module) SystemPrompt(
 	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
 ) (ret SystemPrompt) {
-
-	location, err := time.LoadLocation("Asia/Hong_Kong")
-	ce(err)
-	now := time.Now().In(location)
-	ret += SystemPrompt("\n\n当前北京时间是：" + now.Format("2006-01-02 15:04:05") + "\n\n")
 
 	ret += SystemPrompt(prompts.NextStep)
 
