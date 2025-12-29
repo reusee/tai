@@ -1630,11 +1630,12 @@ func TestVMEmbedding(t *testing.T) {
 		var d = Derived{Base: Base{Val: 10}, Extra: "ext"}
 		var v1 = d.Val
 		var v2 = d.GetVal()
+		var v3 int
 		func init() {
 			d.SetVal(20)
 			d.Val = 30
+			v3 = d.Val
 		}
-		var v3 = d.Val
 	`)
 	checkInt(t, vm, "v1", 10)
 	checkInt(t, vm, "v2", 10)
@@ -1674,10 +1675,11 @@ func TestVMNewBuiltin(t *testing.T) {
 	vm := runVM(t, `
 		package main
 		var p = new(int)
+		var res *int
 		func init() {
 			*p = 42
+			res = *p
 		}
-		var res = *p
 	`)
 	checkInt(t, vm, "res", 42)
 }
@@ -1733,15 +1735,17 @@ func TestVMClearMinMax(t *testing.T) {
 		package main
 		var s = []int{1, 2, 3}
 		var m = map[string]int{"a": 1}
+		var mLen, sLen int
+		var s0 int
 		func init() {
 			clear(s)
+			sLen = len(s)
+			s0 = s[0]
 			clear(m)
+			mLen = len(m)
 		}
 		var minVal = min(10, 5, 8)
 		var maxVal = max(10, 5, 8)
-		var sLen = len(s)
-		var mLen = len(m)
-		var s0 = s[0]
 	`)
 	checkInt(t, vm, "minVal", 5)
 	checkInt(t, vm, "maxVal", 10)
@@ -1843,10 +1847,11 @@ func TestVMSliceToArrayConversion(t *testing.T) {
 		var p = (*[2]int)(s)
 		var v1 = a[1]
 		var v2 = p[1]
+		var v3 int
 		func init() {
 			p[0] = 10
+			v3 = s[0]
 		}
-		var v3 = s[0]
 	`)
 	checkInt(t, vm, "v1", 2)
 	checkInt(t, vm, "v2", 2)
@@ -2022,4 +2027,38 @@ func TestVMConstantDeduplication(t *testing.T) {
 	if fooCount != 1 {
 		t.Errorf("expected 1 'foo' constant, got %d", fooCount)
 	}
+}
+
+func TestVMDependentInit(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var a = b + 1
+		var b = 1
+		var c = f()
+		func f() { return 10 }
+		var d = e
+		const e = 20
+	`)
+	checkInt(t, vm, "a", 2)
+	checkInt(t, vm, "b", 1)
+	checkInt(t, vm, "c", 10)
+	checkInt(t, vm, "d", 20)
+}
+
+func TestVMInitOrder(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var res = ""
+		var a = func() {
+			res += "A"
+			return 1
+		}()
+		func init() {
+			res += "B"
+		}
+		func init() {
+			res += "C"
+		}
+	`)
+	checkString(t, vm, "res", "ABC")
 }

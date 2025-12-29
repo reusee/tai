@@ -1,7 +1,8 @@
 package taigo
 
 /* TODO
- */
+untype constant
+*/
 
 /*
 not supported intentionally:

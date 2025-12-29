@@ -30,6 +30,12 @@ type compiler struct {
 	structFields   map[string][]string
 }
 
+type topDecl struct {
+	names   []string
+	deps    []string
+	compile func() error
+}
+
 type loopScope struct {
 	label           string // label of the statement
 	breakTargets    []int
@@ -545,37 +551,206 @@ func (c *compiler) loadConst(val any) {
 }
 
 func (c *compiler) compileFile(file *ast.File) error {
-	var hasMain bool
 	if c.structFields == nil {
 		c.structFields = make(map[string][]string)
 	}
 
+	allTopSymbols := make(map[string]bool)
 	for _, decl := range file.Decls {
-		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
-			if funcDecl.Recv == nil && funcDecl.Name.Name == "init" {
-				if err := c.compileInitFunc(funcDecl); err != nil {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil && d.Name.Name == "init" {
+				continue
+			}
+			name := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) > 0 {
+			} else {
+				allTopSymbols[name] = true
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.ValueSpec:
+					for _, name := range s.Names {
+						allTopSymbols[name.Name] = true
+					}
+				case *ast.TypeSpec:
+					allTopSymbols[s.Name.Name] = true
+				}
+			}
+		}
+	}
+
+	getDeps := func(node ast.Node) []string {
+		var deps []string
+		ast.Inspect(node, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if allTopSymbols[id.Name] {
+					deps = append(deps, id.Name)
+				}
+			}
+			return true
+		})
+		return deps
+	}
+
+	var funcDecls []topDecl
+	var initDecls []func() error
+	var varDecls []topDecl
+	var hasMain bool
+
+	for _, decl := range file.Decls {
+		d := decl
+		switch g := d.(type) {
+		case *ast.FuncDecl:
+			if g.Recv == nil && g.Name.Name == "init" {
+				initDecls = append(initDecls, func() error {
+					return c.compileInitFunc(g)
+				})
+			} else {
+				if g.Name.Name == "main" {
+					hasMain = true
+				}
+				funcDecls = append(funcDecls, topDecl{
+					names: []string{g.Name.Name},
+					compile: func() error {
+						return c.compileFuncDecl(g)
+					},
+				})
+			}
+
+		case *ast.GenDecl:
+			if g.Tok == token.IMPORT {
+				if err := c.compileGenDecl(g); err != nil {
 					return err
 				}
 				continue
 			}
-			if funcDecl.Name.Name == "main" {
-				hasMain = true
+			var lastExprs []ast.Expr
+			for i, spec := range g.Specs {
+				s := spec
+				var names []string
+				var deps []string
+				switch v := s.(type) {
+				case *ast.ValueSpec:
+					for _, n := range v.Names {
+						names = append(names, n.Name)
+					}
+					vals := v.Values
+					if g.Tok == token.CONST {
+						if len(vals) > 0 {
+							lastExprs = vals
+						} else {
+							vals = lastExprs
+						}
+					}
+					for _, val := range vals {
+						deps = append(deps, getDeps(val)...)
+					}
+				case *ast.TypeSpec:
+					names = append(names, v.Name.Name)
+					deps = append(deps, getDeps(v.Type)...)
+				}
+				capturedLastExprs := lastExprs
+				capturedIota := i
+				varDecls = append(varDecls, topDecl{
+					names: names,
+					deps:  deps,
+					compile: func() error {
+						c.iotaVal = capturedIota
+						c.lastConstExprs = capturedLastExprs
+						switch g.Tok {
+						case token.VAR, token.CONST:
+							return c.compileValueSpec(s.(*ast.ValueSpec), g.Tok == token.CONST)
+						case token.TYPE:
+							return c.compileTypeSpec(s.(*ast.TypeSpec))
+						}
+						return nil
+					},
+				})
 			}
-		}
-
-		if err := c.compileDecl(decl); err != nil {
-			return err
 		}
 	}
 
+	for _, d := range funcDecls {
+		if err := d.compile(); err != nil {
+			return err
+		}
+	}
+	sorted, err := sortTopDecls(varDecls)
+	if err != nil {
+		return err
+	}
+	for _, d := range sorted {
+		if err := d.compile(); err != nil {
+			return err
+		}
+	}
+	for _, f := range initDecls {
+		if err := f(); err != nil {
+			return err
+		}
+	}
 	if hasMain {
 		idx := c.addConst("main")
 		c.emit(taivm.OpLoadVar.With(idx))
 		c.emit(taivm.OpCall.With(0))
 		c.emit(taivm.OpPop)
 	}
-
 	return nil
+}
+
+func sortTopDecls(decls []topDecl) ([]topDecl, error) {
+	type node struct {
+		decl     topDecl
+		deps     []*node
+		onStack  bool
+		finished bool
+	}
+	symbolToNode := make(map[string]*node)
+	var nodes []*node
+	for _, d := range decls {
+		n := &node{decl: d}
+		nodes = append(nodes, n)
+		for _, name := range d.names {
+			symbolToNode[name] = n
+		}
+	}
+	for _, n := range nodes {
+		for _, depName := range n.decl.deps {
+			if depNode, ok := symbolToNode[depName]; ok && depNode != n {
+				n.deps = append(n.deps, depNode)
+			}
+		}
+	}
+	var result []topDecl
+	var visit func(*node) error
+	visit = func(n *node) error {
+		if n.onStack {
+			return nil
+		}
+		if n.finished {
+			return nil
+		}
+		n.onStack = true
+		for _, dep := range n.deps {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		n.onStack = false
+		n.finished = true
+		result = append(result, n.decl)
+		return nil
+	}
+	for _, n := range nodes {
+		if !n.finished {
+			if err := visit(n); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
 }
 
 func (c *compiler) compileDecl(decl ast.Decl) error {
