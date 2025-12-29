@@ -13,7 +13,10 @@ func Compile(name string, source io.Reader) (*taivm.Function, error) {
 		return nil, err
 	}
 
-	c := newCompiler(name)
+	c := newCompiler(name, nil)
+	if err := c.analyze(nil, file.Stmts); err != nil {
+		return nil, err
+	}
 	if err := c.compileStmts(file.Stmts); err != nil {
 		return nil, err
 	}

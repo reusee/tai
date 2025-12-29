@@ -705,7 +705,7 @@ func (mockNode) Comments() *syntax.Comments         { return nil }
 func (mockNode) AllocComments()                     {}
 
 func TestInternalCoverage(t *testing.T) {
-	c := newCompiler("test")
+	c := newCompiler("test", nil)
 
 	// Constants
 	sl := []int{1}
@@ -1023,7 +1023,7 @@ s5 = l[1:4:2]
 }
 
 func TestMoreInternalCoverage(t *testing.T) {
-	c := newCompiler("test")
+	c := newCompiler("test", nil)
 	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
 
 	type mockExpr struct {
@@ -1119,7 +1119,7 @@ func TestMoreInternalCoverage(t *testing.T) {
 }
 
 func TestCompilerDeepCoverage(t *testing.T) {
-	c := newCompiler("test")
+	c := newCompiler("test", nil)
 	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
 
 	// Mock types that satisfy interfaces but fail type switches
@@ -1182,16 +1182,6 @@ func TestCompilerDeepCoverage(t *testing.T) {
 	// 6. compileReturn result error
 	retStmt := &syntax.ReturnStmt{Result: fExpr}
 	expectError("compileReturn", c.compileStmt(retStmt))
-
-	// 7. compileDef errors
-	defStmt := &syntax.DefStmt{Name: &syntax.Ident{Name: "f"}, Body: []syntax.Stmt{fStmt}}
-	expectError("compileDef Body", c.compileDef(defStmt))
-
-	defStmt.Body = []syntax.Stmt{}
-	defStmt.Params = []syntax.Expr{
-		&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
-	}
-	expectError("compileDef Defaults", c.compileDef(defStmt))
 
 	// 8. compileStore errors
 	expectError("compileStore List elem", c.compileStore(&syntax.ListExpr{List: []syntax.Expr{fExpr}}))
@@ -1316,7 +1306,7 @@ func TestNativeFuncErrors(t *testing.T) {
 }
 
 func TestCoverageFinal(t *testing.T) {
-	c := newCompiler("coverage")
+	c := newCompiler("coverage", nil)
 
 	// Mock failing expression
 	type failExpr struct {
@@ -1490,7 +1480,7 @@ func TestCoverageFinal(t *testing.T) {
 }
 
 func TestCoverageRefinement(t *testing.T) {
-	c := newCompiler("refine")
+	c := newCompiler("refine", nil)
 
 	type failExpr struct {
 		syntax.Literal

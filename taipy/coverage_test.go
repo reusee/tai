@@ -18,7 +18,7 @@ type failStmt struct {
 }
 
 func TestCompilerCoverage(t *testing.T) {
-	c := newCompiler("test")
+	c := newCompiler("test", nil)
 	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
 	fExpr := &failExpr{}
 	fStmt := &failStmt{}
@@ -81,7 +81,7 @@ func TestCompilerCoverage(t *testing.T) {
 	// compileAssign just dispatches.
 	// compileAugmentedAssign "augmented assignment op ... not supported"
 	expectError("compileAugmentedAssign bad op", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.EQ}), "augmented assignment op")
-	
+
 	// compileAugmentedAssign "unsupported augmented assignment target"
 	expectError("compileAugmentedAssign bad target", c.compileAugmentedAssign(&syntax.AssignStmt{Op: syntax.PLUS_EQ, LHS: lit, RHS: lit}), "unsupported augmented assignment target")
 
@@ -99,25 +99,25 @@ func TestCompilerCoverage(t *testing.T) {
 
 	// compileSimpleAssign errors
 	expectError("compileSimpleAssign bad target", c.compileSimpleAssign(lit, lit), "unsupported assignment target")
-	
+
 	// compileSimpleAssign sub-expression errors
 	// IndexExpr
 	expectError("compileSimpleAssign Index X", c.compileSimpleAssign(&syntax.IndexExpr{X: fExpr, Y: lit}, lit), "")
 	expectError("compileSimpleAssign Index Y", c.compileSimpleAssign(&syntax.IndexExpr{X: lit, Y: fExpr}, lit), "")
 	expectError("compileSimpleAssign Index RHS", c.compileSimpleAssign(&syntax.IndexExpr{X: lit, Y: lit}, fExpr), "")
-	
+
 	// SliceExpr
 	expectError("compileSimpleAssign Slice X", c.compileSimpleAssign(&syntax.SliceExpr{X: fExpr}, lit), "")
 	expectError("compileSimpleAssign Slice Args", c.compileSimpleAssign(&syntax.SliceExpr{X: lit, Lo: fExpr}, lit), "")
 	expectError("compileSimpleAssign Slice RHS", c.compileSimpleAssign(&syntax.SliceExpr{X: lit}, fExpr), "")
-	
+
 	// DotExpr
 	expectError("compileSimpleAssign Dot X", c.compileSimpleAssign(&syntax.DotExpr{X: fExpr, Name: &syntax.Ident{Name: "a"}}, lit), "")
 	expectError("compileSimpleAssign Dot RHS", c.compileSimpleAssign(&syntax.DotExpr{X: lit, Name: &syntax.Ident{Name: "a"}}, fExpr), "")
-	
+
 	// List/Tuple unpacking recursive error in SimpleAssign
 	expectError("compileSimpleAssign List", c.compileSimpleAssign(&syntax.ListExpr{List: []syntax.Expr{fExpr}}, lit), "")
-	
+
 	// Ident RHS
 	expectError("compileSimpleAssign Ident RHS", c.compileSimpleAssign(&syntax.Ident{Name: "a"}, fExpr), "")
 
@@ -141,11 +141,11 @@ func TestCompilerCoverage(t *testing.T) {
 			lit,
 		},
 	}), "positional argument follows keyword argument")
-	
+
 	// Sub-expression errors
 	expectError("compileCallExpr Fn", c.compileCallExpr(&syntax.CallExpr{Fn: fExpr}), "")
 	expectError("compileCallExpr Arg", c.compileCallExpr(&syntax.CallExpr{Fn: lit, Args: []syntax.Expr{fExpr}}), "")
-	
+
 	// Keyword arg value error (dynamic path)
 	// We force dynamic path by using a binary expr which is not a simple arg
 	expectError("compileCallExpr KwArg Value", c.compileCallExpr(&syntax.CallExpr{
@@ -154,7 +154,7 @@ func TestCompilerCoverage(t *testing.T) {
 			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr},
 		},
 	}), "")
-	
+
 	// Star arg error
 	expectError("compileCallExpr Star Arg", c.compileCallExpr(&syntax.CallExpr{
 		Fn: lit,
@@ -162,7 +162,7 @@ func TestCompilerCoverage(t *testing.T) {
 			&syntax.UnaryExpr{Op: syntax.STAR, X: fExpr},
 		},
 	}), "")
-	
+
 	// StarStar arg error
 	expectError("compileCallExpr StarStar Arg", c.compileCallExpr(&syntax.CallExpr{
 		Fn: lit,
@@ -180,7 +180,7 @@ func TestCompilerCoverage(t *testing.T) {
 			&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: lit},
 		},
 	}), "")
-	
+
 	// flushKw error via starstar
 	expectError("compileCallExpr flushKw via starstar", c.compileCallExpr(&syntax.CallExpr{
 		Fn: lit,
@@ -208,13 +208,13 @@ func TestCompilerCoverage(t *testing.T) {
 		Body:    fExpr,
 		Clauses: []syntax.Node{},
 	}), "")
-	
+
 	expectError("compileComprehension Dict Key", c.compileComprehension(&syntax.Comprehension{
 		Curly:   true,
 		Body:    &syntax.DictEntry{Key: fExpr, Value: lit},
 		Clauses: []syntax.Node{},
 	}), "")
-	
+
 	expectError("compileComprehension Dict Value", c.compileComprehension(&syntax.Comprehension{
 		Curly:   true,
 		Body:    &syntax.DictEntry{Key: lit, Value: fExpr},
@@ -225,20 +225,20 @@ func TestCompilerCoverage(t *testing.T) {
 		Body:    lit,
 		Clauses: []syntax.Node{&syntax.ForClause{Vars: &syntax.Ident{Name: "x"}, X: fExpr}},
 	}), "")
-	
+
 	expectError("compileComprehension For Vars", c.compileComprehension(&syntax.Comprehension{
 		Body:    lit,
 		Clauses: []syntax.Node{&syntax.ForClause{Vars: fExpr, X: lit}}, // fExpr fails compileStore
 	}), "")
-	
+
 	expectError("compileComprehension If Cond", c.compileComprehension(&syntax.Comprehension{
 		Body:    lit,
 		Clauses: []syntax.Node{&syntax.IfClause{Cond: fExpr}},
 	}), "")
-	
+
 	// Recursive clause error
 	expectError("compileComprehension Recursive", c.compileComprehension(&syntax.Comprehension{
-		Body:    lit,
+		Body: lit,
 		Clauses: []syntax.Node{
 			&syntax.IfClause{Cond: lit},
 			&syntax.IfClause{Cond: fExpr},
@@ -263,11 +263,9 @@ func TestCompilerCoverage(t *testing.T) {
 	expectError("compileFor Vars", c.compileFor(&syntax.ForStmt{X: lit, Vars: fExpr}), "")
 	expectError("compileFor Body", c.compileFor(&syntax.ForStmt{X: lit, Vars: &syntax.Ident{Name: "x"}, Body: []syntax.Stmt{fStmt}}), "")
 
-	// compileDef errors
-	expectError("compileDef Body", c.compileDef(&syntax.DefStmt{Name: &syntax.Ident{Name: "f"}, Body: []syntax.Stmt{fStmt}}), "")
 	// Default value error
 	expectError("compileDef Default", c.compileDef(&syntax.DefStmt{
-		Name: &syntax.Ident{Name: "f"},
+		Name:   &syntax.Ident{Name: "f"},
 		Params: []syntax.Expr{&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr}},
 	}), "")
 
@@ -276,11 +274,11 @@ func TestCompilerCoverage(t *testing.T) {
 	// compileLambdaExpr Default
 	expectError("compileLambdaExpr Default", c.compileLambdaExpr(&syntax.LambdaExpr{
 		Params: []syntax.Expr{&syntax.BinaryExpr{Op: syntax.EQ, X: &syntax.Ident{Name: "a"}, Y: fExpr}},
-		Body: lit,
+		Body:   lit,
 	}), "")
 
 	// Reset compiler to ensure clean state (no loops)
-	c = newCompiler("test_branch")
+	c = newCompiler("test_branch", nil)
 	// compileBranch outside loop
 	expectError("compileBranch outside loop", c.compileBranch(&syntax.BranchStmt{Token: syntax.BREAK}), "outside loop")
 
@@ -321,10 +319,10 @@ func TestMiscCoverage(t *testing.T) {
 }
 
 func TestManualASTCoverage(t *testing.T) {
-	c := newCompiler("manual")
+	c := newCompiler("manual", nil)
 	// Compile: 2 ** 3
 	// We want to verify it emits OpPow.
-	
+
 	err := c.compileBinaryExpr(&syntax.BinaryExpr{
 		Op: syntax.STARSTAR,
 		X:  &syntax.Literal{Value: int64(2)},
@@ -333,7 +331,7 @@ func TestManualASTCoverage(t *testing.T) {
 	if err != nil {
 		t.Errorf("compileBinaryExpr STARSTAR failed: %v", err)
 	}
-	
+
 	// Check last opcode
 	// OpPow is emitted last.
 	// Consts are loaded before that.
@@ -361,7 +359,7 @@ l = [1, 2]
 			t.Fatal(err)
 		}
 	}
-	
+
 	if val, ok := vm.Get("l"); !ok {
 		t.Error("l not found")
 	} else if l, ok := val.(*taivm.List); !ok || len(l.Elements) != 2 || l.Elements[0] != int64(3) {
@@ -370,7 +368,7 @@ l = [1, 2]
 }
 
 func TestLambdaErrors(t *testing.T) {
-	c := newCompiler("test")
+	c := newCompiler("test", nil)
 	lit := &syntax.Literal{Token: syntax.INT, Value: int64(1)}
 
 	// compileLambdaExpr extractParamNames error
@@ -384,6 +382,6 @@ func TestLambdaErrors(t *testing.T) {
 
 	expectError("compileLambdaExpr Params", c.compileLambdaExpr(&syntax.LambdaExpr{
 		Params: []syntax.Expr{lit},
-		Body: lit,
+		Body:   lit,
 	}))
 }

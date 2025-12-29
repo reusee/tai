@@ -8,11 +8,15 @@ import (
 )
 
 type compiler struct {
-	name      string
-	code      []taivm.OpCode
-	constants []any
-	constMap  map[any]int
-	loops     []*loopContext
+	name       string
+	code       []taivm.OpCode
+	constants  []any
+	constMap   map[any]int
+	loops      []*loopContext
+	locals     []string
+	isLocal    map[string]int
+	isCaptured map[string]bool
+	parent     *compiler
 }
 
 type loopContext struct {
@@ -20,10 +24,13 @@ type loopContext struct {
 	breakIPs   []int
 }
 
-func newCompiler(name string) *compiler {
+func newCompiler(name string, parent *compiler) *compiler {
 	return &compiler{
-		name:     name,
-		constMap: make(map[any]int),
+		name:       name,
+		constMap:   make(map[any]int),
+		isLocal:    make(map[string]int),
+		isCaptured: make(map[string]bool),
+		parent:     parent,
 	}
 }
 
@@ -32,9 +39,39 @@ func (c *compiler) toFunction() *taivm.Function {
 		Name:      c.name,
 		Code:      c.code,
 		Constants: c.constants,
+		NumLocals: len(c.locals),
 	}
 }
 
+func (c *compiler) analyze(params []syntax.Expr, body []syntax.Stmt) error {
+	if c.parent != nil {
+		for _, p := range params {
+			if err := c.declareParam(p); err != nil {
+				return err
+			}
+		}
+	}
+	for _, stmt := range body {
+		syntax.Walk(stmt, func(n syntax.Node) bool {
+			if n == nil {
+				return true
+			}
+			switch node := n.(type) {
+			case *syntax.AssignStmt:
+				c.collectAssigned(node.LHS)
+			case *syntax.ForStmt:
+				c.collectAssigned(node.Vars)
+			case *syntax.DefStmt:
+				c.collectAssigned(node.Name)
+				return false
+			case *syntax.Ident:
+				c.checkCaptured(node.Name)
+			}
+			return true
+		})
+	}
+	return nil
+}
 func (c *compiler) addConst(val any) int {
 	if isComparable(val) {
 		if idx, ok := c.constMap[val]; ok {
@@ -49,6 +86,25 @@ func (c *compiler) addConst(val any) int {
 	return idx
 }
 
+func (c *compiler) declareParam(p syntax.Expr) error {
+	switch node := p.(type) {
+	case *syntax.Ident:
+		c.declareLocal(node.Name)
+	case *syntax.BinaryExpr:
+		if node.Op == syntax.EQ {
+			if id, ok := node.X.(*syntax.Ident); ok {
+				c.declareLocal(id.Name)
+			}
+		}
+	case *syntax.UnaryExpr:
+		if node.Op == syntax.STAR || node.Op == syntax.STARSTAR {
+			if id, ok := node.X.(*syntax.Ident); ok {
+				c.declareLocal(id.Name)
+			}
+		}
+	}
+	return nil
+}
 func isComparable(v any) bool {
 	switch v.(type) {
 	case int, int64, float64, string, bool, nil:
@@ -57,8 +113,44 @@ func isComparable(v any) bool {
 	return false
 }
 
+func (c *compiler) collectAssigned(lhs syntax.Expr) {
+	if c.parent == nil {
+		return
+	}
+	switch node := lhs.(type) {
+	case *syntax.Ident:
+		c.declareLocal(node.Name)
+	case *syntax.ListExpr:
+		for _, e := range node.List {
+			c.collectAssigned(e)
+		}
+	case *syntax.TupleExpr:
+		for _, e := range node.List {
+			c.collectAssigned(e)
+		}
+	case *syntax.ParenExpr:
+		c.collectAssigned(node.X)
+	}
+}
 func (c *compiler) emit(op taivm.OpCode) {
 	c.code = append(c.code, op)
+}
+
+func (c *compiler) declareLocal(name string) {
+	if _, ok := c.isLocal[name]; ok {
+		return
+	}
+	c.isLocal[name] = len(c.locals)
+	c.locals = append(c.locals, name)
+}
+
+func (c *compiler) checkCaptured(name string) {
+	for curr := c.parent; curr != nil; curr = curr.parent {
+		if _, ok := curr.isLocal[name]; ok {
+			curr.isCaptured[name] = true
+			return
+		}
+	}
 }
 
 func (c *compiler) currentIP() int {
@@ -141,6 +233,10 @@ func (c *compiler) compileAssign(s *syntax.AssignStmt) error {
 func (c *compiler) compileStore(lhs syntax.Expr) error {
 	switch node := lhs.(type) {
 	case *syntax.Ident:
+		if idx, ok := c.isLocal[node.Name]; ok && !c.isCaptured[node.Name] {
+			c.emit(taivm.OpSetLocal.With(idx))
+			return nil
+		}
 		c.emit(taivm.OpDefVar.With(c.addConst(node.Name)))
 		return nil
 	case *syntax.ParenExpr:
@@ -224,7 +320,11 @@ func (c *compiler) compileExpr(expr syntax.Expr) error {
 	case *syntax.Literal:
 		c.emit(taivm.OpLoadConst.With(c.addConst(e.Value)))
 	case *syntax.Ident:
-		c.emit(taivm.OpLoadVar.With(c.addConst(e.Name)))
+		if idx, ok := c.isLocal[e.Name]; ok && !c.isCaptured[e.Name] {
+			c.emit(taivm.OpGetLocal.With(idx))
+		} else {
+			c.emit(taivm.OpLoadVar.With(c.addConst(e.Name)))
+		}
 	case *syntax.UnaryExpr:
 		return c.compileUnaryExpr(e)
 	case *syntax.BinaryExpr:
@@ -362,7 +462,10 @@ func (c *compiler) compileFor(s *syntax.ForStmt) error {
 }
 
 func (c *compiler) compileDef(s *syntax.DefStmt) error {
-	sub := newCompiler(s.Name.Name)
+	sub := newCompiler(s.Name.Name, c)
+	if err := sub.analyze(s.Params, s.Body); err != nil {
+		return err
+	}
 	if err := sub.compileStmts(s.Body); err != nil {
 		return err
 	}
@@ -388,9 +491,7 @@ func (c *compiler) compileDef(s *syntax.DefStmt) error {
 	}
 
 	c.emit(taivm.OpMakeClosure.With(c.addConst(fn)))
-	c.emit(taivm.OpDefVar.With(c.addConst(s.Name.Name)))
-
-	return nil
+	return c.compileStore(s.Name)
 }
 
 func (c *compiler) extractParamNames(params []syntax.Expr) ([]string, []syntax.Expr, bool, error) {
@@ -505,7 +606,11 @@ func (c *compiler) compileAugmentedAssign(s *syntax.AssignStmt) error {
 
 	switch lhs := s.LHS.(type) {
 	case *syntax.Ident:
-		c.emit(taivm.OpLoadVar.With(c.addConst(lhs.Name)))
+		if idx, ok := c.isLocal[lhs.Name]; ok && !c.isCaptured[lhs.Name] {
+			c.emit(taivm.OpGetLocal.With(idx))
+		} else {
+			c.emit(taivm.OpLoadVar.With(c.addConst(lhs.Name)))
+		}
 		if err := c.compileExpr(s.RHS); err != nil {
 			return err
 		}
@@ -966,7 +1071,10 @@ func (c *compiler) compileCondExpr(e *syntax.CondExpr) error {
 }
 
 func (c *compiler) compileLambdaExpr(e *syntax.LambdaExpr) error {
-	sub := newCompiler("<lambda>")
+	sub := newCompiler("<lambda>", c)
+	if err := sub.analyze(e.Params, nil); err != nil {
+		return err
+	}
 	if err := sub.compileExpr(e.Body); err != nil {
 		return err
 	}
