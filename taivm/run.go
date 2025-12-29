@@ -3,6 +3,7 @@ package taivm
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"reflect"
@@ -433,14 +434,6 @@ func ToFloatBig(v any) (*big.Float, bool) {
 	return nil, false
 }
 
-func isFloat(v any) bool {
-	switch v.(type) {
-	case float32, float64:
-		return true
-	}
-	return false
-}
-
 func toComplex128(v any) (complex128, bool) {
 	switch i := v.(type) {
 	case complex128:
@@ -793,15 +786,6 @@ func resolveSliceIndices(length int, start, stop, step any) (int, int, int, erro
 	return startInt, stopInt, stepInt, nil
 }
 
-func (v *VM) opLoadConst(inst OpCode) {
-	idx := int(inst >> 8)
-	if v.SP >= len(v.OperandStack) {
-		v.growOperandStack()
-	}
-	v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
-	v.SP++
-}
-
 func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	idx := int(inst >> 8)
 	name := v.CurrentFun.Constants[idx].(string)
@@ -840,13 +824,6 @@ func (v *VM) opSetVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) opPop() {
-	if v.SP > 0 {
-		v.SP--
-		v.OperandStack[v.SP] = nil
-	}
-}
-
 func (v *VM) opDup(yield func(*Interrupt, error) bool) bool {
 	if v.SP < 1 {
 		if !yield(nil, fmt.Errorf("stack underflow during dup")) {
@@ -870,24 +847,6 @@ func (v *VM) opDup2(yield func(*Interrupt, error) bool) bool {
 	v.push(a)
 	v.push(b)
 	return true
-}
-
-func (v *VM) opJump(inst OpCode) {
-	offset := int(int32(inst) >> 8)
-	v.IP += offset
-}
-
-func (v *VM) opJumpFalse(inst OpCode) {
-	offset := int(int32(inst) >> 8)
-	var val any
-	if v.SP > 0 {
-		v.SP--
-		val = v.OperandStack[v.SP]
-		v.OperandStack[v.SP] = nil
-	}
-	if isZero(val) {
-		v.IP += offset
-	}
 }
 
 func (v *VM) opMakeClosure(inst OpCode) {
@@ -983,10 +942,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 		return true
 	}
 
-	numLocals := fn.Fun.NumLocals
-	if numLocals < numParams {
-		numLocals = numParams
-	}
+	numLocals := max(fn.Fun.NumLocals, numParams)
 	locals := make([]any, numLocals)
 
 	for i := range numFixed {
@@ -1024,10 +980,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 	if v.IP < len(v.CurrentFun.Code) && (v.CurrentFun.Code[v.IP]&0xff) == OpReturn && len(v.Defers) == 0 {
 		needed := v.BP + len(locals)
 		if needed > len(v.OperandStack) {
-			newCap := len(v.OperandStack) * 2
-			if newCap < needed {
-				newCap = needed
-			}
+			newCap := max(len(v.OperandStack)*2, needed)
 			newStack := make([]any, newCap)
 			copy(newStack, v.OperandStack)
 			v.OperandStack = newStack
@@ -1060,10 +1013,7 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 
 		needed := calleeIdx + 1 + len(locals)
 		if needed > len(v.OperandStack) {
-			newCap := len(v.OperandStack) * 2
-			if newCap < needed {
-				newCap = needed
-			}
+			newCap := max(len(v.OperandStack)*2, needed)
 			newStack := make([]any, newCap)
 			copy(newStack, v.OperandStack)
 			v.OperandStack = newStack
@@ -1131,7 +1081,7 @@ func (v *VM) callTypeConversion(t *Type, argc, calleeIdx int, yield func(*Interr
 				}
 				rt := t.ToReflectType()
 				arr := reflect.New(rt).Elem()
-				for i := 0; i < n; i++ {
+				for i := range n {
 					arr.Index(i).Set(reflect.ValueOf(list.Elements[i]))
 				}
 				res = arr.Interface()
@@ -1582,26 +1532,6 @@ func (v *VM) opSwap(yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) opGetLocal(inst OpCode) {
-	idx := int(inst >> 8)
-	if v.SP >= len(v.OperandStack) {
-		v.growOperandStack()
-	}
-	v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
-	v.SP++
-}
-
-func (v *VM) opSetLocal(inst OpCode) {
-	idx := int(inst >> 8)
-	var val any
-	if v.SP > 0 {
-		v.SP--
-		val = v.OperandStack[v.SP]
-		v.OperandStack[v.SP] = nil
-	}
-	v.OperandStack[v.BP+idx] = val
-}
-
 func (v *VM) opDumpTrace(yield func(*Interrupt, error) bool) bool {
 	var msg string
 	for _, frame := range v.CallStack {
@@ -1621,12 +1551,8 @@ func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 		if m1, ok1 := a.(map[any]any); ok1 {
 			if m2, ok2 := b.(map[any]any); ok2 {
 				newMap := make(map[any]any, len(m1)+len(m2))
-				for k, val := range m1 {
-					newMap[k] = val
-				}
-				for k, val := range m2 {
-					newMap[k] = val
-				}
+				maps.Copy(newMap, m1)
+				maps.Copy(newMap, m2)
 				v.push(newMap)
 				return true
 			}
@@ -1876,71 +1802,6 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 	yield(nil, fmt.Errorf("math operands must be numeric"))
 	v.push(nil)
 	return true
-}
-
-func intPow(base, exp int64) (int64, bool) {
-	if exp == 0 {
-		return 1, false
-	}
-	if exp < 0 {
-		return 0, false
-	}
-	if base == 0 {
-		return 0, false
-	}
-	if base == 1 {
-		return 1, false
-	}
-	if base == -1 {
-		if exp%2 == 0 {
-			return 1, false
-		}
-		return -1, false
-	}
-
-	const maxInt64 = math.MaxInt64
-	const minInt64 = math.MinInt64
-
-	result := int64(1)
-	currentBase := base
-	currentExp := exp
-
-	for currentExp > 0 {
-		if currentExp&1 == 1 {
-			// Check overflow before multiplication
-			if result > 0 && currentBase > 0 && result > maxInt64/currentBase {
-				return 0, true
-			}
-			if result > 0 && currentBase < 0 && currentBase < minInt64/result {
-				return 0, true
-			}
-			if result < 0 && currentBase > 0 && result < minInt64/currentBase {
-				return 0, true
-			}
-			if result < 0 && currentBase < 0 && result < maxInt64/currentBase {
-				return 0, true
-			}
-
-			newResult := result * currentBase
-			if currentBase != 0 && newResult/currentBase != result {
-				return 0, true
-			}
-			result = newResult
-		}
-
-		currentExp >>= 1
-		if currentExp > 0 {
-			newBase := currentBase * currentBase
-			if currentBase != 0 && currentBase != 1 && currentBase != -1 {
-				if newBase/currentBase != currentBase {
-					return 0, true
-				}
-			}
-			currentBase = newBase
-		}
-	}
-
-	return result, false
 }
 
 func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
@@ -2546,7 +2407,7 @@ func (v *VM) opGetNativeAttr(target any, nameStr string, yield func(*Interrupt, 
 }
 
 func (v *VM) opGetNativeField(rv reflect.Value, nameStr string, target any, yield func(*Interrupt, error) bool) bool {
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	if rv.Kind() == reflect.Struct {
@@ -2775,10 +2636,7 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 		if v.SP+len(locals) > len(v.OperandStack) {
 			needed := v.SP + len(locals)
-			newCap := len(v.OperandStack) * 2
-			if newCap < needed {
-				newCap = needed
-			}
+			newCap := max(len(v.OperandStack)*2, needed)
 			newStack := make([]any, newCap)
 			copy(newStack, v.OperandStack)
 			v.OperandStack = newStack
@@ -2957,7 +2815,7 @@ func (v *VM) opUnpack(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		length := t.Len()
 		items = make([]any, 0, length)
 		curr := t.Start
-		for i := int64(0); i < length; i++ {
+		for range length {
 			items = append(items, curr)
 			curr += t.Step
 		}
@@ -3094,7 +2952,7 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 				return yield(nil, fmt.Errorf("cannot deref array type %v", p.ArrayType))
 			}
 			arr := reflect.New(rt).Elem()
-			for i := 0; i < n; i++ {
+			for i := range n {
 				arr.Index(i).Set(reflect.ValueOf(list.Elements[int(idx)+i]))
 			}
 			v.push(arr.Interface())
@@ -3135,7 +2993,7 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 			idx, _ := ToInt64(p.Key)
 			n := p.ArrayType.Len
 			vval := reflect.ValueOf(val)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				list.Elements[int(idx)+i] = vval.Index(i).Interface()
 			}
 			return true
@@ -3315,10 +3173,6 @@ func (v *VM) checkStructImplementsReflect(s *Struct, rif reflect.Type) bool {
 		}
 	}
 	return true
-}
-
-func (v *VM) structHasMethod(s *Struct, name string) bool {
-	return v.getStructMethod(s, name) != nil
 }
 
 func (v *VM) getStructMethod(s *Struct, name string) any {
