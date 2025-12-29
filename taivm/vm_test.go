@@ -1128,6 +1128,47 @@ func TestVM_Snapshot(t *testing.T) {
 	}
 }
 
+func TestVM_Snapshot_StackCleanup(t *testing.T) {
+	main := &Function{
+		Name:      "main",
+		Constants: []any{42},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpSuspend,
+			OpPop,
+			OpReturn,
+		},
+	}
+	vm := NewVM(main)
+	// Run to suspend
+	vm.Run(func(i *Interrupt, e error) bool { return false })
+
+	if vm.SP != 1 || vm.OperandStack[0] != 42 {
+		t.Fatal("unexpected state")
+	}
+
+	var buf bytes.Buffer
+	if err := vm.Snapshot(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	vm2 := NewVM(nil)
+	if err := vm2.Restore(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if vm2.SP != 1 || vm2.OperandStack[0] != 42 {
+		t.Fatal("restored stack mismatch")
+	}
+
+	// Verify garbage area is clean
+	for i := vm2.SP; i < len(vm2.OperandStack); i++ {
+		if vm2.OperandStack[i] != nil {
+			t.Errorf("stack not cleaned at index %d", i)
+		}
+	}
+}
+
 func TestVM_FunctionReuse(t *testing.T) {
 	// Function: global_var = 42
 	sharedFunc := &Function{

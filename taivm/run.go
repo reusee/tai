@@ -2001,19 +2001,33 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		}
 	case *FuncIterator:
 		it.Resumed = true
+		var innerIntr *Interrupt
+		var innerErr error
 		it.InnerVM.Run(func(intr *Interrupt, err error) bool {
 			if err == ErrYield {
 				it.Resumed = false
 				return false
 			}
+			if intr != nil || err != nil {
+				innerIntr, innerErr = intr, err
+				return false
+			}
 			return true
 		})
+		// If inner VM suspended or errored, propagate to outer VM
+		if innerIntr != nil || innerErr != nil {
+			if !yield(innerIntr, innerErr) {
+				v.IP-- // Stay on this instruction to retry when resumed
+				return false
+			}
+			return true
+		}
 		if !it.Resumed {
 			v.push(it.K)
 			return true
 		}
 		it.Done = true
-		v.pop()
+		v.pop() // pop iterator
 		v.IP += offset
 	default:
 		if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
