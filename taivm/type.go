@@ -49,6 +49,14 @@ type Type struct {
 	Out      []*Type
 	Variadic bool
 	Methods  map[string]*Type
+	Fields   []StructField
+}
+
+type StructField struct {
+	Name      string
+	Type      *Type
+	Tag       string
+	Anonymous bool
 }
 
 func FromReflectType(t reflect.Type) *Type {
@@ -81,6 +89,16 @@ func FromReflectType(t reflect.Type) *Type {
 		for i := 0; i < t.NumMethod(); i++ {
 			m := t.Method(i)
 			res.Methods[m.Name] = FromReflectType(m.Type)
+		}
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			res.Fields = append(res.Fields, StructField{
+				Name:      f.Name,
+				Type:      FromReflectType(f.Type),
+				Tag:       string(f.Tag),
+				Anonymous: f.Anonymous,
+			})
 		}
 	}
 	return res
@@ -162,6 +180,33 @@ func (t *Type) ToReflectType() reflect.Type {
 			out[i] = v.ToReflectType()
 		}
 		return reflect.FuncOf(in, out, t.Variadic)
+	case KindInterface:
+		return reflect.TypeFor[any]()
+	case KindStruct:
+		if len(t.Fields) == 0 {
+			return reflect.TypeFor[struct{}]()
+		}
+		var fields []reflect.StructField
+		for _, f := range t.Fields {
+			ft := f.Type.ToReflectType()
+			if ft == nil {
+				return nil
+			}
+			sf := reflect.StructField{
+				Name:      f.Name,
+				Type:      ft,
+				Tag:       reflect.StructTag(f.Tag),
+				Anonymous: f.Anonymous,
+			}
+			if sf.Anonymous && ft.Kind() == reflect.Interface {
+				sf.Anonymous = false
+			}
+			if sf.Name != "" && sf.Name[0] >= 'a' && sf.Name[0] <= 'z' {
+				sf.PkgPath = "main"
+			}
+			fields = append(fields, sf)
+		}
+		return reflect.StructOf(fields)
 	}
 	return nil
 }
@@ -247,6 +292,8 @@ func (t *Type) Zero() any {
 		return ""
 	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface, KindUnsafePointer:
 		return nil
+	case KindStruct:
+		return &Struct{TypeName: t.Name, Fields: make(map[string]any)}
 	}
 	if rt := t.ToReflectType(); rt != nil {
 		return reflect.Zero(rt).Interface()

@@ -923,7 +923,7 @@ func TestCoverageBuiltins(t *testing.T) {
 		{
 			name:    "make_invalid_type_arg",
 			src:     `package main; func main() { make(1) }`,
-			wantErr: "make expects reflect.Type as first argument",
+			wantErr: "make expects *taivm.Type as first argument",
 		},
 		{
 			name:    "make_slice_no_len",

@@ -584,22 +584,23 @@ func registerMemory(vm *taivm.VM) {
 			if len(args) < 1 {
 				return nil, fmt.Errorf("make expects type argument")
 			}
-			t, ok := args[0].(reflect.Type)
+			t, ok := args[0].(*taivm.Type)
 			if !ok {
-				return nil, fmt.Errorf("make expects reflect.Type as first argument, got %T", args[0])
+				return nil, fmt.Errorf("make expects *taivm.Type as first argument, got %T", args[0])
 			}
-			switch t.Kind() {
-			case reflect.Slice:
+			switch t.Kind {
+			case taivm.KindSlice:
 				return makeSlice(args, t)
-			case reflect.Map:
+			case taivm.KindMap:
 				size := 0
 				if len(args) >= 2 {
 					if s, ok := taivm.ToInt64(args[1]); ok {
 						size = int(s)
 					}
 				}
-				return reflect.MakeMapWithSize(t, size).Interface(), nil
-			case reflect.Chan:
+				rt := t.ToReflectType()
+				return reflect.MakeMapWithSize(rt, size).Interface(), nil
+			case taivm.KindChan:
 				return nil, fmt.Errorf("channels not supported")
 			default:
 				return nil, fmt.Errorf("cannot make type %v", t)
@@ -614,13 +615,13 @@ func registerMemory(vm *taivm.VM) {
 				return nil, fmt.Errorf("new expects 1 argument")
 			}
 			arg := args[0]
-			var t reflect.Type
+			var t *taivm.Type
 			var val any
-			if rt, ok := arg.(reflect.Type); ok {
+			if rt, ok := arg.(*taivm.Type); ok {
 				t = rt
-				val = getZeroValue(t)
+				val = t.Zero()
 			} else {
-				t = reflect.TypeOf(arg)
+				t = taivm.FromReflectType(reflect.TypeOf(arg))
 				val = arg
 			}
 			return &taivm.Pointer{
@@ -633,7 +634,7 @@ func registerMemory(vm *taivm.VM) {
 	})
 }
 
-func makeSlice(args []any, t reflect.Type) (any, error) {
+func makeSlice(args []any, t *taivm.Type) (any, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("make slice expects length argument")
 	}
@@ -657,7 +658,7 @@ func makeSlice(args []any, t reflect.Type) (any, error) {
 		return nil, fmt.Errorf("len larger than cap in make([]T)")
 	}
 	elements := make([]any, size, capacity)
-	zero := getZeroValue(t.Elem())
+	zero := t.Elem.Zero()
 	if zero != nil {
 		for i := range elements {
 			elements[i] = zero

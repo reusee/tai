@@ -32,6 +32,7 @@ type compiler struct {
 	generics       map[string]bool // Top-level generic names
 	typeParams     map[string]bool // Current function/type parameters
 	structFields   map[string][]string
+	types          map[string]*taivm.Type
 }
 
 type topDecl struct {
@@ -354,6 +355,9 @@ func (c *compiler) compileFile(file *ast.File) error {
 	if c.structFields == nil {
 		c.structFields = make(map[string][]string)
 	}
+	if c.types == nil {
+		c.types = make(map[string]*taivm.Type)
+	}
 
 	allTopSymbols := make(map[string]bool)
 	for _, decl := range file.Decls {
@@ -641,6 +645,7 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		generics:     c.generics,
 		typeParams:   make(map[string]bool),
 		structFields: c.structFields,
+		types:        c.types,
 	}
 	if decl.Type.TypeParams != nil {
 		for _, field := range decl.Type.TypeParams.List {
@@ -720,8 +725,7 @@ func (c *compiler) defineNamedResults(fType *ast.FuncType) error {
 			if err != nil {
 				return err
 			}
-			rt := t.(reflect.Type)
-			zero := reflect.Zero(rt).Interface()
+			zero := t.Zero()
 			for _, name := range field.Names {
 				c.loadConst(zero)
 				c.emit(taivm.OpDefVar.With(c.addConst(name.Name)))
@@ -745,9 +749,17 @@ func (c *compiler) resolveLabels() error {
 }
 
 func (c *compiler) setFuncMetadata(fn *taivm.Function, decl *ast.FuncDecl) error {
-	ft, err := c.getFuncType(decl)
+	ft, err := c.resolveType(decl.Type)
 	if err != nil {
 		return err
+	}
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		recv := decl.Recv.List[0]
+		rt, err := c.resolveType(recv.Type)
+		if err != nil {
+			return err
+		}
+		ft.In = append([]*taivm.Type{rt}, ft.In...)
 	}
 	fn.Type = ft
 	fn.ParamNames = c.getFuncParamNames(decl)
@@ -760,33 +772,6 @@ func (c *compiler) setFuncMetadata(fn *taivm.Function, decl *ast.FuncDecl) error
 		}
 	}
 	return nil
-}
-
-func (c *compiler) getFuncType(decl *ast.FuncDecl) (reflect.Type, error) {
-	tObj, err := c.resolveType(decl.Type)
-	if err != nil {
-		return nil, err
-	}
-	ft := tObj.(reflect.Type)
-	if decl.Recv != nil && len(decl.Recv.List) > 0 {
-		recv := decl.Recv.List[0]
-		rtObj, err := c.resolveType(recv.Type)
-		if err != nil {
-			return nil, err
-		}
-		rt := rtObj.(reflect.Type)
-		ins := make([]reflect.Type, 0, ft.NumIn()+1)
-		ins = append(ins, rt)
-		for i := 0; i < ft.NumIn(); i++ {
-			ins = append(ins, ft.In(i))
-		}
-		outs := make([]reflect.Type, ft.NumOut())
-		for i := 0; i < ft.NumOut(); i++ {
-			outs[i] = ft.Out(i)
-		}
-		ft = reflect.FuncOf(ins, outs, ft.IsVariadic())
-	}
-	return ft, nil
 }
 
 func (c *compiler) getFuncParamNames(decl *ast.FuncDecl) []string {
@@ -1231,6 +1216,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 		generics:     c.generics,
 		typeParams:   c.typeParams,
 		structFields: c.structFields,
+		types:        c.types,
 	}
 	if expr.Type.TypeParams != nil && len(expr.Type.TypeParams.List) > 0 {
 		newTypeParams := make(map[string]bool)
@@ -1274,7 +1260,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	if err != nil {
 		return err
 	}
-	fn.Type = tObj.(reflect.Type)
+	fn.Type = tObj
 	if expr.Type.Params != nil {
 		for _, field := range expr.Type.Params.List {
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
@@ -2179,6 +2165,7 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		generics:     c.generics,
 		typeParams:   c.typeParams,
 		structFields: c.structFields,
+		types:        c.types,
 	}
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
 		return err
@@ -2334,6 +2321,7 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 			generics:     c.generics,
 			typeParams:   make(map[string]bool),
 			structFields: c.structFields,
+			types:        c.types,
 		}
 		for _, field := range spec.TypeParams.List {
 			for _, name := range field.Names {
@@ -2345,11 +2333,9 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	if err != nil {
 		return err
 	}
-	if rt, ok := t.(reflect.Type); ok {
-		c.loadConst(&taivm.Type{Name: spec.Name.Name, Type: rt})
-	} else {
-		c.loadConst(t)
-	}
+	t.Name = spec.Name.Name
+	c.types[spec.Name.Name] = t
+	c.loadConst(t)
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		var fields []string
@@ -2409,9 +2395,9 @@ func (c *compiler) recordEmbeddedInfo(typeName string, st *ast.StructType) {
 	}
 }
 
-func (c *compiler) resolveType(expr ast.Expr) (any, error) {
+func (c *compiler) resolveType(expr ast.Expr) (*taivm.Type, error) {
 	if expr == nil {
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	}
 	switch e := expr.(type) {
 	case *ast.Ident:
@@ -2433,7 +2419,7 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 	case *ast.InterfaceType:
 		return c.resolveInterfaceType(e)
 	case *ast.SelectorExpr:
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	case *ast.IndexExpr:
 		return c.resolveType(e.X)
 	case *ast.IndexListExpr:
@@ -2445,76 +2431,83 @@ func (c *compiler) resolveType(expr ast.Expr) (any, error) {
 	}
 }
 
-func (c *compiler) resolveArrayType(e *ast.ArrayType) (reflect.Type, error) {
-	eltObj, err := c.resolveType(e.Elt)
+func (c *compiler) resolveArrayType(e *ast.ArrayType) (*taivm.Type, error) {
+	elt, err := c.resolveType(e.Elt)
 	if err != nil {
 		return nil, err
 	}
-	elt := eltObj.(reflect.Type)
 	if e.Len != nil {
 		var length int
 		if lit, ok := e.Len.(*ast.BasicLit); ok && lit.Kind == token.INT {
 			i, _ := strconv.Atoi(lit.Value)
 			length = i
 		}
-		return reflect.ArrayOf(length, elt), nil
+		return &taivm.Type{
+			Kind: taivm.KindArray,
+			Elem: elt,
+			Len:  length,
+		}, nil
 	}
-	return reflect.SliceOf(elt), nil
+	return &taivm.Type{
+		Kind: taivm.KindSlice,
+		Elem: elt,
+	}, nil
 }
 
-func (c *compiler) resolveEllipsisType(e *ast.Ellipsis) (reflect.Type, error) {
+func (c *compiler) resolveEllipsisType(e *ast.Ellipsis) (*taivm.Type, error) {
 	if e.Elt == nil {
-		return reflect.TypeFor[[]any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[[]any]()), nil
 	}
-	eltObj, err := c.resolveType(e.Elt)
+	elt, err := c.resolveType(e.Elt)
 	if err != nil {
 		return nil, err
 	}
-	return reflect.SliceOf(eltObj.(reflect.Type)), nil
+	return &taivm.Type{
+		Kind: taivm.KindSlice,
+		Elem: elt,
+	}, nil
 }
 
-func (c *compiler) resolveChanType(e *ast.ChanType) (reflect.Type, error) {
-	tObj, err := c.resolveType(e.Value)
+func (c *compiler) resolveChanType(e *ast.ChanType) (*taivm.Type, error) {
+	t, err := c.resolveType(e.Value)
 	if err != nil {
 		return nil, err
 	}
-	t := tObj.(reflect.Type)
-	switch e.Dir {
-	case ast.RECV | ast.SEND:
-		return reflect.ChanOf(reflect.BothDir, t), nil
-	case ast.RECV:
-		return reflect.ChanOf(reflect.RecvDir, t), nil
-	case ast.SEND:
-		return reflect.ChanOf(reflect.SendDir, t), nil
-	default:
-		return nil, fmt.Errorf("unknown dir: %v", e.Dir)
-	}
+	kind := taivm.KindChan
+	return &taivm.Type{
+		Kind: kind,
+		Elem: t,
+	}, nil
 }
 
-func (c *compiler) resolveMapType(e *ast.MapType) (reflect.Type, error) {
-	ktObj, err := c.resolveType(e.Key)
+func (c *compiler) resolveMapType(e *ast.MapType) (*taivm.Type, error) {
+	kt, err := c.resolveType(e.Key)
 	if err != nil {
 		return nil, err
 	}
-	kt := ktObj.(reflect.Type)
-	vtObj, err := c.resolveType(e.Value)
+	vt, err := c.resolveType(e.Value)
 	if err != nil {
 		return nil, err
 	}
-	vt := vtObj.(reflect.Type)
-	return reflect.MapOf(kt, vt), nil
+	return &taivm.Type{
+		Kind: taivm.KindMap,
+		Key:  kt,
+		Elem: vt,
+	}, nil
 }
 
-func (c *compiler) resolveStarType(e *ast.StarExpr) (reflect.Type, error) {
-	tObj, err := c.resolveType(e.X)
+func (c *compiler) resolveStarType(e *ast.StarExpr) (*taivm.Type, error) {
+	t, err := c.resolveType(e.X)
 	if err != nil {
 		return nil, err
 	}
-	t := tObj.(reflect.Type)
-	return reflect.PointerTo(t), nil
+	return &taivm.Type{
+		Kind: taivm.KindPtr,
+		Elem: t,
+	}, nil
 }
 
-func (c *compiler) resolveFuncType(e *ast.FuncType) (reflect.Type, error) {
+func (c *compiler) resolveFuncType(e *ast.FuncType) (*taivm.Type, error) {
 	params, err := c.resolveFuncFields(e.Params)
 	if err != nil {
 		return nil, err
@@ -2530,20 +2523,24 @@ func (c *compiler) resolveFuncType(e *ast.FuncType) (reflect.Type, error) {
 			variadic = true
 		}
 	}
-	return reflect.FuncOf(params, results, variadic), nil
+	return &taivm.Type{
+		Kind:     taivm.KindFunc,
+		In:       params,
+		Out:      results,
+		Variadic: variadic,
+	}, nil
 }
 
-func (c *compiler) resolveFuncFields(fields *ast.FieldList) ([]reflect.Type, error) {
+func (c *compiler) resolveFuncFields(fields *ast.FieldList) ([]*taivm.Type, error) {
 	if fields == nil {
 		return nil, nil
 	}
-	var res []reflect.Type
+	var res []*taivm.Type
 	for _, field := range fields.List {
-		tObj, err := c.resolveType(field.Type)
+		t, err := c.resolveType(field.Type)
 		if err != nil {
 			return nil, err
 		}
-		t := tObj.(reflect.Type)
 		n := len(field.Names)
 		if n == 0 {
 			n = 1
@@ -2555,140 +2552,128 @@ func (c *compiler) resolveFuncFields(fields *ast.FieldList) ([]reflect.Type, err
 	return res, nil
 }
 
-func (c *compiler) resolveStructType(e *ast.StructType) (reflect.Type, error) {
-	var fields []reflect.StructField
+func (c *compiler) resolveStructType(e *ast.StructType) (*taivm.Type, error) {
+	res := &taivm.Type{Kind: taivm.KindStruct}
 	if e.Fields != nil {
 		for _, field := range e.Fields.List {
-			ftObj, err := c.resolveType(field.Type)
+			t, err := c.resolveType(field.Type)
 			if err != nil {
 				return nil, err
 			}
-			ft := ftObj.(reflect.Type)
 			var tag string
 			if field.Tag != nil {
-				t, err := strconv.Unquote(field.Tag.Value)
+				tg, err := strconv.Unquote(field.Tag.Value)
 				if err != nil {
 					return nil, err
 				}
-				tag = t
+				tag = tg
 			}
 			if len(field.Names) == 0 {
-				fields = c.appendAnonymousField(fields, field, ft, tag)
+				name := ""
+				switch ft := field.Type.(type) {
+				case *ast.Ident:
+					name = ft.Name
+				case *ast.StarExpr:
+					if id, ok := ft.X.(*ast.Ident); ok {
+						name = id.Name
+					}
+				case *ast.IndexExpr:
+					if id, ok := ft.X.(*ast.Ident); ok {
+						name = id.Name
+					}
+				case *ast.IndexListExpr:
+					if id, ok := ft.X.(*ast.Ident); ok {
+						name = id.Name
+					}
+				}
+				res.Fields = append(res.Fields, taivm.StructField{
+					Name:      name,
+					Type:      t,
+					Tag:       tag,
+					Anonymous: true,
+				})
 			}
 			for _, name := range field.Names {
-				sf := c.createStructField(name.Name, ft)
-				sf.Tag = reflect.StructTag(tag)
-				fields = append(fields, sf)
+				res.Fields = append(res.Fields, taivm.StructField{
+					Name:      name.Name,
+					Type:      t,
+					Tag:       tag,
+					Anonymous: false,
+				})
 			}
 		}
 	}
-	return reflect.StructOf(fields), nil
+	return res, nil
 }
 
-func (c *compiler) createStructField(name string, ft reflect.Type) reflect.StructField {
-	sf := reflect.StructField{Name: name, Type: ft}
-	if name[0] >= 'a' && name[0] <= 'z' {
-		sf.PkgPath = "main"
-	}
-	return sf
-}
-
-func (c *compiler) appendAnonymousField(fields []reflect.StructField, field *ast.Field, ft reflect.Type, tag string) []reflect.StructField {
-	var name string
-	switch t := field.Type.(type) {
-	case *ast.Ident:
-		name = t.Name
-	case *ast.StarExpr:
-		if id, ok := t.X.(*ast.Ident); ok {
-			name = id.Name
-		} else if idx, ok := t.X.(*ast.IndexExpr); ok {
-			if id, ok := idx.X.(*ast.Ident); ok {
-				name = id.Name
-			}
-		}
-	case *ast.IndexExpr:
-		if id, ok := t.X.(*ast.Ident); ok {
-			name = id.Name
-		}
-	case *ast.IndexListExpr:
-		if id, ok := t.X.(*ast.Ident); ok {
-			name = id.Name
-		}
-	}
-	if name != "" {
-		sf := reflect.StructField{Name: name, Type: ft, Anonymous: true}
-		sf.Tag = reflect.StructTag(tag)
-		if name[0] >= 'a' && name[0] <= 'z' {
-			sf.PkgPath = "main"
-		}
-		fields = append(fields, sf)
-	}
-	return fields
-}
-
-func (c *compiler) resolveIdentType(e *ast.Ident) (any, error) {
+func (c *compiler) resolveIdentType(e *ast.Ident) (*taivm.Type, error) {
 	if c.typeParams != nil && c.typeParams[e.Name] {
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
+	}
+	if t, ok := c.types[e.Name]; ok {
+		return t, nil
 	}
 	switch e.Name {
 	case "int":
-		return reflect.TypeFor[int](), nil
+		return taivm.FromReflectType(reflect.TypeFor[int]()), nil
 	case "int8":
-		return reflect.TypeFor[int8](), nil
+		return taivm.FromReflectType(reflect.TypeFor[int8]()), nil
 	case "int16":
-		return reflect.TypeFor[int16](), nil
+		return taivm.FromReflectType(reflect.TypeFor[int16]()), nil
 	case "int32", "rune":
-		return reflect.TypeFor[int32](), nil
+		return taivm.FromReflectType(reflect.TypeFor[int32]()), nil
 	case "int64":
-		return reflect.TypeFor[int64](), nil
+		return taivm.FromReflectType(reflect.TypeFor[int64]()), nil
 	case "uint":
-		return reflect.TypeFor[uint](), nil
+		return taivm.FromReflectType(reflect.TypeFor[uint]()), nil
 	case "uint8", "byte":
-		return reflect.TypeFor[uint8](), nil
+		return taivm.FromReflectType(reflect.TypeFor[uint8]()), nil
 	case "uint16":
-		return reflect.TypeFor[uint16](), nil
+		return taivm.FromReflectType(reflect.TypeFor[uint16]()), nil
 	case "uint32":
-		return reflect.TypeFor[uint32](), nil
+		return taivm.FromReflectType(reflect.TypeFor[uint32]()), nil
 	case "uint64":
-		return reflect.TypeFor[uint64](), nil
+		return taivm.FromReflectType(reflect.TypeFor[uint64]()), nil
 	case "float32":
-		return reflect.TypeFor[float32](), nil
+		return taivm.FromReflectType(reflect.TypeFor[float32]()), nil
 	case "float64":
-		return reflect.TypeFor[float64](), nil
+		return taivm.FromReflectType(reflect.TypeFor[float64]()), nil
 	case "string":
-		return reflect.TypeFor[string](), nil
+		return taivm.FromReflectType(reflect.TypeFor[string]()), nil
 	case "any":
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	case "error":
-		return reflect.TypeFor[error](), nil
+		return taivm.FromReflectType(reflect.TypeFor[error]()), nil
 	case "bool":
-		return reflect.TypeFor[bool](), nil
+		return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
 	case "complex64":
-		return reflect.TypeFor[complex64](), nil
+		return taivm.FromReflectType(reflect.TypeFor[complex64]()), nil
 	case "complex128":
-		return reflect.TypeFor[complex128](), nil
+		return taivm.FromReflectType(reflect.TypeFor[complex128]()), nil
 	case "comparable":
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	default:
-		return reflect.TypeFor[any](), nil
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	}
 }
 
-func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Interface, error) {
-	methods := make(map[string]reflect.Type)
+func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, error) {
+	methods := make(map[string]*taivm.Type)
 	if e.Methods != nil {
 		for _, field := range e.Methods.List {
-			tObj, err := c.resolveType(field.Type)
+			t, err := c.resolveType(field.Type)
 			if err != nil {
 				return nil, err
 			}
-			ft := tObj.(reflect.Type)
 			for _, name := range field.Names {
-				methods[name.Name] = ft
+				methods[name.Name] = t
 			}
 		}
 	}
-	return &taivm.Interface{Methods: methods}, nil
+	return &taivm.Type{
+		Kind:    taivm.KindInterface,
+		Methods: methods,
+	}, nil
 }
 
 func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
