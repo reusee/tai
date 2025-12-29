@@ -5027,3 +5027,27 @@ func TestVM_IndexBounds(t *testing.T) {
 		}
 	})
 }
+
+func TestType_String(t *testing.T) {
+	cases := []struct {
+		typ  *Type
+		want string
+	}{
+		{FromReflectType(reflect.TypeOf(0)), "int"},
+		{FromReflectType(reflect.TypeOf([]int{})), "[]int"},
+		{FromReflectType(reflect.TypeOf([2]int{})), "[2]int"},
+		{FromReflectType(reflect.TypeOf(map[string]int{})), "map[string]int"},
+		{FromReflectType(reflect.TypeOf(func(int, ...string) (bool, error) { return false, nil })), "func(int, ...string) (bool, error)"},
+		{FromReflectType(reflect.TypeOf((*interface {
+			Foo(int) string
+			Bar()
+		})(nil)).Elem()), "interface { Bar(); Foo(int) string }"},
+		{&Type{Kind: KindInt}, "int"},
+		{&Type{Name: "MyInt", Kind: KindInt}, "MyInt"},
+	}
+	for _, c := range cases {
+		if got := c.typ.String(); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
+		}
+	}
+}

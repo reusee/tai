@@ -1,6 +1,11 @@
 package taivm
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+)
 
 type TypeKind uint8
 
@@ -335,4 +340,92 @@ func (t *Type) Match(val any) bool {
 		return rt.AssignableTo(targetRT)
 	}
 	return false
+}
+
+func (t *Type) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	if t.Name != "" {
+		return t.Name
+	}
+	switch t.Kind {
+	case KindPtr:
+		return "*" + t.Elem.String()
+	case KindSlice:
+		return "[]" + t.Elem.String()
+	case KindArray:
+		return fmt.Sprintf("[%d]%s", t.Len, t.Elem.String())
+	case KindMap:
+		return "map[" + t.Key.String() + "]" + t.Elem.String()
+	case KindChan:
+		return "chan " + t.Elem.String()
+	case KindFunc:
+		return t.funcString()
+	case KindInterface:
+		return t.interfaceString()
+	default:
+		return reflect.Kind(t.Kind).String()
+	}
+}
+
+func (t *Type) funcString() string {
+	var sb strings.Builder
+	sb.WriteString("func(")
+	for i, v := range t.In {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		if t.Variadic && i == len(t.In)-1 {
+			sb.WriteString("...")
+			if v != nil && v.Kind == KindSlice {
+				sb.WriteString(v.Elem.String())
+			} else {
+				sb.WriteString(v.String())
+			}
+		} else {
+			sb.WriteString(v.String())
+		}
+	}
+	sb.WriteString(")")
+	t.appendResults(&sb)
+	return sb.String()
+}
+
+func (t *Type) appendResults(sb *strings.Builder) {
+	if len(t.Out) == 1 {
+		sb.WriteString(" ")
+		sb.WriteString(t.Out[0].String())
+	} else if len(t.Out) > 1 {
+		sb.WriteString(" (")
+		for i, v := range t.Out {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(v.String())
+		}
+		sb.WriteString(")")
+	}
+}
+
+func (t *Type) interfaceString() string {
+	if len(t.Methods) == 0 {
+		return "interface{}"
+	}
+	var names []string
+	for n := range t.Methods {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	sb.WriteString("interface { ")
+	for i, n := range names {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		sb.WriteString(n)
+		sb.WriteString(strings.TrimPrefix(t.Methods[n].String(), "func"))
+	}
+	sb.WriteString(" }")
+	return sb.String()
 }
