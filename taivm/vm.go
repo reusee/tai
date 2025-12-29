@@ -6,6 +6,10 @@ import (
 	"reflect"
 )
 
+var (
+	errorType = reflect.TypeFor[error]()
+)
+
 type VM struct {
 	MainFun      *Function
 	CurrentFun   *Function
@@ -148,7 +152,7 @@ func (v *VM) handleNativeReturn(out []reflect.Value) (any, error) {
 		return val
 	}
 	last := out[len(out)-1]
-	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+	if last.Type().Implements(errorType) {
 		var err error
 		if !last.IsNil() {
 			err = last.Interface().(error)

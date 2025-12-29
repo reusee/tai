@@ -1070,35 +1070,48 @@ func (v *VM) callTypeConversion(t *Type, argc, calleeIdx int, yield func(*Interr
 	var res any
 	if arg == nil {
 		res = t.Zero()
-	} else {
-		if list, ok := arg.(*List); ok {
-			if t.Kind == KindArray {
-				n := t.Len
-				if len(list.Elements) < n {
-					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array of length %d", len(list.Elements), n)
-					v.IP = len(v.CurrentFun.Code)
-					return true
-				}
-				rt := t.ToReflectType()
-				arr := reflect.New(rt).Elem()
-				for i := range n {
-					arr.Index(i).Set(reflect.ValueOf(list.Elements[i]))
-				}
-				res = arr.Interface()
-			} else if t.Kind == KindPtr && t.Elem != nil && t.Elem.Kind == KindArray {
-				n := t.Elem.Len
-				if len(list.Elements) < n {
-					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array pointer of length %d", len(list.Elements), n)
-					v.IP = len(v.CurrentFun.Code)
-					return true
-				}
-				res = &Pointer{
-					Target:    list,
-					Key:       0,
-					ArrayType: t.Elem,
-				}
+	} else if list, ok := arg.(*List); ok && (t.Kind == KindArray || (t.Kind == KindPtr && t.Elem != nil && t.Elem.Kind == KindArray)) {
+		if t.Kind == KindArray {
+			n := t.Len
+			if len(list.Elements) < n {
+				v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array of length %d", len(list.Elements), n)
+				v.IP = len(v.CurrentFun.Code)
+				return true
 			}
+			rt := t.ToReflectType()
+			arr := reflect.New(rt).Elem()
+			for i := range n {
+				arr.Index(i).Set(reflect.ValueOf(list.Elements[i]))
+			}
+			res = arr.Interface()
+		} else {
+			n := t.Elem.Len
+			if len(list.Elements) < n {
+				v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array pointer of length %d", len(list.Elements), n)
+				v.IP = len(v.CurrentFun.Code)
+				return true
+			}
+			res = &Pointer{Target: list, Key: 0, ArrayType: t.Elem}
 		}
+	} else {
+		// Manual scalar conversions
+		switch t.Kind {
+		case KindInt:
+			if i, ok := ToInt64(arg); ok {
+				res = int(i)
+			}
+		case KindInt64:
+			if i, ok := ToInt64(arg); ok {
+				res = i
+			}
+		case KindFloat64:
+			if f, ok := ToFloat64(arg); ok {
+				res = f
+			}
+		case KindString:
+			res = fmt.Sprint(arg)
+		}
+		// Fallback to reflect for complex native conversions
 		if res == nil {
 			if rt := t.ToReflectType(); rt != nil {
 				val := reflect.ValueOf(arg)

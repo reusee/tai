@@ -121,7 +121,7 @@ func (t *Type) ToReflectType() reflect.Type {
 	case KindString:
 		return reflect.TypeFor[string]()
 	case KindUnsafePointer:
-		return reflect.TypeFor[uintptr]()
+		return reflect.TypeFor[uintptr]() // Fallback to uintptr if unsafe is not imported
 	case KindPtr:
 		et := t.Elem.ToReflectType()
 		if et == nil {
@@ -228,13 +228,19 @@ func (t *Type) Zero() any {
 		return uint32(0)
 	case KindUint64:
 		return uint64(0)
+	case KindUintptr:
+		return uintptr(0)
 	case KindFloat32:
 		return float32(0)
 	case KindFloat64:
 		return float64(0)
+	case KindComplex64:
+		return complex64(0)
+	case KindComplex128:
+		return complex128(0)
 	case KindString:
 		return ""
-	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface:
+	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface, KindUnsafePointer:
 		return nil
 	}
 	if rt := t.ToReflectType(); rt != nil {
@@ -250,13 +256,78 @@ func (t *Type) Match(val any) bool {
 	if t == nil {
 		return false
 	}
+	if t.Kind == KindInterface && len(t.Methods) == 0 {
+		return true
+	}
 	if s, ok := val.(*Struct); ok {
-		if t.Name != "" && s.TypeName == t.Name {
+		return t.Name != "" && s.TypeName == t.Name
+	}
+	// Direct matches for all basic kinds to avoid reflect.TypeOf
+	switch t.Kind {
+	case KindBool:
+		_, ok := val.(bool)
+		return ok
+	case KindInt:
+		_, ok := val.(int)
+		return ok
+	case KindInt8:
+		_, ok := val.(int8)
+		return ok
+	case KindInt16:
+		_, ok := val.(int16)
+		return ok
+	case KindInt32:
+		_, ok := val.(int32)
+		return ok
+	case KindInt64:
+		_, ok := val.(int64)
+		return ok
+	case KindUint:
+		_, ok := val.(uint)
+		return ok
+	case KindUint8:
+		_, ok := val.(uint8)
+		return ok
+	case KindUint16:
+		_, ok := val.(uint16)
+		return ok
+	case KindUint32:
+		_, ok := val.(uint32)
+		return ok
+	case KindUint64:
+		_, ok := val.(uint64)
+		return ok
+	case KindUintptr:
+		_, ok := val.(uintptr)
+		return ok
+	case KindFloat32:
+		_, ok := val.(float32)
+		return ok
+	case KindFloat64:
+		_, ok := val.(float64)
+		return ok
+	case KindComplex64:
+		_, ok := val.(complex64)
+		return ok
+	case KindComplex128:
+		_, ok := val.(complex128)
+		return ok
+	case KindString:
+		_, ok := val.(string)
+		return ok
+	case KindSlice:
+		if _, ok := val.(*List); ok {
 			return true
 		}
-		if t.Kind == KindInterface {
-			// This implementation would need a reference back to VM or a shared interface checker
-			return false
+		if _, ok := val.([]any); ok {
+			return true
+		}
+	case KindMap:
+		if _, ok := val.(map[any]any); ok {
+			return true
+		}
+		if _, ok := val.(map[string]any); ok {
+			return true
 		}
 	}
 	rt := reflect.TypeOf(val)
