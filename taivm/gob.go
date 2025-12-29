@@ -1,6 +1,9 @@
 package taivm
 
-import "encoding/gob"
+import (
+	"encoding/gob"
+	"math/big"
+)
 
 func init() {
 	gob.Register(&Function{})
@@ -25,4 +28,7 @@ func init() {
 	gob.Register(&Interrupt{})
 	gob.Register(&Interface{})
 	gob.Register(&Type{})
+	gob.Register(&big.Int{})
+	gob.Register(&big.Float{})
+	gob.Register(&big.Rat{})
 }

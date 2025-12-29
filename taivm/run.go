@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"reflect"
 	"sort"
 	"strings"
@@ -338,6 +339,8 @@ func ToInt64(v any) (int64, bool) {
 		return int64(i), true
 	case int64:
 		return i, true
+	case *big.Int:
+		return i.Int64(), i.IsInt64()
 	case nil:
 		return 0, true
 	case uint8:
@@ -355,15 +358,38 @@ func ToInt64(v any) (int64, bool) {
 	case uint16:
 		return int64(i), true
 	case uint64:
-		return int64(i), true
+		return int64(i), i <= math.MaxInt64
 	}
 	return 0, false
+}
+
+func ToIntBig(v any) (*big.Int, bool) {
+	switch i := v.(type) {
+	case *big.Int:
+		return i, true
+	case int:
+		return big.NewInt(int64(i)), true
+	case int64:
+		return big.NewInt(i), true
+	case uint64:
+		return new(big.Int).SetUint64(i), true
+	}
+	if i, ok := ToInt64(v); ok {
+		return big.NewInt(i), true
+	}
+	return nil, false
 }
 
 func ToFloat64(v any) (float64, bool) {
 	switch i := v.(type) {
 	case float64:
 		return i, true
+	case *big.Float:
+		f, _ := i.Float64()
+		return f, true
+	case *big.Int:
+		f, _ := new(big.Float).SetInt(i).Float64()
+		return f, true
 	case int:
 		return float64(i), true
 	case int64:
@@ -390,6 +416,21 @@ func ToFloat64(v any) (float64, bool) {
 		return float64(i), true
 	}
 	return 0, false
+}
+
+func ToFloatBig(v any) (*big.Float, bool) {
+	switch i := v.(type) {
+	case *big.Float:
+		return i, true
+	case *big.Int:
+		return new(big.Float).SetInt(i), true
+	case float64:
+		return big.NewFloat(i), true
+	}
+	if f, ok := ToFloat64(v); ok {
+		return big.NewFloat(f), true
+	}
+	return nil, false
 }
 
 func isFloat(v any) bool {
@@ -429,6 +470,10 @@ func isZero(v any) bool {
 		return i == 0
 	case int64:
 		return i == 0
+	case *big.Int:
+		return i.Sign() == 0
+	case *big.Float:
+		return i.Sign() == 0
 	case string:
 		return i == ""
 	case nil:
@@ -520,6 +565,27 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 				return q, true, nil
 			}
 		}
+	case *big.Int:
+		if y, ok := b.(*big.Int); ok {
+			switch op {
+			case OpAdd:
+				return new(big.Int).Add(x, y), true, nil
+			case OpSub:
+				return new(big.Int).Sub(x, y), true, nil
+			case OpMul:
+				return new(big.Int).Mul(x, y), true, nil
+			case OpDiv:
+				if y.Sign() == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return new(big.Int).Quo(x, y), true, nil
+			case OpMod:
+				if y.Sign() == 0 {
+					return nil, true, fmt.Errorf("division by zero")
+				}
+				return new(big.Int).Rem(x, y), true, nil
+			}
+		}
 	case float64:
 		if y, ok := b.(float64); ok {
 			switch op {
@@ -539,6 +605,19 @@ func arithmeticSameType(op OpCode, a, b any) (any, bool, error) {
 					return nil, true, fmt.Errorf("division by zero")
 				}
 				return math.Floor(x / y), true, nil
+			}
+		}
+	case *big.Float:
+		if y, ok := b.(*big.Float); ok {
+			switch op {
+			case OpAdd:
+				return new(big.Float).Add(x, y), true, nil
+			case OpSub:
+				return new(big.Float).Sub(x, y), true, nil
+			case OpMul:
+				return new(big.Float).Mul(x, y), true, nil
+			case OpDiv:
+				return new(big.Float).Quo(x, y), true, nil
 			}
 		}
 	case string:
@@ -591,6 +670,21 @@ func bitwiseSameType(op OpCode, a, b any) (any, bool, error) {
 					return nil, true, fmt.Errorf("negative shift count: %d", y)
 				}
 				return x >> uint(y), true, nil
+			}
+		}
+	case *big.Int:
+		if y, ok := b.(*big.Int); ok {
+			switch op {
+			case OpBitAnd:
+				return new(big.Int).And(x, y), true, nil
+			case OpBitOr:
+				return new(big.Int).Or(x, y), true, nil
+			case OpBitXor:
+				return new(big.Int).Xor(x, y), true, nil
+			case OpBitLsh:
+				return new(big.Int).Lsh(x, uint(y.Uint64())), true, nil
+			case OpBitRsh:
+				return new(big.Int).Rsh(x, uint(y.Uint64())), true, nil
 			}
 		}
 	}
@@ -1521,33 +1615,31 @@ func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {
 		v.push(res)
 		return true
 	}
-	i1, ok1 := ToInt64(a)
-	i2, ok2 := ToInt64(b)
+	i1, ok1 := ToIntBig(a)
+	i2, ok2 := ToIntBig(b)
 	if !ok1 || !ok2 {
 		yield(nil, fmt.Errorf("bitwise operands must be integers"))
 		v.push(nil)
 		return true
 	}
+	var res *big.Int
 	switch op {
 	case OpBitAnd:
-		v.push(i1 & i2)
+		res = new(big.Int).And(i1, i2)
 	case OpBitOr:
-		v.push(i1 | i2)
+		res = new(big.Int).Or(i1, i2)
 	case OpBitXor:
-		v.push(i1 ^ i2)
+		res = new(big.Int).Xor(i1, i2)
 	case OpBitLsh:
-		if i2 < 0 {
-			yield(nil, fmt.Errorf("negative shift count"))
-			v.push(nil)
-		} else {
-			v.push(i1 << uint(i2))
-		}
+		res = new(big.Int).Lsh(i1, uint(i2.Uint64()))
 	case OpBitRsh:
-		if i2 < 0 {
-			yield(nil, fmt.Errorf("negative shift count"))
-			v.push(nil)
+		res = new(big.Int).Rsh(i1, uint(i2.Uint64()))
+	}
+	if res != nil {
+		if res.IsInt64() {
+			v.push(res.Int64())
 		} else {
-			v.push(i1 >> uint(i2))
+			v.push(res)
 		}
 	}
 	return true
@@ -1584,6 +1676,8 @@ func (v *VM) opBitNot(yield func(*Interrupt, error) bool) bool {
 		res = ^i
 	case uint64:
 		res = ^i
+	case *big.Int:
+		res = new(big.Int).Not(i)
 	default:
 		if !yield(nil, fmt.Errorf("bitwise not operand must be int, got %T", a)) {
 			return false
@@ -1591,7 +1685,15 @@ func (v *VM) opBitNot(yield func(*Interrupt, error) bool) bool {
 		v.push(nil)
 		return true
 	}
-	v.push(res)
+	if r, ok := res.(*big.Int); ok {
+		if r.IsInt64() {
+			v.push(r.Int64())
+		} else {
+			v.push(r)
+		}
+	} else {
+		v.push(res)
+	}
 	return true
 }
 
@@ -1656,100 +1758,97 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if isFloat(a) || isFloat(b) {
-		f1, ok1 := ToFloat64(a)
-		f2, ok2 := ToFloat64(b)
-		if !ok1 || !ok2 {
-			yield(nil, fmt.Errorf("invalid operands for float math"))
-			v.push(nil)
-			return true
-		}
+	i1, ok1 := ToIntBig(a)
+	i2, ok2 := ToIntBig(b)
+	if ok1 && ok2 {
+		var res *big.Int
 		switch op {
 		case OpAdd:
-			v.push(f1 + f2)
+			res = new(big.Int).Add(i1, i2)
 		case OpSub:
-			v.push(f1 - f2)
+			res = new(big.Int).Sub(i1, i2)
 		case OpMul:
-			v.push(f1 * f2)
+			res = new(big.Int).Mul(i1, i2)
 		case OpDiv:
-			if f2 == 0 {
+			if i2.Sign() == 0 {
 				yield(nil, fmt.Errorf("division by zero"))
 				v.push(nil)
-				return true
+			} else {
+				res = new(big.Int).Quo(i1, i2)
 			}
-			v.push(f1 / f2)
-		case OpFloorDiv:
-			if f2 == 0 {
+		case OpMod:
+			if i2.Sign() == 0 {
 				yield(nil, fmt.Errorf("division by zero"))
 				v.push(nil)
-				return true
+			} else {
+				res = new(big.Int).Rem(i1, i2)
 			}
-			v.push(math.Floor(f1 / f2))
 		case OpPow:
-			v.push(math.Pow(f1, f2))
-		default:
-			yield(nil, fmt.Errorf("unsupported operation for floats"))
-			v.push(nil)
-		}
-		return true
-	}
-
-	i1, ok1 := ToInt64(a)
-	i2, ok2 := ToInt64(b)
-	if !ok1 || !ok2 {
-		yield(nil, fmt.Errorf("math operands must be numeric"))
-		v.push(nil)
-		return true
-	}
-
-	switch op {
-	case OpAdd:
-		v.push(i1 + i2)
-	case OpSub:
-		v.push(i1 - i2)
-	case OpMul:
-		v.push(i1 * i2)
-	case OpDiv:
-		if i2 == 0 {
-			yield(nil, fmt.Errorf("division by zero"))
-			v.push(nil)
-		} else {
-			v.push(i1 / i2)
-		}
-	case OpMod:
-		if i2 == 0 {
-			yield(nil, fmt.Errorf("division by zero"))
-			v.push(nil)
-		} else {
-			res := i1 % i2
-			if (res < 0) != (i2 < 0) && res != 0 {
-				res += i2
+			exp := i2.Int64()
+			if i2.IsInt64() && exp >= 0 {
+				res = new(big.Int).Exp(i1, big.NewInt(exp), nil)
+			} else {
+				f1, _ := new(big.Float).SetInt(i1).Float64()
+				f2, _ := new(big.Float).SetInt(i2).Float64()
+				v.push(math.Pow(f1, f2))
+				return true
 			}
-			v.push(res)
 		}
-	case OpFloorDiv:
-		if i2 == 0 {
-			yield(nil, fmt.Errorf("division by zero"))
-			v.push(nil)
-		} else {
-			res := i1 / i2
-			if (i1 < 0) != (i2 < 0) && i1%i2 != 0 {
-				res--
-			}
-			v.push(res)
-		}
-	case OpPow:
-		if i2 < 0 {
-			v.push(math.Pow(float64(i1), float64(i2)))
-		} else {
-			res, overflow := intPow(i1, i2)
-			if overflow {
-				v.push(math.Pow(float64(i1), float64(i2)))
+		if res != nil {
+			if res.IsInt64() {
+				v.push(res.Int64())
 			} else {
 				v.push(res)
 			}
 		}
+		return true
 	}
+
+	if fa, ok1 := ToFloatBig(a); ok1 {
+		if fb, ok2 := ToFloatBig(b); ok2 {
+			var res *big.Float
+			switch op {
+			case OpAdd:
+				res = new(big.Float).Add(fa, fb)
+			case OpSub:
+				res = new(big.Float).Sub(fa, fb)
+			case OpMul:
+				res = new(big.Float).Mul(fa, fb)
+			case OpDiv:
+				if fb.Sign() == 0 {
+					yield(nil, fmt.Errorf("division by zero"))
+					v.push(nil)
+					return true
+				}
+				res = new(big.Float).Quo(fa, fb)
+			case OpPow:
+				f1, _ := fa.Float64()
+				f2, _ := fb.Float64()
+				v.push(math.Pow(f1, f2))
+				return true
+			default:
+				yield(nil, fmt.Errorf("unsupported operation for floats"))
+				v.push(nil)
+				return true
+			}
+			if res != nil {
+				_, isBigA := a.(*big.Float)
+				_, isBigB := b.(*big.Float)
+				_, isBigIntA := a.(*big.Int)
+				_, isBigIntB := b.(*big.Int)
+				if !isBigA && !isBigB && !isBigIntA && !isBigIntB {
+					f, _ := res.Float64()
+					v.push(f)
+				} else {
+					v.push(res)
+				}
+			}
+			return true
+		}
+	}
+
+	yield(nil, fmt.Errorf("math operands must be numeric"))
+	v.push(nil)
 	return true
 }
 
@@ -1852,38 +1951,35 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 		v.push(nil)
 		return true
 	}
-	if isFloat(a) || isFloat(b) {
-		f1, ok1 := ToFloat64(a)
-		f2, ok2 := ToFloat64(b)
-		if !ok1 || !ok2 {
-			yield(nil, fmt.Errorf("invalid operands for float comparison"))
-			v.push(nil)
+	if fa, ok1 := ToFloatBig(a); ok1 {
+		if fb, ok2 := ToFloatBig(b); ok2 {
+			cmp := fa.Cmp(fb)
+			switch op {
+			case OpLt:
+				v.push(cmp < 0)
+			case OpLe:
+				v.push(cmp <= 0)
+			case OpGt:
+				v.push(cmp > 0)
+			case OpGe:
+				v.push(cmp >= 0)
+			}
 			return true
 		}
-		switch op {
-		case OpLt:
-			v.push(f1 < f2)
-		case OpLe:
-			v.push(f1 <= f2)
-		case OpGt:
-			v.push(f1 > f2)
-		case OpGe:
-			v.push(f1 >= f2)
-		}
-		return true
 	}
-	i1, ok1 := ToInt64(a)
-	i2, ok2 := ToInt64(b)
+	i1, ok1 := ToIntBig(a)
+	i2, ok2 := ToIntBig(b)
 	if ok1 && ok2 {
+		cmp := i1.Cmp(i2)
 		switch op {
 		case OpLt:
-			v.push(i1 < i2)
+			v.push(cmp < 0)
 		case OpLe:
-			v.push(i1 <= i2)
+			v.push(cmp <= 0)
 		case OpGt:
-			v.push(i1 > i2)
+			v.push(cmp > 0)
 		case OpGe:
-			v.push(i1 >= i2)
+			v.push(cmp >= 0)
 		}
 		return true
 	}
@@ -1893,15 +1989,15 @@ func (v *VM) opCompare(op OpCode, yield func(*Interrupt, error) bool) bool {
 }
 
 func (v *VM) compareEqFallback(a, b any) bool {
-	i1, ok1 := ToInt64(a)
-	i2, ok2 := ToInt64(b)
+	i1, ok1 := ToIntBig(a)
+	i2, ok2 := ToIntBig(b)
 	if ok1 && ok2 {
-		return i1 == i2
+		return i1.Cmp(i2) == 0
 	}
-	f1, ok1 := ToFloat64(a)
-	f2, ok2 := ToFloat64(b)
+	f1, ok1 := ToFloatBig(a)
+	f2, ok2 := ToFloatBig(b)
 	if ok1 && ok2 {
-		return f1 == f2
+		return f1.Cmp(f2) == 0
 	}
 	return false
 }

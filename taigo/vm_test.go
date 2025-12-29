@@ -34,7 +34,7 @@ func checkInt(t *testing.T, vm *taivm.VM, name string, expected int64) {
 	}
 	if i, ok := taivm.ToInt64(val); !ok || i != expected {
 		t.Helper()
-		t.Fatalf("variable %s: expected %d, got %v", name, expected, val)
+		t.Fatalf("variable %s: expected %d, got %T %v", name, expected, val, val)
 	}
 }
 

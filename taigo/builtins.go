@@ -3,6 +3,7 @@ package taigo
 import (
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"reflect"
 
@@ -434,21 +435,27 @@ func isLess(a, b any) bool {
 		if v2, ok := b.(string); ok {
 			return v1 < v2
 		}
+	case *big.Int:
+		if v2, ok := taivm.ToIntBig(b); ok {
+			return v1.Cmp(v2) < 0
+		}
 	}
-	if i1, ok1 := taivm.ToInt64(a); ok1 {
-		if i2, ok2 := taivm.ToInt64(b); ok2 {
-			return i1 < i2
+	if i1, ok1 := taivm.ToIntBig(a); ok1 {
+		if i2, ok2 := taivm.ToIntBig(b); ok2 {
+			return i1.Cmp(i2) < 0
 		}
 		if f2, ok2 := taivm.ToFloat64(b); ok2 {
-			return float64(i1) < f2
+			f1, _ := new(big.Float).SetInt(i1).Float64()
+			return f1 < f2
 		}
 	}
 	if f1, ok1 := taivm.ToFloat64(a); ok1 {
 		if f2, ok2 := taivm.ToFloat64(b); ok2 {
 			return f1 < f2
 		}
-		if i2, ok2 := taivm.ToInt64(b); ok2 {
-			return f1 < float64(i2)
+		if i2, ok2 := taivm.ToIntBig(b); ok2 {
+			f2, _ := new(big.Float).SetInt(i2).Float64()
+			return f1 < f2
 		}
 	}
 	return false
@@ -466,6 +473,8 @@ func registerConversions(vm *taivm.VM) {
 				return v, nil
 			case int64:
 				return int(v), nil
+			case *big.Int:
+				return int(v.Int64()), nil
 			case float64:
 				return int(v), nil
 			}
@@ -491,6 +500,9 @@ func registerConversions(vm *taivm.VM) {
 				return float64(v), nil
 			case int64:
 				return float64(v), nil
+			case *big.Int:
+				f, _ := new(big.Float).SetInt(v).Float64()
+				return f, nil
 			}
 			if f, ok := taivm.ToFloat64(args[0]); ok {
 				return f, nil
@@ -517,6 +529,8 @@ func registerConversions(vm *taivm.VM) {
 				return v != 0, nil
 			case int64:
 				return v != 0, nil
+			case *big.Int:
+				return v.Sign() != 0, nil
 			case float64:
 				return v != 0, nil
 			}
@@ -555,6 +569,8 @@ func registerConversions(vm *taivm.VM) {
 				return string(rune(v)), nil
 			case int64:
 				return string(rune(v)), nil
+			case *big.Int:
+				return v.String(), nil
 			}
 			return fmt.Sprint(arg), nil
 		},
