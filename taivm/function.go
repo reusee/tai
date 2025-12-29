@@ -1,10 +1,8 @@
 package taivm
 
-import "reflect"
-
 type Function struct {
 	Name        string
-	Type        reflect.Type
+	Type        *Type
 	NumParams   int
 	ParamNames  []string
 	NumLocals   int

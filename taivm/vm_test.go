@@ -4965,7 +4965,7 @@ func TestVM_IndexBounds(t *testing.T) {
 
 	t.Run("GetIndex_PointerOutOfBounds", func(t *testing.T) {
 		l := &List{Elements: []any{1, 2, 3}}
-		p := &Pointer{Target: l, Key: 1, ArrayType: reflect.TypeOf([2]any{})} // &l[1] (l[1], l[2])
+		p := &Pointer{Target: l, Key: 1, ArrayType: FromReflectType(reflect.TypeOf([2]any{}))} // &l[1] (l[1], l[2])
 		main := &Function{
 			Constants: []any{p, 2}, // Accessing index 2 of pointer (offset 1+2=3), which is out of bounds for l
 			Code: []OpCode{

@@ -924,7 +924,15 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		return v.callTypeConversion(fn, argc, calleeIdx, yield)
 
 	case *Type:
-		return v.callTypeConversion(fn.Type, argc, calleeIdx, yield)
+		if rt := fn.ToReflectType(); rt != nil {
+			return v.callTypeConversion(rt, argc, calleeIdx, yield)
+		}
+		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
+			return false
+		}
+		v.drop(argc + 1)
+		v.push(nil)
+		return true
 
 	default:
 		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
@@ -1124,7 +1132,11 @@ func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(
 					v.IP = len(v.CurrentFun.Code)
 					return true
 				}
-				res = &Pointer{Target: list, Key: 0, ArrayType: t.Elem()}
+				res = &Pointer{
+					Target:    list,
+					Key:       0,
+					ArrayType: FromReflectType(t.Elem()),
+				}
 			}
 		}
 		if res == nil {
@@ -2414,7 +2426,10 @@ func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error
 			return true
 		}
 	}
-	return v.opGetReflectTypeAttr(t.Type, nameStr, yield)
+	if rt := t.ToReflectType(); rt != nil {
+		return v.opGetReflectTypeAttr(rt, nameStr, yield)
+	}
+	return yield(nil, fmt.Errorf("type %v has no attribute '%s'", t, nameStr))
 }
 
 func (v *VM) tryGetStructMethod(s *Struct, nameStr string) bool {
@@ -3069,8 +3084,8 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	}
 	if t, ok := ptr.(*Type); ok {
 		v.push(&Type{
-			Name: "*" + t.Name,
-			Type: reflect.PointerTo(t.Type),
+			Kind: KindPtr,
+			Elem: t,
 		})
 		return true
 	}
@@ -3081,8 +3096,12 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	if p.ArrayType != nil {
 		if list, ok := p.Target.(*List); ok {
 			idx, _ := ToInt64(p.Key)
-			n := p.ArrayType.Len()
-			arr := reflect.New(p.ArrayType).Elem()
+			n := p.ArrayType.Len
+			rt := p.ArrayType.ToReflectType()
+			if rt == nil {
+				return yield(nil, fmt.Errorf("cannot deref array type %v", p.ArrayType))
+			}
+			arr := reflect.New(rt).Elem()
 			for i := 0; i < n; i++ {
 				arr.Index(i).Set(reflect.ValueOf(list.Elements[int(idx)+i]))
 			}
@@ -3102,11 +3121,13 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 		v.push(p.Target)
 		return true
 	}
-	v.push(p.Target)
-	v.push(p.Key)
 	if _, ok := p.Target.(*Struct); ok {
+		v.push(p.Target)
+		v.push(p.Key)
 		return v.opGetAttr(yield)
 	}
+	v.push(p.Target)
+	v.push(p.Key)
 	return v.opGetIndex(yield)
 }
 
@@ -3120,7 +3141,7 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 	if p.ArrayType != nil {
 		if list, ok := p.Target.(*List); ok {
 			idx, _ := ToInt64(p.Key)
-			n := p.ArrayType.Len()
+			n := p.ArrayType.Len
 			vval := reflect.ValueOf(val)
 			for i := 0; i < n; i++ {
 				list.Elements[int(idx)+i] = vval.Index(i).Interface()
@@ -3132,12 +3153,15 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 		e.Def(p.Key.(string), val)
 		return true
 	}
+	if _, ok := p.Target.(*Struct); ok {
+		v.push(p.Target)
+		v.push(p.Key)
+		v.push(val)
+		return v.opSetAttr(yield)
+	}
 	v.push(p.Target)
 	v.push(p.Key)
 	v.push(val)
-	if _, ok := p.Target.(*Struct); ok {
-		return v.opSetAttr(yield)
-	}
 	return v.opSetIndex(yield)
 }
 
@@ -3171,14 +3195,14 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		t = rt
 		expectedName = rt.Name()
 	} else if dt, ok := tObj.(*Type); ok {
-		t = dt.Type
+		t = dt.ToReflectType()
 		expectedName = dt.Name
 	} else {
 		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
 		return true
 	}
 
-	if t.Kind() == reflect.Interface {
+	if t != nil && t.Kind() == reflect.Interface {
 		if s, ok := val.(*Struct); ok {
 			if v.checkStructImplements(s, t) {
 				v.push(val)
@@ -3193,7 +3217,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 	}
 
 	valType := reflect.TypeOf(val)
-	if valType.AssignableTo(t) {
+	if t != nil && valType.AssignableTo(t) {
 		v.push(val)
 		return true
 	}
@@ -3235,7 +3259,7 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		t = rt
 		expectedName = rt.Name()
 	} else if dt, ok := tObj.(*Type); ok {
-		t = dt.Type
+		t = dt.ToReflectType()
 		expectedName = dt.Name
 	} else {
 		v.push(nil)
@@ -3244,12 +3268,16 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	}
 
 	if val == nil {
-		v.push(reflect.Zero(t).Interface())
+		if t != nil {
+			v.push(reflect.Zero(t).Interface())
+		} else {
+			v.push(nil)
+		}
 		v.push(false)
 		return true
 	}
 
-	if t.Kind() == reflect.Interface {
+	if t != nil && t.Kind() == reflect.Interface {
 		if s, ok := val.(*Struct); ok {
 			if v.checkStructImplements(s, t) {
 				v.push(val)
@@ -3267,7 +3295,7 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	}
 
 	valType := reflect.TypeOf(val)
-	if valType.AssignableTo(t) {
+	if t != nil && valType.AssignableTo(t) {
 		v.push(val)
 		v.push(true)
 		return true
@@ -3279,7 +3307,11 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 	}
-	v.push(reflect.Zero(t).Interface())
+	if t != nil {
+		v.push(reflect.Zero(t).Interface())
+	} else {
+		v.push(nil)
+	}
 	v.push(false)
 	return true
 }
@@ -3344,17 +3376,7 @@ func (v *VM) newFuncIterator(fn any) *FuncIterator {
 
 func (v *VM) checkStructImplements(s *Struct, it any) bool {
 	if rif, ok := it.(reflect.Type); ok {
-		for i := 0; i < rif.NumMethod(); i++ {
-			m := rif.Method(i)
-			method := v.getStructMethod(s, m.Name)
-			if method == nil {
-				return false
-			}
-			if !v.checkMethodType(method, m.Type) {
-				return false
-			}
-		}
-		return true
+		return v.checkStructImplementsReflect(s, rif)
 	}
 	if cif, ok := it.(*Interface); ok {
 		for name, targetType := range cif.Methods {
@@ -3368,7 +3390,33 @@ func (v *VM) checkStructImplements(s *Struct, it any) bool {
 		}
 		return true
 	}
+	if t, ok := it.(*Type); ok && t.Kind == KindInterface {
+		for name, targetType := range t.Methods {
+			method := v.getStructMethod(s, name)
+			if method == nil {
+				return false
+			}
+			if !v.checkMethodType(method, targetType) {
+				return false
+			}
+		}
+		return true
+	}
 	return false
+}
+
+func (v *VM) checkStructImplementsReflect(s *Struct, rif reflect.Type) bool {
+	for i := 0; i < rif.NumMethod(); i++ {
+		m := rif.Method(i)
+		method := v.getStructMethod(s, m.Name)
+		if method == nil {
+			return false
+		}
+		if !v.checkMethodType(method, FromReflectType(m.Type)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *VM) structHasMethod(s *Struct, name string) bool {
@@ -3396,8 +3444,8 @@ func (v *VM) getStructMethod(s *Struct, name string) any {
 	return nil
 }
 
-func (v *VM) checkMethodType(method any, target reflect.Type) bool {
-	var actual reflect.Type
+func (v *VM) checkMethodType(method any, target *Type) bool {
+	var actual *Type
 	switch m := method.(type) {
 	case *Closure:
 		actual = m.Fun.Type
@@ -3409,19 +3457,19 @@ func (v *VM) checkMethodType(method any, target reflect.Type) bool {
 	if actual == nil {
 		return true
 	}
-	if actual.NumIn() != target.NumIn()+1 {
+	if len(actual.In) != len(target.In)+1 {
 		return false
 	}
-	if actual.NumOut() != target.NumOut() {
+	if len(actual.Out) != len(target.Out) {
 		return false
 	}
-	for i := 0; i < target.NumIn(); i++ {
-		if actual.In(i+1) != target.In(i) {
+	for i := 0; i < len(target.In); i++ {
+		if !actual.In[i+1].AssignableTo(target.In[i]) {
 			return false
 		}
 	}
-	for i := 0; i < target.NumOut(); i++ {
-		if actual.Out(i) != target.Out(i) {
+	for i := 0; i < len(target.Out); i++ {
+		if !actual.Out[i].AssignableTo(target.Out[i]) {
 			return false
 		}
 	}

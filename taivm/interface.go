@@ -1,8 +1,7 @@
 package taivm
 
-import "reflect"
-
+// TODO use Type
 type Interface struct {
 	Name    string
-	Methods map[string]reflect.Type
+	Methods map[string]*Type
 }
