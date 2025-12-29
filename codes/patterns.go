@@ -1,6 +1,7 @@
 package codes
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 
@@ -18,5 +19,7 @@ func init() {
 }
 
 func (Module) Patterns() Patterns {
-	return slices.Collect(maps.Keys(cmdPatterns))
+	keys := slices.Collect(maps.Keys(cmdPatterns))
+	slices.SortStableFunc(keys, cmp.Compare)
+	return keys
 }
