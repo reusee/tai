@@ -16,321 +16,203 @@ var ErrYield = errors.New("yield")
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
 	for {
 		if v.IP < 0 || v.IP >= len(v.CurrentFun.Code) {
-			if v.IsPanicking || len(v.CallStack) > 0 {
-				if !v.handleUnwind(yield) {
-					return
-				}
+			if (v.IsPanicking || len(v.CallStack) > 0) && v.handleUnwind(yield) {
 				continue
 			}
 			return
 		}
-
-		inst := v.CurrentFun.Code[v.IP]
-		v.IP++
-		op := inst & 0xff
-
-		switch op {
-		case OpLoadConst:
-			idx := int(inst >> 8)
-			if v.SP >= len(v.OperandStack) {
-				v.growOperandStack()
-			}
-			v.OperandStack[v.SP] = v.CurrentFun.Constants[idx]
-			v.SP++
-
-		case OpGetLocal:
-			idx := int(inst >> 8)
-			if v.SP >= len(v.OperandStack) {
-				v.growOperandStack()
-			}
-			v.OperandStack[v.SP] = v.OperandStack[v.BP+idx]
-			v.SP++
-
-		case OpSetLocal:
-			idx := int(inst >> 8)
-			if v.SP > 0 {
-				v.SP--
-				val := v.OperandStack[v.SP]
-				v.OperandStack[v.SP] = nil
-				v.OperandStack[v.BP+idx] = val
-			}
-
-		case OpPop:
-			if v.SP > 0 {
-				v.SP--
-				v.OperandStack[v.SP] = nil
-			}
-
-		case OpJump:
-			offset := int(int32(inst) >> 8)
-			v.IP += offset
-
-		case OpJumpFalse:
-			var val any
-			if v.SP > 0 {
-				v.SP--
-				val = v.OperandStack[v.SP]
-				v.OperandStack[v.SP] = nil
-			}
-			if isZero(val) {
-				v.IP += int(int32(inst) >> 8)
-			}
-
-		case OpAdd:
-			if v.SP >= 2 {
-				b := v.OperandStack[v.SP-1]
-				a := v.OperandStack[v.SP-2]
-				if x, ok := a.(int); ok {
-					if y, ok := b.(int); ok {
-						v.OperandStack[v.SP-2] = x + y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-				if x, ok := a.(float64); ok {
-					if y, ok := b.(float64); ok {
-						v.OperandStack[v.SP-2] = x + y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-			}
-			if !v.opMath(op, yield) {
-				return
-			}
-
-		case OpSub:
-			if v.SP >= 2 {
-				b := v.OperandStack[v.SP-1]
-				a := v.OperandStack[v.SP-2]
-				if x, ok := a.(int); ok {
-					if y, ok := b.(int); ok {
-						v.OperandStack[v.SP-2] = x - y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-				if x, ok := a.(float64); ok {
-					if y, ok := b.(float64); ok {
-						v.OperandStack[v.SP-2] = x - y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-			}
-			if !v.opMath(op, yield) {
-				return
-			}
-
-		case OpEq:
-			if v.SP >= 2 {
-				b := v.OperandStack[v.SP-1]
-				a := v.OperandStack[v.SP-2]
-				if x, ok := a.(int); ok {
-					if y, ok := b.(int); ok {
-						v.OperandStack[v.SP-2] = x == y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-			}
-			if !v.opCompare(op, yield) {
-				return
-			}
-
-		case OpLt:
-			if v.SP >= 2 {
-				b := v.OperandStack[v.SP-1]
-				a := v.OperandStack[v.SP-2]
-				if x, ok := a.(int); ok {
-					if y, ok := b.(int); ok {
-						v.OperandStack[v.SP-2] = x < y
-						v.SP--
-						v.OperandStack[v.SP] = nil
-						continue
-					}
-				}
-			}
-			if !v.opCompare(op, yield) {
-				return
-			}
-
-		case OpLoadVar:
-			if !v.opLoadVar(inst, yield) {
-				return
-			}
-		case OpDefVar:
-			v.opDefVar(inst)
-		case OpSetVar:
-			if !v.opSetVar(inst, yield) {
-				return
-			}
-		case OpDup:
-			if !v.opDup(yield) {
-				return
-			}
-		case OpDup2:
-			if !v.opDup2(yield) {
-				return
-			}
-		case OpMakeClosure:
-			v.opMakeClosure(inst)
-		case OpCall:
-			if !v.opCall(inst, yield) {
-				return
-			}
-		case OpReturn:
-			if !v.opReturn(yield) {
-				return
-			}
-		case OpSuspend:
-			if !yield(InterruptSuspend, nil) {
-				return
-			}
-		case OpEnterScope:
-			v.Scope = v.allocEnv(v.Scope)
-		case OpLeaveScope:
-			if v.Scope.Parent != nil {
-				old := v.Scope
-				v.Scope = v.Scope.Parent
-				v.freeEnv(old)
-			}
-		case OpMakeList:
-			if !v.opMakeList(inst, yield) {
-				return
-			}
-		case OpMakeStruct:
-			if !v.opMakeStruct(inst, yield) {
-				return
-			}
-		case OpMakeMap:
-			if !v.opMakeMap(inst, yield) {
-				return
-			}
-		case OpGetIndex:
-			if !v.opGetIndex(yield) {
-				return
-			}
-		case OpSetIndex:
-			if !v.opSetIndex(yield) {
-				return
-			}
-		case OpSwap:
-			if !v.opSwap(yield) {
-				return
-			}
-		case OpDumpTrace:
-			if !v.opDumpTrace(yield) {
-				return
-			}
-		case OpBitAnd, OpBitOr, OpBitXor, OpBitLsh, OpBitRsh:
-			if !v.opBitwise(op, yield) {
-				return
-			}
-		case OpBitNot:
-			if !v.opBitNot(yield) {
-				return
-			}
-		case OpMul, OpDiv, OpMod, OpFloorDiv, OpPow:
-			if !v.opMath(op, yield) {
-				return
-			}
-		case OpNe, OpLe, OpGt, OpGe:
-			if !v.opCompare(op, yield) {
-				return
-			}
-		case OpNot:
-			if !v.opNot(yield) {
-				return
-			}
-		case OpGetIter:
-			if !v.opGetIter(yield) {
-				return
-			}
-		case OpNextIter:
-			if !v.opNextIter(inst, yield) {
-				return
-			}
-		case OpMakeTuple:
-			if !v.opMakeTuple(inst, yield) {
-				return
-			}
-		case OpGetSlice:
-			if !v.opGetSlice(yield) {
-				return
-			}
-		case OpSetSlice:
-			if !v.opSetSlice(yield) {
-				return
-			}
-		case OpGetAttr:
-			if !v.opGetAttr(yield) {
-				return
-			}
-		case OpSetAttr:
-			if !v.opSetAttr(yield) {
-				return
-			}
-		case OpCallKw:
-			if !v.opCallKw(inst, yield) {
-				return
-			}
-		case OpListAppend:
-			if !v.opListAppend(yield) {
-				return
-			}
-		case OpContains:
-			if !v.opContains(yield) {
-				return
-			}
-		case OpUnpack:
-			if !v.opUnpack(inst, yield) {
-				return
-			}
-		case OpImport:
-			if !v.opImport(inst, yield) {
-				return
-			}
-		case OpDefer:
-			v.opDefer()
-		case OpAddrOf:
-			if !v.opAddrOf(inst, yield) {
-				return
-			}
-		case OpAddrOfIndex:
-			if !v.opAddrOfIndex(yield) {
-				return
-			}
-		case OpAddrOfAttr:
-			if !v.opAddrOfAttr(yield) {
-				return
-			}
-		case OpDeref:
-			if !v.opDeref(yield) {
-				return
-			}
-		case OpSetDeref:
-			if !v.opSetDeref(yield) {
-				return
-			}
-		case OpTypeAssert:
-			if !v.opTypeAssert(yield) {
-				return
-			}
-		case OpTypeAssertOk:
-			if !v.opTypeAssertOk(yield) {
-				return
-			}
-		case OpGetIndexOk:
-			if !v.opGetIndexOk(yield) {
-				return
-			}
+		if !v.executeOne(yield) {
+			return
 		}
+	}
+}
+
+func (v *VM) executeOne(yield func(*Interrupt, error) bool) bool {
+	inst := v.CurrentFun.Code[v.IP]
+	v.IP++
+	op := inst & 0xff
+	switch op {
+	case OpLoadConst:
+		v.push(v.CurrentFun.Constants[int(inst>>8)])
+	case OpGetLocal:
+		v.push(v.OperandStack[v.BP+int(inst>>8)])
+	case OpSetLocal:
+		if v.SP > 0 {
+			v.OperandStack[v.BP+int(inst>>8)] = v.pop()
+		}
+	case OpPop:
+		v.pop()
+	case OpJump:
+		v.IP += int(int32(inst) >> 8)
+	case OpJumpFalse:
+		if isZero(v.pop()) {
+			v.IP += int(int32(inst) >> 8)
+		}
+	case OpAdd, OpSub:
+		if !v.opArithmeticFast(op) && !v.opMath(op, yield) {
+			return false
+		}
+	case OpEq, OpLt:
+		if !v.opCompareFast(op) && !v.opCompare(op, yield) {
+			return false
+		}
+	case OpLoadVar:
+		return v.opLoadVar(inst, yield)
+	case OpDefVar:
+		v.opDefVar(inst)
+	case OpSetVar:
+		return v.opSetVar(inst, yield)
+	case OpDup:
+		return v.opDup(yield)
+	case OpDup2:
+		return v.opDup2(yield)
+	case OpMakeClosure:
+		v.opMakeClosure(inst)
+	case OpCall:
+		return v.opCall(inst, yield)
+	case OpReturn:
+		return v.opReturn(yield)
+	case OpSuspend:
+		return yield(InterruptSuspend, nil)
+	case OpEnterScope:
+		v.Scope = v.allocEnv(v.Scope)
+	case OpLeaveScope:
+		v.leaveScope()
+	default:
+		return v.executeOther(op, inst, yield)
+	}
+	return true
+}
+
+func (v *VM) executeOther(op OpCode, inst OpCode, yield func(*Interrupt, error) bool) bool {
+	switch op {
+	case OpMakeList:
+		return v.opMakeList(inst, yield)
+	case OpMakeStruct:
+		return v.opMakeStruct(inst, yield)
+	case OpMakeMap:
+		return v.opMakeMap(inst, yield)
+	case OpGetIndex:
+		return v.opGetIndex(yield)
+	case OpSetIndex:
+		return v.opSetIndex(yield)
+	case OpSwap:
+		return v.opSwap(yield)
+	case OpDumpTrace:
+		return v.opDumpTrace(yield)
+	case OpBitAnd, OpBitOr, OpBitXor, OpBitLsh, OpBitRsh:
+		return v.opBitwise(op, yield)
+	case OpBitNot:
+		return v.opBitNot(yield)
+	case OpMul, OpDiv, OpMod, OpFloorDiv, OpPow:
+		return v.opMath(op, yield)
+	case OpNe, OpLe, OpGt, OpGe:
+		return v.opCompare(op, yield)
+	case OpNot:
+		return v.opNot(yield)
+	case OpGetIter:
+		return v.opGetIter(yield)
+	case OpNextIter:
+		return v.opNextIter(inst, yield)
+	case OpMakeTuple:
+		return v.opMakeTuple(inst, yield)
+	case OpGetSlice:
+		return v.opGetSlice(yield)
+	case OpSetSlice:
+		return v.opSetSlice(yield)
+	case OpGetAttr:
+		return v.opGetAttr(yield)
+	case OpSetAttr:
+		return v.opSetAttr(yield)
+	case OpCallKw:
+		return v.opCallKw(inst, yield)
+	case OpListAppend:
+		return v.opListAppend(yield)
+	case OpContains:
+		return v.opContains(yield)
+	case OpUnpack:
+		return v.opUnpack(inst, yield)
+	case OpImport:
+		return v.opImport(inst, yield)
+	case OpDefer:
+		v.opDefer()
+	case OpAddrOf:
+		return v.opAddrOf(inst, yield)
+	case OpAddrOfIndex:
+		return v.opAddrOfIndex(yield)
+	case OpAddrOfAttr:
+		return v.opAddrOfAttr(yield)
+	case OpDeref:
+		return v.opDeref(yield)
+	case OpSetDeref:
+		return v.opSetDeref(yield)
+	case OpTypeAssert:
+		return v.opTypeAssert(yield)
+	case OpTypeAssertOk:
+		return v.opTypeAssertOk(yield)
+	case OpGetIndexOk:
+		return v.opGetIndexOk(yield)
+	}
+	return true
+}
+
+func (v *VM) opArithmeticFast(op OpCode) bool {
+	if v.SP < 2 {
+		return false
+	}
+	b, a := v.OperandStack[v.SP-1], v.OperandStack[v.SP-2]
+	if x, ok := a.(int); ok {
+		if y, ok := b.(int); ok {
+			if op == OpAdd {
+				v.OperandStack[v.SP-2] = x + y
+			} else {
+				v.OperandStack[v.SP-2] = x - y
+			}
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
+	if x, ok := a.(float64); ok {
+		if y, ok := b.(float64); ok {
+			if op == OpAdd {
+				v.OperandStack[v.SP-2] = x + y
+			} else {
+				v.OperandStack[v.SP-2] = x - y
+			}
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
+	return false
+}
+
+func (v *VM) opCompareFast(op OpCode) bool {
+	if v.SP < 2 {
+		return false
+	}
+	b, a := v.OperandStack[v.SP-1], v.OperandStack[v.SP-2]
+	if x, ok := a.(int); ok {
+		if y, ok := b.(int); ok {
+			if op == OpEq {
+				v.OperandStack[v.SP-2] = x == y
+			} else {
+				v.OperandStack[v.SP-2] = x < y
+			}
+			v.SP--
+			v.OperandStack[v.SP] = nil
+			return true
+		}
+	}
+	return false
+}
+
+func (v *VM) leaveScope() {
+	if v.Scope.Parent != nil {
+		old := v.Scope
+		v.Scope = v.Scope.Parent
+		v.freeEnv(old)
 	}
 }
 

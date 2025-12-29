@@ -27,6 +27,8 @@ func init() {
 	gob.Register(&RangeIterator{})
 	gob.Register(&Interrupt{})
 	gob.Register(&Type{})
+	gob.Register(TypeKind(0))
+	gob.Register(&VM{})
 	gob.Register(&big.Int{})
 	gob.Register(&big.Float{})
 	gob.Register(&big.Rat{})
