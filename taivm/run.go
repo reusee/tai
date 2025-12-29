@@ -1800,8 +1800,13 @@ func (v *VM) opMath(op OpCode, yield func(*Interrupt, error) bool) bool {
 					}
 					return true
 				case OpPow:
-					v.push(math.Pow(fa, fb))
-					return true
+					// If both are integers, fall through to big.Int handling for precision
+					_, okA := ToInt64(a)
+					_, okB := ToInt64(b)
+					if !okA || !okB {
+						v.push(math.Pow(fa, fb))
+						return true
+					}
 				}
 			}
 		}
