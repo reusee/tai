@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -27,6 +28,21 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
+		// Clean up file state on exit to avoid leaking state into cached File objects
+		defer func() {
+			for _, f := range files {
+				if f == nil {
+					continue
+				}
+				f.transformCond.L.Lock()
+				f.Transform = nil
+				f.Pending = nil
+				f.transformCond.Broadcast()
+				f.transformCond.L.Unlock()
+			}
+		}()
+
 		jobChan := make(chan *File, len(files))
 		wg := new(sync.WaitGroup)
 		startTokenCounters(ctx, jobChan, fset, countTokens, wg)
@@ -83,16 +99,15 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 			defer wg.Done()
 			for _, transform := range transforms {
 				for i := range files {
+					file := files[i]
+					if file == nil {
+						continue
+					}
 
 					select {
 					case sema <- true:
 					case <-ctx.Done():
 						return
-					}
-
-					file := files[i]
-					if file == nil {
-						continue
 					}
 
 					// set next transform and send job to workers
@@ -124,15 +139,19 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 	loop_ops:
 		for range transforms {
 			for i := range files {
-				<-sema
+				file := files[i]
+				if file == nil {
+					continue
+				}
 
 				if allTokens < maxTokens {
 					break loop_ops
 				}
 
-				file := files[i]
-				if file == nil {
-					continue
+				select {
+				case <-sema:
+				case <-ctx.Done():
+					break loop_ops
 				}
 
 				file.transformCond.L.Lock()
@@ -172,12 +191,26 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		}
 
 		cancel()
-		for _, file := range files { // wake up feeder from Wait()
-			if file != nil {
-				file.transformCond.Broadcast()
+		// keep broadcasting to wake up goroutines potentially stuck in Wait()
+		allDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Millisecond * 50)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-allDone:
+					return
+				case <-ticker.C:
+					for _, f := range files {
+						if f != nil {
+							f.transformCond.Broadcast()
+						}
+					}
+				}
 			}
-		}
+		}()
 		wg.Wait()
+		close(allDone)
 
 		if numFilesFromRootPackageDeleted > 0 {
 			return nil, fmt.Errorf("files from root packages deleted: %d", numFilesFromRootPackageDeleted)
