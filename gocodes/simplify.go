@@ -78,7 +78,9 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		transforms := makeTransforms()
 
 		sema := make(chan bool, runtime.NumCPU()*8)
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for _, transform := range transforms {
 				for i := range files {
 
@@ -116,7 +118,7 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 
 				}
 			}
-		})
+		}()
 
 		var numFilesFromRootPackageDeleted int
 	loop_ops:
@@ -124,9 +126,6 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 			for i := range files {
 				<-sema
 
-				if *debug {
-					logger.Info("count tokens", "tokens", allTokens)
-				}
 				if allTokens < maxTokens {
 					break loop_ops
 				}
@@ -173,6 +172,11 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		}
 
 		cancel()
+		for _, file := range files { // wake up feeder from Wait()
+			if file != nil {
+				file.transformCond.Broadcast()
+			}
+		}
 		wg.Wait()
 
 		if numFilesFromRootPackageDeleted > 0 {
@@ -196,7 +200,9 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 
 func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.FileSet, counter generators.TokenCounter, wg *sync.WaitGroup) {
 	for range runtime.NumCPU() {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for {
 				select {
 
@@ -208,7 +214,7 @@ func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.Fil
 
 				}
 			}
-		})
+		}()
 	}
 }
 
