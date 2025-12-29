@@ -200,3 +200,68 @@ func (t *Type) AssignableTo(u *Type) bool {
 	}
 	return true
 }
+
+func (t *Type) Zero() any {
+	if t == nil {
+		return nil
+	}
+	switch t.Kind {
+	case KindBool:
+		return false
+	case KindInt:
+		return 0
+	case KindInt8:
+		return int8(0)
+	case KindInt16:
+		return int16(0)
+	case KindInt32:
+		return int32(0)
+	case KindInt64:
+		return int64(0)
+	case KindUint:
+		return uint(0)
+	case KindUint8:
+		return uint8(0)
+	case KindUint16:
+		return uint16(0)
+	case KindUint32:
+		return uint32(0)
+	case KindUint64:
+		return uint64(0)
+	case KindFloat32:
+		return float32(0)
+	case KindFloat64:
+		return float64(0)
+	case KindString:
+		return ""
+	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface:
+		return nil
+	}
+	if rt := t.ToReflectType(); rt != nil {
+		return reflect.Zero(rt).Interface()
+	}
+	return nil
+}
+
+func (t *Type) Match(val any) bool {
+	if val == nil {
+		return t == nil || t.Kind == KindInterface || t.Kind == KindPtr || t.Kind == KindSlice || t.Kind == KindMap || t.Kind == KindFunc
+	}
+	if t == nil {
+		return false
+	}
+	if s, ok := val.(*Struct); ok {
+		if t.Name != "" && s.TypeName == t.Name {
+			return true
+		}
+		if t.Kind == KindInterface {
+			// This implementation would need a reference back to VM or a shared interface checker
+			return false
+		}
+	}
+	rt := reflect.TypeOf(val)
+	if targetRT := t.ToReflectType(); targetRT != nil {
+		return rt.AssignableTo(targetRT)
+	}
+	return false
+}

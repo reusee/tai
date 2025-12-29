@@ -140,6 +140,13 @@ func (v *VM) handleNativeReturn(out []reflect.Value) (any, error) {
 	if len(out) == 0 {
 		return nil, nil
 	}
+	wrap := func(rv reflect.Value) any {
+		val := rv.Interface()
+		if rt, ok := val.(reflect.Type); ok {
+			return FromReflectType(rt)
+		}
+		return val
+	}
 	last := out[len(out)-1]
 	if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 		var err error
@@ -150,20 +157,20 @@ func (v *VM) handleNativeReturn(out []reflect.Value) (any, error) {
 			return nil, err
 		}
 		if len(out) == 2 {
-			return out[0].Interface(), err
+			return wrap(out[0]), err
 		}
 		res := make([]any, len(out)-1)
 		for i := 0; i < len(out)-1; i++ {
-			res[i] = out[i].Interface()
+			res[i] = wrap(out[i])
 		}
 		return &List{Elements: res, Immutable: true}, err
 	}
 	if len(out) == 1 {
-		return out[0].Interface(), nil
+		return wrap(out[0]), nil
 	}
 	res := make([]any, len(out))
 	for i, val := range out {
-		res[i] = val.Interface()
+		res[i] = wrap(val)
 	}
 	return &List{Elements: res, Immutable: true}, nil
 }

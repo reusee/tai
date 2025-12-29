@@ -468,7 +468,23 @@ func isZero(v any) bool {
 		return !i
 	case int:
 		return i == 0
+	case int8:
+		return i == 0
+	case int16:
+		return i == 0
+	case int32:
+		return i == 0
 	case int64:
+		return i == 0
+	case uint:
+		return i == 0
+	case uint8:
+		return i == 0
+	case uint16:
+		return i == 0
+	case uint32:
+		return i == 0
+	case uint64:
 		return i == 0
 	case *big.Int:
 		return i.Sign() == 0
@@ -478,7 +494,11 @@ func isZero(v any) bool {
 		return i == ""
 	case nil:
 		return true
+	case float32:
+		return i == 0
 	case float64:
+		return i == 0
+	case complex64:
 		return i == 0
 	case complex128:
 		return i == 0
@@ -920,19 +940,8 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	case NativeFunc:
 		return v.callNative(fn, argc, calleeIdx, yield)
 
-	case reflect.Type: // Handle type conversion calls: T(x)
-		return v.callTypeConversion(fn, argc, calleeIdx, yield)
-
 	case *Type:
-		if rt := fn.ToReflectType(); rt != nil {
-			return v.callTypeConversion(rt, argc, calleeIdx, yield)
-		}
-		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
-			return false
-		}
-		v.drop(argc + 1)
-		v.push(nil)
-		return true
+		return v.callTypeConversion(fn, argc, calleeIdx, yield)
 
 	default:
 		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
@@ -1103,30 +1112,31 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 	return true
 }
 
-func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
+func (v *VM) callTypeConversion(t *Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
 	if argc != 1 {
 		return yield(nil, fmt.Errorf("type conversion expects 1 argument"))
 	}
 	arg := v.OperandStack[calleeIdx+1]
 	var res any
 	if arg == nil {
-		res = reflect.Zero(t).Interface()
+		res = t.Zero()
 	} else {
 		if list, ok := arg.(*List); ok {
-			if t.Kind() == reflect.Array {
-				n := t.Len()
+			if t.Kind == KindArray {
+				n := t.Len
 				if len(list.Elements) < n {
 					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array of length %d", len(list.Elements), n)
 					v.IP = len(v.CurrentFun.Code)
 					return true
 				}
-				arr := reflect.New(t).Elem()
+				rt := t.ToReflectType()
+				arr := reflect.New(rt).Elem()
 				for i := 0; i < n; i++ {
 					arr.Index(i).Set(reflect.ValueOf(list.Elements[i]))
 				}
 				res = arr.Interface()
-			} else if t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Array {
-				n := t.Elem().Len()
+			} else if t.Kind == KindPtr && t.Elem != nil && t.Elem.Kind == KindArray {
+				n := t.Elem.Len
 				if len(list.Elements) < n {
 					v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array pointer of length %d", len(list.Elements), n)
 					v.IP = len(v.CurrentFun.Code)
@@ -1135,16 +1145,20 @@ func (v *VM) callTypeConversion(t reflect.Type, argc, calleeIdx int, yield func(
 				res = &Pointer{
 					Target:    list,
 					Key:       0,
-					ArrayType: FromReflectType(t.Elem()),
+					ArrayType: t.Elem,
 				}
 			}
 		}
 		if res == nil {
-			val := reflect.ValueOf(arg)
-			if val.Type().ConvertibleTo(t) {
-				res = val.Convert(t).Interface()
+			if rt := t.ToReflectType(); rt != nil {
+				val := reflect.ValueOf(arg)
+				if val.Type().ConvertibleTo(rt) {
+					res = val.Convert(rt).Interface()
+				} else {
+					return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, rt))
+				}
 			} else {
-				return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t))
+				return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t.Name))
 			}
 		}
 	}
@@ -2381,8 +2395,6 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		v.push(t.Target)
 		v.push(name)
 		return v.opGetAttr(yield)
-	case reflect.Type:
-		return v.opGetReflectTypeAttr(t, nameStr, yield)
 	case *Type:
 		return v.opGetTypeAttr(t, nameStr, yield)
 	default:
@@ -2416,18 +2428,25 @@ func (v *VM) opGetStructAttr(s *Struct, nameStr string, name any, yield func(*In
 }
 
 func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error) bool) bool {
-	if t.Name != "" {
-		if method, ok := v.Get(t.Name + "." + nameStr); ok {
+	typeName := t.Name
+	if typeName == "" && t.Kind == KindPtr && t.Elem != nil {
+		typeName = t.Elem.Name
+	}
+	if typeName != "" {
+		if method, ok := v.Get(typeName + "." + nameStr); ok {
 			v.push(method)
 			return true
 		}
-		if method, ok := v.Get("*" + t.Name + "." + nameStr); ok {
+		if method, ok := v.Get("*" + typeName + "." + nameStr); ok {
 			v.push(method)
 			return true
 		}
 	}
 	if rt := t.ToReflectType(); rt != nil {
-		return v.opGetReflectTypeAttr(rt, nameStr, yield)
+		if m, ok := rt.MethodByName(nameStr); ok {
+			v.push(v.newNativeMethodExpr(m))
+			return true
+		}
 	}
 	return yield(nil, fmt.Errorf("type %v has no attribute '%s'", t, nameStr))
 }
@@ -2464,28 +2483,6 @@ func (v *VM) opGetListAttr(l *List, nameStr string, yield func(*Interrupt, error
 		return true
 	}
 	return yield(nil, fmt.Errorf("list has no attribute '%s'", nameStr))
-}
-
-func (v *VM) opGetReflectTypeAttr(t reflect.Type, nameStr string, yield func(*Interrupt, error) bool) bool {
-	typeName := t.Name()
-	if t.Kind() == reflect.Ptr {
-		typeName = t.Elem().Name()
-	}
-	if typeName != "" {
-		if method, ok := v.Get(typeName + "." + nameStr); ok {
-			v.push(method)
-			return true
-		}
-		if method, ok := v.Get("*" + typeName + "." + nameStr); ok {
-			v.push(method)
-			return true
-		}
-	}
-	if m, ok := t.MethodByName(nameStr); ok {
-		v.push(v.newNativeMethodExpr(m))
-		return true
-	}
-	return yield(nil, fmt.Errorf("type %v has no attribute '%s'", t, nameStr))
 }
 
 func (v *VM) newNativeMethodExpr(m reflect.Method) NativeFunc {
@@ -3077,11 +3074,6 @@ func (v *VM) opAddrOfAttr(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	ptr := v.pop()
-	if t, ok := ptr.(reflect.Type); ok {
-		// If operand is a type, return a pointer to that type
-		v.push(reflect.PointerTo(t))
-		return true
-	}
 	if t, ok := ptr.(*Type); ok {
 		v.push(&Type{
 			Kind: KindPtr,
@@ -3171,58 +3163,30 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 	fail := func(err error) {
 		v.IsPanicking = true
 		v.PanicValue = err.Error()
-		v.IP = len(v.CurrentFun.Code) // ensure we transition to unwinding immediately
+		v.IP = len(v.CurrentFun.Code)
 	}
+
 	if val == nil {
 		fail(fmt.Errorf("interface is nil"))
 		return true
 	}
 
-	var t reflect.Type
-	var expectedName string
-	var dt *Type
-	if rt, ok := tObj.(reflect.Type); ok {
-		t = rt
-		expectedName = rt.Name()
-	} else if it, ok := tObj.(*Type); ok {
-		dt = it
-		t = it.ToReflectType()
-		expectedName = it.Name
-	} else {
-		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
-		return true
-	}
-
-	if (t != nil && t.Kind() == reflect.Interface) || (dt != nil && dt.Kind == KindInterface) {
-		if s, ok := val.(*Struct); ok {
-			var it any = t
-			if it == nil {
-				it = dt
-			}
-			if v.checkStructImplements(s, it) {
+	if dt, ok := tObj.(*Type); ok {
+		if dt.Kind == KindInterface {
+			if s, ok := val.(*Struct); ok && v.checkStructImplements(s, dt) {
 				v.push(val)
 				return true
 			}
-		} else if t != nil && reflect.TypeOf(val).Implements(t) {
+		}
+		if dt.Match(val) {
 			v.push(val)
 			return true
 		}
-		fail(fmt.Errorf("cannot convert %T to interface", val))
+		fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name))
 		return true
 	}
 
-	valType := reflect.TypeOf(val)
-	if t != nil && valType.AssignableTo(t) {
-		v.push(val)
-		return true
-	}
-	if s, ok := val.(*Struct); ok {
-		if expectedName != "" && s.TypeName == expectedName {
-			v.push(val)
-			return true
-		}
-	}
-	fail(fmt.Errorf("cannot convert %T to %v", val, t))
+	fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
 	return true
 }
 
@@ -3230,84 +3194,34 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
 
-	var t reflect.Type
-	var expectedName string
-	var dt *Type
-	if rt, ok := tObj.(reflect.Type); ok {
-		t = rt
-		expectedName = rt.Name()
-	} else if it, ok := tObj.(*Type); ok {
-		dt = it
-		t = it.ToReflectType()
-		expectedName = it.Name
-	} else {
+	targetType, ok := tObj.(*Type)
+	if !ok {
 		v.push(nil)
-		v.push(false)
-		return true
-	}
-
-	if (t != nil && t.Kind() == reflect.Interface) || (dt != nil && dt.Kind == KindInterface) {
-		if val == nil {
-			if t != nil {
-				v.push(reflect.Zero(t).Interface())
-			} else {
-				v.push(nil)
-			}
-			v.push(false)
-			return true
-		}
-		if s, ok := val.(*Struct); ok {
-			var it any = t
-			if it == nil {
-				it = dt
-			}
-			if v.checkStructImplements(s, it) {
-				v.push(val)
-				v.push(true)
-				return true
-			}
-		} else if t != nil && reflect.TypeOf(val).Implements(t) {
-			v.push(val)
-			v.push(true)
-			return true
-		}
-		if t != nil {
-			v.push(reflect.Zero(t).Interface())
-		} else {
-			v.push(nil)
-		}
 		v.push(false)
 		return true
 	}
 
 	if val == nil {
-		if t != nil {
-			v.push(reflect.Zero(t).Interface())
-		} else {
-			v.push(nil)
-		}
+		v.push(targetType.Zero())
 		v.push(false)
 		return true
 	}
 
-	valType := reflect.TypeOf(val)
-	if t != nil && valType.AssignableTo(t) {
-		v.push(val)
-		v.push(true)
-		return true
-	}
-	if s, ok := val.(*Struct); ok {
-		if expectedName != "" && s.TypeName == expectedName {
+	if targetType.Kind == KindInterface {
+		if s, ok := val.(*Struct); ok && v.checkStructImplements(s, targetType) {
 			v.push(val)
 			v.push(true)
 			return true
 		}
 	}
-	if t != nil {
-		v.push(reflect.Zero(t).Interface())
-	} else {
-		v.push(nil)
+
+	if targetType.Match(val) {
+		v.push(val)
+		v.push(true)
+		return true
 	}
+
+	v.push(targetType.Zero())
 	v.push(false)
 	return true
 }
