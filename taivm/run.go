@@ -3178,41 +3178,36 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if it, ok := tObj.(*Interface); ok {
-		if s, ok := val.(*Struct); ok {
-			if v.checkStructImplements(s, it) {
-				v.push(val)
-				return true
-			}
-		}
-		fail(fmt.Errorf("cannot convert %T to interface", val))
-		return true
-	}
-
 	var t reflect.Type
 	var expectedName string
+	var dt *Type
 	if rt, ok := tObj.(reflect.Type); ok {
 		t = rt
 		expectedName = rt.Name()
-	} else if dt, ok := tObj.(*Type); ok {
-		t = dt.ToReflectType()
-		expectedName = dt.Name
+	} else if it, ok := tObj.(*Type); ok {
+		dt = it
+		t = it.ToReflectType()
+		expectedName = it.Name
 	} else {
 		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
 		return true
 	}
 
-	if t != nil && t.Kind() == reflect.Interface {
+	if (t != nil && t.Kind() == reflect.Interface) || (dt != nil && dt.Kind == KindInterface) {
 		if s, ok := val.(*Struct); ok {
-			if v.checkStructImplements(s, t) {
+			var it any = t
+			if it == nil {
+				it = dt
+			}
+			if v.checkStructImplements(s, it) {
 				v.push(val)
 				return true
 			}
-		} else if reflect.TypeOf(val).Implements(t) {
+		} else if t != nil && reflect.TypeOf(val).Implements(t) {
 			v.push(val)
 			return true
 		}
-		fail(fmt.Errorf("cannot convert %T to %v", val, t))
+		fail(fmt.Errorf("cannot convert %T to interface", val))
 		return true
 	}
 
@@ -3235,34 +3230,52 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
 
-	if it, ok := tObj.(*Interface); ok {
-		if val == nil {
-			v.push(nil)
-			v.push(false)
-			return true
-		}
-		if s, ok := val.(*Struct); ok {
-			if v.checkStructImplements(s, it) {
-				v.push(val)
-				v.push(true)
-				return true
-			}
-		}
+	var t reflect.Type
+	var expectedName string
+	var dt *Type
+	if rt, ok := tObj.(reflect.Type); ok {
+		t = rt
+		expectedName = rt.Name()
+	} else if it, ok := tObj.(*Type); ok {
+		dt = it
+		t = it.ToReflectType()
+		expectedName = it.Name
+	} else {
 		v.push(nil)
 		v.push(false)
 		return true
 	}
 
-	var t reflect.Type
-	var expectedName string
-	if rt, ok := tObj.(reflect.Type); ok {
-		t = rt
-		expectedName = rt.Name()
-	} else if dt, ok := tObj.(*Type); ok {
-		t = dt.ToReflectType()
-		expectedName = dt.Name
-	} else {
-		v.push(nil)
+	if (t != nil && t.Kind() == reflect.Interface) || (dt != nil && dt.Kind == KindInterface) {
+		if val == nil {
+			if t != nil {
+				v.push(reflect.Zero(t).Interface())
+			} else {
+				v.push(nil)
+			}
+			v.push(false)
+			return true
+		}
+		if s, ok := val.(*Struct); ok {
+			var it any = t
+			if it == nil {
+				it = dt
+			}
+			if v.checkStructImplements(s, it) {
+				v.push(val)
+				v.push(true)
+				return true
+			}
+		} else if t != nil && reflect.TypeOf(val).Implements(t) {
+			v.push(val)
+			v.push(true)
+			return true
+		}
+		if t != nil {
+			v.push(reflect.Zero(t).Interface())
+		} else {
+			v.push(nil)
+		}
 		v.push(false)
 		return true
 	}
@@ -3273,23 +3286,6 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		} else {
 			v.push(nil)
 		}
-		v.push(false)
-		return true
-	}
-
-	if t != nil && t.Kind() == reflect.Interface {
-		if s, ok := val.(*Struct); ok {
-			if v.checkStructImplements(s, t) {
-				v.push(val)
-				v.push(true)
-				return true
-			}
-		} else if reflect.TypeOf(val).Implements(t) {
-			v.push(val)
-			v.push(true)
-			return true
-		}
-		v.push(reflect.Zero(t).Interface())
 		v.push(false)
 		return true
 	}
@@ -3377,18 +3373,6 @@ func (v *VM) newFuncIterator(fn any) *FuncIterator {
 func (v *VM) checkStructImplements(s *Struct, it any) bool {
 	if rif, ok := it.(reflect.Type); ok {
 		return v.checkStructImplementsReflect(s, rif)
-	}
-	if cif, ok := it.(*Interface); ok {
-		for name, targetType := range cif.Methods {
-			method := v.getStructMethod(s, name)
-			if method == nil {
-				return false
-			}
-			if !v.checkMethodType(method, targetType) {
-				return false
-			}
-		}
-		return true
 	}
 	if t, ok := it.(*Type); ok && t.Kind == KindInterface {
 		for name, targetType := range t.Methods {
