@@ -1009,6 +1009,9 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 		}
 		res = nil
 	}
+	if rt, ok := res.(reflect.Type); ok {
+		res = FromReflectType(rt)
+	}
 	v.OperandStack[calleeIdx] = res
 	for i := calleeIdx + 1; i < v.SP; i++ {
 		v.OperandStack[i] = nil
@@ -3308,33 +3311,16 @@ func (v *VM) newFuncIterator(fn any) *FuncIterator {
 	return it
 }
 
-func (v *VM) checkStructImplements(s *Struct, it any) bool {
-	if rif, ok := it.(reflect.Type); ok {
-		return v.checkStructImplementsReflect(s, rif)
+func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
+	if t == nil || t.Kind != KindInterface {
+		return false
 	}
-	if t, ok := it.(*Type); ok && t.Kind == KindInterface {
-		for name, targetType := range t.Methods {
-			method := v.getStructMethod(s, name)
-			if method == nil {
-				return false
-			}
-			if !v.checkMethodType(method, targetType) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func (v *VM) checkStructImplementsReflect(s *Struct, rif reflect.Type) bool {
-	for i := 0; i < rif.NumMethod(); i++ {
-		m := rif.Method(i)
-		method := v.getStructMethod(s, m.Name)
+	for name, targetType := range t.Methods {
+		method := v.getStructMethod(s, name)
 		if method == nil {
 			return false
 		}
-		if !v.checkMethodType(method, FromReflectType(m.Type)) {
+		if !v.checkMethodType(method, targetType) {
 			return false
 		}
 	}

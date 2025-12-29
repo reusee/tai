@@ -124,6 +124,9 @@ func (v *VM) push(val any) {
 	if v.SP >= len(v.OperandStack) {
 		v.growOperandStack()
 	}
+	if rt, ok := val.(reflect.Type); ok {
+		val = FromReflectType(rt)
+	}
 	v.OperandStack[v.SP] = val
 	v.SP++
 }
