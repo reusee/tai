@@ -2126,3 +2126,61 @@ func TestVMMethodShadowing(t *testing.T) {
 	`)
 	checkString(t, vm, "res", "derived")
 }
+
+func TestVMExtendedMod(t *testing.T) {
+	// Test Go-style modulo vs Python-style
+	vm := runVM(t, `
+		package main
+		var r1 = -5 % 3
+		var r2 = 5 % -3
+	`)
+	checkInt(t, vm, "r1", -2) // Go style
+	checkInt(t, vm, "r2", 2)  // Go style
+}
+
+func TestVMMapMerge(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var m1 = map[string]int{"a": 1}
+		var m2 = map[string]int{"b": 2}
+		var m3 = m1 | m2
+		var res = m3["a"] + m3["b"]
+	`)
+	checkInt(t, vm, "res", 3)
+}
+
+func TestVMPromotedFieldAssignment(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		type Base struct { Val int }
+		type Derived struct { Base }
+		var d = Derived{Base: Base{Val: 10}}
+		var res int
+		func init() {
+			d.Val = 42
+			res = d.Val
+		}
+	`)
+	checkInt(t, vm, "res", 42)
+}
+
+func TestVMMultiValueTypeAssertion(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var val any = 42
+		var res, ok = val.(int)
+		var res2, ok2 = val.(string)
+	`)
+	checkInt(t, vm, "res", 42)
+	checkBool(t, vm, "ok", true)
+	checkString(t, vm, "res2", "")
+	checkBool(t, vm, "ok2", false)
+}
+
+func TestVMBitAndNot(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var x = 3 &^ 1 // 11 &^ 01 = 10 (2)
+	`)
+	checkInt(t, vm, "x", 2)
+}
