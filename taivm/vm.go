@@ -24,6 +24,7 @@ type VM struct {
 	IsPanicking  bool       // whether currently unwinding from a panic
 	PanicValue   any        // value passed to panic()
 	Defers       []*Closure // stack of deferred functions for the current function
+	YieldTicks   int
 }
 
 func NewVM(main *Function) *VM {
@@ -54,6 +55,7 @@ func (v *VM) GobEncode() ([]byte, error) {
 		IsPanicking  bool
 		PanicValue   any
 		Defers       []*Closure
+		YieldTicks   int
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -69,6 +71,7 @@ func (v *VM) GobEncode() ([]byte, error) {
 		IsPanicking:  v.IsPanicking,
 		PanicValue:   v.PanicValue,
 		Defers:       v.Defers,
+		YieldTicks:   v.YieldTicks,
 	})
 	return buf.Bytes(), err
 }
@@ -86,6 +89,7 @@ func (v *VM) GobDecode(data []byte) error {
 		IsPanicking  bool
 		PanicValue   any
 		Defers       []*Closure
+		YieldTicks   int
 	}
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	var s snapshot
@@ -102,6 +106,7 @@ func (v *VM) GobDecode(data []byte) error {
 	v.IsPanicking = s.IsPanicking
 	v.PanicValue = s.PanicValue
 	v.Defers = s.Defers
+	v.YieldTicks = s.YieldTicks
 	// Restore OperandStack with capacity
 	v.OperandStack = make([]any, max(1024, v.SP))
 	copy(v.OperandStack, s.OperandStack)

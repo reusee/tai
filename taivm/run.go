@@ -14,6 +14,9 @@ import (
 var ErrYield = errors.New("yield")
 
 func (v *VM) Run(yield func(*Interrupt, error) bool) {
+	yieldTicks := v.YieldTicks
+	ticks := 0
+
 	for {
 		if v.IP < 0 || v.IP >= len(v.CurrentFun.Code) {
 			if (v.IsPanicking || len(v.CallStack) > 0) && v.handleUnwind(yield) {
@@ -21,9 +24,21 @@ func (v *VM) Run(yield func(*Interrupt, error) bool) {
 			}
 			return
 		}
+
 		if !v.executeOne(yield) {
 			return
 		}
+
+		if yieldTicks > 0 {
+			ticks++
+			if ticks >= yieldTicks {
+				if !yield(InterruptYield, nil) {
+					return
+				}
+				ticks = 0
+			}
+		}
+
 	}
 }
 

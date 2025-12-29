@@ -5051,3 +5051,84 @@ func TestType_String(t *testing.T) {
 		}
 	}
 }
+
+func TestVM_TickYield(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Code: []OpCode{
+			OpPop,
+			OpPop,
+			OpPop,
+			OpPop,
+		},
+	}
+	vm := NewVM(main)
+	vm.push(1)
+	vm.push(2)
+	vm.push(3)
+	vm.push(4)
+	vm.YieldTicks = 2
+
+	yieldCount := 0
+	vm.Run(func(intr *Interrupt, err error) bool {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if intr == InterruptYield {
+			yieldCount++
+		}
+		return true
+	})
+
+	if yieldCount != 2 {
+		t.Fatalf("expected 2 yields, got %d", yieldCount)
+	}
+	if vm.SP != 0 {
+		t.Fatalf("expected SP 0, got %d", vm.SP)
+	}
+}
+
+func TestVM_TickYieldResume(t *testing.T) {
+	main := &Function{
+		Name: "main",
+		Code: []OpCode{
+			OpPop,
+			OpPop,
+			OpPop,
+			OpPop,
+		},
+	}
+	vm := NewVM(main)
+	vm.push(1)
+	vm.push(2)
+	vm.push(3)
+	vm.push(4)
+	vm.YieldTicks = 3
+
+	// First run should yield after 3 pops
+	vm.Run(func(intr *Interrupt, err error) bool {
+		if intr == InterruptYield {
+			return false // Suspend on yield
+		}
+		return true
+	})
+
+	if vm.IP != 3 {
+		t.Fatalf("expected IP 3, got %d", vm.IP)
+	}
+	if vm.SP != 1 {
+		t.Fatalf("expected SP 1, got %d", vm.SP)
+	}
+
+	// Second run should finish
+	vm.Run(func(intr *Interrupt, err error) bool {
+		return true
+	})
+
+	if vm.IP != 4 {
+		t.Fatalf("expected IP 4, got %d", vm.IP)
+	}
+	if vm.SP != 0 {
+		t.Fatalf("expected SP 0, got %d", vm.SP)
+	}
+}
