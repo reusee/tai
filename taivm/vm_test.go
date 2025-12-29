@@ -1454,11 +1454,11 @@ func TestNativeFunc_Gob(t *testing.T) {
 		t.Fatalf("expected name test, got %s", nf2.Name)
 	}
 
-	if nf2.Func == nil {
-		t.Fatal("Func is nil")
+	if !nf2.IsMissing() {
+		t.Fatal("expected missing")
 	}
 
-	_, err := nf2.Func(nil, nil)
+	_, err := nf2.Call(nil, nil)
 	if err == nil {
 		t.Fatal("expected error calling restored native func")
 	}
@@ -2417,7 +2417,8 @@ func TestVM_Bitwise_TypePreservation(t *testing.T) {
 	}{
 		{int(1), int(^1)},
 		{int8(1), int8(^1)},
-		{int8(1), int8(^1)},
+		{int16(1), int16(^1)},
+		{int32(1), int32(^1)},
 		{int64(1), int64(^1)},
 	}
 

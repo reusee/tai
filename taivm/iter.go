@@ -52,3 +52,25 @@ type FuncIterator struct {
 func (it *FuncIterator) GetIndex(key any) (any, bool) {
 	return it.V, true
 }
+
+func (it *FuncIterator) EnsureYieldBound() {
+	if it.InnerVM == nil {
+		return
+	}
+	// Check if yield is missing or was restored without a function body
+	if val, ok := it.InnerVM.Get("yield"); !ok || val.(NativeFunc).IsMissing() {
+		it.InnerVM.Def("yield", NativeFunc{
+			Name: "yield",
+			Func: func(svm *VM, args []any) (any, error) {
+				if len(args) > 0 {
+					it.K = args[0]
+				}
+				if len(args) > 1 {
+					it.V = args[1]
+				}
+				it.Resumed = false
+				return true, ErrYield
+			},
+		})
+	}
+}

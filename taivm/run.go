@@ -921,14 +921,12 @@ func (v *VM) callClosure(fn *Closure, argc, calleeIdx int, yield func(*Interrupt
 }
 
 func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
-	// Zero-allocation slice view of arguments
-	// Note: Slice is valid only until next Stack modification, which is fine for sync calls
 	args := v.OperandStack[calleeIdx+1 : v.SP]
-	res, err := fn.Func(v, args)
+	res, err := fn.Call(v, args)
 
 	if err != nil {
 		if v.IsPanicking {
-			v.IP = len(v.CurrentFun.Code) // ensure we transition to unwinding immediately
+			v.IP = len(v.CurrentFun.Code)
 			return true
 		}
 		if !yield(nil, err) {
@@ -1854,7 +1852,7 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		}
 		return true
 	}
-	iter := v.OperandStack[v.SP-1] // Peek iterator
+	iter := v.OperandStack[v.SP-1]
 
 	switch it := iter.(type) {
 	case *ListIterator:
@@ -1862,7 +1860,7 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			v.push(it.List.Elements[it.Idx])
 			it.Idx++
 		} else {
-			v.pop() // pop iterator
+			v.pop()
 			v.IP += offset
 		}
 	case *MapIterator:
@@ -1870,7 +1868,7 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			v.push(it.Keys[it.Idx])
 			it.Idx++
 		} else {
-			v.pop() // pop iterator
+			v.pop()
 			v.IP += offset
 		}
 	case *RangeIterator:
@@ -1882,6 +1880,7 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			v.IP += offset
 		}
 	case *FuncIterator:
+		it.EnsureYieldBound()
 		it.Resumed = true
 		var innerIntr *Interrupt
 		var innerErr error
@@ -1896,10 +1895,9 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			}
 			return true
 		})
-		// If inner VM suspended or errored, propagate to outer VM
 		if innerIntr != nil || innerErr != nil {
 			if !yield(innerIntr, innerErr) {
-				v.IP-- // Stay on this instruction to retry when resumed
+				v.IP--
 				return false
 			}
 			return true
@@ -1909,7 +1907,7 @@ func (v *VM) opNextIter(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 		it.Done = true
-		v.pop() // pop iterator
+		v.pop()
 		v.IP += offset
 	default:
 		if !yield(nil, fmt.Errorf("not an iterator: %T", iter)) {
@@ -2578,7 +2576,7 @@ func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
 			v.push(nil)
 			return true
 		}
-		res, err := fn.Func(v, posArgs)
+		res, err := fn.Call(v, posArgs)
 		if err != nil {
 			if !yield(nil, err) {
 				return false
