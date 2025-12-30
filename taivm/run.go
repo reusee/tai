@@ -1288,6 +1288,12 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opGetIndexFallbacks(target, key any, yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
+	case *Struct:
+		if k, ok := key.(string); ok {
+			v.push(t.Fields[k])
+		} else {
+			return yield(nil, fmt.Errorf("struct index must be string"))
+		}
 	case *List:
 		idx, ok := ToInt64(key)
 		if !ok {
@@ -1381,6 +1387,15 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 	switch m := target.(type) {
+	case *Struct:
+		if s, ok := key.(string); ok {
+			val, ok := m.Fields[s]
+			v.push(val)
+			v.push(ok)
+		} else {
+			v.push(nil)
+			v.push(false)
+		}
 	case map[any]any:
 		val, ok := m[key]
 		v.push(val)
@@ -1448,6 +1463,15 @@ func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opSetIndexFallbacks(target, key, val any, yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
+	case *Struct:
+		if k, ok := key.(string); ok {
+			if t.Fields == nil {
+				t.Fields = make(map[string]any)
+			}
+			t.Fields[k] = val
+		} else {
+			return yield(nil, fmt.Errorf("struct index must be string"))
+		}
 	case *List:
 		if t.Immutable {
 			return yield(nil, fmt.Errorf("tuple is immutable"))
@@ -2463,6 +2487,12 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	switch t := target.(type) {
 	case *Struct:
 		return v.opGetStructAttr(t, nameStr, name, yield)
+	case map[any]any:
+		v.push(t[nameStr])
+		return true
+	case map[string]any:
+		v.push(t[nameStr])
+		return true
 	case *List:
 		return v.opGetListAttr(t, nameStr, yield)
 	case *Pointer:
@@ -2691,6 +2721,14 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 			t.Fields = make(map[string]any)
 		}
 		t.Fields[nameStr] = val
+
+	case map[any]any:
+		t[nameStr] = val
+		return true
+
+	case map[string]any:
+		t[nameStr] = val
+		return true
 
 	case *Pointer:
 		v.push(t.Target)

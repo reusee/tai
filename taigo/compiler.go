@@ -1286,6 +1286,15 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 		return c.compileMapLit(expr)
 	}
 
+	if t, err := c.resolveType(expr.Type); err == nil {
+		switch t.Kind {
+		case taivm.KindSlice, taivm.KindArray:
+			return c.compileArrayLit(expr)
+		case taivm.KindMap:
+			return c.compileMapLit(expr)
+		}
+	}
+
 	switch t := expr.Type.(type) {
 	case *ast.ArrayType:
 		return c.compileArrayLit(expr)

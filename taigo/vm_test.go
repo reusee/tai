@@ -2209,3 +2209,40 @@ func TestExec(t *testing.T) {
 	}
 	checkInt(t, vm, "a", 2)
 }
+
+func TestMapSelector(t *testing.T) {
+	vm := runVM(t, `package main
+		type M = map[string]any
+		var m = M{
+			"foo": M{
+				"bar": M{
+					"baz": 42,
+				},
+			},
+		}
+		`)
+
+	val, err := Exec(vm, "m.foo.bar.baz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := val.(int)
+	if !ok {
+		t.Fatal()
+	}
+	if n != 42 {
+		t.Fatal()
+	}
+
+	val, err = Exec(vm, `((m.foo)["bar"]).baz`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok = val.(int)
+	if !ok {
+		t.Fatal()
+	}
+	if n != 42 {
+		t.Fatal()
+	}
+}
