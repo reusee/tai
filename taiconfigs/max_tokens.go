@@ -10,6 +10,12 @@ import (
 
 type MaxTokens int
 
+var _ configs.Configurable = MaxTokens(0)
+
+func (m MaxTokens) ConfigExpr() string {
+	return "MaxTokens"
+}
+
 var maxTokensFlag = cmds.Var[int]("-max-tokens")
 
 func (Module) MaxTokens(

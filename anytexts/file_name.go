@@ -36,6 +36,12 @@ var matchFlag = cmds.Var[string]("-match")
 
 type Match string
 
+var _ configs.Configurable = Match("")
+
+func (m Match) ConfigExpr() string {
+	return "Match"
+}
+
 func (Module) Match(
 	loader configs.Loader,
 ) Match {

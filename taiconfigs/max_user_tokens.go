@@ -10,6 +10,12 @@ import (
 
 type MaxUserTokens int
 
+var _ configs.Configurable = MaxUserTokens(0)
+
+func (m MaxUserTokens) ConfigExpr() string {
+	return "Go.MaxUserTokens"
+}
+
 var maxUserTokensFlag = cmds.Var[int]("-max-user-tokens")
 
 func (Module) MaxUserTokens(

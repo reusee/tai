@@ -9,6 +9,12 @@ var noTestsFlag = cmds.Switch("-no-tests")
 
 type NoTests bool
 
+var _ configs.Configurable = NoTests(true)
+
+func (n NoTests) ConfigExpr() string {
+	return "Go.NoTests"
+}
+
 func (Module) NoTests(
 	loader configs.Loader,
 ) NoTests {

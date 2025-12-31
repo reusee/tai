@@ -60,6 +60,12 @@ type Transformed struct {
 
 type MaxPackageDistanceFromRoot int
 
+var _ configs.Configurable = MaxPackageDistanceFromRoot(0)
+
+func (m MaxPackageDistanceFromRoot) ConfigExpr() string {
+	return "Go.MaxDistance"
+}
+
 func (Module) MaxPackageDistanceFromRoot(
 	loader configs.Loader,
 ) MaxPackageDistanceFromRoot {

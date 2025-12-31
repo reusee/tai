@@ -19,6 +19,54 @@ type (
 	VercelAPIKey     string
 )
 
+func (v VercelAPIKey) ConfigExpr() string {
+	return "VercelAPIKey"
+}
+
+func (z ZhipuAPIKey) ConfigExpr() string {
+	return "ZhipuAPIKey"
+}
+
+func (a AliyunAPIKey) ConfigExpr() string {
+	return "AliyunAPIKey"
+}
+
+func (t TencentAPIKey) ConfigExpr() string {
+	return "TencentAPIKey"
+}
+
+func (o OpenRouterAPIKey) ConfigExpr() string {
+	return "OpenRouterAPIKey"
+}
+
+func (d DeepseekAPIKey) ConfigExpr() string {
+	return "DeepseekAPIKey"
+}
+
+func (b BaiduAPIKey) ConfigExpr() string {
+	return "BaiduAPIKey"
+}
+
+func (h HuoshanAPIKey) ConfigExpr() string {
+	return "HuoshanAPIKey"
+}
+
+func (g GoogleAPIKey) ConfigExpr() string {
+	return "GoogleAPIKey"
+}
+
+var (
+	_ configs.Configurable = GoogleAPIKey("")
+	_ configs.Configurable = HuoshanAPIKey("")
+	_ configs.Configurable = BaiduAPIKey("")
+	_ configs.Configurable = DeepseekAPIKey("")
+	_ configs.Configurable = OpenRouterAPIKey("")
+	_ configs.Configurable = TencentAPIKey("")
+	_ configs.Configurable = AliyunAPIKey("")
+	_ configs.Configurable = ZhipuAPIKey("")
+	_ configs.Configurable = VercelAPIKey("")
+)
+
 func (Module) GoogleAPIKey(
 	loader configs.Loader,
 ) GoogleAPIKey {

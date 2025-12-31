@@ -8,6 +8,12 @@ import (
 
 type Envs []string
 
+func (e Envs) ConfigExpr() string {
+	return "Go.Envs"
+}
+
+var _ configs.Configurable = Envs(nil)
+
 func (Module) Envs(
 	loader configs.Loader,
 ) (ret Envs) {

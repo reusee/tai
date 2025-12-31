@@ -22,6 +22,12 @@ import (
 
 type MaxContextTokens int
 
+var _ configs.Configurable = MaxContextTokens(0)
+
+func (m MaxContextTokens) ConfigExpr() string {
+	return "Go.MaxContextTokens"
+}
+
 var maxContextTokensFlag = cmds.Var[int]("-max-context-tokens")
 
 func (Module) MaxContextTokens(

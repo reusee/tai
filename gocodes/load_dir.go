@@ -10,6 +10,12 @@ import (
 
 type LoadDir string
 
+var _ configs.Configurable = LoadDir("")
+
+func (l LoadDir) ConfigExpr() string {
+	return "Go.LoadDir"
+}
+
 var loadDirFlag = cmds.Var[string]("-load-dir")
 
 func (Module) LoadDir(

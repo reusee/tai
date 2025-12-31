@@ -5,20 +5,33 @@ import (
 	"github.com/reusee/tai/vars"
 )
 
+type OpenRouterEndpoint string
+
+func (Module) OpenRouterEndpoint(
+	loader configs.Loader,
+) OpenRouterEndpoint {
+	if endpoint := configs.First[OpenRouterEndpoint](loader, "openrouter_endpoint"); endpoint != "" {
+		return endpoint
+	}
+	return "https://openrouter.ai/api/v1"
+}
+
+var _ configs.Configurable = OpenRouterEndpoint("")
+
+func (o OpenRouterEndpoint) ConfigExpr() string {
+	return "OpenRouterEndpoint"
+}
+
 type NewOpenRouter func(args GeneratorArgs) *OpenAI
 
 func (Module) NewOpenRouter(
 	newOpenAI NewOpenAI,
 	apiKey OpenRouterAPIKey,
-	loader configs.Loader,
+	endpoint OpenRouterEndpoint,
 ) NewOpenRouter {
 	return func(args GeneratorArgs) *OpenAI {
 		if args.BaseURL == "" {
-			if endpoint := configs.First[string](loader, "openrouter_endpoint"); endpoint != "" {
-				args.BaseURL = endpoint
-			} else {
-				args.BaseURL = "https://openrouter.ai/api/v1"
-			}
+			args.BaseURL = string(endpoint)
 		}
 		args.IsOpenRouter = true
 		return newOpenAI(

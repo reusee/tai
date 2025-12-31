@@ -24,6 +24,12 @@ var (
 
 type DefaultModelName string
 
+func (d DefaultModelName) ConfigExpr() string {
+	return "DefaultModel"
+}
+
+var _ configs.Configurable = DefaultModelName("")
+
 func (Module) DefaultModelName(
 	loader configs.Loader,
 	fallback FallbackModelName,

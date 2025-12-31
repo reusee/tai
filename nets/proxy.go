@@ -15,6 +15,12 @@ import (
 
 type ProxyAddr string
 
+func (p ProxyAddr) ConfigExpr() string {
+	return "ProxyAddr"
+}
+
+var _ configs.Configurable = ProxyAddr("")
+
 func (Module) ProxyAddr(
 	mode modes.Mode,
 	loader configs.Loader,
