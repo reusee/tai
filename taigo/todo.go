@@ -1,8 +1,7 @@
 package taigo
 
 /* TODO
-inter-operations between Go
-*/
+ */
 
 /*
 not supported intentionally:
