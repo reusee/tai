@@ -38,7 +38,11 @@ func main() {
 		input = os.Stdin
 	}
 
-	vm, err := taigo.NewVM(name, input, nil)
+	env := &taigo.Env{
+		Source:     input,
+		SourceName: name,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Stderr.WriteString("\n")

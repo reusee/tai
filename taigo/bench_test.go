@@ -1,14 +1,16 @@
 package taigo
 
 import (
-	"strings"
 	"testing"
 )
 
 func BenchmarkCompile(b *testing.B) {
 	src := `package main; var a = 1 + 2`
 	for b.Loop() {
-		_, err := NewVM("main", strings.NewReader(src), nil)
+		env := &Env{
+			Source: src,
+		}
+		_, err := env.NewVM()
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -26,7 +28,10 @@ func BenchmarkFib15(b *testing.B) {
 			_ = fib(15)
 		}
 	`
-	vm, err := NewVM("main", strings.NewReader(src), nil)
+	env := &Env{
+		Source: src,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -50,7 +55,10 @@ func BenchmarkLoop10000(b *testing.B) {
 			}
 		}
 	`
-	vm, err := NewVM("main", strings.NewReader(src), nil)
+	env := &Env{
+		Source: src,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		b.Fatal(err)
 	}

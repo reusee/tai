@@ -10,8 +10,8 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func registerBuiltins(vm *taivm.VM, options *Options) {
-	registerIO(vm, options)
+func (e *Env) registerBuiltins(vm *taivm.VM) {
+	registerIO(vm, e)
 	registerPanic(vm)
 	registerCollections(vm)
 	registerMath(vm)
@@ -19,7 +19,7 @@ func registerBuiltins(vm *taivm.VM, options *Options) {
 	registerMemory(vm)
 }
 
-func registerIO(vm *taivm.VM, options *Options) {
+func registerIO(vm *taivm.VM, env *Env) {
 	fprint := func(w io.Writer, args []any, newline bool) {
 		for i, arg := range args {
 			if i > 0 {
@@ -33,8 +33,8 @@ func registerIO(vm *taivm.VM, options *Options) {
 	}
 
 	stdout := func() io.Writer {
-		if options != nil && options.Stdout != nil {
-			return options.Stdout
+		if env != nil && env.Stdout != nil {
+			return env.Stdout
 		}
 		return os.Stdout
 	}

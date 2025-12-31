@@ -8,21 +8,23 @@ import (
 )
 
 func runVM(t *testing.T, src string) *taivm.VM {
-	vm, err := NewVM("main", strings.NewReader(src), &Options{
-		Stdout: t.Output(),
-		Stderr: t.Output(),
-	})
+	env := &Env{
+		Source:     src,
+		SourceName: t.Name(),
+		Stdout:     t.Output(),
+		Stderr:     t.Output(),
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Helper()
 		t.Fatal(err)
 	}
-	vm.Run(func(i *taivm.Interrupt, err error) bool {
+	for _, err := range vm.Run {
 		if err != nil {
 			t.Helper()
 			t.Fatalf("vm error: %v", err)
 		}
-		return true
-	})
+	}
 	return vm
 }
 
@@ -602,7 +604,10 @@ func TestVMCompileErrors(t *testing.T) {
 	}
 
 	for _, src := range badSources {
-		_, err := NewVM("bad", strings.NewReader(src), nil)
+		env := &Env{
+			Source: src,
+		}
+		_, err := env.GetPackage()
 		if err == nil {
 			t.Errorf("expected compilation error for source: %s", src)
 		}
@@ -610,39 +615,26 @@ func TestVMCompileErrors(t *testing.T) {
 }
 
 func TestVMRuntimeImportErrors(t *testing.T) {
-	vm, err := NewVM("main", strings.NewReader(`
+	env := &Env{
+		Source: `
 		package main
 		import "fmt"
-	`), nil)
+		`,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	vm.Run(func(i *taivm.Interrupt, err error) bool {
+	for _, err := range vm.Run {
 		if err != nil {
-			if strings.Contains(err.Error(), "import not implemented") {
-				return false // Expected error
+			if !strings.Contains(err.Error(), "import not implemented") {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			t.Fatalf("unexpected error: %v", err)
 		}
-		return true
-	})
+	}
 }
 
 func TestVMNegativeCases(t *testing.T) {
-	// Test Compilation Errors
-	badSources := []string{
-		"package main; func f() { go f() }",
-		"package main; func f() { select {} }",
-	}
-
-	for _, src := range badSources {
-		_, err := NewVM("bad", strings.NewReader(src), nil)
-		if err == nil {
-			t.Errorf("expected compilation error for source: %s", src)
-		}
-	}
-
 	// Test Runtime Errors (Panic, etc)
 	vm := runVM(t, `
 		package main
@@ -977,10 +969,12 @@ func TestCoverageBuiltins(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vm, err := NewVM("test", strings.NewReader(tt.src), &Options{
+			env := &Env{
+				Source: tt.src,
 				Stdout: t.Output(),
 				Stderr: t.Output(),
-			})
+			}
+			vm, err := env.NewVM()
 			if err != nil {
 				t.Fatalf("unexpected compilation error: %v", err)
 			}
@@ -1041,7 +1035,10 @@ func TestCoverageCompilerUnsupported(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewVM("test", strings.NewReader(tt.src), nil)
+			env := &Env{
+				Source: tt.src,
+			}
+			_, err := env.NewVM()
 			if err == nil {
 				t.Error("expected compilation error")
 			} else if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
@@ -1158,7 +1155,10 @@ func TestCoverageCompilerErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vm, err := NewVM("test", strings.NewReader(tt.src), nil)
+			env := &Env{
+				Source: tt.src,
+			}
+			vm, err := env.NewVM()
 			if tt.wantErr == "expected" {
 				if err == nil {
 					t.Error("expected error")
@@ -1198,11 +1198,12 @@ func TestCoverageVarDecl(t *testing.T) {
 
 func TestBuiltinIO(t *testing.T) {
 	var buf strings.Builder
-	opts := &Options{
+	src := `package main; func init() { print("a", "b"); println("c", "d") }`
+	env := &Env{
+		Source: src,
 		Stdout: &buf,
 	}
-	src := `package main; func init() { print("a", "b"); println("c", "d") }`
-	vm, err := NewVM("test", strings.NewReader(src), opts)
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1217,7 +1218,10 @@ func TestBuiltinIO(t *testing.T) {
 	}
 
 	// Test without options
-	vm2, _ := NewVM("test", strings.NewReader(`package main; func init() { print("x") }`), nil)
+	env = &Env{
+		Source: `package main; func init() { print("x") }`,
+	}
+	vm2, _ := env.NewVM()
 	vm2.Run(func(i *taivm.Interrupt, err error) bool { return true })
 }
 
@@ -1265,7 +1269,10 @@ func TestCoverageCompilerMisc(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewVM("test", strings.NewReader(tt.src), nil)
+			env := &Env{
+				Source: tt.src,
+			}
+			_, err := env.NewVM()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
@@ -1866,7 +1873,10 @@ func TestVMSliceToArrayConversionError(t *testing.T) {
 			_ = [2]int(s)
 		}
 	`
-	vm, _ := NewVM("test", strings.NewReader(src), nil)
+	env := &Env{
+		Source: src,
+	}
+	vm, _ := env.NewVM()
 	var err error
 	vm.Run(func(i *taivm.Interrupt, e error) bool {
 		err = e
@@ -1983,13 +1993,16 @@ func TestVMUnkeyedStructLiteral(t *testing.T) {
 
 func TestVMNativeMethodValue(t *testing.T) {
 	var buf strings.Builder
-	vm, err := NewVM("main", strings.NewReader(`
+	env := &Env{
+		Source: `
 		package main
 		func main() {
 			f := buf.WriteString
 			f("hello")
 		}
-	`), nil)
+		`,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2012,7 +2025,10 @@ func TestVMConstantDeduplication(t *testing.T) {
 		var b = "foo"
 		var c = "bar"
 	`
-	vm, err := NewVM("main", strings.NewReader(src), nil)
+	env := &Env{
+		Source: src,
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2085,7 +2101,8 @@ func TestVMInterfaceImplementationPromoted(t *testing.T) {
 
 func TestVMInterfaceImplementationNative(t *testing.T) {
 	var buf strings.Builder
-	vm, err := NewVM("main", strings.NewReader(`
+	env := &Env{
+		Source: `
 		package main
 		type Writer interface {
 			Write([]any) any
@@ -2094,13 +2111,14 @@ func TestVMInterfaceImplementationNative(t *testing.T) {
 		func init() {
 			_, ok = buf.(Writer)
 		}
-	`), &Options{
+		`,
 		Stdout: t.Output(),
 		Stderr: t.Output(),
 		Globals: map[string]any{
 			"buf": &buf,
 		},
-	})
+	}
+	vm, err := env.NewVM()
 	if err != nil {
 		t.Fatal(err)
 	}
