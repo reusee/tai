@@ -11,49 +11,10 @@ import (
 )
 
 func Eval[T any](env *taivm.Env, src any) (ret T, err error) {
-	var srcStr string
-	switch s := src.(type) {
-	case string:
-		srcStr = s
-	case []byte:
-		srcStr = string(s)
-	case io.Reader:
-		b, err := io.ReadAll(s)
-		if err != nil {
-			return ret, err
-		}
-		srcStr = string(b)
-	default:
-		srcStr = fmt.Sprint(s)
+	val, err := evalSrc(env, src)
+	if err != nil {
+		return ret, err
 	}
-
-	var val any
-	fset := token.NewFileSet()
-	expr, err := parser.ParseExpr(srcStr)
-	if err == nil {
-		fn, err := compileExpr(expr)
-		if err != nil {
-			return ret, err
-		}
-		val, err = eval(env, fn)
-		if err != nil {
-			return ret, err
-		}
-	} else {
-		file, err := parser.ParseFile(fset, "eval", srcStr, parser.SkipObjectResolution)
-		if err != nil {
-			return ret, err
-		}
-		pkg, err := compile(file)
-		if err != nil {
-			return ret, err
-		}
-		val, err = eval(env, pkg.Init)
-		if err != nil {
-			return ret, err
-		}
-	}
-
 	if val == nil {
 		return ret, nil
 	}
@@ -67,6 +28,59 @@ func Eval[T any](env *taivm.Env, src any) (ret T, err error) {
 		return v, nil
 	}
 	return ret, fmt.Errorf("cannot convert %T to %v", val, targetType)
+}
+
+func evalSrc(env *taivm.Env, src any) (any, error) {
+	var srcStr string
+	switch s := src.(type) {
+	case string:
+		srcStr = s
+	case []byte:
+		srcStr = string(s)
+	case io.Reader:
+		b, err := io.ReadAll(s)
+		if err != nil {
+			return nil, err
+		}
+		srcStr = string(b)
+	default:
+		srcStr = fmt.Sprint(s)
+	}
+
+	fset := token.NewFileSet()
+	expr, err := parser.ParseExpr(srcStr)
+	if err == nil {
+		fn, err := compileExpr(expr)
+		if err != nil {
+			return nil, err
+		}
+		return eval(env, fn)
+	}
+
+	file, err := parser.ParseFile(fset, "eval", srcStr, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	pkg, err := compile(file)
+	if err != nil {
+		return nil, err
+	}
+	return eval(env, pkg.Init)
+}
+
+func TypedEval(env *taivm.Env, src any, typ reflect.Type) (any, error) {
+	val, err := evalSrc(env, src)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return reflect.Zero(typ).Interface(), nil
+	}
+	res := convertToReflectValue(env, val, typ)
+	if res.Type().AssignableTo(typ) {
+		return res.Interface(), nil
+	}
+	return nil, fmt.Errorf("cannot convert %T to %v", val, typ)
 }
 
 func eval(env *taivm.Env, fn *taivm.Function) (any, error) {

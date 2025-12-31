@@ -1,6 +1,7 @@
 package taigo
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -2261,6 +2262,21 @@ func TestMapSelector(t *testing.T) {
 		t.Fatal()
 	}
 	if n != 42 {
+		t.Fatal()
+	}
+}
+
+func TestTypedEval(t *testing.T) {
+	vm := runVM(t, `package main; var a = 1`)
+	val, err := TypedEval(vm.Scope, `a + 1`, reflect.TypeFor[int]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := val.(int)
+	if !ok {
+		t.Fatalf("got %T %v", val, val)
+	}
+	if res != 2 {
 		t.Fatal()
 	}
 }
