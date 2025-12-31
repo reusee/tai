@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/taiconfigs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/term"
 )
@@ -21,12 +22,17 @@ func main() {
 	cmds.Execute(os.Args[1:])
 	ctx := context.Background()
 
-	dscope.New(
+	scope := dscope.New(
 		new(Module),
 		modes.ForProduction(),
 	).Fork(
 		dscope.Provide(generators.FallbackModelName("gemini3")),
-	).Call(func(
+	)
+
+	scope, err := taiconfigs.TaigoFork(scope)
+	ce(err)
+
+	scope.Call(func(
 		logger logs.Logger,
 		getSystemPrompt GetSystemPrompt,
 		updateMemoryFunc UpdateMemoryFunc,
