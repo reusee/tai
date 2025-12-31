@@ -32,7 +32,7 @@ func runREPL(vm *taivm.VM) {
 		if line == "" {
 			continue
 		}
-		res, err := taigo.Exec(vm, line)
+		res, err := taigo.Eval[any](vm.Scope, line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		} else if res != nil {

@@ -1,22 +1,86 @@
 package taigo
 
 import (
+	"fmt"
+	"go/parser"
+	"go/token"
+	"io"
 	"reflect"
 
 	"github.com/reusee/tai/taivm"
 )
 
-func Eval[T any](env *taivm.Env, expr string) (ret T, err error) {
-	val, err := Exec(env, expr)
-	if err != nil {
-		return ret, err
+func Eval[T any](env *taivm.Env, src any) (ret T, err error) {
+	var srcStr string
+	switch s := src.(type) {
+	case string:
+		srcStr = s
+	case []byte:
+		srcStr = string(s)
+	case io.Reader:
+		b, err := io.ReadAll(s)
+		if err != nil {
+			return ret, err
+		}
+		srcStr = string(b)
+	default:
+		srcStr = fmt.Sprint(s)
 	}
+
+	var val any
+	fset := token.NewFileSet()
+	expr, err := parser.ParseExpr(srcStr)
+	if err == nil {
+		fn, err := compileExpr(expr)
+		if err != nil {
+			return ret, err
+		}
+		val, err = eval(env, fn)
+		if err != nil {
+			return ret, err
+		}
+	} else {
+		file, err := parser.ParseFile(fset, "eval", srcStr, parser.SkipObjectResolution)
+		if err != nil {
+			return ret, err
+		}
+		pkg, err := compile(file)
+		if err != nil {
+			return ret, err
+		}
+		val, err = eval(env, pkg.Init)
+		if err != nil {
+			return ret, err
+		}
+	}
+
+	if val == nil {
+		return ret, nil
+	}
+
 	if v, ok := val.(T); ok {
 		return v, nil
 	}
 	targetType := reflect.TypeFor[T]()
 	res := convertToReflectValue(env, val, targetType)
-	return res.Interface().(T), nil
+	if v, ok := res.Interface().(T); ok {
+		return v, nil
+	}
+	return ret, fmt.Errorf("cannot convert %T to %v", val, targetType)
+}
+
+func eval(env *taivm.Env, fn *taivm.Function) (any, error) {
+	newVM := taivm.NewVM(fn)
+	newVM.Scope = env
+	for _, err := range newVM.Run {
+		if err != nil {
+			return nil, err
+		}
+	}
+	if newVM.SP > 0 {
+		return newVM.OperandStack[newVM.SP-1], nil
+	}
+	return nil, nil
 }
 
 func convertToReflectValue(env *taivm.Env, val any, target reflect.Type) reflect.Value {
