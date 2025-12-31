@@ -587,33 +587,12 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 		recv := decl.Recv.List[0]
 		var typeName string
 		var isPointer bool
-		switch t := recv.Type.(type) {
-		case *ast.Ident:
-			typeName = t.Name
-		case *ast.StarExpr:
-			if id, ok := t.X.(*ast.Ident); ok {
-				typeName = id.Name
-				isPointer = true
-			} else if idx, ok := t.X.(*ast.IndexExpr); ok {
-				if id, ok := idx.X.(*ast.Ident); ok {
-					typeName = id.Name
-					isPointer = true
-				}
-			} else if idx, ok := t.X.(*ast.IndexListExpr); ok {
-				if id, ok := idx.X.(*ast.Ident); ok {
-					typeName = id.Name
-					isPointer = true
-				}
-			}
-		case *ast.IndexExpr:
-			if id, ok := t.X.(*ast.Ident); ok {
-				typeName = id.Name
-			}
-		case *ast.IndexListExpr:
-			if id, ok := t.X.(*ast.Ident); ok {
-				typeName = id.Name
-			}
+		t := recv.Type
+		if star, ok := t.(*ast.StarExpr); ok {
+			isPointer = true
+			t = star.X
 		}
+		typeName, _ = c.extractTypeName(t)
 		if typeName != "" {
 			if isPointer {
 				name = "*" + typeName + "." + name
@@ -627,6 +606,32 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 	c.emit(taivm.OpDefVar.With(nameIdx))
 
 	return nil
+}
+
+func (c *compiler) extractTypeName(t ast.Expr) (typeName string, rawName string) {
+	if t == nil {
+		return "", ""
+	}
+	switch e := t.(type) {
+	case *ast.Ident:
+		return e.Name, e.Name
+	case *ast.SelectorExpr:
+		if id, ok := e.X.(*ast.Ident); ok {
+			typeName = id.Name + "." + e.Sel.Name
+		} else {
+			typeName = e.Sel.Name
+		}
+		return typeName, e.Sel.Name
+	case *ast.IndexExpr:
+		return c.extractTypeName(e.X)
+	case *ast.IndexListExpr:
+		return c.extractTypeName(e.X)
+	case *ast.StarExpr:
+		return c.extractTypeName(e.X)
+	case *ast.ParenExpr:
+		return c.extractTypeName(e.X)
+	}
+	return "", ""
 }
 
 func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
@@ -1301,18 +1306,16 @@ func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
 			return c.compileArrayLit(expr)
 		case taivm.KindMap:
 			return c.compileMapLit(expr)
+		case taivm.KindStruct:
+			return c.compileStructLit(expr, expr.Type)
 		}
 	}
 
 	switch t := expr.Type.(type) {
 	case *ast.ArrayType:
 		return c.compileArrayLit(expr)
-	case *ast.Ident, *ast.SelectorExpr:
+	case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
 		return c.compileStructLit(expr, t)
-	case *ast.IndexExpr:
-		return c.compileStructLit(expr, t.X)
-	case *ast.IndexListExpr:
-		return c.compileStructLit(expr, t.X)
 	default:
 		return c.compileMapLit(expr)
 	}
@@ -1398,17 +1401,7 @@ func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
 }
 
 func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
-	var typeName, rawName string
-	if ident, ok := t.(*ast.Ident); ok {
-		typeName, rawName = ident.Name, ident.Name
-	} else if sel, ok := t.(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok {
-			typeName = id.Name + "." + sel.Sel.Name
-		} else {
-			typeName = sel.Sel.Name
-		}
-		rawName = sel.Sel.Name
-	}
+	typeName, rawName := c.extractTypeName(t)
 	numElts := len(expr.Elts)
 	if numElts > 0 {
 		if _, ok := expr.Elts[0].(*ast.KeyValueExpr); ok {
@@ -2382,25 +2375,9 @@ func (c *compiler) recordEmbeddedInfo(typeName string, st *ast.StructType) {
 	var embedded []any
 	for _, field := range st.Fields.List {
 		if len(field.Names) == 0 {
-			switch ft := field.Type.(type) {
-			case *ast.Ident:
-				embedded = append(embedded, ft.Name)
-			case *ast.SelectorExpr:
-				embedded = append(embedded, ft.Sel.Name)
-			case *ast.StarExpr:
-				if id, ok := ft.X.(*ast.Ident); ok {
-					embedded = append(embedded, id.Name)
-				} else if sel, ok := ft.X.(*ast.SelectorExpr); ok {
-					embedded = append(embedded, sel.Sel.Name)
-				}
-			case *ast.IndexExpr:
-				if id, ok := ft.X.(*ast.Ident); ok {
-					embedded = append(embedded, id.Name)
-				}
-			case *ast.IndexListExpr:
-				if id, ok := ft.X.(*ast.Ident); ok {
-					embedded = append(embedded, id.Name)
-				}
+			_, rawName := c.extractTypeName(field.Type)
+			if rawName != "" {
+				embedded = append(embedded, rawName)
 			}
 		}
 	}

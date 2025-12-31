@@ -2280,3 +2280,25 @@ func TestTypedEval(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestEvalStructField(t *testing.T) {
+	env := &Env{
+		Source: `
+		package main
+		var a = struct{
+			A int
+		}{
+			A: 42,
+		}
+		`,
+	}
+	vm, err := env.RunVM()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Eval[int](vm.Scope, "a.B")
+	if err == nil {
+		t.Fatalf("expect field not found error")
+	}
+}
