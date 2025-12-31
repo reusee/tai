@@ -60,6 +60,13 @@ func (c *compiler) getFunction() *taivm.Function {
 	}
 }
 
+func (c *compiler) getPackage() *Package {
+	return &Package{
+		Name: c.name,
+		Init: c.getFunction(),
+	}
+}
+
 func (c *compiler) emit(op taivm.OpCode) {
 	c.code = append(c.code, op)
 }
@@ -352,6 +359,7 @@ func (c *compiler) loadConst(val any) {
 }
 
 func (c *compiler) compileFile(file *ast.File) error {
+	c.name = file.Name.Name
 	if c.structFields == nil {
 		c.structFields = make(map[string][]string)
 	}

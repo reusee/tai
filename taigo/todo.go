@@ -1,7 +1,7 @@
 package taigo
 
 /* TODO
-untype constant
+inter-operations between Go
 */
 
 /*

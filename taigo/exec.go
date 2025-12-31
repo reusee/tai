@@ -40,11 +40,11 @@ func Exec(vm *taivm.VM, src any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	fn, err := compile(file)
+	pkg, err := compile(file)
 	if err != nil {
 		return nil, err
 	}
-	return runInVM(vm, fn)
+	return runInVM(vm, pkg.Init)
 }
 
 func runInVM(vm *taivm.VM, fn *taivm.Function) (any, error) {

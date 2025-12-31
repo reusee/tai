@@ -7,9 +7,8 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func compile(file *ast.File) (*taivm.Function, error) {
+func compile(file *ast.File) (*Package, error) {
 	c := &compiler{
-		name:       "main",
 		consts:     make(map[any]int),
 		locals:     make(map[string]int),
 		labels:     make(map[string]int),
@@ -30,7 +29,7 @@ func compile(file *ast.File) (*taivm.Function, error) {
 			c.patchJump(idx, target)
 		}
 	}
-	return c.getFunction(), nil
+	return c.getPackage(), nil
 }
 
 func compileExpr(expr ast.Expr) (*taivm.Function, error) {
