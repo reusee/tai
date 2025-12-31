@@ -6,20 +6,42 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"math"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+type MaxContextTokens int
+
+var maxContextTokensFlag = cmds.Var[int]("-max-context-tokens")
+
+func (Module) MaxContextTokens(
+	loader configs.Loader,
+) MaxContextTokens {
+	return vars.FirstNonZero(
+		MaxContextTokens(*maxContextTokensFlag),
+		configs.First[MaxContextTokens](loader, "go.max_context_tokens"),
+		configs.First[MaxContextTokens](loader, "go.context_tokens"),
+		math.MaxInt, // default unlimited
+	)
+}
+
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
-func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyFiles {
+func (Module) SimplifyFiles(
+	getFileSet GetFileSet,
+	logger logs.Logger,
+	maxContextTokens MaxContextTokens,
+) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		fset, err := getFileSet()
 		if err != nil {
@@ -67,6 +89,7 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 		}
 
 		allTokens := 0
+		contextTokens := 0
 		for _, file := range files {
 			file.transformCond.L.Lock()
 			for file.Transform != nil {
@@ -82,13 +105,16 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 				}
 				// confirm
 				allTokens += file.Pending.NumTokens
+				if !file.PackageIsRoot {
+					contextTokens += file.Pending.NumTokens
+				}
 				file.Confirmed = file.Pending
 				file.Pending = nil
 			}
 			file.transformCond.Broadcast()
 			file.transformCond.L.Unlock()
 		}
-		logger.Info("initial tokens", "tokens", allTokens)
+		logger.Info("initial tokens", "tokens", allTokens, "context tokens", contextTokens)
 
 		transforms := makeTransforms()
 
@@ -143,7 +169,7 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 					continue
 				}
 
-				if allTokens < maxTokens {
+				if allTokens < maxTokens && contextTokens <= int(maxContextTokens) {
 					break loop_ops
 				}
 
@@ -162,6 +188,9 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 					// confirm
 					if file.Confirmed != nil {
 						allTokens -= file.Confirmed.NumTokens
+						if !file.PackageIsRoot {
+							contextTokens -= file.Confirmed.NumTokens
+						}
 					}
 					if *debug {
 						logger.InfoContext(ctx, "file operation confirmed",
@@ -179,6 +208,9 @@ func (Module) SimplifyFiles(getFileSet GetFileSet, logger logs.Logger) SimplifyF
 					} else {
 						// updated
 						allTokens += file.Pending.NumTokens
+						if !file.PackageIsRoot {
+							contextTokens += file.Pending.NumTokens
+						}
 						file.Confirmed = file.Pending
 					}
 					file.Pending = nil
