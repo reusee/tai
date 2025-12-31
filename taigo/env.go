@@ -43,6 +43,19 @@ func (e *Env) NewVM() (*taivm.VM, error) {
 	return vm, nil
 }
 
+func (e *Env) RunVM() (*taivm.VM, error) {
+	vm, err := e.NewVM()
+	if err != nil {
+		return nil, err
+	}
+	for _, err := range vm.Run {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return vm, nil
+}
+
 func (e *Env) GetPackage() (*Package, error) {
 	if e.Package != nil {
 		return e.Package, nil
