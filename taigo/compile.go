@@ -7,14 +7,14 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func compile(file *ast.File) (*Package, error) {
+func compile(files ...*ast.File) (*Package, error) {
 	c := &compiler{
 		consts:     make(map[any]int),
 		locals:     make(map[string]int),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
-	if err := c.compileFile(file); err != nil {
+	if err := c.compileFiles(files); err != nil {
 		return nil, err
 	}
 	// Implicit return at end of script

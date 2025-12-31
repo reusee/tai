@@ -52,6 +52,161 @@ type loopScope struct {
 	isLoop          bool // true for for/range, false for switch
 }
 
+func (c *compiler) compileFiles(files []*ast.File) error {
+	if len(files) == 0 {
+		return nil
+	}
+	c.name = files[0].Name.Name
+	if c.structFields == nil {
+		c.structFields = make(map[string][]string)
+	}
+	if c.types == nil {
+		c.types = make(map[string]*taivm.Type)
+	}
+	symbols := c.collectSymbols(files)
+	funcs, inits, vars, hasMain, err := c.collectDecls(files, symbols)
+	if err != nil {
+		return err
+	}
+	for _, d := range funcs {
+		if err := d.compile(); err != nil {
+			return err
+		}
+	}
+	sorted, err := sortTopDecls(vars)
+	if err != nil {
+		return err
+	}
+	for _, d := range sorted {
+		if err := d.compile(); err != nil {
+			return err
+		}
+	}
+	for _, initFn := range inits {
+		if err := initFn(); err != nil {
+			return err
+		}
+	}
+	if hasMain {
+		c.emit(taivm.OpLoadVar.With(c.addConst("main")))
+		c.emit(taivm.OpCall.With(0))
+		c.emit(taivm.OpPop)
+	}
+	return nil
+}
+
+func (c *compiler) collectSymbols(files []*ast.File) map[string]bool {
+	symbols := make(map[string]bool)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name.Name != "init" {
+					symbols[d.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							symbols[name.Name] = true
+						}
+					case *ast.TypeSpec:
+						symbols[s.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return symbols
+}
+
+func (c *compiler) collectDecls(files []*ast.File, symbols map[string]bool) ([]topDecl, []func() error, []topDecl, bool, error) {
+	var funcs, vars []topDecl
+	var inits []func() error
+	var hasMain bool
+	getDeps := func(node ast.Node) []string {
+		var deps []string
+		ast.Inspect(node, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && symbols[id.Name] {
+				deps = append(deps, id.Name)
+			}
+			return true
+		})
+		return deps
+	}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if err := c.processTopDecl(decl, getDeps, &funcs, &inits, &vars, &hasMain); err != nil {
+				return nil, nil, nil, false, err
+			}
+		}
+	}
+	return funcs, inits, vars, hasMain, nil
+}
+
+func (c *compiler) processTopDecl(decl ast.Decl, getDeps func(ast.Node) []string, funcs *[]topDecl, inits *[]func() error, vars *[]topDecl, hasMain *bool) error {
+	switch g := decl.(type) {
+	case *ast.FuncDecl:
+		if g.Recv == nil && g.Name.Name == "init" {
+			*inits = append(*inits, func() error { return c.compileInitFunc(g) })
+		} else {
+			if g.Name.Name == "main" {
+				*hasMain = true
+			}
+			*funcs = append(*funcs, topDecl{
+				names:   []string{g.Name.Name},
+				compile: func() error { return c.compileFuncDecl(g) },
+			})
+		}
+	case *ast.GenDecl:
+		if g.Tok == token.IMPORT {
+			return c.compileGenDecl(g)
+		}
+		c.processGenDecl(g, getDeps, vars)
+	}
+	return nil
+}
+
+func (c *compiler) processGenDecl(g *ast.GenDecl, getDeps func(ast.Node) []string, vars *[]topDecl) {
+	var lastExprs []ast.Expr
+	for i, spec := range g.Specs {
+		var names []string
+		var deps []string
+		switch s := spec.(type) {
+		case *ast.ValueSpec:
+			for _, n := range s.Names {
+				names = append(names, n.Name)
+			}
+			vals := s.Values
+			if g.Tok == token.CONST {
+				if len(vals) > 0 {
+					lastExprs = vals
+				} else {
+					vals = lastExprs
+				}
+			}
+			for _, val := range vals {
+				deps = append(deps, getDeps(val)...)
+			}
+		case *ast.TypeSpec:
+			names = append(names, s.Name.Name)
+			deps = append(deps, getDeps(s.Type)...)
+		}
+		capturedExprs, capturedIota, capturedSpec := lastExprs, i, spec
+		*vars = append(*vars, topDecl{
+			names: names, deps: deps,
+			compile: func() error {
+				c.iotaVal, c.lastConstExprs = capturedIota, capturedExprs
+				if v, ok := capturedSpec.(*ast.ValueSpec); ok {
+					return c.compileValueSpec(v, g.Tok == token.CONST)
+				}
+				return c.compileTypeSpec(capturedSpec.(*ast.TypeSpec))
+			},
+		})
+	}
+}
+
 func (c *compiler) getFunction() *taivm.Function {
 	return &taivm.Function{
 		Name:      c.name,
@@ -356,160 +511,6 @@ func (c *compiler) toVMFloatValue(v constant.Value) any {
 func (c *compiler) loadConst(val any) {
 	idx := c.addConst(val)
 	c.emit(taivm.OpLoadConst.With(idx))
-}
-
-func (c *compiler) compileFile(file *ast.File) error {
-	c.name = file.Name.Name
-	if c.structFields == nil {
-		c.structFields = make(map[string][]string)
-	}
-	if c.types == nil {
-		c.types = make(map[string]*taivm.Type)
-	}
-
-	allTopSymbols := make(map[string]bool)
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv == nil && d.Name.Name == "init" {
-				continue
-			}
-			name := d.Name.Name
-			if d.Recv != nil && len(d.Recv.List) > 0 {
-			} else {
-				allTopSymbols[name] = true
-			}
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.ValueSpec:
-					for _, name := range s.Names {
-						allTopSymbols[name.Name] = true
-					}
-				case *ast.TypeSpec:
-					allTopSymbols[s.Name.Name] = true
-				}
-			}
-		}
-	}
-
-	getDeps := func(node ast.Node) []string {
-		var deps []string
-		ast.Inspect(node, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
-				if allTopSymbols[id.Name] {
-					deps = append(deps, id.Name)
-				}
-			}
-			return true
-		})
-		return deps
-	}
-
-	var funcDecls []topDecl
-	var initDecls []func() error
-	var varDecls []topDecl
-	var hasMain bool
-
-	for _, decl := range file.Decls {
-		d := decl
-		switch g := d.(type) {
-		case *ast.FuncDecl:
-			if g.Recv == nil && g.Name.Name == "init" {
-				initDecls = append(initDecls, func() error {
-					return c.compileInitFunc(g)
-				})
-			} else {
-				if g.Name.Name == "main" {
-					hasMain = true
-				}
-				funcDecls = append(funcDecls, topDecl{
-					names: []string{g.Name.Name},
-					compile: func() error {
-						return c.compileFuncDecl(g)
-					},
-				})
-			}
-
-		case *ast.GenDecl:
-			if g.Tok == token.IMPORT {
-				if err := c.compileGenDecl(g); err != nil {
-					return err
-				}
-				continue
-			}
-			var lastExprs []ast.Expr
-			for i, spec := range g.Specs {
-				s := spec
-				var names []string
-				var deps []string
-				switch v := s.(type) {
-				case *ast.ValueSpec:
-					for _, n := range v.Names {
-						names = append(names, n.Name)
-					}
-					vals := v.Values
-					if g.Tok == token.CONST {
-						if len(vals) > 0 {
-							lastExprs = vals
-						} else {
-							vals = lastExprs
-						}
-					}
-					for _, val := range vals {
-						deps = append(deps, getDeps(val)...)
-					}
-				case *ast.TypeSpec:
-					names = append(names, v.Name.Name)
-					deps = append(deps, getDeps(v.Type)...)
-				}
-				capturedLastExprs := lastExprs
-				capturedIota := i
-				varDecls = append(varDecls, topDecl{
-					names: names,
-					deps:  deps,
-					compile: func() error {
-						c.iotaVal = capturedIota
-						c.lastConstExprs = capturedLastExprs
-						switch g.Tok {
-						case token.VAR, token.CONST:
-							return c.compileValueSpec(s.(*ast.ValueSpec), g.Tok == token.CONST)
-						case token.TYPE:
-							return c.compileTypeSpec(s.(*ast.TypeSpec))
-						}
-						return nil
-					},
-				})
-			}
-		}
-	}
-
-	for _, d := range funcDecls {
-		if err := d.compile(); err != nil {
-			return err
-		}
-	}
-	sorted, err := sortTopDecls(varDecls)
-	if err != nil {
-		return err
-	}
-	for _, d := range sorted {
-		if err := d.compile(); err != nil {
-			return err
-		}
-	}
-	for _, f := range initDecls {
-		if err := f(); err != nil {
-			return err
-		}
-	}
-	if hasMain {
-		idx := c.addConst("main")
-		c.emit(taivm.OpLoadVar.With(idx))
-		c.emit(taivm.OpCall.With(0))
-		c.emit(taivm.OpPop)
-	}
-	return nil
 }
 
 func sortTopDecls(decls []topDecl) ([]topDecl, error) {
