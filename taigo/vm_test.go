@@ -2205,7 +2205,7 @@ func TestVMBitAndNot(t *testing.T) {
 
 func TestExec(t *testing.T) {
 	vm := runVM(t, `package main; var a = 1`)
-	val, err := Exec(vm, `a + 1`)
+	val, err := Exec(vm.Scope, `a + 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2217,11 +2217,11 @@ func TestExec(t *testing.T) {
 		t.Fatal()
 	}
 
-	_, err = Exec(vm, `package main; func inc() { a++ }`)
+	_, err = Exec(vm.Scope, `package main; func inc() { a++ }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Exec(vm, `inc()`)
+	_, err = Exec(vm.Scope, `inc()`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2240,7 +2240,7 @@ func TestMapSelector(t *testing.T) {
 		}
 		`)
 
-	val, err := Exec(vm, "m.foo.bar.baz")
+	val, err := Exec(vm.Scope, "m.foo.bar.baz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2252,7 +2252,7 @@ func TestMapSelector(t *testing.T) {
 		t.Fatal()
 	}
 
-	val, err = Exec(vm, `((m.foo)["bar"]).baz`)
+	val, err = Exec(vm.Scope, `((m.foo)["bar"]).baz`)
 	if err != nil {
 		t.Fatal(err)
 	}

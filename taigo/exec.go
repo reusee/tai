@@ -9,7 +9,7 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func Exec(vm *taivm.VM, src any) (any, error) {
+func Exec(env *taivm.Env, src any) (any, error) {
 	var srcStr string
 	switch s := src.(type) {
 	case string:
@@ -33,7 +33,7 @@ func Exec(vm *taivm.VM, src any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return runInVM(vm, fn)
+		return exec(env, fn)
 	}
 
 	file, err := parser.ParseFile(fset, "exec", srcStr, parser.SkipObjectResolution)
@@ -44,12 +44,12 @@ func Exec(vm *taivm.VM, src any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runInVM(vm, pkg.Init)
+	return exec(env, pkg.Init)
 }
 
-func runInVM(vm *taivm.VM, fn *taivm.Function) (any, error) {
+func exec(env *taivm.Env, fn *taivm.Function) (any, error) {
 	newVM := taivm.NewVM(fn)
-	newVM.Scope = vm.Scope
+	newVM.Scope = env
 	for _, err := range newVM.Run {
 		if err != nil {
 			return nil, err

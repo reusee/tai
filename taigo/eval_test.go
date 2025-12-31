@@ -2,7 +2,7 @@ package taigo
 
 import "testing"
 
-func TestGetFunc(t *testing.T) {
+func TestEvalFunc(t *testing.T) {
 	env := &Env{
 		Source: `
 		package main
@@ -23,7 +23,7 @@ func TestGetFunc(t *testing.T) {
 		}
 	}
 
-	makeAdder, err := Get[func(int) func(int) int](vm, "make_adder")
+	makeAdder, err := Eval[func(int) func(int) int](vm.Scope, "make_adder")
 	if err != nil {
 		t.Fatal(err)
 	}

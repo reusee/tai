@@ -6,8 +6,8 @@ import (
 	"github.com/reusee/tai/taivm"
 )
 
-func Get[T any](vm *taivm.VM, expr string) (ret T, err error) {
-	val, err := Exec(vm, expr)
+func Eval[T any](env *taivm.Env, expr string) (ret T, err error) {
+	val, err := Exec(env, expr)
 	if err != nil {
 		return ret, err
 	}
@@ -15,11 +15,11 @@ func Get[T any](vm *taivm.VM, expr string) (ret T, err error) {
 		return v, nil
 	}
 	targetType := reflect.TypeFor[T]()
-	res := convertToReflectValue(vm, val, targetType)
+	res := convertToReflectValue(env, val, targetType)
 	return res.Interface().(T), nil
 }
 
-func convertToReflectValue(vm *taivm.VM, val any, target reflect.Type) reflect.Value {
+func convertToReflectValue(env *taivm.Env, val any, target reflect.Type) reflect.Value {
 	if val == nil {
 		return reflect.Zero(target)
 	}
@@ -46,7 +46,7 @@ func convertToReflectValue(vm *taivm.VM, val any, target reflect.Type) reflect.V
 			}
 			callFn.Code = append(callFn.Code, taivm.OpCall.With(len(args)), taivm.OpReturn)
 			newVM := taivm.NewVM(callFn)
-			newVM.Scope = vm.Scope
+			newVM.Scope = env
 			for _, err := range newVM.Run {
 				if err != nil {
 					panic(err)
@@ -59,12 +59,12 @@ func convertToReflectValue(vm *taivm.VM, val any, target reflect.Type) reflect.V
 				return results
 			}
 			if numOut == 1 {
-				results[0] = convertToReflectValue(vm, res, target.Out(0))
+				results[0] = convertToReflectValue(env, res, target.Out(0))
 				return results
 			}
 			list := res.(*taivm.List)
 			for i := range numOut {
-				results[i] = convertToReflectValue(vm, list.Elements[i], target.Out(i))
+				results[i] = convertToReflectValue(env, list.Elements[i], target.Out(i))
 			}
 			return results
 		})
@@ -74,7 +74,7 @@ func convertToReflectValue(vm *taivm.VM, val any, target reflect.Type) reflect.V
 	if list, ok := val.(*taivm.List); ok && target.Kind() == reflect.Slice {
 		slice := reflect.MakeSlice(target, len(list.Elements), len(list.Elements))
 		for i, e := range list.Elements {
-			slice.Index(i).Set(convertToReflectValue(vm, e, target.Elem()))
+			slice.Index(i).Set(convertToReflectValue(env, e, target.Elem()))
 		}
 		return slice
 	}
