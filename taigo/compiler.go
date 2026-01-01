@@ -708,33 +708,18 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 }
 
 func (c *compiler) setupParams(decl *ast.FuncDecl) error {
-	idx := 0
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
-		t, err := c.resolveType(recv.Type)
+		_, err := c.resolveType(recv.Type)
 		if err != nil {
 			return err
-		}
-		for _, name := range recv.Names {
-			c.locals[name.Name] = variable{index: idx, typ: t}
-			idx++
-		}
-		if len(recv.Names) == 0 {
-			idx++
 		}
 	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
-			t, err := c.resolveType(field.Type)
+			_, err := c.resolveType(field.Type)
 			if err != nil {
 				return err
-			}
-			for _, name := range field.Names {
-				c.locals[name.Name] = variable{index: idx, typ: t}
-				idx++
-			}
-			if len(field.Names) == 0 {
-				idx++
 			}
 		}
 	}
@@ -1364,18 +1349,10 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) (*taivm.Type, error) {
 		sub.typeParams = newTypeParams
 	}
 	if expr.Type.Params != nil {
-		idx := 0
 		for _, field := range expr.Type.Params.List {
-			t, err := sub.resolveType(field.Type)
+			_, err := sub.resolveType(field.Type)
 			if err != nil {
 				return nil, err
-			}
-			for _, name := range field.Names {
-				sub.locals[name.Name] = variable{index: idx, typ: t}
-				idx++
-			}
-			if len(field.Names) == 0 {
-				idx++
 			}
 		}
 	}
@@ -2912,12 +2889,6 @@ func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token, rhsType *ta
 	}
 	if v, ok := c.locals[name]; ok {
 		c.emit(taivm.OpSetLocal.With(v.index))
-		return nil
-	}
-	if tok == token.DEFINE && c.isFunc {
-		idx := len(c.locals)
-		c.locals[name] = variable{index: idx, typ: rhsType}
-		c.emit(taivm.OpSetLocal.With(idx))
 		return nil
 	}
 	idx := c.addConst(name)

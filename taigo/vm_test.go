@@ -2607,3 +2607,44 @@ func TestDeferVariadicArgsReassignment(t *testing.T) {
 	// Here s is reassigned. The defer should have captured the old slice.
 	checkInt(t, vm, "res", 6)
 }
+
+func TestBugAddressOfParam(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func f(x int) int {
+			p := &x
+			*p = 42
+			return x
+		}
+		var res = f(10)
+	`)
+	checkInt(t, vm, "res", 42)
+}
+
+func TestBugAddressOfLocal(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func f() int {
+			x := 10
+			p := &x
+			*p = 42
+			return x
+		}
+		var res = f()
+	`)
+	checkInt(t, vm, "res", 42)
+}
+
+func TestBugClosureCaptureModified(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		func f() func() int {
+			x := 1
+			g := func() int { return x }
+			x = 2
+			return g
+		}
+		var res = f()()
+	`)
+	checkInt(t, vm, "res", 2)
+}
