@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -62,12 +63,15 @@ func ApplyHunks(aiFilePath string) error {
 func applyHunk(h Hunk) error {
 	fset := token.NewFileSet()
 	src, err := os.ReadFile(h.FilePath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	f, err := parser.ParseFile(fset, h.FilePath, src, parser.ParseComments)
-	if err != nil {
-		return err
+	var f *ast.File
+	if len(src) > 0 {
+		f, err = parser.ParseFile(fset, h.FilePath, src, parser.ParseComments)
+		if err != nil {
+			return err
+		}
 	}
 	start, end, err := findTargetRange(fset, f, h.Target, len(src))
 	if err != nil {
@@ -88,6 +92,11 @@ func applyHunk(h Hunk) error {
 	if err != nil {
 		return fmt.Errorf("format failed: %w", err)
 	}
+	if dir := filepath.Dir(h.FilePath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
 	return os.WriteFile(h.FilePath, formatted, 0644)
 }
 
@@ -97,6 +106,9 @@ func findTargetRange(fset *token.FileSet, f *ast.File, target string, fileSize i
 	}
 	if target == "END" {
 		return fileSize, fileSize, nil
+	}
+	if f == nil {
+		return 0, 0, fmt.Errorf("target %s not found", target)
 	}
 	for _, decl := range f.Decls {
 		start, end, match := matchDecl(fset, decl, target)

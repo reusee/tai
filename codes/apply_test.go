@@ -44,3 +44,27 @@ func (t T) Foo() {
 		t.Errorf("content not updated: %s", string(newContent))
 	}
 }
+
+func TestApplyHunksNewFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "new_dir", "new_file.go")
+	aiFile := filepath.Join(tmpDir, "test.AI")
+	aiContent := []byte(`[[[ ADD_BEFORE BEGIN IN ` + targetFile + `
+package newfile
+
+func New() {}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "package newfile") {
+		t.Errorf("content incorrect: %s", string(content))
+	}
+}
