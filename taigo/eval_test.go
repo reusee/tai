@@ -55,6 +55,7 @@ func TestTypedEvalDynamicType(t *testing.T) {
 			d.Name = "tai"
 			return d
 		}
+		var v = create()
 		`,
 	}
 
@@ -72,6 +73,15 @@ func TestTypedEvalDynamicType(t *testing.T) {
 	data, ok := val.(MyData)
 	if !ok {
 		t.Fatalf("expected MyData, got %T", val)
+	}
+	if data.ID != 100 || data.Name != "tai" {
+		t.Fatalf("data mismatch: %+v", data)
+	}
+
+	// Use Get to get the variable value back with conversion
+	data, err = Get[MyData](vm.Scope, "v")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if data.ID != 100 || data.Name != "tai" {
 		t.Fatalf("data mismatch: %+v", data)

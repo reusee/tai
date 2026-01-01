@@ -849,7 +849,6 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	// Callee is below args on the stack
 	calleeIdx := v.SP - argc - 1
 	callee := v.OperandStack[calleeIdx]
 
@@ -861,7 +860,7 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 		if v.SP >= len(v.OperandStack) {
 			v.growOperandStack()
 		}
-		// Shift arguments
+
 		copy(v.OperandStack[calleeIdx+2:v.SP+1], v.OperandStack[calleeIdx+1:v.SP])
 		v.SP++
 		v.OperandStack[calleeIdx] = fn.Fun
@@ -873,6 +872,9 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 
 	case *Type:
 		return v.callTypeConversion(fn, argc, calleeIdx, yield)
+
+	case reflect.Type:
+		return v.callTypeConversion(FromReflectType(fn), argc, calleeIdx, yield)
 
 	default:
 		if !yield(nil, fmt.Errorf("calling non-function: %T", callee)) {
@@ -1224,9 +1226,14 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 	}
 	v.drop(n * 2)
 
-	// Fill missing fields and Embedded info from Type if available in scope
 	if tObj, ok := v.Get(typeNameStr); ok {
-		if t, ok := tObj.(*Type); ok && t.Kind == KindStruct {
+		var t *Type
+		if tt, ok := tObj.(*Type); ok && tt.Kind == KindStruct {
+			t = tt
+		} else if rt, ok := tObj.(reflect.Type); ok && rt.Kind() == reflect.Struct {
+			t = FromReflectType(rt)
+		}
+		if t != nil {
 			for _, f := range t.Fields {
 				if f.Anonymous {
 					found := false
@@ -2501,6 +2508,8 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		return v.opGetAttr(yield)
 	case *Type:
 		return v.opGetTypeAttr(t, nameStr, yield)
+	case reflect.Type:
+		return v.opGetTypeAttr(FromReflectType(t), nameStr, yield)
 	default:
 		return v.opGetNativeAttr(target, nameStr, yield)
 	}
@@ -2691,7 +2700,7 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 			t.Fields[nameStr] = val
 			return true
 		}
-		// Try to set promoted field
+
 		for _, emb := range t.Embedded {
 			if fieldVal, ok := t.Fields[emb]; ok && fieldVal != nil {
 				v.push(fieldVal)
@@ -2722,6 +2731,25 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 		return v.opSetAttr(yield)
 
 	default:
+		rv := reflect.ValueOf(target)
+		if rv.Kind() == reflect.Pointer {
+			rv = rv.Elem()
+		}
+		if rv.Kind() == reflect.Struct {
+			if f := rv.FieldByName(nameStr); f.IsValid() && f.CanSet() {
+				fv := reflect.ValueOf(val)
+				if !fv.IsValid() {
+					f.Set(reflect.Zero(f.Type()))
+				} else if fv.Type().AssignableTo(f.Type()) {
+					f.Set(fv)
+				} else if fv.Type().ConvertibleTo(f.Type()) {
+					f.Set(fv.Convert(f.Type()))
+				} else {
+					return yield(nil, fmt.Errorf("cannot assign %T to field %s of type %v", val, nameStr, f.Type()))
+				}
+				return true
+			}
+		}
 		if !yield(nil, fmt.Errorf("type %T does not support attribute assignment", target)) {
 			return false
 		}
@@ -3187,6 +3215,13 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 		})
 		return true
 	}
+	if rt, ok := ptr.(reflect.Type); ok {
+		v.push(&Type{
+			Kind: KindPtr,
+			Elem: FromReflectType(rt),
+		})
+		return true
+	}
 	p, ok := ptr.(*Pointer)
 	if !ok {
 		return yield(nil, fmt.Errorf("not a pointer: %T", ptr))
@@ -3277,7 +3312,15 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if dt, ok := tObj.(*Type); ok {
+	var dt *Type
+	switch t := tObj.(type) {
+	case *Type:
+		dt = t
+	case reflect.Type:
+		dt = FromReflectType(t)
+	}
+
+	if dt != nil {
 		if dt.Kind == KindInterface {
 			if s, ok := val.(*Struct); ok && v.checkStructImplements(s, dt) {
 				v.push(val)
@@ -3288,7 +3331,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 			v.push(val)
 			return true
 		}
-		// Allow structural compatibility for structs to support defined types and interop
+
 		if s, ok := val.(*Struct); ok && dt.Kind == KindStruct {
 			if v.checkStructCompatible(s, dt) {
 				v.push(val)
@@ -3307,8 +3350,15 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
 
-	targetType, ok := tObj.(*Type)
-	if !ok {
+	var targetType *Type
+	switch t := tObj.(type) {
+	case *Type:
+		targetType = t
+	case reflect.Type:
+		targetType = FromReflectType(t)
+	}
+
+	if targetType == nil {
 		v.push(nil)
 		v.push(false)
 		return true
@@ -3334,7 +3384,6 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	// Structural compatibility for structs
 	if s, ok := val.(*Struct); ok && targetType.Kind == KindStruct {
 		if v.checkStructCompatible(s, targetType) {
 			v.push(val)

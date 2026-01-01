@@ -61,6 +61,8 @@ func evalSrc(env *taivm.Env, src any) (any, error) {
 				}
 				if t, ok := v.Val.(*taivm.Type); ok {
 					externalTypes[v.Name] = t
+				} else if rt, ok := v.Val.(reflect.Type); ok {
+					externalTypes[v.Name] = taivm.FromReflectType(rt)
 				} else if v.Val != nil {
 					externalValueTypes[v.Name] = taivm.FromReflectType(reflect.TypeOf(v.Val))
 				}
@@ -104,6 +106,24 @@ func TypedEval(env *taivm.Env, src any, typ reflect.Type) (any, error) {
 	return nil, fmt.Errorf("cannot convert %T to %v", val, typ)
 }
 
+func Get[T any](env *taivm.Env, name string) (T, error) {
+	val, ok := env.Get(name)
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("variable not found: %s", name)
+	}
+	if v, ok := val.(T); ok {
+		return v, nil
+	}
+	targetType := reflect.TypeFor[T]()
+	res := convertToReflectValue(env, val, targetType)
+	if v, ok := res.Interface().(T); ok {
+		return v, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("cannot convert %T to %v", val, targetType)
+}
+
 func eval(env *taivm.Env, fn *taivm.Function) (any, error) {
 	newVM := taivm.NewVM(fn)
 	newVM.Scope = env
@@ -127,19 +147,30 @@ func convertToReflectValue(env *taivm.Env, val any, target reflect.Type) reflect
 		return v
 	}
 
-	if s, ok := val.(*taivm.Struct); ok && target.Kind() == reflect.Struct {
-		res := reflect.New(target).Elem()
-		for i := 0; i < target.NumField(); i++ {
-			f := target.Field(i)
-			if f.PkgPath != "" { // Skip unexported fields
-				continue
-			}
-			if fValue, ok := s.Fields[f.Name]; ok {
-				fv := convertToReflectValue(env, fValue, f.Type)
-				res.Field(i).Set(fv)
-			}
+	if s, ok := val.(*taivm.Struct); ok {
+		t := target
+		isPtr := false
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+			isPtr = true
 		}
-		return res
+		if t.Kind() == reflect.Struct {
+			res := reflect.New(t).Elem()
+			for i := 0; i < t.NumField(); i++ {
+				f := t.Field(i)
+				if f.PkgPath != "" { // Skip unexported fields
+					continue
+				}
+				if fValue, ok := s.Fields[f.Name]; ok {
+					fv := convertToReflectValue(env, fValue, f.Type)
+					res.Field(i).Set(fv)
+				}
+			}
+			if isPtr {
+				return res.Addr()
+			}
+			return res
+		}
 	}
 
 	if target.Kind() == reflect.Func {
