@@ -11,9 +11,7 @@ type testInt int
 
 var _ Configurable = testInt(0)
 
-func (t testInt) ConfigExpr() string {
-	return "testInt"
-}
+func (t testInt) TaigoConfigurable() {}
 
 func TestTaigoDefs(t *testing.T) {
 	scope := dscope.New(
