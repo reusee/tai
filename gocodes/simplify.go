@@ -58,8 +58,7 @@ func (Module) SimplifyFiles(
 				}
 			} else {
 				buf := new(bytes.Buffer)
-				err := formatContentForPrompt(buf, file.Content, file.PackageIsRoot, file.Path)
-				if err != nil {
+				if err := formatContentForPrompt(buf, file.Content, file.PackageIsRoot, file.Path); err != nil {
 					return nil, err
 				}
 				file.Transform = &Transform{
@@ -69,7 +68,6 @@ func (Module) SimplifyFiles(
 			jobChan <- file
 		}
 
-		maxContextTokens := 32 << 10
 		allTokens := 0
 		contextTokens := 0
 		for _, file := range files {
@@ -96,7 +94,20 @@ func (Module) SimplifyFiles(
 			file.transformCond.Broadcast()
 			file.transformCond.L.Unlock()
 		}
-		logger.Info("initial tokens", "tokens", allTokens, "context tokens", contextTokens)
+
+		focusTokens := allTokens - contextTokens
+		maxContextTokens := focusTokens / 2
+		if maxContextTokens < 32<<10 {
+			maxContextTokens = 32 << 10
+		} else if maxContextTokens > 256<<10 {
+			maxContextTokens = 256 << 10
+		}
+		logger.InfoContext(ctx, "initial tokens",
+			"all tokens", allTokens,
+			"context tokens", contextTokens,
+			"focus tokens", focusTokens,
+			"max context tokens", maxContextTokens,
+		)
 
 		transforms := makeTransforms()
 
@@ -151,7 +162,7 @@ func (Module) SimplifyFiles(
 					continue
 				}
 
-				if allTokens < maxTokens && contextTokens <= int(maxContextTokens) {
+				if allTokens < maxTokens && contextTokens <= maxContextTokens {
 					break loop_ops
 				}
 
