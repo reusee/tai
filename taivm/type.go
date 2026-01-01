@@ -60,48 +60,68 @@ type StructField struct {
 }
 
 func FromReflectType(t reflect.Type) *Type {
-	if t == nil {
-		return nil
+	var visited = make(map[reflect.Type]*Type)
+	var fromReflectType func(reflect.Type) *Type
+	fromReflectType = func(t reflect.Type) *Type {
+		if t == nil {
+			return nil
+		}
+		if existing, ok := visited[t]; ok {
+			return existing
+		}
+
+		res := &Type{
+			Name: t.Name(),
+			Kind: TypeKind(t.Kind()),
+		}
+		visited[t] = res
+
+		switch t.Kind() {
+		case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Chan:
+			res.Elem = fromReflectType(t.Elem())
+			if t.Kind() == reflect.Array {
+				res.Len = t.Len()
+			}
+		case reflect.Map:
+			res.Key = fromReflectType(t.Key())
+			res.Elem = fromReflectType(t.Elem())
+		case reflect.Func:
+			res.Variadic = t.IsVariadic()
+			for i := 0; i < t.NumIn(); i++ {
+				res.In = append(res.In, fromReflectType(t.In(i)))
+			}
+			for i := 0; i < t.NumOut(); i++ {
+				res.Out = append(res.Out, fromReflectType(t.Out(i)))
+			}
+		case reflect.Struct:
+			for i := 0; i < t.NumField(); i++ {
+				f := t.Field(i)
+				res.Fields = append(res.Fields, StructField{
+					Name:      f.Name,
+					Type:      fromReflectType(f.Type),
+					Tag:       string(f.Tag),
+					Anonymous: f.Anonymous,
+				})
+			}
+		case reflect.Interface:
+			res.Methods = make(map[string]*Type)
+			for i := 0; i < t.NumMethod(); i++ {
+				m := t.Method(i)
+				res.Methods[m.Name] = fromReflectType(m.Type)
+			}
+		}
+
+		if t.Kind() != reflect.Interface && t.NumMethod() > 0 {
+			res.Methods = make(map[string]*Type)
+			for i := 0; i < t.NumMethod(); i++ {
+				m := t.Method(i)
+				res.Methods[m.Name] = fromReflectType(m.Type)
+			}
+		}
+
+		return res
 	}
-	res := &Type{
-		Kind: TypeKind(t.Kind()),
-		Name: t.Name(),
-	}
-	switch t.Kind() {
-	case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Chan:
-		res.Elem = FromReflectType(t.Elem())
-		if t.Kind() == reflect.Array {
-			res.Len = t.Len()
-		}
-	case reflect.Map:
-		res.Key = FromReflectType(t.Key())
-		res.Elem = FromReflectType(t.Elem())
-	case reflect.Func:
-		res.Variadic = t.IsVariadic()
-		for i := 0; i < t.NumIn(); i++ {
-			res.In = append(res.In, FromReflectType(t.In(i)))
-		}
-		for i := 0; i < t.NumOut(); i++ {
-			res.Out = append(res.Out, FromReflectType(t.Out(i)))
-		}
-	case reflect.Interface:
-		res.Methods = make(map[string]*Type)
-		for i := 0; i < t.NumMethod(); i++ {
-			m := t.Method(i)
-			res.Methods[m.Name] = FromReflectType(m.Type)
-		}
-	case reflect.Struct:
-		for i := 0; i < t.NumField(); i++ {
-			f := t.Field(i)
-			res.Fields = append(res.Fields, StructField{
-				Name:      f.Name,
-				Type:      FromReflectType(f.Type),
-				Tag:       string(f.Tag),
-				Anonymous: f.Anonymous,
-			})
-		}
-	}
-	return res
+	return fromReflectType(t)
 }
 
 func (t *Type) ToReflectType() reflect.Type {

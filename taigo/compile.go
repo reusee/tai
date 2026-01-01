@@ -10,7 +10,7 @@ import (
 func compile(files ...*ast.File) (*Package, error) {
 	c := &compiler{
 		consts:     make(map[any]int),
-		locals:     make(map[string]int),
+		locals:     make(map[string]variable),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
@@ -36,11 +36,11 @@ func compileExpr(expr ast.Expr) (*taivm.Function, error) {
 	c := &compiler{
 		name:       "eval",
 		consts:     make(map[any]int),
-		locals:     make(map[string]int),
+		locals:     make(map[string]variable),
 		labels:     make(map[string]int),
 		unresolved: make(map[string][]int),
 	}
-	if err := c.compileExpr(expr); err != nil {
+	if _, err := c.compileExpr(expr); err != nil {
 		return nil, err
 	}
 	c.emit(taivm.OpReturn)

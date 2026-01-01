@@ -23,7 +23,7 @@ type compiler struct {
 	loops          []*loopScope
 	scopeDepth     int
 	tmpCount       int
-	locals         map[string]int
+	locals         map[string]variable
 	iotaVal        int
 	labels         map[string]int
 	unresolved     map[string][]int
@@ -33,6 +33,12 @@ type compiler struct {
 	typeParams     map[string]bool // Current function/type parameters
 	structFields   map[string][]string
 	types          map[string]*taivm.Type
+	globals        map[string]*taivm.Type
+}
+
+type variable struct {
+	index int
+	typ   *taivm.Type
 }
 
 type topDecl struct {
@@ -62,6 +68,9 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 	}
 	if c.types == nil {
 		c.types = make(map[string]*taivm.Type)
+	}
+	if c.globals == nil {
+		c.globals = make(map[string]*taivm.Type)
 	}
 	symbols := c.collectSymbols(files)
 	funcs, inits, vars, hasMain, err := c.collectDecls(files, symbols)
@@ -327,6 +336,13 @@ func (c *compiler) addConst(val any) int {
 func (c *compiler) nextTmp() string {
 	c.tmpCount++
 	return fmt.Sprintf("$tmp%d", c.tmpCount)
+}
+
+func (c *compiler) typeOf(val any) *taivm.Type {
+	if val == nil {
+		return nil
+	}
+	return taivm.FromReflectType(reflect.TypeOf(val))
 }
 
 func (c *compiler) evalInt(expr ast.Expr) (int64, bool) {
@@ -653,13 +669,14 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 		name:         decl.Name.Name,
 		isFunc:       true,
 		consts:       make(map[any]int),
-		locals:       make(map[string]int),
+		locals:       make(map[string]variable),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
 		typeParams:   make(map[string]bool),
 		structFields: c.structFields,
 		types:        c.types,
+		globals:      c.globals,
 	}
 	if decl.Type.TypeParams != nil {
 		for _, field := range decl.Type.TypeParams.List {
@@ -697,8 +714,12 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	idx := 0
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
 		recv := decl.Recv.List[0]
+		t, err := c.resolveType(recv.Type)
+		if err != nil {
+			return err
+		}
 		for _, name := range recv.Names {
-			c.locals[name.Name] = idx
+			c.locals[name.Name] = variable{index: idx, typ: t}
 			idx++
 		}
 		if len(recv.Names) == 0 {
@@ -707,8 +728,12 @@ func (c *compiler) setupParams(decl *ast.FuncDecl) error {
 	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
+			t, err := c.resolveType(field.Type)
+			if err != nil {
+				return err
+			}
 			for _, name := range field.Names {
-				c.locals[name.Name] = idx
+				c.locals[name.Name] = variable{index: idx, typ: t}
 				idx++
 			}
 			if len(field.Names) == 0 {
@@ -813,10 +838,10 @@ func (c *compiler) getFuncParamNames(decl *ast.FuncDecl) []string {
 	return names
 }
 
-func (c *compiler) compileExpr(expr ast.Expr) error {
+func (c *compiler) compileExpr(expr ast.Expr) (*taivm.Type, error) {
 	if val, ok := c.evalConst(expr); ok {
 		c.loadConst(val)
-		return nil
+		return c.typeOf(val), nil
 	}
 	switch e := expr.(type) {
 	case *ast.Ident:
@@ -848,43 +873,49 @@ func (c *compiler) compileExpr(expr ast.Expr) error {
 	case *ast.ArrayType, *ast.StructType, *ast.FuncType, *ast.InterfaceType, *ast.MapType, *ast.ChanType:
 		return c.compileTypeExpr(e)
 	case *ast.KeyValueExpr, *ast.Ellipsis:
-		return fmt.Errorf("%T expression not supported here", expr)
+		return nil, fmt.Errorf("%T expression not supported here", expr)
 	case *ast.BadExpr:
-		return fmt.Errorf("bad expression")
+		return nil, fmt.Errorf("bad expression")
 	default:
-		return fmt.Errorf("unknown expr type: %T", expr)
+		return nil, fmt.Errorf("unknown expr type: %T", expr)
 	}
 }
 
-func (c *compiler) compileStarExpr(expr *ast.StarExpr) error {
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+func (c *compiler) compileStarExpr(expr *ast.StarExpr) (*taivm.Type, error) {
+	t, err := c.compileExpr(expr.X)
+	if err != nil {
+		return nil, err
 	}
 	c.emit(taivm.OpDeref)
-	return nil
+	if t != nil && t.Kind == taivm.KindPtr {
+		return t.Elem, nil
+	}
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
-func (c *compiler) compileTypeAssertExpr(expr *ast.TypeAssertExpr) error {
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+func (c *compiler) compileTypeAssertExpr(expr *ast.TypeAssertExpr) (*taivm.Type, error) {
+	if _, err := c.compileExpr(expr.X); err != nil {
+		return nil, err
 	}
 	if expr.Type == nil {
-		return fmt.Errorf("type switch not supported")
+		return nil, fmt.Errorf("type switch not supported")
 	}
-	if err := c.compileExpr(expr.Type); err != nil {
-		return err
-	}
-	c.emit(taivm.OpTypeAssert)
-	return nil
-}
-
-func (c *compiler) compileTypeExpr(expr ast.Expr) error {
-	t, err := c.resolveType(expr)
+	t, err := c.resolveType(expr.Type)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.loadConst(t)
-	return nil
+	c.emit(taivm.OpTypeAssert)
+	return t, nil
+}
+
+func (c *compiler) compileTypeExpr(expr ast.Expr) (*taivm.Type, error) {
+	t, err := c.resolveType(expr)
+	if err != nil {
+		return nil, err
+	}
+	c.loadConst(t)
+	return taivm.FromReflectType(reflect.TypeFor[*taivm.Type]()), nil
 }
 
 func (c *compiler) emitBinaryOp(tok token.Token) error {
@@ -941,25 +972,22 @@ func (c *compiler) tokenToOp(tok token.Token) (taivm.OpCode, bool) {
 	return 0, false
 }
 
-func (c *compiler) compileIdentifier(expr *ast.Ident) error {
+func (c *compiler) compileIdentifier(expr *ast.Ident) (*taivm.Type, error) {
 	name := expr.Name
 	switch name {
 	case "iota":
 		c.loadConst(int64(c.iotaVal))
-		return nil
-	case "true":
-		c.loadConst(true)
-		return nil
-	case "false":
-		c.loadConst(false)
-		return nil
+		return taivm.FromReflectType(reflect.TypeFor[int]()), nil
+	case "true", "false":
+		c.loadConst(name == "true")
+		return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
 	case "nil":
 		c.loadConst(nil)
-		return nil
+		return nil, nil
 	}
-	if idx, ok := c.locals[name]; ok {
-		c.emit(taivm.OpGetLocal.With(idx))
-		return nil
+	if v, ok := c.locals[name]; ok {
+		c.emit(taivm.OpGetLocal.With(v.index))
+		return v.typ, nil
 	}
 	switch name {
 	case "int", "int8", "int16", "int32", "rune", "int64",
@@ -968,17 +996,20 @@ func (c *compiler) compileIdentifier(expr *ast.Ident) error {
 		"complex64", "complex128":
 		t, err := c.resolveType(expr)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		c.loadConst(t)
-		return nil
+		return taivm.FromReflectType(reflect.TypeFor[*taivm.Type]()), nil
 	}
 	idx := c.addConst(name)
 	c.emit(taivm.OpLoadVar.With(idx))
-	return nil
+	if t, ok := c.globals[name]; ok {
+		return t, nil
+	}
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
-func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
+func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) (*taivm.Type, error) {
 	if expr.Op == token.LAND {
 		return c.compileLogicAnd(expr)
 	}
@@ -986,20 +1017,35 @@ func (c *compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 		return c.compileLogicOr(expr)
 	}
 
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+	leftType, err := c.compileExpr(expr.X)
+	if err != nil {
+		return nil, err
 	}
-	if err := c.compileExpr(expr.Y); err != nil {
-		return err
+	rightType, err := c.compileExpr(expr.Y)
+	if err != nil {
+		return nil, err
 	}
 
-	return c.emitBinaryOp(expr.Op)
+	// Basic type checking
+	if leftType != nil && rightType != nil {
+		// TODO: stricter checks based on operator
+	}
+
+	if err := c.emitBinaryOp(expr.Op); err != nil {
+		return nil, err
+	}
+
+	switch expr.Op {
+	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+		return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
+	}
+	return leftType, nil
 }
 
-func (c *compiler) compileLogicAnd(expr *ast.BinaryExpr) error {
+func (c *compiler) compileLogicAnd(expr *ast.BinaryExpr) (*taivm.Type, error) {
 	// a && b
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+	if _, err := c.compileExpr(expr.X); err != nil {
+		return nil, err
 	}
 	// Stack: [a]
 	c.emit(taivm.OpDup)
@@ -1008,18 +1054,18 @@ func (c *compiler) compileLogicAnd(expr *ast.BinaryExpr) error {
 
 	// Fallthrough: a is true. Result is result of b.
 	c.emit(taivm.OpPop) // Pop a
-	if err := c.compileExpr(expr.Y); err != nil {
-		return err
+	if _, err := c.compileExpr(expr.Y); err != nil {
+		return nil, err
 	}
 
 	c.patchJump(jumpEnd, len(c.code))
-	return nil
+	return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
 }
 
-func (c *compiler) compileLogicOr(expr *ast.BinaryExpr) error {
+func (c *compiler) compileLogicOr(expr *ast.BinaryExpr) (*taivm.Type, error) {
 	// a || b
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+	if _, err := c.compileExpr(expr.X); err != nil {
+		return nil, err
 	}
 	// Stack: [a]
 	c.emit(taivm.OpDup)
@@ -1033,54 +1079,57 @@ func (c *compiler) compileLogicOr(expr *ast.BinaryExpr) error {
 	// Eval b
 	c.patchJump(jumpEvalB, len(c.code))
 	c.emit(taivm.OpPop) // Pop a (which was false)
-	if err := c.compileExpr(expr.Y); err != nil {
-		return err
+	if _, err := c.compileExpr(expr.Y); err != nil {
+		return nil, err
 	}
 
 	c.patchJump(jumpEnd, len(c.code))
-	return nil
+	return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
 }
 
-func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
+func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) (*taivm.Type, error) {
 	switch expr.Op {
 
 	case token.SUB:
 		c.loadConst(0)
-		if err := c.compileExpr(expr.X); err != nil {
-			return err
+		t, err := c.compileExpr(expr.X)
+		if err != nil {
+			return nil, err
 		}
 		c.emit(taivm.OpSub)
+		return t, nil
 
 	case token.ADD:
-		if err := c.compileExpr(expr.X); err != nil {
-			return err
-		}
+		return c.compileExpr(expr.X)
 
 	case token.AND:
 		switch x := expr.X.(type) {
 		case *ast.Ident:
 			idx := c.addConst(x.Name)
 			c.emit(taivm.OpAddrOf.With(idx))
+			if v, ok := c.locals[x.Name]; ok && v.typ != nil {
+				return &taivm.Type{Kind: taivm.KindPtr, Elem: v.typ}, nil
+			}
 
 		case *ast.IndexExpr:
-			if err := c.compileExpr(x.X); err != nil {
-				return err
+			if _, err := c.compileExpr(x.X); err != nil {
+				return nil, err
 			}
-			if err := c.compileExpr(x.Index); err != nil {
-				return err
+			if _, err := c.compileExpr(x.Index); err != nil {
+				return nil, err
 			}
 			c.emit(taivm.OpAddrOfIndex)
 
 		case *ast.SelectorExpr:
-			if err := c.compileExpr(x.X); err != nil {
-				return err
+			if _, err := c.compileExpr(x.X); err != nil {
+				return nil, err
 			}
 			c.loadConst(x.Sel.Name)
 			c.emit(taivm.OpAddrOfAttr)
 
 		case *ast.StarExpr:
-			if err := c.compileExpr(x.X); err != nil {
-				return err
+			if _, err := c.compileExpr(x.X); err != nil {
+				return nil, err
 			}
 			c.emit(taivm.OpDeref)
 			tmpIdx := c.addConst(c.nextTmp())
@@ -1088,8 +1137,8 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 			c.emit(taivm.OpAddrOf.With(tmpIdx))
 
 		case *ast.CompositeLit:
-			if err := c.compileCompositeLit(x); err != nil {
-				return err
+			if _, err := c.compileCompositeLit(x); err != nil {
+				return nil, err
 			}
 			tmpIdx := c.addConst(c.nextTmp())
 			c.emit(taivm.OpDefVar.With(tmpIdx))
@@ -1099,55 +1148,62 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
 			return c.compileUnaryExpr(&ast.UnaryExpr{Op: token.AND, X: x.X})
 
 		default:
-			return fmt.Errorf("cannot take address of %T", expr.X)
+			return nil, fmt.Errorf("cannot take address of %T", expr.X)
 		}
+		// Fallback for ptr type unknown
+		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 
 	default:
-		if err := c.compileExpr(expr.X); err != nil {
-			return err
+		t, err := c.compileExpr(expr.X)
+		if err != nil {
+			return nil, err
 		}
 		switch expr.Op {
 
 		case token.NOT:
 			c.emit(taivm.OpNot)
+			return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
 
 		case token.XOR:
 			c.emit(taivm.OpBitNot)
+			return t, nil
 
 		default:
-			return fmt.Errorf("unknown unary operator: %s", expr.Op)
+			return nil, fmt.Errorf("unknown unary operator: %s", expr.Op)
 
 		}
 	}
-
-	return nil
 }
 
-func (c *compiler) compileCallExpr(expr *ast.CallExpr) error {
-	if err := c.compileExpr(expr.Fun); err != nil {
-		return err
+func (c *compiler) compileCallExpr(expr *ast.CallExpr) (*taivm.Type, error) {
+	if _, err := c.compileExpr(expr.Fun); err != nil {
+		return nil, err
 	}
 	if expr.Ellipsis != token.NoPos {
-		return c.compileVariadicCall(expr)
-	}
-	for _, arg := range expr.Args {
-		if err := c.compileExpr(arg); err != nil {
-			return err
+		if err := c.compileVariadicCall(expr); err != nil {
+			return nil, err
 		}
+	} else {
+		for _, arg := range expr.Args {
+			if _, err := c.compileExpr(arg); err != nil {
+				return nil, err
+			}
+		}
+		c.emit(taivm.OpCall.With(len(expr.Args)))
 	}
-	c.emit(taivm.OpCall.With(len(expr.Args)))
-	return nil
+	// TODO: infer return type from function signature
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
 func (c *compiler) compileVariadicCall(expr *ast.CallExpr) error {
 	numExplicit := len(expr.Args) - 1
 	for i := range numExplicit {
-		if err := c.compileExpr(expr.Args[i]); err != nil {
+		if _, err := c.compileExpr(expr.Args[i]); err != nil {
 			return err
 		}
 	}
 	c.emit(taivm.OpMakeList.With(numExplicit))
-	if err := c.compileExpr(expr.Args[numExplicit]); err != nil {
+	if _, err := c.compileExpr(expr.Args[numExplicit]); err != nil {
 		return err
 	}
 	c.emit(taivm.OpAdd)
@@ -1156,58 +1212,81 @@ func (c *compiler) compileVariadicCall(expr *ast.CallExpr) error {
 	return nil
 }
 
-func (c *compiler) compileIndexExpr(expr *ast.IndexExpr) error {
+func (c *compiler) compileIndexExpr(expr *ast.IndexExpr) (*taivm.Type, error) {
 	if id, ok := expr.X.(*ast.Ident); ok && c.generics != nil && c.generics[id.Name] {
 		return c.compileExpr(expr.X)
 	}
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+	t, err := c.compileExpr(expr.X)
+	if err != nil {
+		return nil, err
 	}
-	if err := c.compileExpr(expr.Index); err != nil {
-		return err
+	if _, err := c.compileExpr(expr.Index); err != nil {
+		return nil, err
 	}
 	c.emit(taivm.OpGetIndex)
-	return nil
+
+	if t != nil {
+		if t.Kind == taivm.KindSlice || t.Kind == taivm.KindArray || t.Kind == taivm.KindMap || t.Kind == taivm.KindPtr { // Ptr to array
+			// If ptr, assume ptr to array? Go allows it.
+			if t.Kind == taivm.KindPtr && t.Elem != nil && t.Elem.Kind == taivm.KindArray {
+				return t.Elem.Elem, nil
+			}
+			return t.Elem, nil
+		}
+	}
+
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
-func (c *compiler) compileIndexListExpr(expr *ast.IndexListExpr) error {
+func (c *compiler) compileIndexListExpr(expr *ast.IndexListExpr) (*taivm.Type, error) {
 	if id, ok := expr.X.(*ast.Ident); ok && c.generics != nil && c.generics[id.Name] {
 		return c.compileExpr(expr.X)
 	}
 	return c.compileExpr(expr.X)
 }
 
-func (c *compiler) compileSelectorExpr(expr *ast.SelectorExpr) error {
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+func (c *compiler) compileSelectorExpr(expr *ast.SelectorExpr) (*taivm.Type, error) {
+	t, err := c.compileExpr(expr.X)
+	if err != nil {
+		return nil, err
 	}
 	c.loadConst(expr.Sel.Name)
 	c.emit(taivm.OpGetAttr)
-	return nil
+
+	if t != nil && t.Kind == taivm.KindStruct {
+		for _, f := range t.Fields {
+			if f.Name == expr.Sel.Name {
+				return f.Type, nil
+			}
+		}
+	}
+
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
-func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
-	if err := c.compileExpr(expr.X); err != nil {
-		return err
+func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) (*taivm.Type, error) {
+	t, err := c.compileExpr(expr.X)
+	if err != nil {
+		return nil, err
 	}
 	if expr.Low != nil {
-		if err := c.compileExpr(expr.Low); err != nil {
-			return err
+		if _, err := c.compileExpr(expr.Low); err != nil {
+			return nil, err
 		}
 	} else {
 		c.loadConst(nil)
 	}
 	if expr.High != nil {
-		if err := c.compileExpr(expr.High); err != nil {
-			return err
+		if _, err := c.compileExpr(expr.High); err != nil {
+			return nil, err
 		}
 	} else {
 		c.loadConst(nil)
 	}
 	if expr.Slice3 {
 		if expr.Max != nil {
-			if err := c.compileExpr(expr.Max); err != nil {
-				return err
+			if _, err := c.compileExpr(expr.Max); err != nil {
+				return nil, err
 			}
 		} else {
 			c.loadConst(nil)
@@ -1216,21 +1295,22 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) error {
 		c.loadConst(nil)
 	}
 	c.emit(taivm.OpGetSlice)
-	return nil
+	return t, nil
 }
 
-func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
+func (c *compiler) compileFuncLit(expr *ast.FuncLit) (*taivm.Type, error) {
 	sub := &compiler{
 		name:         "anon",
 		isFunc:       true,
 		consts:       make(map[any]int),
-		locals:       make(map[string]int),
+		locals:       make(map[string]variable),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
 		typeParams:   c.typeParams,
 		structFields: c.structFields,
 		types:        c.types,
+		globals:      c.globals,
 	}
 	if expr.Type.TypeParams != nil && len(expr.Type.TypeParams.List) > 0 {
 		newTypeParams := make(map[string]bool)
@@ -1245,8 +1325,12 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	if expr.Type.Params != nil {
 		idx := 0
 		for _, field := range expr.Type.Params.List {
+			t, err := sub.resolveType(field.Type)
+			if err != nil {
+				return nil, err
+			}
 			for _, name := range field.Names {
-				sub.locals[name.Name] = idx
+				sub.locals[name.Name] = variable{index: idx, typ: t}
 				idx++
 			}
 			if len(field.Names) == 0 {
@@ -1256,23 +1340,23 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	}
 	sub.setupResults(expr.Type)
 	if err := sub.defineNamedResults(expr.Type); err != nil {
-		return err
+		return nil, err
 	}
 	for _, stmt := range expr.Body.List {
 		if err := sub.compileStmt(stmt); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	sub.loadConst(nil)
 	sub.emit(taivm.OpReturn)
 	if err := sub.resolveLabels(); err != nil {
-		return err
+		return nil, err
 	}
 	fn := sub.getFunction()
 	fn.NumLocals = len(sub.locals)
 	tObj, err := c.resolveType(expr.Type)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fn.Type = tObj
 	if expr.Type.Params != nil {
@@ -1292,32 +1376,55 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) error {
 	fn.NumParams = len(fn.ParamNames)
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
-	return nil
+	return tObj, nil
 }
 
-func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) error {
+func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) (*taivm.Type, error) {
 	if expr.Type == nil {
-		return c.compileMapLit(expr)
+		if err := c.compileMapLit(expr); err != nil {
+			return nil, err
+		}
+		return taivm.FromReflectType(reflect.TypeFor[map[any]any]()), nil
 	}
 
-	if t, err := c.resolveType(expr.Type); err == nil {
+	t, err := c.resolveType(expr.Type)
+	if err == nil {
 		switch t.Kind {
 		case taivm.KindSlice, taivm.KindArray:
-			return c.compileArrayLit(expr)
+			if err := c.compileArrayLit(expr); err != nil {
+				return nil, err
+			}
+			return t, nil
 		case taivm.KindMap:
-			return c.compileMapLit(expr)
+			if err := c.compileMapLit(expr); err != nil {
+				return nil, err
+			}
+			return t, nil
 		case taivm.KindStruct:
-			return c.compileStructLit(expr, expr.Type)
+			if err := c.compileStructLit(expr, expr.Type); err != nil {
+				return nil, err
+			}
+			return t, nil
 		}
 	}
 
-	switch t := expr.Type.(type) {
+	// Fallback
+	switch tExpr := expr.Type.(type) {
 	case *ast.ArrayType:
-		return c.compileArrayLit(expr)
+		if err := c.compileArrayLit(expr); err != nil {
+			return nil, err
+		}
+		return t, nil
 	case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
-		return c.compileStructLit(expr, t)
+		if err := c.compileStructLit(expr, tExpr); err != nil {
+			return nil, err
+		}
+		return t, nil
 	default:
-		return c.compileMapLit(expr)
+		if err := c.compileMapLit(expr); err != nil {
+			return nil, err
+		}
+		return t, nil
 	}
 }
 
@@ -1332,7 +1439,7 @@ func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
 
 	if !hasKey {
 		for _, elt := range expr.Elts {
-			if err := c.compileExpr(elt); err != nil {
+			if _, err := c.compileExpr(elt); err != nil {
 				return err
 			}
 		}
@@ -1356,10 +1463,10 @@ func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
 			} else {
 				// Fallback for dynamic/complex keys
 				c.emit(taivm.OpDup)
-				if err := c.compileExpr(kv.Key); err != nil {
+				if _, err := c.compileExpr(kv.Key); err != nil {
 					return err
 				}
-				if err := c.compileExpr(kv.Value); err != nil {
+				if _, err := c.compileExpr(kv.Value); err != nil {
 					return err
 				}
 				c.emit(taivm.OpSetIndex)
@@ -1382,13 +1489,13 @@ func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
 				// Overwrite existing index
 				c.emit(taivm.OpDup)
 				c.loadConst(idx)
-				if err := c.compileExpr(valExpr); err != nil {
+				if _, err := c.compileExpr(valExpr); err != nil {
 					return err
 				}
 				c.emit(taivm.OpSetIndex)
 			} else {
 				// Append at current end
-				if err := c.compileExpr(valExpr); err != nil {
+				if _, err := c.compileExpr(valExpr); err != nil {
 					return err
 				}
 				c.emit(taivm.OpListAppend)
@@ -1420,7 +1527,7 @@ func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
 			}
 			for i, elt := range expr.Elts {
 				c.loadConst(fields[i])
-				if err := c.compileExpr(elt); err != nil {
+				if _, err := c.compileExpr(elt); err != nil {
 					return err
 				}
 			}
@@ -1439,10 +1546,13 @@ func (c *compiler) compileStructElement(elt ast.Expr) error {
 	}
 	if ident, ok := kv.Key.(*ast.Ident); ok {
 		c.loadConst(ident.Name)
-	} else if err := c.compileExpr(kv.Key); err != nil {
+	} else if _, err := c.compileExpr(kv.Key); err != nil {
 		return err
 	}
-	return c.compileExpr(kv.Value)
+	if _, err := c.compileExpr(kv.Value); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *compiler) compileMapLit(expr *ast.CompositeLit) error {
@@ -1453,10 +1563,10 @@ func (c *compiler) compileMapLit(expr *ast.CompositeLit) error {
 		}
 		if ident, ok := kv.Key.(*ast.Ident); ok {
 			c.loadConst(ident.Name)
-		} else if err := c.compileExpr(kv.Key); err != nil {
+		} else if _, err := c.compileExpr(kv.Key); err != nil {
 			return err
 		}
-		if err := c.compileExpr(kv.Value); err != nil {
+		if _, err := c.compileExpr(kv.Value); err != nil {
 			return err
 		}
 	}
@@ -1543,7 +1653,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) error {
 }
 
 func (c *compiler) compileExprStmt(stmt *ast.ExprStmt) error {
-	if err := c.compileExpr(stmt.X); err != nil {
+	if _, err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
 	c.emit(taivm.OpPop)
@@ -1579,14 +1689,14 @@ func (c *compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
 		c.emit(taivm.OpReturn)
 
 	} else if len(stmt.Results) == 1 {
-		if err := c.compileExpr(stmt.Results[0]); err != nil {
+		if _, err := c.compileExpr(stmt.Results[0]); err != nil {
 			return err
 		}
 		c.emit(taivm.OpReturn)
 
 	} else {
 		for _, r := range stmt.Results {
-			if err := c.compileExpr(r); err != nil {
+			if _, err := c.compileExpr(r); err != nil {
 				return err
 			}
 		}
@@ -1626,31 +1736,31 @@ func (c *compiler) compileMultiAssign(stmt *ast.AssignStmt) error {
 func (c *compiler) compileMultiAssignFromSingleRHS(stmt *ast.AssignStmt) error {
 	rhs := stmt.Rhs[0]
 	if ta, ok := rhs.(*ast.TypeAssertExpr); ok && len(stmt.Lhs) == 2 {
-		if err := c.compileExpr(ta.X); err != nil {
+		if _, err := c.compileExpr(ta.X); err != nil {
 			return err
 		}
-		if err := c.compileExpr(ta.Type); err != nil {
+		if _, err := c.compileExpr(ta.Type); err != nil {
 			return err
 		}
 		c.emit(taivm.OpTypeAssertOk)
 		c.emit(taivm.OpSwap)
 	} else if ie, ok := rhs.(*ast.IndexExpr); ok && len(stmt.Lhs) == 2 {
-		if err := c.compileExpr(ie.X); err != nil {
+		if _, err := c.compileExpr(ie.X); err != nil {
 			return err
 		}
-		if err := c.compileExpr(ie.Index); err != nil {
+		if _, err := c.compileExpr(ie.Index); err != nil {
 			return err
 		}
 		c.emit(taivm.OpGetIndexOk)
 		c.emit(taivm.OpSwap)
 	} else {
-		if err := c.compileExpr(rhs); err != nil {
+		if _, err := c.compileExpr(rhs); err != nil {
 			return err
 		}
 		c.emit(taivm.OpUnpack.With(len(stmt.Lhs)))
 	}
 	for i := 0; i < len(stmt.Lhs); i++ {
-		if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok); err != nil {
+		if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok, nil); err != nil {
 			return err
 		}
 	}
@@ -1658,13 +1768,16 @@ func (c *compiler) compileMultiAssignFromSingleRHS(stmt *ast.AssignStmt) error {
 }
 
 func (c *compiler) compileMultiAssignFromMultiRHS(stmt *ast.AssignStmt) error {
-	for _, r := range stmt.Rhs {
-		if err := c.compileExpr(r); err != nil {
+	rhsTypes := make([]*taivm.Type, len(stmt.Rhs))
+	for i, r := range stmt.Rhs {
+		t, err := c.compileExpr(r)
+		if err != nil {
 			return err
 		}
+		rhsTypes[i] = t
 	}
 	for i := len(stmt.Lhs) - 1; i >= 0; i-- {
-		if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok); err != nil {
+		if err := c.compileAssignFromStack(stmt.Lhs[i], stmt.Tok, rhsTypes[i]); err != nil {
 			return err
 		}
 	}
@@ -1672,10 +1785,11 @@ func (c *compiler) compileMultiAssignFromMultiRHS(stmt *ast.AssignStmt) error {
 }
 
 func (c *compiler) compileSingleAssign(lhs, rhs ast.Expr, tok token.Token) error {
-	if err := c.compileExpr(rhs); err != nil {
+	t, err := c.compileExpr(rhs)
+	if err != nil {
 		return err
 	}
-	return c.compileAssignFromStack(lhs, tok)
+	return c.compileAssignFromStack(lhs, tok, t)
 }
 
 func (c *compiler) compileCompoundAssign(lhs, rhs ast.Expr, tok token.Token) error {
@@ -1692,15 +1806,15 @@ func (c *compiler) compileCompoundAssign(lhs, rhs ast.Expr, tok token.Token) err
 }
 
 func (c *compiler) compileIndexCompoundAssign(lhs *ast.IndexExpr, rhs ast.Expr, tok token.Token) error {
-	if err := c.compileExpr(lhs.X); err != nil {
+	if _, err := c.compileExpr(lhs.X); err != nil {
 		return err
 	}
-	if err := c.compileExpr(lhs.Index); err != nil {
+	if _, err := c.compileExpr(lhs.Index); err != nil {
 		return err
 	}
 	c.emit(taivm.OpDup2)
 	c.emit(taivm.OpGetIndex)
-	if err := c.compileExpr(rhs); err != nil {
+	if _, err := c.compileExpr(rhs); err != nil {
 		return err
 	}
 	if err := c.emitBinaryOp(tok); err != nil {
@@ -1711,13 +1825,13 @@ func (c *compiler) compileIndexCompoundAssign(lhs *ast.IndexExpr, rhs ast.Expr, 
 }
 
 func (c *compiler) compileSelectorCompoundAssign(lhs *ast.SelectorExpr, rhs ast.Expr, tok token.Token) error {
-	if err := c.compileExpr(lhs.X); err != nil {
+	if _, err := c.compileExpr(lhs.X); err != nil {
 		return err
 	}
 	c.emit(taivm.OpDup)
 	c.loadConst(lhs.Sel.Name)
 	c.emit(taivm.OpGetAttr)
-	if err := c.compileExpr(rhs); err != nil {
+	if _, err := c.compileExpr(rhs); err != nil {
 		return err
 	}
 	if err := c.emitBinaryOp(tok); err != nil {
@@ -1731,20 +1845,20 @@ func (c *compiler) compileSelectorCompoundAssign(lhs *ast.SelectorExpr, rhs ast.
 
 func (c *compiler) compileIdentCompoundAssign(lhs *ast.Ident, rhs ast.Expr, tok token.Token) error {
 	name := lhs.Name
-	if idx, ok := c.locals[name]; ok {
-		c.emit(taivm.OpGetLocal.With(idx))
-		if err := c.compileExpr(rhs); err != nil {
+	if v, ok := c.locals[name]; ok {
+		c.emit(taivm.OpGetLocal.With(v.index))
+		if _, err := c.compileExpr(rhs); err != nil {
 			return err
 		}
 		if err := c.emitBinaryOp(tok); err != nil {
 			return err
 		}
-		c.emit(taivm.OpSetLocal.With(idx))
+		c.emit(taivm.OpSetLocal.With(v.index))
 		return nil
 	}
 	idx := c.addConst(name)
 	c.emit(taivm.OpLoadVar.With(idx))
-	if err := c.compileExpr(rhs); err != nil {
+	if _, err := c.compileExpr(rhs); err != nil {
 		return err
 	}
 	if err := c.emitBinaryOp(tok); err != nil {
@@ -1794,7 +1908,7 @@ func (c *compiler) compileIfStmt(stmt *ast.IfStmt) error {
 		}()
 	}
 
-	if err := c.compileExpr(stmt.Cond); err != nil {
+	if _, err := c.compileExpr(stmt.Cond); err != nil {
 		return err
 	}
 
@@ -1834,7 +1948,7 @@ func (c *compiler) compileSwitchStmt(stmt *ast.SwitchStmt, label string) error {
 	c.enterLoop(label)
 	defer c.leaveLoop()
 	if stmt.Tag != nil {
-		if err := c.compileExpr(stmt.Tag); err != nil {
+		if _, err := c.compileExpr(stmt.Tag); err != nil {
 			return err
 		}
 	} else {
@@ -1882,7 +1996,7 @@ func (c *compiler) compileSwitchChecks(stmt *ast.SwitchStmt) ([][]int, int, erro
 		var jumps []int
 		for _, expr := range cc.List {
 			c.emit(taivm.OpDup)
-			if err := c.compileExpr(expr); err != nil {
+			if _, err := c.compileExpr(expr); err != nil {
 				return nil, 0, err
 			}
 			c.emit(taivm.OpEq)
@@ -1944,7 +2058,7 @@ func (c *compiler) compileTypeSwitchStmt(stmt *ast.TypeSwitchStmt, label string)
 	} else if expr, ok := stmt.Assign.(*ast.ExprStmt); ok {
 		xExpr = expr.X.(*ast.TypeAssertExpr).X
 	}
-	if err := c.compileExpr(xExpr); err != nil {
+	if _, err := c.compileExpr(xExpr); err != nil {
 		return err
 	}
 	valTmpIdx := c.addConst(c.nextTmp())
@@ -1968,7 +2082,7 @@ func (c *compiler) compileTypeSwitchClauses(stmt *ast.TypeSwitchStmt, valTmpIdx 
 				c.loadConst(nil)
 				c.emit(taivm.OpEq)
 			} else {
-				if err := c.compileExpr(typeExpr); err != nil {
+				if _, err := c.compileExpr(typeExpr); err != nil {
 					return err
 				}
 				c.emit(taivm.OpTypeAssertOk)
@@ -2032,7 +2146,7 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt, label string) error {
 	loop.startPos = len(c.code)
 
 	if stmt.Cond != nil {
-		if err := c.compileExpr(stmt.Cond); err != nil {
+		if _, err := c.compileExpr(stmt.Cond); err != nil {
 			return err
 		}
 		loop.breakTargets = append(loop.breakTargets, c.emitJump(taivm.OpJumpFalse))
@@ -2056,7 +2170,7 @@ func (c *compiler) compileForStmt(stmt *ast.ForStmt, label string) error {
 }
 
 func (c *compiler) compileRangeStmt(stmt *ast.RangeStmt, label string) error {
-	if err := c.compileExpr(stmt.X); err != nil {
+	if _, err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
 	c.emit(taivm.OpGetIter)
@@ -2084,12 +2198,12 @@ func (c *compiler) compileRangeLoop(stmt *ast.RangeStmt, containerIdx int, label
 		c.emit(taivm.OpLoadVar.With(containerIdx))
 		c.emit(taivm.OpSwap)
 		c.emit(taivm.OpGetIndex)
-		if err := c.compileAssignFromStack(stmt.Value, stmt.Tok); err != nil {
+		if err := c.compileAssignFromStack(stmt.Value, stmt.Tok, nil); err != nil {
 			return err
 		}
 	}
 	if stmt.Key != nil {
-		if err := c.compileAssignFromStack(stmt.Key, stmt.Tok); err != nil {
+		if err := c.compileAssignFromStack(stmt.Key, stmt.Tok, nil); err != nil {
 			return err
 		}
 	} else {
@@ -2170,13 +2284,14 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		name:         "defer",
 		isFunc:       true,
 		consts:       make(map[any]int),
-		locals:       make(map[string]int),
+		locals:       make(map[string]variable),
 		labels:       make(map[string]int),
 		unresolved:   make(map[string][]int),
 		generics:     c.generics,
 		typeParams:   c.typeParams,
 		structFields: c.structFields,
 		types:        c.types,
+		globals:      c.globals,
 	}
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
 		return err
@@ -2262,7 +2377,7 @@ func (c *compiler) compileValueSpec(s *ast.ValueSpec, isConst bool) error {
 func (c *compiler) compileNamedValueDef(name string, valExpr any) error {
 	if name == "_" {
 		if e, ok := valExpr.(ast.Expr); ok {
-			if err := c.compileExpr(e); err != nil {
+			if _, err := c.compileExpr(e); err != nil {
 				return err
 			}
 		} else {
@@ -2271,38 +2386,41 @@ func (c *compiler) compileNamedValueDef(name string, valExpr any) error {
 		c.emit(taivm.OpPop)
 		return nil
 	}
+	var t *taivm.Type
+	var err error
 	if e, ok := valExpr.(ast.Expr); ok {
-		if err := c.compileExpr(e); err != nil {
+		if t, err = c.compileExpr(e); err != nil {
 			return err
 		}
 	} else {
 		c.loadConst(nil)
 	}
 	c.emit(taivm.OpDefVar.With(c.addConst(name)))
+	c.globals[name] = t
 	return nil
 }
 
 func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr) error {
 	if ta, ok := rhs.(*ast.TypeAssertExpr); ok && len(s.Names) == 2 {
-		if err := c.compileExpr(ta.X); err != nil {
+		if _, err := c.compileExpr(ta.X); err != nil {
 			return err
 		}
-		if err := c.compileExpr(ta.Type); err != nil {
+		if _, err := c.compileExpr(ta.Type); err != nil {
 			return err
 		}
 		c.emit(taivm.OpTypeAssertOk)
 		c.emit(taivm.OpSwap)
 	} else if ie, ok := rhs.(*ast.IndexExpr); ok && len(s.Names) == 2 {
-		if err := c.compileExpr(ie.X); err != nil {
+		if _, err := c.compileExpr(ie.X); err != nil {
 			return err
 		}
-		if err := c.compileExpr(ie.Index); err != nil {
+		if _, err := c.compileExpr(ie.Index); err != nil {
 			return err
 		}
 		c.emit(taivm.OpGetIndexOk)
 		c.emit(taivm.OpSwap)
 	} else {
-		if err := c.compileExpr(rhs); err != nil {
+		if _, err := c.compileExpr(rhs); err != nil {
 			return err
 		}
 		c.emit(taivm.OpUnpack.With(len(s.Names)))
@@ -2671,10 +2789,10 @@ func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, erro
 	}, nil
 }
 
-func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
+func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token, rhsType *taivm.Type) error {
 	switch e := lhs.(type) {
 	case *ast.Ident:
-		return c.compileIdentAssign(e, tok)
+		return c.compileIdentAssign(e, tok, rhsType)
 	case *ast.IndexExpr:
 		return c.compileIndexAssign(e)
 	case *ast.SelectorExpr:
@@ -2686,25 +2804,26 @@ func (c *compiler) compileAssignFromStack(lhs ast.Expr, tok token.Token) error {
 	}
 }
 
-func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token) error {
+func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token, rhsType *taivm.Type) error {
 	name := e.Name
 	if name == "_" {
 		c.emit(taivm.OpPop)
 		return nil
 	}
-	if idx, ok := c.locals[name]; ok {
-		c.emit(taivm.OpSetLocal.With(idx))
+	if v, ok := c.locals[name]; ok {
+		c.emit(taivm.OpSetLocal.With(v.index))
 		return nil
 	}
 	if tok == token.DEFINE && c.isFunc {
 		idx := len(c.locals)
-		c.locals[name] = idx
+		c.locals[name] = variable{index: idx, typ: rhsType}
 		c.emit(taivm.OpSetLocal.With(idx))
 		return nil
 	}
 	idx := c.addConst(name)
 	if tok == token.DEFINE {
 		c.emit(taivm.OpDefVar.With(idx))
+		c.globals[name] = rhsType
 	} else {
 		c.emit(taivm.OpSetVar.With(idx))
 	}
@@ -2714,10 +2833,10 @@ func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token) error {
 func (c *compiler) compileIndexAssign(e *ast.IndexExpr) error {
 	tmpIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(tmpIdx))
-	if err := c.compileExpr(e.X); err != nil {
+	if _, err := c.compileExpr(e.X); err != nil {
 		return err
 	}
-	if err := c.compileExpr(e.Index); err != nil {
+	if _, err := c.compileExpr(e.Index); err != nil {
 		return err
 	}
 	c.emit(taivm.OpLoadVar.With(tmpIdx))
@@ -2728,7 +2847,7 @@ func (c *compiler) compileIndexAssign(e *ast.IndexExpr) error {
 func (c *compiler) compileSelectorAssign(e *ast.SelectorExpr) error {
 	tmpIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(tmpIdx))
-	if err := c.compileExpr(e.X); err != nil {
+	if _, err := c.compileExpr(e.X); err != nil {
 		return err
 	}
 	c.loadConst(e.Sel.Name)
@@ -2738,7 +2857,7 @@ func (c *compiler) compileSelectorAssign(e *ast.SelectorExpr) error {
 }
 
 func (c *compiler) compileDerefAssign(e *ast.StarExpr) error {
-	if err := c.compileExpr(e.X); err != nil {
+	if _, err := c.compileExpr(e.X); err != nil {
 		return err
 	}
 	c.emit(taivm.OpSwap)

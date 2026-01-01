@@ -2302,3 +2302,26 @@ func TestEvalStructField(t *testing.T) {
 		t.Fatalf("expect field not found error")
 	}
 }
+
+func TestFromReflectTypeRecursive(t *testing.T) {
+	type Recursive struct {
+		Next *Recursive
+	}
+	r := &Recursive{}
+	env := &Env{
+		Globals: map[string]any{
+			"r": r,
+		},
+		Source: `
+		package main
+		`,
+	}
+	vm, err := env.NewVM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Eval[any](vm.Scope, "new(r)")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
