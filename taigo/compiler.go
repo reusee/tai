@@ -244,6 +244,35 @@ func (c *compiler) getFunction() *taivm.Function {
 	}
 }
 
+func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*taivm.Type) {
+	if c.types == nil {
+		c.types = make(map[string]*taivm.Type)
+	}
+	if c.globals == nil {
+		c.globals = make(map[string]*taivm.Type)
+	}
+	if c.structFields == nil {
+		c.structFields = make(map[string][]string)
+	}
+	for name, t := range externalTypes {
+		c.types[name] = t
+		st := t
+		if st.Kind == taivm.KindPtr && st.Elem != nil {
+			st = st.Elem
+		}
+		if st.Kind == taivm.KindStruct {
+			var fields []string
+			for _, f := range st.Fields {
+				fields = append(fields, f.Name)
+			}
+			c.structFields[name] = fields
+		}
+	}
+	for name, t := range externalValueTypes {
+		c.globals[name] = t
+	}
+}
+
 func (c *compiler) getPackage() *Package {
 	return &Package{
 		Name: c.name,
@@ -644,7 +673,7 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 	return nil
 }
 
-func (c *compiler) extractTypeName(t ast.Expr) (typeName string, rawName string) {
+func (c *compiler) extractTypeName(t ast.Expr) (string, string) {
 	if t == nil {
 		return "", ""
 	}
@@ -652,12 +681,11 @@ func (c *compiler) extractTypeName(t ast.Expr) (typeName string, rawName string)
 	case *ast.Ident:
 		return e.Name, e.Name
 	case *ast.SelectorExpr:
-		if id, ok := e.X.(*ast.Ident); ok {
-			typeName = id.Name + "." + e.Sel.Name
-		} else {
-			typeName = e.Sel.Name
+		prefix, _ := c.extractTypeName(e.X)
+		if prefix != "" {
+			return prefix + "." + e.Sel.Name, e.Sel.Name
 		}
-		return typeName, e.Sel.Name
+		return e.Sel.Name, e.Sel.Name
 	case *ast.IndexExpr:
 		return c.extractTypeName(e.X)
 	case *ast.IndexListExpr:
@@ -1295,13 +1323,22 @@ func (c *compiler) compileIndexListExpr(expr *ast.IndexListExpr) (*taivm.Type, e
 }
 
 func (c *compiler) compileSelectorExpr(expr *ast.SelectorExpr) (*taivm.Type, error) {
+	typeName, _ := c.extractTypeName(expr)
+	if t, ok := c.types[typeName]; ok {
+		c.loadConst(t)
+		return taivm.FromReflectType(reflect.TypeFor[*taivm.Type]()), nil
+	}
+	if t, ok := c.globals[typeName]; ok {
+		c.emit(taivm.OpLoadVar.With(c.addConst(typeName)))
+		return t, nil
+	}
+
 	t, err := c.compileExpr(expr.X)
 	if err != nil {
 		return nil, err
 	}
 	c.loadConst(expr.Sel.Name)
 	c.emit(taivm.OpGetAttr)
-
 	if t != nil && t.Kind == taivm.KindStruct {
 		for _, f := range t.Fields {
 			if f.Name == expr.Sel.Name {
@@ -1309,7 +1346,6 @@ func (c *compiler) compileSelectorExpr(expr *ast.SelectorExpr) (*taivm.Type, err
 			}
 		}
 	}
-
 	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
@@ -1549,7 +1585,7 @@ func (c *compiler) compileArrayLit(expr *ast.CompositeLit) error {
 }
 
 func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
-	typeName, rawName := c.extractTypeName(t)
+	typeName, _ := c.extractTypeName(t)
 	numElts := len(expr.Elts)
 	if numElts > 0 {
 		if _, ok := expr.Elts[0].(*ast.KeyValueExpr); ok {
@@ -1559,9 +1595,9 @@ func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
 				}
 			}
 		} else {
-			fields, ok := c.structFields[rawName]
+			fields, ok := c.structFields[typeName]
 			if !ok {
-				return fmt.Errorf("struct fields unknown for unkeyed literal of %s", rawName)
+				return fmt.Errorf("struct fields unknown for unkeyed literal of %s", typeName)
 			}
 			if len(fields) < numElts {
 				return fmt.Errorf("too many values in unkeyed struct literal")
@@ -1575,7 +1611,7 @@ func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
 		}
 	}
 	c.loadConst(typeName)
-	c.emit(taivm.OpLoadVar.With(c.addConst("_embedded_info_" + rawName)))
+	c.loadConst(&taivm.List{Immutable: true})
 	c.emit(taivm.OpMakeStruct.With(numElts))
 	return nil
 }
@@ -2562,50 +2598,30 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	if err != nil {
 		return err
 	}
-	t.Name = spec.Name.Name
+
+	if t.Kind == taivm.KindStruct {
+		var fields []string
+		for _, f := range t.Fields {
+			fields = append(fields, f.Name)
+		}
+		c.structFields[spec.Name.Name] = fields
+	}
+
+	// Handle type alias: type T = S
+	if spec.Assign != token.NoPos {
+		c.types[spec.Name.Name] = t
+		c.loadConst(t)
+		c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
+		return nil
+	}
+	// Defined type: type T S. Copy the type to avoid mutating shared types.
+	newT := *t
+	newT.Name = spec.Name.Name
+	t = &newT
 	c.types[spec.Name.Name] = t
 	c.loadConst(t)
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
-	if st, ok := spec.Type.(*ast.StructType); ok {
-		var fields []string
-		for _, f := range st.Fields.List {
-			for _, n := range f.Names {
-				fields = append(fields, n.Name)
-			}
-			if len(f.Names) == 0 {
-				switch ft := f.Type.(type) {
-				case *ast.Ident:
-					fields = append(fields, ft.Name)
-				case *ast.StarExpr:
-					if id, ok := ft.X.(*ast.Ident); ok {
-						fields = append(fields, id.Name)
-					}
-				}
-			}
-		}
-		c.structFields[spec.Name.Name] = fields
-		c.recordEmbeddedInfo(spec.Name.Name, st)
-	}
 	return nil
-}
-
-func (c *compiler) recordEmbeddedInfo(typeName string, st *ast.StructType) {
-	var embedded []any
-	for _, field := range st.Fields.List {
-		if len(field.Names) == 0 {
-			_, rawName := c.extractTypeName(field.Type)
-			if rawName != "" {
-				embedded = append(embedded, rawName)
-			}
-		}
-	}
-	if len(embedded) > 0 {
-		for _, e := range embedded {
-			c.loadConst(e)
-		}
-		c.emit(taivm.OpMakeList.With(len(embedded)))
-		c.emit(taivm.OpDefVar.With(c.addConst("_embedded_info_" + typeName)))
-	}
 }
 
 func (c *compiler) resolveType(expr ast.Expr) (*taivm.Type, error) {
@@ -2632,6 +2648,10 @@ func (c *compiler) resolveType(expr ast.Expr) (*taivm.Type, error) {
 	case *ast.InterfaceType:
 		return c.resolveInterfaceType(e)
 	case *ast.SelectorExpr:
+		typeName, _ := c.extractTypeName(e)
+		if t, ok := c.types[typeName]; ok {
+			return t, nil
+		}
 		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 	case *ast.IndexExpr:
 		return c.resolveType(e.X)

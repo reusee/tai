@@ -696,6 +696,36 @@ func TestVMCharVarInvalidSyntax(t *testing.T) {
 	`)
 }
 
+func TestVMExternalTypeQualified(t *testing.T) {
+	type ExtS struct {
+		F1 int
+		F2 string
+	}
+	rt := reflect.TypeFor[ExtS]()
+
+	env := &Env{
+		Globals: map[string]any{
+			"pkg.S": rt,
+		},
+		Source: `
+		package main
+		type T pkg.S
+		var v1 = pkg.S{10, "foo"}
+		var v2 = T{20, "bar"}
+		func getF1(s pkg.S) int { return s.F1 }
+		var res1 = getF1(v1)
+		var res2 = getF1(v2.(pkg.S))
+		`,
+	}
+
+	vm, err := env.RunVM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkInt(t, vm, "res1", 10)
+	checkInt(t, vm, "res2", 20)
+}
+
 func TestCoverageBuiltins(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/reusee/tai/taivm"
 )
@@ -37,7 +38,22 @@ func (e *Env) NewVM() (*taivm.VM, error) {
 
 	e.registerBuiltins(vm)
 	for key, val := range e.Globals {
-		vm.Def(key, val)
+		var t *taivm.Type
+		if rt, ok := val.(reflect.Type); ok {
+			t = taivm.FromReflectType(rt)
+		} else if tt, ok := val.(*taivm.Type); ok {
+			t = tt
+		}
+		if t != nil {
+			if t.Name != key {
+				t2 := *t
+				t2.Name = key
+				t = &t2
+			}
+			vm.Def(key, t)
+		} else {
+			vm.Def(key, val)
+		}
 	}
 
 	return vm, nil
@@ -66,7 +82,28 @@ func (e *Env) GetPackage() (*Package, error) {
 		return nil, err
 	}
 
-	pkg, err := compile(files...)
+	externalTypes := make(map[string]*taivm.Type)
+	externalValueTypes := make(map[string]*taivm.Type)
+	for name, val := range e.Globals {
+		var t *taivm.Type
+		if rt, ok := val.(reflect.Type); ok {
+			t = taivm.FromReflectType(rt)
+		} else if tt, ok := val.(*taivm.Type); ok {
+			t = tt
+		}
+		if t != nil {
+			if t.Name != name {
+				t2 := *t
+				t2.Name = name
+				t = &t2
+			}
+			externalTypes[name] = t
+		} else if val != nil {
+			externalValueTypes[name] = taivm.FromReflectType(reflect.TypeOf(val))
+		}
+	}
+
+	pkg, err := compile(externalTypes, externalValueTypes, files...)
 	if err != nil {
 		return nil, err
 	}

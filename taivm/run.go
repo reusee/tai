@@ -3288,6 +3288,13 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 			v.push(val)
 			return true
 		}
+		// Allow structural compatibility for structs to support defined types and interop
+		if s, ok := val.(*Struct); ok && dt.Kind == KindStruct {
+			if v.checkStructCompatible(s, dt) {
+				v.push(val)
+				return true
+			}
+		}
 		fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name))
 		return true
 	}
@@ -3325,6 +3332,15 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		v.push(val)
 		v.push(true)
 		return true
+	}
+
+	// Structural compatibility for structs
+	if s, ok := val.(*Struct); ok && targetType.Kind == KindStruct {
+		if v.checkStructCompatible(s, targetType) {
+			v.push(val)
+			v.push(true)
+			return true
+		}
 	}
 
 	v.push(targetType.Zero())
@@ -3400,6 +3416,19 @@ func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
 			return false
 		}
 		if !v.checkMethodType(method, targetType) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *VM) checkStructCompatible(s *Struct, t *Type) bool {
+	if t == nil || t.Kind != KindStruct {
+		return false
+	}
+	// Verify that the struct instance provides all fields required by the type
+	for _, f := range t.Fields {
+		if _, ok := s.Fields[f.Name]; !ok {
 			return false
 		}
 	}

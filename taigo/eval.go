@@ -47,10 +47,31 @@ func evalSrc(env *taivm.Env, src any) (any, error) {
 		srcStr = fmt.Sprint(s)
 	}
 
+	// Extract external types and value types from the runtime environment
+	externalTypes := make(map[string]*taivm.Type)
+	externalValueTypes := make(map[string]*taivm.Type)
+	if env != nil {
+		for e := env; e != nil; e = e.Parent {
+			for _, v := range e.Vars {
+				if _, ok := externalTypes[v.Name]; ok {
+					continue
+				}
+				if _, ok := externalValueTypes[v.Name]; ok {
+					continue
+				}
+				if t, ok := v.Val.(*taivm.Type); ok {
+					externalTypes[v.Name] = t
+				} else if v.Val != nil {
+					externalValueTypes[v.Name] = taivm.FromReflectType(reflect.TypeOf(v.Val))
+				}
+			}
+		}
+	}
+
 	fset := token.NewFileSet()
 	expr, err := parser.ParseExpr(srcStr)
 	if err == nil {
-		fn, err := compileExpr(expr)
+		fn, err := compileExpr(expr, externalTypes, externalValueTypes)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +82,7 @@ func evalSrc(env *taivm.Env, src any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	pkg, err := compile(file)
+	pkg, err := compile(externalTypes, externalValueTypes, file)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +125,21 @@ func convertToReflectValue(env *taivm.Env, val any, target reflect.Type) reflect
 	v := reflect.ValueOf(val)
 	if v.Type().AssignableTo(target) {
 		return v
+	}
+
+	if s, ok := val.(*taivm.Struct); ok && target.Kind() == reflect.Struct {
+		res := reflect.New(target).Elem()
+		for i := 0; i < target.NumField(); i++ {
+			f := target.Field(i)
+			if f.PkgPath != "" { // Skip unexported fields
+				continue
+			}
+			if fValue, ok := s.Fields[f.Name]; ok {
+				fv := convertToReflectValue(env, fValue, f.Type)
+				res.Field(i).Set(fv)
+			}
+		}
+		return res
 	}
 
 	if target.Kind() == reflect.Func {
@@ -157,5 +193,8 @@ func convertToReflectValue(env *taivm.Env, val any, target reflect.Type) reflect
 		return slice
 	}
 
-	return v.Convert(target)
+	if v.Type().ConvertibleTo(target) {
+		return v.Convert(target)
+	}
+	return v
 }
