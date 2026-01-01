@@ -2325,3 +2325,191 @@ func TestFromReflectTypeRecursive(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name: "basic types",
+			src: `package main
+				var a int
+				var b string
+				var c bool
+				var d float64
+			`,
+		},
+		{
+			name: "pointers",
+			src: `package main
+				var p *int
+				var pp **string
+			`,
+		},
+		{
+			name: "slices and arrays",
+			src: `package main
+				var s []int
+				var a [10]string
+			`,
+		},
+		{
+			name: "maps",
+			src: `package main
+				var m map[string]int
+				var m2 map[int]bool
+			`,
+		},
+		{
+			name: "structs",
+			src: `package main
+				type User struct {
+					Name string
+					Age  int
+				}
+				var u User
+			`,
+		},
+		{
+			name: "nested structs",
+			src: `package main
+				type Point struct { X, Y int }
+				type Rect struct {
+					P1, P2 Point
+				}
+			`,
+		},
+		{
+			name: "recursive struct",
+			src: `package main
+				type Node struct {
+					Val  int
+					Next *Node
+				}
+			`,
+		},
+		{
+			name: "interfaces",
+			src: `package main
+				type Reader interface {
+					Read(p []byte) (n int, err error)
+				}
+			`,
+		},
+		{
+			name: "functions",
+			src: `package main
+				type Func func(int, string) (bool, error)
+				var f Func
+			`,
+		},
+		{
+			name: "channels",
+			src: `package main
+				var c chan int
+				var cr <-chan int
+				var cs chan<- int
+			`,
+		},
+		{
+			name: "multiple type definitions",
+			src: `package main
+				type (
+					A int
+					B = string
+				)
+			`,
+		},
+		{
+			name: "embedded structs",
+			src: `package main
+				type Base struct { ID int }
+				type Derived struct {
+					Base
+					Name string
+				}
+			`,
+		},
+		{
+			name: "generic types",
+			src: `package main
+				type Box[T any] struct {
+					Val T
+				}
+				var b Box[int]
+			`,
+		},
+		{
+			name: "generic functions",
+			src: `package main
+				func Identity[T any](v T) T {
+					return v
+				}
+			`,
+		},
+		{
+			name:    "duplicate struct fields",
+			src:     `package main; type S struct { A int; A string }`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := &Env{Source: tt.src}
+			_, err := env.NewVM()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.wantErr)
+				} else if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckTypeResolution(t *testing.T) {
+	src := `
+		package main
+		
+		type MyInt int
+		
+		func (m MyInt) IsPositive() bool {
+			return int(m) > 0
+		}
+		
+		func main() {
+			var i MyInt = 10
+			if i.IsPositive() {
+			}
+		}
+	`
+	env := &Env{Source: src}
+	_, err := env.RunVM()
+	if err != nil {
+		t.Fatalf("compilation failed: %v", err)
+	}
+}
+
+func TestCheckRecursiveTypeUsage(t *testing.T) {
+	src := `
+		package main
+		type Node struct {
+			Next *Node
+		}
+		func main() {
+			var n Node
+			n.Next = &n
+		}
+	`
+	env := &Env{Source: src}
+	_, err := env.RunVM()
+	if err != nil {
+		t.Fatalf("compilation failed: %v", err)
+	}
+}

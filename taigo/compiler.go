@@ -73,16 +73,11 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 		c.globals = make(map[string]*taivm.Type)
 	}
 	symbols := c.collectSymbols(files)
-	funcs, inits, vars, hasMain, err := c.collectDecls(files, symbols)
+	inits, decls, hasMain, err := c.collectDecls(files, symbols)
 	if err != nil {
 		return err
 	}
-	for _, d := range funcs {
-		if err := d.compile(); err != nil {
-			return err
-		}
-	}
-	sorted, err := sortTopDecls(vars)
+	sorted, err := sortTopDecls(decls)
 	if err != nil {
 		return err
 	}
@@ -130,8 +125,8 @@ func (c *compiler) collectSymbols(files []*ast.File) map[string]bool {
 	return symbols
 }
 
-func (c *compiler) collectDecls(files []*ast.File, symbols map[string]bool) ([]topDecl, []func() error, []topDecl, bool, error) {
-	var funcs, vars []topDecl
+func (c *compiler) collectDecls(files []*ast.File, symbols map[string]bool) ([]func() error, []topDecl, bool, error) {
+	var decls []topDecl
 	var inits []func() error
 	var hasMain bool
 	getDeps := func(node ast.Node) []string {
@@ -146,15 +141,15 @@ func (c *compiler) collectDecls(files []*ast.File, symbols map[string]bool) ([]t
 	}
 	for _, file := range files {
 		for _, decl := range file.Decls {
-			if err := c.processTopDecl(decl, getDeps, &funcs, &inits, &vars, &hasMain); err != nil {
-				return nil, nil, nil, false, err
+			if err := c.processTopDecl(decl, getDeps, &inits, &decls, &hasMain); err != nil {
+				return nil, nil, false, err
 			}
 		}
 	}
-	return funcs, inits, vars, hasMain, nil
+	return inits, decls, hasMain, nil
 }
 
-func (c *compiler) processTopDecl(decl ast.Decl, getDeps func(ast.Node) []string, funcs *[]topDecl, inits *[]func() error, vars *[]topDecl, hasMain *bool) error {
+func (c *compiler) processTopDecl(decl ast.Decl, getDeps func(ast.Node) []string, inits *[]func() error, decls *[]topDecl, hasMain *bool) error {
 	switch g := decl.(type) {
 	case *ast.FuncDecl:
 		if g.Recv == nil && g.Name.Name == "init" {
@@ -163,8 +158,10 @@ func (c *compiler) processTopDecl(decl ast.Decl, getDeps func(ast.Node) []string
 			if g.Name.Name == "main" {
 				*hasMain = true
 			}
-			*funcs = append(*funcs, topDecl{
+			deps := getDeps(g)
+			*decls = append(*decls, topDecl{
 				names:   []string{g.Name.Name},
+				deps:    deps,
 				compile: func() error { return c.compileFuncDecl(g) },
 			})
 		}
@@ -172,7 +169,7 @@ func (c *compiler) processTopDecl(decl ast.Decl, getDeps func(ast.Node) []string
 		if g.Tok == token.IMPORT {
 			return c.compileGenDecl(g)
 		}
-		c.processGenDecl(g, getDeps, vars)
+		c.processGenDecl(g, getDeps, decls)
 	}
 	return nil
 }
@@ -1176,9 +1173,53 @@ func (c *compiler) compileUnaryExpr(expr *ast.UnaryExpr) (*taivm.Type, error) {
 }
 
 func (c *compiler) compileCallExpr(expr *ast.CallExpr) (*taivm.Type, error) {
-	if _, err := c.compileExpr(expr.Fun); err != nil {
-		return nil, err
+	if sel, ok := expr.Fun.(*ast.SelectorExpr); ok {
+		t, err := c.compileExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+
+		isNamed := t != nil && t.Name != ""
+		isNamedPtr := t != nil && t.Kind == taivm.KindPtr && t.Elem != nil && t.Elem.Name != ""
+
+		if (isNamed || isNamedPtr) &&
+			(t.Kind != taivm.KindStruct && t.Kind != taivm.KindInterface) &&
+			!(isNamedPtr && t.Elem.Kind == taivm.KindStruct) {
+
+			methodName := ""
+			if isNamed {
+				methodName = t.Name + "." + sel.Sel.Name
+			} else {
+				methodName = "*" + t.Elem.Name + "." + sel.Sel.Name
+			}
+
+			idx := c.addConst(methodName)
+			c.emit(taivm.OpLoadVar.With(idx))
+			c.emit(taivm.OpSwap)
+			for _, arg := range expr.Args {
+				if _, err := c.compileExpr(arg); err != nil {
+					return nil, err
+				}
+			}
+			if expr.Ellipsis != token.NoPos {
+				numExplicit := len(expr.Args) - 1
+				c.emit(taivm.OpMakeList.With(numExplicit))
+				c.emit(taivm.OpAdd)
+				c.emit(taivm.OpMakeMap.With(0))
+				c.emit(taivm.OpCallKw)
+			} else {
+				c.emit(taivm.OpCall.With(len(expr.Args) + 1))
+			}
+			return taivm.FromReflectType(reflect.TypeFor[any]()), nil
+		}
+		c.loadConst(sel.Sel.Name)
+		c.emit(taivm.OpGetAttr)
+	} else {
+		if _, err := c.compileExpr(expr.Fun); err != nil {
+			return nil, err
+		}
 	}
+
 	if expr.Ellipsis != token.NoPos {
 		if err := c.compileVariadicCall(expr); err != nil {
 			return nil, err
@@ -2356,8 +2397,18 @@ func (c *compiler) compileValueSpec(s *ast.ValueSpec, isConst bool) error {
 	} else if isConst {
 		c.lastConstExprs = values
 	}
+
+	var explicitType *taivm.Type
+	if s.Type != nil {
+		var err error
+		explicitType, err = c.resolveType(s.Type)
+		if err != nil {
+			return err
+		}
+	}
+
 	if len(values) == 1 && len(s.Names) > 1 {
-		return c.compileValueSpecSingleRHS(s, values[0])
+		return c.compileValueSpecSingleRHS(s, values[0], explicitType)
 	}
 	if len(values) > 0 && len(values) != len(s.Names) {
 		return fmt.Errorf("assignment count mismatch: %d = %d", len(s.Names), len(values))
@@ -2367,14 +2418,14 @@ func (c *compiler) compileValueSpec(s *ast.ValueSpec, isConst bool) error {
 		if i < len(values) {
 			valExpr = values[i]
 		}
-		if err := c.compileNamedValueDef(name.Name, valExpr); err != nil {
+		if err := c.compileNamedValueDef(name.Name, valExpr, explicitType); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *compiler) compileNamedValueDef(name string, valExpr any) error {
+func (c *compiler) compileNamedValueDef(name string, valExpr any, explicitType *taivm.Type) error {
 	if name == "_" {
 		if e, ok := valExpr.(ast.Expr); ok {
 			if _, err := c.compileExpr(e); err != nil {
@@ -2387,20 +2438,30 @@ func (c *compiler) compileNamedValueDef(name string, valExpr any) error {
 		return nil
 	}
 	var t *taivm.Type
-	var err error
+	if explicitType != nil {
+		t = explicitType
+	}
 	if e, ok := valExpr.(ast.Expr); ok {
-		if t, err = c.compileExpr(e); err != nil {
+		rhsType, err := c.compileExpr(e)
+		if err != nil {
 			return err
 		}
+		if t == nil {
+			t = rhsType
+		}
 	} else {
-		c.loadConst(nil)
+		if explicitType != nil {
+			c.loadConst(explicitType.Zero())
+		} else {
+			c.loadConst(nil)
+		}
 	}
 	c.emit(taivm.OpDefVar.With(c.addConst(name)))
 	c.globals[name] = t
 	return nil
 }
 
-func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr) error {
+func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr, explicitType *taivm.Type) error {
 	if ta, ok := rhs.(*ast.TypeAssertExpr); ok && len(s.Names) == 2 {
 		if _, err := c.compileExpr(ta.X); err != nil {
 			return err
@@ -2431,6 +2492,9 @@ func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr) err
 			continue
 		}
 		c.emit(taivm.OpDefVar.With(c.addConst(name.Name)))
+		if explicitType != nil {
+			c.globals[name.Name] = explicitType
+		}
 	}
 	return nil
 }
