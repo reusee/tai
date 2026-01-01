@@ -72,7 +72,10 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 	if c.globals == nil {
 		c.globals = make(map[string]*taivm.Type)
 	}
-	symbols := c.collectSymbols(files)
+	symbols, err := c.collectSymbols(files)
+	if err != nil {
+		return err
+	}
 	inits, decls, hasMain, err := c.collectDecls(files, symbols)
 	if err != nil {
 		return err
@@ -99,30 +102,50 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 	return nil
 }
 
-func (c *compiler) collectSymbols(files []*ast.File) map[string]bool {
+func (c *compiler) collectSymbols(files []*ast.File) (map[string]bool, error) {
 	symbols := make(map[string]bool)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
 				if d.Recv == nil && d.Name.Name != "init" {
-					symbols[d.Name.Name] = true
+					name := d.Name.Name
+					if name == "_" {
+						continue
+					}
+					if symbols[name] {
+						return nil, fmt.Errorf("%s redeclared in this block", name)
+					}
+					symbols[name] = true
 				}
 			case *ast.GenDecl:
 				for _, spec := range d.Specs {
 					switch s := spec.(type) {
 					case *ast.ValueSpec:
 						for _, name := range s.Names {
+							if name.Name == "_" {
+								continue
+							}
+							if symbols[name.Name] {
+								return nil, fmt.Errorf("%s redeclared in this block", name.Name)
+							}
 							symbols[name.Name] = true
 						}
 					case *ast.TypeSpec:
-						symbols[s.Name.Name] = true
+						name := s.Name.Name
+						if name == "_" {
+							continue
+						}
+						if symbols[name] {
+							return nil, fmt.Errorf("%s redeclared in this block", name)
+						}
+						symbols[name] = true
 					}
 				}
 			}
 		}
 	}
-	return symbols
+	return symbols, nil
 }
 
 func (c *compiler) collectDecls(files []*ast.File, symbols map[string]bool) ([]func() error, []topDecl, bool, error) {

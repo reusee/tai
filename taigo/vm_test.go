@@ -1114,6 +1114,80 @@ func TestCoverageCompilerAssign(t *testing.T) {
 	checkInt(t, vm, "a", 3)
 }
 
+func TestCompilerRedeclaration(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "dup_var",
+			src:     `package main; var a = 1; var a = 2`,
+			wantErr: "a redeclared",
+		},
+		{
+			name:    "dup_func",
+			src:     `package main; func f() {}; func f() {}`,
+			wantErr: "f redeclared",
+		},
+		{
+			name:    "dup_type",
+			src:     `package main; type T int; type T string`,
+			wantErr: "T redeclared",
+		},
+		{
+			name:    "var_func_collision",
+			src:     `package main; var a = 1; func a() {}`,
+			wantErr: "a redeclared",
+		},
+		{
+			name:    "const_type_collision",
+			src:     `package main; const C = 1; type C int`,
+			wantErr: "C redeclared",
+		},
+		{
+			name:    "var_block_dup",
+			src:     `package main; var ( a = 1; a = 2 )`,
+			wantErr: "a redeclared",
+		},
+		{
+			name:    "no_error_init",
+			src:     `package main; func init() {}; func init() {}`,
+			wantErr: "",
+		},
+		{
+			name:    "no_error_blank_var",
+			src:     `package main; var _ = 1; var _ = 2`,
+			wantErr: "",
+		},
+		{
+			name:    "no_error_blank_func",
+			src:     `package main; func _() {}; func _() {}`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := &Env{
+				Source: tt.src,
+			}
+			_, err := env.NewVM()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.wantErr)
+				} else if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestCoverageCompilerErrors(t *testing.T) {
 	tests := []struct {
 		name    string
