@@ -2321,6 +2321,42 @@ func (c *compiler) compileGoto(stmt *ast.BranchStmt) error {
 }
 
 func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
+	// We need to evaluate the function and its arguments at the point of defer.
+	// We do this by evaluating them into temporary variables in the current scope,
+	// and then creating a closure that calls the function using these temporaries.
+	// Since temporaries are assigned once and never modified, capturing them
+	// effectively captures their values at this point.
+
+	// 1. Evaluate function expression
+	fnTmp := c.nextTmp()
+	if _, err := c.compileExpr(stmt.Call.Fun); err != nil {
+		return err
+	}
+	c.emit(taivm.OpDefVar.With(c.addConst(fnTmp)))
+
+	// 2. Evaluate arguments
+	var argTmps []string
+	for _, arg := range stmt.Call.Args {
+		argTmp := c.nextTmp()
+		if _, err := c.compileExpr(arg); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDefVar.With(c.addConst(argTmp)))
+		argTmps = append(argTmps, argTmp)
+	}
+
+	// 3. Construct synthetic CallExpr using the temporaries
+	syntheticArgs := make([]ast.Expr, len(argTmps))
+	for i, tmp := range argTmps {
+		syntheticArgs[i] = &ast.Ident{Name: tmp}
+	}
+	syntheticCall := &ast.CallExpr{
+		Fun:      &ast.Ident{Name: fnTmp},
+		Args:     syntheticArgs,
+		Ellipsis: stmt.Call.Ellipsis,
+	}
+
+	// 4. Compile the closure body using the synthetic call
 	sub := &compiler{
 		name:         "defer",
 		isFunc:       true,
@@ -2334,7 +2370,7 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 		types:        c.types,
 		globals:      c.globals,
 	}
-	if err := sub.compileExprStmt(&ast.ExprStmt{X: stmt.Call}); err != nil {
+	if err := sub.compileExprStmt(&ast.ExprStmt{X: syntheticCall}); err != nil {
 		return err
 	}
 	sub.loadConst(nil)

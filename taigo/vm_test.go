@@ -2513,3 +2513,97 @@ func TestCheckRecursiveTypeUsage(t *testing.T) {
 		t.Fatalf("compilation failed: %v", err)
 	}
 }
+
+func TestDeferArgsEvaluation(t *testing.T) {
+	// Test basic argument evaluation
+	vm := runVM(t, `
+		package main
+		var res = 0
+		func setRes(x int) {
+			res = x
+		}
+		func main() {
+			var i = 1
+			defer setRes(i)
+			i = 2
+		}
+	`)
+	checkInt(t, vm, "res", 1)
+}
+
+func TestDeferMethodReceiverEvaluation(t *testing.T) {
+	// Test value receiver evaluation
+	vm := runVM(t, `
+		package main
+		type S struct { val int }
+		var res = 0
+		func (s S) M() {
+			res = s.val
+		}
+		func main() {
+			s := S{val: 10}
+			defer s.M()
+			s.val = 20
+		}
+	`)
+	checkInt(t, vm, "res", 10)
+}
+
+func TestDeferFunctionValueEvaluation(t *testing.T) {
+	// Test function variable evaluation
+	vm := runVM(t, `
+		package main
+		var res = ""
+		func f1() { res = "f1" }
+		func f2() { res = "f2" }
+		func main() {
+			var fn = f1
+			defer fn()
+			fn = f2
+		}
+	`)
+	checkString(t, vm, "res", "f1")
+}
+
+func TestDeferVariadicArgsEvaluation(t *testing.T) {
+	// Test variadic arguments
+	vm := runVM(t, `
+		package main
+		var res = 0
+		func sum(args ...int) {
+			for v := range args {
+				res += v
+			}
+		}
+		func main() {
+			s := []int{1, 2, 3}
+			defer sum(s...)
+			s[0] = 10
+		}
+	`)
+	// Slice content is modified, so the underlying array is shared.
+	// defer captures the slice header (ptr, len, cap).
+	// If backing array is modified, defer sees modification.
+	// This matches Go behavior.
+	checkInt(t, vm, "res", 15)
+}
+
+func TestDeferVariadicArgsReassignment(t *testing.T) {
+	// Test variadic slice variable reassignment
+	vm := runVM(t, `
+		package main
+		var res = 0
+		func sum(args ...int) {
+			for v := range args {
+				res += v
+			}
+		}
+		func main() {
+			s := []int{1, 2, 3}
+			defer sum(s...)
+			s = []int{10, 20, 30}
+		}
+	`)
+	// Here s is reassigned. The defer should have captured the old slice.
+	checkInt(t, vm, "res", 6)
+}

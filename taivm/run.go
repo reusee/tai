@@ -2555,34 +2555,19 @@ func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error
 }
 
 func (v *VM) tryGetStructMethod(s *Struct, nameStr string) bool {
-	ptrMethodName := "*" + s.TypeName + "." + nameStr
-	if method, ok := v.Get(ptrMethodName); ok {
+	if val, ok := v.Get(s.TypeName + "." + nameStr); ok {
 		v.push(&BoundMethod{
-			Receiver: &Pointer{Target: s, Key: ""},
-			Fun:      method,
+			Receiver: s.Copy(),
+			Fun:      val,
 		})
 		return true
 	}
-	methodName := s.TypeName + "." + nameStr
-	if method, ok := v.Get(methodName); ok {
+	if val, ok := v.Get("*" + s.TypeName + "." + nameStr); ok {
 		v.push(&BoundMethod{
 			Receiver: s,
-			Fun:      method,
+			Fun:      val,
 		})
 		return true
-	}
-	// Recursive search for promoted methods
-	for _, emb := range s.Embedded {
-		if fieldVal, ok := s.Fields[emb]; ok {
-			if embStruct, ok := fieldVal.(*Struct); ok {
-				if v.tryGetStructMethod(embStruct, nameStr) {
-					// tryGetStructMethod pushed a BoundMethod. If it was a promoted method,
-					// the receiver might need adjustment, but since we use namespaced keys,
-					// BoundMethod already has the correct embedded receiver.
-					return true
-				}
-			}
-		}
 	}
 	return false
 }
