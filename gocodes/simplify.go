@@ -6,47 +6,22 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"math"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/reusee/tai/cmds"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-type MaxContextTokens int
-
-var _ configs.Configurable = MaxContextTokens(0)
-
-func (m MaxContextTokens) ConfigExpr() string {
-	return "Go.MaxContextTokens"
-}
-
-var maxContextTokensFlag = cmds.Var[int]("-max-context-tokens")
-
-func (Module) MaxContextTokens(
-	loader configs.Loader,
-) MaxContextTokens {
-	return vars.FirstNonZero(
-		MaxContextTokens(*maxContextTokensFlag),
-		configs.First[MaxContextTokens](loader, "go.max_context_tokens"),
-		configs.First[MaxContextTokens](loader, "go.context_tokens"),
-		math.MaxInt, // default unlimited
-	)
-}
-
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
 func (Module) SimplifyFiles(
 	getFileSet GetFileSet,
 	logger logs.Logger,
-	maxContextTokens MaxContextTokens,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		fset, err := getFileSet()
@@ -94,6 +69,7 @@ func (Module) SimplifyFiles(
 			jobChan <- file
 		}
 
+		maxContextTokens := 32 << 10
 		allTokens := 0
 		contextTokens := 0
 		for _, file := range files {

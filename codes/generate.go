@@ -26,7 +26,6 @@ func (Module) Generate(
 	logger logs.Logger,
 	action Action,
 	maxTokens taiconfigs.MaxTokens,
-	maxUserTokens taiconfigs.MaxUserTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
 	patterns Patterns,
@@ -62,7 +61,6 @@ func (Module) Generate(
 		if maxUserPromptTokens <= 0 {
 			return fmt.Errorf("token limit too low, need at least %d", -maxUserPromptTokens)
 		}
-		maxUserPromptTokens = min(maxUserPromptTokens, int(maxUserTokens))
 		logger.Info("token limits",
 			"max user prompt", maxUserPromptTokens,
 		)
