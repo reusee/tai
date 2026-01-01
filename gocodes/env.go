@@ -9,7 +9,7 @@ import (
 type Envs []string
 
 func (e Envs) ConfigExpr() string {
-	return "Go.Envs"
+	return "GoEnvs"
 }
 
 var _ configs.Configurable = Envs(nil)

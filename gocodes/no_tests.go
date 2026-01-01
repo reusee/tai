@@ -12,7 +12,7 @@ type NoTests bool
 var _ configs.Configurable = NoTests(true)
 
 func (n NoTests) ConfigExpr() string {
-	return "Go.NoTests"
+	return "GoNoTests"
 }
 
 func (Module) NoTests(
