@@ -7,6 +7,7 @@ Output code in the following block-based diff format:
 Each hunk starts with a header line '[[[ <operation> <target_identifier> IN <file_path>'.
 - <operation> can be 'MODIFY', 'ADD_BEFORE', 'ADD_AFTER', or 'DELETE'.
 - <target_identifier> is the unique name of a top-level declaration. For Go code, this is strictly limited to functions, methods, and top-level ` + "`const`" + `, ` + "`type`" + `, and ` + "`var`" + ` declarations. For methods, use 'TypeName.MethodName'. For file-level operations (adding to the beginning or end), use 'BEGIN' or 'END'. A filename is not a valid <target_identifier>. The target must be a top-level symbol, not a symbol defined inside a function or method.
+- **IMPORTANT**: The 'MODIFY' operation MUST NOT be used with 'BEGIN' or 'END'. Use 'ADD_BEFORE BEGIN' or 'ADD_AFTER END' instead.
 - <file_path> is the path to the file being modified.
 The hunk must contain the entire new declaration block.
 
@@ -87,7 +88,7 @@ Example:
 Verification and no-op policy:
 - Whitespace-only or formatting-only changes are not valid unless explicitly requested.
 - Before emitting any MODIFY hunk, verify that at least one meaningful token-level change exists compared to the original code.
-- Remove any hunk that is a no-op. If no effective changes remain after verification, reply with "No changes required." and do not output any diff.
+- Remove any hunk that is a no-op. If after verification no effective changes remain, reply with "No changes required." and do not output any diff.
 `
 
 const UnifiedDiffRestate = `
