@@ -110,17 +110,18 @@ func findTargetRange(fset *token.FileSet, f *ast.File, target string, fileSize i
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, bool) {
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
-		name := d.Name.Name
+		funcName := d.Name.Name
+		fullName := funcName
 		if d.Recv != nil && len(d.Recv.List) > 0 {
 			recv := d.Recv.List[0].Type
 			if star, ok := recv.(*ast.StarExpr); ok {
 				recv = star.X
 			}
 			if ident, ok := recv.(*ast.Ident); ok {
-				name = ident.Name + "." + name
+				fullName = ident.Name + "." + funcName
 			}
 		}
-		if name == target {
+		if fullName == target || funcName == target {
 			return fset.Position(d.Pos()).Offset, fset.Position(d.End()).Offset, true
 		}
 	case *ast.GenDecl:
