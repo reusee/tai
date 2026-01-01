@@ -21,10 +21,16 @@ func TestTaigoDefs(t *testing.T) {
 	)
 
 	env := &taigo.Env{
+		Globals: make(map[string]any),
 		Source: `
 		package main
-		var testInt = 42
+		var x testInt = 42
 		`,
+	}
+	for t := range scope.AllTypes() {
+		if t.Implements(configurableType) {
+			env.Globals[t.Name()] = t
+		}
 	}
 	vm, err := env.RunVM()
 	if err != nil {

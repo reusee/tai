@@ -3,6 +3,7 @@ package taiconfigs
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
@@ -49,6 +50,8 @@ func TaigoFork(scope dscope.Scope) (ret dscope.Scope, err error) {
 		}
 	}
 
+	configurableType := reflect.TypeFor[configs.Configurable]()
+
 	for _, path := range paths {
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -57,6 +60,12 @@ func TaigoFork(scope dscope.Scope) (ret dscope.Scope, err error) {
 		env := &taigo.Env{
 			Source:     content,
 			SourceName: path,
+			Globals:    make(map[string]any),
+		}
+		for t := range scope.AllTypes() {
+			if t.Implements(configurableType) {
+				env.Globals[t.Name()] = t
+			}
 		}
 		vm, err := env.RunVM()
 		if err != nil {
