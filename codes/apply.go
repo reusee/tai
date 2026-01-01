@@ -26,19 +26,20 @@ var hunkRegexp = regexp.MustCompile(`(?s)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DEL
 
 // ApplyHunks processes hunks from a file and applies them to the source.
 // It returns the content of the file after removing applied hunks.
+// ApplyHunks processes hunks from a file and applies them to the source.
+// It returns the content of the file after removing applied hunks.
 func ApplyHunks(aiFilePath string) error {
-	content, err := os.ReadFile(aiFilePath)
-	if err != nil {
-		return err
-	}
-	matches := hunkRegexp.FindAllSubmatchIndex(content, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	// process from last to first to maintain offsets in aiFilePath
-	var appliedIndices []int
-	for i := 0; i < len(matches); i++ {
-		m := matches[i]
+	for {
+		content, err := os.ReadFile(aiFilePath)
+		if err != nil {
+			return err
+		}
+		matches := hunkRegexp.FindAllSubmatchIndex(content, -1)
+		if len(matches) == 0 {
+			break
+		}
+		// Process the first hunk found
+		m := matches[0]
 		h := Hunk{
 			Op:       string(content[m[2]:m[3]]),
 			Target:   string(content[m[4]:m[5]]),
@@ -49,15 +50,13 @@ func ApplyHunks(aiFilePath string) error {
 		if err := applyHunk(h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
-		appliedIndices = append(appliedIndices, i)
+		// Remove the successfully applied hunk from the file content
+		newContent := append(content[:m[0]], content[m[1]:]...)
+		if err := os.WriteFile(aiFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
+			return err
+		}
 	}
-	// remove applied hunks from .AI file
-	newAIContent := content
-	for i := len(appliedIndices) - 1; i >= 0; i-- {
-		m := matches[appliedIndices[i]]
-		newAIContent = append(newAIContent[:m[0]], newAIContent[m[1]:]...)
-	}
-	return os.WriteFile(aiFilePath, bytes.TrimSpace(newAIContent), 0644)
+	return nil
 }
 
 func applyHunk(h Hunk) error {
