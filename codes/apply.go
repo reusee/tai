@@ -73,7 +73,7 @@ func applyHunk(h Hunk) error {
 			return err
 		}
 	}
-	start, end, err := findTargetRange(fset, f, h.Target, len(src))
+	start, end, err := findTargetRange(fset, f, h, len(src))
 	if err != nil {
 		return err
 	}
@@ -100,23 +100,43 @@ func applyHunk(h Hunk) error {
 	return os.WriteFile(h.FilePath, formatted, 0644)
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, target string, fileSize int) (int, int, error) {
-	if target == "BEGIN" {
+func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int) (int, int, error) {
+	if h.Target == "BEGIN" {
 		return 0, 0, nil
 	}
-	if target == "END" {
+	if h.Target == "END" {
 		return fileSize, fileSize, nil
 	}
 	if f == nil {
-		return 0, 0, fmt.Errorf("target %s not found", target)
+		return 0, 0, fmt.Errorf("target %s not found", h.Target)
 	}
+
+	bodyKind := getHunkBodyKind(h.Body)
+	var candidateFound bool
+	var candidateStart, candidateEnd int
+
 	for _, decl := range f.Decls {
-		start, end, match := matchDecl(fset, decl, target)
-		if match {
-			return start, end, nil
+		start, end, match := matchDecl(fset, decl, h.Target)
+		if !match {
+			continue
 		}
+		if h.Op == "MODIFY" && bodyKind != "" {
+			declKind := getDeclKind(decl)
+			if declKind != bodyKind {
+				if !candidateFound {
+					candidateFound = true
+					candidateStart, candidateEnd = start, end
+				}
+				continue
+			}
+		}
+		return start, end, nil
 	}
-	return 0, 0, fmt.Errorf("target %s not found", target)
+
+	if candidateFound {
+		return candidateStart, candidateEnd, nil
+	}
+	return 0, 0, fmt.Errorf("target %s not found", h.Target)
 }
 
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, bool) {
@@ -153,4 +173,40 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, boo
 		}
 	}
 	return 0, 0, false
+}
+
+func getHunkBodyKind(body string) string {
+	fset := token.NewFileSet()
+	src := "package p\n" + body
+	f, err := parser.ParseFile(fset, "", src, 0)
+	if err != nil || len(f.Decls) == 0 {
+		return ""
+	}
+	return getDeclKind(f.Decls[0])
+}
+
+func getDeclKind(decl ast.Decl) string {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if d.Recv != nil && len(d.Recv.List) > 0 {
+			return "method"
+		}
+		return "function"
+	case *ast.GenDecl:
+		if len(d.Specs) == 0 {
+			return ""
+		}
+		switch d.Specs[0].(type) {
+		case *ast.TypeSpec:
+			return "type"
+		case *ast.ValueSpec:
+			if d.Tok == token.VAR {
+				return "var"
+			}
+			if d.Tok == token.CONST {
+				return "const"
+			}
+		}
+	}
+	return ""
 }
