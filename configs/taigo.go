@@ -42,7 +42,7 @@ func TaigoFork(scope dscope.Scope, env *taivm.Env) (ret dscope.Scope, err error)
 				}
 			}
 			ptr := reflect.New(t)
-			ptr.Elem().Set(rv)
+			ptr.Elem().Set(reflect.ValueOf(val))
 			defs = append(defs, ptr.Interface())
 			seen[t] = true
 		}
