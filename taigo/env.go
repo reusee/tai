@@ -41,6 +41,12 @@ func (e *Env) NewVM() (*taivm.VM, error) {
 		var t *taivm.Type
 		if rt, ok := val.(reflect.Type); ok {
 			t = taivm.FromReflectType(rt)
+			if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+				t2 := *t
+				t2.Kind = taivm.KindExternal
+				t2.External = rt
+				t = &t2
+			}
 		} else if tt, ok := val.(*taivm.Type); ok {
 			t = tt
 		}
@@ -52,7 +58,14 @@ func (e *Env) NewVM() (*taivm.VM, error) {
 			}
 			vm.Def(key, t)
 		} else if val != nil {
-			t = taivm.FromReflectType(reflect.TypeOf(val))
+			rt := reflect.TypeOf(val)
+			t = taivm.FromReflectType(rt)
+			if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+				t2 := *t
+				t2.Kind = taivm.KindExternal
+				t2.External = rt
+				t = &t2
+			}
 			vm.DefWithType(key, val, t)
 		} else {
 			vm.Def(key, val)
@@ -91,6 +104,12 @@ func (e *Env) GetPackage() (*Package, error) {
 		var t *taivm.Type
 		if rt, ok := val.(reflect.Type); ok {
 			t = taivm.FromReflectType(rt)
+			if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+				t2 := *t
+				t2.Kind = taivm.KindExternal
+				t2.External = rt
+				t = &t2
+			}
 		} else if tt, ok := val.(*taivm.Type); ok {
 			t = tt
 		}
@@ -102,7 +121,15 @@ func (e *Env) GetPackage() (*Package, error) {
 			}
 			externalTypes[name] = t
 		} else if val != nil {
-			externalValueTypes[name] = taivm.FromReflectType(reflect.TypeOf(val))
+			rt := reflect.TypeOf(val)
+			t := taivm.FromReflectType(rt)
+			if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+				t2 := *t
+				t2.Kind = taivm.KindExternal
+				t2.External = rt
+				t = &t2
+			}
+			externalValueTypes[name] = t
 		}
 	}
 

@@ -2752,3 +2752,33 @@ func TestBugClosureCaptureModified(t *testing.T) {
 	`)
 	checkInt(t, vm, "res", 2)
 }
+
+func TestExternalTypedVarType(t *testing.T) {
+	type Int int
+	env := &Env{
+		Source: `
+		package main
+		var i Int = 42
+		`,
+		Globals: map[string]any{
+			"Int": reflect.TypeFor[Int](),
+		},
+	}
+	vm, err := env.RunVM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := vm.Scope.GetVar("i")
+	if !ok {
+		t.Fatal(err)
+	}
+	if v.Type == nil {
+		t.Fatalf("no type")
+	}
+	if v.Type.Kind != taivm.KindExternal {
+		t.Fatalf("not external type")
+	}
+	if v.Type.External != reflect.TypeFor[Int]() {
+		t.Fatalf("type mismatch, got %v", v.Type.External)
+	}
+}

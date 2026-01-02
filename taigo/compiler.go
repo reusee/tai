@@ -2536,7 +2536,13 @@ func (c *compiler) compileNamedValueDef(name string, valExpr any, explicitType *
 			c.loadConst(nil)
 		}
 	}
-	c.emit(taivm.OpDefVar.With(c.addConst(name)))
+	arg := c.addConst(name)
+	if t != nil {
+		c.loadConst(t)
+		c.emit(taivm.OpDefVar.With(arg | (1 << 23))) // Set typed flag
+	} else {
+		c.emit(taivm.OpDefVar.With(arg))
+	}
 	c.globals[name] = t
 	return nil
 }
@@ -2571,9 +2577,12 @@ func (c *compiler) compileValueSpecSingleRHS(s *ast.ValueSpec, rhs ast.Expr, exp
 			c.emit(taivm.OpPop)
 			continue
 		}
-		c.emit(taivm.OpDefVar.With(c.addConst(name.Name)))
 		if explicitType != nil {
+			c.loadConst(explicitType)
+			c.emit(taivm.OpDefVar.With(c.addConst(name.Name) | (1 << 23)))
 			c.globals[name.Name] = explicitType
+		} else {
+			c.emit(taivm.OpDefVar.With(c.addConst(name.Name)))
 		}
 	}
 	return nil
@@ -2918,7 +2927,12 @@ func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token, rhsType *ta
 	}
 	idx := c.addConst(name)
 	if tok == token.DEFINE {
-		c.emit(taivm.OpDefVar.With(idx))
+		if rhsType != nil {
+			c.loadConst(rhsType)
+			c.emit(taivm.OpDefVar.With(idx | (1 << 23)))
+		} else {
+			c.emit(taivm.OpDefVar.With(idx))
+		}
 		c.globals[name] = rhsType
 	} else {
 		c.emit(taivm.OpSetVar.With(idx))

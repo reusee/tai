@@ -779,9 +779,18 @@ func (v *VM) opLoadVar(inst OpCode, yield func(*Interrupt, error) bool) bool {
 }
 
 func (v *VM) opDefVar(inst OpCode) {
-	idx := int(inst >> 8)
-	name := v.CurrentFun.Constants[idx].(string)
-	v.Scope.Def(name, v.pop())
+	arg := int(inst >> 8)
+	// Lower 23 bits are the constant index for the variable name
+	name := v.CurrentFun.Constants[arg&0x7fffff].(string)
+	// Bit 23 (the 24th bit of the 24-bit argument) is a flag for typed definition
+	if arg&(1<<23) != 0 {
+		typ := v.pop().(*Type) // Pop type first
+		val := v.pop()         // Then value
+		v.DefWithType(name, val, typ)
+	} else {
+		val := v.pop()
+		v.Def(name, val)
+	}
 }
 
 func (v *VM) opSetVar(inst OpCode, yield func(*Interrupt, error) bool) bool {

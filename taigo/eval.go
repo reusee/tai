@@ -62,11 +62,26 @@ func evalSrc(env *taivm.Env, src any) (any, error) {
 				if t, ok := v.Val.(*taivm.Type); ok {
 					externalTypes[v.Name] = t
 				} else if rt, ok := v.Val.(reflect.Type); ok {
-					externalTypes[v.Name] = taivm.FromReflectType(rt)
+					t := taivm.FromReflectType(rt)
+					if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+						t2 := *t
+						t2.Kind = taivm.KindExternal
+						t2.External = rt
+						t = &t2
+					}
+					externalTypes[v.Name] = t
 				} else if v.Type != nil {
 					externalValueTypes[v.Name] = v.Type
 				} else if v.Val != nil {
-					externalValueTypes[v.Name] = taivm.FromReflectType(reflect.TypeOf(v.Val))
+					rt := reflect.TypeOf(v.Val)
+					t := taivm.FromReflectType(rt)
+					if rt.PkgPath() != "" && t.Kind != taivm.KindExternal {
+						t2 := *t
+						t2.Kind = taivm.KindExternal
+						t2.External = rt
+						t = &t2
+					}
+					externalValueTypes[v.Name] = t
 				}
 			}
 		}
