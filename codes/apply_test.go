@@ -1,6 +1,7 @@
 package codes
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,5 +111,71 @@ func (t T) Foo() {
 	}
 	if !strings.Contains(s, "type Foo func()") {
 		t.Errorf("type Foo was incorrectly overwritten")
+	}
+}
+
+func TestApplyHunksModifyNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Existing() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`[[[ MODIFY NonExistent IN ` + targetFile + `
+func NonExistent() {
+	println("appended")
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatal(err)
+	}
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "func NonExistent") {
+		t.Errorf("missing appended function: %s", s)
+	}
+	if !strings.Contains(s, "func Existing") {
+		t.Errorf("existing function lost: %s", s)
+	}
+}
+
+func TestApplyHunksDeleteNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Existing() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`[[[ DELETE NonExistent IN ` + targetFile + ` ]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatal(err)
+	}
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(newContent), "func Existing") {
+		t.Errorf("existing content modified: %s", string(newContent))
+	}
+	aiNewContent, _ := os.ReadFile(aiFile)
+	if len(bytes.TrimSpace(aiNewContent)) > 0 {
+		t.Errorf("hunk not removed from AI file")
 	}
 }

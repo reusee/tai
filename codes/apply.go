@@ -28,6 +28,8 @@ var hunkRegexp = regexp.MustCompile(`(?s)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DEL
 // It returns the content of the file after removing applied hunks.
 // ApplyHunks processes hunks from a file and applies them to the source.
 // It returns the content of the file after removing applied hunks.
+// ApplyHunks processes hunks from a file and applies them to the source.
+// It returns the content of the file after removing applied hunks.
 func ApplyHunks(aiFilePath string) error {
 	for {
 		content, err := os.ReadFile(aiFilePath)
@@ -74,12 +76,24 @@ func applyHunk(h Hunk) error {
 	}
 	start, end, err := findTargetRange(fset, f, h, len(src))
 	if err != nil {
-		return err
+		if h.Op == "MODIFY" {
+			// fallback to append if not found
+			start, end = len(src), len(src)
+		} else if h.Op == "DELETE" {
+			// no-op if not found
+			return nil
+		} else {
+			return err
+		}
 	}
 	var newSrc []byte
 	switch h.Op {
 	case "MODIFY":
-		newSrc = append(src[:start], append([]byte(h.Body), src[end:]...)...)
+		body := []byte(h.Body)
+		if start == end && start == len(src) && len(src) > 0 {
+			body = append([]byte("\n\n"), body...)
+		}
+		newSrc = append(src[:start], append(body, src[end:]...)...)
 	case "DELETE":
 		newSrc = append(src[:start], src[end:]...)
 	case "ADD_BEFORE":
