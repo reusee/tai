@@ -293,7 +293,8 @@ func (t *Type) Match(val any) bool {
 	}
 	if t.External != nil {
 		if val == nil {
-			return false
+			k := t.External.Kind()
+			return k == reflect.Interface || k == reflect.Ptr || k == reflect.Slice || k == reflect.Map || k == reflect.Func || k == reflect.Chan
 		}
 		return reflect.TypeOf(val).AssignableTo(t.External)
 	}

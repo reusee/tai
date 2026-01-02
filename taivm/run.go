@@ -3303,11 +3303,11 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 		}
 	}
 	if e, ok := p.Target.(*Env); ok {
-		val, ok := e.Get(p.Key.(string))
+		vr, ok := e.GetVar(p.Key.(string))
 		if !ok {
 			return yield(nil, fmt.Errorf("undefined variable: %s", p.Key))
 		}
-		v.push(val)
+		v.push(vr.Val)
 		return true
 	}
 	if p.Key == "" {
@@ -3343,7 +3343,8 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 		}
 	}
 	if e, ok := p.Target.(*Env); ok {
-		e.Def(p.Key.(string), val)
+		vr, _ := e.GetVar(p.Key.(string))
+		e.DefWithType(p.Key.(string), val, vr.Type)
 		return true
 	}
 	if _, ok := p.Target.(*Struct); ok {
@@ -3367,11 +3368,6 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		v.IP = len(v.CurrentFun.Code)
 	}
 
-	if val == nil {
-		fail(fmt.Errorf("interface is nil"))
-		return true
-	}
-
 	var dt *Type
 	switch t := tObj.(type) {
 	case *Type:
@@ -3380,29 +3376,32 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		dt = FromReflectType(t)
 	}
 
-	if dt != nil {
+	if dt == nil {
+		fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
+		return true
+	}
+
+	if dt.Match(val) {
+		v.push(val)
+		return true
+	}
+
+	if val != nil {
 		if dt.Kind == KindInterface || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Interface) {
 			if v.checkImplements(val, dt) {
 				v.push(val)
 				return true
 			}
 		}
-		if dt.Match(val) {
-			v.push(val)
-			return true
-		}
-
 		if s, ok := val.(*Struct); ok && (dt.Kind == KindStruct || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Struct)) {
 			if v.checkStructCompatible(s, dt) {
 				v.push(val)
 				return true
 			}
 		}
-		fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name))
-		return true
 	}
 
-	fail(fmt.Errorf("invalid type for type assertion: %T", tObj))
+	fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name))
 	return true
 }
 
@@ -3424,31 +3423,26 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if val == nil {
-		v.push(targetType.Zero())
-		v.push(false)
-		return true
-	}
-
-	if targetType.Kind == KindInterface || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Interface) {
-		if v.checkImplements(val, targetType) {
-			v.push(val)
-			v.push(true)
-			return true
-		}
-	}
-
 	if targetType.Match(val) {
 		v.push(val)
 		v.push(true)
 		return true
 	}
 
-	if s, ok := val.(*Struct); ok && (targetType.Kind == KindStruct || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Struct)) {
-		if v.checkStructCompatible(s, targetType) {
-			v.push(val)
-			v.push(true)
-			return true
+	if val != nil {
+		if targetType.Kind == KindInterface || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Interface) {
+			if v.checkImplements(val, targetType) {
+				v.push(val)
+				v.push(true)
+				return true
+			}
+		}
+		if s, ok := val.(*Struct); ok && (targetType.Kind == KindStruct || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Struct)) {
+			if v.checkStructCompatible(s, targetType) {
+				v.push(val)
+				v.push(true)
+				return true
+			}
 		}
 	}
 

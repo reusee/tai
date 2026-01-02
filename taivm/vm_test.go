@@ -5132,3 +5132,59 @@ func TestVM_TickYieldResume(t *testing.T) {
 		t.Fatalf("expected SP 0, got %d", vm.SP)
 	}
 }
+
+func TestVM_ExternalTypeAssertNil(t *testing.T) {
+	errorType := reflect.TypeFor[error]()
+	main := &Function{
+		Constants: []any{
+			nil,
+			errorType,
+		},
+		Code: []OpCode{
+			OpLoadConst.With(0), // nil
+			OpLoadConst.With(1), // error type
+			OpTypeAssert,
+			OpReturn,
+		},
+	}
+	vm := NewVM(main)
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if vm.pop() != nil {
+		t.Fatal("expected nil")
+	}
+}
+
+func TestVM_EnvVarType(t *testing.T) {
+	intType := FromReflectType(reflect.TypeFor[int]())
+	main := &Function{
+		Constants: []any{
+			"x",
+			intType,
+		},
+		Code: []OpCode{
+			OpAddrOf.With(0),
+			OpReturn,
+		},
+	}
+	vm := NewVM(main)
+	vm.DefWithType("x", 42, intType)
+
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ptr := vm.pop().(*Pointer)
+	vr, ok := ptr.Target.(*Env).GetVar("x")
+	if !ok {
+		t.Fatal("x not found")
+	}
+	if vr.Type != intType {
+		t.Fatal("type mismatch")
+	}
+}
