@@ -22,7 +22,7 @@ type Hunk struct {
 	Raw      string
 }
 
-var hunkRegexp = regexp.MustCompile(`(?s)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN (\S+)\n?(.*?)\n?\]\]\]`)
+var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN (\S+)`)
 
 // ApplyHunks processes hunks from a file and applies them to the source.
 // It returns the content of the file after removing applied hunks.
@@ -30,35 +30,65 @@ var hunkRegexp = regexp.MustCompile(`(?s)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DEL
 // It returns the content of the file after removing applied hunks.
 // ApplyHunks processes hunks from a file and applies them to the source.
 // It returns the content of the file after removing applied hunks.
+// ApplyHunks processes hunks from a file and applies them to the source.
 func ApplyHunks(aiFilePath string) error {
 	for {
 		content, err := os.ReadFile(aiFilePath)
 		if err != nil {
 			return err
 		}
-		matches := hunkRegexp.FindAllSubmatchIndex(content, -1)
-		if len(matches) == 0 {
+		h, start, end, ok := parseFirstHunk(content)
+		if !ok {
 			break
-		}
-		// Process the first hunk found
-		m := matches[0]
-		h := Hunk{
-			Op:       string(content[m[2]:m[3]]),
-			Target:   string(content[m[4]:m[5]]),
-			FilePath: string(content[m[6]:m[7]]),
-			Body:     strings.TrimSpace(string(content[m[8]:m[9]])),
-			Raw:      string(content[m[0]:m[1]]),
 		}
 		if err := applyHunk(h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
 		// Remove the successfully applied hunk from the file content
-		newContent := append(content[:m[0]], content[m[1]:]...)
+		newContent := append(content[:start], content[end:]...)
 		if err := os.WriteFile(aiFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
+	lines := bytes.Split(content, []byte("\n"))
+	var startOffset int
+	for i, line := range lines {
+		if m := headerRegexp.FindSubmatchIndex(line); m != nil {
+			h.Op = string(line[m[4]:m[5]])
+			h.Target = string(line[m[6]:m[7]])
+			h.FilePath = string(line[m[8]:m[9]])
+			start = startOffset
+			if bytes.Contains(line, []byte("]]]")) {
+				end = start + len(line)
+				h.Raw = string(content[start:end])
+				h.Body = ""
+				ok = true
+				return
+			}
+			var footerOffset int = startOffset + len(line) + 1
+			for j := i + 1; j < len(lines); j++ {
+				if string(bytes.TrimSpace(lines[j])) == "]]]" {
+					end = footerOffset + len(lines[j])
+					h.Raw = string(content[start:end])
+					bodyStart := start + len(line) + 1
+					bodyEnd := footerOffset - 1
+					if bodyEnd > bodyStart {
+						h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+					}
+					ok = true
+					return
+				}
+				footerOffset += len(lines[j]) + 1
+			}
+			return
+		}
+		startOffset += len(line) + 1
+	}
+	return
 }
 
 func applyHunk(h Hunk) error {
