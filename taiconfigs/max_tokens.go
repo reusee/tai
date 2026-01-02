@@ -12,9 +12,7 @@ type MaxTokens int
 
 var _ configs.Configurable = MaxTokens(0)
 
-func (m MaxTokens) ConfigExpr() string {
-	return "MaxTokens"
-}
+func (m MaxTokens) TaigoConfigurable() {}
 
 var maxTokensFlag = cmds.Var[int]("-max-tokens")
 

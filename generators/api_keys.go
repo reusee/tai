@@ -19,40 +19,31 @@ type (
 	VercelAPIKey     string
 )
 
-func (v VercelAPIKey) ConfigExpr() string {
-	return "VercelAPIKey"
+func (v VercelAPIKey) TaigoConfigurable() {
 }
 
-func (z ZhipuAPIKey) ConfigExpr() string {
-	return "ZhipuAPIKey"
+func (z ZhipuAPIKey) TaigoConfigurable() {
 }
 
-func (a AliyunAPIKey) ConfigExpr() string {
-	return "AliyunAPIKey"
+func (a AliyunAPIKey) TaigoConfigurable() {
 }
 
-func (t TencentAPIKey) ConfigExpr() string {
-	return "TencentAPIKey"
+func (t TencentAPIKey) TaigoConfigurable() {
 }
 
-func (o OpenRouterAPIKey) ConfigExpr() string {
-	return "OpenRouterAPIKey"
+func (o OpenRouterAPIKey) TaigoConfigurable() {
 }
 
-func (d DeepseekAPIKey) ConfigExpr() string {
-	return "DeepseekAPIKey"
+func (d DeepseekAPIKey) TaigoConfigurable() {
 }
 
-func (b BaiduAPIKey) ConfigExpr() string {
-	return "BaiduAPIKey"
+func (b BaiduAPIKey) TaigoConfigurable() {
 }
 
-func (h HuoshanAPIKey) ConfigExpr() string {
-	return "HuoshanAPIKey"
+func (h HuoshanAPIKey) TaigoConfigurable() {
 }
 
-func (g GoogleAPIKey) ConfigExpr() string {
-	return "GoogleAPIKey"
+func (g GoogleAPIKey) TaigoConfigurable() {
 }
 
 var (

@@ -7,6 +7,12 @@ import (
 
 type OpenRouterEndpoint string
 
+var _ configs.Configurable = OpenRouterEndpoint("")
+
+func (o OpenRouterEndpoint) TaigoConfigurable() {
+	panic("unimplemented")
+}
+
 func (Module) OpenRouterEndpoint(
 	loader configs.Loader,
 ) OpenRouterEndpoint {
@@ -14,12 +20,6 @@ func (Module) OpenRouterEndpoint(
 		return endpoint
 	}
 	return "https://openrouter.ai/api/v1"
-}
-
-var _ configs.Configurable = OpenRouterEndpoint("")
-
-func (o OpenRouterEndpoint) ConfigExpr() string {
-	return "OpenRouterEndpoint"
 }
 
 type NewOpenRouter func(args GeneratorArgs) *OpenAI

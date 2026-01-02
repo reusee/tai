@@ -38,9 +38,7 @@ type Match string
 
 var _ configs.Configurable = Match("")
 
-func (m Match) ConfigExpr() string {
-	return "Match"
-}
+func (m Match) TaigoConfigurable() {}
 
 func (Module) Match(
 	loader configs.Loader,

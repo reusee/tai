@@ -97,8 +97,8 @@ func (Module) SimplifyFiles(
 
 		focusTokens := allTokens - contextTokens
 		maxContextTokens := focusTokens / 2
-		if maxContextTokens < 32<<10 {
-			maxContextTokens = 32 << 10
+		if maxContextTokens < 16<<10 {
+			maxContextTokens = 16 << 10
 		} else if maxContextTokens > 256<<10 {
 			maxContextTokens = 256 << 10
 		}

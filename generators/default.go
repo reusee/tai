@@ -24,11 +24,10 @@ var (
 
 type DefaultModelName string
 
-func (d DefaultModelName) ConfigExpr() string {
-	return "DefaultModel"
-}
-
 var _ configs.Configurable = DefaultModelName("")
+
+func (d DefaultModelName) TaigoConfigurable() {
+}
 
 func (Module) DefaultModelName(
 	loader configs.Loader,

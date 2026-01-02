@@ -11,9 +11,7 @@ type NoTests bool
 
 var _ configs.Configurable = NoTests(true)
 
-func (n NoTests) ConfigExpr() string {
-	return "GoNoTests"
-}
+func (n NoTests) TaigoConfigurable() {}
 
 func (Module) NoTests(
 	loader configs.Loader,

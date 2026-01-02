@@ -12,9 +12,7 @@ type LoadDir string
 
 var _ configs.Configurable = LoadDir("")
 
-func (l LoadDir) ConfigExpr() string {
-	return "GoLoadDir"
-}
+func (l LoadDir) TaigoConfigurable() {}
 
 var loadDirFlag = cmds.Var[string]("-load-dir")
 
