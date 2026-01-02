@@ -1264,20 +1264,30 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 	if target == nil {
 		return yield(nil, fmt.Errorf("indexing nil"))
 	}
-	if p, ok := target.(*Pointer); ok && p.ArrayType != nil {
-		if list, ok := p.Target.(*List); ok {
-			base, _ := ToInt64(p.Key)
-			offset, ok := ToInt64(key)
-			if !ok {
-				return yield(nil, fmt.Errorf("index must be integer"))
+	if p, ok := target.(*Pointer); ok {
+		if p.ArrayType != nil {
+			if list, ok := p.Target.(*List); ok {
+				base, _ := ToInt64(p.Key)
+				offset, ok := ToInt64(key)
+				if !ok {
+					return yield(nil, fmt.Errorf("index must be integer"))
+				}
+				idx := int(base + offset)
+				if idx < 0 || idx >= len(list.Elements) {
+					return yield(nil, fmt.Errorf("index out of bounds"))
+				}
+				v.push(list.Elements[idx])
+				return true
 			}
-			idx := int(base + offset)
-			if idx < 0 || idx >= len(list.Elements) {
-				return yield(nil, fmt.Errorf("index out of bounds"))
-			}
-			v.push(list.Elements[idx])
-			return true
 		}
+		v.push(p)
+		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+			return yield(nil, fmt.Errorf("cannot deref pointer in getindex"))
+		}
+		derefed := v.pop()
+		v.push(derefed)
+		v.push(key)
+		return v.opGetIndex(yield)
 	}
 	type indexer interface {
 		GetIndex(any) (any, bool)
@@ -1393,6 +1403,18 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 		v.push(false)
 		return true
 	}
+	if p, ok := target.(*Pointer); ok {
+		v.push(p)
+		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+			v.push(nil)
+			v.push(false)
+			return true
+		}
+		derefed := v.pop()
+		v.push(derefed)
+		v.push(key)
+		return v.opGetIndexOk(yield)
+	}
 	switch m := target.(type) {
 	case *Struct:
 		if s, ok := key.(string); ok {
@@ -1435,8 +1457,7 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 				return true
 			}
 		}
-		// Go allows indexing other types, but comma-ok is map only.
-		// For consistency in our dynamic VM, non-maps return false.
+
 		v.push(nil)
 		v.push(false)
 	}
@@ -1450,20 +1471,31 @@ func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
 	if target == nil {
 		return yield(nil, fmt.Errorf("assignment to nil"))
 	}
-	if p, ok := target.(*Pointer); ok && p.ArrayType != nil {
-		if list, ok := p.Target.(*List); ok {
-			base, _ := ToInt64(p.Key)
-			offset, ok := ToInt64(key)
-			if !ok {
-				return yield(nil, fmt.Errorf("index must be integer"))
+	if p, ok := target.(*Pointer); ok {
+		if p.ArrayType != nil {
+			if list, ok := p.Target.(*List); ok {
+				base, _ := ToInt64(p.Key)
+				offset, ok := ToInt64(key)
+				if !ok {
+					return yield(nil, fmt.Errorf("index must be integer"))
+				}
+				idx := int(base + offset)
+				if idx < 0 || idx >= len(list.Elements) {
+					return yield(nil, fmt.Errorf("index out of bounds"))
+				}
+				list.Elements[idx] = val
+				return true
 			}
-			idx := int(base + offset)
-			if idx < 0 || idx >= len(list.Elements) {
-				return yield(nil, fmt.Errorf("index out of bounds"))
-			}
-			list.Elements[idx] = val
-			return true
 		}
+		v.push(p)
+		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+			return yield(nil, fmt.Errorf("cannot deref pointer in setindex"))
+		}
+		derefed := v.pop()
+		v.push(derefed)
+		v.push(key)
+		v.push(val)
+		return v.opSetIndex(yield)
 	}
 	return v.opSetIndexFallbacks(target, key, val, yield)
 }
@@ -2503,7 +2535,12 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	case *List:
 		return v.opGetListAttr(t, nameStr, yield)
 	case *Pointer:
-		v.push(t.Target)
+		v.push(t)
+		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+			return yield(nil, fmt.Errorf("cannot deref pointer in getattr"))
+		}
+		derefed := v.pop()
+		v.push(derefed)
 		v.push(name)
 		return v.opGetAttr(yield)
 	case *Type:
@@ -2725,7 +2762,30 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 		return true
 
 	case *Pointer:
-		v.push(t.Target)
+		v.push(t)
+		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+			return yield(nil, fmt.Errorf("cannot deref pointer in setattr"))
+		}
+		derefed := v.pop()
+		rv := reflect.ValueOf(derefed)
+		if rv.Kind() == reflect.Struct {
+			newObj := reflect.New(rv.Type()).Elem()
+			newObj.Set(rv)
+			if f := newObj.FieldByName(nameStr); f.IsValid() && f.CanSet() {
+				fv := reflect.ValueOf(val)
+				if !fv.IsValid() {
+					f.Set(reflect.Zero(f.Type()))
+				} else if fv.Type().AssignableTo(f.Type()) {
+					f.Set(fv)
+				} else if fv.Type().ConvertibleTo(f.Type()) {
+					f.Set(fv.Convert(f.Type()))
+				}
+				v.push(t)
+				v.push(newObj.Interface())
+				return v.opSetDeref(yield)
+			}
+		}
+		v.push(derefed)
 		v.push(name)
 		v.push(val)
 		return v.opSetAttr(yield)
@@ -3321,8 +3381,8 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 	}
 
 	if dt != nil {
-		if dt.Kind == KindInterface {
-			if s, ok := val.(*Struct); ok && v.checkStructImplements(s, dt) {
+		if dt.Kind == KindInterface || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Interface) {
+			if v.checkImplements(val, dt) {
 				v.push(val)
 				return true
 			}
@@ -3332,7 +3392,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 			return true
 		}
 
-		if s, ok := val.(*Struct); ok && dt.Kind == KindStruct {
+		if s, ok := val.(*Struct); ok && (dt.Kind == KindStruct || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Struct)) {
 			if v.checkStructCompatible(s, dt) {
 				v.push(val)
 				return true
@@ -3370,8 +3430,8 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if targetType.Kind == KindInterface {
-		if s, ok := val.(*Struct); ok && v.checkStructImplements(s, targetType) {
+	if targetType.Kind == KindInterface || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Interface) {
+		if v.checkImplements(val, targetType) {
 			v.push(val)
 			v.push(true)
 			return true
@@ -3384,7 +3444,7 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 		return true
 	}
 
-	if s, ok := val.(*Struct); ok && targetType.Kind == KindStruct {
+	if s, ok := val.(*Struct); ok && (targetType.Kind == KindStruct || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Struct)) {
 		if v.checkStructCompatible(s, targetType) {
 			v.push(val)
 			v.push(true)
@@ -3455,8 +3515,25 @@ func (v *VM) newFuncIterator(fn any) *FuncIterator {
 	return it
 }
 
+func (v *VM) checkImplements(val any, t *Type) bool {
+	if t == nil || (t.Kind != KindInterface && (t.Kind != KindExternal || t.External.Kind() != reflect.Interface)) {
+		return false
+	}
+	if s, ok := val.(*Struct); ok {
+		return v.checkStructImplements(s, t)
+	}
+	rv := reflect.ValueOf(val)
+	for name := range t.Methods {
+		m := rv.MethodByName(name)
+		if !m.IsValid() {
+			return false
+		}
+	}
+	return true
+}
+
 func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
-	if t == nil || t.Kind != KindInterface {
+	if t == nil || (t.Kind != KindInterface && (t.Kind != KindExternal || t.External.Kind() != reflect.Interface)) {
 		return false
 	}
 	for name, targetType := range t.Methods {
@@ -3472,10 +3549,10 @@ func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
 }
 
 func (v *VM) checkStructCompatible(s *Struct, t *Type) bool {
-	if t == nil || t.Kind != KindStruct {
+	if t == nil || (t.Kind != KindStruct && (t.Kind != KindExternal || t.External.Kind() != reflect.Struct)) {
 		return false
 	}
-	// Verify that the struct instance provides all fields required by the type
+
 	for _, f := range t.Fields {
 		if _, ok := s.Fields[f.Name]; !ok {
 			return false
@@ -3525,12 +3602,13 @@ func (v *VM) checkMethodType(method any, target *Type) bool {
 		return false
 	}
 	for i := 0; i < len(target.In); i++ {
-		if !actual.In[i+1].AssignableTo(target.In[i]) {
+		// Use String() for type identity check as it covers name and structure
+		if actual.In[i+1].String() != target.In[i].String() {
 			return false
 		}
 	}
 	for i := 0; i < len(target.Out); i++ {
-		if !actual.Out[i].AssignableTo(target.Out[i]) {
+		if actual.Out[i].String() != target.Out[i].String() {
 			return false
 		}
 	}

@@ -257,6 +257,20 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 	for name, t := range externalTypes {
 		c.types[name] = t
 		st := t
+		if st.Kind == taivm.KindExternal {
+			rt := st.External
+			if rt.Kind() == reflect.Pointer {
+				rt = rt.Elem()
+			}
+			if rt.Kind() == reflect.Struct {
+				var fields []string
+				for i := 0; i < rt.NumField(); i++ {
+					fields = append(fields, rt.Field(i).Name)
+				}
+				c.structFields[name] = fields
+			}
+			continue
+		}
 		if st.Kind == taivm.KindPtr && st.Elem != nil {
 			st = st.Elem
 		}
@@ -1883,6 +1897,21 @@ func (c *compiler) compileCompoundAssign(lhs, rhs ast.Expr, tok token.Token) err
 }
 
 func (c *compiler) compileIndexCompoundAssign(lhs *ast.IndexExpr, rhs ast.Expr, tok token.Token) error {
+	if err := c.compileAddrOf(lhs.X); err == nil {
+		if _, err := c.compileExpr(lhs.Index); err != nil {
+			return err
+		}
+		c.emit(taivm.OpDup2)
+		c.emit(taivm.OpGetIndex)
+		if _, err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
+		}
+		c.emit(taivm.OpSetIndex)
+		return nil
+	}
 	if _, err := c.compileExpr(lhs.X); err != nil {
 		return err
 	}
@@ -1902,6 +1931,21 @@ func (c *compiler) compileIndexCompoundAssign(lhs *ast.IndexExpr, rhs ast.Expr, 
 }
 
 func (c *compiler) compileSelectorCompoundAssign(lhs *ast.SelectorExpr, rhs ast.Expr, tok token.Token) error {
+	if err := c.compileAddrOf(lhs.X); err == nil {
+		c.emit(taivm.OpDup)
+		c.loadConst(lhs.Sel.Name)
+		c.emit(taivm.OpGetAttr)
+		if _, err := c.compileExpr(rhs); err != nil {
+			return err
+		}
+		if err := c.emitBinaryOp(tok); err != nil {
+			return err
+		}
+		c.loadConst(lhs.Sel.Name)
+		c.emit(taivm.OpSwap)
+		c.emit(taivm.OpSetAttr)
+		return nil
+	}
 	if _, err := c.compileExpr(lhs.X); err != nil {
 		return err
 	}
@@ -2605,6 +2649,18 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 			fields = append(fields, f.Name)
 		}
 		c.structFields[spec.Name.Name] = fields
+	} else if t.Kind == taivm.KindExternal {
+		rt := t.External
+		if rt.Kind() == reflect.Pointer {
+			rt = rt.Elem()
+		}
+		if rt.Kind() == reflect.Struct {
+			var fields []string
+			for i := 0; i < rt.NumField(); i++ {
+				fields = append(fields, rt.Field(i).Name)
+			}
+			c.structFields[spec.Name.Name] = fields
+		}
 	}
 
 	// Handle type alias: type T = S
@@ -2947,6 +3003,14 @@ func (c *compiler) compileIdentAssign(e *ast.Ident, tok token.Token, rhsType *ta
 func (c *compiler) compileIndexAssign(e *ast.IndexExpr) error {
 	tmpIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(tmpIdx))
+	if err := c.compileAddrOf(e.X); err == nil {
+		if _, err := c.compileExpr(e.Index); err != nil {
+			return err
+		}
+		c.emit(taivm.OpLoadVar.With(tmpIdx))
+		c.emit(taivm.OpSetIndex)
+		return nil
+	}
 	if _, err := c.compileExpr(e.X); err != nil {
 		return err
 	}
@@ -2961,6 +3025,12 @@ func (c *compiler) compileIndexAssign(e *ast.IndexExpr) error {
 func (c *compiler) compileSelectorAssign(e *ast.SelectorExpr) error {
 	tmpIdx := c.addConst(c.nextTmp())
 	c.emit(taivm.OpDefVar.With(tmpIdx))
+	if err := c.compileAddrOf(e.X); err == nil {
+		c.loadConst(e.Sel.Name)
+		c.emit(taivm.OpLoadVar.With(tmpIdx))
+		c.emit(taivm.OpSetAttr)
+		return nil
+	}
 	if _, err := c.compileExpr(e.X); err != nil {
 		return err
 	}
@@ -2968,6 +3038,37 @@ func (c *compiler) compileSelectorAssign(e *ast.SelectorExpr) error {
 	c.emit(taivm.OpLoadVar.With(tmpIdx))
 	c.emit(taivm.OpSetAttr)
 	return nil
+}
+
+func (c *compiler) compileAddrOf(expr ast.Expr) error {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		idx := c.addConst(x.Name)
+		c.emit(taivm.OpAddrOf.With(idx))
+		return nil
+	case *ast.IndexExpr:
+		if _, err := c.compileExpr(x.X); err != nil {
+			return err
+		}
+		if _, err := c.compileExpr(x.Index); err != nil {
+			return err
+		}
+		c.emit(taivm.OpAddrOfIndex)
+		return nil
+	case *ast.SelectorExpr:
+		if _, err := c.compileExpr(x.X); err != nil {
+			return err
+		}
+		c.loadConst(x.Sel.Name)
+		c.emit(taivm.OpAddrOfAttr)
+		return nil
+	case *ast.StarExpr:
+		_, err := c.compileExpr(x.X)
+		return err
+	case *ast.ParenExpr:
+		return c.compileAddrOf(x.X)
+	}
+	return fmt.Errorf("cannot take address of %T", expr)
 }
 
 func (c *compiler) compileDerefAssign(e *ast.StarExpr) error {

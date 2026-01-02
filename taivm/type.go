@@ -37,6 +37,7 @@ const (
 	KindString
 	KindStruct
 	KindUnsafePointer
+	KindExternal
 )
 
 type Type struct {
@@ -50,6 +51,7 @@ type Type struct {
 	Variadic bool
 	Methods  map[string]*Type
 	Fields   []StructField
+	External reflect.Type
 }
 
 type StructField struct {
@@ -60,73 +62,124 @@ type StructField struct {
 }
 
 func FromReflectType(t reflect.Type) *Type {
-	var visited = make(map[reflect.Type]*Type)
-	var fromReflectType func(reflect.Type) *Type
-	fromReflectType = func(t reflect.Type) *Type {
-		if t == nil {
-			return nil
-		}
-		if existing, ok := visited[t]; ok {
-			return existing
-		}
+	return fromReflectType(t, make(map[reflect.Type]*Type))
+}
 
-		res := &Type{
-			Name: t.Name(),
-			Kind: TypeKind(t.Kind()),
-		}
-		visited[t] = res
-
-		switch t.Kind() {
-		case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Chan:
-			res.Elem = fromReflectType(t.Elem())
-			if t.Kind() == reflect.Array {
-				res.Len = t.Len()
-			}
-		case reflect.Map:
-			res.Key = fromReflectType(t.Key())
-			res.Elem = fromReflectType(t.Elem())
-		case reflect.Func:
-			res.Variadic = t.IsVariadic()
-			for i := 0; i < t.NumIn(); i++ {
-				res.In = append(res.In, fromReflectType(t.In(i)))
-			}
-			for i := 0; i < t.NumOut(); i++ {
-				res.Out = append(res.Out, fromReflectType(t.Out(i)))
-			}
-		case reflect.Struct:
-			for i := 0; i < t.NumField(); i++ {
-				f := t.Field(i)
-				res.Fields = append(res.Fields, StructField{
-					Name:      f.Name,
-					Type:      fromReflectType(f.Type),
-					Tag:       string(f.Tag),
-					Anonymous: f.Anonymous,
-				})
-			}
-		case reflect.Interface:
-			res.Methods = make(map[string]*Type)
-			for i := 0; i < t.NumMethod(); i++ {
-				m := t.Method(i)
-				res.Methods[m.Name] = fromReflectType(m.Type)
-			}
-		}
-
-		if t.Kind() != reflect.Interface && t.NumMethod() > 0 {
-			res.Methods = make(map[string]*Type)
-			for i := 0; i < t.NumMethod(); i++ {
-				m := t.Method(i)
-				res.Methods[m.Name] = fromReflectType(m.Type)
-			}
-		}
-
+func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
+	if t == nil || t.Kind() == reflect.Invalid {
+		return nil
+	}
+	if res, ok := cache[t]; ok {
 		return res
 	}
-	return fromReflectType(t)
+
+	res := &Type{
+		Name:     t.Name(),
+		External: t,
+	}
+	cache[t] = res
+
+	kind := t.Kind()
+	switch kind {
+	case reflect.Bool:
+		res.Kind = KindBool
+	case reflect.Int:
+		res.Kind = KindInt
+	case reflect.Int8:
+		res.Kind = KindInt8
+	case reflect.Int16:
+		res.Kind = KindInt16
+	case reflect.Int32:
+		res.Kind = KindInt32
+	case reflect.Int64:
+		res.Kind = KindInt64
+	case reflect.Uint:
+		res.Kind = KindUint
+	case reflect.Uint8:
+		res.Kind = KindUint8
+	case reflect.Uint16:
+		res.Kind = KindUint16
+	case reflect.Uint32:
+		res.Kind = KindUint32
+	case reflect.Uint64:
+		res.Kind = KindUint64
+	case reflect.Uintptr:
+		res.Kind = KindUintptr
+	case reflect.Float32:
+		res.Kind = KindFloat32
+	case reflect.Float64:
+		res.Kind = KindFloat64
+	case reflect.Complex64:
+		res.Kind = KindComplex64
+	case reflect.Complex128:
+		res.Kind = KindComplex128
+	case reflect.Array:
+		res.Kind = KindArray
+		res.Len = t.Len()
+		res.Elem = fromReflectType(t.Elem(), cache)
+	case reflect.Chan:
+		res.Kind = KindChan
+		res.Elem = fromReflectType(t.Elem(), cache)
+	case reflect.Func:
+		res.Kind = KindFunc
+		res.In = make([]*Type, t.NumIn())
+		for i := 0; i < t.NumIn(); i++ {
+			res.In[i] = fromReflectType(t.In(i), cache)
+		}
+		res.Out = make([]*Type, t.NumOut())
+		for i := 0; i < t.NumOut(); i++ {
+			res.Out[i] = fromReflectType(t.Out(i), cache)
+		}
+		res.Variadic = t.IsVariadic()
+	case reflect.Interface:
+		res.Kind = KindInterface
+	case reflect.Map:
+		res.Kind = KindMap
+		res.Key = fromReflectType(t.Key(), cache)
+		res.Elem = fromReflectType(t.Elem(), cache)
+	case reflect.Ptr:
+		res.Kind = KindPtr
+		res.Elem = fromReflectType(t.Elem(), cache)
+	case reflect.Slice:
+		res.Kind = KindSlice
+		res.Elem = fromReflectType(t.Elem(), cache)
+	case reflect.String:
+		res.Kind = KindString
+	case reflect.Struct:
+		res.Kind = KindStruct
+		res.Fields = make([]StructField, t.NumField())
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			res.Fields[i] = StructField{
+				Name:      f.Name,
+				Type:      fromReflectType(f.Type, cache),
+				Tag:       string(f.Tag),
+				Anonymous: f.Anonymous,
+			}
+		}
+	case reflect.UnsafePointer:
+		res.Kind = KindUnsafePointer
+	default:
+		res.Kind = KindExternal
+	}
+
+	if t.NumMethod() > 0 {
+		res.Methods = make(map[string]*Type)
+		for i := 0; i < t.NumMethod(); i++ {
+			m := t.Method(i)
+			res.Methods[m.Name] = fromReflectType(m.Type, cache)
+		}
+	}
+
+	return res
 }
 
 func (t *Type) ToReflectType() reflect.Type {
 	if t == nil {
 		return nil
+	}
+	if t.External != nil {
+		return t.External
 	}
 	switch t.Kind {
 	case KindBool:
@@ -164,32 +217,27 @@ func (t *Type) ToReflectType() reflect.Type {
 	case KindString:
 		return reflect.TypeFor[string]()
 	case KindUnsafePointer:
-		return reflect.TypeFor[uintptr]() // Fallback to uintptr if unsafe is not imported
-	case KindPtr:
-		et := t.Elem.ToReflectType()
-		if et == nil {
-			return nil
-		}
-		return reflect.PointerTo(et)
+		return reflect.TypeFor[uintptr]()
 	case KindSlice:
-		et := t.Elem.ToReflectType()
-		if et == nil {
-			return nil
+		if t.Elem == nil {
+			return reflect.TypeFor[[]any]()
 		}
-		return reflect.SliceOf(et)
+		return reflect.SliceOf(t.Elem.ToReflectType())
 	case KindArray:
-		et := t.Elem.ToReflectType()
-		if et == nil {
-			return nil
+		if t.Elem == nil {
+			return reflect.ArrayOf(t.Len, reflect.TypeFor[any]())
 		}
-		return reflect.ArrayOf(t.Len, et)
+		return reflect.ArrayOf(t.Len, t.Elem.ToReflectType())
 	case KindMap:
-		kt := t.Key.ToReflectType()
-		et := t.Elem.ToReflectType()
-		if kt == nil || et == nil {
-			return nil
+		if t.Key == nil || t.Elem == nil {
+			return reflect.TypeFor[map[any]any]()
 		}
-		return reflect.MapOf(kt, et)
+		return reflect.MapOf(t.Key.ToReflectType(), t.Elem.ToReflectType())
+	case KindPtr:
+		if t.Elem == nil {
+			return reflect.TypeFor[uintptr]()
+		}
+		return reflect.PointerTo(t.Elem.ToReflectType())
 	case KindFunc:
 		in := make([]reflect.Type, len(t.In))
 		for i, v := range t.In {
@@ -200,33 +248,6 @@ func (t *Type) ToReflectType() reflect.Type {
 			out[i] = v.ToReflectType()
 		}
 		return reflect.FuncOf(in, out, t.Variadic)
-	case KindInterface:
-		return reflect.TypeFor[any]()
-	case KindStruct:
-		if len(t.Fields) == 0 {
-			return reflect.TypeFor[struct{}]()
-		}
-		var fields []reflect.StructField
-		for _, f := range t.Fields {
-			ft := f.Type.ToReflectType()
-			if ft == nil {
-				return nil
-			}
-			sf := reflect.StructField{
-				Name:      f.Name,
-				Type:      ft,
-				Tag:       reflect.StructTag(f.Tag),
-				Anonymous: f.Anonymous,
-			}
-			if sf.Anonymous && ft.Kind() == reflect.Interface {
-				sf.Anonymous = false
-			}
-			if sf.Name != "" && sf.Name[0] >= 'a' && sf.Name[0] <= 'z' {
-				sf.PkgPath = "main"
-			}
-			fields = append(fields, sf)
-		}
-		return reflect.StructOf(fields)
 	}
 	return nil
 }
@@ -235,207 +256,118 @@ func (t *Type) AssignableTo(u *Type) bool {
 	if t == nil || u == nil {
 		return t == u
 	}
-	if t.Kind != u.Kind {
+	if t.External != nil && u.External != nil {
+		return t.External.AssignableTo(u.External)
+	}
+	rt := t.ToReflectType()
+	ru := u.ToReflectType()
+	if rt == nil || ru == nil {
 		return false
 	}
-	if t.Name != "" && u.Name != "" {
-		return t.Name == u.Name
-	}
-	switch t.Kind {
-	case KindPtr, KindSlice, KindArray:
-		if t.Elem == nil || u.Elem == nil {
-			return t.Elem == u.Elem
-		}
-		return t.Elem.AssignableTo(u.Elem)
-	case KindMap:
-		if t.Key == nil || u.Key == nil || t.Elem == nil || u.Elem == nil {
-			return t.Key == u.Key && t.Elem == u.Elem
-		}
-		return t.Key.AssignableTo(u.Key) && t.Elem.AssignableTo(u.Elem)
-	case KindFunc:
-		if len(t.In) != len(u.In) || len(t.Out) != len(u.Out) || t.Variadic != u.Variadic {
-			return false
-		}
-		for i := range t.In {
-			if !t.In[i].AssignableTo(u.In[i]) {
-				return false
-			}
-		}
-		for i := range t.Out {
-			if !t.Out[i].AssignableTo(u.Out[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	return true
+	return rt.AssignableTo(ru)
 }
 
 func (t *Type) Zero() any {
 	if t == nil {
 		return nil
 	}
+	if t.External != nil {
+		return reflect.Zero(t.External).Interface()
+	}
 	switch t.Kind {
-	case KindBool:
-		return false
-	case KindInt:
-		return 0
-	case KindInt8:
-		return int8(0)
-	case KindInt16:
-		return int16(0)
-	case KindInt32:
-		return int32(0)
-	case KindInt64:
-		return int64(0)
-	case KindUint:
-		return uint(0)
-	case KindUint8:
-		return uint8(0)
-	case KindUint16:
-		return uint16(0)
-	case KindUint32:
-		return uint32(0)
-	case KindUint64:
-		return uint64(0)
-	case KindUintptr:
-		return uintptr(0)
-	case KindFloat32:
-		return float32(0)
-	case KindFloat64:
-		return float64(0)
-	case KindComplex64:
-		return complex64(0)
-	case KindComplex128:
-		return complex128(0)
-	case KindString:
-		return ""
-	case KindSlice, KindMap, KindPtr, KindFunc, KindChan, KindInterface, KindUnsafePointer:
+	case KindPtr, KindSlice, KindMap, KindFunc, KindInterface, KindChan:
 		return nil
 	case KindStruct:
-		s := &Struct{TypeName: t.Name, Fields: make(map[string]any)}
-		for _, f := range t.Fields {
-			if f.Anonymous {
-				s.Embedded = append(s.Embedded, f.Name)
-			}
-			s.Fields[f.Name] = f.Type.Zero()
-		}
-		return s
+		return &Struct{TypeName: t.Name, Fields: make(map[string]any)}
 	}
-	if rt := t.ToReflectType(); rt != nil {
-		return reflect.Zero(rt).Interface()
+	rt := t.ToReflectType()
+	if rt == nil {
+		return nil
 	}
-	return nil
+	return reflect.Zero(rt).Interface()
 }
 
 func (t *Type) Match(val any) bool {
-	if val == nil {
-		return t == nil || t.Kind == KindInterface || t.Kind == KindPtr || t.Kind == KindSlice || t.Kind == KindMap || t.Kind == KindFunc
-	}
 	if t == nil {
+		return val == nil
+	}
+	if t.External != nil {
+		if val == nil {
+			return false
+		}
+		return reflect.TypeOf(val).AssignableTo(t.External)
+	}
+	if val == nil {
+		switch t.Kind {
+		case KindPtr, KindSlice, KindMap, KindFunc, KindInterface, KindChan:
+			return true
+		}
 		return false
 	}
-	if t.Kind == KindInterface {
-		if len(t.Methods) == 0 {
-			return true
-		}
-		if _, ok := val.(*Struct); ok {
-			return false // Must be handled by VM.checkStructImplements
-		}
-		rv := reflect.ValueOf(val)
-		for name := range t.Methods {
-			if !rv.MethodByName(name).IsValid() {
+	if t.Kind == KindStruct {
+		if s, ok := val.(*Struct); ok {
+			if t.Name != "" && s.TypeName != "" && t.Name != s.TypeName {
 				return false
 			}
-		}
-		return true
-	}
-	if s, ok := val.(*Struct); ok {
-		return t.Name != "" && s.TypeName == t.Name
-	}
-	// Direct matches for all basic kinds to avoid reflect.TypeOf
-	switch t.Kind {
-	case KindBool:
-		_, ok := val.(bool)
-		return ok
-	case KindInt:
-		_, ok := val.(int)
-		return ok
-	case KindInt8:
-		_, ok := val.(int8)
-		return ok
-	case KindInt16:
-		_, ok := val.(int16)
-		return ok
-	case KindInt32:
-		_, ok := val.(int32)
-		return ok
-	case KindInt64:
-		_, ok := val.(int64)
-		return ok
-	case KindUint:
-		_, ok := val.(uint)
-		return ok
-	case KindUint8:
-		_, ok := val.(uint8)
-		return ok
-	case KindUint16:
-		_, ok := val.(uint16)
-		return ok
-	case KindUint32:
-		_, ok := val.(uint32)
-		return ok
-	case KindUint64:
-		_, ok := val.(uint64)
-		return ok
-	case KindUintptr:
-		_, ok := val.(uintptr)
-		return ok
-	case KindFloat32:
-		_, ok := val.(float32)
-		return ok
-	case KindFloat64:
-		_, ok := val.(float64)
-		return ok
-	case KindComplex64:
-		_, ok := val.(complex64)
-		return ok
-	case KindComplex128:
-		_, ok := val.(complex128)
-		return ok
-	case KindString:
-		_, ok := val.(string)
-		return ok
-	case KindSlice:
-		if _, ok := val.(*List); ok {
-			return true
-		}
-		if _, ok := val.([]any); ok {
-			return true
-		}
-	case KindMap:
-		if _, ok := val.(map[any]any); ok {
-			return true
-		}
-		if _, ok := val.(map[string]any); ok {
 			return true
 		}
 	}
-	rt := reflect.TypeOf(val)
-	if targetRT := t.ToReflectType(); targetRT != nil {
-		return rt.AssignableTo(targetRT)
+	rt := t.ToReflectType()
+	if rt == nil {
+		return false
 	}
-	return false
+	return reflect.TypeOf(val).AssignableTo(rt)
 }
 
 func (t *Type) String() string {
 	if t == nil {
-		return "<nil>"
+		return "nil"
 	}
 	if t.Name != "" {
 		return t.Name
 	}
+	if t.External != nil {
+		return t.External.String()
+	}
 	switch t.Kind {
+	case KindBool:
+		return "bool"
+	case KindInt:
+		return "int"
+	case KindInt8:
+		return "int8"
+	case KindInt16:
+		return "int16"
+	case KindInt32:
+		return "int32"
+	case KindInt64:
+		return "int64"
+	case KindUint:
+		return "uint"
+	case KindUint8:
+		return "uint8"
+	case KindUint16:
+		return "uint16"
+	case KindUint32:
+		return "uint32"
+	case KindUint64:
+		return "uint64"
+	case KindUintptr:
+		return "uintptr"
+	case KindFloat32:
+		return "float32"
+	case KindFloat64:
+		return "float64"
+	case KindComplex64:
+		return "complex64"
+	case KindComplex128:
+		return "complex128"
+	case KindString:
+		return "string"
+	case KindUnsafePointer:
+		return "unsafe.Pointer"
+	case KindChan:
+		return "chan " + t.Elem.String()
 	case KindPtr:
 		return "*" + t.Elem.String()
 	case KindSlice:
@@ -443,16 +375,15 @@ func (t *Type) String() string {
 	case KindArray:
 		return fmt.Sprintf("[%d]%s", t.Len, t.Elem.String())
 	case KindMap:
-		return "map[" + t.Key.String() + "]" + t.Elem.String()
-	case KindChan:
-		return "chan " + t.Elem.String()
+		return fmt.Sprintf("map[%s]%s", t.Key.String(), t.Elem.String())
 	case KindFunc:
 		return t.funcString()
 	case KindInterface:
 		return t.interfaceString()
-	default:
-		return reflect.Kind(t.Kind).String()
+	case KindStruct:
+		return "struct{...}"
 	}
+	return "unknown"
 }
 
 func (t *Type) funcString() string {
