@@ -23,11 +23,28 @@ func TaigoFork(scope dscope.Scope, env *taivm.Env) (ret dscope.Scope, err error)
 			if v.Val == nil {
 				continue
 			}
-			t := reflect.TypeOf(v.Val)
-			if configTypes[t] && !seen[t] {
-				defs = append(defs, v.Val)
-				seen[t] = true
+			var t reflect.Type
+			if v.Type != nil && v.Type.External != nil {
+				t = v.Type.External
+			} else {
+				t = reflect.TypeOf(v.Val)
 			}
+			if !configTypes[t] || seen[t] {
+				continue
+			}
+			val := v.Val
+			rv := reflect.ValueOf(val)
+			if rv.Type() != t {
+				if rv.Type().ConvertibleTo(t) {
+					val = rv.Convert(t).Interface()
+				} else {
+					continue
+				}
+			}
+			ptr := reflect.New(t)
+			ptr.Elem().Set(rv)
+			defs = append(defs, ptr.Interface())
+			seen[t] = true
 		}
 	}
 	return scope.Fork(defs...), nil
