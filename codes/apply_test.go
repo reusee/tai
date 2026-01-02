@@ -46,6 +46,46 @@ func (t T) Foo() {
 	}
 }
 
+func TestApplyHunksReplaceComments(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+// Old comment
+func Foo() {
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`[[[ MODIFY Foo IN ` + targetFile + `
+// New comment
+func Foo() {
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Contains(s, "Old comment") {
+		t.Errorf("Old comment still exists:\n%s", s)
+	}
+	if !strings.Contains(s, "New comment") {
+		t.Errorf("New comment missing:\n%s", s)
+	}
+}
+
 func TestApplyHunksNewFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	targetFile := filepath.Join(tmpDir, "new_dir", "new_file.go")

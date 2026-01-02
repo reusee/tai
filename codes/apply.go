@@ -25,12 +25,6 @@ type Hunk struct {
 var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN (\S+)`)
 
 // ApplyHunks processes hunks from a file and applies them to the source.
-// It returns the content of the file after removing applied hunks.
-// ApplyHunks processes hunks from a file and applies them to the source.
-// It returns the content of the file after removing applied hunks.
-// ApplyHunks processes hunks from a file and applies them to the source.
-// It returns the content of the file after removing applied hunks.
-// ApplyHunks processes hunks from a file and applies them to the source.
 func ApplyHunks(aiFilePath string) error {
 	for {
 		content, err := os.ReadFile(aiFilePath)
@@ -183,8 +177,12 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int) (in
 }
 
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, bool) {
+	startPos := decl.Pos()
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
+		if d.Doc != nil {
+			startPos = d.Doc.Pos()
+		}
 		funcName := d.Name.Name
 		fullName := funcName
 		if d.Recv != nil && len(d.Recv.List) > 0 {
@@ -197,19 +195,22 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, boo
 			}
 		}
 		if fullName == target || funcName == target {
-			return fset.Position(d.Pos()).Offset, fset.Position(d.End()).Offset, true
+			return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
 		}
 	case *ast.GenDecl:
+		if d.Doc != nil {
+			startPos = d.Doc.Pos()
+		}
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
 				if s.Name.Name == target {
-					return fset.Position(d.Pos()).Offset, fset.Position(d.End()).Offset, true
+					return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
 				}
 			case *ast.ValueSpec:
 				for _, n := range s.Names {
 					if n.Name == target {
-						return fset.Position(d.Pos()).Offset, fset.Position(d.End()).Offset, true
+						return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
 					}
 				}
 			}
