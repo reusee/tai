@@ -38,7 +38,25 @@ func (e *Env) NewVM() (*taivm.VM, error) {
 
 	e.registerBuiltins(vm)
 	for key, val := range e.Globals {
-		vm.Def(key, val)
+		var t *taivm.Type
+		if rt, ok := val.(reflect.Type); ok {
+			t = taivm.FromReflectType(rt)
+		} else if tt, ok := val.(*taivm.Type); ok {
+			t = tt
+		}
+		if t != nil {
+			if t.Name != key {
+				t2 := *t
+				t2.Name = key
+				t = &t2
+			}
+			vm.Def(key, t)
+		} else if val != nil {
+			t = taivm.FromReflectType(reflect.TypeOf(val))
+			vm.DefWithType(key, val, t)
+		} else {
+			vm.Def(key, val)
+		}
 	}
 
 	return vm, nil
