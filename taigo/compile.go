@@ -7,15 +7,7 @@ import (
 )
 
 func compile(externalTypes, externalValueTypes map[string]*taivm.Type, files ...*ast.File) (*Package, error) {
-	c := &compiler{
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		structFields: make(map[string][]string),
-		types:        make(map[string]*taivm.Type),
-		globals:      make(map[string]*taivm.Type),
-	}
+	c := newCompiler()
 	c.initExternal(externalTypes, externalValueTypes)
 	if err := c.compileFiles(files); err != nil {
 		return nil, err
@@ -30,16 +22,8 @@ func compile(externalTypes, externalValueTypes map[string]*taivm.Type, files ...
 }
 
 func compileExpr(expr ast.Expr, externalTypes, externalValueTypes map[string]*taivm.Type) (*taivm.Function, error) {
-	c := &compiler{
-		name:         "eval",
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		structFields: make(map[string][]string),
-		types:        make(map[string]*taivm.Type),
-		globals:      make(map[string]*taivm.Type),
-	}
+	c := newCompiler()
+	c.name = "eval"
 	c.initExternal(externalTypes, externalValueTypes)
 	if _, err := c.compileExpr(expr); err != nil {
 		return nil, err

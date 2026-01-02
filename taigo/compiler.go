@@ -41,6 +41,42 @@ type variable struct {
 	typ   *taivm.Type
 }
 
+var basicTypes = map[string]reflect.Type{
+	"int":        reflect.TypeFor[int](),
+	"int8":       reflect.TypeFor[int8](),
+	"int16":      reflect.TypeFor[int16](),
+	"int32":      reflect.TypeFor[int32](),
+	"rune":       reflect.TypeFor[int32](),
+	"int64":      reflect.TypeFor[int64](),
+	"uint":       reflect.TypeFor[uint](),
+	"uint8":      reflect.TypeFor[uint8](),
+	"byte":       reflect.TypeFor[uint8](),
+	"uint16":     reflect.TypeFor[uint16](),
+	"uint32":     reflect.TypeFor[uint32](),
+	"uint64":     reflect.TypeFor[uint64](),
+	"float32":    reflect.TypeFor[float32](),
+	"float64":    reflect.TypeFor[float64](),
+	"string":     reflect.TypeFor[string](),
+	"any":        reflect.TypeFor[any](),
+	"error":      reflect.TypeFor[error](),
+	"bool":       reflect.TypeFor[bool](),
+	"complex64":  reflect.TypeFor[complex64](),
+	"complex128": reflect.TypeFor[complex128](),
+	"comparable": reflect.TypeFor[any](),
+}
+
+func newCompiler() *compiler {
+	return &compiler{
+		consts:       make(map[any]int),
+		locals:       make(map[string]variable),
+		labels:       make(map[string]int),
+		unresolved:   make(map[string][]int),
+		structFields: make(map[string][]string),
+		types:        make(map[string]*taivm.Type),
+		globals:      make(map[string]*taivm.Type),
+	}
+}
+
 type topDecl struct {
 	names   []string
 	deps    []string
@@ -63,15 +99,6 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 		return nil
 	}
 	c.name = files[0].Name.Name
-	if c.structFields == nil {
-		c.structFields = make(map[string][]string)
-	}
-	if c.types == nil {
-		c.types = make(map[string]*taivm.Type)
-	}
-	if c.globals == nil {
-		c.globals = make(map[string]*taivm.Type)
-	}
 	symbols, err := c.collectSymbols(files)
 	if err != nil {
 		return err
@@ -245,15 +272,6 @@ func (c *compiler) getFunction() *taivm.Function {
 }
 
 func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*taivm.Type) {
-	if c.types == nil {
-		c.types = make(map[string]*taivm.Type)
-	}
-	if c.globals == nil {
-		c.globals = make(map[string]*taivm.Type)
-	}
-	if c.structFields == nil {
-		c.structFields = make(map[string][]string)
-	}
 	for name, t := range externalTypes {
 		c.types[name] = t
 		st := t
@@ -727,68 +745,22 @@ func (c *compiler) compileInitFunc(decl *ast.FuncDecl) error {
 }
 
 func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
-	sub := &compiler{
-		name:         decl.Name.Name,
-		isFunc:       true,
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		generics:     c.generics,
-		typeParams:   make(map[string]bool),
-		structFields: c.structFields,
-		types:        c.types,
-		globals:      c.globals,
-	}
+	typeParams := make(map[string]bool)
 	if decl.Type.TypeParams != nil {
 		for _, field := range decl.Type.TypeParams.List {
 			for _, name := range field.Names {
-				sub.typeParams[name.Name] = true
+				typeParams[name.Name] = true
 			}
 		}
 	}
-	if err := sub.setupParams(decl); err != nil {
+	fn, err := c.compileFunctionBody(decl.Name.Name, decl.Recv, decl.Type, decl.Body, typeParams)
+	if err != nil {
 		return nil, err
 	}
-	sub.setupResults(decl.Type)
-	if err := sub.defineNamedResults(decl.Type); err != nil {
+	if err := c.setFuncMetadata(fn, decl.Recv, decl.Type); err != nil {
 		return nil, err
 	}
-	for _, stmt := range decl.Body.List {
-		if err := sub.compileStmt(stmt); err != nil {
-			return nil, err
-		}
-	}
-	sub.loadConst(nil)
-	sub.emit(taivm.OpReturn)
-	if err := sub.resolveLabels(); err != nil {
-		return nil, err
-	}
-	fn := sub.getFunction()
-	if err := c.setFuncMetadata(fn, decl); err != nil {
-		return nil, err
-	}
-	fn.NumLocals = len(sub.locals)
 	return fn, nil
-}
-
-func (c *compiler) setupParams(decl *ast.FuncDecl) error {
-	if decl.Recv != nil && len(decl.Recv.List) > 0 {
-		recv := decl.Recv.List[0]
-		_, err := c.resolveType(recv.Type)
-		if err != nil {
-			return err
-		}
-	}
-	if decl.Type.Params != nil {
-		for _, field := range decl.Type.Params.List {
-			_, err := c.resolveType(field.Type)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (c *compiler) setupResults(fType *ast.FuncType) {
@@ -821,6 +793,49 @@ func (c *compiler) defineNamedResults(fType *ast.FuncType) error {
 	return nil
 }
 
+func (c *compiler) compileFunctionBody(name string, recv *ast.FieldList, fType *ast.FuncType, body *ast.BlockStmt, typeParams map[string]bool) (*taivm.Function, error) {
+	sub := newCompiler()
+	sub.name = name
+	sub.isFunc = true
+	sub.generics = c.generics
+	sub.typeParams = typeParams
+	sub.structFields = c.structFields
+	sub.types = c.types
+	sub.globals = c.globals
+
+	if recv != nil && len(recv.List) > 0 {
+		recvField := recv.List[0]
+		if _, err := sub.resolveType(recvField.Type); err != nil {
+			return nil, err
+		}
+	}
+	if fType.Params != nil {
+		for _, field := range fType.Params.List {
+			if _, err := sub.resolveType(field.Type); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	sub.setupResults(fType)
+	if err := sub.defineNamedResults(fType); err != nil {
+		return nil, err
+	}
+	for _, stmt := range body.List {
+		if err := sub.compileStmt(stmt); err != nil {
+			return nil, err
+		}
+	}
+	sub.loadConst(nil)
+	sub.emit(taivm.OpReturn)
+	if err := sub.resolveLabels(); err != nil {
+		return nil, err
+	}
+	fn := sub.getFunction()
+	fn.NumLocals = len(sub.locals)
+	return fn, nil
+}
+
 func (c *compiler) resolveLabels() error {
 	for name, indices := range c.unresolved {
 		target, ok := c.labels[name]
@@ -834,24 +849,24 @@ func (c *compiler) resolveLabels() error {
 	return nil
 }
 
-func (c *compiler) setFuncMetadata(fn *taivm.Function, decl *ast.FuncDecl) error {
-	ft, err := c.resolveType(decl.Type)
+func (c *compiler) setFuncMetadata(fn *taivm.Function, recv *ast.FieldList, fType *ast.FuncType) error {
+	ft, err := c.resolveType(fType)
 	if err != nil {
 		return err
 	}
-	if decl.Recv != nil && len(decl.Recv.List) > 0 {
-		recv := decl.Recv.List[0]
-		rt, err := c.resolveType(recv.Type)
+	if recv != nil && len(recv.List) > 0 {
+		rField := recv.List[0]
+		rt, err := c.resolveType(rField.Type)
 		if err != nil {
 			return err
 		}
 		ft.In = append([]*taivm.Type{rt}, ft.In...)
 	}
 	fn.Type = ft
-	fn.ParamNames = c.getFuncParamNames(decl)
+	fn.ParamNames = c.getFuncParamNames(recv, fType)
 	fn.NumParams = len(fn.ParamNames)
-	if decl.Type.Params != nil {
-		for _, field := range decl.Type.Params.List {
+	if fType.Params != nil {
+		for _, field := range fType.Params.List {
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
 				fn.Variadic = true
 			}
@@ -860,19 +875,19 @@ func (c *compiler) setFuncMetadata(fn *taivm.Function, decl *ast.FuncDecl) error
 	return nil
 }
 
-func (c *compiler) getFuncParamNames(decl *ast.FuncDecl) []string {
+func (c *compiler) getFuncParamNames(recv *ast.FieldList, fType *ast.FuncType) []string {
 	var names []string
-	if decl.Recv != nil && len(decl.Recv.List) > 0 {
-		recv := decl.Recv.List[0]
-		for _, name := range recv.Names {
+	if recv != nil && len(recv.List) > 0 {
+		rField := recv.List[0]
+		for _, name := range rField.Names {
 			names = append(names, name.Name)
 		}
-		if len(recv.Names) == 0 {
+		if len(rField.Names) == 0 {
 			names = append(names, "")
 		}
 	}
-	if decl.Type.Params != nil {
-		for _, field := range decl.Type.Params.List {
+	if fType.Params != nil {
+		for _, field := range fType.Params.List {
 			if len(field.Names) == 0 {
 				names = append(names, "")
 			} else {
@@ -1398,76 +1413,25 @@ func (c *compiler) compileSliceExpr(expr *ast.SliceExpr) (*taivm.Type, error) {
 }
 
 func (c *compiler) compileFuncLit(expr *ast.FuncLit) (*taivm.Type, error) {
-	sub := &compiler{
-		name:         "anon",
-		isFunc:       true,
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		generics:     c.generics,
-		typeParams:   c.typeParams,
-		structFields: c.structFields,
-		types:        c.types,
-		globals:      c.globals,
-	}
-	if expr.Type.TypeParams != nil && len(expr.Type.TypeParams.List) > 0 {
-		newTypeParams := make(map[string]bool)
-		maps.Copy(newTypeParams, c.typeParams)
+	typeParams := make(map[string]bool)
+	maps.Copy(typeParams, c.typeParams)
+	if expr.Type.TypeParams != nil {
 		for _, field := range expr.Type.TypeParams.List {
 			for _, name := range field.Names {
-				newTypeParams[name.Name] = true
-			}
-		}
-		sub.typeParams = newTypeParams
-	}
-	if expr.Type.Params != nil {
-		for _, field := range expr.Type.Params.List {
-			_, err := sub.resolveType(field.Type)
-			if err != nil {
-				return nil, err
+				typeParams[name.Name] = true
 			}
 		}
 	}
-	sub.setupResults(expr.Type)
-	if err := sub.defineNamedResults(expr.Type); err != nil {
-		return nil, err
-	}
-	for _, stmt := range expr.Body.List {
-		if err := sub.compileStmt(stmt); err != nil {
-			return nil, err
-		}
-	}
-	sub.loadConst(nil)
-	sub.emit(taivm.OpReturn)
-	if err := sub.resolveLabels(); err != nil {
-		return nil, err
-	}
-	fn := sub.getFunction()
-	fn.NumLocals = len(sub.locals)
-	tObj, err := c.resolveType(expr.Type)
+	fn, err := c.compileFunctionBody("anon", nil, expr.Type, expr.Body, typeParams)
 	if err != nil {
 		return nil, err
 	}
-	fn.Type = tObj
-	if expr.Type.Params != nil {
-		for _, field := range expr.Type.Params.List {
-			if _, ok := field.Type.(*ast.Ellipsis); ok {
-				fn.Variadic = true
-			}
-			if len(field.Names) == 0 {
-				fn.ParamNames = append(fn.ParamNames, "")
-			} else {
-				for _, name := range field.Names {
-					fn.ParamNames = append(fn.ParamNames, name.Name)
-				}
-			}
-		}
+	if err := c.setFuncMetadata(fn, nil, expr.Type); err != nil {
+		return nil, err
 	}
-	fn.NumParams = len(fn.ParamNames)
 	idx := c.addConst(fn)
 	c.emit(taivm.OpMakeClosure.With(idx))
-	return tObj, nil
+	return fn.Type, nil
 }
 
 func (c *compiler) compileCompositeLit(expr *ast.CompositeLit) (*taivm.Type, error) {
@@ -2902,48 +2866,10 @@ func (c *compiler) resolveIdentType(e *ast.Ident) (*taivm.Type, error) {
 	if t, ok := c.types[e.Name]; ok {
 		return t, nil
 	}
-	switch e.Name {
-	case "int":
-		return taivm.FromReflectType(reflect.TypeFor[int]()), nil
-	case "int8":
-		return taivm.FromReflectType(reflect.TypeFor[int8]()), nil
-	case "int16":
-		return taivm.FromReflectType(reflect.TypeFor[int16]()), nil
-	case "int32", "rune":
-		return taivm.FromReflectType(reflect.TypeFor[int32]()), nil
-	case "int64":
-		return taivm.FromReflectType(reflect.TypeFor[int64]()), nil
-	case "uint":
-		return taivm.FromReflectType(reflect.TypeFor[uint]()), nil
-	case "uint8", "byte":
-		return taivm.FromReflectType(reflect.TypeFor[uint8]()), nil
-	case "uint16":
-		return taivm.FromReflectType(reflect.TypeFor[uint16]()), nil
-	case "uint32":
-		return taivm.FromReflectType(reflect.TypeFor[uint32]()), nil
-	case "uint64":
-		return taivm.FromReflectType(reflect.TypeFor[uint64]()), nil
-	case "float32":
-		return taivm.FromReflectType(reflect.TypeFor[float32]()), nil
-	case "float64":
-		return taivm.FromReflectType(reflect.TypeFor[float64]()), nil
-	case "string":
-		return taivm.FromReflectType(reflect.TypeFor[string]()), nil
-	case "any":
-		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
-	case "error":
-		return taivm.FromReflectType(reflect.TypeFor[error]()), nil
-	case "bool":
-		return taivm.FromReflectType(reflect.TypeFor[bool]()), nil
-	case "complex64":
-		return taivm.FromReflectType(reflect.TypeFor[complex64]()), nil
-	case "complex128":
-		return taivm.FromReflectType(reflect.TypeFor[complex128]()), nil
-	case "comparable":
-		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
-	default:
-		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
+	if rt, ok := basicTypes[e.Name]; ok {
+		return taivm.FromReflectType(rt), nil
 	}
+	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
 }
 
 func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, error) {
