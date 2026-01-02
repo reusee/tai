@@ -99,6 +99,25 @@ func (c *compiler) compileFiles(files []*ast.File) error {
 		return nil
 	}
 	c.name = files[0].Name.Name
+
+	// Pre-declare top-level type names to support recursive types
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+				for _, spec := range gd.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok {
+						name := ts.Name.Name
+						if name != "_" && c.types[name] == nil {
+							c.types[name] = &taivm.Type{
+								Name: name,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	symbols, err := c.collectSymbols(files)
 	if err != nil {
 		return err
@@ -753,11 +772,35 @@ func (c *compiler) compileFunc(decl *ast.FuncDecl) (*taivm.Function, error) {
 			}
 		}
 	}
+	// Also collect type parameters from method receiver
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		t := decl.Recv.List[0].Type
+		for {
+			if star, ok := t.(*ast.StarExpr); ok {
+				t = star.X
+				continue
+			}
+			break
+		}
+		switch e := t.(type) {
+		case *ast.IndexExpr:
+			if id, ok := e.Index.(*ast.Ident); ok {
+				typeParams[id.Name] = true
+			}
+		case *ast.IndexListExpr:
+			for _, idx := range e.Indices {
+				if id, ok := idx.(*ast.Ident); ok {
+					typeParams[id.Name] = true
+				}
+			}
+		}
+	}
+
 	fn, err := c.compileFunctionBody(decl.Name.Name, decl.Recv, decl.Type, decl.Body, typeParams)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.setFuncMetadata(fn, decl.Recv, decl.Type); err != nil {
+	if err := c.setFuncMetadata(fn, decl.Recv, decl.Type, typeParams); err != nil {
 		return nil, err
 	}
 	return fn, nil
@@ -849,7 +892,12 @@ func (c *compiler) resolveLabels() error {
 	return nil
 }
 
-func (c *compiler) setFuncMetadata(fn *taivm.Function, recv *ast.FieldList, fType *ast.FuncType) error {
+func (c *compiler) setFuncMetadata(fn *taivm.Function, recv *ast.FieldList, fType *ast.FuncType, typeParams map[string]bool) error {
+	// Temporarily set typeParams to resolve generic types correctly
+	old := c.typeParams
+	c.typeParams = typeParams
+	defer func() { c.typeParams = old }()
+
 	ft, err := c.resolveType(fType)
 	if err != nil {
 		return err
@@ -1426,7 +1474,7 @@ func (c *compiler) compileFuncLit(expr *ast.FuncLit) (*taivm.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := c.setFuncMetadata(fn, nil, expr.Type); err != nil {
+	if err := c.setFuncMetadata(fn, nil, expr.Type, typeParams); err != nil {
 		return nil, err
 	}
 	idx := c.addConst(fn)
@@ -2616,6 +2664,15 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		return err
 	}
 
+	// Update placeholder for recursive type support
+	if placeholder, ok := c.types[spec.Name.Name]; ok && placeholder.Kind == taivm.KindInvalid {
+		*placeholder = *t
+		if spec.Assign == token.NoPos {
+			placeholder.Name = spec.Name.Name
+		}
+		t = placeholder
+	}
+
 	if t.Kind == taivm.KindStruct {
 		var fields []string
 		for _, f := range t.Fields {
@@ -2644,9 +2701,11 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		return nil
 	}
 	// Defined type: type T S. Copy the type to avoid mutating shared types.
-	newT := *t
-	newT.Name = spec.Name.Name
-	t = &newT
+	if t != c.types[spec.Name.Name] {
+		newT := *t
+		newT.Name = spec.Name.Name
+		t = &newT
+	}
 	c.types[spec.Name.Name] = t
 	c.loadConst(t)
 	c.emit(taivm.OpDefVar.With(c.addConst(spec.Name.Name)))
@@ -2681,7 +2740,7 @@ func (c *compiler) resolveType(expr ast.Expr) (*taivm.Type, error) {
 		if t, ok := c.types[typeName]; ok {
 			return t, nil
 		}
-		return taivm.FromReflectType(reflect.TypeFor[any]()), nil
+		return nil, fmt.Errorf("undefined: %s", typeName)
 	case *ast.IndexExpr:
 		return c.resolveType(e.X)
 	case *ast.IndexListExpr:
@@ -2878,7 +2937,7 @@ func (c *compiler) resolveIdentType(e *ast.Ident) (*taivm.Type, error) {
 	if rt, ok := basicTypes[e.Name]; ok {
 		return taivm.FromReflectType(rt), nil
 	}
-	return taivm.FromReflectType(reflect.TypeFor[any]()), nil
+	return nil, fmt.Errorf("undefined: %s", e.Name)
 }
 
 func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, error) {

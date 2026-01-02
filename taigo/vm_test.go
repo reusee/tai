@@ -2782,3 +2782,16 @@ func TestExternalTypedVarType(t *testing.T) {
 		t.Fatalf("type mismatch, got %v", v.Type.External)
 	}
 }
+
+func TestTypeNotFound(t *testing.T) {
+	env := &Env{
+		Source: `
+		package main
+		var _ NotExists
+		`,
+	}
+	_, err := env.RunVM()
+	if err == nil {
+		t.Fatal("should error")
+	}
+}
