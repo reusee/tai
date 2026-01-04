@@ -19,10 +19,11 @@ import (
 )
 
 type rankFileInfo struct {
-	content generators.Part
-	text    string
-	tokens  int
-	score   int
+	content       generators.Part
+	text          string
+	tokens        int
+	snippetTokens int
+	score         int
 }
 
 type ActionRank struct {
@@ -93,11 +94,17 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 			go func(p generators.Part, content string) {
 				defer wg.Done()
 				tokens, _ := m1.CountTokens(content)
+				snippet := content
+				if len(snippet) > 4000 {
+					snippet = snippet[:4000]
+				}
+				snippetTokens, _ := m1.CountTokens(snippet)
 				mu.Lock()
 				files = append(files, &rankFileInfo{
-					content: p,
-					text:    content,
-					tokens:  tokens,
+					content:       p,
+					text:          content,
+					tokens:        tokens,
+					snippetTokens: snippetTokens,
 				})
 				mu.Unlock()
 			}(part, string(text))
@@ -105,27 +112,31 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 		wg.Wait()
 
 		m1Args := m1.Args()
-		maxBatchTokens := (m1Args.ContextTokens / 2)
-		if maxBatchTokens > 12000 {
+		maxBatchTokens := m1Args.ContextTokens - 8000
+		if maxBatchTokens > 200000 {
+			maxBatchTokens = 200000
+		}
+		if maxBatchTokens < 12000 {
 			maxBatchTokens = 12000
 		}
+
 		var currentBatch []*rankFileInfo
 		var currentBatchTokens int
 		var batches [][]*rankFileInfo
 		for _, f := range files {
-			if currentBatchTokens+f.tokens > maxBatchTokens && len(currentBatch) > 0 {
+			if currentBatchTokens+f.snippetTokens > maxBatchTokens && len(currentBatch) > 0 {
 				batches = append(batches, currentBatch)
 				currentBatch = nil
 				currentBatchTokens = 0
 			}
 			currentBatch = append(currentBatch, f)
-			currentBatchTokens += f.tokens
+			currentBatchTokens += f.snippetTokens
 		}
 		if len(currentBatch) > 0 {
 			batches = append(batches, currentBatch)
 		}
 
-		limit := make(chan struct{}, 8)
+		limit := make(chan struct{}, 16)
 		for _, batch := range batches {
 			wg.Add(1)
 			go func(batch []*rankFileInfo) {
@@ -146,13 +157,16 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 		if m2Args.MaxGenerateTokens != nil {
 			maxTokens -= *m2Args.MaxGenerateTokens * 2
 		}
-		maxTokens -= 2000
+		maxTokens -= 4000
 
 		var selectedParts []generators.Part
 		currentTokens := 0
 		for _, f := range files {
-			if currentTokens+f.tokens > maxTokens {
+			if f.score <= 0 && len(selectedParts) > 0 {
 				break
+			}
+			if currentTokens+f.tokens > maxTokens {
+				continue
 			}
 			selectedParts = append(selectedParts, f.content)
 			currentTokens += f.tokens
@@ -182,15 +196,13 @@ func (a ActionRank) scoreBatch(ctx context.Context, m generators.Generator, goal
 	if len(files) == 0 {
 		return
 	}
-	mArgs := m.Args()
-	maxInputTokens := mArgs.ContextTokens - 2000
 	prompt := fmt.Sprintf("Goal: %s\nRate the relevance of each code snippet below from 0 (irrelevant) to 100 (critical) based on the goal.\nRespond with scores in the format 'ID: Score', one per line. No other text.\n\n", goal)
 	for i, f := range files {
-		content := f.text
-		if f.tokens > maxInputTokens {
-			content = content[:maxInputTokens*3]
+		snippet := f.text
+		if len(snippet) > 4000 {
+			snippet = snippet[:4000] + "\n(truncated...)"
 		}
-		prompt += fmt.Sprintf("ID %d:\n%s\n\n", i, content)
+		prompt += fmt.Sprintf("ID %d:\n%s\n\n", i, snippet)
 	}
 	var state generators.State
 	state = generators.NewPrompts(prompt, nil)
