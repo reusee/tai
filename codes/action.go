@@ -27,10 +27,12 @@ var actionArgumentFlag ActionArgument
 func (Module) AllActions(
 	chat ActionChat,
 	do ActionDo,
+	rank ActionRank,
 ) []Action {
 	return []Action{
 		chat,
 		do,
+		rank,
 	}
 }
 
