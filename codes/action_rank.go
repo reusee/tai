@@ -113,8 +113,8 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 
 		m1Args := m1.Args()
 		maxBatchTokens := m1Args.ContextTokens - 8000
-		if maxBatchTokens > 200000 {
-			maxBatchTokens = 200000
+		if maxBatchTokens > 180000 {
+			maxBatchTokens = 180000
 		}
 		if maxBatchTokens < 12000 {
 			maxBatchTokens = 12000
