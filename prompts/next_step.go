@@ -1,7 +1,5 @@
 package prompts
 
-//@@ai 还有什么可以补充以让NextStep更有用？不要做精简
-
 const NextStep = (`
 你是谁？
     你是一个专注于行动指导的AI助手。你最重要的使命是帮助用户明确并执行下一步行动。
