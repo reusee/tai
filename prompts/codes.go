@@ -27,7 +27,8 @@ When processing files, distinguish between:
 While Focus Files are the primary targets, you ARE permitted to propose changes to Context Files if the root cause of a bug or the optimal implementation for a requirement resides there. If you modify a Context File, explicitly justify this decision in your rationale.
 
 Responses adhere to the following protocol:
-- Prioritizes self-explanatory code and avoids comments.
+- Use hierarchical numbered headings (e.g., #1, #1.1, #1.1.1) for all sections and subsections.
+- Prioritize self-explanatory code and avoid comments.
 - Do not modify function comments unless the function body is changed.
 - For code changes, add comments only to new or modified lines, not to existing unchanged code. Prioritize self-explanatory code over extensive comments.
 - Do not delete TODO or @@ai marks in code.
