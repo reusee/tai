@@ -92,25 +92,24 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 }
 
 func applyHunk(h Hunk) error {
-	fset := token.NewFileSet()
 	src, err := os.ReadFile(h.FilePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	fset := token.NewFileSet()
 	var f *ast.File
+	var prefixLen int
 	if len(src) > 0 {
-		f, err = parser.ParseFile(fset, h.FilePath, src, parser.ParseComments)
+		f, prefixLen, err = parseGoSource(fset, h.FilePath, src)
 		if err != nil {
 			return err
 		}
 	}
-	start, end, err := findTargetRange(fset, f, h, len(src))
+	start, end, err := findTargetRange(fset, f, h, len(src), prefixLen)
 	if err != nil {
 		if h.Op == "MODIFY" {
-			// fallback to append if not found
 			start, end = len(src), len(src)
 		} else if h.Op == "DELETE" {
-			// no-op if not found
 			return nil
 		} else {
 			return err
@@ -137,19 +136,30 @@ func applyHunk(h Hunk) error {
 	case "ADD_AFTER":
 		newSrc = append(src[:end], append([]byte("\n\n"+body), src[end:]...)...)
 	}
-	formatted, err := format.Source(newSrc)
+
+	outputSrc := newSrc
+	outputPrefixLen := 0
+	if !hasPackage(newSrc) {
+		outputSrc = append([]byte("package p\n"), newSrc...)
+		outputPrefixLen = len("package p\n")
+	}
+	formatted, err := format.Source(outputSrc)
 	if err != nil {
 		return fmt.Errorf("format failed: %w", err)
 	}
+	if outputPrefixLen > 0 {
+		formatted = formatted[outputPrefixLen:]
+	}
+
 	if dir := filepath.Dir(h.FilePath); dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(h.FilePath, formatted, 0644)
+	return os.WriteFile(h.FilePath, bytes.TrimSpace(formatted), 0644)
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int) (int, int, error) {
+func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int, prefixLen int) (int, int, error) {
 	if h.Target == "BEGIN" {
 		return 0, 0, nil
 	}
@@ -169,6 +179,9 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int) (in
 		if !match {
 			continue
 		}
+		start -= prefixLen
+		end -= prefixLen
+
 		if h.Op == "MODIFY" && bodyKind != "" {
 			declKind := getDeclKind(decl)
 			if declKind != bodyKind {
@@ -268,6 +281,27 @@ func getDeclKind(decl ast.Decl) string {
 		}
 	}
 	return ""
+}
+
+func parseGoSource(fset *token.FileSet, filename string, src []byte) (*ast.File, int, error) {
+	f, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
+	if err == nil {
+		return f, 0, nil
+	}
+	if !hasPackage(src) {
+		prefix := "package p\n"
+		newSrc := append([]byte(prefix), src...)
+		f, err = parser.ParseFile(fset, filename, newSrc, parser.ParseComments)
+		if err == nil {
+			return f, len(prefix), nil
+		}
+	}
+	return nil, 0, err
+}
+
+func hasPackage(src []byte) bool {
+	trimmed := bytes.TrimLeft(src, " \t\n\r")
+	return bytes.HasPrefix(trimmed, []byte("package "))
 }
 
 func stripPackage(body string) string {
