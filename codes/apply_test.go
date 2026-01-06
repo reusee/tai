@@ -261,3 +261,45 @@ func Foo() {
 		t.Errorf("content not updated:\n%s", s)
 	}
 }
+
+func TestApplyHunksBodyEndCalculation(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old value")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	// The body ends with a character before the closing bracket
+	// Bug would truncate the last character 'x'
+	aiContent := []byte(`[[[ MODIFY Foo IN ` + targetFile + `
+func Foo() {
+	println("new value x")
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, `"new value x"`) {
+		t.Errorf("last character of body was truncated: %s", s)
+	}
+	if strings.Contains(s, `"new value "`) && !strings.Contains(s, `"new value x"`) {
+		t.Errorf("trailing 'x' is missing due to bug")
+	}
+}

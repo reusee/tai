@@ -69,7 +69,7 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 					end = footerOffset + len(lines[j])
 					h.Raw = string(content[start:end])
 					bodyStart := start + len(line) + 1
-					bodyEnd := footerOffset - 1
+					bodyEnd := footerOffset
 					if bodyEnd > bodyStart {
 						h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
 					}
