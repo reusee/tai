@@ -110,20 +110,26 @@ func applyHunk(h Hunk) error {
 			return err
 		}
 	}
+
+	body := h.Body
+	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
+		body = stripPackage(body)
+	}
+
 	var newSrc []byte
 	switch h.Op {
 	case "MODIFY":
-		body := []byte(h.Body)
+		bodyBytes := []byte(body)
 		if start == end && start == len(src) && len(src) > 0 {
-			body = append([]byte("\n\n"), body...)
+			bodyBytes = append([]byte("\n\n"), bodyBytes...)
 		}
-		newSrc = append(src[:start], append(body, src[end:]...)...)
+		newSrc = append(src[:start], append(bodyBytes, src[end:]...)...)
 	case "DELETE":
 		newSrc = append(src[:start], src[end:]...)
 	case "ADD_BEFORE":
-		newSrc = append(src[:start], append([]byte(h.Body+"\n\n"), src[start:]...)...)
+		newSrc = append(src[:start], append([]byte(body+"\n\n"), src[start:]...)...)
 	case "ADD_AFTER":
-		newSrc = append(src[:end], append([]byte("\n\n"+h.Body), src[end:]...)...)
+		newSrc = append(src[:end], append([]byte("\n\n"+body), src[end:]...)...)
 	}
 	formatted, err := format.Source(newSrc)
 	if err != nil {
@@ -221,7 +227,10 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, boo
 
 func getHunkBodyKind(body string) string {
 	fset := token.NewFileSet()
-	src := "package p\n" + body
+	src := body
+	if !strings.HasPrefix(strings.TrimLeft(body, " \t\n\r"), "package ") {
+		src = "package p\n" + body
+	}
 	f, err := parser.ParseFile(fset, "", src, 0)
 	if err != nil || len(f.Decls) == 0 {
 		return ""
@@ -253,4 +262,29 @@ func getDeclKind(decl ast.Decl) string {
 		}
 	}
 	return ""
+}
+
+func stripPackage(body string) string {
+	if !strings.HasPrefix(strings.TrimLeft(body, " \t\n\r"), "package ") {
+		return body
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", body, parser.ParseComments)
+	if err != nil || len(f.Decls) == 0 {
+		return body
+	}
+	firstDecl := f.Decls[0]
+	var startPos token.Pos = firstDecl.Pos()
+	switch d := firstDecl.(type) {
+	case *ast.FuncDecl:
+		if d.Doc != nil {
+			startPos = d.Doc.Pos()
+		}
+	case *ast.GenDecl:
+		if d.Doc != nil {
+			startPos = d.Doc.Pos()
+		}
+	}
+	offset := fset.Position(startPos).Offset
+	return strings.TrimSpace(body[offset:])
 }
