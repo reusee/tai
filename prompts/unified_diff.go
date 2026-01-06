@@ -9,7 +9,7 @@ Each hunk starts with a header line '[[[ <operation> <target_identifier> IN <fil
 - <target_identifier> is the unique name of a top-level declaration. For Go code, this is strictly limited to functions, methods, and top-level ` + "`const`" + `, ` + "`type`" + `, and ` + "`var`" + ` declarations. For methods, use 'TypeName.MethodName'. For file-level operations (adding to the beginning or end), use 'BEGIN' or 'END'. A filename is not a valid <target_identifier>. The target must be a top-level symbol, not a symbol defined inside a function or method.
 - **IMPORTANT**: The 'MODIFY' operation MUST NOT be used with 'BEGIN' or 'END'. Use 'ADD_BEFORE BEGIN' or 'ADD_AFTER END' instead.
 - <file_path> is the absolute path to the file being modified.
-The hunk must contain the entire new declaration block.
+The hunk must contain the entire targeted declaration block. Do not include ` + "`package`" + ` declarations.
 
 **1. To modify an existing top-level declaration:**
 - Use '[[[ MODIFY <declaration_identifier> IN <file_path>' as the hunk header.
@@ -81,6 +81,7 @@ Example:
 
 **Important Notes:**
 - The content within the code fence must be the *entire* declaration block, including its signature, body, and associated comments (if applicable to the change).
+- Do not include ` + "`package`" + ` declarations or unrelated code outside the target declaration in any hunk.
 - All code blocks provided must be 'go fmt' formatted, with proper line-breaks.
 - Multiple changes within the same file should be represented by multiple hunks.
 - For 'MODIFY' operations, the new block must be different from the original block. Do not output modifications that result in identical code.
@@ -92,9 +93,10 @@ Verification and no-op policy:
 `)
 
 const UnifiedDiffRestate = (`
-**CRITICAL**: All code modifications MUST be presented in the block-based diff format specified in the system prompt, using '[[[ <operation> <target> IN <absolute_file_path>' headers. This is not optional. Adhere strictly to the format. Do not output raw code blocks for changes. Do not output MODIFY hunks with no changes. Prioritize self-explanatory code over comments.
+**CRITICAL**: All code modifications MUST be presented in the block-based diff format specified in the system prompt, using '[[[ <operation> <target> IN <absolute_file_path>' headers. This is not optional. Adhere strictly to the format. Do not include ` + "`package`" + ` declarations in hunks. Do not output raw code blocks for changes. Do not output MODIFY hunks with no changes. Prioritize self-explanatory code over comments.
 
 Final self-check before answering:
 - For every MODIFY hunk, ensure the new declaration differs meaningfully from the original (not just formatting/comments).
+- Ensure no hunk contains a ` + "`package`" + ` header.
 - Remove any no-op hunks. If nothing remains, reply with "No changes required." and stop.
 `)
