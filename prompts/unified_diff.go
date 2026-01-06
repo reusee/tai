@@ -85,6 +85,7 @@ Example:
 - All code blocks provided must be 'go fmt' formatted, with proper line-breaks.
 - Multiple changes within the same file should be represented by multiple hunks.
 - For 'MODIFY' operations, the new block must be different from the original block. Do not output modifications that result in identical code.
+- Do not remove defensive checks, boundary condition handling, or specialized error logic unless they are proven to be unreachable or incorrect. Refactoring for brevity must not sacrifice robustness.
 
 Verification and no-op policy:
 - Whitespace-only or formatting-only changes are not valid unless explicitly requested.
