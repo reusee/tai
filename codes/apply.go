@@ -22,7 +22,7 @@ type Hunk struct {
 	Raw      string
 }
 
-var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN (\S+)`)
+var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN ("[^"]*"|'[^']*'|\S+)`)
 
 // ApplyHunks processes hunks from a file and applies them to the source.
 func ApplyHunks(aiFilePath string) error {
@@ -54,7 +54,13 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 		if m := headerRegexp.FindSubmatchIndex(line); m != nil {
 			h.Op = string(line[m[4]:m[5]])
 			h.Target = string(line[m[6]:m[7]])
-			h.FilePath = string(line[m[8]:m[9]])
+			filePathMatch := string(line[m[8]:m[9]])
+			// Remove surrounding quotes if present
+			if len(filePathMatch) >= 2 && (filePathMatch[0] == '"' || filePathMatch[0] == '\'') && filePathMatch[0] == filePathMatch[len(filePathMatch)-1] {
+				h.FilePath = filePathMatch[1 : len(filePathMatch)-1]
+			} else {
+				h.FilePath = filePathMatch
+			}
 			start = startOffset
 			if bytes.Contains(line, []byte("]]]")) {
 				end = start + len(line)

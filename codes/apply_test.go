@@ -262,6 +262,43 @@ func Foo() {
 	}
 }
 
+func TestApplyHunksPathWithSpaces(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	// File path with spaces must be quoted
+	aiContent := []byte(`[[[ MODIFY Foo IN "` + targetFile + `"
+func Foo() {
+	println("new")
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(aiFile); err != nil {
+		t.Fatalf("ApplyHunks failed: %v", err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(newContent), "new") {
+		t.Errorf("content not updated: %s", string(newContent))
+	}
+}
+
 func TestApplyHunksBodyEndCalculation(t *testing.T) {
 	tmpDir := t.TempDir()
 	targetFile := filepath.Join(tmpDir, "test.go")
