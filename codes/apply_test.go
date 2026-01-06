@@ -10,6 +10,13 @@ import (
 
 func TestApplyHunksMethodNameOnly(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -33,7 +40,7 @@ func (t T) Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,6 +55,13 @@ func (t T) Foo() {
 
 func TestApplyHunksReplaceComments(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -69,7 +83,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,6 +102,13 @@ func Foo() {
 
 func TestApplyHunksNewFile(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "new_dir", "new_file.go")
 	aiFile := filepath.Join(tmpDir, "test.AI")
 	aiContent := []byte(`[[[ ADD_BEFORE BEGIN IN ` + targetFile + `
@@ -98,7 +119,7 @@ func New() {}
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(targetFile)
@@ -112,6 +133,13 @@ func New() {}
 
 func TestApplyHunksAmbiguousName(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -137,7 +165,7 @@ func (t T) Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,6 +184,13 @@ func (t T) Foo() {
 
 func TestApplyHunksModifyNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -173,7 +208,7 @@ func NonExistent() {
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	newContent, err := os.ReadFile(targetFile)
@@ -191,6 +226,13 @@ func NonExistent() {
 
 func TestApplyHunksDeleteNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -204,7 +246,7 @@ func Existing() {}
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	newContent, err := os.ReadFile(targetFile)
@@ -222,6 +264,13 @@ func Existing() {}
 
 func TestApplyHunksWithPackageDeclaration(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -245,7 +294,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,6 +313,13 @@ func Foo() {
 
 func TestApplyHunksPathWithSpaces(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -286,7 +342,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatalf("ApplyHunks failed: %v", err)
 	}
 
@@ -301,6 +357,13 @@ func Foo() {
 
 func TestApplyHunksBodyEndCalculation(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`package test
 
@@ -314,7 +377,6 @@ func Foo() {
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
 	// The body ends with a character before the closing bracket
-	// Bug would truncate the last character 'x'
 	aiContent := []byte(`[[[ MODIFY Foo IN ` + targetFile + `
 func Foo() {
 	println("new value x")
@@ -324,7 +386,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,6 +405,13 @@ func Foo() {
 
 func TestApplyHunksNoPackage(t *testing.T) {
 	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetFile := filepath.Join(tmpDir, "test.go")
 	content := []byte(`func Foo() {
 	println("old")
@@ -362,7 +431,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(aiFile); err != nil {
+	if err := ApplyHunks(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 

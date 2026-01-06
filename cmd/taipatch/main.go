@@ -12,7 +12,12 @@ func main() {
 	if len(os.Args) > 1 {
 		target = os.Args[1]
 	}
-	if err := codes.ApplyHunks(target); err != nil {
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := codes.ApplyHunks(root, target); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

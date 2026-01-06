@@ -24,8 +24,7 @@ type Hunk struct {
 
 var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN ("[^"]*"|'[^']*'|\S+)`)
 
-// ApplyHunks processes hunks from a file and applies them to the source.
-func ApplyHunks(aiFilePath string) error {
+func ApplyHunks(root *os.Root, aiFilePath string) error {
 	for {
 		content, err := os.ReadFile(aiFilePath)
 		if err != nil {
@@ -35,7 +34,7 @@ func ApplyHunks(aiFilePath string) error {
 		if !ok {
 			break
 		}
-		if err := applyHunk(h); err != nil {
+		if err := applyHunk(root, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
 		// Remove the successfully applied hunk from the file content
@@ -91,8 +90,24 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	return
 }
 
-func applyHunk(h Hunk) error {
-	src, err := os.ReadFile(h.FilePath)
+func applyHunk(root *os.Root, h Hunk) error {
+	path := h.FilePath
+	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("path outside of current directory: %s", path)
+		}
+		path = rel
+	}
+	if strings.HasPrefix(filepath.Clean(path), "..") { // Proactively block directory escape
+		return fmt.Errorf("path escapes current directory: %s", path)
+	}
+
+	src, err := root.ReadFile(path) // Use os.Root for safe reading
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -100,7 +115,7 @@ func applyHunk(h Hunk) error {
 	var f *ast.File
 	var prefixLen int
 	if len(src) > 0 {
-		f, prefixLen, err = parseGoSource(fset, h.FilePath, src)
+		f, prefixLen, err = parseGoSource(fset, path, src)
 		if err != nil {
 			return err
 		}
@@ -151,12 +166,30 @@ func applyHunk(h Hunk) error {
 		formatted = formatted[outputPrefixLen:]
 	}
 
-	if dir := filepath.Dir(h.FilePath); dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := rootMkdirAll(root, dir, 0755); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(h.FilePath, bytes.TrimSpace(formatted), 0644)
+	return root.WriteFile(path, bytes.TrimSpace(formatted), 0644) // Use os.Root for safe writing
+}
+
+func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
+	path = filepath.Clean(path)
+	if path == "." || path == "/" || path == "" {
+		return nil
+	}
+	err := root.Mkdir(path, perm) // Try creating directly
+	if err == nil || os.IsExist(err) {
+		return nil
+	}
+	parent := filepath.Dir(path)
+	if parent != path {
+		if err := rootMkdirAll(root, parent, perm); err != nil {
+			return err
+		}
+	}
+	return root.Mkdir(path, perm)
 }
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int, prefixLen int) (int, int, error) {
