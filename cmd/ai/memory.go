@@ -175,13 +175,14 @@ func (Module) Memory(
 type UpdateMemoryFunc *generators.Func
 
 func (Module) UpdateMemoryFunc(
+	currentMemory CurrentMemory,
 	appendMemory AppendMemory,
 	generator generators.Generator,
 ) UpdateMemoryFunc {
 	return &generators.Func{
 		Decl: generators.FuncDecl{
-			Name:        "set_user_profile",
-			Description: "update user profile",
+			Name:        "update_user_profile",
+			Description: "update user profile with new or changed information",
 			Params: generators.Vars{
 				{
 					Name:        "items",
@@ -195,14 +196,43 @@ func (Module) UpdateMemoryFunc(
 		},
 		Func: func(args map[string]any) (map[string]any, error) {
 			var items []string
-			for _, v := range args["items"].([]any) {
-				items = append(items, v.(string))
+			if v, ok := args["items"].([]any); ok {
+				for _, val := range v {
+					items = append(items, val.(string))
+				}
 			}
+			current, err := currentMemory()
+			if err != nil {
+				return nil, err
+			}
+			var currentItems []string
+			if current != nil {
+				currentItems = current.Items
+			}
+
+			// Start with the items provided by the model
+			finalItems := slices.Clone(items)
+
+			// Ensure no deletions: verify every current item is still present
+			for _, currentItem := range currentItems {
+				found := false
+				for _, item := range items {
+					if item == currentItem {
+						found = true
+						break
+					}
+				}
+				// If missing, add it back to ensure history preservation
+				if !found {
+					finalItems = append(finalItems, currentItem)
+				}
+			}
+
 			model := filepath.Base(generator.Args().Model)
 			if err := appendMemory(&MemoryEntry{
 				Time:  time.Now(),
 				Model: model,
-				Items: items,
+				Items: finalItems,
 			}); err != nil {
 				return nil, err
 			}
