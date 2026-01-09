@@ -32,6 +32,7 @@ type compiler struct {
 	generics       map[string]bool // Top-level generic names
 	typeParams     map[string]bool // Current function/type parameters
 	structFields   map[string][]string
+	structEmbedded map[string][]string
 	types          map[string]*taivm.Type
 	globals        map[string]*taivm.Type
 }
@@ -67,13 +68,14 @@ var basicTypes = map[string]reflect.Type{
 
 func newCompiler() *compiler {
 	return &compiler{
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		structFields: make(map[string][]string),
-		types:        make(map[string]*taivm.Type),
-		globals:      make(map[string]*taivm.Type),
+		consts:         make(map[any]int),
+		locals:         make(map[string]variable),
+		labels:         make(map[string]int),
+		unresolved:     make(map[string][]int),
+		structFields:   make(map[string][]string),
+		structEmbedded: make(map[string][]string),
+		types:          make(map[string]*taivm.Type),
+		globals:        make(map[string]*taivm.Type),
 	}
 }
 
@@ -301,10 +303,16 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 			}
 			if rt.Kind() == reflect.Struct {
 				var fields []string
+				var embedded []string
 				for i := 0; i < rt.NumField(); i++ {
-					fields = append(fields, rt.Field(i).Name)
+					f := rt.Field(i)
+					fields = append(fields, f.Name)
+					if f.Anonymous {
+						embedded = append(embedded, f.Name)
+					}
 				}
 				c.structFields[name] = fields
+				c.structEmbedded[name] = embedded
 			}
 			continue
 		}
@@ -313,10 +321,15 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 		}
 		if st.Kind == taivm.KindStruct {
 			var fields []string
+			var embedded []string
 			for _, f := range st.Fields {
 				fields = append(fields, f.Name)
+				if f.Anonymous {
+					embedded = append(embedded, f.Name)
+				}
 			}
 			c.structFields[name] = fields
+			c.structEmbedded[name] = embedded
 		}
 	}
 	for name, t := range externalValueTypes {
@@ -703,17 +716,31 @@ func (c *compiler) compileFuncDecl(decl *ast.FuncDecl) error {
 		recv := decl.Recv.List[0]
 		var typeName string
 		var isPointer bool
-		t := recv.Type
-		if star, ok := t.(*ast.StarExpr); ok {
+		recvTypeExpr := recv.Type
+		if star, ok := recvTypeExpr.(*ast.StarExpr); ok {
 			isPointer = true
-			t = star.X
+			recvTypeExpr = star.X
 		}
-		typeName, _ = c.extractTypeName(t)
+		typeName, _ = c.extractTypeName(recvTypeExpr)
 		if typeName != "" {
 			if isPointer {
 				name = "*" + typeName + "." + name
 			} else {
 				name = typeName + "." + name
+			}
+			if typ, ok := c.types[typeName]; ok {
+				ft, _ := c.resolveType(decl.Type)
+				ptrType := taivm.PointerTo(typ)
+				if ptrType.Methods == nil {
+					ptrType.Methods = make(map[string]*taivm.Type)
+				}
+				ptrType.Methods[decl.Name.Name] = ft
+				if !isPointer {
+					if typ.Methods == nil {
+						typ.Methods = make(map[string]*taivm.Type)
+					}
+					typ.Methods[decl.Name.Name] = ft
+				}
 			}
 		}
 	}
@@ -843,6 +870,7 @@ func (c *compiler) compileFunctionBody(name string, recv *ast.FieldList, fType *
 	sub.generics = c.generics
 	sub.typeParams = typeParams
 	sub.structFields = c.structFields
+	sub.structEmbedded = c.structEmbedded
 	sub.types = c.types
 	sub.globals = c.globals
 
@@ -908,7 +936,8 @@ func (c *compiler) setFuncMetadata(fn *taivm.Function, recv *ast.FieldList, fTyp
 		if err != nil {
 			return err
 		}
-		ft.In = append([]*taivm.Type{rt}, ft.In...)
+		in := append([]*taivm.Type{rt}, ft.In...)
+		ft = taivm.FuncOf(in, ft.Out, ft.Variadic)
 	}
 	fn.Type = ft
 	fn.ParamNames = c.getFuncParamNames(recv, fType)
@@ -1637,7 +1666,15 @@ func (c *compiler) compileStructLit(expr *ast.CompositeLit, t ast.Expr) error {
 		}
 	}
 	c.loadConst(typeName)
-	c.loadConst(&taivm.List{Immutable: true})
+	embedded := c.structEmbedded[typeName]
+	embeddedElements := make([]any, len(embedded))
+	for i, e := range embedded {
+		embeddedElements[i] = e
+	}
+	c.loadConst(&taivm.List{
+		Elements:  embeddedElements,
+		Immutable: true,
+	})
 	c.emit(taivm.OpMakeStruct.With(numElts))
 	return nil
 }
@@ -2450,17 +2487,18 @@ func (c *compiler) compileDeferStmt(stmt *ast.DeferStmt) error {
 
 	// 4. Compile the closure body using the synthetic call
 	sub := &compiler{
-		name:         "defer",
-		isFunc:       true,
-		consts:       make(map[any]int),
-		locals:       make(map[string]variable),
-		labels:       make(map[string]int),
-		unresolved:   make(map[string][]int),
-		generics:     c.generics,
-		typeParams:   c.typeParams,
-		structFields: c.structFields,
-		types:        c.types,
-		globals:      c.globals,
+		name:           "defer",
+		isFunc:         true,
+		consts:         make(map[any]int),
+		locals:         make(map[string]variable),
+		labels:         make(map[string]int),
+		unresolved:     make(map[string][]int),
+		generics:       c.generics,
+		typeParams:     c.typeParams,
+		structFields:   c.structFields,
+		structEmbedded: c.structEmbedded,
+		types:          c.types,
+		globals:        c.globals,
 	}
 	if err := sub.compileExprStmt(&ast.ExprStmt{X: syntheticCall}); err != nil {
 		return err
@@ -2646,12 +2684,13 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	sub := c
 	if spec.TypeParams != nil && len(spec.TypeParams.List) > 0 {
 		sub = &compiler{
-			name:         spec.Name.Name,
-			consts:       make(map[any]int),
-			generics:     c.generics,
-			typeParams:   make(map[string]bool),
-			structFields: c.structFields,
-			types:        c.types,
+			name:           spec.Name.Name,
+			consts:         make(map[any]int),
+			generics:       c.generics,
+			typeParams:     make(map[string]bool),
+			structFields:   c.structFields,
+			structEmbedded: c.structEmbedded,
+			types:          c.types,
 		}
 		for _, field := range spec.TypeParams.List {
 			for _, name := range field.Names {
@@ -2669,16 +2708,24 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		*placeholder = *t
 		if spec.Assign == token.NoPos {
 			placeholder.Name = spec.Name.Name
+			if t.Kind != taivm.KindInterface { // Interface methods are its definition, not inherited
+				placeholder.Methods = nil // Defined types do not inherit methods
+			}
 		}
 		t = placeholder
 	}
 
 	if t.Kind == taivm.KindStruct {
 		var fields []string
+		var embedded []string
 		for _, f := range t.Fields {
 			fields = append(fields, f.Name)
+			if f.Anonymous {
+				embedded = append(embedded, f.Name)
+			}
 		}
 		c.structFields[spec.Name.Name] = fields
+		c.structEmbedded[spec.Name.Name] = embedded
 	} else if t.Kind == taivm.KindExternal {
 		rt := t.External
 		if rt.Kind() == reflect.Pointer {
@@ -2686,10 +2733,16 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		}
 		if rt.Kind() == reflect.Struct {
 			var fields []string
+			var embedded []string
 			for i := 0; i < rt.NumField(); i++ {
-				fields = append(fields, rt.Field(i).Name)
+				f := rt.Field(i)
+				fields = append(fields, f.Name)
+				if f.Anonymous {
+					embedded = append(embedded, f.Name)
+				}
 			}
 			c.structFields[spec.Name.Name] = fields
+			c.structEmbedded[spec.Name.Name] = embedded
 		}
 	}
 
@@ -2704,6 +2757,9 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 	if t != c.types[spec.Name.Name] {
 		newT := *t
 		newT.Name = spec.Name.Name
+		if t.Kind != taivm.KindInterface {
+			newT.Methods = nil // Defined types do not inherit methods
+		}
 		t = &newT
 	}
 	c.types[spec.Name.Name] = t
@@ -2921,6 +2977,14 @@ func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, erro
 			t, err := c.resolveType(field.Type)
 			if err != nil {
 				return nil, err
+			}
+			if len(field.Names) == 0 { // Embedded interface
+				if t.Kind == taivm.KindInterface {
+					for k, v := range t.Methods {
+						methods[k] = v
+					}
+				}
+				continue
 			}
 			for _, name := range field.Names {
 				methods[name.Name] = t
