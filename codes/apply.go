@@ -24,7 +24,27 @@ type Hunk struct {
 
 var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN ("[^"]*"|'[^']*'|\S+)`)
 
+func getModuleRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return cwd
+}
+
 func ApplyHunks(root *os.Root, aiFilePath string) error {
+	mRoot := getModuleRoot()
 	for {
 		content, err := os.ReadFile(aiFilePath)
 		if err != nil {
@@ -34,7 +54,7 @@ func ApplyHunks(root *os.Root, aiFilePath string) error {
 		if !ok {
 			break
 		}
-		if err := applyHunk(root, h); err != nil {
+		if err := applyHunk(root, mRoot, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
 		// Remove the successfully applied hunk from the file content
@@ -90,21 +110,28 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	return
 }
 
-func applyHunk(root *os.Root, h Hunk) error {
+func applyHunk(root *os.Root, mRoot string, h Hunk) error {
 	path := h.FilePath
-	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = filepath.Clean(path)
+	} else {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(cwd, path)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return fmt.Errorf("path outside of current directory: %s", path)
-		}
-		path = rel
+		absPath = filepath.Join(cwd, path)
 	}
-	if strings.HasPrefix(filepath.Clean(path), "..") { // Proactively block directory escape
-		return fmt.Errorf("path escapes current directory: %s", path)
+	rel, err := filepath.Rel(mRoot, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		// Skip hunks outside of the module (dependencies)
+		return nil
+	}
+	path = rel
+
+	// Skip vendor
+	if strings.HasPrefix(path, "vendor/") || strings.Contains(path, "/vendor/") {
+		return nil
 	}
 
 	src, err := root.ReadFile(path) // Use os.Root for safe reading
