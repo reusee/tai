@@ -31,6 +31,9 @@ type ActionRank struct {
 	GetPlanGenerator dscope.Inject[GetPlanGenerator]
 	GetCodeGenerator dscope.Inject[GetCodeGenerator]
 	CodeProvider     dscope.Inject[codetypes.CodeProvider]
+	DiffHandler      dscope.Inject[codetypes.DiffHandler]
+	SystemPrompt     dscope.Inject[SystemPrompt]
+	MaxTokens        dscope.Inject[taiconfigs.MaxTokens]
 	Patterns         dscope.Inject[Patterns]
 	BuildGenerate    dscope.Inject[phases.BuildGenerate]
 	BuildChat        dscope.Inject[phases.BuildChat]
@@ -93,12 +96,12 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 			wg.Add(1)
 			go func(p generators.Part, content string) {
 				defer wg.Done()
-				tokens, _ := m1.CountTokens(content)
+				tokens, _ := m2.CountTokens(content) // Count for the final code model
 				snippet := content
 				if len(snippet) > 4000 {
 					snippet = snippet[:4000]
 				}
-				snippetTokens, _ := m1.CountTokens(snippet)
+				snippetTokens, _ := m1.CountTokens(snippet) // Count for the planning model
 				mu.Lock()
 				files = append(files, &rankFileInfo{
 					content:       p,
@@ -152,12 +155,28 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 			return files[i].score > files[j].score
 		})
 
+		// Calculate available budget for code model (m2)
 		m2Args := m2.Args()
-		maxTokens := m2Args.ContextTokens
+		maxInputTokens := min(m2Args.ContextTokens, int(a.MaxTokens()))
 		if m2Args.MaxGenerateTokens != nil {
-			maxTokens -= *m2Args.MaxGenerateTokens * 2
+			maxInputTokens -= *m2Args.MaxGenerateTokens * 2
 		}
-		maxTokens -= 4000
+		sysTokens, _ := m2.CountTokens(string(a.SystemPrompt()))
+		maxInputTokens -= sysTokens
+
+		var allFuncs []*generators.Func
+		if !m2Args.DisableTools {
+			allFuncs = append(allFuncs, provider.Functions()...)
+			allFuncs = append(allFuncs, a.DiffHandler().Functions()...)
+		}
+		funcTokens, _ := countFuncsTokens(allFuncs, m2.CountTokens)
+		maxInputTokens -= funcTokens
+
+		goalText := "\n\nGoal: " + goal
+		goalTokens, _ := m2.CountTokens(goalText)
+		maxInputTokens -= goalTokens
+
+		maxTokens := maxInputTokens - 1000 // Overhead buffer
 
 		var selectedParts []generators.Part
 		currentTokens := 0
@@ -180,7 +199,7 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 
 		state, err = state.AppendContent(&generators.Content{
 			Role:  "user",
-			Parts: append(selectedParts, generators.Text("\n\nGoal: "+goal)),
+			Parts: append(selectedParts, generators.Text(goalText)),
 		})
 		if err != nil {
 			return nil, nil, err

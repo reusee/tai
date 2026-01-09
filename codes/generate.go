@@ -17,6 +17,17 @@ import (
 
 type Generate func(ctx context.Context, output io.Writer) error
 
+func countFuncsTokens(funcs []*generators.Func, count func(string) (int, error)) (int, error) {
+	if len(funcs) == 0 {
+		return 0, nil
+	}
+	data, err := json.Marshal(funcs)
+	if err != nil {
+		return 0, err
+	}
+	return count(string(data))
+}
+
 var showThoughts = cmds.Switch("-thoughts")
 
 func (Module) Generate(
@@ -45,24 +56,40 @@ func (Module) Generate(
 			"base_url", args.BaseURL,
 		)
 
-		// tokens
+		// Calculate basic limits
 		maxInputTokens := min(
 			args.ContextTokens,
 			int(maxTokens),
 		)
 		if args.MaxGenerateTokens != nil {
+			// Reserve space for reasoning and completion
 			maxInputTokens -= *args.MaxGenerateTokens * 2
 		}
+
+		// Count tokens for fixed parts
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 		if err != nil {
 			return err
 		}
-		maxUserPromptTokens := maxInputTokens - systemPromptTokens
+		var allFuncs []*generators.Func
+		if !args.DisableTools {
+			allFuncs = append(allFuncs, codeProvider.Functions()...)
+			allFuncs = append(allFuncs, diffHandler.Functions()...)
+		}
+		funcTokens, err := countFuncsTokens(allFuncs, generator.CountTokens)
+		if err != nil {
+			return err
+		}
+
+		// Calculate remaining budget for user content
+		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000 // 1000 for overhead
 		if maxUserPromptTokens <= 0 {
-			return fmt.Errorf("token limit too low, need at least %d", -maxUserPromptTokens)
+			return fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
 		logger.Info("token limits",
-			"max user prompt", maxUserPromptTokens,
+			"system", systemPromptTokens,
+			"functions", funcTokens,
+			"max user content", maxUserPromptTokens,
 		)
 
 		// user prompt
