@@ -108,9 +108,9 @@ func (v *VM) executeOther(op OpCode, inst OpCode, yield func(*Interrupt, error) 
 	case OpMakeMap:
 		return v.opMakeMap(inst, yield)
 	case OpGetIndex:
-		return v.opGetIndex(yield)
+		return v.opGetIndex(yield, 0)
 	case OpSetIndex:
-		return v.opSetIndex(yield)
+		return v.opSetIndex(yield, 0)
 	case OpSwap:
 		return v.opSwap(yield)
 	case OpDumpTrace:
@@ -136,9 +136,9 @@ func (v *VM) executeOther(op OpCode, inst OpCode, yield func(*Interrupt, error) 
 	case OpSetSlice:
 		return v.opSetSlice(yield)
 	case OpGetAttr:
-		return v.opGetAttr(yield)
+		return v.opGetAttr(yield, 0)
 	case OpSetAttr:
-		return v.opSetAttr(yield)
+		return v.opSetAttr(yield, 0)
 	case OpCallKw:
 		return v.opCallKw(inst, yield)
 	case OpListAppend:
@@ -158,15 +158,15 @@ func (v *VM) executeOther(op OpCode, inst OpCode, yield func(*Interrupt, error) 
 	case OpAddrOfAttr:
 		return v.opAddrOfAttr(yield)
 	case OpDeref:
-		return v.opDeref(yield)
+		return v.opDeref(yield, 0)
 	case OpSetDeref:
-		return v.opSetDeref(yield)
+		return v.opSetDeref(yield, 0)
 	case OpTypeAssert:
 		return v.opTypeAssert(yield)
 	case OpTypeAssertOk:
 		return v.opTypeAssertOk(yield)
 	case OpGetIndexOk:
-		return v.opGetIndexOk(yield)
+		return v.opGetIndexOk(yield, 0)
 	}
 	return true
 }
@@ -1267,7 +1267,10 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 	return true
 }
 
-func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opGetIndex(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	key := v.pop()
 	target := v.pop()
 	if target == nil {
@@ -1290,13 +1293,13 @@ func (v *VM) opGetIndex(yield func(*Interrupt, error) bool) bool {
 			}
 		}
 		v.push(p)
-		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
-			return yield(nil, fmt.Errorf("cannot deref pointer in getindex"))
+		if !v.opDeref(yield, depth+1) {
+			return false
 		}
 		derefed := v.pop()
 		v.push(derefed)
 		v.push(key)
-		return v.opGetIndex(yield)
+		return v.opGetIndex(yield, depth+1)
 	}
 	type indexer interface {
 		GetIndex(any) (any, bool)
@@ -1404,7 +1407,10 @@ func (v *VM) opGetIndexFallbacks(target, key any, yield func(*Interrupt, error) 
 	return true
 }
 
-func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	key := v.pop()
 	target := v.pop()
 	if target == nil {
@@ -1414,7 +1420,11 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 	}
 	if p, ok := target.(*Pointer); ok {
 		v.push(p)
-		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
+		success := true
+		if !v.opDeref(func(i *Interrupt, e error) bool {
+			success = false
+			return false
+		}, depth+1) && !success {
 			v.push(nil)
 			v.push(false)
 			return true
@@ -1422,7 +1432,7 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 		derefed := v.pop()
 		v.push(derefed)
 		v.push(key)
-		return v.opGetIndexOk(yield)
+		return v.opGetIndexOk(yield, depth+1)
 	}
 	switch m := target.(type) {
 	case *Struct:
@@ -1473,7 +1483,10 @@ func (v *VM) opGetIndexOk(yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opSetIndex(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	val := v.pop()
 	key := v.pop()
 	target := v.pop()
@@ -1497,14 +1510,14 @@ func (v *VM) opSetIndex(yield func(*Interrupt, error) bool) bool {
 			}
 		}
 		v.push(p)
-		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
-			return yield(nil, fmt.Errorf("cannot deref pointer in setindex"))
+		if !v.opDeref(yield, depth+1) {
+			return false
 		}
 		derefed := v.pop()
 		v.push(derefed)
 		v.push(key)
 		v.push(val)
-		return v.opSetIndex(yield)
+		return v.opSetIndex(yield, depth+1)
 	}
 	return v.opSetIndexFallbacks(target, key, val, yield)
 }
@@ -2517,7 +2530,10 @@ func (v *VM) opSetSlice(yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opGetAttr(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	if v.SP < 2 {
 		return yield(nil, fmt.Errorf("stack underflow during getattr"))
 	}
@@ -2534,7 +2550,14 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	}
 	switch t := target.(type) {
 	case *Struct:
-		return v.opGetStructAttr(t, nameStr, name, yield)
+		found, err := v.getStructAttr(t, nameStr, depth)
+		if err != nil {
+			return yield(nil, err)
+		}
+		if found {
+			return true
+		}
+		return yield(nil, fmt.Errorf("struct %s has no field or method '%s'", t.TypeName, nameStr))
 	case map[any]any:
 		v.push(t[nameStr])
 		return true
@@ -2544,14 +2567,14 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	case *List:
 		return v.opGetListAttr(t, nameStr, yield)
 	case *Pointer:
-		v.push(t)
-		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
-			return yield(nil, fmt.Errorf("cannot deref pointer in getattr"))
+		v.push(target)
+		if !v.opDeref(yield, depth+1) {
+			return false
 		}
 		derefed := v.pop()
 		v.push(derefed)
 		v.push(name)
-		return v.opGetAttr(yield)
+		return v.opGetAttr(yield, depth+1)
 	case *Type:
 		return v.opGetTypeAttr(t, nameStr, yield)
 	case reflect.Type:
@@ -2561,28 +2584,33 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 	}
 }
 
-func (v *VM) opGetStructAttr(s *Struct, nameStr string, name any, yield func(*Interrupt, error) bool) bool {
+func (v *VM) getStructAttr(s *Struct, nameStr string, depth int) (bool, error) {
+	if depth > 100 {
+		return false, fmt.Errorf("recursion depth limit exceeded")
+	}
 	if val, ok := s.Fields[nameStr]; ok {
 		v.push(val)
-		return true
+		return true, nil
 	}
 	if s.TypeName != "" {
 		if v.tryGetStructMethod(s, nameStr) {
-			return true
+			return true, nil
 		}
 	}
-	// Recursive search for promoted fields
 	for _, emb := range s.Embedded {
 		if fieldVal, ok := s.Fields[emb]; ok && fieldVal != nil {
 			if embStruct, ok := fieldVal.(*Struct); ok {
-				// Use internal call to avoid stack push/pop overhead and side effects
-				if v.opGetStructAttr(embStruct, nameStr, name, func(*Interrupt, error) bool { return true }) {
-					return true
+				found, err := v.getStructAttr(embStruct, nameStr, depth+1)
+				if err != nil {
+					return false, err
+				}
+				if found {
+					return true, nil
 				}
 			}
 		}
 	}
-	return yield(nil, fmt.Errorf("struct %s has no field or method '%s'", s.TypeName, nameStr))
+	return false, nil
 }
 
 func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error) bool) bool {
@@ -2714,7 +2742,10 @@ func (v *VM) opGetNativeField(rv reflect.Value, nameStr string, target any, yiel
 	return yield(nil, fmt.Errorf("type %T has no attributes", target))
 }
 
-func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opSetAttr(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	if v.SP < 3 {
 		if !yield(nil, fmt.Errorf("stack underflow during setattr")) {
 			return false
@@ -2742,20 +2773,12 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 
 	switch t := target.(type) {
 	case *Struct:
-		if _, ok := t.Fields[nameStr]; ok {
-			t.Fields[nameStr] = val
-			return true
+		found, err := v.setStructAttr(t, nameStr, val, depth)
+		if err != nil {
+			return yield(nil, err)
 		}
-
-		for _, emb := range t.Embedded {
-			if fieldVal, ok := t.Fields[emb]; ok && fieldVal != nil {
-				v.push(fieldVal)
-				v.push(name)
-				v.push(val)
-				if v.opSetAttr(yield) {
-					return true
-				}
-			}
+		if found {
+			return true
 		}
 		if t.Fields == nil {
 			t.Fields = make(map[string]any)
@@ -2772,8 +2795,8 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 
 	case *Pointer:
 		v.push(t)
-		if !v.opDeref(func(i *Interrupt, e error) bool { return true }) {
-			return yield(nil, fmt.Errorf("cannot deref pointer in setattr"))
+		if !v.opDeref(yield, depth+1) {
+			return false
 		}
 		derefed := v.pop()
 		rv := reflect.ValueOf(derefed)
@@ -2791,13 +2814,13 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 				}
 				v.push(t)
 				v.push(newObj.Interface())
-				return v.opSetDeref(yield)
+				return v.opSetDeref(yield, depth+1)
 			}
 		}
 		v.push(derefed)
 		v.push(name)
 		v.push(val)
-		return v.opSetAttr(yield)
+		return v.opSetAttr(yield, depth+1)
 
 	default:
 		rv := reflect.ValueOf(target)
@@ -2824,6 +2847,30 @@ func (v *VM) opSetAttr(yield func(*Interrupt, error) bool) bool {
 		}
 	}
 	return true
+}
+
+func (v *VM) setStructAttr(s *Struct, nameStr string, val any, depth int) (bool, error) {
+	if depth > 100 {
+		return false, fmt.Errorf("recursion depth limit exceeded")
+	}
+	if _, ok := s.Fields[nameStr]; ok {
+		s.Fields[nameStr] = val
+		return true, nil
+	}
+	for _, emb := range s.Embedded {
+		if fieldVal, ok := s.Fields[emb]; ok && fieldVal != nil {
+			if embStruct, ok := fieldVal.(*Struct); ok {
+				found, err := v.setStructAttr(embStruct, nameStr, val, depth+1)
+				if err != nil {
+					return false, err
+				}
+				if found {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 func (v *VM) opCallKw(inst OpCode, yield func(*Interrupt, error) bool) bool {
@@ -3275,7 +3322,10 @@ func (v *VM) opAddrOfAttr(yield func(*Interrupt, error) bool) bool {
 	return true
 }
 
-func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opDeref(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	ptr := v.pop()
 	if t, ok := ptr.(*Type); ok {
 		v.push(&Type{
@@ -3326,14 +3376,17 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	if _, ok := p.Target.(*Struct); ok {
 		v.push(p.Target)
 		v.push(p.Key)
-		return v.opGetAttr(yield)
+		return v.opGetAttr(yield, depth+1)
 	}
 	v.push(p.Target)
 	v.push(p.Key)
-	return v.opGetIndex(yield)
+	return v.opGetIndex(yield, depth+1)
 }
 
-func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
+func (v *VM) opSetDeref(yield func(*Interrupt, error) bool, depth int) bool {
+	if depth > 100 {
+		return yield(nil, fmt.Errorf("recursion depth limit exceeded"))
+	}
 	val := v.pop()
 	ptr := v.pop()
 	p, ok := ptr.(*Pointer)
@@ -3360,12 +3413,12 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 		v.push(p.Target)
 		v.push(p.Key)
 		v.push(val)
-		return v.opSetAttr(yield)
+		return v.opSetAttr(yield, depth+1)
 	}
 	v.push(p.Target)
 	v.push(p.Key)
 	v.push(val)
-	return v.opSetIndex(yield)
+	return v.opSetIndex(yield, depth+1)
 }
 
 func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
@@ -3540,7 +3593,7 @@ func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
 		return false
 	}
 	for name, targetType := range t.Methods {
-		method := v.getStructMethod(s, name)
+		method := v.getStructMethod(s, name, 0)
 		if method == nil {
 			return false
 		}
@@ -3564,7 +3617,10 @@ func (v *VM) checkStructCompatible(s *Struct, t *Type) bool {
 	return true
 }
 
-func (v *VM) getStructMethod(s *Struct, name string) any {
+func (v *VM) getStructMethod(s *Struct, name string, depth int) any {
+	if depth > 100 {
+		return nil
+	}
 	methodName := s.TypeName + "." + name
 	ptrMethodName := "*" + s.TypeName + "." + name
 	if method, ok := v.Get(methodName); ok {
@@ -3576,7 +3632,7 @@ func (v *VM) getStructMethod(s *Struct, name string) any {
 	for _, emb := range s.Embedded {
 		if fieldVal, ok := s.Fields[emb]; ok {
 			if embStruct, ok := fieldVal.(*Struct); ok {
-				if method := v.getStructMethod(embStruct, name); method != nil {
+				if method := v.getStructMethod(embStruct, name, depth+1); method != nil {
 					return method
 				}
 			}

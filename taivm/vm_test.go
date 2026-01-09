@@ -5226,3 +5226,54 @@ func TestTypeEquality(t *testing.T) {
 		t.Error("identical structs should be equal")
 	}
 }
+
+func TestVM_CyclicStruct(t *testing.T) {
+	s1 := &Struct{TypeName: "S1", Fields: make(map[string]any), Embedded: []string{"s2"}}
+	s2 := &Struct{TypeName: "S2", Fields: make(map[string]any), Embedded: []string{"s1"}}
+	s1.Fields["s2"] = s2
+	s2.Fields["s1"] = s1
+
+	vm := NewVM(&Function{
+		Constants: []any{s1, "foo"},
+		Code:      []OpCode{OpLoadConst.With(0), OpLoadConst.With(1), OpGetAttr},
+	})
+	var err error
+	vm.Run(func(_ *Interrupt, e error) bool {
+		err = e
+		return false
+	})
+	if err == nil || !strings.Contains(err.Error(), "depth limit") {
+		t.Fatalf("expected depth limit error, got %v", err)
+	}
+}
+
+func TestVM_PointerCorruption(t *testing.T) {
+	// Pointer to undefined variable in Env
+	env := &Env{}
+	p := &Pointer{Target: env, Key: "undef"}
+
+	main := &Function{
+		Constants: []any{p, "foo", 42},
+		Code: []OpCode{
+			OpLoadConst.With(2), // 42 - unrelated value
+			OpLoadConst.With(0), // p
+			OpLoadConst.With(1), // "foo"
+			OpGetAttr,           // Should fail deref
+			OpReturn,
+		},
+	}
+
+	vm := NewVM(main)
+	var err error
+	vm.Run(func(_ *Interrupt, e error) bool {
+		err = e
+		return false
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Check stack: should still contain 42 if correctly handled (no corruption)
+	if vm.SP != 1 || vm.OperandStack[0] != 42 {
+		t.Fatalf("stack corrupted: SP=%d, val=%v", vm.SP, vm.OperandStack[0])
+	}
+}
