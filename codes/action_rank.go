@@ -196,16 +196,27 @@ func (a ActionRank) scoreBatch(ctx context.Context, m generators.Generator, goal
 	if len(files) == 0 {
 		return
 	}
-	prompt := fmt.Sprintf("Goal: %s\nRate the relevance of each code snippet below from 0 (irrelevant) to 100 (critical) based on the goal.\nRespond with scores in the format 'ID: Score', one per line. No other text.\n\n", goal)
+	var snippets string
 	for i, f := range files {
 		snippet := f.text
 		if len(snippet) > 4000 {
 			snippet = snippet[:4000] + "\n(truncated...)"
 		}
-		prompt += fmt.Sprintf("ID %d:\n%s\n\n", i, snippet)
+		snippets += fmt.Sprintf("ID %d:\n%s\n\n", i, snippet)
 	}
+	instruction := fmt.Sprintf(
+		"Goal: %s\n\nRate the relevance of each code snippet above from 0 (irrelevant) to 100 (critical) based on the goal.\nRespond with scores in the format 'ID: Score', one per line. No other text.\n",
+		goal,
+	)
 	var state generators.State
-	state = generators.NewPrompts(prompt, nil)
+	state = generators.NewPrompts("", []*generators.Content{
+		{
+			Role: "user",
+			Parts: []generators.Part{
+				generators.Text(snippets + "\n" + instruction),
+			},
+		},
+	})
 	state = generators.NewOutput(state, io.Discard, false)
 	state, err := m.Generate(ctx, state, nil)
 	if err != nil {
