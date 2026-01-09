@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type TypeKind uint8
@@ -61,7 +62,62 @@ type StructField struct {
 	Anonymous bool
 }
 
+var (
+	typeCache   sync.Map // reflect.Type -> *Type
+	internCache sync.Map // string -> *Type
+)
+
+func intern(t *Type) *Type {
+	if t == nil {
+		return nil
+	}
+	// 具名类型或带有 External 引用的类型不参与基于结构的 intern
+	if t.Name != "" || t.External != nil {
+		return t
+	}
+	key := t.String()
+	if v, ok := internCache.Load(key); ok {
+		return v.(*Type)
+	}
+	v, _ := internCache.LoadOrStore(key, t)
+	return v.(*Type)
+}
+
+func PointerTo(elem *Type) *Type {
+	return intern(&Type{Kind: KindPtr, Elem: elem})
+}
+
+func SliceOf(elem *Type) *Type {
+	return intern(&Type{Kind: KindSlice, Elem: elem})
+}
+
+func MapOf(key, elem *Type) *Type {
+	return intern(&Type{Kind: KindMap, Key: key, Elem: elem})
+}
+
+func ArrayOf(elem *Type, length int) *Type {
+	return intern(&Type{Kind: KindArray, Elem: elem, Len: length})
+}
+
+func ChanOf(elem *Type) *Type {
+	return intern(&Type{Kind: KindChan, Elem: elem})
+}
+
+func FuncOf(in, out []*Type, variadic bool) *Type {
+	return intern(&Type{Kind: KindFunc, In: in, Out: out, Variadic: variadic})
+}
+
+func StructOf(fields []StructField) *Type {
+	return intern(&Type{Kind: KindStruct, Fields: fields})
+}
+
 func FromReflectType(t reflect.Type) *Type {
+	if t == nil || t.Kind() == reflect.Invalid {
+		return nil
+	}
+	if v, ok := typeCache.Load(t); ok {
+		return v.(*Type)
+	}
 	return fromReflectType(t, make(map[reflect.Type]*Type))
 }
 
@@ -69,6 +125,48 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 	if t == nil || t.Kind() == reflect.Invalid {
 		return nil
 	}
+	if v, ok := typeCache.Load(t); ok {
+		return v.(*Type)
+	}
+
+	// 匿名复合类型通过工厂方法递归规范化
+	if t.Name() == "" {
+		switch t.Kind() {
+		case reflect.Ptr:
+			return PointerTo(fromReflectType(t.Elem(), cache))
+		case reflect.Slice:
+			return SliceOf(fromReflectType(t.Elem(), cache))
+		case reflect.Map:
+			return MapOf(fromReflectType(t.Key(), cache), fromReflectType(t.Elem(), cache))
+		case reflect.Array:
+			return ArrayOf(fromReflectType(t.Elem(), cache), t.Len())
+		case reflect.Chan:
+			return ChanOf(fromReflectType(t.Elem(), cache))
+		case reflect.Func:
+			in := make([]*Type, t.NumIn())
+			for i := 0; i < t.NumIn(); i++ {
+				in[i] = fromReflectType(t.In(i), cache)
+			}
+			out := make([]*Type, t.NumOut())
+			for i := 0; i < t.NumOut(); i++ {
+				out[i] = fromReflectType(t.Out(i), cache)
+			}
+			return FuncOf(in, out, t.IsVariadic())
+		case reflect.Struct:
+			fields := make([]StructField, t.NumField())
+			for i := 0; i < t.NumField(); i++ {
+				f := t.Field(i)
+				fields[i] = StructField{
+					Name:      f.Name,
+					Type:      fromReflectType(f.Type, cache),
+					Tag:       string(f.Tag),
+					Anonymous: f.Anonymous,
+				}
+			}
+			return StructOf(fields)
+		}
+	}
+
 	if res, ok := cache[t]; ok {
 		return res
 	}
@@ -171,7 +269,8 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 		}
 	}
 
-	return res
+	actual, _ := typeCache.LoadOrStore(t, res)
+	return actual.(*Type)
 }
 
 func (t *Type) ToReflectType() reflect.Type {
@@ -382,7 +481,23 @@ func (t *Type) String() string {
 	case KindInterface:
 		return t.interfaceString()
 	case KindStruct:
-		return "struct{...}"
+		var sb strings.Builder
+		sb.WriteString("struct { ")
+		for i, f := range t.Fields {
+			if i > 0 {
+				sb.WriteString("; ")
+			}
+			if !f.Anonymous {
+				sb.WriteString(f.Name)
+				sb.WriteString(" ")
+			}
+			sb.WriteString(f.Type.String())
+			if f.Tag != "" {
+				sb.WriteString(fmt.Sprintf(" %q", f.Tag))
+			}
+		}
+		sb.WriteString(" }")
+		return sb.String()
 	}
 	return "unknown"
 }
@@ -447,3 +562,4 @@ func (t *Type) interfaceString() string {
 	sb.WriteString(" }")
 	return sb.String()
 }
+

@@ -2763,16 +2763,9 @@ func (c *compiler) resolveArrayType(e *ast.ArrayType) (*taivm.Type, error) {
 			i, _ := strconv.Atoi(lit.Value)
 			length = i
 		}
-		return &taivm.Type{
-			Kind: taivm.KindArray,
-			Elem: elt,
-			Len:  length,
-		}, nil
+		return taivm.ArrayOf(elt, length), nil
 	}
-	return &taivm.Type{
-		Kind: taivm.KindSlice,
-		Elem: elt,
-	}, nil
+	return taivm.SliceOf(elt), nil
 }
 
 func (c *compiler) resolveEllipsisType(e *ast.Ellipsis) (*taivm.Type, error) {
@@ -2783,10 +2776,7 @@ func (c *compiler) resolveEllipsisType(e *ast.Ellipsis) (*taivm.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &taivm.Type{
-		Kind: taivm.KindSlice,
-		Elem: elt,
-	}, nil
+	return taivm.SliceOf(elt), nil
 }
 
 func (c *compiler) resolveChanType(e *ast.ChanType) (*taivm.Type, error) {
@@ -2794,11 +2784,7 @@ func (c *compiler) resolveChanType(e *ast.ChanType) (*taivm.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	kind := taivm.KindChan
-	return &taivm.Type{
-		Kind: kind,
-		Elem: t,
-	}, nil
+	return taivm.ChanOf(t), nil
 }
 
 func (c *compiler) resolveMapType(e *ast.MapType) (*taivm.Type, error) {
@@ -2810,11 +2796,7 @@ func (c *compiler) resolveMapType(e *ast.MapType) (*taivm.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &taivm.Type{
-		Kind: taivm.KindMap,
-		Key:  kt,
-		Elem: vt,
-	}, nil
+	return taivm.MapOf(kt, vt), nil
 }
 
 func (c *compiler) resolveStarType(e *ast.StarExpr) (*taivm.Type, error) {
@@ -2822,10 +2804,7 @@ func (c *compiler) resolveStarType(e *ast.StarExpr) (*taivm.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &taivm.Type{
-		Kind: taivm.KindPtr,
-		Elem: t,
-	}, nil
+	return taivm.PointerTo(t), nil
 }
 
 func (c *compiler) resolveFuncType(e *ast.FuncType) (*taivm.Type, error) {
@@ -2844,12 +2823,7 @@ func (c *compiler) resolveFuncType(e *ast.FuncType) (*taivm.Type, error) {
 			variadic = true
 		}
 	}
-	return &taivm.Type{
-		Kind:     taivm.KindFunc,
-		In:       params,
-		Out:      results,
-		Variadic: variadic,
-	}, nil
+	return taivm.FuncOf(params, results, variadic), nil
 }
 
 func (c *compiler) resolveFuncFields(fields *ast.FieldList) ([]*taivm.Type, error) {
@@ -2874,7 +2848,7 @@ func (c *compiler) resolveFuncFields(fields *ast.FieldList) ([]*taivm.Type, erro
 }
 
 func (c *compiler) resolveStructType(e *ast.StructType) (*taivm.Type, error) {
-	res := &taivm.Type{Kind: taivm.KindStruct}
+	var fields []taivm.StructField
 	if e.Fields != nil {
 		for _, field := range e.Fields.List {
 			t, err := c.resolveType(field.Type)
@@ -2907,7 +2881,7 @@ func (c *compiler) resolveStructType(e *ast.StructType) (*taivm.Type, error) {
 						name = id.Name
 					}
 				}
-				res.Fields = append(res.Fields, taivm.StructField{
+				fields = append(fields, taivm.StructField{
 					Name:      name,
 					Type:      t,
 					Tag:       tag,
@@ -2915,7 +2889,7 @@ func (c *compiler) resolveStructType(e *ast.StructType) (*taivm.Type, error) {
 				})
 			}
 			for _, name := range field.Names {
-				res.Fields = append(res.Fields, taivm.StructField{
+				fields = append(fields, taivm.StructField{
 					Name:      name.Name,
 					Type:      t,
 					Tag:       tag,
@@ -2924,7 +2898,7 @@ func (c *compiler) resolveStructType(e *ast.StructType) (*taivm.Type, error) {
 			}
 		}
 	}
-	return res, nil
+	return taivm.StructOf(fields), nil
 }
 
 func (c *compiler) resolveIdentType(e *ast.Ident) (*taivm.Type, error) {

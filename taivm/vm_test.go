@@ -5188,3 +5188,41 @@ func TestVM_EnvVarType(t *testing.T) {
 		t.Fatal("type mismatch")
 	}
 }
+
+func TestTypeEquality(t *testing.T) {
+	intType1 := FromReflectType(reflect.TypeFor[int]())
+	intType2 := FromReflectType(reflect.TypeFor[int]())
+	if intType1 != intType2 {
+		t.Error("basic types should be equal")
+	}
+
+	slice1 := SliceOf(intType1)
+	slice2 := SliceOf(intType2)
+	if slice1 != slice2 {
+		t.Error("identical slices should be equal")
+	}
+
+	ptr1 := PointerTo(slice1)
+	ptr2 := PointerTo(slice2)
+	if ptr1 != ptr2 {
+		t.Error("identical pointers should be equal")
+	}
+
+	map1 := MapOf(intType1, FromReflectType(reflect.TypeFor[string]()))
+	map2 := MapOf(intType2, FromReflectType(reflect.TypeFor[string]()))
+	if map1 != map2 {
+		t.Error("identical maps should be equal")
+	}
+
+	func1 := FuncOf([]*Type{intType1}, []*Type{intType1}, false)
+	func2 := FuncOf([]*Type{intType2}, []*Type{intType2}, false)
+	if func1 != func2 {
+		t.Error("identical funcs should be equal")
+	}
+
+	struct1 := StructOf([]StructField{{Name: "A", Type: intType1}})
+	struct2 := StructOf([]StructField{{Name: "A", Type: intType2}})
+	if struct1 != struct2 {
+		t.Error("identical structs should be equal")
+	}
+}
