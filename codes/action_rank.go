@@ -16,6 +16,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/taiconfigs"
 )
 
 type rankFileInfo struct {
@@ -271,3 +272,4 @@ func (a ActionRank) scoreBatch(ctx context.Context, m generators.Generator, goal
 		}
 	}
 }
+

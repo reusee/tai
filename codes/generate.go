@@ -2,6 +2,7 @@ package codes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -178,3 +179,4 @@ func (Module) Generate(
 		return nil
 	}
 }
+
