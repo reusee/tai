@@ -3,33 +3,33 @@ module github.com/reusee/tai
 go 1.25.4
 
 require (
-	cloud.google.com/go/ai v0.14.0
-	cuelang.org/go v0.15.1
+	cloud.google.com/go/ai v0.15.0
+	cuelang.org/go v0.15.3
+	github.com/chzyer/readline v1.5.1
 	github.com/gabriel-vasile/mimetype v1.4.12
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20251220082955-2cff4b0156c3
+	github.com/reusee/dscope v0.0.0-20260107135840-0bde98d75ae3
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
-	github.com/samber/slog-multi v1.6.0
+	github.com/samber/slog-multi v1.7.0
 	github.com/systemd/slog-journal v0.1.2
 	github.com/tiktoken-go/tokenizer v0.7.0
-	go.starlark.net v0.0.0-20251222184526-15019ee33dea
+	go.starlark.net v0.0.0-20260102030733-3fee463870c9
 	golang.org/x/net v0.48.0
 	golang.org/x/term v0.38.0
 	golang.org/x/tools v0.40.0
-	google.golang.org/api v0.258.0
-	google.golang.org/genai v1.40.0
+	google.golang.org/api v0.259.0
+	google.golang.org/genai v1.41.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.17.0 // indirect
+	cloud.google.com/go/auth v0.18.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.7.0 // indirect
-	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
@@ -43,7 +43,7 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect
-	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.16.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
@@ -67,7 +67,7 @@ require (
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	google.golang.org/genproto v0.0.0-20251124214823-79d6a2a48846 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20251124214823-79d6a2a48846 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251213004720-97cd9d5aeac2 // indirect
+	google.golang.org/genproto v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
 )
