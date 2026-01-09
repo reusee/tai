@@ -93,8 +93,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/protocolbuffers/txtpbfmt v0.0.0-20251124094003-fcb97cc64c7b h1:fPVI9E6QNFYI0Ph3XpKUDrcAvbCifHvqYJcntFLPog8=
 github.com/protocolbuffers/txtpbfmt v0.0.0-20251124094003-fcb97cc64c7b/go.mod h1:JSbkp0BviKovYYt9XunS95M3mLPibE9bGg+Y95DsEEY=
-github.com/reusee/dscope v0.0.0-20260107135840-0bde98d75ae3 h1:NzPIAmtS0ZqnHvRDq2LOo25Jn7YKCNA8IHqVOxD1Y7U=
-github.com/reusee/dscope v0.0.0-20260107135840-0bde98d75ae3/go.mod h1:JtHKpPh9/rknocu2RAouG90FkXc+nPmvG5matoIrJtw=
+github.com/reusee/dscope v0.0.0-20260109153159-65c73ef6fd04 h1:P3dfUmwv41asri4wpIRLqvqqIwFZun/SwWM8lk7vM1k=
+github.com/reusee/dscope v0.0.0-20260109153159-65c73ef6fd04/go.mod h1:JtHKpPh9/rknocu2RAouG90FkXc+nPmvG5matoIrJtw=
 github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104 h1:GfPb/TN1XHHuPsaCwTt2rxXlbekrbeBzjlF0jLOuHeY=
 github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104/go.mod h1:L24cJjkVA/jMvaVhLLb1dY+S/BR48tEL2a4qFqXHXso=
 github.com/reusee/pr3 v0.0.0-20240520031754-49012a37a83e h1:zruB8DlyrCAps7tvlFcM1O/ld/KL21BSx5TcVexqUQI=

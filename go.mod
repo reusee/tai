@@ -8,7 +8,7 @@ require (
 	github.com/chzyer/readline v1.5.1
 	github.com/gabriel-vasile/mimetype v1.4.12
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260107135840-0bde98d75ae3
+	github.com/reusee/dscope v0.0.0-20260109153159-65c73ef6fd04
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.7.0
