@@ -2,7 +2,7 @@ package taivm
 
 type Function struct {
 	Name        string
-	Type        *Type
+	Type        Type
 	NumParams   int
 	ParamNames  []string
 	NumLocals   int

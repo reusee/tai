@@ -9,7 +9,7 @@ type Env struct {
 type EnvVar struct {
 	Name string
 	Val  any
-	Type *Type
+	Type Type
 }
 
 func (e *Env) Get(name string) (any, bool) {
@@ -41,7 +41,7 @@ func (e *Env) Set(name string, val any) bool {
 	return false
 }
 
-func (e *Env) DefWithType(name string, val any, typ *Type) {
+func (e *Env) DefWithType(name string, val any, typ Type) {
 	for i, v := range e.Vars {
 		if v.Name == name {
 			e.Vars[i].Val = val
@@ -56,7 +56,7 @@ func (e *Env) DefWithType(name string, val any, typ *Type) {
 	})
 }
 
-func (e *Env) SetWithType(name string, val any, typ *Type) bool {
+func (e *Env) SetWithType(name string, val any, typ Type) bool {
 	for i := len(e.Vars) - 1; i >= 0; i-- {
 		if e.Vars[i].Name == name {
 			e.Vars[i].Val = val

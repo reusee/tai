@@ -26,7 +26,7 @@ func init() {
 	gob.Register(&Range{})
 	gob.Register(&RangeIterator{})
 	gob.Register(&Interrupt{})
-	gob.Register(&Type{})
+	gob.Register(&typeImpl{})
 	gob.Register(StructField{})
 	gob.Register(TypeKind(0))
 	gob.Register(&VM{})
