@@ -5030,7 +5030,7 @@ func TestVM_IndexBounds(t *testing.T) {
 
 func TestType_String(t *testing.T) {
 	cases := []struct {
-		typ  Type
+		typ  *Type
 		want string
 	}{
 		{FromReflectType(reflect.TypeOf(0)), "int"},
@@ -5042,6 +5042,8 @@ func TestType_String(t *testing.T) {
 			Foo(int) string
 			Bar()
 		})(nil)).Elem()), "interface { Bar(); Foo(int) string }"},
+		{&Type{Kind: KindInt}, "int"},
+		{&Type{Name: "MyInt", Kind: KindInt}, "MyInt"},
 	}
 	for _, c := range cases {
 		if got := c.typ.String(); got != c.want {

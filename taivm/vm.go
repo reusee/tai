@@ -45,7 +45,7 @@ func (v *VM) Def(name string, val any) {
 	v.Scope.Def(name, val)
 }
 
-func (v *VM) DefWithType(name string, val any, typ Type) {
+func (v *VM) DefWithType(name string, val any, typ *Type) {
 	v.Scope.DefWithType(name, val, typ)
 }
 
@@ -53,7 +53,7 @@ func (v *VM) Set(name string, val any) bool {
 	return v.Scope.Set(name, val)
 }
 
-func (v *VM) SetWithType(name string, val any, typ Type) bool {
+func (v *VM) SetWithType(name string, val any, typ *Type) bool {
 	return v.Scope.SetWithType(name, val, typ)
 }
 

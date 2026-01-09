@@ -784,8 +784,8 @@ func (v *VM) opDefVar(inst OpCode) {
 	name := v.CurrentFun.Constants[arg&0x7fffff].(string)
 	// Bit 23 (the 24th bit of the 24-bit argument) is a flag for typed definition
 	if arg&(1<<23) != 0 {
-		typ := v.pop().(Type) // Pop type first
-		val := v.pop()        // Then value
+		typ := v.pop().(*Type) // Pop type first
+		val := v.pop()         // Then value
 		v.DefWithType(name, val, typ)
 	} else {
 		val := v.pop()
@@ -879,7 +879,7 @@ func (v *VM) opCall(inst OpCode, yield func(*Interrupt, error) bool) bool {
 	case NativeFunc:
 		return v.callNative(fn, argc, calleeIdx, yield)
 
-	case Type:
+	case *Type:
 		return v.callTypeConversion(fn, argc, calleeIdx, yield)
 
 	case reflect.Type:
@@ -1046,7 +1046,7 @@ func (v *VM) callNative(fn NativeFunc, argc, calleeIdx int, yield func(*Interrup
 	return true
 }
 
-func (v *VM) callTypeConversion(t Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
+func (v *VM) callTypeConversion(t *Type, argc, calleeIdx int, yield func(*Interrupt, error) bool) bool {
 	if argc != 1 {
 		return yield(nil, fmt.Errorf("type conversion expects 1 argument"))
 	}
@@ -1054,9 +1054,9 @@ func (v *VM) callTypeConversion(t Type, argc, calleeIdx int, yield func(*Interru
 	var res any
 	if arg == nil {
 		res = t.Zero()
-	} else if list, ok := arg.(*List); ok && (t.Kind() == KindArray || (t.Kind() == KindPtr && t.Elem() != nil && t.Elem().Kind() == KindArray)) {
-		if t.Kind() == KindArray {
-			n := t.Len()
+	} else if list, ok := arg.(*List); ok && (t.Kind == KindArray || (t.Kind == KindPtr && t.Elem != nil && t.Elem.Kind == KindArray)) {
+		if t.Kind == KindArray {
+			n := t.Len
 			if len(list.Elements) < n {
 				v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array of length %d", len(list.Elements), n)
 				v.IP = len(v.CurrentFun.Code)
@@ -1069,17 +1069,17 @@ func (v *VM) callTypeConversion(t Type, argc, calleeIdx int, yield func(*Interru
 			}
 			res = arr.Interface()
 		} else {
-			n := t.Elem().Len()
+			n := t.Elem.Len
 			if len(list.Elements) < n {
 				v.IsPanicking, v.PanicValue = true, fmt.Sprintf("cannot convert slice with length %d to array pointer of length %d", len(list.Elements), n)
 				v.IP = len(v.CurrentFun.Code)
 				return true
 			}
-			res = &Pointer{Target: list, Key: 0, ArrayType: t.Elem()}
+			res = &Pointer{Target: list, Key: 0, ArrayType: t.Elem}
 		}
 	} else {
 		// Manual scalar conversions
-		switch t.Kind() {
+		switch t.Kind {
 		case KindInt:
 			if i, ok := ToInt64(arg); ok {
 				res = int(i)
@@ -1105,7 +1105,7 @@ func (v *VM) callTypeConversion(t Type, argc, calleeIdx int, yield func(*Interru
 					return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, rt))
 				}
 			} else {
-				return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t.Name()))
+				return yield(nil, fmt.Errorf("cannot convert %T to %v", arg, t.Name))
 			}
 		}
 	}
@@ -1236,14 +1236,14 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 	v.drop(n * 2)
 
 	if tObj, ok := v.Get(typeNameStr); ok {
-		var t Type
-		if tt, ok := tObj.(Type); ok && tt.Kind() == KindStruct {
+		var t *Type
+		if tt, ok := tObj.(*Type); ok && tt.Kind == KindStruct {
 			t = tt
 		} else if rt, ok := tObj.(reflect.Type); ok && rt.Kind() == reflect.Struct {
 			t = FromReflectType(rt)
 		}
 		if t != nil {
-			for _, f := range t.Fields() {
+			for _, f := range t.Fields {
 				if f.Anonymous {
 					found := false
 					for _, e := range embedded {
@@ -2552,7 +2552,7 @@ func (v *VM) opGetAttr(yield func(*Interrupt, error) bool) bool {
 		v.push(derefed)
 		v.push(name)
 		return v.opGetAttr(yield)
-	case Type:
+	case *Type:
 		return v.opGetTypeAttr(t, nameStr, yield)
 	case reflect.Type:
 		return v.opGetTypeAttr(FromReflectType(t), nameStr, yield)
@@ -2585,10 +2585,10 @@ func (v *VM) opGetStructAttr(s *Struct, nameStr string, name any, yield func(*In
 	return yield(nil, fmt.Errorf("struct %s has no field or method '%s'", s.TypeName, nameStr))
 }
 
-func (v *VM) opGetTypeAttr(t Type, nameStr string, yield func(*Interrupt, error) bool) bool {
-	typeName := t.Name()
-	if typeName == "" && t.Kind() == KindPtr && t.Elem() != nil {
-		typeName = t.Elem().Name()
+func (v *VM) opGetTypeAttr(t *Type, nameStr string, yield func(*Interrupt, error) bool) bool {
+	typeName := t.Name
+	if typeName == "" && t.Kind == KindPtr && t.Elem != nil {
+		typeName = t.Elem.Name
 	}
 	if typeName != "" {
 		if method, ok := v.Get(typeName + "." + nameStr); ok {
@@ -3277,12 +3277,18 @@ func (v *VM) opAddrOfAttr(yield func(*Interrupt, error) bool) bool {
 
 func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	ptr := v.pop()
-	if t, ok := ptr.(Type); ok {
-		v.push(PtrOf(t))
+	if t, ok := ptr.(*Type); ok {
+		v.push(&Type{
+			Kind: KindPtr,
+			Elem: t,
+		})
 		return true
 	}
 	if rt, ok := ptr.(reflect.Type); ok {
-		v.push(PtrOf(FromReflectType(rt)))
+		v.push(&Type{
+			Kind: KindPtr,
+			Elem: FromReflectType(rt),
+		})
 		return true
 	}
 	p, ok := ptr.(*Pointer)
@@ -3292,7 +3298,7 @@ func (v *VM) opDeref(yield func(*Interrupt, error) bool) bool {
 	if p.ArrayType != nil {
 		if list, ok := p.Target.(*List); ok {
 			idx, _ := ToInt64(p.Key)
-			n := p.ArrayType.Len()
+			n := p.ArrayType.Len
 			rt := p.ArrayType.ToReflectType()
 			if rt == nil {
 				return yield(nil, fmt.Errorf("cannot deref array type %v", p.ArrayType))
@@ -3337,9 +3343,9 @@ func (v *VM) opSetDeref(yield func(*Interrupt, error) bool) bool {
 	if p.ArrayType != nil {
 		if list, ok := p.Target.(*List); ok {
 			idx, _ := ToInt64(p.Key)
-			n := p.ArrayType.Len()
+			n := p.ArrayType.Len
 			vval := reflect.ValueOf(val)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				list.Elements[int(idx)+i] = vval.Index(i).Interface()
 			}
 			return true
@@ -3371,9 +3377,9 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		v.IP = len(v.CurrentFun.Code)
 	}
 
-	var dt Type
+	var dt *Type
 	switch t := tObj.(type) {
-	case Type:
+	case *Type:
 		dt = t
 	case reflect.Type:
 		dt = FromReflectType(t)
@@ -3390,13 +3396,13 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 	}
 
 	if val != nil {
-		if dt.Kind() == KindInterface || (dt.Kind() == KindExternal && dt.(*typeImpl).external.Kind() == reflect.Interface) {
+		if dt.Kind == KindInterface || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Interface) {
 			if v.checkImplements(val, dt) {
 				v.push(val)
 				return true
 			}
 		}
-		if s, ok := val.(*Struct); ok && (dt.Kind() == KindStruct || (dt.Kind() == KindExternal && dt.(*typeImpl).external.Kind() == reflect.Struct)) {
+		if s, ok := val.(*Struct); ok && (dt.Kind == KindStruct || (dt.Kind == KindExternal && dt.External.Kind() == reflect.Struct)) {
 			if v.checkStructCompatible(s, dt) {
 				v.push(val)
 				return true
@@ -3404,7 +3410,7 @@ func (v *VM) opTypeAssert(yield func(*Interrupt, error) bool) bool {
 		}
 	}
 
-	fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name()))
+	fail(fmt.Errorf("cannot convert %T to %v", val, dt.Name))
 	return true
 }
 
@@ -3412,9 +3418,9 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	tObj := v.pop()
 	val := v.pop()
 
-	var targetType Type
+	var targetType *Type
 	switch t := tObj.(type) {
-	case Type:
+	case *Type:
 		targetType = t
 	case reflect.Type:
 		targetType = FromReflectType(t)
@@ -3433,14 +3439,14 @@ func (v *VM) opTypeAssertOk(yield func(*Interrupt, error) bool) bool {
 	}
 
 	if val != nil {
-		if targetType.Kind() == KindInterface || (targetType.Kind() == KindExternal && targetType.(*typeImpl).external.Kind() == reflect.Interface) {
+		if targetType.Kind == KindInterface || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Interface) {
 			if v.checkImplements(val, targetType) {
 				v.push(val)
 				v.push(true)
 				return true
 			}
 		}
-		if s, ok := val.(*Struct); ok && (targetType.Kind() == KindStruct || (targetType.Kind() == KindExternal && targetType.(*typeImpl).external.Kind() == reflect.Struct)) {
+		if s, ok := val.(*Struct); ok && (targetType.Kind == KindStruct || (targetType.Kind == KindExternal && targetType.External.Kind() == reflect.Struct)) {
 			if v.checkStructCompatible(s, targetType) {
 				v.push(val)
 				v.push(true)
@@ -3512,15 +3518,15 @@ func (v *VM) newFuncIterator(fn any) *FuncIterator {
 	return it
 }
 
-func (v *VM) checkImplements(val any, t Type) bool {
-	if t == nil || (t.Kind() != KindInterface && (t.Kind() != KindExternal || t.(*typeImpl).external.Kind() != reflect.Interface)) {
+func (v *VM) checkImplements(val any, t *Type) bool {
+	if t == nil || (t.Kind != KindInterface && (t.Kind != KindExternal || t.External.Kind() != reflect.Interface)) {
 		return false
 	}
 	if s, ok := val.(*Struct); ok {
 		return v.checkStructImplements(s, t)
 	}
 	rv := reflect.ValueOf(val)
-	for name := range t.Methods() {
+	for name := range t.Methods {
 		m := rv.MethodByName(name)
 		if !m.IsValid() {
 			return false
@@ -3529,11 +3535,11 @@ func (v *VM) checkImplements(val any, t Type) bool {
 	return true
 }
 
-func (v *VM) checkStructImplements(s *Struct, t Type) bool {
-	if t == nil || (t.Kind() != KindInterface && (t.Kind() != KindExternal || t.(*typeImpl).external.Kind() != reflect.Interface)) {
+func (v *VM) checkStructImplements(s *Struct, t *Type) bool {
+	if t == nil || (t.Kind != KindInterface && (t.Kind != KindExternal || t.External.Kind() != reflect.Interface)) {
 		return false
 	}
-	for name, targetType := range t.Methods() {
+	for name, targetType := range t.Methods {
 		method := v.getStructMethod(s, name)
 		if method == nil {
 			return false
@@ -3545,12 +3551,12 @@ func (v *VM) checkStructImplements(s *Struct, t Type) bool {
 	return true
 }
 
-func (v *VM) checkStructCompatible(s *Struct, t Type) bool {
-	if t == nil || (t.Kind() != KindStruct && (t.Kind() != KindExternal || t.(*typeImpl).external.Kind() != reflect.Struct)) {
+func (v *VM) checkStructCompatible(s *Struct, t *Type) bool {
+	if t == nil || (t.Kind != KindStruct && (t.Kind != KindExternal || t.External.Kind() != reflect.Struct)) {
 		return false
 	}
 
-	for _, f := range t.Fields() {
+	for _, f := range t.Fields {
 		if _, ok := s.Fields[f.Name]; !ok {
 			return false
 		}
@@ -3579,8 +3585,8 @@ func (v *VM) getStructMethod(s *Struct, name string) any {
 	return nil
 }
 
-func (v *VM) checkMethodType(method any, target Type) bool {
-	var actual Type
+func (v *VM) checkMethodType(method any, target *Type) bool {
+	var actual *Type
 	switch m := method.(type) {
 	case *Closure:
 		actual = m.Fun.Type
@@ -3592,20 +3598,20 @@ func (v *VM) checkMethodType(method any, target Type) bool {
 	if actual == nil {
 		return true
 	}
-	if len(actual.In()) != len(target.In())+1 {
+	if len(actual.In) != len(target.In)+1 {
 		return false
 	}
-	if len(actual.Out()) != len(target.Out()) {
+	if len(actual.Out) != len(target.Out) {
 		return false
 	}
-	for i := 0; i < len(target.In()); i++ {
+	for i := 0; i < len(target.In); i++ {
 		// Use String() for type identity check as it covers name and structure
-		if actual.In()[i+1].String() != target.In()[i].String() {
+		if actual.In[i+1].String() != target.In[i].String() {
 			return false
 		}
 	}
-	for i := 0; i < len(target.Out()); i++ {
-		if actual.Out()[i].String() != target.Out()[i].String() {
+	for i := 0; i < len(target.Out); i++ {
+		if actual.Out[i].String() != target.Out[i].String() {
 			return false
 		}
 	}
