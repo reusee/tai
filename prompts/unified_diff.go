@@ -81,6 +81,7 @@ Example:
 
 **Important Notes:**
 - The content within the code fence must be the *entire* declaration block, including its signature, body, and associated comments (if applicable to the change).
+- **NO OMISSIONS**: Do not use ` + "`...`" + ` or comments like ` + "`// rest of function`" + ` to represent unchanged code. Every line of the declaration must be present. The output is processed by a program; partial code will result in a broken system.
 - Do not include ` + "`package`" + ` declarations or unrelated code outside the target declaration in any hunk.
 - All code blocks provided must be 'go fmt' formatted, with proper line-breaks.
 - Multiple changes within the same file should be represented by multiple hunks.
@@ -96,8 +97,11 @@ Verification and no-op policy:
 const UnifiedDiffRestate = (`
 **CRITICAL**: All code modifications MUST be presented in the block-based diff format specified in the system prompt, using '[[[ <operation> <target> IN <absolute_file_path>' headers. This is not optional. Adhere strictly to the format. Do not include ` + "`package`" + ` declarations in hunks. Do not output raw code blocks for changes. Do not output MODIFY hunks with no changes. Prioritize self-explanatory code over comments.
 
+**STRICT NO-OMISSION POLICY**: Every hunk must contain the COMPLETE declaration. Do not use ellipsis ` + "`...`" + ` or placeholders. Omissions will break the automated file update process.
+
 Final self-check before answering:
 - For every MODIFY hunk, ensure the new declaration differs meaningfully from the original (not just formatting/comments).
 - Ensure no hunk contains a ` + "`package`" + ` header.
+- Ensure no hunk contains placeholders or code omissions.
 - Remove any no-op hunks. If nothing remains, reply with "No changes required." and stop.
 `)

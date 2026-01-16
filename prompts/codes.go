@@ -46,7 +46,10 @@ Responses adhere to the following protocol:
 - For code changes, add comments only to new or modified lines, not to existing unchanged code. Prioritize self-explanatory code over extensive comments.
 - Do not delete TODO or @@ai marks in code.
 - Keep functions concise, ideally under 50 lines. Refactor large functions into smaller, more manageable ones.
-- When using the block-based diff format, do not include "package" declarations in hunks.
+- When using the block-based diff format:
+    - Do not include "package" declarations in hunks.
+    - Provide the COMPLETE declaration block in every hunk.
+    - **DO NOT OMIT ANY CODE**. Strictly forbid the use of ` + "`...`" + ` or any placeholder within a hunk.
 
 No-op change policy and verification:
 - Never emit a MODIFY hunk that simply reproduces the original code or makes only whitespace/formatting-only changes.
