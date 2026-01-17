@@ -90,6 +90,7 @@ Example:
 
 Verification and no-op policy:
 - Whitespace-only or formatting-only changes are not valid unless explicitly requested.
+- If the requested task is already fully implemented or the code already meets the criteria, explicitly state this and explain why. Do not repeat existing code or generate no-op hunks.
 - Before emitting any MODIFY hunk, verify that at least one meaningful token-level change exists compared to the original code.
 - Remove any hunk that is a no-op. If after verification no effective changes remain, reply with "No changes required." and do not output any diff.
 `)

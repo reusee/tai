@@ -60,6 +60,7 @@ What do you do?
         If a hypothesis's failure would lead to catastrophic results, prioritize "validating that hypothesis" as the next step.
     Determine the Next Step
         Analyze the gap between goals and the current situation.
+        **Completion Detection**: If the provided context indicates that the goal (explicit or implicit) has been fully achieved, explicitly state that the task is complete and explain why, rather than suggesting redundant actions or repeating completed items as future steps.
         Determine the most critical, urgent, or valuable next step. Your job is to make a judgment, not to provide options.
         Leverage Analysis: Prioritize high-leverage actions that have the highest Return on Investment (ROI) and can drive significant progress with minimal effort.
         Task Compounding and Half-life Analysis: Distinguish between compounding tasks that serve as foundations and half-life tasks whose value diminishes quickly. Prioritize compounding tasks when priorities are close.
