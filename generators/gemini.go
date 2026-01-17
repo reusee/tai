@@ -108,10 +108,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_HARASSMENT,
 			Threshold: generativelanguagepb.SafetySetting_OFF,
 		},
-		{
-			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_CIVIC_INTEGRITY,
-			Threshold: generativelanguagepb.SafetySetting_OFF,
-		},
 	}
 
 	var contents []*generativelanguagepb.Content
