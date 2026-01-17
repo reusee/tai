@@ -4,6 +4,8 @@ action?: string
 
 // action_argument provides the input or goal for the action.
 action_argument?: string
+// chats defines pre-defined prompts or goals mapped to shortcuts.
+chats?: {[string]: string}
 
 model_name?: string
 model?: string
@@ -27,6 +29,11 @@ match?: string
 
 // diff specifies the diff handler to use. e.g., "unified".
 diff?: string
+// thoughts, if true, shows the AI's internal reasoning/thoughts.
+thoughts?: bool
+
+// debug, if true, enables verbose debug logging.
+debug?: bool
 
 // go contains settings for Go language project analysis.
 go?: {
@@ -82,6 +89,8 @@ generators?: [...{
 }]
 
 // api keys
+openai_api_key?:    string
+anthropic_api_key?: string
 google_api_key?: string
 huoshan_api_key?: string
 baidu_api_key?: string
