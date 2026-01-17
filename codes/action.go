@@ -20,9 +20,17 @@ type Action interface {
 
 type ActionArgument string
 
+type Chats map[string]string
+
 var actionNameFlag string
 
 var actionArgumentFlag ActionArgument
+
+func (Module) Chats(
+	loader configs.Loader,
+) Chats {
+	return configs.First[Chats](loader, "chats")
+}
 
 func (Module) AllActions(
 	chat ActionChat,
@@ -89,9 +97,14 @@ func (Module) Action(
 
 func (Module) ActionArgument(
 	loader configs.Loader,
+	chats Chats,
 ) ActionArgument {
-	return vars.FirstNonZero(
+	arg := vars.FirstNonZero(
 		actionArgumentFlag,
 		configs.First[ActionArgument](loader, "action_argument"),
 	)
+	if v, ok := chats[string(arg)]; ok {
+		return ActionArgument(v)
+	}
+	return arg
 }
