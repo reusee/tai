@@ -101,6 +101,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		Model:               o.args.Model,
 		Messages:            messages,
 		Stream:              true,
+		StreamOptions:       &StreamOptions{IncludeUsage: true},
 		ReasoningEffort:     "high",
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
@@ -208,28 +209,26 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			)
 		}
 
-		//TODO fix
-		//if streamResp.Usage != nil {
-		//	var usage Usage
-		//	usage.Prompt.TokenCount = streamResp.Usage.PromptTokens
-		//	if streamResp.Usage.PromptTokensDetails != nil {
-		//		usage.Prompt.TokenCountCached = streamResp.Usage.PromptTokensDetails.CachedTokens
-		//	}
-		//	usage.Candidates.TokenCount = streamResp.Usage.CompletionTokens
-		//	if streamResp.Usage.CompletionTokensDetails != nil {
-		//		usage.Candidates.TokenCount -= streamResp.Usage.CompletionTokensDetails.ReasoningTokens
-		//		usage.Thoughts.TokenCount = streamResp.Usage.CompletionTokensDetails.ReasoningTokens
-		//	}
-		//	if ret, err = ret.AppendContent(&Content{
-		//		Role:  RoleLog,
-		//		Parts: []Part{usage},
-		//	}); err != nil {
-		//		return ret, err
-		//	}
-		//}
+		if streamResp.Usage != nil {
+			var usage Usage
+			usage.Prompt.TokenCount = streamResp.Usage.PromptTokens
+			if streamResp.Usage.PromptTokensDetails != nil {
+				usage.Prompt.TokenCountCached = streamResp.Usage.PromptTokensDetails.CachedTokens
+			}
+			usage.Candidates.TokenCount = streamResp.Usage.CompletionTokens
+			if streamResp.Usage.CompletionTokensDetails != nil {
+				usage.Candidates.TokenCount -= streamResp.Usage.CompletionTokensDetails.ReasoningTokens
+				usage.Thoughts.TokenCount = streamResp.Usage.CompletionTokensDetails.ReasoningTokens
+			}
+			if ret, err = ret.AppendContent(&Content{
+				Role:  RoleLog,
+				Parts: []Part{usage},
+			}); err != nil {
+				return ret, err
+			}
+		}
 
 		if len(streamResp.Choices) == 0 {
-			o.Logger().Info("no choices")
 			continue
 		}
 
@@ -290,137 +289,150 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 		})
 	}
 
-	addPart := func(role string, part ChatMessagePart) {
+	for _, content := range state.Contents() {
+		role := string(content.Role)
 		if role == string(RoleModel) {
-			// convert to open ai role
 			role = string(RoleAssistant)
 		}
-		if len(messages) == 0 {
-			messages = append(messages, ChatCompletionMessage{
-				Role: role,
-			})
-		}
-		last := messages[len(messages)-1]
-		if last.Role != role {
-			messages = append(messages, ChatCompletionMessage{
-				Role: role,
-			})
-			last = messages[len(messages)-1]
-		}
 
-		if part.Type == "text" && last.Content == "" && len(last.MultiContent) == 0 {
-			// empty
-			last.Content = part.Text
-		} else if part.Type == "text" && last.Content != "" {
-			// append text
-			last.Content += part.Text
-		} else {
-			// append to multi content
-			last.MultiContent = append(last.MultiContent, part)
-		}
+		for _, part := range content.Parts {
+			switch part := part.(type) {
 
-		messages[len(messages)-1] = last
-	}
-
-	if contents := state.Contents(); len(contents) > 0 {
-		for _, content := range contents {
-
-			for _, part := range content.Parts {
-				switch part := part.(type) {
-
-				case Text:
-					if len(part) > 0 {
-						addPart(string(content.Role), ChatMessagePart{
+			case Text:
+				if len(part) == 0 {
+					continue
+				}
+				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
+					last := &messages[len(messages)-1]
+					if last.Content == "" && len(last.MultiContent) == 0 {
+						last.Content = string(part)
+					} else if last.Content != "" {
+						last.Content += string(part)
+					} else {
+						last.MultiContent = append(last.MultiContent, ChatMessagePart{
 							Type: "text",
 							Text: string(part),
 						})
 					}
+				} else {
+					messages = append(messages, ChatCompletionMessage{
+						Role:    role,
+						Content: string(part),
+					})
+				}
 
-				case Thought:
-					// skip
+			case Thought:
+				// ignore
 
-				case FileURL:
-					if len(part) > 0 {
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "image_url",
-							ImageURL: &ChatMessageImageURL{
-								URL: string(part),
-							},
-						})
-					}
-
-				case FileContent:
-					if isTextMIMEType(part.MimeType) {
-						addPart(string(content.Role), ChatMessagePart{
+			case FileURL:
+				if len(part) == 0 {
+					continue
+				}
+				imgPart := ChatMessagePart{
+					Type: "image_url",
+					ImageURL: &ChatMessageImageURL{
+						URL: string(part),
+					},
+				}
+				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
+					last := &messages[len(messages)-1]
+					if last.Content != "" {
+						last.MultiContent = append([]ChatMessagePart{{
 							Type: "text",
-							Text: string(part.Content),
+							Text: last.Content,
+						}}, imgPart)
+						last.Content = ""
+					} else {
+						last.MultiContent = append(last.MultiContent, imgPart)
+					}
+				} else {
+					messages = append(messages, ChatCompletionMessage{
+						Role:         role,
+						MultiContent: []ChatMessagePart{imgPart},
+					})
+				}
+
+			case FileContent:
+				var msgPart ChatMessagePart
+				if isTextMIMEType(part.MimeType) {
+					msgPart = ChatMessagePart{
+						Type: "text",
+						Text: string(part.Content),
+					}
+				} else {
+					dataURL := fmt.Sprintf("data:%s;base64,%s",
+						part.MimeType,
+						base64.StdEncoding.EncodeToString(part.Content),
+					)
+					msgPart = ChatMessagePart{
+						Type: "image_url",
+						ImageURL: &ChatMessageImageURL{
+							URL: dataURL,
+						},
+					}
+				}
+				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
+					last := &messages[len(messages)-1]
+					if msgPart.Type == "text" && last.Content != "" {
+						last.Content += msgPart.Text
+					} else if last.Content != "" {
+						last.MultiContent = append([]ChatMessagePart{{
+							Type: "text",
+							Text: last.Content,
+						}}, msgPart)
+						last.Content = ""
+					} else {
+						last.MultiContent = append(last.MultiContent, msgPart)
+					}
+				} else {
+					if msgPart.Type == "text" {
+						messages = append(messages, ChatCompletionMessage{
+							Role:    role,
+							Content: msgPart.Text,
 						})
 					} else {
-						dataURL := fmt.Sprintf("data:%s;base64,%s",
-							part.MimeType,
-							base64.StdEncoding.EncodeToString(part.Content),
-						)
-						addPart(string(content.Role), ChatMessagePart{
-							Type: "image_url",
-							ImageURL: &ChatMessageImageURL{
-								URL: dataURL,
-							},
+						messages = append(messages, ChatCompletionMessage{
+							Role:         role,
+							MultiContent: []ChatMessagePart{msgPart},
 						})
 					}
-
-				case FuncCall:
-					argsBytes, err := json.Marshal(part.Args)
-					if err != nil {
-						return nil, err
-					}
-					messages = append(messages, ChatCompletionMessage{
-						Role: "assistant",
-						ToolCalls: []ToolCall{
-							{
-								ID:   part.ID,
-								Type: "function",
-								Function: FunctionCall{
-									Name:      part.Name,
-									Arguments: string(argsBytes),
-								},
-							},
-						},
-					})
-
-				case CallResult:
-					resultsBytes, err := json.Marshal(part.Results)
-					if err != nil {
-						return nil, err
-					}
-					messages = append(messages, ChatCompletionMessage{
-						Role:       "tool",
-						ToolCallID: part.ID,
-						Content:    string(resultsBytes),
-					})
-
 				}
+
+			case FuncCall:
+				argsBytes, err := json.Marshal(part.Args)
+				if err != nil {
+					return nil, err
+				}
+				toolCall := ToolCall{
+					ID:   part.ID,
+					Type: "function",
+					Function: FunctionCall{
+						Name:      part.Name,
+						Arguments: string(argsBytes),
+					},
+				}
+				if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+					messages[len(messages)-1].ToolCalls = append(messages[len(messages)-1].ToolCalls, toolCall)
+				} else {
+					messages = append(messages, ChatCompletionMessage{
+						Role:      "assistant",
+						ToolCalls: []ToolCall{toolCall},
+					})
+				}
+
+			case CallResult:
+				resultsBytes, err := json.Marshal(part.Results)
+				if err != nil {
+					return nil, err
+				}
+				messages = append(messages, ChatCompletionMessage{
+					Role:       "tool",
+					ToolCallID: part.ID,
+					Content:    string(resultsBytes),
+				})
+
 			}
-
 		}
-	}
-
-	// convert single text part MultiContent to Content
-	for i, msg := range messages {
-		if len(msg.ToolCalls) > 0 {
-			continue
-		}
-		if len(msg.Content) > 0 {
-			continue
-		}
-		if len(msg.MultiContent) != 1 {
-			continue
-		}
-		part := msg.MultiContent[0]
-		if part.Type != "text" {
-			continue
-		}
-		messages[i].Content = part.Text
-		messages[i].MultiContent = nil
 	}
 
 	return
@@ -447,11 +459,16 @@ type ChatCompletionRequest struct {
 	Model               string                  `json:"model"`
 	Messages            []ChatCompletionMessage `json:"messages"`
 	Stream              bool                    `json:"stream"`
+	StreamOptions       *StreamOptions          `json:"stream_options,omitempty"`
 	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`
 	Reasoning           *Reasoning              `json:"reasoning,omitempty"`
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
 	Temperature         float32                 `json:"temperature,omitempty"`
 	Tools               []Tool                  `json:"tools,omitempty"`
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type Reasoning struct {
@@ -504,7 +521,15 @@ type FunctionCall struct {
 
 type ChatCompletionStreamResponse struct {
 	Choices []ChatCompletionStreamChoice `json:"choices"`
-	//TODO Usage
+	Usage   *OpenAIUsage                 `json:"usage,omitempty"`
+}
+
+type OpenAIUsage struct {
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
 type ChatCompletionStreamChoice struct {
@@ -519,14 +544,6 @@ type ChatCompletionStreamChoiceDelta struct {
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 }
 
-type PromptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens,omitempty"`
-}
-
-type CompletionTokensDetails struct {
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
-}
-
 type ErrorResponse struct {
 	Error *APIError `json:"error,omitempty"`
 }
@@ -537,6 +554,14 @@ type APIError struct {
 	Param          *string `json:"param,omitempty"`
 	Type           string  `json:"type,omitempty"`
 	HTTPStatusCode int     `json:"-"`
+}
+
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 func (e *APIError) Error() string {
