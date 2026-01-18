@@ -131,7 +131,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 		}
 	}
 
-	body := h.Body
+	body := stripMarkdown(h.Body)
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		body = stripPackage(body)
 	}
@@ -360,4 +360,19 @@ func stripPackage(body string) string {
 	}
 	offset := fset.Position(startPos).Offset
 	return strings.TrimSpace(body[offset:])
+}
+
+func stripMarkdown(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) < 2 {
+		return s
+	}
+	if !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+		return s
+	}
+	return strings.Join(lines[1:len(lines)-1], "\n")
 }
