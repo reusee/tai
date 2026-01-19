@@ -70,7 +70,8 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 			}
 			var footerOffset int = startOffset + len(line) + 1
 			for j := i + 1; j < len(lines); j++ {
-				if string(bytes.TrimSpace(lines[j])) == "]]]" {
+				trimmedLine := bytes.TrimSpace(lines[j])
+				if bytes.HasPrefix(trimmedLine, []byte("]]]")) {
 					end = footerOffset + len(lines[j])
 					h.Raw = string(content[start:end])
 					bodyStart := start + len(line) + 1
@@ -120,18 +121,34 @@ func applyHunk(root *os.Root, h Hunk) error {
 			return err
 		}
 	}
-	start, end, err := findTargetRange(fset, f, h, len(src), prefixLen)
-	if err != nil {
-		if h.Op == "MODIFY" {
-			start, end = len(src), len(src)
-		} else if h.Op == "DELETE" {
-			return nil
-		} else {
-			return err
+
+	body := stripMarkdown(h.Body)
+	bodyName := getHunkBodyName(body)
+	var start, end int
+
+	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
+	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
+		if s, e, err := findTargetRange(fset, f, Hunk{Target: bodyName}, len(src), prefixLen); err == nil {
+			h.Op = "MODIFY"
+			h.Target = bodyName
+			start, end = s, e
 		}
 	}
 
-	body := stripMarkdown(h.Body)
+	// Resolve target range
+	if start == 0 && end == 0 {
+		var err error
+		start, end, err = findTargetRange(fset, f, h, len(src), prefixLen)
+		if err != nil {
+			if h.Op == "MODIFY" || h.Op == "DELETE" {
+				// Theory: MODIFY and DELETE have no effect if target is not found
+				return nil
+			}
+			// ADD anchor missing: append to the end of file
+			start, end = len(src), len(src)
+		}
+	}
+
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		body = stripPackage(body)
 	}
@@ -139,11 +156,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 	var newSrc []byte
 	switch h.Op {
 	case "MODIFY":
-		bodyBytes := []byte(body)
-		if start == end && start == len(src) && len(src) > 0 {
-			bodyBytes = append([]byte("\n\n"), bodyBytes...)
-		}
-		newSrc = append(src[:start], append(bodyBytes, src[end:]...)...)
+		newSrc = append(src[:start], append([]byte(body), src[end:]...)...)
 	case "DELETE":
 		newSrc = append(src[:start], src[end:]...)
 	case "ADD_BEFORE":
@@ -275,6 +288,45 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, boo
 		}
 	}
 	return 0, 0, false
+}
+
+func getHunkBodyName(body string) string {
+	fset := token.NewFileSet()
+	src := body
+	if !hasPackage([]byte(body)) {
+		src = "package p\n" + body
+	}
+	f, err := parser.ParseFile(fset, "", src, 0)
+	if err != nil || len(f.Decls) == 0 {
+		return ""
+	}
+	decl := f.Decls[0]
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		name := d.Name.Name
+		if d.Recv != nil && len(d.Recv.List) > 0 {
+			recv := d.Recv.List[0].Type
+			if star, ok := recv.(*ast.StarExpr); ok {
+				recv = star.X
+			}
+			if ident, ok := recv.(*ast.Ident); ok {
+				return ident.Name + "." + name
+			}
+		}
+		return name
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				return s.Name.Name
+			case *ast.ValueSpec:
+				for _, n := range s.Names {
+					return n.Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func getHunkBodyKind(body string) string {

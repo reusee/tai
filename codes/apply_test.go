@@ -202,7 +202,7 @@ func Existing() {}
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
 	aiContent := []byte(`[[[ MODIFY NonExistent IN ` + targetFile + `
 func NonExistent() {
-	println("appended")
+	println("should not be added")
 }
 ]]]`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
@@ -216,8 +216,8 @@ func NonExistent() {
 		t.Fatal(err)
 	}
 	s := string(newContent)
-	if !strings.Contains(s, "func NonExistent") {
-		t.Errorf("missing appended function: %s", s)
+	if strings.Contains(s, "func NonExistent") {
+		t.Errorf("MODIFY incorrectly added a non-existent function: %s", s)
 	}
 	if !strings.Contains(s, "func Existing") {
 		t.Errorf("existing function lost: %s", s)
