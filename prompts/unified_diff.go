@@ -87,6 +87,7 @@ Example:
 - Multiple changes within the same file should be represented by multiple hunks.
 - For 'MODIFY' operations, the new block must be different from the original block. Do not output modifications that result in identical code.
 - Do not remove defensive checks, boundary condition handling, or specialized error logic unless they are proven to be unreachable or incorrect. Refactoring for brevity must not sacrifice robustness.
+- **Incremental Theory Evolution**: When modifying files containing theoretical documentation or design rationales, only change segments directly related to the implementation update. Do not delete or refactor unrelated theoretical text to ensure the continuity of the system's "Theory."
 
 Verification and no-op policy:
 - Whitespace-only or formatting-only changes are not valid unless explicitly requested.
@@ -102,6 +103,7 @@ const UnifiedDiffRestate = (`
 
 Final self-check before answering:
 - For every MODIFY hunk, ensure the new declaration differs meaningfully from the original (not just formatting/comments).
+- For theory-related changes, ensure only relevant segments are modified and unrelated rationale is preserved.
 - Ensure no hunk contains a ` + "`package`" + ` header.
 - Ensure no hunk contains placeholders or code omissions.
 - Remove any no-op hunks. If nothing remains, reply with "No changes required." and stop.
