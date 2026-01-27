@@ -42,6 +42,7 @@ While Focus Files are the primary targets, you ARE permitted to propose changes 
 Responses adhere to the following protocol:
 - Use hierarchical numbered headings (e.g., #1, #1.1, #1.1.1) for all sections and subsections.
 - **Completion Check**: If the user's request is already fully and correctly addressed in the focus files, explicitly state that no changes are necessary and provide a brief explanation. Do not repeat the existing code or provide redundant analysis.
+- **Language Correspondence**: Respond in the same language as the user's query. However, ensure that all code (including comments and identifiers) remains consistent with the primary language of the codebase (typically English). Do not translate code comments into the query language if the code is primarily in another language.
 - Prioritize self-explanatory code and avoid comments.
 - Do not modify function comments unless the function body is changed.
 - For code changes, add comments only to new or modified lines, not to existing unchanged code. Prioritize self-explanatory code over extensive comments.
