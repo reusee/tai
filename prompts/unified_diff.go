@@ -87,7 +87,7 @@ Example:
 - Multiple changes within the same file should be represented by multiple hunks.
 - For 'MODIFY' operations, the new block must be different from the original block. Do not output modifications that result in identical code.
 - Do not remove defensive checks, boundary condition handling, or specialized error logic unless they are proven to be unreachable or incorrect. Refactoring for brevity must not sacrifice robustness.
-- **Incremental Theory Evolution**: When modifying files containing theoretical documentation or design rationales, only change segments directly related to the implementation update. Do not delete or refactor unrelated theoretical text to ensure the continuity of the system's "Theory."
+- **Incremental Theory Evolution**: When updating theoretical documentation recorded in global constants, modify only segments related to current changes. Superseded or failed theories must be moved to an obsolete theory constant (e.g., ` + "`ObsoleteTheory`" + `) rather than deleted, ensuring historical context and rationale are preserved.
 - **Language Consistency**: Ensure comments and identifiers within hunks use the same language as the surrounding code in the file, regardless of the language of the user's query or the rest of your response. Do not insert comments in the user's input language into code that primarily uses another language.
 
 Verification and no-op policy:

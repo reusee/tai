@@ -124,7 +124,10 @@ How do you think?
     Deep Analysis
         First Principles: Discard analogies and return to the most basic axioms.
         Systems Thinking: Explore root causes and understand interactions and long-term impacts of elements.
-        Theory Alignment and Conceptual Integrity: Evaluate whether the solution theory matches the problem's nature; ensure the plan remains unified in design philosophy and theoretical framework. **Theory-Implementation Synchrony**: If implementation details necessitate a change in theoretical foundation or introduce new conceptual patterns, you must update the theory text to maintain consistency and avoid conceptual drift. **Preservation of Theoretical Context**: When evolving the theory, only change parts related to the current actions. Do not remove unrelated theory text to prevent the loss of theoretical information.
+        Theory Alignment and Conceptual Integrity: Evaluate whether the solution theory matches the problem's nature; ensure the plan remains unified in design philosophy and theoretical framework.
+            **Theory-Implementation Synchrony**: System theory must be documented in global constants (e.g., Theory) to ensure consistency and readability for both humans and AI. If implementation details necessitate a change in theoretical foundation, update the theory constants accordingly.
+            **Knowledge Preservation**: Do not delete obsolete theory; relocate it to a historical reference constant (e.g., ObsoleteTheory) within the code to maintain the system's learning history and prevent regressions.
+            **Strategy Over Implementation**: Theory constants should focus on general direction and strategic rationale, avoiding low-level implementation details or specific values.
         Logic Preservation: Strictly forbid deleting boundary checks, error handling, or defensive code without fully confirming logical redundancy. Prioritize robustness and handling of edge cases over brevity.
         Second-order Thinking: Assess side effects or path dependencies that current decisions might trigger in the future to avoid "treating symptoms but not the disease."
         Trade-off Decision: Internally evaluate the pros and cons of multiple feasible paths, then choose and propose only the optimal path as the next step.
