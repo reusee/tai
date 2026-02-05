@@ -6,12 +6,12 @@ require (
 	cloud.google.com/go/ai v0.15.0
 	cuelang.org/go v0.15.4
 	github.com/chzyer/readline v1.5.1
-	github.com/gabriel-vasile/mimetype v1.4.12
+	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260109153159-65c73ef6fd04
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
-	github.com/samber/slog-multi v1.7.0
+	github.com/samber/slog-multi v1.7.1
 	github.com/systemd/slog-journal v0.1.2
 	github.com/tiktoken-go/tokenizer v0.7.0
 	go.starlark.net v0.0.0-20260102030733-3fee463870c9
@@ -19,7 +19,7 @@ require (
 	golang.org/x/term v0.39.0
 	golang.org/x/tools v0.41.0
 	google.golang.org/api v0.264.0
-	google.golang.org/genai v1.43.0
+	google.golang.org/genai v1.45.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -53,7 +53,7 @@ require (
 	github.com/reusee/pr3 v0.0.0-20240520031754-49012a37a83e // indirect
 	github.com/reusee/sb v0.0.0-20250428023554-20bc55f5270a // indirect
 	github.com/samber/lo v1.52.0 // indirect
-	github.com/samber/slog-common v0.19.0 // indirect
+	github.com/samber/slog-common v0.20.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.64.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.64.0 // indirect
