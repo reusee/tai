@@ -496,3 +496,91 @@ func Foo() {
 		t.Errorf("markdown fences leaked into file:\n%s", s)
 	}
 }
+
+func TestApplyHunksMalformedSingleLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	// Malformed: ]]] on header line, but body follows
+	aiContent := []byte(`[[[ MODIFY Foo IN ` + targetFile + ` ]]]
+func Foo() {
+	println("new")
+}
+`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new") {
+		t.Errorf("content not updated (likely treated as empty body/delete):\n%s", s)
+	}
+}
+
+func TestApplyHunksMultipleMalformed(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+func Bar() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`[[[ MODIFY Foo IN ` + targetFile + ` ]]]
+func Foo() { println("f") }
+[[[ MODIFY Bar IN ` + targetFile + ` ]]]
+func Bar() { println("b") }
+`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, `println("f")`) || !strings.Contains(s, `println("b")`) {
+		t.Errorf("one or more updates failed:\n%s", s)
+	}
+}

@@ -62,9 +62,28 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 			}
 			start = startOffset
 			if bytes.Contains(line, []byte("]]]")) {
-				end = start + len(line)
+				if h.Op == "DELETE" {
+					end = start + len(line)
+					h.Raw = string(content[start:end])
+					h.Body = ""
+					ok = true
+					return
+				}
+				// Robustness: If MODIFY/ADD has ]]] on same line, look ahead for body until next [[[ or end
+				end = start + len(line) + 1
+				var bodyLines [][]byte
+				for j := i + 1; j < len(lines); j++ {
+					if headerRegexp.Match(lines[j]) {
+						break
+					}
+					bodyLines = append(bodyLines, lines[j])
+					end += len(lines[j]) + 1
+				}
+				if end > len(content) {
+					end = len(content)
+				}
 				h.Raw = string(content[start:end])
-				h.Body = ""
+				h.Body = strings.TrimSpace(string(bytes.Join(bodyLines, []byte("\n"))))
 				ok = true
 				return
 			}
