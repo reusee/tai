@@ -13,6 +13,10 @@ import (
 // usually the one package that in the WorkingDir
 type GetPackages = func() ([]*packages.Package, error)
 
+type GetRootPackages GetPackages
+
+type GetContextPackages GetPackages
+
 type GetFileSet = func() (*token.FileSet, error)
 
 func (Module) Packages(
@@ -21,13 +25,16 @@ func (Module) Packages(
 	logger logs.Logger,
 	loadDir LoadDir,
 	loadPatterns LoadPatterns,
+	contextPatterns ContextPatterns,
 ) (
-	getPackages GetPackages,
+	getRootPackages GetRootPackages,
+	getContextPackages GetContextPackages,
 	getFileSet GetFileSet,
 ) {
 
 	fset := token.NewFileSet()
-	var pkgs []*packages.Package
+	var rootPkgs []*packages.Package
+	var contextPkgs []*packages.Package
 	var err error
 
 	init := sync.OnceFunc(func() {
@@ -50,13 +57,21 @@ func (Module) Packages(
 			Dir:   string(loadDir),
 		}
 
-		pkgs, err = packages.Load(config, loadPatterns...)
+		rootPkgs, err = packages.Load(config, loadPatterns...)
 		if err != nil {
 			return
 		}
 
+		if len(contextPatterns) > 0 {
+			var err2 error
+			contextPkgs, err2 = packages.Load(config, contextPatterns...)
+			if err2 != nil {
+				err = errors.Join(err, err2)
+			}
+		}
+
 		var errs []error
-		packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		packages.Visit(append(rootPkgs, contextPkgs...), nil, func(pkg *packages.Package) {
 			for _, err := range pkg.Errors {
 				errs = append(errs, err)
 			}
@@ -69,19 +84,24 @@ func (Module) Packages(
 		}
 
 		dirs := make(map[string]bool)
-		for _, pkg := range pkgs {
+		for _, pkg := range append(rootPkgs, contextPkgs...) {
 			if pkg.Module != nil {
 				dirs[pkg.Module.Dir] = true
 			}
 		}
 
-		logger.Info("packages", "num", len(pkgs))
+		logger.Info("packages", "root", len(rootPkgs), "context", len(contextPkgs))
 
 	})
 
-	getPackages = func() ([]*packages.Package, error) {
+	getRootPackages = func() ([]*packages.Package, error) {
 		init()
-		return pkgs, err
+		return rootPkgs, err
+	}
+
+	getContextPackages = func() ([]*packages.Package, error) {
+		init()
+		return contextPkgs, err
 	}
 
 	getFileSet = func() (*token.FileSet, error) {

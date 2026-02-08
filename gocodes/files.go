@@ -78,7 +78,8 @@ type GetFiles func() ([]*File, error)
 
 func (Module) Files(
 	getFileSet GetFileSet,
-	getPackages GetPackages,
+	getRootPackages GetRootPackages,
+	getContextPackages GetContextPackages,
 	logger logs.Logger,
 	maxDistance MaxPackageDistanceFromRoot,
 	includeStdLib IncludeStdLib,
@@ -110,27 +111,38 @@ func (Module) Files(
 		}
 
 		// packages
-		pkgs, err := getPackages()
+		rootPkgs, err := getRootPackages()
 		if err != nil {
 			return nil, err
 		}
+		contextPkgs, err := getContextPackages()
+		if err != nil {
+			return nil, err
+		}
+		allPkgs := append(rootPkgs, contextPkgs...)
 
 		// root modules
 		rootModulePaths := make(map[string]bool)
-		for _, pkg := range pkgs {
+		for _, pkg := range allPkgs {
 			if pkg.Module != nil {
 				rootModulePaths[pkg.Module.Path] = true
 			}
 			if *debug {
-				logger.Info("root package", "path", pkg.PkgPath)
+				logger.Info("loaded package", "path", pkg.PkgPath)
 			}
 		}
 
 		packageDistanceFromRoot := make(map[*packages.Package]int)
 		queue := []*packages.Package{}
-		for _, pkg := range pkgs {
+		for _, pkg := range rootPkgs {
 			packageDistanceFromRoot[pkg] = 0
 			queue = append(queue, pkg)
+		}
+		for _, pkg := range contextPkgs {
+			if _, ok := packageDistanceFromRoot[pkg]; !ok {
+				packageDistanceFromRoot[pkg] = 0
+				queue = append(queue, pkg)
+			}
 		}
 		head := 0
 		for head < len(queue) {
@@ -148,7 +160,7 @@ func (Module) Files(
 		// mappings from packages
 		tokenFileToAstFile := make(map[*token.File]*ast.File)
 		astFileToPackage := make(map[*ast.File]*packages.Package)
-		packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		packages.Visit(allPkgs, nil, func(pkg *packages.Package) {
 			for _, astFile := range pkg.Syntax {
 				tokenFile := fset.File(astFile.Name.Pos())
 				if tokenFile == nil {
@@ -174,7 +186,7 @@ func (Module) Files(
 				panic(fmt.Errorf("package not found for file %s", file.TokenFile.Name()))
 			}
 			file.Package = pkg
-			file.PackageIsRoot = slices.Contains(pkgs, file.Package)
+			file.PackageIsRoot = slices.Contains(rootPkgs, file.Package)
 			file.PackageDistanceFromRoot = packageDistanceFromRoot[file.Package]
 			file.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
 			file.Module = file.Package.Module
@@ -192,7 +204,7 @@ func (Module) Files(
 
 		// collect non-Go files
 		nonGoFilePaths := make(map[string]*packages.Package)
-		packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		packages.Visit(allPkgs, nil, func(pkg *packages.Package) {
 			allFiles := [][]string{
 				pkg.EmbedFiles,
 				pkg.OtherFiles,
@@ -232,7 +244,7 @@ func (Module) Files(
 				IsGoFile:                false,
 				Content:                 content,
 				Package:                 pkg,
-				PackageIsRoot:           slices.Contains(pkgs, pkg),
+				PackageIsRoot:           slices.Contains(rootPkgs, pkg),
 				PackageDistanceFromRoot: packageDistanceFromRoot[pkg],
 				PackagePathDepth:        len(strings.Split(pkg.PkgPath, "/")),
 				Module:                  pkg.Module,

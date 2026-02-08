@@ -9,15 +9,20 @@ import (
 type GetPackagesMap func() (map[*types.Package]*packages.Package, error)
 
 func (Module) PackagesMap(
-	getPackages GetPackages,
+	getRootPackages GetRootPackages,
+	getContextPackages GetContextPackages,
 ) GetPackagesMap {
 	return func() (map[*types.Package]*packages.Package, error) {
-		pkgs, err := getPackages()
+		rootPkgs, err := getRootPackages()
+		if err != nil {
+			return nil, err
+		}
+		contextPkgs, err := getContextPackages()
 		if err != nil {
 			return nil, err
 		}
 		ret := make(map[*types.Package]*packages.Package)
-		packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		packages.Visit(append(rootPkgs, contextPkgs...), nil, func(pkg *packages.Package) {
 			ret[pkg.Types] = pkg
 		})
 		return ret, nil

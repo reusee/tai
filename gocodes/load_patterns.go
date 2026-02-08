@@ -7,12 +7,20 @@ import (
 
 type LoadPatterns []string
 
-var loadPatternsFlag []string
+type ContextPatterns []string
+
+var (
+	loadPatternsFlag    []string
+	contextPatternsFlag []string
+)
 
 func init() {
 	cmds.Define("-load", cmds.Func(func(pattern string) {
 		loadPatternsFlag = append(loadPatternsFlag, pattern)
 	}).Alias("-pkg"))
+	cmds.Define("-ctx", cmds.Func(func(pattern string) {
+		contextPatternsFlag = append(contextPatternsFlag, pattern)
+	}).Alias("-dep"))
 }
 
 func (Module) LoadArgs(
@@ -36,4 +44,13 @@ func (Module) LoadArgs(
 	return LoadPatterns{
 		"./...",
 	}
+}
+
+func (Module) ContextPatterns(
+	loader configs.Loader,
+) ContextPatterns {
+	if len(contextPatternsFlag) > 0 {
+		return ContextPatterns(contextPatternsFlag)
+	}
+	return configs.First[ContextPatterns](loader, "go.context_patterns")
 }
