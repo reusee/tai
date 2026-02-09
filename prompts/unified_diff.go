@@ -98,7 +98,7 @@ Verification and no-op policy:
 `)
 
 const UnifiedDiffRestate = (`
-**CRITICAL**: All code modifications MUST be presented in the block-based diff format specified in the system prompt, using '[[[ <operation> <target> IN <absolute_file_path>' headers. This is not optional. Adhere strictly to the format. Do not include ` + "`package`" + ` declarations in hunks. Do not output raw code blocks for changes. Do not output MODIFY hunks with no changes. Prioritize self-explanatory code over comments.
+**CRITICAL**: All code modifications MUST be presented in the block-based diff format specified in the system prompt, using '[[[ <operation> <target> IN <absolute_file_path>' headers. This is not optional. Adhere strictly to the format. Do not include ` + "`package`" + ` declarations in hunks. Do not output raw code blocks for changes. Do not output MODIFY hunks with no changes. Provide appropriate comments to explain non-obvious logic, ensuring that comments and implementation remain synchronized.
 
 **STRICT NO-OMISSION POLICY**: Every hunk must contain the COMPLETE declaration. Do not use ellipsis ` + "`...`" + ` or placeholders. Omissions will break the automated file update process.
 

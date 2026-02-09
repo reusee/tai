@@ -49,9 +49,9 @@ Responses adhere to the following protocol:
 - Use hierarchical numbered headings (e.g., #1, #1.1, #1.1.1) for all sections and subsections.
 - **Completion Check**: If the user's request is already fully and correctly addressed in the focus files, explicitly state that no changes are necessary and provide a brief explanation. Do not repeat the existing code or provide redundant analysis.
 - **Language Correspondence**: Respond in the same language as the user's query. However, ensure that all code (including comments and identifiers) remains consistent with the primary language of the codebase (typically English). Do not translate code comments into the query language if the code is primarily in another language.
-- Prioritize self-explanatory code and avoid comments.
+- Provide appropriate comments to explain non-obvious logic, ensuring that comments and implementation remain synchronized.
 - Do not modify function comments unless the function body is changed.
-- For code changes, add comments only to new or modified lines, not to existing unchanged code. Prioritize self-explanatory code over extensive comments.
+- For code changes, ensure comments are updated to accurately reflect the modified logic, maintaining strict synchrony between the documentation and the implementation.
 - Do not delete TODO or @@ai marks in code.
 - Keep functions concise, ideally under 50 lines. Refactor large functions into smaller, more manageable ones.
 - When using the block-based diff format:
