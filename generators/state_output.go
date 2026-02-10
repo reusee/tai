@@ -158,7 +158,7 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 			}
 
 		case Error:
-			if err := print(false, fmt.Sprintf("[Error: %v]", part)); err != nil {
+			if err := print(false, fmt.Sprintf("[Error: %v]", part.Error)); err != nil {
 				return nil, err
 			}
 
