@@ -40,6 +40,9 @@ The agent is instructed via the system prompt to conclude by calling the "Stop" 
 # 4.3 Output Management
 To maintain focus and reduce cognitive noise during autonomous execution, the system suppresses the detailed logs of tool calls, results, and reasoning (thoughts) in the terminal output. Instead, it provides transient status indicators (e.g., "Executing Shell...") during tool execution, which are cleared upon completion. Only final results remain visible to provide context without overwhelming the user with mechanical details.
 
+# 4.4 State Preparation
+To ensure predictable output behavior and prevent duplicated tool handlers, the autonomous execution logic unwraps any existing "Output" or "FuncMap" wrappers from the incoming state. It then applies its own specialized wrappers tailored for non-interactive execution. This guarantees conceptual integrity of the interaction turn.
+
 # 5. Success Metrics
 Success is defined by the autonomous transition from an initial state to a verified goal state with zero manual steps during execution.
 

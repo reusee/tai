@@ -27,6 +27,21 @@ func (Module) Execute(
 			return fmt.Errorf("failed to apply sandbox: %w", err)
 		}
 
+		// Ensure we start with a clean state by unwrapping display/tool wrappers
+		// that might have been applied by the caller. Taido wants to manage its own
+		// output and tool mappings.
+		for {
+			if s, ok := generators.As[generators.Output](state); ok {
+				state = s.Unwrap()
+				continue
+			}
+			if s, ok := generators.As[generators.FuncMap](state); ok {
+				state = s.Unwrap()
+				continue
+			}
+			break
+		}
+
 		// Wrap state with Output to show progress to user, but hide thoughts and tool details
 		state = generators.NewOutput(state, os.Stdout, false).
 			WithTools(false)
@@ -169,9 +184,10 @@ func (Module) Execute(
 		wrapFunc := func(f *generators.Func) *generators.Func {
 			original := f.Func
 			f.Func = func(args map[string]any) (map[string]any, error) {
-				fmt.Printf("\r\033[2K%sExecuting %s...%s", generators.ColorTool, f.Decl.Name, generators.ColorReset)
+				fmt.Printf("\n%sExecuting %s...%s", generators.ColorTool, f.Decl.Name, generators.ColorReset)
 				res, err := original(args)
-				fmt.Printf("\r\033[2K")
+				// Clear the transient status line
+				fmt.Printf("\033[1A\033[2K\r")
 				return res, err
 			}
 			return f
@@ -188,6 +204,11 @@ func (Module) Execute(
 				return fmt.Errorf("generation failed at iteration %d: %w", i, err)
 			}
 			state = newState
+
+			// Flush output to ensure the user sees current progress
+			if s, err := state.Flush(); err == nil {
+				state = s
+			}
 
 			// Check for Stop tool call
 			if stopped {
@@ -225,9 +246,10 @@ func (Module) Execute(
 					return nil
 				}
 
-				// If model called tools, the FuncMap wrapper already executed them and
-				// appended the result to state (if correctly configured).
-				// We check if the NEW last content is now a tool result.
+				// If the FuncMap wrapper executed tools, the new last message will be RoleTool.
+				// We already checked this at the top of the continuation logic, but since
+				// state was updated via newState (which includes tool results), we need to
+				// re-check if we should continue.
 				contents = state.Contents()
 				if contents[len(contents)-1].Role == generators.RoleTool {
 					continue
