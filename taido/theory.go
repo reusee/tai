@@ -22,7 +22,10 @@ Complexity should be managed through decomposition. For tasks that are independe
 There is no provision for mid-process user input. All necessary information, constraints, and permissions must be established in the initial prompt or defined within the tool environment.
 
 # 3.2 Tool-Centric Problem Solving
-If a problem is complex, Taido should not be taught to solve it internally. Instead, an external tool or program should be developed to solve it, and Taido should be instructed on how to invoke and interpret that tool.
+The system follows a "Tool-First" approach. The agent is instructed to treat its internal knowledge as secondary to information gathered via tools. If a problem is complex, Taido should not be taught to solve it internally. Instead, an external tool or program should be developed to solve it, and Taido should be instructed on how to invoke and interpret that tool.
+
+# 3.3 Instruction Adherence
+High-fidelity execution of user instructions is paramount. The agent must prioritize following the specific constraints and logic provided in the prompt over its own "creative" interpretations of the goal.
 
 # 4. Implementation Details
 # 4.1 ReAct Loop
