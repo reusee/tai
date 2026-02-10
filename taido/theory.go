@@ -21,6 +21,13 @@ There is no provision for mid-process user input. All necessary information, con
 # 3.2 Tool-Centric Problem Solving
 If a problem is complex, Taido should not be taught to solve it internally. Instead, an external tool or program should be developed to solve it, and Taido should be instructed on how to invoke and interpret that tool.
 
-# 4. Success Metrics
+# 4. Implementation Details
+# 4.1 ReAct Loop
+The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop continues until the agent explicitly signals completion (e.g., via "Goal achieved.") or no tool calls are generated in a model response.
+
+# 4.2 Completion Signal
+The agent is instructed via the system prompt to conclude with "Goal achieved." once the primary objective is met. This serves as the terminal condition for the autonomous loop.
+
+# 5. Success Metrics
 Success is defined by the autonomous transition from an initial state to a verified goal state with zero manual steps during execution.
 `
