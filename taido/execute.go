@@ -42,8 +42,10 @@ func (Module) Execute(
 			break
 		}
 
-		// Wrap state with Output to show progress to user, but hide thoughts and tool details
-		state = generators.NewOutput(state, os.Stdout, false).
+		// Wrap state with Output to show progress to user.
+		// We show thoughts (reasoning) but suppress tool calls/results in the primary
+		// output to keep the dialogue clean. Mechanical progress is handled by the logger.
+		state = generators.NewOutput(state, os.Stdout, true).
 			WithTools(false)
 
 		// Internal Stop tool to signal completion
@@ -104,8 +106,6 @@ func (Module) Execute(
 		}
 
 		// Shell tool for environment interaction
-		// Security: This tool executes in the same process context as the agent,
-		// inheriting the Landlock sandbox (restricted write access).
 		shellFunc := &generators.Func{
 			Decl: generators.FuncDecl{
 				Name:        "Shell",
@@ -163,8 +163,12 @@ func (Module) Execute(
 				if goal == "" {
 					return nil, fmt.Errorf("goal is required")
 				}
-				// Invoke a new tai instance with 'do' command
-				cmd := exec.CommandContext(ctx, "tai", "do", goal)
+				// Use current executable if possible, fallback to "tai"
+				exe, _ := os.Executable()
+				if exe == "" {
+					exe = "tai"
+				}
+				cmd := exec.CommandContext(ctx, exe, "do", goal)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
@@ -180,14 +184,18 @@ func (Module) Execute(
 			},
 		}
 
-		// Tool wrapper for transient status display
+		// Tool wrapper for logging progress.
+		// We avoid manual ANSI hacks and instead rely on the logger for mechanical status.
 		wrapFunc := func(f *generators.Func) *generators.Func {
 			original := f.Func
 			f.Func = func(args map[string]any) (map[string]any, error) {
-				fmt.Printf("\n%sExecuting %s...%s", generators.ColorTool, f.Decl.Name, generators.ColorReset)
+				logger.Info("executing tool", "tool", f.Decl.Name)
 				res, err := original(args)
-				// Clear the transient status line
-				fmt.Printf("\033[1A\033[2K\r")
+				if err != nil {
+					logger.Error("tool execution failed", "tool", f.Decl.Name, "error", err)
+				} else {
+					logger.Info("tool execution completed", "tool", f.Decl.Name)
+				}
 				return res, err
 			}
 			return f

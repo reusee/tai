@@ -38,7 +38,7 @@ These are the primary mechanisms for environment interaction and logic execution
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
 
 # 4.3 Output Management
-To maintain focus and reduce cognitive noise during autonomous execution, the system suppresses the detailed logs of tool calls, results, and reasoning (thoughts) in the terminal output. Instead, it provides transient status indicators (e.g., "Executing Shell...") during tool execution, which are cleared upon completion. Only final results remain visible to provide context without overwhelming the user with mechanical details.
+To maintain focus and reduce cognitive noise during autonomous execution, the system employs a two-tier output strategy. The dialogue content (thoughts and text responses) is displayed to the user via a clean output wrapper. Mechanical details, such as tool calls and their raw results, are suppressed from the main dialogue but recorded in the system logs. This ensures that the user sees the agent's progress and reasoning without being overwhelmed by technical artifacts.
 
 # 4.4 State Preparation
 To ensure predictable output behavior and prevent duplicated tool handlers, the autonomous execution logic unwraps any existing "Output" or "FuncMap" wrappers from the incoming state. It then applies its own specialized wrappers tailored for non-interactive execution. This guarantees conceptual integrity of the interaction turn.

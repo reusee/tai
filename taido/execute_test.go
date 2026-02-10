@@ -91,6 +91,7 @@ func TestExecute(t *testing.T) {
 					if err != nil {
 						return nil, nil, err
 					}
+					// Simulate internal FuncMap handling for the test
 					contents := newState.Contents()
 					last := contents[len(contents)-1]
 					hasCall := false
@@ -260,4 +261,3 @@ func TestSystemPrompt(t *testing.T) {
 		t.Errorf("unexpected prompt: %s", p)
 	}
 }
-
