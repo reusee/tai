@@ -48,6 +48,9 @@ To maintain focus and reduce cognitive noise during autonomous execution, the sy
 # 4.4 State Preparation
 To ensure predictable output behavior and prevent duplicated tool handlers, the autonomous execution logic unwraps any existing "Output" or "FuncMap" wrappers from the incoming state. It then applies its own specialized wrappers tailored for non-interactive execution. This guarantees conceptual integrity of the interaction turn.
 
+# 4.5 Model Configuration
+Taido allows for independent model selection via the "-taido-model" flag or the "taido_model" configuration key. If neither is specified, it falls back to the system's default model. This enables the use of more capable or specialized models for autonomous reasoning while using faster/cheaper models for interactive chat.
+
 # 5. Success Metrics
 Success is defined by the autonomous transition from an initial state to a verified goal state with zero manual steps during execution.
 
