@@ -68,7 +68,7 @@ func TestExecute(t *testing.T) {
 				}
 			}
 		}
-		exec := (Module{}).Execute(buildGenerate, logger, nil)
+		exec := (Module{}).Execute(buildGenerate, logger)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -119,7 +119,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger, nil)
+		exec := (Module{}).Execute(buildGenerate, logger)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -171,7 +171,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger, nil)
+		exec := (Module{}).Execute(buildGenerate, logger)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -223,7 +223,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger, nil)
+		exec := (Module{}).Execute(buildGenerate, logger)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -245,7 +245,7 @@ func TestExecute(t *testing.T) {
 				}
 			}
 		}
-		exec := (Module{}).Execute(buildGenerate, logger, nil)
+		exec := (Module{}).Execute(buildGenerate, logger)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -260,3 +260,4 @@ func TestSystemPrompt(t *testing.T) {
 		t.Errorf("unexpected prompt: %s", p)
 	}
 }
+
