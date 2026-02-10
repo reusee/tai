@@ -6,7 +6,7 @@ Taido is a minimalist autonomous execution engine designed to automate repetitiv
 
 # 2. Design Philosophy
 # 2.1 Autonomous Execution
-ти System operates on a "set and forget" model. Once a goal is defined via an initial prompt, Taido executes the full lifecycle of reasoning and tool usage without human intervention. This eliminates the latency and cognitive load of interactive interfaces.
+The system operates on a "set and forget" model. Once a goal is defined via an initial prompt, Taido executes the full lifecycle of reasoning and tool usage without human intervention. This eliminates the latency and cognitive load of interactive interfaces.
 
 # 2.2 Minimalist Architecture
 Taido eschews complex frameworks and multi-agent abstractions. It provides a lean ReAct (Thought-Action-Observation) loop. It is a coordinator, not a monolith; it relies on external tools for specialized logic, data processing, and heavy computation.
@@ -25,6 +25,8 @@ If a problem is complex, Taido should not be taught to solve it internally. Inst
 # 4.1 ReAct Loop
 The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop is unbounded and continues until the agent explicitly signals completion (e.g., via the "Stop" tool or "Goal achieved.") or no tool calls are generated in a model response. This design trusts the LLM to manage the task horizon and termination.
 
+The system provides a built-in "Shell" tool, allowing the agent to execute arbitrary commands. This is the primary mechanism for environment interaction.
+
 # 4.2 Completion Signal
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
 
@@ -36,10 +38,13 @@ Success is defined by the autonomous transition from an initial state to a verif
 To prevent the autonomous agent from causing unintended damage to the host system, Taido implements a best-effort filesystem sandbox using Linux Landlock. If the kernel supports Landlock, it reduces the blast radius of any tool-calling errors. If Landlock is unavailable, the system proceeds with a warning, emphasizing the importance of running Taido in a controlled environment.
 
 # 6.2 Write Restriction
-When sandboxing is active, the agent is strictly restricted to writing only within the current working directory. This ensures that any files created, modified, or deleted by tools are contained within the project scope.
+When sandboxing is active, the agent is strictly restricted to writing only within the current working directory. This ensures that any files created, modified, or deleted by tools (including those run via the "Shell" tool) are contained within the project scope.
 
 # 6.3 Unrestricted Reading
 The agent retains unrestricted read access to the entire filesystem (where permissions allow). This is necessary for the agent to gather context, such as reading system headers, library source code, or configuration files located outside the working directory, which informs its reasoning process.
+
+# 6.4 Subprocess Inheritance
+The Landlock ruleset and the "no new privileges" flag are inherited by all subprocesses. Consequently, the "Shell" tool and any commands it executes are subject to the same security constraints as the primary Taido process.
 
 # 7. Testing Strategy
 # 7.1 Sandbox Verification

@@ -1,8 +1,11 @@
 package taido
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/reusee/tai/generators"
@@ -43,7 +46,50 @@ func (Module) Execute(
 				return map[string]any{"status": "stopped", "reason": reason}, nil
 			},
 		}
-		state = generators.NewFuncMap(state, stopFunc)
+
+		// Shell tool for environment interaction
+		// Security: This tool executes in the same process context as the agent,
+		// inheriting the Landlock sandbox (restricted write access).
+		shellFunc := &generators.Func{
+			Decl: generators.FuncDecl{
+				Name:        "Shell",
+				Description: "Execute a shell command in /bin/sh and return the output.",
+				Params: generators.Vars{
+					{
+						Name:        "command",
+						Type:        generators.TypeString,
+						Description: "The command string to execute.",
+					},
+				},
+			},
+			Func: func(args map[string]any) (map[string]any, error) {
+				command, _ := args["command"].(string)
+				if command == "" {
+					return nil, fmt.Errorf("command is required")
+				}
+				cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+				err := cmd.Run()
+				exitCode := 0
+				if err != nil {
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						exitCode = exitErr.ExitCode()
+					} else {
+						return nil, err
+					}
+				}
+				return map[string]any{
+					"stdout":    stdout.String(),
+					"stderr":    stderr.String(),
+					"exit_code": exitCode,
+				}, nil
+			},
+		}
+
+		state = generators.NewFuncMap(state, stopFunc, shellFunc)
 
 		for i := 0; ; i++ {
 			// 1. Generation Phase
@@ -110,3 +156,4 @@ func (Module) Execute(
 		return nil
 	}
 }
+
