@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -25,6 +26,10 @@ func (Module) Execute(
 		if err := applySandbox(logger); err != nil {
 			return fmt.Errorf("failed to apply sandbox: %w", err)
 		}
+
+		// Wrap state with Output to show progress to user, but hide thoughts and tool details
+		state = generators.NewOutput(state, os.Stdout, false).
+			WithTools(false)
 
 		// Internal Stop tool to signal completion
 		stopped := false
@@ -160,7 +165,19 @@ func (Module) Execute(
 			},
 		}
 
-		state = generators.NewFuncMap(state, stopFunc, shellFunc, evalTaigoFunc, taidoFunc)
+		// Tool wrapper for transient status display
+		wrapFunc := func(f *generators.Func) *generators.Func {
+			original := f.Func
+			f.Func = func(args map[string]any) (map[string]any, error) {
+				fmt.Printf("\r\033[2K%sExecuting %s...%s", generators.ColorTool, f.Decl.Name, generators.ColorReset)
+				res, err := original(args)
+				fmt.Printf("\r\033[2K")
+				return res, err
+			}
+			return f
+		}
+
+		state = generators.NewFuncMap(state, wrapFunc(stopFunc), wrapFunc(shellFunc), wrapFunc(evalTaigoFunc), wrapFunc(taidoFunc))
 
 		for i := 0; ; i++ {
 			// 1. Generation Phase

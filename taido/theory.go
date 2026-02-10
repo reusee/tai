@@ -37,6 +37,9 @@ These are the primary mechanisms for environment interaction and logic execution
 # 4.2 Completion Signal
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
 
+# 4.3 Output Management
+To maintain focus and reduce cognitive noise during autonomous execution, the system suppresses the detailed logs of tool calls, results, and reasoning (thoughts) in the terminal output. Instead, it provides transient status indicators (e.g., "Executing Shell...") during tool execution, which are cleared upon completion. Only final results remain visible to provide context without overwhelming the user with mechanical details.
+
 # 5. Success Metrics
 Success is defined by the autonomous transition from an initial state to a verified goal state with zero manual steps during execution.
 
