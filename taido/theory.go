@@ -14,6 +14,9 @@ Taido eschews complex frameworks and multi-agent abstractions. It provides a lea
 # 2.3 Functional Efficiency
 The focus is on "doing" rather than "chatting." The tool is optimized for high-level leverage actions where a small amount of reasoning can trigger significant external processes.
 
+# 2.4 Task Delegation
+Complexity should be managed through decomposition. For tasks that are independent, require isolated research, or involve high-risk environment changes, the agent is encouraged to delegate the goal to a sub-agent. This keeps the primary agent's reasoning path focused and prevents context pollution.
+
 # 3. Strategic Constraints
 # 3.1 Non-Interactivity
 There is no provision for mid-process user input. All necessary information, constraints, and permissions must be established in the initial prompt or defined within the tool environment.
@@ -28,6 +31,7 @@ The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repe
 The system provides built-in tools:
 1. "Shell": For executing arbitrary commands in /bin/sh.
 2. "EvalTaigo": For executing Go code using the internal Taigo VM.
+3. "Taido": For delegating a specific sub-goal to a new autonomous agent.
 These are the primary mechanisms for environment interaction and logic execution.
 
 # 4.2 Completion Signal

@@ -125,7 +125,42 @@ func (Module) Execute(
 			},
 		}
 
-		state = generators.NewFuncMap(state, stopFunc, shellFunc, evalTaigoFunc)
+		// Taido tool for delegation
+		taidoFunc := &generators.Func{
+			Decl: generators.FuncDecl{
+				Name:        "Taido",
+				Description: "Delegate an independent sub-task to another autonomous agent. The sub-agent will run in a separate process and return its results. Use this for isolation or to break down complex goals.",
+				Params: generators.Vars{
+					{
+						Name:        "goal",
+						Type:        generators.TypeString,
+						Description: "The specific sub-goal for the sub-agent to achieve.",
+					},
+				},
+			},
+			Func: func(args map[string]any) (map[string]any, error) {
+				goal, _ := args["goal"].(string)
+				if goal == "" {
+					return nil, fmt.Errorf("goal is required")
+				}
+				// Invoke a new tai instance with 'do' command
+				cmd := exec.CommandContext(ctx, "tai", "do", goal)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+				err := cmd.Run()
+				res := map[string]any{
+					"stdout": stdout.String(),
+					"stderr": stderr.String(),
+				}
+				if err != nil {
+					res["error"] = err.Error()
+				}
+				return res, nil
+			},
+		}
+
+		state = generators.NewFuncMap(state, stopFunc, shellFunc, evalTaigoFunc, taidoFunc)
 
 		for i := 0; ; i++ {
 			// 1. Generation Phase
@@ -192,4 +227,3 @@ func (Module) Execute(
 		return nil
 	}
 }
-
