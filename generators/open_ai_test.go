@@ -11,7 +11,7 @@ func TestOpenAI(t *testing.T) {
 		new NewOpenRouter,
 	) Generator {
 		return new(GeneratorArgs{
-			Model:             "mistralai/devstral-2512:free",
+			Model:             "z-ai/glm-4.5-air:free",
 			ContextTokens:     128 << 10,
 			MaxGenerateTokens: vars.PtrTo(8 << 10),
 		})
