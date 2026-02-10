@@ -130,7 +130,7 @@ func TestExecute(t *testing.T) {
 	t.Run("Stop tool success", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
-				generators.FuncCall{Name: "Stop"},
+				generators.FuncCall{Name: "Stop", Args: map[string]any{"reason": "done"}},
 			},
 		}
 

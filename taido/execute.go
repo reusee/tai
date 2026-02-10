@@ -25,10 +25,19 @@ func (Module) Execute(
 			Decl: generators.FuncDecl{
 				Name:        "Stop",
 				Description: "Signal that the goal has been achieved and terminate execution.",
+				Params: generators.Vars{
+					{
+						Name:        "reason",
+						Type:        generators.TypeString,
+						Description: "A brief summary of what was achieved.",
+					},
+				},
 			},
 			Func: func(args map[string]any) (map[string]any, error) {
 				stopped = true
-				return map[string]any{"status": "stopped"}, nil
+				reason, _ := args["reason"].(string)
+				logger.Info("autonomous execution completed: Stop tool called", "reason", reason)
+				return map[string]any{"status": "stopped", "reason": reason}, nil
 			},
 		}
 		state = generators.NewFuncMap(state, stopFunc)
@@ -45,7 +54,6 @@ func (Module) Execute(
 
 			// Check for Stop tool call
 			if stopped {
-				logger.Info("autonomous execution completed: Stop tool called")
 				return nil
 			}
 
@@ -74,18 +82,18 @@ func (Module) Execute(
 					}
 				}
 
+				// Check for completion signal in text as a fallback
+				if strings.Contains(textBuilder.String(), "Goal achieved.") {
+					logger.Info("autonomous execution completed: goal achieved text signal")
+					return nil
+				}
+
 				// If model called tools, the FuncMap wrapper already executed them and
 				// appended the result to state (if correctly configured).
 				// We check if the NEW last content is now a tool result.
 				contents = state.Contents()
 				if contents[len(contents)-1].Role == generators.RoleTool {
 					continue
-				}
-
-				// Check for completion signal
-				if strings.Contains(textBuilder.String(), "Goal achieved.") {
-					logger.Info("autonomous execution completed: goal achieved")
-					return nil
 				}
 
 				// If there are no tool calls and no completion signal, we stop to avoid

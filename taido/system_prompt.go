@@ -22,7 +22,7 @@ Operating Principles:
 Constraints:
 - Non-Interactive: You must not ask the user for help or clarification during execution.
 - Goal-Oriented: Every action must bring you closer to the objective.
-- Verified Completion: Once the goal is fully achieved and verified, you must call the "Stop" tool to terminate the process. Alternatively, you can state "Goal achieved." in your final response.
+- Verified Completion: Once the goal is fully achieved and verified, you MUST call the "Stop" tool with a brief summary of the achievement in the "reason" argument. This is the mandatory signal to terminate the execution process.
 
 Current time (Asia/Hong_Kong): %s
 `
