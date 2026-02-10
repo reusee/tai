@@ -18,6 +18,21 @@ func (Module) Execute(
 ) Execute {
 	return func(ctx context.Context, generator generators.Generator, state generators.State) error {
 		const maxIterations = 50 // Safety limit to prevent infinite loops
+
+		// Internal Stop tool to signal completion
+		stopped := false
+		stopFunc := &generators.Func{
+			Decl: generators.FuncDecl{
+				Name:        "Stop",
+				Description: "Signal that the goal has been achieved and terminate execution.",
+			},
+			Func: func(args map[string]any) (map[string]any, error) {
+				stopped = true
+				return map[string]any{"status": "stopped"}, nil
+			},
+		}
+		state = generators.NewFuncMap(state, stopFunc)
+
 		for i := 0; i < maxIterations; i++ {
 			// 1. Generation Phase
 			// This handles tool execution internally via FuncMap state wrapper
@@ -27,6 +42,12 @@ func (Module) Execute(
 				return fmt.Errorf("generation failed at iteration %d: %w", i, err)
 			}
 			state = newState
+
+			// Check for Stop tool call
+			if stopped {
+				logger.Info("autonomous execution completed: Stop tool called")
+				return nil
+			}
 
 			// 2. Analyze state for continuation
 			contents := state.Contents()

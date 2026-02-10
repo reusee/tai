@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	goalFlag  = cmds.Var[string]("goal")
-	modelFlag = cmds.Var[string]("-model")
+	goalFlag = cmds.Var[string]("goal")
 )
 
 func main() {
@@ -37,10 +36,6 @@ func main() {
 		dscope.Provide(codes.CodeProviderName("any")),
 		dscope.Provide(codes.DefaultDiffHandlerName("unified")),
 	)
-
-	if *modelFlag != "" {
-		scope = scope.Fork(dscope.Provide(generators.FallbackModelName(*modelFlag)))
-	}
 
 	scope, err := taiconfigs.TaigoFork(scope)
 	if err != nil {
@@ -88,3 +83,4 @@ func main() {
 		}
 	})
 }
+

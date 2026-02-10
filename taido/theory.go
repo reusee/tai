@@ -23,10 +23,10 @@ If a problem is complex, Taido should not be taught to solve it internally. Inst
 
 # 4. Implementation Details
 # 4.1 ReAct Loop
-The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop continues until the agent explicitly signals completion (e.g., via "Goal achieved.") or no tool calls are generated in a model response.
+The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop continues until the agent explicitly signals completion (e.g., via the "Stop" tool or "Goal achieved.") or no tool calls are generated in a model response.
 
 # 4.2 Completion Signal
-The agent is instructed via the system prompt to conclude with "Goal achieved." once the primary objective is met. This serves as the terminal condition for the autonomous loop.
+The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. Alternatively, stating "Goal achieved." also serves as a terminal condition. This provides a robust mechanism for the autonomous loop to exit.
 
 # 5. Success Metrics
 Success is defined by the autonomous transition from an initial state to a verified goal state with zero manual steps during execution.
