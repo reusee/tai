@@ -9,11 +9,14 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taigo"
 )
+
+var safeFlag = cmds.Switch("-safe")
 
 type Execute func(ctx context.Context, generator generators.Generator, state generators.State) error
 
@@ -22,9 +25,11 @@ func (Module) Execute(
 	logger logs.Logger,
 ) Execute {
 	return func(ctx context.Context, generator generators.Generator, state generators.State) error {
-		// Apply sandbox to restrict filesystem access
-		if err := applySandbox(logger); err != nil {
-			return fmt.Errorf("failed to apply sandbox: %w", err)
+		// Apply sandbox to restrict filesystem access if the -safe flag is provided
+		if *safeFlag {
+			if err := applySandbox(logger); err != nil {
+				return fmt.Errorf("failed to apply sandbox: %w", err)
+			}
 		}
 
 		// Ensure we start with a clean state by unwrapping display/tool wrappers

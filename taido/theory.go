@@ -48,16 +48,16 @@ Success is defined by the autonomous transition from an initial state to a verif
 
 # 6. Security and Sandboxing
 # 6.1 Principle of Least Privilege
-To prevent the autonomous agent from causing unintended damage to the host system, Taido implements a best-effort filesystem sandbox using Linux Landlock. If the kernel supports Landlock, it reduces the blast radius of any tool-calling errors. If Landlock is unavailable, the system proceeds with a warning, emphasizing the importance of running Taido in a controlled environment.
+To prevent the autonomous agent from causing unintended damage to the host system, Taido provides an opt-in filesystem sandbox (via the -safe flag) using Linux Landlock. This reduces the blast radius of any tool-calling errors. If Landlock is unavailable or not supported by the kernel, the system proceeds with a warning.
 
 # 6.2 Write Restriction
-When sandboxing is active, the agent is strictly restricted to writing only within the current working directory. This ensures that any files created, modified, or deleted by tools (including those run via the "Shell" tool) are contained within the project scope.
+When sandboxing is active (via the -safe flag), the agent is strictly restricted to writing only within the current working directory. This ensures that any files created, modified, or deleted by tools (including those run via the "Shell" tool) are contained within the project scope.
 
 # 6.3 Unrestricted Reading
 The agent retains unrestricted read access to the entire filesystem (where permissions allow). This is necessary for the agent to gather context, such as reading system headers, library source code, or configuration files located outside the working directory, which informs its reasoning process.
 
 # 6.4 Subprocess Inheritance
-The Landlock ruleset and the "no new privileges" flag are inherited by all subprocesses. Consequently, the "Shell" tool and any commands it executes are subject to the same security constraints as the primary Taido process.
+The Landlock ruleset and the "no new privileges" flag are inherited by all subprocesses. Consequently, the "Shell" tool and any commands it executes are subject to the same security constraints as the primary Taido process when the sandbox is enabled.
 
 # 7. Testing Strategy
 # 7.1 Sandbox Verification
@@ -76,4 +76,9 @@ The initial implementation included a "maxIterations" safety limit (e.g., 50 ste
 # 6.1 Principle of Least Privilege
 To prevent the autonomous agent from causing unintended damage to the host system, Taido implements a filesystem sandbox using Linux Landlock. This reduces the blast radius of any tool-calling errors.
 (Obsolete because it caused failures in environments without Landlock support, e.g., CI or older kernels. Sandboxing is now best-effort.)
+
+# 4. Default Sandboxing (prior to -safe flag)
+# 6.1 Principle of Least Privilege
+To prevent the autonomous agent from causing unintended damage to the host system, Taido implements a best-effort filesystem sandbox using Linux Landlock. This reduces the blast radius of any tool-calling errors. If Landlock is unavailable, the system proceeds with a warning, emphasizing the importance of running Taido in a controlled environment.
+(Obsolete because sandboxing is now opt-in via the -safe flag to provide more flexibility to the user.)
 `)
