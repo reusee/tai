@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,21 +20,6 @@ type Output struct {
 	disableThoughts bool
 	disableTools    bool
 }
-
-const Theory = `
-# Output State
-
-The Output state is a decorator that provides real-time visual feedback for the generation process by writing to an io.Writer.
-
-## Conceptual Integrity of the Visual Stream
-
-The visual stream must remain coherent even when content is delivered in small, irregular chunks (streaming). This requires careful management of state transitions between different roles and between thought/normal text.
-
-1. **Role Separation**: When the role changes between consecutive content blocks, a visual separator (dual newline) is inserted to distinguish them.
-2. **Thinking Tags**: Reasoning models often provide "thought" parts. These are wrapped in <think> tags. The state must track whether a thinking block is currently open to ensure tags are correctly balanced across multiple AppendContent calls.
-3. **Coloring**: In terminal environments, different roles are assigned different colors. Color escape codes must be applied and reset correctly for each chunk to avoid color bleeding into subsequent terminal output. Thoughts use a specific ColorThought to distinguish them from model responses.
-4. **Flush**: The Flush operation marks the end of a generation sequence. It must ensure all open tags (like <think>) are closed and provide final spacing.
-`
 
 func NewOutput(upstream State, w io.Writer, showThoughts bool) Output {
 	isTerminal := false
@@ -63,7 +49,7 @@ var _ State = Output{}
 func (s Output) AppendContent(content *Content) (_ State, err error) {
 	ret := s // copy
 
-	// Determine color
+	// color
 	var roleColor string
 	if s.isTerminal {
 		switch content.Role {
@@ -80,58 +66,49 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 		}
 	}
 
-	// Role change separation and thought closing
-	if s.lastOutputRole != "" && s.lastOutputRole != content.Role {
-		// If we were in a thought from the previous role, close it now
-		if ret.lastOutputIsThought {
-			if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
-				return nil, err
-			}
-			ret.lastOutputIsThought = false
-		}
-		// Separation
-		if _, err := fmt.Fprint(s.w, "\n\n"); err != nil {
-			return nil, err
-		}
-	}
-
+	separated := false
 	print := func(isThought bool, str string) (err error) {
-		// Transition thought state within the current content
+		if roleColor != "" {
+			if _, err := fmt.Fprint(s.w, roleColor); err != nil {
+				return err
+			}
+			defer func() {
+				_, e := fmt.Fprint(s.w, ColorReset)
+				err = errors.Join(err, e)
+			}()
+		}
+
+		// separate
+		if !separated &&
+			s.lastOutputRole != "" &&
+			s.lastOutputRole != content.Role {
+			if _, err := fmt.Fprint(s.w, "\n\n"); err != nil {
+				return err
+			}
+			separated = true
+		}
+
+		// think mark
 		if !ret.lastOutputIsThought && isThought {
+			// open
 			if _, err := fmt.Fprint(s.w, "<think>\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = true
-		} else if ret.lastOutputIsThought && !isThought {
+		}
+		if ret.lastOutputIsThought && !isThought {
+			// close
 			if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = false
 		}
 
-		// Apply color
-		c := roleColor
-		if isThought && s.isTerminal {
-			c = ColorThought
-		}
-		if c != "" {
-			if _, err := fmt.Fprint(s.w, c); err != nil {
-				return err
-			}
-		}
-
-		// Output content
 		if _, err := fmt.Fprint(s.w, str); err != nil {
 			return err
 		}
 
-		// Reset color
-		if c != "" {
-			if _, err := fmt.Fprint(s.w, ColorReset); err != nil {
-				return err
-			}
-		}
-
+		ret.lastOutputRole = content.Role
 		return nil
 	}
 
@@ -188,7 +165,6 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 		}
 	}
 
-	ret.lastOutputRole = content.Role
 	ret.upstream, err = s.upstream.AppendContent(content)
 	if err != nil {
 		return nil, err
@@ -211,12 +187,6 @@ func (s Output) SystemPrompt() string {
 
 func (s Output) Flush() (State, error) {
 	ret := s // copy
-	if ret.lastOutputIsThought {
-		if _, err := io.WriteString(s.w, "\n</think>\n"); err != nil {
-			return nil, err
-		}
-		ret.lastOutputIsThought = false
-	}
 	if _, err := io.WriteString(s.w, "\n\n"); err != nil {
 		return nil, err
 	}
@@ -232,4 +202,3 @@ func (s Output) Flush() (State, error) {
 func (s Output) Unwrap() State {
 	return s.upstream
 }
-
