@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/taigo"
 )
 
 type Execute func(ctx context.Context, generator generators.Generator, state generators.State) error
@@ -44,6 +45,41 @@ func (Module) Execute(
 				reason, _ := args["reason"].(string)
 				logger.Info("autonomous execution completed: Stop tool called", "reason", reason)
 				return map[string]any{"status": "stopped", "reason": reason}, nil
+			},
+		}
+
+		// EvalTaigo tool for internal Go execution
+		evalTaigoFunc := &generators.Func{
+			Decl: generators.FuncDecl{
+				Name:        "EvalTaigo",
+				Description: "Execute Go code using the internal Taigo VM. Use this for logic, data processing, or when a shell is not required.",
+				Params: generators.Vars{
+					{
+						Name:        "code",
+						Type:        generators.TypeString,
+						Description: "The Go source code to execute.",
+					},
+				},
+			},
+			Func: func(args map[string]any) (map[string]any, error) {
+				code, _ := args["code"].(string)
+				if code == "" {
+					return nil, fmt.Errorf("code is required")
+				}
+				var stdout, stderr bytes.Buffer
+				env := new(taigo.Env)
+				env.Source = code
+				env.Stdout = &stdout
+				env.Stderr = &stderr
+				_, err := env.RunVM()
+				res := map[string]any{
+					"stdout": stdout.String(),
+					"stderr": stderr.String(),
+				}
+				if err != nil {
+					res["error"] = err.Error()
+				}
+				return res, nil
 			},
 		}
 
@@ -89,7 +125,7 @@ func (Module) Execute(
 			},
 		}
 
-		state = generators.NewFuncMap(state, stopFunc, shellFunc)
+		state = generators.NewFuncMap(state, stopFunc, shellFunc, evalTaigoFunc)
 
 		for i := 0; ; i++ {
 			// 1. Generation Phase

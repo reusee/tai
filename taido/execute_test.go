@@ -68,7 +68,7 @@ func TestExecute(t *testing.T) {
 				}
 			}
 		}
-		exec := (Module{}).Execute(buildGenerate, logger)
+		exec := (Module{}).Execute(buildGenerate, logger, nil)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -119,7 +119,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger)
+		exec := (Module{}).Execute(buildGenerate, logger, nil)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -171,7 +171,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger)
+		exec := (Module{}).Execute(buildGenerate, logger, nil)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -223,7 +223,7 @@ func TestExecute(t *testing.T) {
 			}
 		}
 
-		exec := (Module{}).Execute(buildGenerate, logger)
+		exec := (Module{}).Execute(buildGenerate, logger, nil)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {
@@ -245,7 +245,7 @@ func TestExecute(t *testing.T) {
 				}
 			}
 		}
-		exec := (Module{}).Execute(buildGenerate, logger)
+		exec := (Module{}).Execute(buildGenerate, logger, nil)
 		state := &mockState{}
 		err := exec(context.Background(), gen, state)
 		if err != nil {

@@ -25,7 +25,10 @@ If a problem is complex, Taido should not be taught to solve it internally. Inst
 # 4.1 ReAct Loop
 The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop is unbounded and continues until the agent explicitly signals completion (e.g., via the "Stop" tool or "Goal achieved.") or no tool calls are generated in a model response. This design trusts the LLM to manage the task horizon and termination.
 
-The system provides a built-in "Shell" tool, allowing the agent to execute arbitrary commands. This is the primary mechanism for environment interaction.
+The system provides built-in tools:
+1. "Shell": For executing arbitrary commands in /bin/sh.
+2. "EvalTaigo": For executing Go code using the internal Taigo VM.
+These are the primary mechanisms for environment interaction and logic execution.
 
 # 4.2 Completion Signal
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
