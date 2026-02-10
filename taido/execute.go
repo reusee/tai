@@ -17,6 +17,11 @@ func (Module) Execute(
 	logger logs.Logger,
 ) Execute {
 	return func(ctx context.Context, generator generators.Generator, state generators.State) error {
+		// Apply sandbox to restrict filesystem access
+		if err := applySandbox(logger); err != nil {
+			return fmt.Errorf("failed to apply sandbox: %w", err)
+		}
+
 		// Internal Stop tool to signal completion
 		stopped := false
 		stopFunc := &generators.Func{
