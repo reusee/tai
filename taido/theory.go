@@ -32,10 +32,12 @@ The system provides built-in tools:
 1. "Shell": For executing arbitrary commands in /bin/sh.
 2. "EvalTaigo": For executing Go code using the internal Taigo VM.
 3. "Taido": For delegating a specific sub-goal to a new autonomous agent.
+4. "Stop": For signaling successful completion.
+5. "Error": For signaling failure to achieve the goal.
 These are the primary mechanisms for environment interaction and logic execution.
 
-# 4.2 Completion Signal
-The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
+# 4.2 Termination Signals
+The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. If the goal is determined to be impossible, the agent must call the "Error" tool with a detailed explanation. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" and "Error" tools are the primary and mandatory mechanisms for autonomous termination.
 
 # 4.3 Output Management
 To maintain focus and reduce cognitive noise during autonomous execution, the system employs a two-tier output strategy. The dialogue content (thoughts and text responses) is displayed to the user via a clean output wrapper. Mechanical details, such as tool calls and their raw results, are suppressed from the main dialogue but recorded in the system logs. This ensures that the user sees the agent's progress and reasoning without being overwhelmed by technical artifacts.

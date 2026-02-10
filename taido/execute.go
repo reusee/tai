@@ -75,6 +75,29 @@ func (Module) Execute(
 			},
 		}
 
+		// Internal Error tool to signal failure
+		errored := false
+		errorReason := ""
+		errorFunc := &generators.Func{
+			Decl: generators.FuncDecl{
+				Name:        "Error",
+				Description: "Signal that the goal cannot be achieved and terminate execution with an error.",
+				Params: generators.Vars{
+					{
+						Name:        "reason",
+						Type:        generators.TypeString,
+						Description: "A detailed explanation of why the goal cannot be achieved.",
+					},
+				},
+			},
+			Func: func(args map[string]any) (map[string]any, error) {
+				errored = true
+				errorReason, _ = args["reason"].(string)
+				logger.Error("autonomous execution failed: Error tool called", "reason", errorReason)
+				return map[string]any{"status": "error", "reason": errorReason}, nil
+			},
+		}
+
 		// EvalTaigo tool for internal Go execution
 		evalTaigoFunc := &generators.Func{
 			Decl: generators.FuncDecl{
@@ -206,7 +229,7 @@ func (Module) Execute(
 			return f
 		}
 
-		state = generators.NewFuncMap(state, wrapFunc(stopFunc), wrapFunc(shellFunc), wrapFunc(evalTaigoFunc), wrapFunc(taidoFunc))
+		state = generators.NewFuncMap(state, wrapFunc(stopFunc), wrapFunc(errorFunc), wrapFunc(shellFunc), wrapFunc(evalTaigoFunc), wrapFunc(taidoFunc))
 
 		for i := 0; ; i++ {
 			// 1. Generation Phase
@@ -223,9 +246,12 @@ func (Module) Execute(
 				state = s
 			}
 
-			// Check for Stop tool call
+			// Check for termination signals
 			if stopped {
 				return nil
+			}
+			if errored {
+				return fmt.Errorf("autonomous execution failed: %s", errorReason)
 			}
 
 			// 2. Analyze state for continuation

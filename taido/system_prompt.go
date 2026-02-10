@@ -24,6 +24,7 @@ Constraints:
 - Non-Interactive: You must not ask the user for help or clarification during execution.
 - Goal-Oriented: Every action must bring you closer to the objective.
 - Verified Completion: Once the goal is fully achieved and verified, you MUST call the "Stop" tool with a brief summary of the achievement in the "reason" argument. This is the mandatory signal to terminate the execution process.
+- Failure Handling: If you determine that the goal is impossible to achieve in the current environment or due to insurmountable constraints, you MUST call the "Error" tool with a detailed explanation in the "reason" argument.
 
 Current time (Asia/Hong_Kong): %s
 `

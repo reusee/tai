@@ -49,7 +49,7 @@ func (m *mockState) FuncMap() map[string]*generators.Func { return nil }
 
 func (m *mockState) Flush() (generators.State, error) { return m, nil }
 
-func (m *mockState) Unwrap() generators.State { return m }
+func (m *mockState) Unwrap() generators.State { return nil }
 
 func TestExecute(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -177,6 +177,60 @@ func TestExecute(t *testing.T) {
 		err := exec(context.Background(), gen, state)
 		if err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	t.Run("Error tool failure", func(t *testing.T) {
+		gen := &mockGenerator{
+			responses: []generators.Part{
+				generators.FuncCall{Name: "Error", Args: map[string]any{"reason": "environment incompatible"}},
+			},
+		}
+
+		buildGenerate := func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
+			return func(cont phases.Phase) phases.Phase {
+				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+					newState, err := generator.Generate(ctx, state, options)
+					if err != nil {
+						return nil, nil, err
+					}
+					contents := newState.Contents()
+					last := contents[len(contents)-1]
+					for _, part := range last.Parts {
+						if call, ok := part.(generators.FuncCall); ok {
+							if fn, ok := state.FuncMap()[call.Name]; ok {
+								res, err := fn.Func(call.Args)
+								if err != nil {
+									return nil, nil, err
+								}
+								newState, err = newState.AppendContent(&generators.Content{
+									Role: generators.RoleTool,
+									Parts: []generators.Part{
+										generators.CallResult{
+											Name:    call.Name,
+											Results: res,
+										},
+									},
+								})
+								if err != nil {
+									return nil, nil, err
+								}
+							}
+						}
+					}
+					return nil, newState, nil
+				}
+			}
+		}
+
+		exec := (Module{}).Execute(buildGenerate, logger)
+		state := &mockState{}
+		err := exec(context.Background(), gen, state)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "environment incompatible") {
+			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
