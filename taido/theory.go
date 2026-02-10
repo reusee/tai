@@ -23,7 +23,7 @@ If a problem is complex, Taido should not be taught to solve it internally. Inst
 
 # 4. Implementation Details
 # 4.1 ReAct Loop
-The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop continues until the agent explicitly signals completion (e.g., via the "Stop" tool or "Goal achieved.") or no tool calls are generated in a model response.
+The core execution is a ReAct loop: Generate -> Execute Tools -> Observe -> Repeat. The loop is unbounded and continues until the agent explicitly signals completion (e.g., via the "Stop" tool or "Goal achieved.") or no tool calls are generated in a model response. This design trusts the LLM to manage the task horizon and termination.
 
 # 4.2 Completion Signal
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. This tool requires a "reason" argument to summarize the outcome. While the system also monitors for text-based completion signals like "Goal achieved.", the "Stop" tool is the primary and mandatory mechanism for autonomous termination.
@@ -36,4 +36,7 @@ const ObsoleteTheory = `
 # 1. Obsolete Completion Signal (prior to reason parameter)
 # 4.2 Completion Signal
 The agent is instructed via the system prompt to conclude by calling the "Stop" tool once the primary objective is met. Alternatively, stating "Goal achieved." also serves as a terminal condition. This provides a robust mechanism for the autonomous loop to exit.
+
+# 2. Obsolete Safety Limit
+The initial implementation included a "maxIterations" safety limit (e.g., 50 steps) to prevent infinite loops. This was removed to accommodate complex, long-running tasks, shifting the responsibility for termination to the model and termination detection logic.
 `

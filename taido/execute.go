@@ -17,8 +17,6 @@ func (Module) Execute(
 	logger logs.Logger,
 ) Execute {
 	return func(ctx context.Context, generator generators.Generator, state generators.State) error {
-		const maxIterations = 50 // Safety limit to prevent infinite loops
-
 		// Internal Stop tool to signal completion
 		stopped := false
 		stopFunc := &generators.Func{
@@ -42,7 +40,7 @@ func (Module) Execute(
 		}
 		state = generators.NewFuncMap(state, stopFunc)
 
-		for i := 0; i < maxIterations; i++ {
+		for i := 0; ; i++ {
 			// 1. Generation Phase
 			// This handles tool execution internally via FuncMap state wrapper
 			phase := buildGenerate(generator, nil)(nil)
@@ -104,6 +102,6 @@ func (Module) Execute(
 				}
 			}
 		}
-		return fmt.Errorf("autonomous execution exceeded maximum iterations (%d)", maxIterations)
+		return nil
 	}
 }

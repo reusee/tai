@@ -179,36 +179,6 @@ func TestExecute(t *testing.T) {
 		}
 	})
 
-	t.Run("max iterations", func(t *testing.T) {
-		gen := &mockGenerator{}
-		for i := 0; i < 100; i++ {
-			gen.responses = append(gen.responses, generators.FuncCall{Name: "loop"})
-		}
-
-		buildGenerate := func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-			return func(cont phases.Phase) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
-					newState, err := generator.Generate(ctx, state, options)
-					if err != nil {
-						return nil, nil, err
-					}
-					newState, err = newState.AppendContent(&generators.Content{
-						Role:  generators.RoleTool,
-						Parts: []generators.Part{generators.CallResult{Name: "loop"}},
-					})
-					return nil, newState, err
-				}
-			}
-		}
-
-		exec := (Module{}).Execute(buildGenerate, logger)
-		state := &mockState{}
-		err := exec(context.Background(), gen, state)
-		if err == nil || !strings.Contains(err.Error(), "exceeded maximum iterations") {
-			t.Fatalf("expected max iterations error, got %v", err)
-		}
-	})
-
 	t.Run("no action no signal", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
