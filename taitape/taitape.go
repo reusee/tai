@@ -245,15 +245,32 @@ func (v *VM) executeAction(ctx context.Context, step *Step, tape *Tape) (string,
 		return "executed", -1, nil
 
 	case "taipy":
-		vm, err := taipy.NewVM(step.Name, strings.NewReader(content))
+		fn, err := taipy.Compile(step.Name, strings.NewReader(content))
 		if err != nil {
 			return "", -1, err
 		}
+		vm := taivm.NewVM(fn)
 		for k, val := range tape.Globals {
 			vm.Def(k, val)
 		}
-		vm.Run(nil)
+		var runErr error
+		vm.Run(func(i *taivm.Interrupt, err error) bool {
+			if err != nil {
+				runErr = err
+				return false
+			}
+			select {
+			case <-ctx.Done():
+				runErr = ctx.Err()
+				return false
+			default:
+			}
+			return true
+		})
 		v.syncEnvToTape(vm.Scope, tape)
+		if runErr != nil {
+			return "", -1, runErr
+		}
 		if vm.IsPanicking {
 			return "", -1, fmt.Errorf("taipy panic: %v", vm.PanicValue)
 		}
