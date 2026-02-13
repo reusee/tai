@@ -241,6 +241,9 @@ func (v *VM) executeAction(ctx context.Context, step *Step, tape *Tape) (string,
 		if err != nil {
 			return "", -1, err
 		}
+		if vm.IsPanicking {
+			return "", -1, fmt.Errorf("taigo panic: %v", vm.PanicValue)
+		}
 		v.syncEnvToTape(vm.Scope, tape)
 		return "executed", -1, nil
 
@@ -250,6 +253,9 @@ func (v *VM) executeAction(ctx context.Context, step *Step, tape *Tape) (string,
 			return "", -1, err
 		}
 		vm := taivm.NewVM(fn)
+		if tape.Globals == nil {
+			tape.Globals = make(map[string]any)
+		}
 		for k, val := range tape.Globals {
 			vm.Def(k, val)
 		}
@@ -306,21 +312,22 @@ func (v *VM) syncEnvToTape(env *taivm.Env, tape *Tape) {
 	if tape.Globals == nil {
 		tape.Globals = make(map[string]any)
 	}
-	// taivm.Env exposes Vars directly
+	// Sync top-level environment variables back to Tape Globals.
+	// This ensures the "Tape as Memory" model where all script side-effects
+	// are persisted for the next instruction.
 	for _, vVar := range env.Vars {
-		// Only sync back if it's not internal/private (convention: ignore leading underscore if needed)
+		// Convention: ignore private/internal variables starting with underscore.
 		if strings.HasPrefix(vVar.Name, "_") {
 			continue
 		}
-		// Ensure value is JSON-serializable before putting it in Globals.
-		// Tape is a persistent JSON artifact; non-serializable objects like
-		// native functions (built-ins) must not be persisted.
+		// Critical: only persist JSON-serializable values.
+		// Native functions, complex pointers, or non-serializable objects
+		// are transient and will be lost between steps.
 		if _, err := json.Marshal(vVar.Val); err == nil {
 			tape.Globals[vVar.Name] = vVar.Val
 		}
 	}
-	// Clean up any remaining non-serializable values that might have been
-	// injected via in-place modifications of the Globals map.
+	// Clean up Globals to ensure the entire map remains serializable.
 	for k, val := range tape.Globals {
 		if _, err := json.Marshal(val); err != nil {
 			delete(tape.Globals, k)
