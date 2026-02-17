@@ -183,3 +183,23 @@ func (Module) NewVercel(
 		)
 	}
 }
+
+type NewNvidia func(args GeneratorArgs) *OpenAI
+
+func (Module) NewNvidia(
+	apiKey NvidiaAPIKey,
+	newOpenAI NewOpenAI,
+) NewNvidia {
+	return func(args GeneratorArgs) *OpenAI {
+		if args.BaseURL == "" {
+			args.BaseURL = "https://integrate.api.nvidia.com/v1"
+		}
+		return newOpenAI(
+			args,
+			vars.FirstNonZero(
+				args.APIKey,
+				string(apiKey),
+			),
+		)
+	}
+}

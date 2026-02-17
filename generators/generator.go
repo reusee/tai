@@ -32,6 +32,7 @@ func (Module) GetGenerator(
 	getSpecs GetGeneratorSpecs,
 	newZhipu NewZhipu,
 	newVercel NewVercel,
+	newNvidia NewNvidia,
 ) GetGenerator {
 	return func(name string) (Generator, error) {
 
@@ -70,6 +71,8 @@ func (Module) GetGenerator(
 				return newOpenAI(spec.GeneratorArgs, ""), nil
 			case "vercel":
 				return newVercel(spec.GeneratorArgs), nil
+			case "nvidia":
+				return newNvidia(spec.GeneratorArgs), nil
 			default:
 				return nil, fmt.Errorf("unknown generator type: %q", spec.Type)
 			}
