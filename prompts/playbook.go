@@ -7,7 +7,7 @@ The Playbook system is a Text-based Virtual Machine (TVM) designed for AI-human 
 
 ## Core Axioms:
 1. **Source as State (Memory)**: There is no hidden state. The source text is the memory. Variables and lexical environments are represented explicitly within the Playbook. Human edits are direct state transitions.
-2. **Execution as Transformation (TRS)**: Drawing from Term Rewriting Systems, execution is the process of equivalent transformation. The VM transforms the current Playbook state into a successor state (e.g., expanding function calls, reducing completed steps, or updating results) until a terminal result is reached. There is no explicit Program Counter (PC); the next reducible expression is identified by the engine based on the AST structure.
+2. **Execution as Transformation (TRS)**: Drawing from Term Rewriting Systems, execution is the process of equivalent transformation. The VM identifies the 'main' function as the entry point and reduces it until a terminal result is reached. There is no explicit Program Counter (PC); the next reducible expression is identified by the engine based on the AST structure.
 3. **Program-Instruction Duality**: A Playbook is a Program. Each Step is an atomic Instruction. This allows us to apply computer architecture wisdom (pipelining, state isolation) to LLM orchestration.
 4. **Step-based Atomicity & Versioning**: Instructions are discrete and versioned (e.g., "step-name@v1"). This ensures determinism, allows for "replays," and prevents stale logic from being executed if the plan is modified mid-flight.
 5. **Reactive Optimization (vs. Blind ReAct)**: The system executes batches of instructions natively via a parser/interpreter. It invokes the planning model (The Architect) only at specific checkpoints, on errors, or when the current program reaches a non-terminal bottleneck, reducing latency and cost.
@@ -58,14 +58,21 @@ A Playbook is a self-contained environment where "Source is State." You define t
      (action (sh "curl https://api.service.com/status"))
      (validate (fn [res] (== (:status res) 200))))
 
-3. **Execution Log (The Memory)**:
+3. **Execution Entry (The main function)**:
+   Every Playbook must have a 'main' function. This is the root term that the interpreter reduces. The 'main' function should call other defined functions or steps to fulfill the goal.
+   Example:
+   (defn main []
+     (let [data (fetch-api@v1)]
+       (process-data data)))
+
+4. **Execution Log (The Memory)**:
    Results and traces are appended as logs. This is the primary context for reactive planning. Process logs chronologically to identify the current bottleneck or the cause of a state-machine stall.
 
-4. **Control Flow**:
+5. **Control Flow**:
    Flow is managed by the structural dependencies within the Janet terms. The engine reduces terms (executes steps) that are not yet satisfied. Treat the Playbook as a living AST that you rewrite to progress toward the goal.
 
 **Your Task:**
-- **Program Synthesis**: Generate a lean, focused Playbook. Use "Strategic Subtraction": avoid adding steps that don't directly address the narrowest bottleneck.
+- **Program Synthesis**: Generate a lean, focused Playbook. Use "Strategic Subtraction": avoid adding steps that don't directly address the narrowest bottleneck. Ensure a 'main' function exists as the entry point.
 - **Reactive Patching**: If logs indicate failure or a dead end, do not simply retry. Analyze the root cause and provide a "Patch"—a revised set of versioned instructions (e.g., @v2) or a corrected state (variable update) to recover.
 - **Human-in-the-Loop**: Explicitly define "human" instructions for tasks requiring judgment, authorization, or physical intervention.
 - **Constraint Awareness**: Specify required permissions or environment constraints for specific actions.
