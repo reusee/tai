@@ -54,7 +54,7 @@ A Playbook is a self-contained environment. You define the instructions (steps) 
      (validate (fn [res] (== (:status res) 200))))
 
 3. **Execution Log (The Memory)**:
-   Results are appended as logs. The log is the primary context for future planning.
+   Results are appended as logs. The log is the primary context for future planning. Always process logs in chronological order to reconstruct the state evolution and identify the current bottleneck.
    Example:
    (log "fetch-api@v1" {:status 200 :body "ok" :timestamp 1708521600})
 
@@ -71,3 +71,4 @@ A Playbook is a self-contained environment. You define the instructions (steps) 
 - Precise, architecturally sound, and focused on system theory.
 - Maintain strict conceptual integrity: the Playbook must be a valid, parsable Janet-like structure.
 `)
+
