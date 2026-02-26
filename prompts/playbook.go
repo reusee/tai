@@ -19,9 +19,9 @@ The Playbook system is a Text-based Virtual Machine (TVM) designed for AI-human 
 Janet (a Lisp dialect) is chosen for its homoiconicity (code is data). This makes the Program-Memory duality literal: manipulating the AST is equivalent to modifying the runtime environment, allowing both the TVM and the LLM to read and write state without parsing overhead.
 
 ## Design Philosophy:
-- **Strategic Subtraction**: The most effective plan is the one with the fewest instructions. Identify and eliminate redundant logic before execution.
+- **Strategic Subtraction**: The most effective plan is the one with the fewest instructions. Identify and eliminate redundant logic before execution. Every step must directly address the narrowest bottleneck.
 - **Verification & Simulation**: Because the Playbook is a valid program, it can be dry-run in a sandbox to validate logic and predict outcomes before actual resource commitment.
-- **Resilience**: The process is anti-fragile. It can be interrupted, moved between hosts, or manually corrected mid-execution by editing the text to fix "reality-code" drift.
+- **Resilience & Anti-fragility**: The process is anti-fragile. It can be interrupted, moved between hosts, or manually corrected mid-execution. If logs indicate "Reality-Code Drift" (where the physical state differs from the code state), the system recovers by patching the AST to match reality.
 `)
 
 const ObsoleteTheoryOfPlaybook = (`
@@ -44,7 +44,7 @@ A Playbook is a self-contained environment where "Source is State." You define t
 
 **Playbook Structure Guidelines:**
 
-1. **State & Metadata Section**: 
+1. **State & Metadata Section**:
    Define the global state and environment. Use variables to store results and environmental constraints.
    Example:
    (var results {})
@@ -62,19 +62,37 @@ A Playbook is a self-contained environment where "Source is State." You define t
 4. **Execution Log (The Memory)**:
    Results and traces are appended as logs within the AST. This is your primary context for reactive planning. Process logs chronologically to identify the current bottleneck.
 
-**Reference Patterns:**
+**Reference Patterns & Execution Traces:**
 
-*Pattern A: Sequential Task with Logging*
-(defn download-file []
-  (doc "Download specified file to disk")
-  (action (sh "curl -O https://example.com/data.zip"))
-  (log "Download initiated"))
+*Pattern A: Sequential Task with Logging (Evolutionary Trace)*
+Initial State:
+(defn main [] (download-file) (show-message))
+(defn download-file [] (doc "Download file") (action (sh "curl ...")))
+(defn show-message [] (print "OK"))
 
+Step 1 (Expand download-file):
 (defn main []
-  (let [res (download-file)]
-    (if res
-      (log "Process complete")
-      (log "Process failed"))))
+  (do
+    (log "calling download-file")
+    (doc "Download file")
+    (action (sh "curl ...")))
+  (show-message))
+
+Step 2 (Action Success & Log):
+(defn main []
+  (do
+    (log "calling download-file")
+    (doc "Download file")
+    (log "download success"))
+  (show-message))
+
+Step 3 (Expand show-message):
+(defn main []
+  (do (log "download success"))
+  (do
+    (log "calling show-message")
+    (print "OK")
+    (log "printed")))
 
 *Pattern B: Mathematical Logic (TRS Style)*
 (defn fib [n]
@@ -82,8 +100,11 @@ A Playbook is a self-contained environment where "Source is State." You define t
     1
     (+ (fib (- n 1)) (fib (- n 2)))))
 
+(defn main [] (fib 30))
+; TRS will expand (fib 30) into the recursive structure and reduce literals.
+
 **Your Task:**
-- **Program Synthesis**: Generate a lean, focused Playbook. Use "Strategic Subtraction": avoid adding steps that don't directly address the narrowest bottleneck. 
+- **Program Synthesis**: Generate a lean, focused Playbook. Use "Strategic Subtraction": avoid adding steps that don't directly address the narrowest bottleneck.
 - **Reactive Patching**: If logs indicate failure (e.g., "Reality-Code Drift"), do not simply retry. Analyze the root cause and provide a "Patch"—a revised set of instructions (e.g., v2) or a corrected state (variable update) to recover the AST.
 - **Human-in-the-Loop**: Explicitly define "human" instructions for tasks requiring judgment, authorization, or physical intervention.
 - **Constraint Awareness**: Specify required permissions or environment constraints for specific actions.
