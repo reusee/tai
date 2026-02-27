@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/prompts"
 	"github.com/reusee/tai/taiconfigs"
+	"github.com/reusee/tai/taiplay"
 )
 
 var (
@@ -107,9 +108,17 @@ func main() {
 
 		// Save the rewritten playbook source back to the file
 		if outputBuffer.Len() > 0 {
-			err := os.WriteFile(playbookFile, outputBuffer.Bytes(), 0644)
+			root, err := os.OpenRoot(".")
 			ce(err)
-			logger.Info("playbook updated")
+			applied, err := taiplay.ApplySexprPatches(root, outputBuffer.Bytes())
+			ce(err)
+			if applied {
+				logger.Info("playbook updated via patches")
+			} else {
+				err := os.WriteFile(playbookFile, outputBuffer.Bytes(), 0644)
+				ce(err)
+				logger.Info("playbook updated via full rewrite")
+			}
 		}
 	})
 }
@@ -123,4 +132,6 @@ The taiplay tool is an implementation of the Playbook system, which treats a tas
 2. Human-AI Symbiosis: Both the AI (The Architect) and humans can read and write to the same file. Edits represent direct state transitions.
 3. Execution as Transformation: Progressing a task is equivalent to transforming the playbook source from one state to the next.
 4. Strategic Focus: The tool minimizes context bloat by focusing the AI on rewriting the playbook rather than processing infinite chat history.
+5. Structural Patching: Supports S-expression based patches (S-MODIFY, S-DELETE, etc.) for surgical updates to the playbook, which is more token-efficient than full rewrites.
 `
+
