@@ -45,7 +45,7 @@ func main() {
 	) {
 		ctx := context.Background()
 
-		const playbookFile = "playbook.janet"
+		const playbookFile = "tai.playbook"
 		logger.Info("starting playbook execution",
 			"goal", *goalFlag,
 			"file", playbookFile,
@@ -115,13 +115,12 @@ func main() {
 }
 
 var Theory = `
-# Theory of cmd/taibook
+# Theory of cmd/taiplay
 
-The taibook tool is an implementation of the Playbook system, which treats a task's state as a Text-based Virtual Machine (TVM). 
+The taiplay tool is an implementation of the Playbook system, which treats a task's state as a Text-based Virtual Machine (TVM). 
 
-1. Source as State: The entire execution state (variables, program counter, and logs) is persisted in a Janet/Lisp-formatted text file (playbook.janet).
+1. Source as State: The entire execution state (variables, program counter, and logs) is persisted in a Lisp-formatted text file (tai.playbook).
 2. Human-AI Symbiosis: Both the AI (The Architect) and humans can read and write to the same file. Edits represent direct state transitions.
 3. Execution as Transformation: Progressing a task is equivalent to transforming the playbook source from one state to the next.
 4. Strategic Focus: The tool minimizes context bloat by focusing the AI on rewriting the playbook rather than processing infinite chat history.
 `
-
