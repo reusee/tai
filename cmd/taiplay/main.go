@@ -111,7 +111,8 @@ func main() {
 		ce(err)
 
 		// Save the rewritten playbook source back to the file.
-		// We prioritize surgical patches for efficiency, falling back to full rewrite.
+		// We strictly enforce patches for efficiency and safety.
+		// Direct text output that is not a patch is ignored to prevent corruption.
 		if playbookBuffer.Len() > 0 {
 			root, err := os.OpenRoot(".")
 			ce(err)
@@ -120,9 +121,7 @@ func main() {
 			if applied {
 				logger.Info("playbook updated via patches")
 			} else {
-				err := os.WriteFile(playbookFile, playbookBuffer.Bytes(), 0644)
-				ce(err)
-				logger.Info("playbook updated via full rewrite")
+				logger.Warn("no valid patches found in output; playbook file not updated to avoid corruption")
 			}
 		} else {
 			logger.Warn("no playbook output produced during this run")
@@ -139,7 +138,7 @@ The taiplay tool is an implementation of the Playbook system, which treats a tas
 2. Human-AI Symbiosis: Both the AI (The Architect) and humans can read and write to the same file. Edits represent direct state transitions in the virtual machine.
 3. Execution as Transformation: Progressing a task is equivalent to transforming the playbook source from one state to the next (Term Rewriting).
 4. Strategic Focus: The tool minimizes context bloat by focusing the AI on rewriting the playbook rather than processing infinite, unstructured chat history.
-5. Structural Patching: Supports S-expression based patches (S-MODIFY, S-DELETE, etc.) for surgical updates to the playbook, which is more token-efficient and maintains file structure.
+5. Strict Patch Enforcement: S-expression based patches (S-MODIFY, S-DELETE, etc.) are the *only* allowed mechanism for updating the playbook file. This ensures that only well-structured transitions are applied, preventing natural language explanations or other non-Lisp content from corrupting the program state.
 6. Dual Output Streams: We distinguish between "Human Interface" (Terminal) and "System State" (File). The terminal stream includes the Architect's reasoning (thoughts), while the file stream suppresses them to maintain syntactic purity of the Playbook.
 7. Atomic Pass: The command performs a single generation pass to update the state. No interactive dialogue is provided within the tool; all "conversation" occurs through edits to the playbook file itself.
 8. No Execution Responsibility: taiplay is strictly an architecting and state-transition tool. It does not execute the instructions (e.g., shell commands, scripts) defined in the playbook. Execution is handled by a separate, specialized engine. The Architect must never simulate or hallucinate results for instructions it creates or modifies.
