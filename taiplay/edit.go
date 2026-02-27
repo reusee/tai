@@ -20,6 +20,7 @@ const Theory = `
    - S-ADD_AFTER: Inserts new S-expression(s) after the target.
 4. Uniqueness Constraint: To prevent ambiguous edits, the prefix must match exactly one top-level S-expression in the file.
 5. TVM Compatibility: This mechanism is designed to update Lisp-formatted Playbook files while maintaining syntactic integrity.
+6. Boundary Anchors: 'BEGIN' and 'END' can be used as targets to insert content at the very start or end of the file, which is essential for initializing new Playbooks or appending to existing ones.
 `
 
 var headerRegexp = regexp.MustCompile(`(?m)^(\s*)\[\[\[ (S-MODIFY|S-ADD_BEFORE|S-ADD_AFTER|S-DELETE) (.*) IN (\S+)`)
@@ -106,6 +107,12 @@ func applyHunk(root *os.Root, h Hunk) error {
 }
 
 func findTargetRange(src []byte, prefix string) (int, int, error) {
+	if prefix == "BEGIN" {
+		return 0, 0, nil
+	}
+	if prefix == "END" {
+		return len(src), len(src), nil
+	}
 	sexprs := scanTopLevelSexprs(src)
 	var found []sexprPos
 	for _, s := range sexprs {

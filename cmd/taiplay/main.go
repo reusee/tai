@@ -37,96 +37,107 @@ func main() {
 	scope, err := taiconfigs.TaigoFork(scope)
 	ce(err)
 
-	scope.Call(func(
-		logger logs.Logger,
-		buildGenerate phases.BuildGenerate,
-		getGenerator generators.GetDefaultGenerator,
-	) {
-		ctx := context.Background()
+	scope.Call(runArchitect)
+}
 
-		const playbookFile = "tai.playbook"
-		logger.Info("starting playbook execution",
-			"goal", *goalFlag,
-			"file", playbookFile,
+func runArchitect(
+	logger logs.Logger,
+	buildGenerate phases.BuildGenerate,
+	getGenerator generators.GetDefaultGenerator,
+) {
+	ctx := context.Background()
+
+	const playbookFile = "tai.playbook"
+	logger.Info("starting playbook execution",
+		"goal", *goalFlag,
+		"file", playbookFile,
+	)
+
+	state := initState(logger, playbookFile)
+
+	// Dual output stream setup:
+	// 1. Terminal output includes AI thoughts for transparency.
+	// 2. Playbook buffer excludes thoughts to ensure a clean, parsable Lisp file.
+	state = generators.NewOutput(state, os.Stdout, true)
+	playbookBuffer := new(bytes.Buffer)
+	state = generators.NewOutput(state, playbookBuffer, false)
+
+	generator, err := getGenerator()
+	ce(err)
+
+	// Create the phase chain. We perform a single generation pass to update the playbook.
+	// There is no interactive chat phase, as the "Source as State" philosophy
+	// prioritizes the playbook as the authoritative communication medium.
+	phase := buildGenerate(generator, nil)(nil)
+
+	for phase != nil {
+		var err error
+		phase, state, err = phase(ctx, state)
+		ce(err)
+	}
+
+	// Ensure all content is flushed
+	state, err = state.Flush()
+	ce(err)
+
+	applyPatches(logger, playbookBuffer)
+}
+
+func initState(logger logs.Logger, playbookFile string) generators.State {
+	// Try to load existing playbook to maintain "Source as State"
+	if content, err := os.ReadFile(playbookFile); err == nil {
+		logger.Info("loading existing playbook")
+		return generators.NewPrompts(
+			prompts.Playbook,
+			[]*generators.Content{
+				{
+					Role:  generators.RoleUser,
+					Parts: []generators.Part{generators.Text("Goal: " + *goalFlag)},
+				},
+				{
+					Role:  generators.RoleAssistant,
+					Parts: []generators.Part{generators.Text(string(content))},
+				},
+				{
+					Role:  generators.RoleUser,
+					Parts: []generators.Part{generators.Text("Analyze logs and continue execution or optimize.")},
+				},
+			},
 		)
+	}
 
-		var state generators.State
+	// Initial state setup for a new goal
+	return generators.NewPrompts(
+		prompts.Playbook,
+		[]*generators.Content{
+			{
+				Role: generators.RoleUser,
+				Parts: []generators.Part{generators.Text(
+					"Goal: " + *goalFlag + "\n\n" +
+						"Initialize the playbook using S-expression patches (e.g., S-ADD_BEFORE BEGIN).",
+				)},
+			},
+		},
+	)
+}
 
-		// Try to load existing playbook to maintain "Source as State"
-		if content, err := os.ReadFile(playbookFile); err == nil {
-			logger.Info("loading existing playbook")
-			state = generators.NewPrompts(
-				prompts.Playbook,
-				[]*generators.Content{
-					{
-						Role:  generators.RoleUser,
-						Parts: []generators.Part{generators.Text("Goal: " + *goalFlag)},
-					},
-					{
-						Role:  generators.RoleAssistant,
-						Parts: []generators.Part{generators.Text(string(content))},
-					},
-					{
-						Role:  generators.RoleUser,
-						Parts: []generators.Part{generators.Text("Analyze logs and continue execution or optimize.")},
-					},
-				},
-			)
-		} else {
-			// Initial state setup for a new goal
-			state = generators.NewPrompts(
-				prompts.Playbook,
-				[]*generators.Content{
-					{
-						Role:  generators.RoleUser,
-						Parts: []generators.Part{generators.Text("Goal: " + *goalFlag)},
-					},
-				},
-			)
-		}
-
-		// Dual output stream setup:
-		// 1. Terminal output includes AI thoughts for transparency.
-		// 2. Playbook buffer excludes thoughts to ensure a clean, parsable Janet file.
-		state = generators.NewOutput(state, os.Stdout, true)
-		playbookBuffer := new(bytes.Buffer)
-		state = generators.NewOutput(state, playbookBuffer, false)
-
-		generator, err := getGenerator()
+func applyPatches(logger logs.Logger, playbookBuffer *bytes.Buffer) {
+	// Save the rewritten playbook source back to the file.
+	// We strictly enforce patches for efficiency and safety.
+	// Direct text output that is not a patch is ignored to prevent corruption.
+	if playbookBuffer.Len() > 0 {
+		root, err := os.OpenRoot(".")
 		ce(err)
-
-		// Create the phase chain. We perform a single generation pass to update the playbook.
-		// There is no interactive chat phase, as the "Source as State" philosophy
-		// prioritizes the playbook as the authoritative communication medium.
-		phase := buildGenerate(generator, nil)(nil)
-
-		for phase != nil {
-			var err error
-			phase, state, err = phase(ctx, state)
-			ce(err)
-		}
-
-		// Ensure all content is flushed
-		state, err = state.Flush()
+		applied, err := taiplay.ApplySexprPatches(root, playbookBuffer.Bytes())
 		ce(err)
-
-		// Save the rewritten playbook source back to the file.
-		// We strictly enforce patches for efficiency and safety.
-		// Direct text output that is not a patch is ignored to prevent corruption.
-		if playbookBuffer.Len() > 0 {
-			root, err := os.OpenRoot(".")
-			ce(err)
-			applied, err := taiplay.ApplySexprPatches(root, playbookBuffer.Bytes())
-			ce(err)
-			if applied {
-				logger.Info("playbook updated via patches")
-			} else {
-				logger.Warn("no valid patches found in output; playbook file not updated to avoid corruption")
-			}
+		if applied {
+			logger.Info("playbook updated via patches")
 		} else {
-			logger.Warn("no playbook output produced during this run")
+			logger.Warn("no valid patches found in output; playbook file not updated to avoid corruption")
 		}
-	})
+	} else {
+		logger.Warn("no playbook output produced during this run")
+	}
 }
 
 var Theory = `
