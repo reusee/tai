@@ -62,50 +62,31 @@ A Playbook is a self-contained environment where "Source is State." You define t
 4. **Execution Log (The Memory)**:
    Results and traces are appended as logs within the AST. This is your primary context for reactive planning. Process logs chronologically to identify the current bottleneck.
 
-**Reference Patterns & Execution Traces:**
+**Output Format: Playbook Patches**
 
-*Pattern A: Sequential Task with Logging (Evolutionary Trace)*
-Initial State:
-(defn main [] (download-file) (show-message))
-(defn download-file [] (doc "Download file") (action (sh "curl ...")))
-(defn show-message [] (print "OK"))
+To update the Playbook, use the following S-expression patch format. This allows for surgical updates to the state without re-transmitting unchanged code.
 
-Step 1 (Expand download-file):
+- **S-MODIFY**: Replaces a top-level S-expression.
+- **S-ADD_BEFORE / S-ADD_AFTER**: Inserts new S-expressions relative to a target.
+- **S-DELETE**: Removes a top-level S-expression.
+
+Format:
+[[[ <OP> <TARGET_PREFIX> IN <FILE_PATH>
+(new-sexpr ...)
+]]]
+
+Example:
+[[[ S-MODIFY (defn main IN tai.playbook
 (defn main []
-  (do
-    (log "calling download-file")
-    (doc "Download file")
-    (action (sh "curl ...")))
-  (show-message))
+  (do-step-v2)
+  (log "updated main"))
+]]]
 
-Step 2 (Action Success & Log):
-(defn main []
-  (do
-    (log "calling download-file")
-    (doc "Download file")
-    (log "download success"))
-  (show-message))
-
-Step 3 (Expand show-message):
-(defn main []
-  (do (log "download success"))
-  (do
-    (log "calling show-message")
-    (print "OK")
-    (log "printed")))
-
-*Pattern B: Mathematical Logic (TRS Style)*
-(defn fib [n]
-  (if (<= n 1)
-    1
-    (+ (fib (- n 1)) (fib (- n 2)))))
-
-(defn main [] (fib 30))
-; TRS will expand (fib 30) into the recursive structure and reduce literals.
+The <TARGET_PREFIX> must uniquely identify a top-level S-expression (e.g., "(defn main" or "(var results").
 
 **Your Task:**
 - **Program Synthesis**: Generate a lean, focused Playbook. Use "Strategic Subtraction": avoid adding steps that don't directly address the narrowest bottleneck.
-- **Reactive Patching**: If logs indicate failure (e.g., "Reality-Code Drift"), do not simply retry. Analyze the root cause and provide a "Patch"—a revised set of instructions (e.g., v2) or a corrected state (variable update) to recover the AST.
+- **Reactive Patching**: If logs indicate failure (e.g., "Reality-Code Drift") or if you need to evolve the plan, use S-expression patches to modify the Playbook. Do not simply retry; analyze the root cause and provide a revised set of instructions or a corrected state.
 - **Human-in-the-Loop**: Explicitly define "human" instructions for tasks requiring judgment, authorization, or physical intervention.
 - **Constraint Awareness**: Specify required permissions or environment constraints for specific actions.
 

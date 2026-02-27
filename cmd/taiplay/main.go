@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/reusee/dscope"
@@ -41,7 +40,6 @@ func main() {
 	scope.Call(func(
 		logger logs.Logger,
 		buildGenerate phases.BuildGenerate,
-		buildChat phases.BuildChat,
 		getGenerator generators.GetDefaultGenerator,
 	) {
 		ctx := context.Background()
@@ -87,18 +85,20 @@ func main() {
 			)
 		}
 
-		// Capture the output to update the playbook file atomically
-		outputBuffer := new(bytes.Buffer)
-		state = generators.NewOutput(state, io.MultiWriter(os.Stdout, outputBuffer), true)
+		// Dual output stream setup:
+		// 1. Terminal output includes AI thoughts for transparency.
+		// 2. Playbook buffer excludes thoughts to ensure a clean, parsable Janet file.
+		state = generators.NewOutput(state, os.Stdout, true)
+		playbookBuffer := new(bytes.Buffer)
+		state = generators.NewOutput(state, playbookBuffer, false)
 
 		generator, err := getGenerator()
 		ce(err)
 
-		phase := buildGenerate(generator, nil)(
-			buildChat(generator, nil)(
-				nil,
-			),
-		)
+		// Create the phase chain. We perform a single generation pass to update the playbook.
+		// There is no interactive chat phase, as the "Source as State" philosophy
+		// prioritizes the playbook as the authoritative communication medium.
+		phase := buildGenerate(generator, nil)(nil)
 
 		for phase != nil {
 			var err error
@@ -106,19 +106,26 @@ func main() {
 			ce(err)
 		}
 
-		// Save the rewritten playbook source back to the file
-		if outputBuffer.Len() > 0 {
+		// Ensure all content is flushed
+		state, err = state.Flush()
+		ce(err)
+
+		// Save the rewritten playbook source back to the file.
+		// We prioritize surgical patches for efficiency, falling back to full rewrite.
+		if playbookBuffer.Len() > 0 {
 			root, err := os.OpenRoot(".")
 			ce(err)
-			applied, err := taiplay.ApplySexprPatches(root, outputBuffer.Bytes())
+			applied, err := taiplay.ApplySexprPatches(root, playbookBuffer.Bytes())
 			ce(err)
 			if applied {
 				logger.Info("playbook updated via patches")
 			} else {
-				err := os.WriteFile(playbookFile, outputBuffer.Bytes(), 0644)
+				err := os.WriteFile(playbookFile, playbookBuffer.Bytes(), 0644)
 				ce(err)
 				logger.Info("playbook updated via full rewrite")
 			}
+		} else {
+			logger.Warn("no playbook output produced during this run")
 		}
 	})
 }
@@ -128,10 +135,11 @@ var Theory = `
 
 The taiplay tool is an implementation of the Playbook system, which treats a task's state as a Text-based Virtual Machine (TVM). 
 
-1. Source as State: The entire execution state (variables, program counter, and logs) is persisted in a Lisp-formatted text file (tai.playbook).
-2. Human-AI Symbiosis: Both the AI (The Architect) and humans can read and write to the same file. Edits represent direct state transitions.
-3. Execution as Transformation: Progressing a task is equivalent to transforming the playbook source from one state to the next.
-4. Strategic Focus: The tool minimizes context bloat by focusing the AI on rewriting the playbook rather than processing infinite chat history.
-5. Structural Patching: Supports S-expression based patches (S-MODIFY, S-DELETE, etc.) for surgical updates to the playbook, which is more token-efficient than full rewrites.
+1. Source as State: The entire execution state (variables, program counter, and logs) is persisted in a Lisp-formatted text file (tai.playbook). This file is the authoritative, human-readable record of the "Theory of the Task."
+2. Human-AI Symbiosis: Both the AI (The Architect) and humans can read and write to the same file. Edits represent direct state transitions in the virtual machine.
+3. Execution as Transformation: Progressing a task is equivalent to transforming the playbook source from one state to the next (Term Rewriting).
+4. Strategic Focus: The tool minimizes context bloat by focusing the AI on rewriting the playbook rather than processing infinite, unstructured chat history.
+5. Structural Patching: Supports S-expression based patches (S-MODIFY, S-DELETE, etc.) for surgical updates to the playbook, which is more token-efficient and maintains file structure.
+6. Dual Output Streams: We distinguish between "Human Interface" (Terminal) and "System State" (File). The terminal stream includes the Architect's reasoning (thoughts), while the file stream suppresses them to maintain syntactic purity of the Playbook.
+7. Atomic Pass: The command performs a single generation pass to update the state. No interactive dialogue is provided within the tool; all "conversation" occurs through edits to the playbook file itself.
 `
-
