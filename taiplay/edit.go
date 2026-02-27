@@ -11,24 +11,25 @@ import (
 const Theory = `
 # S-Expression Editing Theory
 
-1. Structural Targeting: Unlike line-based diffs, we target S-expressions. An S-expression is the fundamental unit of state in taiplay.
+1. Structural Targeting: Unlike line-based diffs, we target S-expressions within tai.playbook. An S-expression is the fundamental unit of state in taiplay.
 2. Prefix Matching: A target is identified by a prefix. The tool searches for a unique top-level S-expression that starts with this prefix. This allows the AI to specify a target concisely.
-3. Operations:
+3. Operations (always targeting tai.playbook):
    - S-MODIFY: Replaces the entire targeted S-expression with new content.
    - S-DELETE: Removes the targeted S-expression.
    - S-ADD_BEFORE: Inserts new S-expression(s) before the target.
    - S-ADD_AFTER: Inserts new S-expression(s) after the target.
 4. Uniqueness Constraint: To prevent ambiguous edits, the prefix must match exactly one top-level S-expression in the file.
 5. TVM Compatibility: This mechanism is designed to update Lisp-formatted Playbook files while maintaining syntactic integrity.
-6. Boundary Anchors: 'BEGIN' and 'END' can be used as targets to insert content at the very start or end of the file, which is essential for initializing new Playbooks or appending to existing ones.
+6. Boundary Anchors: 'BEGIN' and 'END' can be used as targets to insert content at the very start or end of tai.playbook, which is essential for initializing new Playbooks or appending to existing ones.
 `
 
-var headerRegexp = regexp.MustCompile(`(?m)^(\s*)\[\[\[ (S-MODIFY|S-ADD_BEFORE|S-ADD_AFTER|S-DELETE) (.*) IN (\S+)`)
+var headerRegexp = regexp.MustCompile(`(?m)^(\s*)\[\[\[ (S-MODIFY|S-ADD_BEFORE|S-ADD_AFTER|S-DELETE) (.*)`)
+
+const playbookFile = "tai.playbook"
 
 type Hunk struct {
 	Op           string
 	TargetPrefix string
-	FilePath     string
 	Body         string
 }
 
@@ -52,7 +53,6 @@ func parseHunks(content []byte) []Hunk {
 		hunk := Hunk{
 			Op:           string(content[m[4]:m[5]]),
 			TargetPrefix: strings.TrimSpace(string(content[m[6]:m[7]])),
-			FilePath:     strings.Trim(string(content[m[8]:m[9]]), "\"'"),
 		}
 		start := m[1]
 		endOfHeader := bytes.IndexByte(content[start:], '\n')
@@ -75,10 +75,10 @@ func parseHunks(content []byte) []Hunk {
 }
 
 func applyHunk(root *os.Root, h Hunk) error {
-	src, err := root.ReadFile(h.FilePath)
+	src, err := root.ReadFile(playbookFile)
 	if err != nil {
 		if os.IsNotExist(err) && (h.Op == "S-ADD_BEFORE" || h.Op == "S-ADD_AFTER" || h.Op == "S-MODIFY") {
-			return root.WriteFile(h.FilePath, []byte(h.Body), 0644)
+			return root.WriteFile(playbookFile, []byte(h.Body), 0644)
 		}
 		return err
 	}
@@ -103,7 +103,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 		newSrc = append(src[:end], append([]byte("\n\n"+h.Body), src[end:]...)...)
 	}
 
-	return root.WriteFile(h.FilePath, bytes.TrimSpace(newSrc), 0644)
+	return root.WriteFile(playbookFile, bytes.TrimSpace(newSrc), 0644)
 }
 
 func findTargetRange(src []byte, prefix string) (int, int, error) {

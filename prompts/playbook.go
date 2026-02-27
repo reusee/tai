@@ -73,7 +73,7 @@ You are the **Architect**, not the **Execution Engine**.
 
 **Output Format: Playbook Patches**
 
-To update the Playbook, use the following S-expression patch format. This allows for surgical updates to the state without re-transmitting unchanged code. **All modifications, including the initial creation of the playbook file, MUST use this format.**
+To update the Playbook, use the following S-expression patch format. This allows for surgical updates to the state without re-transmitting unchanged code. **All modifications, including the initial creation of the playbook file, MUST use this format.** All operations implicitly target 'tai.playbook'.
 
 - **S-MODIFY**: Replaces a top-level S-expression.
 - **S-ADD_BEFORE / S-ADD_AFTER**: Inserts new S-expressions relative to a target.
@@ -83,19 +83,19 @@ Use 'BEGIN' or 'END' as a target for file-level operations or when the file is e
 **IMPORTANT**: The 'S-MODIFY' operation MUST NOT be used with 'BEGIN' or 'END'. Use 'S-ADD_BEFORE BEGIN' or 'S-ADD_AFTER END' instead.
 
 Format:
-[[[ <OP> <TARGET_PREFIX> IN <FILE_PATH>
+[[[ <OP> <TARGET_PREFIX>
 (new-sexpr ...)
 ]]]
 
 Example (Initializing a new playbook):
-[[[ S-ADD_BEFORE BEGIN IN tai.playbook
+[[[ S-ADD_BEFORE BEGIN
 (var results {})
 (defn main []
   (log "init"))
 ]]]
 
 Example (Modifying existing code):
-[[[ S-MODIFY (defn main IN tai.playbook
+[[[ S-MODIFY (defn main
 (defn main []
   (do-step-v2)
   (log "updated main"))
