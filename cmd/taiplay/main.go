@@ -142,4 +142,5 @@ The taiplay tool is an implementation of the Playbook system, which treats a tas
 5. Structural Patching: Supports S-expression based patches (S-MODIFY, S-DELETE, etc.) for surgical updates to the playbook, which is more token-efficient and maintains file structure.
 6. Dual Output Streams: We distinguish between "Human Interface" (Terminal) and "System State" (File). The terminal stream includes the Architect's reasoning (thoughts), while the file stream suppresses them to maintain syntactic purity of the Playbook.
 7. Atomic Pass: The command performs a single generation pass to update the state. No interactive dialogue is provided within the tool; all "conversation" occurs through edits to the playbook file itself.
+8. No Execution Responsibility: taiplay is strictly an architecting and state-transition tool. It does not execute the instructions (e.g., shell commands, scripts) defined in the playbook. Execution is handled by a separate, specialized engine. The Architect must never simulate or hallucinate results for instructions it creates or modifies.
 `

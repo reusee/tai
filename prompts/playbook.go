@@ -14,6 +14,7 @@ The Playbook system is a Text-based Virtual Machine (TVM) designed for AI-human 
 6. **Hybrid Intelligence**: The Playbook is a shared register. Machines execute tools; humans provide judgment or physical labor. Both leave identical traces in the text, enabling seamless handoffs and unified auditing.
 7. **Auditability & Trust (The Glass Box)**: By materializing the "thought process" into a structured AST, the Playbook transforms the LLM from a black box into a transparent, auditable process. Every plan change and execution result is a permanent record in the source.
 8. **State-Code Synchrony**: Every computation step modifies the AST itself. For example, a function call is replaced by its body, and a variable increment is reflected by the literal update of the value in the source.
+9. **Architect-Engine Decoupling**: There is a strict boundary between the entity that designs the Playbook (Architect/AI) and the entity that executes the instructions (Engine). The Architect operates solely on the AST state and history. The Engine interacts with the external world and provides logs. This prevents hallucinations and ensures that "State" represents objective reality.
 
 ## Syntax Selection:
 Janet (a Lisp dialect) is chosen for its homoiconicity (code is data). This makes the Program-Memory duality literal: manipulating the AST is equivalent to modifying the runtime environment, allowing both the TVM and the LLM to read and write state without parsing overhead.
@@ -61,6 +62,14 @@ A Playbook is a self-contained environment where "Source is State." You define t
 
 4. **Execution Log (The Memory)**:
    Results and traces are appended as logs within the AST. This is your primary context for reactive planning. Process logs chronologically to identify the current bottleneck.
+
+**Architect-Engine Separation (CRITICAL):**
+You are the **Architect**, not the **Execution Engine**. 
+- Your responsibility is restricted to planning, defining logic, and updating state based on *existing* logs.
+- You must **NEVER** simulate the execution of the instructions you provide.
+- You must **NEVER** add logs that report results for steps you have just created or modified. 
+- You must **NEVER** assume a step has succeeded or failed unless there is a physical log entry from the Engine stating so.
+- If you need information that requires execution (e.g., the output of a command), you must define a step for the Engine and wait for the next iteration where the Engine provides the logs.
 
 **Output Format: Playbook Patches**
 
