@@ -61,47 +61,70 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 				h.FilePath = filePathMatch
 			}
 			start = startOffset
-			if bytes.Contains(line, []byte("]]]")) {
-				if h.Op == "DELETE" {
-					end = start + len(line)
-					h.Raw = string(content[start:end])
-					h.Body = ""
-					ok = true
-					return
-				}
-				// Robustness: If MODIFY/ADD has ]]] on same line, look ahead for body until next [[[ or end
-				end = start + len(line) + 1
-				var bodyLines [][]byte
-				for j := i + 1; j < len(lines); j++ {
-					if headerRegexp.Match(lines[j]) {
-						break
-					}
-					bodyLines = append(bodyLines, lines[j])
-					end += len(lines[j]) + 1
-				}
-				if end > len(content) {
-					end = len(content)
-				}
+
+			// Special case for DELETE on same line
+			if h.Op == "DELETE" && bytes.Contains(line, []byte("]]]")) {
+				end = start + len(line)
 				h.Raw = string(content[start:end])
-				h.Body = strings.TrimSpace(string(bytes.Join(bodyLines, []byte("\n"))))
+				h.Body = ""
 				ok = true
 				return
 			}
+
+			// Search for closing ]]]
 			var footerOffset int = startOffset + len(line) + 1
 			for j := i + 1; j < len(lines); j++ {
-				trimmedLine := bytes.TrimSpace(lines[j])
-				if bytes.HasPrefix(trimmedLine, []byte("]]]")) {
-					end = footerOffset + len(lines[j])
-					h.Raw = string(content[start:end])
-					bodyStart := start + len(line) + 1
-					bodyEnd := footerOffset
-					if bodyEnd > bodyStart {
-						h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+				// If we encounter another header before a footer
+				if headerRegexp.Match(lines[j]) {
+					if bytes.Contains(line, []byte("]]]")) {
+						// Header had ]]], treat as closing tag and take everything before next header as body
+						end = footerOffset - 1
+						h.Raw = string(content[start:end])
+						bodyStart := start + len(line) + 1
+						bodyEnd := end
+						if bodyEnd > bodyStart {
+							h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+						}
+						ok = true
+						return
 					}
-					ok = true
-					return
+					// Otherwise broken hunk
+					break
 				}
+
+				trimmedLine := bytes.TrimSpace(lines[j])
+				if idx := bytes.Index(lines[j], []byte("]]]")); idx != -1 {
+					// Delimiter is ]]] at start or end of line (ignoring whitespace)
+					if bytes.HasPrefix(trimmedLine, []byte("]]]")) || bytes.HasSuffix(trimmedLine, []byte("]]]")) {
+						if bytes.HasSuffix(trimmedLine, []byte("]]]")) {
+							idx = bytes.LastIndex(lines[j], []byte("]]]"))
+						}
+						end = footerOffset + idx + 3
+						h.Raw = string(content[start:end])
+						bodyStart := start + len(line) + 1
+						bodyEnd := footerOffset + idx
+						if bodyEnd > bodyStart {
+							h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+						}
+						ok = true
+						return
+					}
+				}
+
 				footerOffset += len(lines[j]) + 1
+			}
+
+			// End of file reached
+			if bytes.Contains(line, []byte("]]]")) {
+				end = len(content)
+				h.Raw = string(content[start:end])
+				bodyStart := start + len(line) + 1
+				bodyEnd := end
+				if bodyEnd > bodyStart {
+					h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+				}
+				ok = true
+				return
 			}
 			return
 		}
