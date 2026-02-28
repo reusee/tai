@@ -18,6 +18,20 @@ import (
 
 var chatArgs = cmds.Var[string]("chat")
 
+const Theory = `
+Memory and Tool Usage:
+The AI's memory is implemented as a persistent user profile (ai-memory.json).
+This profile is fed into the system prompt to provide long-term context.
+Updates are handled via the 'update_user_profile' tool, which the AI is instructed
+to call whenever it learns something new about the user.
+
+To ensure reliability:
+1. Tool calls are strictly separated from user-facing responses in the prompt.
+2. The AI is explicitly forbidden from 'simulating' tool calls in text.
+3. Tool visibility is enabled in the output to provide feedback on memory operations, 
+   helping to distinguish between a successful structural call and a textual hallucination.
+`
+
 func main() {
 	cmds.Execute(os.Args[1:])
 	ctx := context.Background()
@@ -104,3 +118,4 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
+
