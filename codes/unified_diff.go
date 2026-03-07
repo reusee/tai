@@ -4,7 +4,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/prompts"
+	"github.com/reusee/prompts"
 )
 
 type UnifiedDiff struct {

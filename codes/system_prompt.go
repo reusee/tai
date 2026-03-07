@@ -1,8 +1,8 @@
 package codes
 
 import (
+	"github.com/reusee/prompts"
 	"github.com/reusee/tai/codes/codetypes"
-	"github.com/reusee/tai/prompts"
 )
 
 type SystemPrompt string

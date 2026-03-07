@@ -7,7 +7,7 @@ import (
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/prompts"
+	"github.com/reusee/prompts"
 )
 
 type SystemPrompt string

@@ -12,7 +12,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/tai/prompts"
+	"github.com/reusee/prompts"
 	"github.com/reusee/tai/taiconfigs"
 	"github.com/reusee/tai/taiplay"
 )
