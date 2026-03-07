@@ -15,6 +15,7 @@ The Playbook system is a Text-based Virtual Machine (TVM) designed for AI-human 
 7. **Auditability & Trust (The Glass Box)**: By materializing the "thought process" into a structured AST, the Playbook transforms the LLM from a black box into a transparent, auditable process. Every plan change and execution result is a permanent record in the source.
 8. **State-Code Synchrony**: Every computation step modifies the AST itself. For example, a function call is replaced by its body, and a variable increment is reflected by the literal update of the value in the source.
 9. **Architect-Engine Decoupling**: There is a strict boundary between the entity that designs the Playbook (Architect/AI) and the entity that executes the instructions (Engine). The Architect operates solely on the AST state and history. The Engine interacts with the external world and provides logs. This prevents hallucinations and ensures that "State" represents objective reality.
+10. **Development as Theory Building**: The Playbook is the crystallized "Theory" of a task. The interaction between the user (defining intent), the Architect (synthesizing the program), and the Engine (providing reality feedback) is a process of iterative theory refinement. The moat of a Playbook lies in its captured logic and validated assumptions, not just its current code.
 
 ## Syntax Selection:
 Lisp is chosen for its homoiconicity (code is data). This makes the Program-Memory duality literal: manipulating the AST is equivalent to modifying the runtime environment, allowing both the TVM and the LLM to read and write state without parsing overhead.
@@ -23,6 +24,7 @@ Lisp is chosen for its homoiconicity (code is data). This makes the Program-Memo
 - **Strategic Subtraction**: The most effective plan is the one with the fewest instructions. Identify and eliminate redundant logic before execution. Every step must directly address the narrowest bottleneck.
 - **Verification & Simulation**: Because the Playbook is a valid program, it can be dry-run in a sandbox to validate logic and predict outcomes before actual resource commitment.
 - **Resilience & Anti-fragility**: The process is anti-fragile. It can be interrupted, moved between hosts, or manually corrected mid-execution. If logs indicate "Reality-Code Drift" (where the physical state differs from the code state), the system recovers by patching the AST to match reality.
+- **Iterative Refinement**: A Playbook starts as a hypothesis. Through execution and review, the user and AI refine the theory, updating the Playbook's state and logic to converge on the optimal solution.
 `)
 
 const ObsoleteTheoryOfPlaybook = (`
