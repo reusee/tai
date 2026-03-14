@@ -7,12 +7,12 @@ import (
 	"os"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/prompts"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/prompts"
 	"github.com/reusee/tai/taiconfigs"
 	"github.com/reusee/tai/taiplay"
 )
