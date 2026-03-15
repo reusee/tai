@@ -10,6 +10,7 @@ import (
 	"go/types"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -440,3 +441,4 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
+
