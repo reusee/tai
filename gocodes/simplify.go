@@ -279,21 +279,23 @@ type Transform struct {
 	MatchModuleIsRoot  *bool
 	MatchPackageIsRoot *bool
 
-	Set                *ast.File
-	SetContent         []byte
-	DeleteTestFiles    bool
-	DeleteComments     bool
-	DeleteStructTags   bool
-	DeleteFunctionBody bool
-	DeleteFile         bool
+	Set                 *ast.File
+	SetContent          []byte
+	DeleteTestFiles     bool
+	DeleteMarkdownFiles bool
+	DeleteComments      bool
+	DeleteStructTags    bool
+	DeleteFunctionBody  bool
+	DeleteFile          bool
 }
 
 func makeTransforms() (ops []*Transform) {
 
 	// non-root module
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot: vars.PtrTo(false),
-		DeleteTestFiles:   true,
+		MatchModuleIsRoot:   vars.PtrTo(false),
+		DeleteTestFiles:     true,
+		DeleteMarkdownFiles: true,
 	})
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot: vars.PtrTo(false),
@@ -310,9 +312,10 @@ func makeTransforms() (ops []*Transform) {
 
 	// root module, non-root package
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(true),
-		MatchPackageIsRoot: vars.PtrTo(false),
-		DeleteTestFiles:    true,
+		MatchModuleIsRoot:   vars.PtrTo(true),
+		MatchPackageIsRoot:  vars.PtrTo(false),
+		DeleteTestFiles:     true,
+		DeleteMarkdownFiles: true,
 	})
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot:  vars.PtrTo(true),
@@ -350,7 +353,6 @@ func makeTransforms() (ops []*Transform) {
 	return
 }
 
-// applyTransform apply f.Transform and set f.Pending
 func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCounter) {
 	f.transformCond.L.Lock()
 	defer f.transformCond.L.Unlock()
@@ -420,6 +422,14 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 	if f.Transform.DeleteTestFiles && strings.HasSuffix(f.Path, "_test.go") {
 		f.Pending = &Transformed{
 			What: "delete test file",
+		}
+		return
+	}
+
+	// delete markdown file
+	if f.Transform.DeleteMarkdownFiles && strings.HasSuffix(strings.ToLower(f.Path), ".md") {
+		f.Pending = &Transformed{
+			What: "delete markdown file",
 		}
 		return
 	}

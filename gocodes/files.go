@@ -218,6 +218,35 @@ func (Module) Files(
 			}
 		})
 
+		// root packages directories
+		rootPkgDirs := make(map[string]*packages.Package)
+		for _, pkg := range rootPkgs {
+			for _, file := range pkg.GoFiles {
+				rootPkgDirs[filepath.Dir(file)] = pkg
+				break
+			}
+		}
+		// include .md files in root package directories
+		for dir, pkg := range rootPkgDirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+				if strings.HasSuffix(strings.ToLower(name), ".md") {
+					path := filepath.Join(dir, name)
+					if _, ok := nonGoFilePaths[path]; !ok {
+						nonGoFilePaths[path] = pkg
+						logger.Info("include markdown file", "path", path)
+					}
+				}
+			}
+		}
+
 		for path, pkg := range nonGoFilePaths {
 			content, err := os.ReadFile(path)
 			if err != nil {
