@@ -22,7 +22,7 @@ type Hunk struct {
 	Raw      string
 }
 
-var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE) (\S+) IN ("[^"]*"|'[^']*'|\S+)`)
+var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE)\s+(\S+?)\s+IN\s+("[^"]*"|'[^']*'|\S+?)(\s*\]\]\]|\s|$)`)
 
 func ApplyHunks(root *os.Root, aiFilePath string) error {
 	for {
@@ -458,15 +458,20 @@ func stripPackage(body string) string {
 
 func stripMarkdown(s string) string {
 	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
+	start := strings.Index(s, "```")
+	if start == -1 {
 		return s
 	}
-	lines := strings.Split(s, "\n")
-	if len(lines) < 2 {
+	// skip the line with ```
+	nextNl := strings.Index(s[start:], "\n")
+	if nextNl == -1 {
 		return s
 	}
-	if !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+	contentStart := start + nextNl + 1
+
+	end := strings.LastIndex(s, "```")
+	if end <= contentStart {
 		return s
 	}
-	return strings.Join(lines[1:len(lines)-1], "\n")
+	return strings.TrimSpace(s[contentStart:end])
 }
