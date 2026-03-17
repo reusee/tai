@@ -2,6 +2,7 @@ package codes
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -276,20 +278,72 @@ func applyHunk(root *os.Root, h Hunk) error {
 		}
 	}
 
+	type rangeItem struct {
+		start, end int
+		body       string
+	}
+	var items []rangeItem
+	items = append(items, rangeItem{start: start, end: end, body: finalBody})
+
+	// Detect and remove other occurrences of entities present in the hunk body
+	// to prevent duplication when a hunk contains multiple declarations (e.g. Type + Methods).
+	if bodyInfo != nil && bodyInfo.entityCount() > 1 && f != nil && h.Target != "BEGIN" && h.Target != "END" {
+		ids := getIdentifiers(bodyInfo)
+		for _, id := range ids {
+			// Skip the primary target or anything that matches it
+			if id == h.Target {
+				continue
+			}
+			// Find range of this identifier in the original file
+			s, e, _, err := findTargetRange(fset, f, Hunk{Op: "DELETE", Target: id}, nil, len(src), prefixLen)
+			if err == nil {
+				// Check for overlap with existing items
+				overlap := false
+				for _, item := range items {
+					if (s >= item.start && s < item.end) || (e > item.start && e <= item.end) || (item.start >= s && item.start < e) {
+						overlap = true
+						break
+					}
+				}
+				if !overlap {
+					items = append(items, rangeItem{start: s, end: e, body: ""})
+				}
+			}
+		}
+	}
+
+	// Sort items by start offset descending to apply changes from end to start
+	slices.SortStableFunc(items, func(a, b rangeItem) int {
+		return cmp.Compare(b.start, a.start)
+	})
+
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
-		finalBody = stripPackage(finalBody)
+		for i := range items {
+			if items[i].body != "" {
+				items[i].body = stripPackage(items[i].body)
+			}
+		}
 	}
 
 	var newSrc []byte
-	switch h.Op {
-	case "MODIFY":
-		newSrc = append(src[:start], append([]byte(finalBody), src[end:]...)...)
-	case "DELETE":
-		newSrc = append(src[:start], src[end:]...)
-	case "ADD_BEFORE":
-		newSrc = append(src[:start], append([]byte(finalBody+"\n\n"), src[start:]...)...)
-	case "ADD_AFTER":
-		newSrc = append(src[:end], append([]byte("\n\n"+finalBody), src[end:]...)...)
+	newSrc = src
+	for _, item := range items {
+		if item.start == start && item.end == end {
+			// primary target
+			switch h.Op {
+			case "MODIFY":
+				newSrc = append(newSrc[:item.start], append([]byte(item.body), newSrc[item.end:]...)...)
+			case "DELETE":
+				newSrc = append(newSrc[:item.start], newSrc[item.end:]...)
+			case "ADD_BEFORE":
+				newSrc = append(newSrc[:item.start], append([]byte(item.body+"\n\n"), newSrc[item.start:]...)...)
+			case "ADD_AFTER":
+				newSrc = append(newSrc[:item.end], append([]byte("\n\n"+item.body), newSrc[item.end:]...)...)
+			}
+		} else {
+			// other entities found in hunk body: delete them from their original locations
+			newSrc = append(newSrc[:item.start], newSrc[item.end:]...)
+		}
 	}
 
 	outputSrc := newSrc
@@ -498,6 +552,42 @@ func getHunkBodyKind(body string) string {
 	return getDeclKind(info.Decls[0])
 }
 
+func getIdentifiers(info *BodyInfo) []string {
+	var ids []string
+	if info == nil {
+		return nil
+	}
+	for _, decl := range info.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			funcName := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) > 0 {
+				recv := d.Recv.List[0].Type
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv = star.X
+				}
+				if ident, ok := recv.(*ast.Ident); ok {
+					ids = append(ids, ident.Name+"."+funcName)
+					continue // only use full name for methods to avoid ambiguous deletions
+				}
+			}
+			ids = append(ids, funcName)
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					ids = append(ids, s.Name.Name)
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						ids = append(ids, n.Name)
+					}
+				}
+			}
+		}
+	}
+	return ids
+}
+
 func getDeclKind(node ast.Node) string {
 	switch n := node.(type) {
 	case *ast.FuncDecl:
@@ -605,3 +695,4 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
+

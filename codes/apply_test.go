@@ -853,3 +853,59 @@ const (
 		t.Errorf("B incorrectly removed: %s", s)
 	}
 }
+
+func TestApplyHunksTypeAndMethodsCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+type T struct{}
+
+func (t T) Foo() {
+	println("old foo")
+}
+
+func (t T) Bar() {
+	println("old bar")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`[[[ MODIFY T IN ` + targetFile + `
+type T struct { I int }
+func (t T) Foo() { println("new foo") }
+func (t T) Bar() { println("new bar") }
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Count(s, "func (t T) Foo()") != 1 {
+		t.Errorf("expected 1 Foo, got %d:\n%s", strings.Count(s, "func (t T) Foo()"), s)
+	}
+	if strings.Count(s, "func (t T) Bar()") != 1 {
+		t.Errorf("expected 1 Bar, got %d:\n%s", strings.Count(s, "func (t T) Bar()"), s)
+	}
+	if !strings.Contains(s, "new foo") || !strings.Contains(s, "new bar") {
+		t.Errorf("new content missing:\n%s", s)
+	}
+}
