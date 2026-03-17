@@ -24,6 +24,88 @@ type Hunk struct {
 
 var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE)\s+(\S+?)\s+IN\s+("[^"]*"|'[^']*'|\S+?)(\s*\]\]\]|\s|$)`)
 
+type BodyInfo struct {
+	Decls     []ast.Decl
+	Specs     []ast.Spec
+	Fset      *token.FileSet
+	PrefixLen int
+	Src       []byte
+}
+
+func getBodyInfo(body string) (*BodyInfo, error) {
+	if body == "" {
+		return nil, nil
+	}
+	src := []byte(body)
+	prefixLen := 0
+	if !hasPackage(src) {
+		prefix := "package p\n"
+		src = append([]byte(prefix), src...)
+		prefixLen = len(prefix)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	info := &BodyInfo{
+		Decls:     f.Decls,
+		Fset:      fset,
+		PrefixLen: prefixLen,
+		Src:       src,
+	}
+	for _, decl := range f.Decls {
+		if g, ok := decl.(*ast.GenDecl); ok {
+			info.Specs = append(info.Specs, g.Specs...)
+		}
+	}
+	return info, nil
+}
+
+func (info *BodyInfo) entityCount() int {
+	if info == nil {
+		return 0
+	}
+	count := 0
+	for _, d := range info.Decls {
+		if _, ok := d.(*ast.FuncDecl); ok {
+			count++
+		} else if g, ok := d.(*ast.GenDecl); ok {
+			count += len(g.Specs)
+		}
+	}
+	return count
+}
+
+func (info *BodyInfo) extractEntitySource(target string) string {
+	if info == nil {
+		return ""
+	}
+	for _, decl := range info.Decls {
+		node, _, match := matchDecl(info.Fset, decl, target)
+		if match {
+			start := info.Fset.Position(node.Pos()).Offset
+			end := info.Fset.Position(node.End()).Offset
+			return string(info.Src[start:end])
+		}
+	}
+	// fallback: if exactly 1 entity, use its source even if name doesn't match perfectly
+	if info.entityCount() == 1 {
+		var node ast.Node
+		if len(info.Specs) == 1 {
+			node = info.Specs[0]
+		} else if len(info.Decls) == 1 {
+			node = info.Decls[0]
+		}
+		if node != nil {
+			start := info.Fset.Position(node.Pos()).Offset
+			end := info.Fset.Position(node.End()).Offset
+			return string(info.Src[start:end])
+		}
+	}
+	return ""
+}
+
 func ApplyHunks(root *os.Root, aiFilePath string) error {
 	for {
 		content, err := os.ReadFile(aiFilePath)
@@ -164,23 +246,26 @@ func applyHunk(root *os.Root, h Hunk) error {
 		}
 	}
 
-	body := stripMarkdown(h.Body)
-	bodyName := getHunkBodyName(body)
+	h.Body = stripMarkdown(h.Body)
+	bodyInfo, _ := getBodyInfo(h.Body)
+	bodyName := getHunkBodyName(h.Body)
+
 	var start, end int
+	var finalBody string = h.Body
 
 	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
 	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
-		if s, e, err := findTargetRange(fset, f, Hunk{Target: bodyName}, len(src), prefixLen); err == nil {
+		if s, e, fb, err := findTargetRange(fset, f, Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
 			h.Op = "MODIFY"
 			h.Target = bodyName
-			start, end = s, e
+			start, end, finalBody = s, e, fb
 		}
 	}
 
 	// Resolve target range
 	if start == 0 && end == 0 {
 		var err error
-		start, end, err = findTargetRange(fset, f, h, len(src), prefixLen)
+		start, end, finalBody, err = findTargetRange(fset, f, h, bodyInfo, len(src), prefixLen)
 		if err != nil {
 			if h.Op == "MODIFY" || h.Op == "DELETE" {
 				// Theory: MODIFY and DELETE have no effect if target is not found
@@ -192,19 +277,19 @@ func applyHunk(root *os.Root, h Hunk) error {
 	}
 
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
-		body = stripPackage(body)
+		finalBody = stripPackage(finalBody)
 	}
 
 	var newSrc []byte
 	switch h.Op {
 	case "MODIFY":
-		newSrc = append(src[:start], append([]byte(body), src[end:]...)...)
+		newSrc = append(src[:start], append([]byte(finalBody), src[end:]...)...)
 	case "DELETE":
 		newSrc = append(src[:start], src[end:]...)
 	case "ADD_BEFORE":
-		newSrc = append(src[:start], append([]byte(body+"\n\n"), src[start:]...)...)
+		newSrc = append(src[:start], append([]byte(finalBody+"\n\n"), src[start:]...)...)
 	case "ADD_AFTER":
-		newSrc = append(src[:end], append([]byte("\n\n"+body), src[end:]...)...)
+		newSrc = append(src[:end], append([]byte("\n\n"+finalBody), src[end:]...)...)
 	}
 
 	outputSrc := newSrc
@@ -247,55 +332,100 @@ func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 	return root.Mkdir(path, perm)
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, fileSize int, prefixLen int) (int, int, error) {
+func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
-		return 0, 0, nil
+		return 0, 0, h.Body, nil
 	}
 	if h.Target == "END" {
-		return fileSize, fileSize, nil
+		return fileSize, fileSize, h.Body, nil
 	}
 	if f == nil {
-		return 0, 0, fmt.Errorf("target %s not found", h.Target)
+		return 0, 0, h.Body, fmt.Errorf("target %s not found", h.Target)
 	}
 
-	bodyKind := getHunkBodyKind(h.Body)
+	bodyKind := ""
+	if bodyInfo != nil && bodyInfo.entityCount() > 0 {
+		var firstNode ast.Node
+		if len(bodyInfo.Decls) > 0 {
+			if g, ok := bodyInfo.Decls[0].(*ast.GenDecl); ok && len(g.Specs) > 0 {
+				firstNode = g.Specs[0]
+			} else {
+				firstNode = bodyInfo.Decls[0]
+			}
+		}
+		if firstNode != nil {
+			bodyKind = getDeclKind(firstNode)
+		}
+	}
+
 	var candidateFound bool
 	var candidateStart, candidateEnd int
+	var candidateBody string
 
 	for _, decl := range f.Decls {
-		start, end, match := matchDecl(fset, decl, h.Target)
+		node, parent, match := matchDecl(fset, decl, h.Target)
 		if !match {
 			continue
 		}
-		start -= prefixLen
-		end -= prefixLen
+
+		// Calculate ranges
+		nodeStart := fset.Position(getActualPos(node)).Offset - prefixLen
+		nodeEnd := fset.Position(node.End()).Offset - prefixLen
+		parentStart := fset.Position(getActualPos(parent)).Offset - prefixLen
+		parentEnd := fset.Position(parent.End()).Offset - prefixLen
+
+		// Determine actual range and body to use
+		var start, end int
+		var finalBody string = h.Body
+
+		if _, ok := node.(ast.Spec); ok {
+			genDecl := parent.(*ast.GenDecl)
+			// DELETE logic
+			if h.Op == "DELETE" {
+				if len(genDecl.Specs) > 1 {
+					start, end = nodeStart, nodeEnd
+				} else {
+					start, end = parentStart, parentEnd
+				}
+			} else {
+				// MODIFY logic
+				if bodyInfo != nil && bodyInfo.entityCount() == 1 && len(genDecl.Specs) > 1 {
+					// replace only the specific spec
+					start, end = nodeStart, nodeEnd
+					finalBody = bodyInfo.extractEntitySource(h.Target)
+				} else {
+					// replace whole block
+					start, end = parentStart, parentEnd
+				}
+			}
+		} else {
+			// FuncDecl or simple GenDecl
+			start, end = nodeStart, nodeEnd
+		}
 
 		if h.Op == "MODIFY" && bodyKind != "" {
-			declKind := getDeclKind(decl)
+			declKind := getDeclKind(parent)
 			if declKind != bodyKind {
 				if !candidateFound {
 					candidateFound = true
 					candidateStart, candidateEnd = start, end
+					candidateBody = finalBody
 				}
 				continue
 			}
 		}
-		return start, end, nil
+		return start, end, finalBody, nil
 	}
 
 	if candidateFound {
-		return candidateStart, candidateEnd, nil
+		return candidateStart, candidateEnd, candidateBody, nil
 	}
-	return 0, 0, fmt.Errorf("target %s not found", h.Target)
+	return 0, 0, h.Body, fmt.Errorf("target %s not found", h.Target)
 }
 
-func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, bool) {
-	startPos := decl.Pos()
+func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
-		if d.Doc != nil {
-			startPos = d.Doc.Pos()
-		}
 		funcName := d.Name.Name
 		fullName := funcName
 		if d.Recv != nil && len(d.Recv.List) > 0 {
@@ -308,46 +438,37 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (int, int, boo
 			}
 		}
 		if fullName == target || funcName == target {
-			return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
+			return d, d, true
 		}
 	case *ast.GenDecl:
-		if d.Doc != nil {
-			startPos = d.Doc.Pos()
-		}
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
 				if s.Name.Name == target {
-					return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
+					return s, d, true
 				}
 			case *ast.ValueSpec:
 				for _, n := range s.Names {
 					if n.Name == target {
-						return fset.Position(startPos).Offset, fset.Position(d.End()).Offset, true
+						return s, d, true
 					}
 				}
 			}
 		}
 	}
-	return 0, 0, false
+	return nil, nil, false
 }
 
 func getHunkBodyName(body string) string {
-	fset := token.NewFileSet()
-	src := body
-	if !hasPackage([]byte(body)) {
-		src = "package p\n" + body
-	}
-	f, err := parser.ParseFile(fset, "", src, 0)
-	if err != nil || len(f.Decls) == 0 {
+	info, err := getBodyInfo(body)
+	if err != nil || info == nil || info.entityCount() == 0 {
 		return ""
 	}
-	decl := f.Decls[0]
-	switch d := decl.(type) {
-	case *ast.FuncDecl:
-		name := d.Name.Name
-		if d.Recv != nil && len(d.Recv.List) > 0 {
-			recv := d.Recv.List[0].Type
+	d := info.Decls[0]
+	if fn, ok := d.(*ast.FuncDecl); ok {
+		name := fn.Name.Name
+		if fn.Recv != nil && len(fn.Recv.List) > 0 {
+			recv := fn.Recv.List[0].Type
 			if star, ok := recv.(*ast.StarExpr); ok {
 				recv = star.X
 			}
@@ -356,56 +477,53 @@ func getHunkBodyName(body string) string {
 			}
 		}
 		return name
-	case *ast.GenDecl:
-		for _, spec := range d.Specs {
-			switch s := spec.(type) {
-			case *ast.TypeSpec:
-				return s.Name.Name
-			case *ast.ValueSpec:
-				for _, n := range s.Names {
-					return n.Name
-				}
-			}
+	}
+	if g, ok := d.(*ast.GenDecl); ok && len(g.Specs) > 0 {
+		spec := g.Specs[0]
+		if ts, ok := spec.(*ast.TypeSpec); ok {
+			return ts.Name.Name
+		}
+		if vs, ok := spec.(*ast.ValueSpec); ok {
+			return vs.Names[0].Name
 		}
 	}
 	return ""
 }
 
 func getHunkBodyKind(body string) string {
-	fset := token.NewFileSet()
-	src := body
-	if !strings.HasPrefix(strings.TrimLeft(body, " \t\n\r"), "package ") {
-		src = "package p\n" + body
-	}
-	f, err := parser.ParseFile(fset, "", src, 0)
-	if err != nil || len(f.Decls) == 0 {
+	info, err := getBodyInfo(body)
+	if err != nil || info == nil || info.entityCount() == 0 {
 		return ""
 	}
-	return getDeclKind(f.Decls[0])
+	return getDeclKind(info.Decls[0])
 }
 
-func getDeclKind(decl ast.Decl) string {
-	switch d := decl.(type) {
+func getDeclKind(node ast.Node) string {
+	switch n := node.(type) {
 	case *ast.FuncDecl:
-		if d.Recv != nil && len(d.Recv.List) > 0 {
+		if n.Recv != nil && len(n.Recv.List) > 0 {
 			return "method"
 		}
 		return "function"
 	case *ast.GenDecl:
-		if len(d.Specs) == 0 {
+		if len(n.Specs) == 0 {
 			return ""
 		}
-		switch d.Specs[0].(type) {
+		switch n.Specs[0].(type) {
 		case *ast.TypeSpec:
 			return "type"
 		case *ast.ValueSpec:
-			if d.Tok == token.VAR {
+			if n.Tok == token.VAR {
 				return "var"
 			}
-			if d.Tok == token.CONST {
+			if n.Tok == token.CONST {
 				return "const"
 			}
 		}
+	case *ast.TypeSpec:
+		return "type"
+	case *ast.ValueSpec:
+		return "var" // context independent, parent GenDecl check is needed for const
 	}
 	return ""
 }
@@ -441,17 +559,7 @@ func stripPackage(body string) string {
 		return body
 	}
 	firstDecl := f.Decls[0]
-	var startPos token.Pos = firstDecl.Pos()
-	switch d := firstDecl.(type) {
-	case *ast.FuncDecl:
-		if d.Doc != nil {
-			startPos = d.Doc.Pos()
-		}
-	case *ast.GenDecl:
-		if d.Doc != nil {
-			startPos = d.Doc.Pos()
-		}
-	}
+	startPos := getActualPos(firstDecl)
 	offset := fset.Position(startPos).Offset
 	return strings.TrimSpace(body[offset:])
 }
@@ -474,4 +582,26 @@ func stripMarkdown(s string) string {
 		return s
 	}
 	return strings.TrimSpace(s[contentStart:end])
+}
+
+func getActualPos(node ast.Node) token.Pos {
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		if n.Doc != nil {
+			return n.Doc.Pos()
+		}
+	case *ast.GenDecl:
+		if n.Doc != nil {
+			return n.Doc.Pos()
+		}
+	case *ast.TypeSpec:
+		if n.Doc != nil {
+			return n.Doc.Pos()
+		}
+	case *ast.ValueSpec:
+		if n.Doc != nil {
+			return n.Doc.Pos()
+		}
+	}
+	return node.Pos()
 }
