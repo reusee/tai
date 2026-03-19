@@ -238,7 +238,8 @@ func (Module) Files(
 					continue
 				}
 				name := entry.Name()
-				if strings.HasSuffix(strings.ToLower(name), ".md") {
+				lowerName := strings.ToLower(name)
+				if strings.HasSuffix(lowerName, ".md") && !strings.HasPrefix(lowerName, "_") {
 					path := filepath.Join(dir, name)
 					if _, ok := nonGoFilePaths[path]; !ok {
 						nonGoFilePaths[path] = pkg
@@ -441,4 +442,3 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
-
