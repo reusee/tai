@@ -48,6 +48,21 @@ func getBodyInfo(body string) (*BodyInfo, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
+		// Try prepending keywords if parsing failed
+		for _, kw := range []string{"const ", "var ", "type ", "func "} {
+			trialPrefix := "package p\n" + kw
+			trial := append([]byte(trialPrefix), []byte(body)...)
+			f2, err2 := parser.ParseFile(fset, "", trial, parser.ParseComments)
+			if err2 == nil {
+				f = f2
+				src = trial
+				prefixLen = len(trialPrefix)
+				err = nil
+				break
+			}
+		}
+	}
+	if err != nil {
 		return nil, err
 	}
 	info := &BodyInfo{
@@ -450,11 +465,53 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 				} else {
 					// replace whole block
 					start, end = parentStart, parentEnd
+					// Ensure keyword for single-spec GenDecl or block replacement
+					kind := ""
+					var tok token.Token
+					switch genDecl.Tok {
+					case token.CONST:
+						kind = "const"
+						tok = token.CONST
+					case token.VAR:
+						kind = "var"
+						tok = token.VAR
+					case token.TYPE:
+						kind = "type"
+						tok = token.TYPE
+					}
+					if kind != "" {
+						hasKeyword := false
+						if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
+							if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
+								if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
+									hasKeyword = true
+								}
+							}
+						}
+						if !hasKeyword {
+							finalBody = kind + " " + finalBody
+						}
+					}
 				}
 			}
 		} else {
 			// FuncDecl or simple GenDecl
 			start, end = nodeStart, nodeEnd
+			if h.Op == "MODIFY" {
+				if _, ok := node.(*ast.FuncDecl); ok {
+					hasKeyword := false
+					if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
+						if _, ok := info.Decls[0].(*ast.FuncDecl); ok {
+							if info.Fset.Position(info.Decls[0].Pos()).Offset >= info.PrefixLen {
+								hasKeyword = true
+							}
+						}
+					}
+					if !hasKeyword {
+						finalBody = "func " + finalBody
+					}
+				}
+			}
 		}
 
 		if h.Op == "MODIFY" && bodyKind != "" {
@@ -695,4 +752,3 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
-
