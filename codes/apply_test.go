@@ -1039,3 +1039,56 @@ func (f *foo) M() {}
 		t.Errorf("method missing:\n%s", s)
 	}
 }
+
+func TestApplyHunksModifyBegin(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package foo
+
+import "os"
+
+func A() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ MODIFY BEGIN IN test.go
+package foo
+
+import (
+	"fmt"
+	"os"
+)
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Count(s, "package foo") != 1 {
+		t.Errorf("duplicated package declaration:\n%s", s)
+	}
+	if !strings.Contains(s, `"fmt"`) {
+		t.Errorf("fmt import missing:\n%s", s)
+	}
+	if !strings.Contains(s, "func A()") {
+		t.Errorf("function A lost:\n%s", s)
+	}
+}

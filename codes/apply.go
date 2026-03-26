@@ -347,7 +347,11 @@ func applyHunk(root *os.Root, h Hunk) error {
 			// primary target
 			switch h.Op {
 			case "MODIFY":
-				newSrc = append(newSrc[:item.start], append([]byte(item.body), newSrc[item.end:]...)...)
+				body := item.body
+				if h.Target == "BEGIN" && item.end < len(src) && !strings.HasSuffix(body, "\n") {
+					body += "\n"
+				}
+				newSrc = append(newSrc[:item.start], append([]byte(body), newSrc[item.end:]...)...)
 			case "DELETE":
 				newSrc = append(newSrc[:item.start], newSrc[item.end:]...)
 			case "ADD_BEFORE":
@@ -403,6 +407,25 @@ func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
+		if h.Op == "MODIFY" && f != nil {
+			// Find the start of the first non-import declaration
+			var firstNonImport ast.Decl
+			for _, decl := range f.Decls {
+				if g, ok := decl.(*ast.GenDecl); ok && g.Tok == token.IMPORT {
+					continue
+				}
+				firstNonImport = decl
+				break
+			}
+			if firstNonImport != nil {
+				start := 0
+				end := fset.Position(getActualPos(firstNonImport)).Offset - prefixLen
+				return start, end, h.Body, nil
+			} else {
+				// File only has package and imports (or is empty)
+				return 0, fileSize, h.Body, nil
+			}
+		}
 		return 0, 0, h.Body, nil
 	}
 	if h.Target == "END" {
