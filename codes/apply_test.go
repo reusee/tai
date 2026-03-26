@@ -949,3 +949,93 @@ A = 2
 		t.Errorf("const keyword lost: %s", s)
 	}
 }
+
+func TestApplyHunksAddMethodAfterType(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+type foo struct {
+	I int
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ ADD_AFTER foo IN ` + targetFile + `
+func (f *foo) M() {
+	println(f.I)
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "func (f *foo) M()") {
+		t.Errorf("method not added:\n%s", s)
+	}
+}
+
+func TestApplyHunksWithCommentedPackage(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+type foo struct{}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ ADD_AFTER foo IN ` + targetFile + `
+// This is a comment before the package
+package test
+
+func (f *foo) M() {}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatalf("ApplyHunks failed: %v", err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Count(s, "package test") != 1 {
+		t.Errorf("multiple package declarations found:\n%s", s)
+	}
+	if !strings.Contains(s, "func (f *foo) M()") {
+		t.Errorf("method missing:\n%s", s)
+	}
+}

@@ -466,30 +466,32 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 					// replace whole block
 					start, end = parentStart, parentEnd
 					// Ensure keyword for single-spec GenDecl or block replacement
-					kind := ""
-					var tok token.Token
-					switch genDecl.Tok {
-					case token.CONST:
-						kind = "const"
-						tok = token.CONST
-					case token.VAR:
-						kind = "var"
-						tok = token.VAR
-					case token.TYPE:
-						kind = "type"
-						tok = token.TYPE
-					}
-					if kind != "" {
-						hasKeyword := false
-						if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
-							if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
-								if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
-									hasKeyword = true
+					if h.Op == "MODIFY" {
+						kind := ""
+						var tok token.Token
+						switch genDecl.Tok {
+						case token.CONST:
+							kind = "const"
+							tok = token.CONST
+						case token.VAR:
+							kind = "var"
+							tok = token.VAR
+						case token.TYPE:
+							kind = "type"
+							tok = token.TYPE
+						}
+						if kind != "" {
+							hasKeyword := false
+							if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
+								if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
+									if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
+										hasKeyword = true
+									}
 								}
 							}
-						}
-						if !hasKeyword {
-							finalBody = kind + " " + finalBody
+							if !hasKeyword {
+								finalBody = kind + " " + finalBody
+							}
 						}
 					}
 				}
@@ -697,9 +699,6 @@ func hasPackage(src []byte) bool {
 }
 
 func stripPackage(body string) string {
-	if !strings.HasPrefix(strings.TrimLeft(body, " \t\n\r"), "package ") {
-		return body
-	}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", body, parser.ParseComments)
 	if err != nil || len(f.Decls) == 0 {
