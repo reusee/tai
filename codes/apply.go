@@ -472,6 +472,46 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 
 		if _, ok := node.(ast.Spec); ok {
 			genDecl := parent.(*ast.GenDecl)
+
+			// Heuristic: if MODIFY and body doesn't seem to contain the target declaration,
+			// try to reconstruct it as a raw value replacement for const/var.
+			if h.Op == "MODIFY" && (bodyInfo == nil || bodyInfo.entityCount() == 0 || getHunkBodyName(finalBody) != h.Target) {
+				isString := false
+				if vs, ok := node.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
+					if bl, ok := vs.Values[0].(*ast.BasicLit); ok && bl.Kind == token.STRING {
+						isString = true
+					}
+				}
+				kw := ""
+				switch genDecl.Tok {
+				case token.CONST:
+					kw = "const"
+				case token.VAR:
+					kw = "var"
+				case token.TYPE:
+					kw = "type"
+				}
+				if kw != "" {
+					reconstructed := kw + " " + h.Target + " = "
+					if isString {
+						trimmedBody := strings.TrimSpace(h.Body)
+						if !((strings.HasPrefix(trimmedBody, "`") && strings.HasSuffix(trimmedBody, "`")) ||
+							(strings.HasPrefix(trimmedBody, `"`) && strings.HasSuffix(trimmedBody, `"`))) {
+							reconstructed += "`" + h.Body + "`"
+						} else {
+							reconstructed += h.Body
+						}
+					} else {
+						reconstructed += h.Body
+					}
+					newInfo, err := getBodyInfo(reconstructed)
+					if err == nil && newInfo.entityCount() > 0 {
+						finalBody = reconstructed
+						bodyInfo = newInfo
+					}
+				}
+			}
+
 			// DELETE logic
 			if h.Op == "DELETE" {
 				if len(genDecl.Specs) > 1 {
@@ -774,3 +814,4 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
+

@@ -1092,3 +1092,77 @@ import (
 		t.Errorf("function A lost:\n%s", s)
 	}
 }
+
+func TestApplyHunksRawValueReplacement(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte("package test\n\nconst Theory = `old theory` \n")
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ MODIFY Theory IN test.go
+new theory content
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new theory content") {
+		t.Errorf("content not updated:\n%s", s)
+	}
+}
+
+func TestApplyHunksRawValueReplacementInt(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte("package test\n\nconst A = 1\n")
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ MODIFY A IN test.go
+42
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "A = 42") {
+		t.Errorf("int constant not updated:\n%s", s)
+	}
+}
