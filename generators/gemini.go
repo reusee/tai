@@ -55,8 +55,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
 		n := int32(*options.MaxGenerateTokens)
-		n = min(n, *maxOutputTokens)
-		maxOutputTokens = &n
+		if maxOutputTokens == nil || n < *maxOutputTokens {
+			maxOutputTokens = &n
+		}
 	}
 
 	var maxThinkingTokens *int32
@@ -139,22 +140,28 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		temperature = temperatureFlag
 	}
 
+	generationConfig := &generativelanguagepb.GenerationConfig{
+		MaxOutputTokens: maxOutputTokens,
+		Temperature:     temperature,
+		ThinkingConfig: &generativelanguagepb.ThinkingConfig{
+			IncludeThoughts: vars.PtrTo(true),
+			ThinkingBudget:  maxThinkingTokens,
+		},
+	}
+	if options != nil && options.ResponseSchema != nil {
+		generationConfig.ResponseMimeType = "application/json"
+		generationConfig.ResponseSchema = options.ResponseSchema.ToGemini()
+	}
+
 	req := &generativelanguagepb.GenerateContentRequest{
 		Model: g.args.Model,
 		Tools: tools,
 		ToolConfig: &generativelanguagepb.ToolConfig{
 			FunctionCallingConfig: functionCallingConfig,
 		},
-		SafetySettings: safetySettings,
-		GenerationConfig: &generativelanguagepb.GenerationConfig{
-			MaxOutputTokens: maxOutputTokens,
-			Temperature:     temperature,
-			ThinkingConfig: &generativelanguagepb.ThinkingConfig{
-				IncludeThoughts: vars.PtrTo(true),
-				ThinkingBudget:  maxThinkingTokens,
-			},
-		},
-		Contents: contents,
+		SafetySettings:   safetySettings,
+		GenerationConfig: generationConfig,
+		Contents:         contents,
 		SystemInstruction: &generativelanguagepb.Content{
 			Role: string(RoleSystem),
 			Parts: []*generativelanguagepb.Part{

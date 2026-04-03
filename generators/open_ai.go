@@ -117,6 +117,17 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		req.ReasoningEffort = ""
 	}
 
+	if options != nil && options.ResponseSchema != nil {
+		req.ResponseFormat = &ResponseFormat{
+			Type: "json_schema",
+			JSONSchema: &JSONSchema{
+				Name:   "response",
+				Strict: true,
+				Schema: options.ResponseSchema.ToOpenAI(),
+			},
+		}
+	}
+
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -465,6 +476,19 @@ type ChatCompletionRequest struct {
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
 	Temperature         float32                 `json:"temperature,omitempty"`
 	Tools               []Tool                  `json:"tools,omitempty"`
+	ResponseFormat      *ResponseFormat         `json:"response_format,omitempty"`
+}
+
+type ResponseFormat struct {
+	Type       string      `json:"type"`
+	JSONSchema *JSONSchema `json:"json_schema,omitempty"`
+}
+
+type JSONSchema struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Strict      bool   `json:"strict,omitempty"`
+	Schema      any    `json:"schema"`
 }
 
 type StreamOptions struct {

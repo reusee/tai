@@ -54,11 +54,9 @@ func (v Var) ToGemini() *generativelanguagepb.Schema {
 		ret.Items = v.ItemType.ToGemini()
 	case TypeObject:
 		ret.Type = generativelanguagepb.Type_OBJECT
-		props := make(map[string]*generativelanguagepb.Schema)
-		for _, v := range v.Properties {
-			props[v.Name] = v.ToGemini()
-		}
-		ret.Properties = props
+		objSchema := v.Properties.ToGemini()
+		ret.Properties = objSchema.Properties
+		ret.Required = objSchema.Required
 	default:
 		panic(fmt.Errorf("unknown type: %v", v.Type))
 	}

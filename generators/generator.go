@@ -16,6 +16,7 @@ type Generator interface {
 
 type GenerateOptions struct {
 	MaxGenerateTokens *int
+	ResponseSchema    *Var
 }
 
 type GetGenerator func(name string) (Generator, error)

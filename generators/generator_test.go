@@ -2,6 +2,7 @@ package generators
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,4 +103,74 @@ func testGenerator(
 
 	})
 
+	t.Run("structured output", func(t *testing.T) {
+		loader := configs.NewLoader([]string{}, "")
+		scope := dscope.New(
+			modes.ForTest(t),
+			&loader,
+			new(Module),
+		).Fork(
+			func() nets.ProxyAddr {
+				return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
+			},
+		)
+
+		var generator Generator
+		scope.Call(newGenerator).Assign(&generator)
+
+		schema := &Var{
+			Type: TypeObject,
+			Properties: Vars{
+				{
+					Name: "answer",
+					Type: TypeString,
+				},
+			},
+		}
+
+		prompts := NewPrompts("", []*Content{
+			{
+				Role: RoleUser,
+				Parts: []Part{
+					Text("say hello in json"),
+				},
+			},
+		})
+		output := NewOutput(prompts, t.Output(), true)
+		state := State(output)
+
+		var err error
+		state, err = generator.Generate(t.Context(), state, &GenerateOptions{
+			ResponseSchema: schema,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		promptsState, ok := As[Prompts](state)
+		if !ok {
+			t.Fatal("Prompts not found")
+		}
+
+		found := false
+		for _, content := range promptsState.Contents() {
+			if content.Role != RoleModel && content.Role != RoleAssistant {
+				continue
+			}
+			for _, part := range content.Parts {
+				if text, ok := part.(Text); ok {
+					if strings.Contains(string(text), `"answer"`) {
+						found = true
+						break
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("structured output not found in result")
+		}
+
+	})
+
 }
+
