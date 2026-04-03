@@ -1166,3 +1166,49 @@ func TestApplyHunksRawValueReplacementInt(t *testing.T) {
 		t.Errorf("int constant not updated:\n%s", s)
 	}
 }
+
+func TestApplyHunksAddAfterBeginImport(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ ADD_AFTER BEGIN IN test.go
+import "fmt"
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	// Check that import comes after package
+	pkgIdx := strings.Index(s, "package test")
+	impIdx := strings.Index(s, `import "fmt"`)
+	if pkgIdx == -1 || impIdx == -1 {
+		t.Fatalf("missing package or import:\n%s", s)
+	}
+	if impIdx < pkgIdx {
+		t.Errorf("import prepended before package declaration:\n%s", s)
+	}
+}

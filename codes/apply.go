@@ -426,6 +426,14 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 				return 0, fileSize, h.Body, nil
 			}
 		}
+		if h.Op == "ADD_AFTER" && f != nil {
+			// Find position after package declaration
+			pos := fset.Position(f.Name.End()).Offset - prefixLen
+			if pos < 0 {
+				pos = 0
+			}
+			return pos, pos, h.Body, nil
+		}
 		return 0, 0, h.Body, nil
 	}
 	if h.Target == "END" {
@@ -814,4 +822,3 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
-
