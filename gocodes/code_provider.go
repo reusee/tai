@@ -2,10 +2,9 @@ package gocodes
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -16,6 +15,7 @@ type CodeProvider struct {
 	GetFileSet    dscope.Inject[GetFileSet]
 	SimplifyFiles dscope.Inject[SimplifyFiles]
 	Logger        dscope.Inject[logs.Logger]
+	AnyTexts      dscope.Inject[anytexts.CodeProvider]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
@@ -37,24 +37,38 @@ func (c CodeProvider) Parts(
 	err error,
 ) {
 
-	// provide files from patterns
-	var patternParts []generators.Part
-	for _, pattern := range patterns {
-		files, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, err
-		}
-		for _, file := range files {
-			content, err := os.ReadFile(file)
+	// provide files from patterns (extra context)
+	if len(patterns) > 0 {
+		for info, err := range c.AnyTexts().IterFiles(patterns) {
 			if err != nil {
 				return nil, err
 			}
-			patternParts = append(patternParts, generators.Text(content))
-			numTokens, err := countTokens(string(content))
-			if err != nil {
-				return nil, err
+
+			if info.IsText {
+				text := "``` begin of context file " + info.Path + "\n" +
+					string(info.Content) + "\n" +
+					"``` end of context file " + info.Path + "\n"
+
+				numTokens, err := countTokens(text)
+				if err != nil {
+					return nil, err
+				}
+				if numTokens > maxTokens {
+					continue
+				}
+				maxTokens -= numTokens
+				parts = append(parts, generators.Text(text))
+
+			} else {
+				// binary or other media
+				parts = append(parts, generators.Text("File: "+info.Path+"\n"))
+				parts = append(parts, generators.FileContent{
+					Content:  info.Content,
+					MimeType: info.MimeType,
+				})
+				// approximate token count for binary content is not implemented,
+				// but it will be capped by the model's overall context window.
 			}
-			maxTokens -= numTokens
 		}
 	}
 
@@ -75,8 +89,6 @@ func (c CodeProvider) Parts(
 		parts = append(parts, generators.Text(file.Confirmed.Content))
 	}
 
-	parts = append(parts, patternParts...)
-
 	return
 }
 
@@ -86,3 +98,4 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
+
