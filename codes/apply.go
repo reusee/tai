@@ -625,6 +625,9 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 			return d, d, true
 		}
 	case *ast.GenDecl:
+		if d.Tok == token.IMPORT && target == "IMPORT" {
+			return d, d, true
+		}
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
@@ -664,6 +667,9 @@ func getHunkBodyName(body string) string {
 	}
 	if g, ok := d.(*ast.GenDecl); ok && len(g.Specs) > 0 {
 		spec := g.Specs[0]
+		if g.Tok == token.IMPORT {
+			return "IMPORT"
+		}
 		if ts, ok := spec.(*ast.TypeSpec); ok {
 			return ts.Name.Name
 		}
@@ -703,6 +709,10 @@ func getIdentifiers(info *BodyInfo) []string {
 			}
 			ids = append(ids, funcName)
 		case *ast.GenDecl:
+			if d.Tok == token.IMPORT {
+				ids = append(ids, "IMPORT")
+				continue
+			}
 			for _, spec := range d.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
@@ -726,6 +736,9 @@ func getDeclKind(node ast.Node) string {
 		}
 		return "function"
 	case *ast.GenDecl:
+		if n.Tok == token.IMPORT {
+			return "import"
+		}
 		if len(n.Specs) == 0 {
 			return ""
 		}
@@ -822,3 +835,4 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
+

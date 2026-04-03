@@ -1212,3 +1212,54 @@ import "fmt"
 		t.Errorf("import prepended before package declaration:\n%s", s)
 	}
 }
+
+func TestApplyHunksImportMerging(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+import "os"
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	// Model sends ADD_AFTER BEGIN with new import block
+	aiContent := []byte(`[[[ ADD_AFTER BEGIN IN test.go
+import (
+	"fmt"
+	"os"
+)
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+
+	// Check that we don't have two import declarations
+	if strings.Count(s, "import") != 1 {
+		t.Errorf("expected 1 import declaration, got %d:\n%s", strings.Count(s, "import"), s)
+	}
+	if !strings.Contains(s, `"fmt"`) || !strings.Contains(s, `"os"`) {
+		t.Errorf("imports missing:\n%s", s)
+	}
+}
