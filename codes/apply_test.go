@@ -1263,3 +1263,60 @@ import (
 		t.Errorf("imports missing:\n%s", s)
 	}
 }
+
+func TestApplyHunksTargetNotFirstInBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+var Bar = 1
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	// Target is Foo, but Bar comes first in hunk body
+	aiContent := []byte(`[[[ MODIFY Foo IN test.go
+var Bar = 2
+func Foo() {
+	println("new")
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "Bar = 2") {
+		t.Errorf("Bar not updated:\n%s", s)
+	}
+	if !strings.Contains(s, "println(\"new\")") {
+		t.Errorf("Foo not updated:\n%s", s)
+	}
+	if strings.Count(s, "func Foo") != 1 {
+		t.Errorf("Foo duplicated:\n%s", s)
+	}
+	if strings.Count(s, "var Bar") != 1 {
+		t.Errorf("Bar duplicated:\n%s", s)
+	}
+}

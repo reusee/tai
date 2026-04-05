@@ -32,6 +32,7 @@ type BodyInfo struct {
 	Fset      *token.FileSet
 	PrefixLen int
 	Src       []byte
+	Keyword   string // The keyword prepended, if any
 }
 
 func getBodyInfo(body string) (*BodyInfo, error) {
@@ -58,7 +59,21 @@ func getBodyInfo(body string) (*BodyInfo, error) {
 				src = trial
 				prefixLen = len(trialPrefix)
 				err = nil
-				break
+				// Extract keyword without trailing space
+				kwStr := strings.TrimSpace(kw)
+				info := &BodyInfo{
+					Decls:     f.Decls,
+					Fset:      fset,
+					PrefixLen: prefixLen,
+					Src:       src,
+					Keyword:   kwStr,
+				}
+				for _, decl := range f.Decls {
+					if g, ok := decl.(*ast.GenDecl); ok {
+						info.Specs = append(info.Specs, g.Specs...)
+					}
+				}
+				return info, nil
 			}
 		}
 	}
@@ -445,16 +460,29 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 
 	bodyKind := ""
 	if bodyInfo != nil && bodyInfo.entityCount() > 0 {
-		var firstNode ast.Node
-		if len(bodyInfo.Decls) > 0 {
-			if g, ok := bodyInfo.Decls[0].(*ast.GenDecl); ok && len(g.Specs) > 0 {
-				firstNode = g.Specs[0]
-			} else {
-				firstNode = bodyInfo.Decls[0]
+		// Look for target's kind in body
+		found := false
+		for _, d := range bodyInfo.Decls {
+			node, _, match := matchDecl(bodyInfo.Fset, d, h.Target)
+			if match {
+				bodyKind = getDeclKind(node)
+				found = true
+				break
 			}
 		}
-		if firstNode != nil {
-			bodyKind = getDeclKind(firstNode)
+		if !found {
+			// Fallback to first node
+			var firstNode ast.Node
+			if len(bodyInfo.Decls) > 0 {
+				if g, ok := bodyInfo.Decls[0].(*ast.GenDecl); ok && len(g.Specs) > 0 {
+					firstNode = g.Specs[0]
+				} else {
+					firstNode = bodyInfo.Decls[0]
+				}
+			}
+			if firstNode != nil {
+				bodyKind = getDeclKind(firstNode)
+			}
 		}
 	}
 
@@ -554,9 +582,15 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 						if kind != "" {
 							hasKeyword := false
 							if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
-								if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
-									if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
-										hasKeyword = true
+								// If the body parsed successfully without prepending a keyword, assume it's self-sufficient.
+								if info.Keyword == "" {
+									hasKeyword = true
+								} else {
+									// If it used a keyword, check if the first decl has it.
+									if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
+										if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
+											hasKeyword = true
+										}
 									}
 								}
 							}
@@ -574,9 +608,15 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 				if _, ok := node.(*ast.FuncDecl); ok {
 					hasKeyword := false
 					if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
-						if _, ok := info.Decls[0].(*ast.FuncDecl); ok {
-							if info.Fset.Position(info.Decls[0].Pos()).Offset >= info.PrefixLen {
-								hasKeyword = true
+						// If the body parsed successfully without prepending a keyword, assume it's self-sufficient.
+						if info.Keyword == "" {
+							hasKeyword = true
+						} else {
+							// If it used a keyword, check if the first decl has it.
+							if _, ok := info.Decls[0].(*ast.FuncDecl); ok {
+								if info.Fset.Position(info.Decls[0].Pos()).Offset >= info.PrefixLen {
+									hasKeyword = true
+								}
 							}
 						}
 					}
@@ -651,30 +691,32 @@ func getHunkBodyName(body string) string {
 	if err != nil || info == nil || info.entityCount() == 0 {
 		return ""
 	}
-	d := info.Decls[0]
-	if fn, ok := d.(*ast.FuncDecl); ok {
-		name := fn.Name.Name
-		if fn.Recv != nil && len(fn.Recv.List) > 0 {
-			recv := fn.Recv.List[0].Type
-			if star, ok := recv.(*ast.StarExpr); ok {
-				recv = star.X
+	// Try to find an entity that is likely a target or return the first one
+	for _, d := range info.Decls {
+		var name string
+		if fn, ok := d.(*ast.FuncDecl); ok {
+			name = fn.Name.Name
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				recv := fn.Recv.List[0].Type
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv = star.X
+				}
+				if ident, ok := recv.(*ast.Ident); ok {
+					name = ident.Name + "." + name
+				}
 			}
-			if ident, ok := recv.(*ast.Ident); ok {
-				return ident.Name + "." + name
+		} else if g, ok := d.(*ast.GenDecl); ok && len(g.Specs) > 0 {
+			spec := g.Specs[0]
+			if g.Tok == token.IMPORT {
+				name = "IMPORT"
+			} else if ts, ok := spec.(*ast.TypeSpec); ok {
+				name = ts.Name.Name
+			} else if vs, ok := spec.(*ast.ValueSpec); ok {
+				name = vs.Names[0].Name
 			}
 		}
-		return name
-	}
-	if g, ok := d.(*ast.GenDecl); ok && len(g.Specs) > 0 {
-		spec := g.Specs[0]
-		if g.Tok == token.IMPORT {
-			return "IMPORT"
-		}
-		if ts, ok := spec.(*ast.TypeSpec); ok {
-			return ts.Name.Name
-		}
-		if vs, ok := spec.(*ast.ValueSpec); ok {
-			return vs.Names[0].Name
+		if name != "" {
+			return name
 		}
 	}
 	return ""
@@ -835,4 +877,3 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
-
