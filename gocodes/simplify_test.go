@@ -177,3 +177,11 @@ func bar() {
 		t.Fatalf("expected 3 panics, got %s", text)
 	}
 }
+
+func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
+	got := calculateMaxContextTokens(128 << 10)
+	want := maximumContextTokenBudget
+	if got != want {
+		t.Fatalf("got %d, want %d", got, want)
+	}
+}

@@ -17,7 +17,31 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+const (
+	SimplifyTheory = `Simplification keeps operative files primary and dependency context secondary.
+Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
+The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.`
+
+	minimumContextTokenBudget = 8 << 10
+	maximumContextTokenBudget = 32 << 10
+)
+
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
+
+func calculateMaxContextTokens(focusTokens int) int {
+	if focusTokens < 0 {
+		focusTokens = 0
+	}
+
+	maxContextTokens := focusTokens / 2
+	if maxContextTokens < minimumContextTokenBudget {
+		return minimumContextTokenBudget
+	}
+	if maxContextTokens > maximumContextTokenBudget {
+		return maximumContextTokenBudget
+	}
+	return maxContextTokens
+}
 
 func (Module) SimplifyFiles(
 	getFileSet GetFileSet,
@@ -96,12 +120,7 @@ func (Module) SimplifyFiles(
 		}
 
 		focusTokens := allTokens - contextTokens
-		maxContextTokens := focusTokens / 2
-		if maxContextTokens < 16<<10 {
-			maxContextTokens = 16 << 10
-		} else if maxContextTokens > 256<<10 {
-			maxContextTokens = 256 << 10
-		}
+		maxContextTokens := calculateMaxContextTokens(focusTokens)
 		logger.InfoContext(ctx, "initial tokens",
 			"all tokens", allTokens,
 			"context tokens", contextTokens,
@@ -560,3 +579,4 @@ func deleteStructTags(file *ast.File) *ast.File {
 		return true
 	}, nil).(*ast.File)
 }
+
