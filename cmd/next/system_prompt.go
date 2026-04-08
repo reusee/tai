@@ -4,11 +4,24 @@ import (
 	_ "embed"
 	"strings"
 
+	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/prompts"
 )
+
+type ExtraSystemPrompt string
+
+var _ExtraSystemPromptConfigurable configs.Configurable = ExtraSystemPrompt("")
+
+func (e ExtraSystemPrompt) TaigoConfigurable() {}
+
+func (Module) ExtraSystemPrompt(
+	loader configs.Loader,
+) ExtraSystemPrompt {
+	return configs.First[ExtraSystemPrompt](loader, "extra_system_prompt")
+}
 
 type SystemPrompt string
 
@@ -29,6 +42,7 @@ func init() {
 func (Module) SystemPrompt(
 	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
+	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
@@ -44,6 +58,10 @@ func (Module) SystemPrompt(
 	if hasGoFiles {
 		logger.Info("has go file")
 		ret += "\n\n" + prompts.UnifiedDiff + "\n\n"
+	}
+
+	if extra != "" {
+		ret += "\n\n" + SystemPrompt(extra) + "\n"
 	}
 
 	if len(focus) > 0 {

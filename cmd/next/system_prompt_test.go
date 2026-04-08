@@ -267,3 +267,20 @@ func TestSystemPrompt(t *testing.T) {
 
 	})
 }
+
+func TestExtraSystemPrompt(t *testing.T) {
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Fork(
+		func() ExtraSystemPrompt {
+			return "THIS_IS_EXTRA_SYSTEM_PROMPT"
+		},
+	).Call(func(
+		systemPrompt SystemPrompt,
+	) {
+		if !strings.Contains(string(systemPrompt), "THIS_IS_EXTRA_SYSTEM_PROMPT") {
+			t.Fatalf("extra prompt not included in system prompt: %s", systemPrompt)
+		}
+	})
+}
