@@ -24,6 +24,9 @@ max_tokens?: int
 // max_context_tokens limits the total context tokens (input + output).
 max_context_tokens?: int
 
+// extra_system_prompt provides additional instructions to the AI.
+extra_system_prompt?: string
+
 // match provides a regex to filter files by path.
 match?: string
 
@@ -117,7 +120,7 @@ _var: {
   properties?: [..._var]
 }
 
-functions: [...{
+functions?: [...{
   name: string
   description?: string
   params: [..._var]
