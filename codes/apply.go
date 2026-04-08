@@ -39,59 +39,78 @@ func getBodyInfo(body string) (*BodyInfo, error) {
 	if body == "" {
 		return nil, nil
 	}
-	src := []byte(body)
-	prefixLen := 0
-	if !hasPackage(src) {
-		prefix := "package p\n"
-		src = append([]byte(prefix), src...)
-		prefixLen = len(prefix)
-	}
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
-	if err != nil {
-		// Try prepending keywords if parsing failed
-		for _, kw := range []string{"const ", "var ", "type ", "func "} {
-			trialPrefix := "package p\n" + kw
-			trial := append([]byte(trialPrefix), []byte(body)...)
-			f2, err2 := parser.ParseFile(fset, "", trial, parser.ParseComments)
-			if err2 == nil {
-				f = f2
-				src = trial
-				prefixLen = len(trialPrefix)
-				err = nil
-				// Extract keyword without trailing space
-				kwStr := strings.TrimSpace(kw)
-				info := &BodyInfo{
-					Decls:     f.Decls,
-					Fset:      fset,
-					PrefixLen: prefixLen,
-					Src:       src,
-					Keyword:   kwStr,
-				}
-				for _, decl := range f.Decls {
-					if g, ok := decl.(*ast.GenDecl); ok {
-						info.Specs = append(info.Specs, g.Specs...)
+
+	tryParse := func(b string) (*BodyInfo, error) {
+		src := []byte(b)
+		prefixLen := 0
+		if !hasPackage(src) {
+			prefix := "package p\n"
+			src = append([]byte(prefix), src...)
+			prefixLen = len(prefix)
+		}
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
+		if err != nil {
+			// Try prepending keywords if parsing failed
+			for _, kw := range []string{"const ", "var ", "type ", "func "} {
+				trialPrefix := "package p\n" + kw
+				trial := append([]byte(trialPrefix), []byte(b)...)
+				f2, err2 := parser.ParseFile(fset, "", trial, parser.ParseComments)
+				if err2 == nil {
+					f = f2
+					src = trial
+					prefixLen = len(trialPrefix)
+					err = nil
+					// Extract keyword without trailing space
+					kwStr := strings.TrimSpace(kw)
+					info := &BodyInfo{
+						Decls:     f.Decls,
+						Fset:      fset,
+						PrefixLen: prefixLen,
+						Src:       src,
+						Keyword:   kwStr,
 					}
+					for _, decl := range f.Decls {
+						if g, ok := decl.(*ast.GenDecl); ok {
+							info.Specs = append(info.Specs, g.Specs...)
+						}
+					}
+					return info, nil
 				}
-				return info, nil
 			}
 		}
+		if err != nil {
+			return nil, err
+		}
+		info := &BodyInfo{
+			Decls:     f.Decls,
+			Fset:      fset,
+			PrefixLen: prefixLen,
+			Src:       src,
+		}
+		for _, decl := range f.Decls {
+			if g, ok := decl.(*ast.GenDecl); ok {
+				info.Specs = append(info.Specs, g.Specs...)
+			}
+		}
+		return info, nil
 	}
-	if err != nil {
-		return nil, err
+
+	info, err := tryParse(body)
+	if err == nil {
+		return info, nil
 	}
-	info := &BodyInfo{
-		Decls:     f.Decls,
-		Fset:      fset,
-		PrefixLen: prefixLen,
-		Src:       src,
-	}
-	for _, decl := range f.Decls {
-		if g, ok := decl.(*ast.GenDecl); ok {
-			info.Specs = append(info.Specs, g.Specs...)
+
+	// Try trimming trailing artifacts (like extra closing parenthesis) and retry
+	trimmed := strings.TrimSpace(body)
+	if strings.HasSuffix(trimmed, ")") {
+		info2, err2 := tryParse(trimmed[:len(trimmed)-1])
+		if err2 == nil {
+			return info2, nil
 		}
 	}
-	return info, nil
+
+	return nil, err
 }
 
 func (info *BodyInfo) entityCount() int {
@@ -280,6 +299,9 @@ func applyHunk(root *os.Root, h Hunk) error {
 
 	h.Body = stripMarkdown(h.Body)
 	bodyInfo, _ := getBodyInfo(h.Body)
+	if bodyInfo != nil {
+		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
+	}
 	bodyName := getHunkBodyName(h.Body)
 
 	var start, end int
@@ -542,7 +564,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 					}
 					newInfo, err := getBodyInfo(reconstructed)
 					if err == nil && newInfo.entityCount() > 0 {
-						finalBody = reconstructed
+						finalBody = string(newInfo.Src[newInfo.PrefixLen:])
 						bodyInfo = newInfo
 					}
 				}
