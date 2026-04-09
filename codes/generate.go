@@ -167,6 +167,9 @@ func (Module) Generate(
 				tap(ctx, "codes generate error", globals)
 
 				// let user determine what to do
+				if *noChat {
+					return phaseErr
+				}
 				phase = buildChat(generator, nil)(phase)
 
 			} else {
@@ -179,4 +182,3 @@ func (Module) Generate(
 		return nil
 	}
 }
-

@@ -206,9 +206,11 @@ func (a ActionRank) InitialPhase(cont phases.Phase) phases.Phase {
 			return nil, nil, err
 		}
 
-		return a.BuildGenerate()(m2, nil)(
-			a.BuildChat()(m2, nil)(cont),
-		), state, nil
+		next := cont
+		if !*noChat {
+			next = a.BuildChat()(m2, nil)(cont)
+		}
+		return a.BuildGenerate()(m2, nil)(next), state, nil
 	}
 }
 
@@ -272,4 +274,3 @@ func (a ActionRank) scoreBatch(ctx context.Context, m generators.Generator, goal
 		}
 	}
 }
-

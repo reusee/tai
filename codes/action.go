@@ -99,6 +99,8 @@ var actionNameFlag string
 
 var actionArgumentFlag ActionArgument
 
+var noChat = cmds.Switch("-no-chat")
+
 func (Module) Chats(
 	loader configs.Loader,
 ) Chats {

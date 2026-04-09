@@ -161,11 +161,11 @@ Always include a clear rationale for your decisions and the anticipated impact o
 		if err != nil {
 			return nil, nil, err
 		}
-		return a.BuildGenerate()(codeGenerator, nil)(
-			a.BuildChat()(codeGenerator, nil)(
-				cont,
-			),
-		), state, nil
+		next := cont
+		if !*noChat {
+			next = a.BuildChat()(codeGenerator, nil)(cont)
+		}
+		return a.BuildGenerate()(codeGenerator, nil)(next), state, nil
 	}
 }
 
