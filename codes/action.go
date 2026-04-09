@@ -108,12 +108,10 @@ func (Module) Chats(
 
 func (Module) AllActions(
 	chat ActionChat,
-	do ActionDo,
 	rank ActionRank,
 ) []Action {
 	return []Action{
 		chat,
-		do,
 		rank,
 	}
 }
@@ -190,4 +188,3 @@ func (Module) ActionArgument(
 
 	return arg
 }
-
