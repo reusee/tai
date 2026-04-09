@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"go/scanner"
+	"go/token"
+
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -14,11 +18,6 @@ import (
 	"github.com/reusee/tai/taigo"
 	"github.com/reusee/tai/taivm"
 	"github.com/reusee/tai/vars"
-)
-
-import (
-	"go/scanner"
-	"go/token"
 )
 
 const Theory = `
@@ -191,3 +190,4 @@ func (Module) ActionArgument(
 
 	return arg
 }
+
