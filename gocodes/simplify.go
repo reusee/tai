@@ -36,7 +36,7 @@ func calculateMaxContextTokens(focusTokens int) int {
 		focusTokens = 0
 	}
 
-	maxContextTokens := focusTokens / 2
+	maxContextTokens := focusTokens / 3
 	if maxContextTokens < minimumContextTokenBudget {
 		return minimumContextTokenBudget
 	}

@@ -179,8 +179,23 @@ func bar() {
 }
 
 func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
+	// 128K / 3 = 42.6K -> capped at 32K
 	got := calculateMaxContextTokens(128 << 10)
 	want := maximumContextTokenBudget
+	if got != want {
+		t.Fatalf("got %d, want %d", got, want)
+	}
+
+	// 12K / 3 = 4K -> floored at 8K
+	got = calculateMaxContextTokens(12 << 10)
+	want = minimumContextTokenBudget
+	if got != want {
+		t.Fatalf("got %d, want %d", got, want)
+	}
+
+	// 60K / 3 = 20K -> within [8K, 32K]
+	got = calculateMaxContextTokens(60 << 10)
+	want = 20 << 10
 	if got != want {
 		t.Fatalf("got %d, want %d", got, want)
 	}
