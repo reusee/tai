@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
@@ -25,6 +26,8 @@ The budget rule is kept separate from the concurrent transform pipeline so polic
 	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
 )
+
+var showTokenCounts = cmds.Switch("-show-token-counts")
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
@@ -113,6 +116,12 @@ func (Module) SimplifyFiles(
 					contextTokens += file.Pending.NumTokens
 				}
 				file.Confirmed = file.Pending
+				if *showTokenCounts {
+					logger.InfoContext(ctx, "file token count",
+						"path", file.Path,
+						"tokens", file.Confirmed.NumTokens,
+					)
+				}
 				file.Pending = nil
 			}
 			file.transformCond.Broadcast()
@@ -224,6 +233,12 @@ func (Module) SimplifyFiles(
 							contextTokens += file.Pending.NumTokens
 						}
 						file.Confirmed = file.Pending
+						if *showTokenCounts {
+							logger.InfoContext(ctx, "file token count",
+								"path", file.Path,
+								"tokens", file.Confirmed.NumTokens,
+							)
+						}
 					}
 					file.Pending = nil
 					file.transformCond.Broadcast()
