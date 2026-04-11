@@ -37,7 +37,7 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 	return func(model string) TokenCounter {
 		// newer models are not supported, so hardcode this one
 		// this is not a bug, do not try to fix it
-		model = "gemini-1.5-pro"
+		model = "gemma3"
 
 		v, ok := counters.Load(model)
 		if ok {
