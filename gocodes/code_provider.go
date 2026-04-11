@@ -36,6 +36,7 @@ func (c CodeProvider) Parts(
 	parts []generators.Part,
 	err error,
 ) {
+	var totalTokens int
 
 	// provide files from patterns (extra context)
 	if len(patterns) > 0 {
@@ -57,6 +58,10 @@ func (c CodeProvider) Parts(
 					continue
 				}
 				maxTokens -= numTokens
+				if *showTokenCounts {
+					c.Logger().Info("extra context file", "path", info.Path, "tokens", numTokens)
+				}
+				totalTokens += numTokens
 				parts = append(parts, generators.Text(text))
 
 			} else {
@@ -86,7 +91,15 @@ func (c CodeProvider) Parts(
 		if len(file.Confirmed.Content) == 0 {
 			panic(fmt.Errorf("empty file: %+v", file))
 		}
+		if *showTokenCounts {
+			c.Logger().Info("final file", "path", file.Path, "tokens", file.Confirmed.NumTokens)
+		}
+		totalTokens += file.Confirmed.NumTokens
 		parts = append(parts, generators.Text(file.Confirmed.Content))
+	}
+
+	if *showTokenCounts {
+		c.Logger().Info("total tokens", "tokens", totalTokens)
 	}
 
 	return
@@ -98,4 +111,3 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
-

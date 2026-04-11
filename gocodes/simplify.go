@@ -116,12 +116,6 @@ func (Module) SimplifyFiles(
 					contextTokens += file.Pending.NumTokens
 				}
 				file.Confirmed = file.Pending
-				if *showTokenCounts {
-					logger.InfoContext(ctx, "file token count",
-						"path", file.Path,
-						"tokens", file.Confirmed.NumTokens,
-					)
-				}
 				file.Pending = nil
 			}
 			file.transformCond.Broadcast()
@@ -233,12 +227,6 @@ func (Module) SimplifyFiles(
 							contextTokens += file.Pending.NumTokens
 						}
 						file.Confirmed = file.Pending
-						if *showTokenCounts {
-							logger.InfoContext(ctx, "file token count",
-								"path", file.Path,
-								"tokens", file.Confirmed.NumTokens,
-							)
-						}
 					}
 					file.Pending = nil
 					file.transformCond.Broadcast()
@@ -594,4 +582,3 @@ func deleteStructTags(file *ast.File) *ast.File {
 		return true
 	}, nil).(*ast.File)
 }
-
