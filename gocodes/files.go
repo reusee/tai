@@ -21,6 +21,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/imports"
 )
 
 var includeStdLib = cmds.Switch("-include-std")
@@ -382,13 +383,24 @@ func formatASTForPrompt(w io.Writer, fileAST *ast.File, fset *token.FileSet, isR
 		}
 	}
 
-	err := format.Node(w, fset, fileAST)
+	buf := new(bytes.Buffer)
+	err := format.Node(buf, fset, fileAST)
 	if err != nil {
 		panic(err)
 	}
-	_, err = fmt.Fprintf(w, "\n")
+	res, err := imports.Process(path, buf.Bytes(), nil)
+	if err != nil {
+		res = buf.Bytes()
+	}
+	_, err = w.Write(res)
 	if err != nil {
 		return err
+	}
+	if !bytes.HasSuffix(res, []byte("\n")) {
+		_, err = fmt.Fprintf(w, "\n")
+		if err != nil {
+			return err
+		}
 	}
 
 	if isRoot {

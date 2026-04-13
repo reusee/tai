@@ -21,7 +21,8 @@ import (
 const (
 	SimplifyTheory = `Simplification keeps operative files primary and dependency context secondary.
 Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
-The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.`
+The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
+Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).`
 
 	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
@@ -582,3 +583,4 @@ func deleteStructTags(file *ast.File) *ast.File {
 		return true
 	}, nil).(*ast.File)
 }
+
