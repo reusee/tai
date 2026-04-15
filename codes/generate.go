@@ -170,7 +170,7 @@ func (Module) Generate(
 				if *noChat {
 					return phaseErr
 				}
-				phase = buildChat(generator, &generators.Options{
+				phase = buildChat(generator, &generators.GenerateOptions{
 					NonStreaming: true,
 				})(phase)
 
@@ -184,3 +184,4 @@ func (Module) Generate(
 		return nil
 	}
 }
+
