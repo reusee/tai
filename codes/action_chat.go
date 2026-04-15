@@ -44,9 +44,13 @@ func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
 			}
 			next := cont
 			if !*noChat {
-				next = a.BuildChat()(generator, nil)(cont)
+				next = a.BuildChat()(generator, &generators.Options{
+					NonStreaming: true,
+				})(cont)
 			}
-			return a.BuildGenerate()(generator, nil)(next), state, nil
+			return a.BuildGenerate()(generator, &generators.Options{
+				NonStreaming: true,
+			})(next), state, nil
 		}
 
 		if *noChat {
