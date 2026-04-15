@@ -174,40 +174,22 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		},
 	}
 
+	nonStreaming := false
+	if options != nil && options.NonStreaming {
+		nonStreaming = true
+	}
+
 	ret, err = doWithRetry(ctx, g.Logger(), func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
 			"model", g.args.Model,
+			"non_streaming", nonStreaming,
 		)
-
-		streamClient, err := client.StreamGenerateContent(ctx, req)
-		if err != nil {
-			return ret, err
-		}
-		defer streamClient.CloseSend()
 
 		newState := ret
 		hasContent := false
 
-		for {
-			select {
-			case <-ctx.Done():
-				return ret, ctx.Err()
-			default:
-			}
-
-			resp, err := streamClient.Recv()
-			if err == io.EOF {
-				if !hasContent {
-					// no output
-					return ret, errors.Join(fmt.Errorf("no output"), ErrRetryable)
-				}
-				break
-			}
-			if err != nil {
-				return ret, wrap(err)
-			}
-
+		handleResponse := func(resp *generativelanguagepb.GenerateContentResponse) error {
 			if *debugGemini {
 				g.Logger().InfoContext(ctx, "gemini response",
 					"details", resp,
@@ -220,17 +202,18 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				usage.Prompt.TokenCountCached = int(metadata.CachedContentTokenCount)
 				usage.Candidates.TokenCount = int(metadata.CandidatesTokenCount)
 				usage.Thoughts.TokenCount = int(metadata.ThoughtsTokenCount)
+				var err error
 				newState, err = newState.AppendContent(&Content{
 					Role:  RoleLog,
 					Parts: []Part{usage},
 				})
 				if err != nil {
-					return ret, err
+					return err
 				}
 			}
 
 			if len(resp.Candidates) == 0 {
-				continue
+				return nil
 			}
 			candidate := resp.Candidates[0]
 
@@ -240,7 +223,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				}
 				for _, part := range candidate.Content.Parts {
 					if p, err := PartFromGemini(part); err != nil {
-						return ret, err
+						return err
 					} else if p != nil {
 						if _, isThought := p.(Thought); !isThought {
 							hasContent = true
@@ -248,22 +231,65 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 						newContent.Parts = append(newContent.Parts, p)
 					}
 				}
+				var err error
 				if newState, err = newState.AppendContent(newContent); err != nil {
-					return ret, err
+					return err
 				}
 			}
 
 			if reason := candidate.GetFinishReason(); reason > 0 {
+				var err error
 				if newState, err = newState.AppendContent(&Content{
 					Role: RoleLog,
 					Parts: []Part{
 						FinishReason(reason.String()),
 					},
 				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		if nonStreaming {
+			resp, err := client.GenerateContent(ctx, req)
+			if err != nil {
+				return ret, wrap(err)
+			}
+			if err := handleResponse(resp); err != nil {
+				return ret, err
+			}
+
+		} else {
+			streamClient, err := client.StreamGenerateContent(ctx, req)
+			if err != nil {
+				return ret, err
+			}
+			defer streamClient.CloseSend()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return ret, ctx.Err()
+				default:
+				}
+
+				resp, err := streamClient.Recv()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return ret, wrap(err)
+				}
+				if err := handleResponse(resp); err != nil {
 					return ret, err
 				}
 			}
+		}
 
+		if !hasContent {
+			// no output
+			return ret, errors.Join(fmt.Errorf("no output"), ErrRetryable)
 		}
 
 		return newState, nil

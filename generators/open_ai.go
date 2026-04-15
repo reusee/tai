@@ -85,8 +85,14 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		})
 	}
 
+	nonStreaming := false
+	if options != nil && options.NonStreaming {
+		nonStreaming = true
+	}
+
 	o.Logger().InfoContext(ctx, "generating",
 		"model", o.args.Model,
+		"non_streaming", nonStreaming,
 	)
 
 	maxCompletionTokens := 0
@@ -100,11 +106,14 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	req := ChatCompletionRequest{
 		Model:               o.args.Model,
 		Messages:            messages,
-		Stream:              true,
-		StreamOptions:       &StreamOptions{IncludeUsage: true},
+		Stream:              !nonStreaming,
 		ReasoningEffort:     "high",
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
+	}
+
+	if !nonStreaming {
+		req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	}
 
 	if !o.args.DisableTools {
@@ -138,7 +147,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	if !nonStreaming {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
 
 	resp, err := o.client.Do(httpReq)
 	if err != nil {
@@ -173,116 +184,187 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 
-	parser := new(OpenAIParser)
-	finish := func() error {
-		if contents, err := parser.End(); err != nil {
+	handleUsage := func(u *OpenAIUsage) error {
+		if u == nil {
+			return nil
+		}
+		var usage Usage
+		usage.Prompt.TokenCount = u.PromptTokens
+		if u.PromptTokensDetails != nil {
+			usage.Prompt.TokenCountCached = u.PromptTokensDetails.CachedTokens
+		}
+		usage.Candidates.TokenCount = u.CompletionTokens
+		if u.CompletionTokensDetails != nil {
+			usage.Candidates.TokenCount -= u.CompletionTokensDetails.ReasoningTokens
+			usage.Thoughts.TokenCount = u.CompletionTokensDetails.ReasoningTokens
+		}
+		var err error
+		if ret, err = ret.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage},
+		}); err != nil {
 			return err
-		} else {
-			for _, content := range contents {
+		}
+		return nil
+	}
+
+	if nonStreaming {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return ret, err
+		}
+		if *debugOpenAI {
+			o.Logger().InfoContext(ctx, "OpenAI response",
+				"body", string(body),
+			)
+		}
+		var response ChatCompletionResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return ret, err
+		}
+
+		if err := handleUsage(response.Usage); err != nil {
+			return ret, err
+		}
+
+		if len(response.Choices) > 0 {
+			choice := response.Choices[0]
+			msg := choice.Message
+			content := &Content{
+				Role: Role(msg.Role),
+			}
+			if msg.ReasoningContent != "" {
+				content.Parts = append(content.Parts, Thought(msg.ReasoningContent))
+			}
+			if msg.Content != "" {
+				content.Parts = append(content.Parts, Text(msg.Content))
+			}
+			for _, call := range msg.ToolCalls {
+				var args map[string]any
+				if call.Function.Arguments != "" {
+					if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+						return ret, err
+					}
+				}
+				content.Parts = append(content.Parts, FuncCall{
+					ID:   call.ID,
+					Name: call.Function.Name,
+					Args: args,
+				})
+			}
+			if ret, err = ret.AppendContent(content); err != nil {
+				return ret, err
+			}
+
+			if choice.FinishReason != "" {
+				if ret, err = ret.AppendContent(&Content{
+					Role: RoleLog,
+					Parts: []Part{
+						FinishReason(choice.FinishReason),
+					},
+				}); err != nil {
+					return ret, err
+				}
+			}
+		}
+
+	} else {
+		parser := new(OpenAIParser)
+		finish := func() error {
+			if contents, err := parser.End(); err != nil {
+				return err
+			} else {
+				for _, content := range contents {
+					if *debugOpenAI {
+						o.Logger().InfoContext(ctx, "OpenAI content",
+							"details", content,
+						)
+					}
+					if ret, err = ret.AppendContent(content); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(nil, 1<<20)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+
+			if strings.HasPrefix(line, "data: [DONE]") {
+				break
+			}
+
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := line[6:]
+
+			var streamResp ChatCompletionStreamResponse
+			if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				return ret, fmt.Errorf("error unmarshalling stream response: %w", err)
+			}
+
+			if *debugOpenAI {
+				o.Logger().InfoContext(ctx, "OpenAI response",
+					"details", streamResp,
+				)
+			}
+
+			if err := handleUsage(streamResp.Usage); err != nil {
+				return ret, err
+			}
+
+			if len(streamResp.Choices) == 0 {
+				continue
+			}
+
+			newContents, err := parser.Input(streamResp.Choices[0].Delta)
+			if err != nil {
+				return ret, err
+			}
+
+			for _, content := range newContents {
 				if *debugOpenAI {
 					o.Logger().InfoContext(ctx, "OpenAI content",
 						"details", content,
 					)
 				}
 				if ret, err = ret.AppendContent(content); err != nil {
-					return err
+					return ret, err
 				}
 			}
-		}
-		return nil
-	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(nil, 1<<20)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		if strings.HasPrefix(line, "data: [DONE]") {
-			break
-		}
-
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := line[6:]
-
-		var streamResp ChatCompletionStreamResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-			return ret, fmt.Errorf("error unmarshalling stream response: %w", err)
-		}
-
-		if *debugOpenAI {
-			o.Logger().InfoContext(ctx, "OpenAI response",
-				"details", streamResp,
-			)
-		}
-
-		if streamResp.Usage != nil {
-			var usage Usage
-			usage.Prompt.TokenCount = streamResp.Usage.PromptTokens
-			if streamResp.Usage.PromptTokensDetails != nil {
-				usage.Prompt.TokenCountCached = streamResp.Usage.PromptTokensDetails.CachedTokens
+			if reason := streamResp.Choices[0].FinishReason; reason != "" {
+				if err := finish(); err != nil {
+					return ret, err
+				}
+				if ret, err = ret.AppendContent(&Content{
+					Role: RoleLog,
+					Parts: []Part{
+						FinishReason(reason),
+					},
+				}); err != nil {
+					return ret, err
+				}
+				if reason == "error" {
+					return ret, errors.Join(errors.New(string(reason)), ErrRetryable)
+				}
 			}
-			usage.Candidates.TokenCount = streamResp.Usage.CompletionTokens
-			if streamResp.Usage.CompletionTokensDetails != nil {
-				usage.Candidates.TokenCount -= streamResp.Usage.CompletionTokensDetails.ReasoningTokens
-				usage.Thoughts.TokenCount = streamResp.Usage.CompletionTokensDetails.ReasoningTokens
-			}
-			if ret, err = ret.AppendContent(&Content{
-				Role:  RoleLog,
-				Parts: []Part{usage},
-			}); err != nil {
-				return ret, err
-			}
+
+		}
+		if err := scanner.Err(); err != nil {
+			return ret, fmt.Errorf("error reading stream: %w", err)
 		}
 
-		if len(streamResp.Choices) == 0 {
-			continue
-		}
-
-		newContents, err := parser.Input(streamResp.Choices[0].Delta)
-		if err != nil {
+		if err := finish(); err != nil {
 			return ret, err
 		}
-
-		for _, content := range newContents {
-			if *debugOpenAI {
-				o.Logger().InfoContext(ctx, "OpenAI content",
-					"details", content,
-				)
-			}
-			if ret, err = ret.AppendContent(content); err != nil {
-				return ret, err
-			}
-		}
-
-		if reason := streamResp.Choices[0].FinishReason; reason != "" {
-			if err := finish(); err != nil {
-				return ret, err
-			}
-			if ret, err = ret.AppendContent(&Content{
-				Role: RoleLog,
-				Parts: []Part{
-					FinishReason(reason),
-				},
-			}); err != nil {
-				return ret, err
-			}
-			if reason == "error" {
-				return ret, errors.Join(errors.New(string(reason)), ErrRetryable)
-			}
-		}
-
-	}
-	if err := scanner.Err(); err != nil {
-		return ret, fmt.Errorf("error reading stream: %w", err)
-	}
-
-	if err := finish(); err != nil {
-		return ret, err
 	}
 
 	if ret, err = ret.Flush(); err != nil {
@@ -503,11 +585,12 @@ type Reasoning struct {
 }
 
 type ChatCompletionMessage struct {
-	Role         string            `json:"role"`
-	Content      string            `json:"content,omitempty"`
-	MultiContent []ChatMessagePart `json:"multi_content,omitempty"`
-	ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
-	ToolCallID   string            `json:"tool_call_id,omitempty"`
+	Role             string            `json:"role"`
+	Content          string            `json:"content,omitempty"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	MultiContent     []ChatMessagePart `json:"multi_content,omitempty"`
+	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
 }
 
 type ChatMessagePart struct {
@@ -546,6 +629,16 @@ type FunctionCall struct {
 type ChatCompletionStreamResponse struct {
 	Choices []ChatCompletionStreamChoice `json:"choices"`
 	Usage   *OpenAIUsage                 `json:"usage,omitempty"`
+}
+
+type ChatCompletionResponse struct {
+	Choices []ChatCompletionChoice `json:"choices"`
+	Usage   *OpenAIUsage           `json:"usage,omitempty"`
+}
+
+type ChatCompletionChoice struct {
+	Message      ChatCompletionMessage `json:"message"`
+	FinishReason string                `json:"finish_reason"`
 }
 
 type OpenAIUsage struct {

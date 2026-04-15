@@ -174,3 +174,72 @@ func testGenerator(
 
 }
 
+func TestNonStreaming(t *testing.T) {
+	test := func(t *testing.T, newGenerator any) {
+		loader := configs.NewLoader([]string{}, "")
+		scope := dscope.New(
+			modes.ForTest(t),
+			&loader,
+			new(Module),
+		).Fork(
+			func() nets.ProxyAddr {
+				return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
+			},
+		)
+
+		var generator Generator
+		scope.Call(newGenerator).Assign(&generator)
+
+		prompts := NewPrompts("", []*Content{
+			{
+				Role: RoleUser,
+				Parts: []Part{
+					Text("say hi"),
+				},
+			},
+		})
+		output := NewOutput(prompts, t.Output(), true)
+		state := State(output)
+
+		var err error
+		state, err = generator.Generate(t.Context(), state, &GenerateOptions{
+			NonStreaming: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		found := false
+		for _, content := range state.Contents() {
+			if content.Role != RoleModel && content.Role != RoleAssistant {
+				continue
+			}
+			for _, part := range content.Parts {
+				if text, ok := part.(Text); ok && len(text) > 0 {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			t.Fatal("no response content")
+		}
+	}
+
+	t.Run("gemini", func(t *testing.T) {
+		test(t, func(newGemini NewGemini) Generator {
+			return newGemini(GeneratorArgs{
+				Model: "models/gemini-flash-latest",
+			})
+		})
+	})
+
+	t.Run("openai", func(t *testing.T) {
+		test(t, func(newOpenRouter NewOpenRouter) Generator {
+			return newOpenRouter(GeneratorArgs{
+				Model: "mistralai/devstral-2512:free",
+			})
+		})
+	})
+
+}

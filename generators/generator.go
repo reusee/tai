@@ -15,6 +15,7 @@ type Generator interface {
 type GenerateOptions struct {
 	MaxGenerateTokens *int
 	ResponseSchema    *Var
+	NonStreaming      bool
 }
 
 type GetGenerator func(name string) (Generator, error)
@@ -111,4 +112,3 @@ func (Module) GetGenerator(
 		return nil, fmt.Errorf("invalid model: %s", name)
 	}
 }
-
