@@ -27,9 +27,13 @@ to call whenever it learns something new about the user.
 
 To ensure reliability:
 1. Tool calls are strictly separated from user-facing responses in the prompt.
-2. The AI is explicitly forbidden from 'simulating' tool calls in text.
+2. While the AI is forbidden from 'simulating' tool calls in text, a fallback mechanism 
+   detects and recovers textual pseudo-calls (e.g., update_user_profile(...)) to ensure 
+   memory updates even when the model fails to use the structural tool calling mechanism.
 3. Tool visibility is enabled in the output to provide feedback on memory operations, 
    helping to distinguish between a successful structural call and a textual hallucination.
+4. Pseudo-call recovery is implemented as a state wrapper that scans assistant text 
+   for specific patterns and injects corresponding function call parts into the stream.
 `
 
 func main() {
@@ -94,6 +98,7 @@ func main() {
 		state = generators.NewOutput(state, os.Stdout, true).WithTools(false)
 		if !*noMemory {
 			state = generators.NewFuncMap(state, updateMemoryFunc)
+			state = NewPseudoCallState(state)
 		}
 
 		phase := buildGenerate(generator, nil)(
@@ -118,4 +123,3 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
-

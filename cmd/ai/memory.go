@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -173,6 +174,85 @@ func (Module) Memory(
 }
 
 type UpdateMemoryFunc *generators.Func
+
+var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*items\s*:\s*(\[[\s\S]*?\])\s*\)`)
+
+type PseudoCallState struct {
+	upstream generators.State
+}
+
+func NewPseudoCallState(upstream generators.State) PseudoCallState {
+	return PseudoCallState{
+		upstream: upstream,
+	}
+}
+
+func (p PseudoCallState) AppendContent(content *generators.Content) (generators.State, error) {
+	if content == nil {
+		return p.upstream.AppendContent(content)
+	}
+	var newParts []generators.Part
+	found := false
+	for _, part := range content.Parts {
+		newParts = append(newParts, part)
+		if text, ok := part.(generators.Text); ok {
+			matches := pseudoCallRegex.FindAllStringSubmatch(string(text), -1)
+			for _, match := range matches {
+				var items []any
+				if err := json.Unmarshal([]byte(match[1]), &items); err == nil {
+					found = true
+					newParts = append(newParts, generators.FuncCall{
+						ID:   fmt.Sprintf("pseudo_%d", rand.Int64()),
+						Name: "update_user_profile",
+						Args: map[string]any{
+							"items": items,
+						},
+					})
+				}
+			}
+		}
+	}
+	if !found {
+		next, err := p.upstream.AppendContent(content)
+		if err != nil {
+			return nil, err
+		}
+		return PseudoCallState{upstream: next}, nil
+	}
+	newContent := *content
+	newContent.Parts = newParts
+	next, err := p.upstream.AppendContent(&newContent)
+	if err != nil {
+		return nil, err
+	}
+	return PseudoCallState{upstream: next}, nil
+}
+
+func (p PseudoCallState) Contents() []*generators.Content {
+	return p.upstream.Contents()
+}
+
+func (p PseudoCallState) Flush() (generators.State, error) {
+	next, err := p.upstream.Flush()
+	if err != nil {
+		return nil, err
+	}
+	return PseudoCallState{upstream: next}, nil
+}
+
+func (p PseudoCallState) FuncMap() map[string]*generators.Func {
+	return p.upstream.FuncMap()
+}
+
+func (p PseudoCallState) SystemPrompt() string {
+	return p.upstream.SystemPrompt()
+}
+
+func (p PseudoCallState) Unwrap() generators.State {
+	return p.upstream
+}
+
+var _ generators.State = PseudoCallState{}
 
 func (Module) UpdateMemoryFunc(
 	currentMemory CurrentMemory,
