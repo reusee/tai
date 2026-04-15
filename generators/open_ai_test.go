@@ -2,18 +2,16 @@ package generators
 
 import (
 	"testing"
-
-	"github.com/reusee/tai/vars"
 )
 
 func TestOpenAI(t *testing.T) {
 	testGenerator(t, func(
-		new NewOpenRouter,
+		newOpenRouter NewOpenRouter,
 	) Generator {
-		return new(GeneratorArgs{
+		return newOpenRouter(GeneratorArgs{
 			Model:             "mistralai/devstral-2512:free",
 			ContextTokens:     128 << 10,
-			MaxGenerateTokens: vars.PtrTo(8 << 10),
+			MaxGenerateTokens: new(8 << 10),
 		})
 	})
 }

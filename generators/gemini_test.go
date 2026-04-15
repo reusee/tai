@@ -12,7 +12,6 @@ import (
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/vars"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 )
@@ -24,8 +23,8 @@ func TestGemini(t *testing.T) {
 		generator := newGemini(GeneratorArgs{
 			Model:             "models/gemini-flash-latest",
 			ContextTokens:     1 * M,
-			MaxGenerateTokens: vars.PtrTo(64 * K),
-			Temperature:       vars.PtrTo[float32](0.1),
+			MaxGenerateTokens: new(64 * K),
+			Temperature:       new(float32(0.1)),
 			DisableSearch:     true,
 		})
 		return generator

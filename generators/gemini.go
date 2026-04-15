@@ -144,7 +144,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		MaxOutputTokens: maxOutputTokens,
 		Temperature:     temperature,
 		ThinkingConfig: &generativelanguagepb.ThinkingConfig{
-			IncludeThoughts: vars.PtrTo(true),
+			IncludeThoughts: new(true),
 			ThinkingBudget:  maxThinkingTokens,
 		},
 	}

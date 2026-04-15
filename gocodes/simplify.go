@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -316,60 +315,60 @@ func makeTransforms() (ops []*Transform) {
 
 	// non-root module
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:   vars.PtrTo(false),
+		MatchModuleIsRoot:   new(false),
 		DeleteTestFiles:     true,
 		DeleteMarkdownFiles: true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot: new(false),
 		DeleteComments:    true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot: new(false),
 		DeleteStructTags:  true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(false),
+		MatchModuleIsRoot:  new(false),
 		DeleteFunctionBody: true,
 	})
 
 	// root module, non-root package
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:   vars.PtrTo(true),
-		MatchPackageIsRoot:  vars.PtrTo(false),
+		MatchModuleIsRoot:   new(true),
+		MatchPackageIsRoot:  new(false),
 		DeleteTestFiles:     true,
 		DeleteMarkdownFiles: true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(true),
-		MatchPackageIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot:  new(true),
+		MatchPackageIsRoot: new(false),
 		DeleteComments:     true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(true),
-		MatchPackageIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot:  new(true),
+		MatchPackageIsRoot: new(false),
 		DeleteStructTags:   true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(true),
-		MatchPackageIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot:  new(true),
+		MatchPackageIsRoot: new(false),
 		DeleteFunctionBody: true,
 	})
 
 	// delete non-root files
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot: new(false),
 		DeleteFile:        true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  vars.PtrTo(true),
-		MatchPackageIsRoot: vars.PtrTo(false),
+		MatchModuleIsRoot:  new(true),
+		MatchPackageIsRoot: new(false),
 		DeleteFile:         true,
 	})
 
 	// root package
 	ops = append(ops, &Transform{
-		MatchPackageIsRoot: vars.PtrTo(true),
+		MatchPackageIsRoot: new(true),
 		DeleteFile:         true,
 	})
 
@@ -583,4 +582,3 @@ func deleteStructTags(file *ast.File) *ast.File {
 		return true
 	}, nil).(*ast.File)
 }
-

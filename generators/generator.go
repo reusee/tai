@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/reusee/tai/vars"
 )
 
 type Generator interface {
@@ -96,16 +94,16 @@ func (Module) GetGenerator(
 			return newGemini(GeneratorArgs{
 				Model:             "models/gemini-flash-latest",
 				ContextTokens:     192 * K,
-				MaxGenerateTokens: vars.PtrTo(32 * K),
-				Temperature:       vars.PtrTo(float32(0.1)),
+				MaxGenerateTokens: new(32 * K),
+				Temperature:       new(float32(0.1)),
 			}), nil
 
 		case "gemini", "pro", "gemini-pro":
 			return newGemini(GeneratorArgs{
 				Model:             "models/gemini-pro-latest",
 				ContextTokens:     192 * K,
-				MaxGenerateTokens: vars.PtrTo(32 * K),
-				Temperature:       vars.PtrTo(float32(0.1)),
+				MaxGenerateTokens: new(32 * K),
+				Temperature:       new(float32(0.1)),
 			}), nil
 
 		}
@@ -113,3 +111,4 @@ func (Module) GetGenerator(
 		return nil, fmt.Errorf("invalid model: %s", name)
 	}
 }
+
