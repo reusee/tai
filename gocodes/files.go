@@ -174,7 +174,9 @@ func (Module) Files(
 		})
 
 		// files info
+		seenPaths := make(map[string]bool)
 		for _, file := range files {
+			seenPaths[file.Path] = true
 			if !file.IsGoFile {
 				continue
 			}
@@ -213,6 +215,9 @@ func (Module) Files(
 			}
 			for _, fileList := range allFiles {
 				for _, path := range fileList {
+					if seenPaths[path] {
+						continue
+					}
 					if _, ok := nonGoFilePaths[path]; !ok {
 						nonGoFilePaths[path] = pkg
 					}
@@ -242,9 +247,11 @@ func (Module) Files(
 				lowerName := strings.ToLower(name)
 				if strings.HasSuffix(lowerName, ".md") && !strings.HasPrefix(lowerName, "_") {
 					path := filepath.Join(dir, name)
-					if _, ok := nonGoFilePaths[path]; !ok {
-						nonGoFilePaths[path] = pkg
-						logger.Info("include markdown file", "path", path)
+					if !seenPaths[path] {
+						if _, ok := nonGoFilePaths[path]; !ok {
+							nonGoFilePaths[path] = pkg
+							logger.Info("include markdown file", "path", path)
+						}
 					}
 				}
 			}
