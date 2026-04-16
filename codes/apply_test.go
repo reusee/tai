@@ -1360,3 +1360,61 @@ A = 42 )
 		t.Errorf("trailing paren leaked into file:\n%s", s)
 	}
 }
+
+func TestApplyHunksNonGoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test 1: Create new non-Go file (allowed)
+	txtFile := "test.txt"
+	aiFile := "test.AI"
+	aiContent := []byte(`[[[ ADD_BEFORE BEGIN IN ` + txtFile + `
+Hello World
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatalf("Creation of non-Go file failed: %v", err)
+	}
+	content, err := os.ReadFile(txtFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "Hello World" {
+		t.Errorf("content incorrect: %q", string(content))
+	}
+
+	// Test 2: Modify existing non-Go file (not allowed)
+	aiContent = []byte(`[[[ MODIFY BEGIN IN ` + txtFile + `
+New Content
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = ApplyHunks(root, aiFile)
+	if err == nil {
+		t.Error("expected error when modifying existing non-Go file, got nil")
+	} else if !strings.Contains(err.Error(), "only .go files are supported") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	// Test 3: Unsupported op on non-existent non-Go file (not allowed)
+	otherTxt := "other.txt"
+	aiContent = []byte(`[[[ MODIFY BEGIN IN ` + otherTxt + `
+Content
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = ApplyHunks(root, aiFile)
+	if err == nil {
+		t.Error("expected error when MODIFY on non-existent non-Go file, got nil")
+	}
+}

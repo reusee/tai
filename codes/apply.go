@@ -287,6 +287,22 @@ func applyHunk(root *os.Root, h Hunk) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
+	// Handle non-Go files
+	if !strings.HasSuffix(path, ".go") {
+		if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
+			// Allow creating new non-Go file
+			body := stripMarkdown(h.Body)
+			if dir := filepath.Dir(path); dir != "." {
+				if err := rootMkdirAll(root, dir, 0755); err != nil {
+					return err
+				}
+			}
+			return root.WriteFile(path, []byte(body), 0644)
+		}
+		return fmt.Errorf("only .go files are supported for modification: %s", path)
+	}
+
 	fset := token.NewFileSet()
 	var f *ast.File
 	var prefixLen int
