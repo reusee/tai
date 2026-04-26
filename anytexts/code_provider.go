@@ -137,7 +137,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			path := queue[0]
 			queue = queue[1:]
 			if stop, err := handlePath(path); err != nil {
-				yield(FileInfo{}, nil)
+				yield(FileInfo{}, err)
 				return
 			} else if stop {
 				break
