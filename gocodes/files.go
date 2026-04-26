@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/tai/cmds"
@@ -51,6 +52,7 @@ type File struct {
 	Transform     *Transform
 	Pending       *Transformed
 	Confirmed     *Transformed
+	ModTime       time.Time
 }
 
 type Transformed struct {
@@ -107,6 +109,9 @@ func (Module) Files(
 				IsGoFile:      true,
 				TokenFile:     file,
 				transformCond: sync.NewCond(new(sync.Mutex)),
+			}
+			if info, err := os.Stat(path); err == nil {
+				f.ModTime = info.ModTime()
 			}
 			files = append(files, f)
 			tokenFileToFile[file] = f
@@ -263,6 +268,7 @@ func (Module) Files(
 				logger.Warn("cannot read non-go file", "path", path, "error", err)
 				continue
 			}
+			info, _ := os.Stat(path)
 
 			// check if text file
 			mime := mimetype.Detect(content)
@@ -290,6 +296,9 @@ func (Module) Files(
 				ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
 				ModuleIsNil:             pkg.Module == nil,
 				transformCond:           sync.NewCond(new(sync.Mutex)),
+			}
+			if info != nil {
+				f.ModTime = info.ModTime()
 			}
 			files = append(files, f)
 		}
@@ -337,6 +346,11 @@ func (Module) Files(
 			// package name
 			if a.Package.PkgPath != b.Package.PkgPath {
 				return cmp.Compare(a.Package.PkgPath, b.Package.PkgPath)
+			}
+
+			// ModTime ascending
+			if !a.ModTime.Equal(b.ModTime) {
+				return cmp.Compare(a.ModTime.UnixNano(), b.ModTime.UnixNano())
 			}
 
 			// large file last
@@ -461,3 +475,4 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
+
