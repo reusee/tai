@@ -238,3 +238,47 @@ func TestOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestOutputUsage(t *testing.T) {
+	t.Run("non-cumulative usage", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		output := NewOutput(NewPrompts("", nil), buf, true)
+		state := State(output)
+
+		// first call
+		usage1 := Usage{}
+		usage1.Prompt.TokenCount = 10
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage1},
+		})
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{FinishReason("stop")},
+		})
+		if !strings.Contains(buf.String(), "prompt=10") {
+			t.Fatal()
+		}
+		buf.Reset()
+		state, _ = state.Flush()
+
+		// second call
+		usage2 := Usage{}
+		usage2.Prompt.TokenCount = 20
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage2},
+		})
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{FinishReason("stop")},
+		})
+		got := buf.String()
+		if !strings.Contains(got, "prompt=20") {
+			t.Fatalf("got %q", got)
+		}
+		if strings.Contains(got, "prompt=30") {
+			t.Fatal("usage should not be cumulative")
+		}
+	})
+}

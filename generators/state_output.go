@@ -19,6 +19,8 @@ type Output struct {
 
 	disableThoughts bool
 	disableTools    bool
+
+	lastUsage Usage
 }
 
 func NewOutput(upstream State, w io.Writer, showThoughts bool) Output {
@@ -152,9 +154,29 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 				}
 			}
 
+		case Usage:
+			ret.lastUsage = part
+
 		case FinishReason:
 			if err := print(false, fmt.Sprintf("[Finish: %s]", part)); err != nil {
 				return nil, err
+			}
+			if ret.lastUsage.Prompt.TokenCount != 0 ||
+				ret.lastUsage.Prompt.TokenCountCached != 0 ||
+				ret.lastUsage.Candidates.TokenCount != 0 ||
+				ret.lastUsage.Thoughts.TokenCount != 0 {
+				if _, err := fmt.Fprint(s.w, "\n"); err != nil {
+					return nil, err
+				}
+				if err := print(false, fmt.Sprintf(
+					"[Usage: prompt=%d, cached=%d, completion=%d, thoughts=%d]",
+					ret.lastUsage.Prompt.TokenCount,
+					ret.lastUsage.Prompt.TokenCountCached,
+					ret.lastUsage.Candidates.TokenCount,
+					ret.lastUsage.Thoughts.TokenCount,
+				)); err != nil {
+					return nil, err
+				}
 			}
 
 		case Error:
@@ -196,6 +218,7 @@ func (s Output) Flush() (State, error) {
 		return nil, err
 	}
 	ret.lastOutputRole = ""
+	ret.lastUsage = Usage{}
 	return ret, nil
 }
 
