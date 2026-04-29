@@ -11,4 +11,6 @@ type GeneratorArgs struct {
 	DisableTools      bool           `json:"disable_tools"`
 	ExtraArguments    map[string]any `json:"extra_arguments"`
 	IsOpenRouter      bool           `json:"is_open_router"`
+	APIVersion        string         `json:"api_version"`
+	IsAzure           bool           `json:"is_azure"`
 }

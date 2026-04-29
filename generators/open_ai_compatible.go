@@ -7,10 +7,35 @@ import (
 
 type OpenRouterEndpoint string
 
-var _ configs.Configurable = OpenRouterEndpoint("")
+func (Module) AzureEndpoint(
+	loader configs.Loader,
+) AzureEndpoint {
+	return configs.First[AzureEndpoint](loader, "azure_endpoint")
+}
+
+type AzureAPIVersion string
+
+var _ configs.Configurable = AzureAPIVersion("")
+
+func (a AzureAPIVersion) TaigoConfigurable() {
+}
+
+func (Module) AzureAPIVersion(
+	loader configs.Loader,
+) AzureAPIVersion {
+	if version := configs.First[AzureAPIVersion](loader, "azure_api_version"); version != "" {
+		return version
+	}
+	return "2024-05-01-preview"
+}
 
 func (o OpenRouterEndpoint) TaigoConfigurable() {
 	panic("unimplemented")
+}
+
+type AzureEndpoint string
+
+func (a AzureEndpoint) TaigoConfigurable() {
 }
 
 func (Module) OpenRouterEndpoint(
@@ -23,6 +48,32 @@ func (Module) OpenRouterEndpoint(
 }
 
 type NewOpenRouter func(args GeneratorArgs) *OpenAI
+
+type NewAzure func(args GeneratorArgs) *OpenAI
+
+func (Module) NewAzure(
+	newOpenAI NewOpenAI,
+	apiKey AzureAPIKey,
+	endpoint AzureEndpoint,
+	apiVersion AzureAPIVersion,
+) NewAzure {
+	return func(args GeneratorArgs) *OpenAI {
+		if args.BaseURL == "" {
+			args.BaseURL = string(endpoint)
+		}
+		if args.APIVersion == "" {
+			args.APIVersion = string(apiVersion)
+		}
+		args.IsAzure = true
+		return newOpenAI(
+			args,
+			vars.FirstNonZero(
+				args.APIKey,
+				string(apiKey),
+			),
+		)
+	}
+}
 
 func (Module) NewOpenRouter(
 	newOpenAI NewOpenAI,

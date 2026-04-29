@@ -2,6 +2,9 @@ package generators
 
 import (
 	"testing"
+
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/modes"
 )
 
 func TestOpenAI(t *testing.T) {
@@ -61,3 +64,29 @@ func TestStateToOpenAIMessages(t *testing.T) {
 	})
 
 }
+
+func TestAzureConfiguration(t *testing.T) {
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Call(func(
+		newAzure NewAzure,
+	) {
+		g := newAzure(GeneratorArgs{
+			BaseURL:    "https://foo.openai.azure.com/",
+			Model:      "my-deployment",
+			APIVersion: "2024-05-01-preview",
+			APIKey:     "my-key",
+		})
+		if !g.args.IsAzure {
+			t.Fatal("IsAzure should be true")
+		}
+		if g.apiKey != "my-key" {
+			t.Fatalf("wrong key: %s", g.apiKey)
+		}
+		if g.args.APIVersion != "2024-05-01-preview" {
+			t.Fatalf("wrong version: %s", g.args.APIVersion)
+		}
+	})
+}
+

@@ -28,11 +28,12 @@ func (Module) GetGenerator(
 	newOpenRouter NewOpenRouter,
 	newTencent NewTencent,
 	newOpenAI NewOpenAI,
-	newAliyn NewAliyun,
+	newAliyun NewAliyun,
 	getSpecs GetGeneratorSpecs,
 	newZhipu NewZhipu,
 	newVercel NewVercel,
 	newNvidia NewNvidia,
+	newAzure NewAzure,
 ) GetGenerator {
 	return func(name string) (Generator, error) {
 
@@ -61,7 +62,7 @@ func (Module) GetGenerator(
 			case "gemini":
 				return newGemini(spec.GeneratorArgs), nil
 			case "aliyun":
-				return newAliyn(spec.GeneratorArgs), nil
+				return newAliyun(spec.GeneratorArgs), nil
 			case "zhipu":
 				return newZhipu(spec.GeneratorArgs), nil
 			case "ollama":
@@ -73,6 +74,8 @@ func (Module) GetGenerator(
 				return newVercel(spec.GeneratorArgs), nil
 			case "nvidia":
 				return newNvidia(spec.GeneratorArgs), nil
+			case "azure":
+				return newAzure(spec.GeneratorArgs), nil
 			default:
 				return nil, fmt.Errorf("unknown generator type: %q", spec.Type)
 			}

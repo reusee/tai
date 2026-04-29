@@ -141,11 +141,25 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.args.BaseURL+"/chat/completions", bytes.NewReader(bodyBytes))
+
+	url := o.args.BaseURL + "/chat/completions"
+	if o.args.IsAzure {
+		url = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
+			strings.TrimSuffix(o.args.BaseURL, "/"),
+			o.args.Model,
+			o.args.APIVersion,
+		)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+	if o.args.IsAzure {
+		httpReq.Header.Set("api-key", o.apiKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if !nonStreaming {
 		httpReq.Header.Set("Accept", "text/event-stream")
@@ -336,7 +350,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					)
 				}
 				if ret, err = ret.AppendContent(content); err != nil {
-					return ret, err
+					return nil, err
 				}
 			}
 
@@ -684,3 +698,4 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
+

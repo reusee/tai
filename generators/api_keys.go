@@ -18,6 +18,7 @@ type (
 	ZhipuAPIKey      string
 	VercelAPIKey     string
 	NvidiaAPIKey     string
+	AzureAPIKey      string
 )
 
 func (v VercelAPIKey) TaigoConfigurable() {
@@ -48,6 +49,9 @@ func (g GoogleAPIKey) TaigoConfigurable() {
 }
 
 func (NvidiaAPIKey) TaigoConfigurable() {
+}
+
+func (AzureAPIKey) TaigoConfigurable() {
 }
 
 var (
@@ -152,5 +156,14 @@ func (Module) NvidiaAPIKey(
 	return vars.FirstNonZero(
 		configs.First[NvidiaAPIKey](loader, "nvidia_api_key"),
 		NvidiaAPIKey(os.Getenv("NVIDIA_API_KEY")),
+	)
+}
+
+func (Module) AzureAPIKey(
+	loader configs.Loader,
+) AzureAPIKey {
+	return vars.FirstNonZero(
+		configs.First[AzureAPIKey](loader, "azure_api_key"),
+		AzureAPIKey(os.Getenv("AZURE_API_KEY")),
 	)
 }
