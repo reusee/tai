@@ -175,7 +175,7 @@ func (Module) Memory(
 
 type UpdateMemoryFunc *generators.Func
 
-var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*items\s*:\s*(\[[\s\S]*?\])\s*\)`)
+var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
 
 type PseudoCallState struct {
 	upstream generators.State
@@ -199,16 +199,22 @@ func (p PseudoCallState) AppendContent(content *generators.Content) (generators.
 			matches := pseudoCallRegex.FindAllStringSubmatch(string(text), -1)
 			for _, match := range matches {
 				var items []any
-				if err := json.Unmarshal([]byte(match[1]), &items); err == nil {
-					found = true
-					newParts = append(newParts, generators.FuncCall{
-						ID:   fmt.Sprintf("pseudo_%d", rand.Int64()),
-						Name: "update_user_profile",
-						Args: map[string]any{
-							"items": items,
-						},
-					})
+				data := []byte(match[1])
+				if err := json.Unmarshal(data, &items); err != nil {
+					// Fallback for single quotes common in hallucinations
+					data = bytes.ReplaceAll(data, []byte("'"), []byte("\""))
+					if err := json.Unmarshal(data, &items); err != nil {
+						continue
+					}
 				}
+				found = true
+				newParts = append(newParts, generators.FuncCall{
+					ID:   fmt.Sprintf("pseudo_%d", rand.Int64()),
+					Name: "update_user_profile",
+					Args: map[string]any{
+						"items": items,
+					},
+				})
 			}
 		}
 	}

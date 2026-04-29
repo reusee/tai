@@ -30,6 +30,8 @@ To ensure reliability:
 2. While the AI is forbidden from 'simulating' tool calls in text, a fallback mechanism 
    detects and recovers textual pseudo-calls (e.g., update_user_profile(...)) to ensure 
    memory updates even when the model fails to use the structural tool calling mechanism.
+   This mechanism is robust against common hallucination patterns, including use of 
+   assignment operators (=) instead of colon separators and single quotes in JSON-like lists.
 3. Tool visibility is enabled in the output to provide feedback on memory operations, 
    helping to distinguish between a successful structural call and a textual hallucination.
 4. Pseudo-call recovery is implemented as a state wrapper that scans assistant text 
