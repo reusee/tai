@@ -36,6 +36,11 @@ To ensure reliability:
    helping to distinguish between a successful structural call and a textual hallucination.
 4. Pseudo-call recovery is implemented as a state wrapper that scans assistant text 
    for specific patterns and injects corresponding function call parts into the stream.
+5. Fact-based Profiling: To maintain the integrity of long-term memory, the system 
+   enforces a "fact-only" policy. The AI is explicitly instructed to avoid 
+   speculation, intuition, or unfounded inference, recording only information 
+   explicitly expressed by the user or confirmed by objective facts. This prevents 
+   the user profile from being polluted with hallucinations or unverified assumptions.
 `
 
 func main() {
