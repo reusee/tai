@@ -34,6 +34,7 @@ func (Module) GetGenerator(
 	newVercel NewVercel,
 	newNvidia NewNvidia,
 	newAzure NewAzure,
+	newBedrock NewBedrock,
 ) GetGenerator {
 	return func(name string) (Generator, error) {
 
@@ -76,6 +77,8 @@ func (Module) GetGenerator(
 				return newNvidia(spec.GeneratorArgs), nil
 			case "azure":
 				return newAzure(spec.GeneratorArgs), nil
+			case "bedrock":
+				return newBedrock(spec.GeneratorArgs), nil
 			default:
 				return nil, fmt.Errorf("unknown generator type: %q", spec.Type)
 			}

@@ -237,6 +237,26 @@ func (Module) NewVercel(
 
 type NewNvidia func(args GeneratorArgs) *OpenAI
 
+type NewBedrock func(args GeneratorArgs) *OpenAI
+
+func (Module) NewBedrock(
+	apiKey BedrockAPIKey,
+	newOpenAI NewOpenAI,
+) NewBedrock {
+	return func(args GeneratorArgs) *OpenAI {
+		if args.BaseURL == "" {
+			args.BaseURL = "https://bedrock-mantle.ap-northeast-1.api.aws/v1"
+		}
+		return newOpenAI(
+			args,
+			vars.FirstNonZero(
+				args.APIKey,
+				string(apiKey),
+			),
+		)
+	}
+}
+
 func (Module) NewNvidia(
 	apiKey NvidiaAPIKey,
 	newOpenAI NewOpenAI,
@@ -254,3 +274,4 @@ func (Module) NewNvidia(
 		)
 	}
 }
+

@@ -19,6 +19,7 @@ type (
 	VercelAPIKey     string
 	NvidiaAPIKey     string
 	AzureAPIKey      string
+	BedrockAPIKey    string
 )
 
 func (v VercelAPIKey) TaigoConfigurable() {
@@ -52,6 +53,9 @@ func (NvidiaAPIKey) TaigoConfigurable() {
 }
 
 func (AzureAPIKey) TaigoConfigurable() {
+}
+
+func (BedrockAPIKey) TaigoConfigurable() {
 }
 
 var (
@@ -167,3 +171,13 @@ func (Module) AzureAPIKey(
 		AzureAPIKey(os.Getenv("AZURE_API_KEY")),
 	)
 }
+
+func (Module) BedrockAPIKey(
+	loader configs.Loader,
+) BedrockAPIKey {
+	return vars.FirstNonZero(
+		configs.First[BedrockAPIKey](loader, "aws_bedrock_api_key"),
+		BedrockAPIKey(os.Getenv("AWS_BEDROCK_API_KEY")),
+	)
+}
+
