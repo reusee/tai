@@ -63,6 +63,62 @@ func TestStateToOpenAIMessages(t *testing.T) {
 
 	})
 
+	t.Run("reasoning content", func(t *testing.T) {
+		state := NewPrompts("", []*Content{
+			{
+				Role: RoleModel,
+				Parts: []Part{
+					Thought("thinking"),
+					Text("answer"),
+				},
+			},
+		})
+		messages, err := stateToOpenAIMessages(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(messages) != 1 {
+			t.Fatalf("got %+v", messages)
+		}
+		if messages[0].ReasoningContent != "thinking" {
+			t.Errorf("wrong reasoning: %s", messages[0].ReasoningContent)
+		}
+		if messages[0].Content != "answer" {
+			t.Errorf("wrong content: %s", messages[0].Content)
+		}
+	})
+
+	t.Run("merge assistant messages with tool calls", func(t *testing.T) {
+		state := NewPrompts("", []*Content{
+			{
+				Role: RoleModel,
+				Parts: []Part{
+					Text("thinking..."),
+					FuncCall{ID: "1", Name: "foo", Args: map[string]any{}},
+				},
+			},
+			{
+				Role: RoleModel,
+				Parts: []Part{
+					Text("more thinking..."),
+				},
+			},
+		})
+		messages, err := stateToOpenAIMessages(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(messages) != 1 {
+			t.Fatalf("expected 1 message, got %d: %+v", len(messages), messages)
+		}
+		if messages[0].Content != "thinking...more thinking..." {
+			t.Errorf("wrong content: %s", messages[0].Content)
+		}
+		if len(messages[0].ToolCalls) != 1 {
+			t.Errorf("wrong tool calls: %+v", messages[0].ToolCalls)
+		}
+	})
+
 }
 
 func TestAzureConfiguration(t *testing.T) {
@@ -89,4 +145,3 @@ func TestAzureConfiguration(t *testing.T) {
 		}
 	})
 }
-

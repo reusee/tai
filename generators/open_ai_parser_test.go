@@ -498,7 +498,7 @@ func TestOpenAIParserRoleChange(t *testing.T) {
 	}
 
 	content1 := contents[0]
-	if content1.Role != RoleAssistant {
+	if content1.Role != RoleModel {
 		t.Errorf("content1 has wrong role: %s", content1.Role)
 	}
 	if len(content1.Parts) != 1 || content1.Parts[0].(Text) != "Hello. " {

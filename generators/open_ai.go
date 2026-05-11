@@ -244,8 +244,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		if len(response.Choices) > 0 {
 			choice := response.Choices[0]
 			msg := choice.Message
+			role := Role(msg.Role)
+			if role == RoleAssistant {
+				role = RoleModel
+			}
 			content := &Content{
-				Role: Role(msg.Role),
+				Role: role,
 			}
 			if msg.ReasoningContent != "" {
 				content.Parts = append(content.Parts, Thought(msg.ReasoningContent))
@@ -278,6 +282,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					},
 				}); err != nil {
 					return ret, err
+				}
+				if choice.FinishReason == "error" {
+					return ret, errors.Join(errors.New(string(choice.FinishReason)), ErrRetryable)
 				}
 			}
 		}
@@ -350,7 +357,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					)
 				}
 				if ret, err = ret.AppendContent(content); err != nil {
-					return nil, err
+					return ret, err
 				}
 			}
 
@@ -409,7 +416,7 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 				if len(part) == 0 {
 					continue
 				}
-				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
+				if len(messages) > 0 && messages[len(messages)-1].Role == role {
 					last := &messages[len(messages)-1]
 					if last.Content == "" && len(last.MultiContent) == 0 {
 						last.Content = string(part)
@@ -429,7 +436,16 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 				}
 
 			case Thought:
-				// ignore
+				if role == string(RoleAssistant) {
+					if len(messages) > 0 && messages[len(messages)-1].Role == role {
+						messages[len(messages)-1].ReasoningContent += string(part)
+					} else {
+						messages = append(messages, ChatCompletionMessage{
+							Role:             role,
+							ReasoningContent: string(part),
+						})
+					}
+				}
 
 			case FileURL:
 				if len(part) == 0 {
@@ -698,4 +714,3 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
-

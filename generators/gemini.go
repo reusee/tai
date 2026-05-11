@@ -16,6 +16,19 @@ import (
 	"google.golang.org/genai"
 )
 
+func isTerminalFinishReason(reason genai.FinishReason) bool {
+	switch reason {
+	case genai.FinishReasonSafety,
+		genai.FinishReasonRecitation,
+		genai.FinishReasonBlocklist,
+		genai.FinishReasonProhibitedContent,
+		genai.FinishReasonSPII,
+		genai.FinishReasonMalformedFunctionCall:
+		return true
+	}
+	return false
+}
+
 type Gemini struct {
 	args      GeneratorArgs
 	GetClient dscope.Inject[GetGeminiClient]
@@ -177,6 +190,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 		newState := ret
 		hasContent := false
+		var terminalReason string
 
 		handleResponse := func(resp *genai.GenerateContentResponse) error {
 			if *debugGemini {
@@ -205,6 +219,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				return nil
 			}
 			candidate := resp.Candidates[0]
+
+			if isTerminalFinishReason(candidate.FinishReason) {
+				terminalReason = string(candidate.FinishReason)
+			}
 
 			if candidate.Content != nil {
 				newContent := &Content{
@@ -264,6 +282,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 
 		if !hasContent {
+			if terminalReason != "" {
+				return ret, fmt.Errorf("terminal finish reason: %s", terminalReason)
+			}
 			// no output
 			return ret, errors.Join(fmt.Errorf("no output"), ErrRetryable)
 		}
@@ -368,3 +389,4 @@ func (Module) NewGemini(
 		return ret
 	}
 }
+

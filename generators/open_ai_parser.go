@@ -20,19 +20,27 @@ func (o *OpenAIParser) Input(delta ChatCompletionStreamChoiceDelta) (ret []*Cont
 		return nil, nil
 	}
 
+	role := Role(delta.Role)
+	if role == RoleAssistant {
+		role = RoleModel
+	}
+
 	if o.current == nil {
 		// new content
-		o.current = &Content{
-			Role: Role(delta.Role),
+		if role == "" {
+			role = RoleModel
 		}
-	} else if delta.Role != "" && o.current.Role != Role(delta.Role) {
+		o.current = &Content{
+			Role: role,
+		}
+	} else if delta.Role != "" && o.current.Role != role {
 		// role change, new content
 		if err := o.checkAndEmitCall(); err != nil {
 			return nil, err
 		}
 		ret = append(ret, o.current)
 		o.current = &Content{
-			Role: Role(delta.Role),
+			Role: role,
 		}
 	}
 
