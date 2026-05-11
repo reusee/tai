@@ -316,8 +316,7 @@ func isRetryable(err error) bool {
 	if errors.Is(err, ErrRetryable) {
 		return true
 	}
-	var apiErr *genai.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*genai.APIError](err); ok {
 		if apiErr.Code == 429 || apiErr.Code == 503 || apiErr.Code == 500 {
 			return true
 		}
@@ -369,4 +368,3 @@ func (Module) NewGemini(
 		return ret
 	}
 }
-
