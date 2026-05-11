@@ -3,7 +3,7 @@ package generators
 import (
 	"fmt"
 
-	"cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb"
+	"google.golang.org/genai"
 )
 
 type Var struct {
@@ -17,8 +17,8 @@ type Var struct {
 
 type Vars []Var
 
-func (v Vars) ToGemini() *generativelanguagepb.Schema {
-	props := make(map[string]*generativelanguagepb.Schema)
+func (v Vars) ToGemini() *genai.Schema {
+	props := make(map[string]*genai.Schema)
 	var required []string
 	for _, variable := range v {
 		props[variable.Name] = variable.ToGemini()
@@ -26,34 +26,33 @@ func (v Vars) ToGemini() *generativelanguagepb.Schema {
 			required = append(required, variable.Name)
 		}
 	}
-	return &generativelanguagepb.Schema{
-		Type:        generativelanguagepb.Type_OBJECT,
+	return &genai.Schema{
+		Type:        genai.TypeObject,
 		Properties:  props,
 		Required:    required,
 		Description: "Parameters for the function call.",
 	}
 }
 
-func (v Var) ToGemini() *generativelanguagepb.Schema {
-	ret := &generativelanguagepb.Schema{
-		Title:       v.Name,
-		Nullable:    v.Optional,
+func (v Var) ToGemini() *genai.Schema {
+	ret := &genai.Schema{
+		Nullable:    &v.Optional,
 		Description: v.Description,
 	}
 	switch v.Type {
 	case TypeString:
-		ret.Type = generativelanguagepb.Type_STRING
+		ret.Type = genai.TypeString
 	case TypeNumber:
-		ret.Type = generativelanguagepb.Type_NUMBER
+		ret.Type = genai.TypeNumber
 	case TypeInteger:
-		ret.Type = generativelanguagepb.Type_INTEGER
+		ret.Type = genai.TypeInteger
 	case TypeBoolean:
-		ret.Type = generativelanguagepb.Type_BOOLEAN
+		ret.Type = genai.TypeBoolean
 	case TypeArray:
-		ret.Type = generativelanguagepb.Type_ARRAY
+		ret.Type = genai.TypeArray
 		ret.Items = v.ItemType.ToGemini()
 	case TypeObject:
-		ret.Type = generativelanguagepb.Type_OBJECT
+		ret.Type = genai.TypeObject
 		objSchema := v.Properties.ToGemini()
 		ret.Properties = objSchema.Properties
 		ret.Required = objSchema.Required

@@ -1,19 +1,14 @@
 package generators
 
 import (
-	"context"
-	"net"
 	"os"
 	"testing"
 
-	generativelanguage "cloud.google.com/go/ai/generativelanguage/apiv1beta"
-	"cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
-	"google.golang.org/api/option"
-	"google.golang.org/grpc"
+	"google.golang.org/genai"
 )
 
 func TestGemini(t *testing.T) {
@@ -42,33 +37,30 @@ func TestGeminiListModels(t *testing.T) {
 			return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 		},
 	).Call(func(
-		dialer nets.Dialer,
+		httpClient nets.HTTPClient,
 		apiKey GoogleAPIKey,
 	) {
 		ctx := t.Context()
 
-		clientOptions := []option.ClientOption{
-			option.WithAPIKey(string(apiKey)),
-			option.WithGRPCDialOption(
-				grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "tcp", addr)
-				}),
-			),
-		}
-		client, err := generativelanguage.NewModelClient(ctx, clientOptions...)
+		client, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:     string(apiKey),
+			Backend:    genai.BackendGeminiAPI,
+			HTTPClient: httpClient,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		iter := client.ListModels(ctx, &generativelanguagepb.ListModelsRequest{
+		resp, err := client.Models.List(ctx, &genai.ListModelsConfig{
 			PageSize: 1000,
 		})
-		for model, err := range iter.All() {
-			if err != nil {
-				t.Fatal(err)
-			}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, model := range resp.Items {
 			_ = model
 		}
 
 	})
 }
+

@@ -5,21 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"sync"
 	"time"
 
-	generativelanguage "cloud.google.com/go/ai/generativelanguage/apiv1beta"
-	"cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/vars"
-	"google.golang.org/api/option"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"google.golang.org/genai"
 )
 
 type Gemini struct {
@@ -48,32 +42,32 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 	ret = state
 
-	var maxOutputTokens *int32
+	var maxOutputTokens int32
 	if g.args.MaxGenerateTokens != nil {
 		max := int32(*g.args.MaxGenerateTokens)
-		maxOutputTokens = &max
+		maxOutputTokens = max
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
 		n := int32(*options.MaxGenerateTokens)
-		if maxOutputTokens == nil || n < *maxOutputTokens {
-			maxOutputTokens = &n
+		if maxOutputTokens == 0 || n < maxOutputTokens {
+			maxOutputTokens = n
 		}
 	}
 
 	var maxThinkingTokens *int32
-	if maxOutputTokens != nil {
-		maxThinking := int32(*maxOutputTokens) / 4
+	if maxOutputTokens != 0 {
+		maxThinking := maxOutputTokens / 4
 		maxThinkingTokens = &maxThinking
 	}
 
-	var tools []*generativelanguagepb.Tool
+	var tools []*genai.Tool
 	if !g.args.DisableSearch && len(ret.FuncMap()) == 0 {
-		tools = append(tools, &generativelanguagepb.Tool{
-			GoogleSearch: &generativelanguagepb.Tool_GoogleSearch{},
+		tools = append(tools, &genai.Tool{
+			GoogleSearch: &genai.GoogleSearch{},
 		})
 	}
 
-	var funcDecls []*generativelanguagepb.FunctionDeclaration
+	var funcDecls []*genai.FunctionDeclaration
 	for _, fn := range ret.FuncMap() {
 		funcDecls = append(funcDecls, fn.Decl.ToGemini())
 	}
@@ -82,44 +76,45 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			funcDecls = append(funcDecls, fn.ToGemini())
 		}
 	}
-	var functionCallingConfig *generativelanguagepb.FunctionCallingConfig
+	var toolConfig *genai.ToolConfig
 	if len(funcDecls) > 0 {
-		tools = append(tools, &generativelanguagepb.Tool{
+		tools = append(tools, &genai.Tool{
 			FunctionDeclarations: funcDecls,
 		})
-		functionCallingConfig = &generativelanguagepb.FunctionCallingConfig{
-			Mode: generativelanguagepb.FunctionCallingConfig_VALIDATED,
+		toolConfig = &genai.ToolConfig{
+			FunctionCallingConfig: &genai.FunctionCallingConfig{
+				Mode: genai.FunctionCallingConfigModeAny,
+			},
 		}
 	}
 
-	safetySettings := []*generativelanguagepb.SafetySetting{
+	safetySettings := []*genai.SafetySetting{
 		{
-			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_HATE_SPEECH,
-			Threshold: generativelanguagepb.SafetySetting_OFF,
+			Category:  genai.HarmCategoryHateSpeech,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
-			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_SEXUALLY_EXPLICIT,
-			Threshold: generativelanguagepb.SafetySetting_OFF,
+			Category:  genai.HarmCategorySexuallyExplicit,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
-			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_DANGEROUS_CONTENT,
-			Threshold: generativelanguagepb.SafetySetting_OFF,
+			Category:  genai.HarmCategoryDangerousContent,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 		{
-			Category:  generativelanguagepb.HarmCategory_HARM_CATEGORY_HARASSMENT,
-			Threshold: generativelanguagepb.SafetySetting_OFF,
+			Category:  genai.HarmCategoryHarassment,
+			Threshold: genai.HarmBlockThresholdBlockNone,
 		},
 	}
 
-	var contents []*generativelanguagepb.Content
+	var contents []*genai.Content
 	for _, content := range ret.Contents() {
-		role := content.Role
-		if role == RoleAssistant {
-			// convert to gemini role
-			role = RoleModel
+		role := string(content.Role)
+		if role == string(RoleAssistant) {
+			role = string(RoleModel)
 		}
-		pbContent := generativelanguagepb.Content{
-			Role: string(role),
+		pbContent := &genai.Content{
+			Role: role,
 		}
 		for _, part := range content.Parts {
 			pbPart, err := part.ToGemini()
@@ -131,47 +126,40 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 		}
 		if len(pbContent.Parts) > 0 {
-			contents = append(contents, &pbContent)
+			contents = append(contents, pbContent)
 		}
 	}
 
-	temperature := g.args.Temperature
+	temperature := float32(0)
+	if g.args.Temperature != nil {
+		temperature = float32(*g.args.Temperature)
+	}
 	if *temperatureFlag != 0 {
-		temperature = temperatureFlag
+		temperature = float32(*temperatureFlag)
 	}
 
-	generationConfig := &generativelanguagepb.GenerationConfig{
+	config := &genai.GenerateContentConfig{
 		MaxOutputTokens: maxOutputTokens,
-		Temperature:     temperature,
-		ThinkingConfig: &generativelanguagepb.ThinkingConfig{
-			IncludeThoughts: new(true),
+		Temperature:     &temperature,
+		ThinkingConfig: &genai.ThinkingConfig{
+			IncludeThoughts: true,
 			ThinkingBudget:  maxThinkingTokens,
 		},
+		SafetySettings: safetySettings,
+		Tools:          tools,
+		ToolConfig:     toolConfig,
 	}
-	if options != nil && options.ResponseSchema != nil {
-		generationConfig.ResponseMimeType = "application/json"
-		generationConfig.ResponseSchema = options.ResponseSchema.ToGemini()
+	if sysPrompt := ret.SystemPrompt(); sysPrompt != "" {
+		config.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{
+				{Text: sysPrompt},
+			},
+		}
 	}
 
-	req := &generativelanguagepb.GenerateContentRequest{
-		Model: g.args.Model,
-		Tools: tools,
-		ToolConfig: &generativelanguagepb.ToolConfig{
-			FunctionCallingConfig: functionCallingConfig,
-		},
-		SafetySettings:   safetySettings,
-		GenerationConfig: generationConfig,
-		Contents:         contents,
-		SystemInstruction: &generativelanguagepb.Content{
-			Role: string(RoleSystem),
-			Parts: []*generativelanguagepb.Part{
-				{
-					Data: &generativelanguagepb.Part_Text{
-						Text: ret.SystemPrompt(),
-					},
-				},
-			},
-		},
+	if options != nil && options.ResponseSchema != nil {
+		config.ResponseMIMEType = "application/json"
+		config.ResponseSchema = options.ResponseSchema.ToGemini()
 	}
 
 	nonStreaming := false
@@ -189,14 +177,14 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		newState := ret
 		hasContent := false
 
-		handleResponse := func(resp *generativelanguagepb.GenerateContentResponse) error {
+		handleResponse := func(resp *genai.GenerateContentResponse) error {
 			if *debugGemini {
 				g.Logger().InfoContext(ctx, "gemini response",
 					"details", resp,
 				)
 			}
 
-			if metadata := resp.GetUsageMetadata(); metadata != nil {
+			if metadata := resp.UsageMetadata; metadata != nil {
 				var usage Usage
 				usage.Prompt.TokenCount = int(metadata.PromptTokenCount)
 				usage.Prompt.TokenCountCached = int(metadata.CachedContentTokenCount)
@@ -237,12 +225,12 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				}
 			}
 
-			if reason := candidate.GetFinishReason(); reason > 0 {
+			if reason := candidate.FinishReason; reason != "" {
 				var err error
 				if newState, err = newState.AppendContent(&Content{
 					Role: RoleLog,
 					Parts: []Part{
-						FinishReason(reason.String()),
+						FinishReason(string(reason)),
 					},
 				}); err != nil {
 					return err
@@ -252,7 +240,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 
 		if nonStreaming {
-			resp, err := client.GenerateContent(ctx, req)
+			resp, err := client.Models.GenerateContent(ctx, g.args.Model, contents, config)
 			if err != nil {
 				return ret, wrap(err)
 			}
@@ -261,27 +249,14 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 
 		} else {
-			streamClient, err := client.StreamGenerateContent(ctx, req)
-			if err != nil {
-				return ret, err
-			}
-			defer streamClient.CloseSend()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return ret, ctx.Err()
-				default:
-				}
-
-				resp, err := streamClient.Recv()
-				if err == io.EOF {
-					break
-				}
+			for msg, err := range client.Models.GenerateContentStream(ctx, g.args.Model, contents, config) {
 				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
 					return ret, wrap(err)
 				}
-				if err := handleResponse(resp); err != nil {
+				if err := handleResponse(msg); err != nil {
 					return ret, err
 				}
 			}
@@ -337,53 +312,46 @@ func doWithRetry[T any](
 }
 
 func isRetryable(err error) bool {
-	s, ok := status.FromError(err)
-	if ok && (s.Code() == codes.ResourceExhausted || s.Code() == codes.Unavailable) {
-		return true
-	}
 	if errors.Is(err, ErrRetryable) {
 		return true
+	}
+	var apiErr *genai.APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.Code == 429 || apiErr.Code == 503 || apiErr.Code == 500 {
+			return true
+		}
 	}
 	return false
 }
 
-type GetGeminiClient = func(ctx context.Context, key string) (*generativelanguage.GenerativeClient, error)
+type GetGeminiClient = func(ctx context.Context, key string) (*genai.Client, error)
 
 func (Module) GetGeminiClient(
-	dialer nets.Dialer,
+	httpClient nets.HTTPClient,
 	apiKey GoogleAPIKey,
 ) GetGeminiClient {
-	var clients sync.Map // key -> *generativelanguage.GenerativeClient
-	return func(ctx context.Context, key string) (*generativelanguage.GenerativeClient, error) {
+	var clients sync.Map // key -> *genai.Client
+	return func(ctx context.Context, key string) (*genai.Client, error) {
 		key = vars.FirstNonZero(
 			key,
 			string(apiKey),
 		)
 
 		if v, ok := clients.Load(key); ok {
-			return v.(*generativelanguage.GenerativeClient), nil
+			return v.(*genai.Client), nil
 		}
 
-		clientOptions := []option.ClientOption{
-			option.WithAPIKey(key),
-			option.WithGRPCDialOption(
-				grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "tcp", addr)
-				}),
-			),
-		}
-		client, err := generativelanguage.NewGenerativeClient(ctx, clientOptions...)
+		client, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:     key,
+			Backend:    genai.BackendGeminiAPI,
+			HTTPClient: httpClient,
+		})
 		if err != nil {
 			return nil, err
 		}
 
-		v, loaded := clients.LoadOrStore(key, client)
-		if loaded {
-			// not store
-			client.Close()
-		}
-
-		return v.(*generativelanguage.GenerativeClient), nil
+		v, _ := clients.LoadOrStore(key, client)
+		return v.(*genai.Client), nil
 	}
 }
 

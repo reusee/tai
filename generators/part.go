@@ -1,26 +1,24 @@
 package generators
 
 import (
-	"fmt"
-
-	"cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb"
-	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/genai"
 )
 
 type Part interface {
 	isPart()
-	ToGemini() (*generativelanguagepb.Part, error)
+	ToGemini() (*genai.Part, error)
 }
 
 type Text string
 
 func (Text) isPart() {}
 
-func (t Text) ToGemini() (*generativelanguagepb.Part, error) {
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_Text{
-			Text: string(t),
-		},
+func (t Text) ToGemini() (*genai.Part, error) {
+	if len(t) == 0 {
+		return nil, nil
+	}
+	return &genai.Part{
+		Text: string(t),
 	}, nil
 }
 
@@ -28,7 +26,7 @@ type Thought string
 
 func (Thought) isPart() {}
 
-func (t Thought) ToGemini() (*generativelanguagepb.Part, error) {
+func (t Thought) ToGemini() (*genai.Part, error) {
 	return nil, nil
 }
 
@@ -36,12 +34,10 @@ type FileURL string
 
 func (FileURL) isPart() {}
 
-func (f FileURL) ToGemini() (*generativelanguagepb.Part, error) {
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_FileData{
-			FileData: &generativelanguagepb.FileData{
-				FileUri: string(f),
-			},
+func (f FileURL) ToGemini() (*genai.Part, error) {
+	return &genai.Part{
+		FileData: &genai.FileData{
+			FileURI: string(f),
 		},
 	}, nil
 }
@@ -53,13 +49,11 @@ type FileContent struct {
 
 func (FileContent) isPart() {}
 
-func (f FileContent) ToGemini() (*generativelanguagepb.Part, error) {
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_InlineData{
-			InlineData: &generativelanguagepb.Blob{
-				MimeType: f.MimeType,
-				Data:     f.Content,
-			},
+func (f FileContent) ToGemini() (*genai.Part, error) {
+	return &genai.Part{
+		InlineData: &genai.Blob{
+			MIMEType: f.MimeType,
+			Data:     f.Content,
 		},
 	}, nil
 }
@@ -73,26 +67,20 @@ type FuncCall struct {
 
 func (FuncCall) isPart() {}
 
-func (f FuncCall) ToGemini() (*generativelanguagepb.Part, error) {
+func (f FuncCall) ToGemini() (*genai.Part, error) {
 	// If Origin is set, it means this FuncCall came from a Gemini response
-	// and we should reuse the original protobuf part.
+	// and we should reuse the original part.
 	if f.Origin != nil {
-		if pbPart, ok := f.Origin.(*generativelanguagepb.Part); ok {
-			return pbPart, nil
+		if part, ok := f.Origin.(*genai.Part); ok {
+			return part, nil
 		}
 	}
 	// Otherwise, construct a new FunctionCall part for Gemini
-	s, err := structpb.NewStruct(f.Args)
-	if err != nil {
-		return nil, err
-	}
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_FunctionCall{
-			FunctionCall: &generativelanguagepb.FunctionCall{
-				Id:   f.ID,
-				Name: f.Name,
-				Args: s,
-			},
+	return &genai.Part{
+		FunctionCall: &genai.FunctionCall{
+			ID:   f.ID,
+			Name: f.Name,
+			Args: f.Args,
 		},
 	}, nil
 }
@@ -105,18 +93,12 @@ type CallResult struct {
 
 func (CallResult) isPart() {}
 
-func (c CallResult) ToGemini() (*generativelanguagepb.Part, error) {
-	s, err := structpb.NewStruct(c.Results)
-	if err != nil {
-		return nil, err
-	}
-	return &generativelanguagepb.Part{
-		Data: &generativelanguagepb.Part_FunctionResponse{
-			FunctionResponse: &generativelanguagepb.FunctionResponse{
-				Id:       c.ID,
-				Name:     c.Name,
-				Response: s,
-			},
+func (c CallResult) ToGemini() (*genai.Part, error) {
+	return &genai.Part{
+		FunctionResponse: &genai.FunctionResponse{
+			ID:       c.ID,
+			Name:     c.Name,
+			Response: c.Results,
 		},
 	}, nil
 }
@@ -125,7 +107,7 @@ type FinishReason string
 
 func (FinishReason) isPart() {}
 
-func (FinishReason) ToGemini() (*generativelanguagepb.Part, error) {
+func (FinishReason) ToGemini() (*genai.Part, error) {
 	return nil, nil
 }
 
@@ -144,7 +126,7 @@ type Usage struct {
 
 func (Usage) isPart() {}
 
-func (Usage) ToGemini() (*generativelanguagepb.Part, error) {
+func (Usage) ToGemini() (*genai.Part, error) {
 	return nil, nil
 }
 
@@ -154,55 +136,56 @@ type Error struct {
 
 func (Error) isPart() {}
 
-func (Error) ToGemini() (*generativelanguagepb.Part, error) {
+func (Error) ToGemini() (*genai.Part, error) {
 	return nil, nil
 }
 
-func PartFromGemini(part *generativelanguagepb.Part) (Part, error) {
-	switch data := part.Data.(type) {
-
-	case *generativelanguagepb.Part_Text:
+func PartFromGemini(part *genai.Part) (Part, error) {
+	if part.Text != "" || part.Thought {
 		if part.Thought {
-			return Thought(data.Text), nil
+			return Thought(part.Text), nil
 		} else {
-			return Text(data.Text), nil
+			return Text(part.Text), nil
 		}
-
-	case *generativelanguagepb.Part_CodeExecutionResult:
-		output := data.CodeExecutionResult.GetOutput()
-		return Text(output), nil
-
-	case *generativelanguagepb.Part_ExecutableCode:
-		code := data.ExecutableCode.GetCode()
-		return Text(code), nil
-
-	case *generativelanguagepb.Part_FileData:
-		return FileURL(data.FileData.FileUri), nil
-
-	case *generativelanguagepb.Part_FunctionResponse:
-		return CallResult{
-			ID:      data.FunctionResponse.Id,
-			Name:    data.FunctionResponse.Name,
-			Results: data.FunctionResponse.GetResponse().AsMap(),
-		}, nil
-
-	case *generativelanguagepb.Part_FunctionCall:
-		call := data.FunctionCall
-		return FuncCall{
-			ID:     call.Id,
-			Name:   call.Name,
-			Args:   call.Args.AsMap(),
-			Origin: part,
-		}, nil
-
-	case *generativelanguagepb.Part_InlineData:
-		inlineData := data.InlineData
-		return FileContent{
-			Content:  inlineData.Data,
-			MimeType: inlineData.MimeType,
-		}, nil
-
 	}
 
-	return nil, fmt.Errorf("unknown part type: %T", part)
+	if part.FunctionResponse != nil {
+		return CallResult{
+			ID:      part.FunctionResponse.ID,
+			Name:    part.FunctionResponse.Name,
+			Results: part.FunctionResponse.Response,
+		}, nil
+	}
+
+	if part.FunctionCall != nil {
+		return FuncCall{
+			ID:     part.FunctionCall.ID,
+			Name:   part.FunctionCall.Name,
+			Args:   part.FunctionCall.Args,
+			Origin: part,
+		}, nil
+	}
+
+	if part.InlineData != nil {
+		return FileContent{
+			Content:  part.InlineData.Data,
+			MimeType: part.InlineData.MIMEType,
+		}, nil
+	}
+
+	if part.FileData != nil {
+		return FileURL(part.FileData.FileURI), nil
+	}
+
+	if part.ExecutableCode != nil {
+		return Text(part.ExecutableCode.Code), nil
+	}
+
+	if part.CodeExecutionResult != nil {
+		return Text(part.CodeExecutionResult.Output), nil
+	}
+
+	// Unknown or metadata-only part, ignore
+	return nil, nil
 }
+

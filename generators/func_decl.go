@@ -1,7 +1,7 @@
 package generators
 
 import (
-	"cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb"
+	"google.golang.org/genai"
 )
 
 type FuncDecl struct {
@@ -11,8 +11,8 @@ type FuncDecl struct {
 	Returns     Vars   `json:"returns"`
 }
 
-func (f FuncDecl) ToGemini() *generativelanguagepb.FunctionDeclaration {
-	return &generativelanguagepb.FunctionDeclaration{
+func (f FuncDecl) ToGemini() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{
 		Name:        f.Name,
 		Description: f.Description,
 		Parameters:  f.Params.ToGemini(),
