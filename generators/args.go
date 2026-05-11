@@ -13,4 +13,6 @@ type GeneratorArgs struct {
 	IsOpenRouter      bool           `json:"is_open_router"`
 	APIVersion        string         `json:"api_version"`
 	IsAzure           bool           `json:"is_azure"`
+	ServiceTier       string         `json:"service_tier"`
 }
+

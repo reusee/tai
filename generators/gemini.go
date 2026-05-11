@@ -148,6 +148,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		SafetySettings: safetySettings,
 		Tools:          tools,
 		ToolConfig:     toolConfig,
+		ServiceTier:    genai.ServiceTier(g.args.ServiceTier),
 	}
 	if sysPrompt := ret.SystemPrompt(); sysPrompt != "" {
 		config.SystemInstruction = &genai.Content{
@@ -368,3 +369,4 @@ func (Module) NewGemini(
 		return ret
 	}
 }
+
