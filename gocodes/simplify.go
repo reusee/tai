@@ -21,7 +21,8 @@ const (
 	SimplifyTheory = `Simplification keeps operative files primary and dependency context secondary.
 Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
 The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
-Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).`
+Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
+Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.`
 
 	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
@@ -59,15 +60,19 @@ func (Module) SimplifyFiles(
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		originalFiles := make([]*File, len(files))
+		copy(originalFiles, files)
+
 		// Clean up file state on exit to avoid leaking state into cached File objects
 		defer func() {
-			for _, f := range files {
+			for _, f := range originalFiles {
 				if f == nil {
 					continue
 				}
 				f.transformCond.L.Lock()
 				f.Transform = nil
 				f.Pending = nil
+				f.DoNotSimplify = false
 				f.transformCond.Broadcast()
 				f.transformCond.L.Unlock()
 			}
@@ -143,6 +148,9 @@ func (Module) SimplifyFiles(
 					if file == nil {
 						continue
 					}
+					if file.DoNotSimplify {
+						continue
+					}
 
 					select {
 					case sema <- true:
@@ -186,6 +194,10 @@ func (Module) SimplifyFiles(
 
 				if allTokens < maxTokens && contextTokens <= maxContextTokens {
 					break loop_ops
+				}
+
+				if file.DoNotSimplify {
+					continue
 				}
 
 				select {
@@ -247,7 +259,7 @@ func (Module) SimplifyFiles(
 				case <-allDone:
 					return
 				case <-ticker.C:
-					for _, f := range files {
+					for _, f := range originalFiles {
 						if f != nil {
 							f.transformCond.Broadcast()
 						}

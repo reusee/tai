@@ -38,11 +38,28 @@ func (c CodeProvider) Parts(
 ) {
 	var totalTokens int
 
+	files, err := c.GetFiles()()
+	if err != nil {
+		return nil, err
+	}
+	c.Logger().Info("get files done", "num files", len(files))
+
 	// provide files from patterns (extra context)
 	if len(patterns) > 0 {
+		projectFiles := make(map[string]*File)
+		for _, f := range files {
+			projectFiles[f.Path] = f
+		}
+
 		for info, err := range c.AnyTexts().IterFiles(patterns) {
 			if err != nil {
 				return nil, err
+			}
+
+			// if file is in project, mark it as do not simplify and skip adding here
+			if f, ok := projectFiles[info.Path]; ok {
+				f.DoNotSimplify = true
+				continue
 			}
 
 			if info.IsText {
@@ -77,11 +94,6 @@ func (c CodeProvider) Parts(
 		}
 	}
 
-	files, err := c.GetFiles()()
-	if err != nil {
-		return nil, err
-	}
-	c.Logger().Info("get files done", "num files", len(files))
 	files, err = c.SimplifyFiles()(files, maxTokens, countTokens)
 	if err != nil {
 		return nil, err

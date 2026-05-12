@@ -47,6 +47,7 @@ type File struct {
 	ModuleIsRoot            bool
 	ModuleIsNil             bool
 	DefinedObjects          map[types.Object]bool
+	DoNotSimplify           bool
 
 	transformCond *sync.Cond
 	Transform     *Transform
@@ -475,4 +476,3 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
-
