@@ -39,8 +39,11 @@ To ensure reliability:
 5. Fact-based Profiling: To maintain the integrity of long-term memory, the system 
    enforces a "fact-only" policy. The AI is explicitly instructed to avoid 
    speculation, intuition, or unfounded inference, recording only information 
-   explicitly expressed by the user or confirmed by objective facts. This prevents 
-   the user profile from being polluted with hallucinations or unverified assumptions.
+   explicitly expressed by the user or confirmed by objective facts. Crucially, 
+   it must distinguish between a user's topical interest (e.g., asking about a 
+   medical procedure) and their personal status (e.g., undergoing that procedure). 
+   This prevents the user profile from being polluted with hallucinations or 
+   unverified assumptions.
 `
 
 func main() {
