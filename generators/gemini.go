@@ -96,7 +96,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		})
 		toolConfig = &genai.ToolConfig{
 			FunctionCallingConfig: &genai.FunctionCallingConfig{
-				Mode: genai.FunctionCallingConfigModeAny,
+				Mode: genai.FunctionCallingConfigModeAuto,
 			},
 		}
 	}
@@ -122,9 +122,14 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 	var contents []*genai.Content
 	for _, content := range ret.Contents() {
+		if content.Role == RoleLog || content.Role == RoleSystem {
+			continue
+		}
 		role := string(content.Role)
 		if role == string(RoleAssistant) {
 			role = string(RoleModel)
+		} else if role == string(RoleTool) {
+			role = "function"
 		}
 		pbContent := &genai.Content{
 			Role: role,
@@ -151,9 +156,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		temperature = float32(*temperatureFlag)
 	}
 
-	servierTier := g.args.ServiceTier
-	if servierTier == "" {
-		servierTier = genai.ServiceTierStandard
+	serviceTier := g.args.ServiceTier
+	if serviceTier == "" {
+		serviceTier = genai.ServiceTierStandard
 	}
 
 	config := &genai.GenerateContentConfig{
@@ -166,7 +171,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		SafetySettings: safetySettings,
 		Tools:          tools,
 		ToolConfig:     toolConfig,
-		ServiceTier:    genai.ServiceTier(g.args.ServiceTier),
+		ServiceTier:    serviceTier,
 	}
 	if sysPrompt := ret.SystemPrompt(); sysPrompt != "" {
 		config.SystemInstruction = &genai.Content{
@@ -237,9 +242,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 					if p, err := PartFromGemini(part); err != nil {
 						return err
 					} else if p != nil {
-						if _, isThought := p.(Thought); !isThought {
-							hasContent = true
-						}
+						hasContent = true
 						newContent.Parts = append(newContent.Parts, p)
 					}
 				}
@@ -342,7 +345,8 @@ func isRetryable(err error) bool {
 	if errors.Is(err, ErrRetryable) {
 		return true
 	}
-	if apiErr, ok := errors.AsType[*genai.APIError](err); ok {
+	var apiErr *genai.APIError
+	if errors.As(err, &apiErr) {
 		if apiErr.Code == 429 || apiErr.Code == 503 || apiErr.Code == 500 {
 			return true
 		}
