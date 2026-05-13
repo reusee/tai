@@ -151,6 +151,11 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		temperature = float32(*temperatureFlag)
 	}
 
+	servierTier := g.args.ServiceTier
+	if servierTier == "" {
+		servierTier = genai.ServiceTierStandard
+	}
+
 	config := &genai.GenerateContentConfig{
 		MaxOutputTokens: maxOutputTokens,
 		Temperature:     &temperature,
@@ -389,4 +394,3 @@ func (Module) NewGemini(
 		return ret
 	}
 }
-
