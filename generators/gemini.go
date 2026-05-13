@@ -74,30 +74,32 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	}
 
 	var tools []*genai.Tool
-	if !g.args.DisableSearch && len(ret.FuncMap()) == 0 {
-		tools = append(tools, &genai.Tool{
-			GoogleSearch: &genai.GoogleSearch{},
-		})
-	}
-
-	var funcDecls []*genai.FunctionDeclaration
-	for _, fn := range ret.FuncMap() {
-		funcDecls = append(funcDecls, fn.Decl.ToGemini())
-	}
-	for set := range configs.All[[]FuncDecl](g.Loader(), "functions") {
-		for _, fn := range set {
-			funcDecls = append(funcDecls, fn.ToGemini())
-		}
-	}
 	var toolConfig *genai.ToolConfig
-	if len(funcDecls) > 0 {
-		tools = append(tools, &genai.Tool{
-			FunctionDeclarations: funcDecls,
-		})
-		toolConfig = &genai.ToolConfig{
-			FunctionCallingConfig: &genai.FunctionCallingConfig{
-				Mode: genai.FunctionCallingConfigModeAuto,
-			},
+	if !g.args.DisableTools {
+		if !g.args.DisableSearch && len(ret.FuncMap()) == 0 {
+			tools = append(tools, &genai.Tool{
+				GoogleSearch: &genai.GoogleSearch{},
+			})
+		}
+
+		var funcDecls []*genai.FunctionDeclaration
+		for _, fn := range ret.FuncMap() {
+			funcDecls = append(funcDecls, fn.Decl.ToGemini())
+		}
+		for set := range configs.All[[]FuncDecl](g.Loader(), "functions") {
+			for _, fn := range set {
+				funcDecls = append(funcDecls, fn.ToGemini())
+			}
+		}
+		if len(funcDecls) > 0 {
+			tools = append(tools, &genai.Tool{
+				FunctionDeclarations: funcDecls,
+			})
+			toolConfig = &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			}
 		}
 	}
 
