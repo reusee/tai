@@ -16,4 +16,5 @@ type GeneratorArgs struct {
 	APIVersion        string            `json:"api_version"`
 	IsAzure           bool              `json:"is_azure"`
 	ServiceTier       genai.ServiceTier `json:"service_tier"`
+	ReasoningEffort   string            `json:"reasoning_effort"`
 }

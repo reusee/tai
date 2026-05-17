@@ -100,16 +100,21 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		maxCompletionTokens = *o.args.MaxGenerateTokens
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
-		maxCompletionTokens = min(maxCompletionTokens, *options.MaxGenerateTokens)
+		n := *options.MaxGenerateTokens
+		if maxCompletionTokens == 0 || n < maxCompletionTokens {
+			maxCompletionTokens = n
+		}
 	}
 
 	req := ChatCompletionRequest{
 		Model:               o.args.Model,
 		Messages:            messages,
 		Stream:              !nonStreaming,
-		ReasoningEffort:     "high",
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
+	}
+	if o.args.ReasoningEffort != "" {
+		req.ReasoningEffort = o.args.ReasoningEffort
 	}
 
 	if !nonStreaming {
@@ -120,9 +125,10 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		req.Tools = tools
 	}
 
-	if o.args.IsOpenRouter {
-		req.Reasoning = new(Reasoning)
-		req.Reasoning.Effort = req.ReasoningEffort
+	if o.args.IsOpenRouter && req.ReasoningEffort != "" {
+		req.Reasoning = &Reasoning{
+			Effort: req.ReasoningEffort,
+		}
 		req.ReasoningEffort = ""
 	}
 
@@ -357,7 +363,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					)
 				}
 				if ret, err = ret.AppendContent(content); err != nil {
-					return ret, err
+					return nil, err
 				}
 			}
 
@@ -714,3 +720,4 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
+
