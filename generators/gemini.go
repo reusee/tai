@@ -67,10 +67,21 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 	}
 
-	var maxThinkingTokens *int32
-	if maxOutputTokens != 0 {
-		maxThinking := maxOutputTokens / 4
-		maxThinkingTokens = &maxThinking
+	thinkingConfig := &genai.ThinkingConfig{
+		IncludeThoughts: true,
+	}
+	if g.args.ReasoningEffort != "" {
+		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(g.args.ReasoningEffort)
+	} else {
+		// set budget from max output tokens
+		var maxThinkingTokens *int32
+		if maxOutputTokens != 0 {
+			maxThinking := maxOutputTokens / 4
+			maxThinkingTokens = &maxThinking
+		}
+		if maxThinkingTokens != nil {
+			thinkingConfig.ThinkingBudget = maxThinkingTokens
+		}
 	}
 
 	var tools []*genai.Tool
@@ -158,7 +169,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		temperature = float32(*temperatureFlag)
 	}
 
-	serviceTier := g.args.ServiceTier
+	serviceTier := genai.ServiceTier(g.args.ServiceTier)
 	if serviceTier == "" {
 		serviceTier = genai.ServiceTierStandard
 	}
@@ -166,14 +177,11 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	config := &genai.GenerateContentConfig{
 		MaxOutputTokens: maxOutputTokens,
 		Temperature:     &temperature,
-		ThinkingConfig: &genai.ThinkingConfig{
-			IncludeThoughts: true,
-			ThinkingBudget:  maxThinkingTokens,
-		},
-		SafetySettings: safetySettings,
-		Tools:          tools,
-		ToolConfig:     toolConfig,
-		ServiceTier:    serviceTier,
+		ThinkingConfig:  thinkingConfig,
+		SafetySettings:  safetySettings,
+		Tools:           tools,
+		ToolConfig:      toolConfig,
+		ServiceTier:     serviceTier,
 	}
 	if sysPrompt := ret.SystemPrompt(); sysPrompt != "" {
 		config.SystemInstruction = &genai.Content{
