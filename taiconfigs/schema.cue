@@ -9,6 +9,7 @@ chats?: {[string]: string}
 
 model_name?: string
 model?: string
+cmd_ai_model?: string
 
 // plan_model specifies the model to use for the planning phase in the "do" action.
 plan_model?: string
