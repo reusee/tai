@@ -91,7 +91,7 @@ func (Module) Memory(
 			return nil, nil
 		}
 
-		model := filepath.Base(generator.Spec().Model)
+		model := getModelID(generator.Spec())
 		for _, entry := range slices.Backward(memory.Entries) {
 			if entry.Model == model {
 				return entry, nil
@@ -314,7 +314,7 @@ func (Module) UpdateMemoryFunc(
 				}
 			}
 
-			model := filepath.Base(generator.Spec().Model)
+			model := getModelID(generator.Spec())
 			if err := appendMemory(&MemoryEntry{
 				Time:  time.Now(),
 				Model: model,
@@ -327,4 +327,12 @@ func (Module) UpdateMemoryFunc(
 			}, nil
 		},
 	}
+}
+
+func getModelID(spec generators.Spec) string {
+	name := spec.Name
+	if name == "" {
+		name = spec.Model
+	}
+	return filepath.Base(name)
 }
