@@ -283,7 +283,7 @@ func (Module) NewOpenCodeGo(
 ) NewOpenCodeGo {
 	return func(spec Spec) *OpenAI {
 		if spec.BaseURL == "" {
-			spec.BaseURL = "https://opencode.ai/zen/go/v1/chat/completions"
+			spec.BaseURL = "https://opencode.ai/zen/go/v1"
 		}
 		return newOpenAI(
 			spec,
@@ -294,3 +294,4 @@ func (Module) NewOpenCodeGo(
 		)
 	}
 }
+
