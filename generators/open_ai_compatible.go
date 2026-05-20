@@ -274,3 +274,23 @@ func (Module) NewNvidia(
 		)
 	}
 }
+
+type NewOpenCodeGo func(spec Spec) *OpenAI
+
+func (Module) NewOpenCodeGo(
+	apiKey OpenCodeGoAPIKey,
+	newOpenAI NewOpenAI,
+) NewOpenCodeGo {
+	return func(spec Spec) *OpenAI {
+		if spec.BaseURL == "" {
+			spec.BaseURL = "https://opencode.ai/zen/go/v1/chat/completions"
+		}
+		return newOpenAI(
+			spec,
+			vars.FirstNonZero(
+				spec.APIKey,
+				string(apiKey),
+			),
+		)
+	}
+}

@@ -181,3 +181,18 @@ func (Module) BedrockAPIKey(
 	)
 }
 
+type OpenCodeGoAPIKey string
+
+var _ configs.Configurable = OpenCodeGoAPIKey("")
+
+func (OpenCodeGoAPIKey) TaigoConfigurable() {
+}
+
+func (Module) OpenCodeGoAPIKey(
+	loader configs.Loader,
+) OpenCodeGoAPIKey {
+	return vars.FirstNonZero(
+		configs.First[OpenCodeGoAPIKey](loader, "opencode_go_api_key"),
+		OpenCodeGoAPIKey(os.Getenv("OPENCODE_GO_API_KEY")),
+	)
+}
