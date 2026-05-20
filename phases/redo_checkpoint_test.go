@@ -46,7 +46,7 @@ func (m *mockState) Unwrap() generators.State { return m.unwrapped }
 
 type mockGenerator struct{}
 
-func (m *mockGenerator) Args() generators.GeneratorArgs  { return generators.GeneratorArgs{} }
+func (m *mockGenerator) Spec() generators.Spec           { return generators.Spec{} }
 func (m *mockGenerator) CountTokens(string) (int, error) { return 0, nil }
 func (m *mockGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
 	return state, nil

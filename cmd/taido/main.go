@@ -58,7 +58,7 @@ func main() {
 
 		logger.Info("starting autonomous execution",
 			"goal", *goalFlag,
-			"model", generator.Args().Model,
+			"model", generator.Spec().Model,
 		)
 
 		// Initial state setup
@@ -83,4 +83,3 @@ func main() {
 		}
 	})
 }
-

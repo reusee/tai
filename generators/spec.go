@@ -1,6 +1,8 @@
 package generators
 
-type GeneratorArgs struct {
+type Spec struct {
+	Name              string         `json:"name"`
+	Type              string         `json:"type"`
 	BaseURL           string         `json:"base_url"`
 	APIKey            string         `json:"api_key"`
 	Model             string         `json:"model"`

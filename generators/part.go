@@ -59,10 +59,10 @@ func (f FileContent) ToGemini() (*genai.Part, error) {
 }
 
 type FuncCall struct {
-	ID     string
-	Name   string
-	Args   map[string]any
-	Origin any
+	ID        string
+	Name      string
+	Arguments map[string]any
+	Origin    any
 }
 
 func (FuncCall) isPart() {}
@@ -80,7 +80,7 @@ func (f FuncCall) ToGemini() (*genai.Part, error) {
 		FunctionCall: &genai.FunctionCall{
 			ID:   f.ID,
 			Name: f.Name,
-			Args: f.Args,
+			Args: f.Arguments,
 		},
 	}, nil
 }
@@ -159,10 +159,10 @@ func PartFromGemini(part *genai.Part) (Part, error) {
 
 	if part.FunctionCall != nil {
 		return FuncCall{
-			ID:     part.FunctionCall.ID,
-			Name:   part.FunctionCall.Name,
-			Args:   part.FunctionCall.Args,
-			Origin: part,
+			ID:        part.FunctionCall.ID,
+			Name:      part.FunctionCall.Name,
+			Arguments: part.FunctionCall.Args,
+			Origin:    part,
 		}, nil
 	}
 
@@ -188,4 +188,3 @@ func PartFromGemini(part *genai.Part) (Part, error) {
 	// Unknown or metadata-only part, ignore
 	return nil, nil
 }
-

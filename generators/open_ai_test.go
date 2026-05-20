@@ -11,7 +11,7 @@ func TestOpenAI(t *testing.T) {
 	testGenerator(t, func(
 		newOpenRouter NewOpenRouter,
 	) Generator {
-		return newOpenRouter(GeneratorArgs{
+		return newOpenRouter(Spec{
 			Model:             "mistralai/devstral-2512:free",
 			ContextTokens:     128 << 10,
 			MaxGenerateTokens: new(8 << 10),
@@ -94,7 +94,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 				Role: RoleModel,
 				Parts: []Part{
 					Text("thinking..."),
-					FuncCall{ID: "1", Name: "foo", Args: map[string]any{}},
+					FuncCall{ID: "1", Name: "foo", Arguments: map[string]any{}},
 				},
 			},
 			{
@@ -128,20 +128,20 @@ func TestAzureConfiguration(t *testing.T) {
 	).Call(func(
 		newAzure NewAzure,
 	) {
-		g := newAzure(GeneratorArgs{
+		g := newAzure(Spec{
 			BaseURL:    "https://foo.openai.azure.com/",
 			Model:      "my-deployment",
 			APIVersion: "2024-05-01-preview",
 			APIKey:     "my-key",
 		})
-		if !g.args.IsAzure {
+		if !g.spec.IsAzure {
 			t.Fatal("IsAzure should be true")
 		}
 		if g.apiKey != "my-key" {
 			t.Fatalf("wrong key: %s", g.apiKey)
 		}
-		if g.args.APIVersion != "2024-05-01-preview" {
-			t.Fatalf("wrong version: %s", g.args.APIVersion)
+		if g.spec.APIVersion != "2024-05-01-preview" {
+			t.Fatalf("wrong version: %s", g.spec.APIVersion)
 		}
 	})
 }

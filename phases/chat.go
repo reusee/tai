@@ -118,7 +118,7 @@ func (Module) BuildChatPhase(
 
 				case "/tap":
 					tap(ctx, "tap on chat", map[string]any{
-						"generator_args": generator.Args(),
+						"generator_args": generator.Spec(),
 						"contents":       state.Contents(),
 						"system_prompt":  state.SystemPrompt(),
 						"func_map":       state.FuncMap(),

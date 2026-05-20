@@ -7,7 +7,7 @@ import (
 )
 
 type Generator interface {
-	Args() GeneratorArgs
+	Spec() Spec
 	CountTokens(string) (int, error)
 	Generate(ctx context.Context, state State, options *GenerateOptions) (State, error)
 }
@@ -49,36 +49,36 @@ func (Module) GetGenerator(
 			}
 			switch strings.ToLower(spec.Type) {
 			case "open-router", "open_router", "openrouter":
-				return newOpenRouter(spec.GeneratorArgs), nil
+				return newOpenRouter(spec), nil
 			case "deepseek":
-				return newDeepseek(spec.GeneratorArgs), nil
+				return newDeepseek(spec), nil
 			case "baidu":
-				return newBaidu(spec.GeneratorArgs), nil
+				return newBaidu(spec), nil
 			case "tencent":
-				return newTencent(spec.GeneratorArgs), nil
+				return newTencent(spec), nil
 			case "openai", "open-ai", "open_ai":
-				return newOpenAI(spec.GeneratorArgs, spec.APIKey), nil
+				return newOpenAI(spec, spec.APIKey), nil
 			case "huoshan":
-				return newHuoshan(spec.GeneratorArgs), nil
+				return newHuoshan(spec), nil
 			case "gemini":
-				return newGemini(spec.GeneratorArgs), nil
+				return newGemini(spec), nil
 			case "aliyun":
-				return newAliyun(spec.GeneratorArgs), nil
+				return newAliyun(spec), nil
 			case "zhipu":
-				return newZhipu(spec.GeneratorArgs), nil
+				return newZhipu(spec), nil
 			case "ollama":
-				if spec.GeneratorArgs.BaseURL == "" {
-					spec.GeneratorArgs.BaseURL = "http://127.0.0.1:11434/v1"
+				if spec.BaseURL == "" {
+					spec.BaseURL = "http://127.0.0.1:11434/v1"
 				}
-				return newOpenAI(spec.GeneratorArgs, ""), nil
+				return newOpenAI(spec, ""), nil
 			case "vercel":
-				return newVercel(spec.GeneratorArgs), nil
+				return newVercel(spec), nil
 			case "nvidia":
-				return newNvidia(spec.GeneratorArgs), nil
+				return newNvidia(spec), nil
 			case "azure":
-				return newAzure(spec.GeneratorArgs), nil
+				return newAzure(spec), nil
 			case "bedrock":
-				return newBedrock(spec.GeneratorArgs), nil
+				return newBedrock(spec), nil
 			default:
 				return nil, fmt.Errorf("unknown generator type: %q", spec.Type)
 			}
@@ -87,7 +87,7 @@ func (Module) GetGenerator(
 		// ollama
 		provider, modelName, ok := strings.Cut(name, ":")
 		if ok && provider == "ollama" {
-			return newOpenAI(GeneratorArgs{
+			return newOpenAI(Spec{
 				BaseURL:       "http://127.0.0.1:11434/v1",
 				Model:         modelName,
 				DisableSearch: true,
@@ -98,7 +98,7 @@ func (Module) GetGenerator(
 		switch name {
 
 		case "flash", "gemini-flash":
-			return newGemini(GeneratorArgs{
+			return newGemini(Spec{
 				Model:             "models/gemini-flash-latest",
 				ContextTokens:     192 * K,
 				MaxGenerateTokens: new(32 * K),
@@ -106,7 +106,7 @@ func (Module) GetGenerator(
 			}), nil
 
 		case "gemini", "pro", "gemini-pro":
-			return newGemini(GeneratorArgs{
+			return newGemini(Spec{
 				Model:             "models/gemini-pro-latest",
 				ContextTokens:     192 * K,
 				MaxGenerateTokens: new(32 * K),

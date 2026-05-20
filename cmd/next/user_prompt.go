@@ -15,7 +15,7 @@ func (Module) UserPrompt(
 	maxTokens taiconfigs.MaxTokens,
 ) UserPrompt {
 
-	args := generator.Args()
+	args := generator.Spec()
 	maxInputTokens := min(
 		args.ContextTokens,
 		int(maxTokens),

@@ -30,7 +30,7 @@ func isTerminalFinishReason(reason genai.FinishReason) bool {
 }
 
 type Gemini struct {
-	args      GeneratorArgs
+	spec      Spec
 	GetClient dscope.Inject[GetGeminiClient]
 	Counter   dscope.Inject[GeminiTokenCounter]
 	Logger    dscope.Inject[logs.Logger]
@@ -39,16 +39,16 @@ type Gemini struct {
 
 var _ Generator = Gemini{}
 
-func (g Gemini) Args() GeneratorArgs {
-	return g.args
+func (g Gemini) Spec() Spec {
+	return g.spec
 }
 
 func (g Gemini) CountTokens(text string) (int, error) {
-	return g.Counter()(g.args.Model)(text)
+	return g.Counter()(g.spec.Model)(text)
 }
 
 func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
-	client, err := g.GetClient()(ctx, g.args.APIKey)
+	client, err := g.GetClient()(ctx, g.spec.APIKey)
 	if err != nil {
 		return ret, err
 	}
@@ -56,8 +56,8 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	ret = state
 
 	var maxOutputTokens int32
-	if g.args.MaxGenerateTokens != nil {
-		max := int32(*g.args.MaxGenerateTokens)
+	if g.spec.MaxGenerateTokens != nil {
+		max := int32(*g.spec.MaxGenerateTokens)
 		maxOutputTokens = max
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
@@ -70,8 +70,8 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	thinkingConfig := &genai.ThinkingConfig{
 		IncludeThoughts: true,
 	}
-	if g.args.ReasoningEffort != "" {
-		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(g.args.ReasoningEffort)
+	if g.spec.ReasoningEffort != "" {
+		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(g.spec.ReasoningEffort)
 	} else {
 		// set budget from max output tokens
 		var maxThinkingTokens *int32
@@ -86,8 +86,8 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
-	if !g.args.DisableTools {
-		if !g.args.DisableSearch && len(ret.FuncMap()) == 0 {
+	if !g.spec.DisableTools {
+		if !g.spec.DisableSearch && len(ret.FuncMap()) == 0 {
 			tools = append(tools, &genai.Tool{
 				GoogleSearch: &genai.GoogleSearch{},
 			})
@@ -162,14 +162,14 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	}
 
 	temperature := float32(0)
-	if g.args.Temperature != nil {
-		temperature = float32(*g.args.Temperature)
+	if g.spec.Temperature != nil {
+		temperature = float32(*g.spec.Temperature)
 	}
 	if *temperatureFlag != 0 {
 		temperature = float32(*temperatureFlag)
 	}
 
-	serviceTier := genai.ServiceTier(g.args.ServiceTier)
+	serviceTier := genai.ServiceTier(g.spec.ServiceTier)
 	if serviceTier == "" {
 		serviceTier = genai.ServiceTierStandard
 	}
@@ -204,7 +204,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	ret, err = doWithRetry(ctx, g.Logger(), func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
-			"model", g.args.Model,
+			"model", g.spec.Model,
 			"non_streaming", nonStreaming,
 		)
 
@@ -277,7 +277,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 
 		if nonStreaming {
-			resp, err := client.Models.GenerateContent(ctx, g.args.Model, contents, config)
+			resp, err := client.Models.GenerateContent(ctx, g.spec.Model, contents, config)
 			if err != nil {
 				return ret, wrap(err)
 			}
@@ -286,7 +286,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 
 		} else {
-			for msg, err := range client.Models.GenerateContentStream(ctx, g.args.Model, contents, config) {
+			for msg, err := range client.Models.GenerateContentStream(ctx, g.spec.Model, contents, config) {
 				if err != nil {
 					if errors.Is(err, io.EOF) {
 						break
@@ -395,14 +395,14 @@ func (Module) GetGeminiClient(
 	}
 }
 
-type NewGemini func(args GeneratorArgs) Gemini
+type NewGemini func(spec Spec) Gemini
 
 func (Module) NewGemini(
 	inject dscope.InjectStruct,
 ) NewGemini {
-	return func(args GeneratorArgs) Gemini {
+	return func(spec Spec) Gemini {
 		ret := Gemini{
-			args: args,
+			spec: spec,
 		}
 		inject(&ret)
 		return ret

@@ -193,7 +193,7 @@ func TestOutput(t *testing.T) {
 		parts := []Part{
 			FileURL("http://example.com/img.png"),
 			FileContent{MimeType: "image/png"},
-			FuncCall{Name: "myFunc", Args: map[string]any{"a": 1}},
+			FuncCall{Name: "myFunc", Arguments: map[string]any{"a": 1}},
 			CallResult{Name: "myFunc", Results: map[string]any{"res": "ok"}},
 			FinishReason("stop"),
 			Error{Error: errors.New("fail")},
@@ -282,3 +282,4 @@ func TestOutputUsage(t *testing.T) {
 		}
 	})
 }
+

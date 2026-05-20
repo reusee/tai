@@ -91,7 +91,7 @@ func (Module) Memory(
 			return nil, nil
 		}
 
-		model := filepath.Base(generator.Args().Model)
+		model := filepath.Base(generator.Spec().Model)
 		for _, entry := range slices.Backward(memory.Entries) {
 			if entry.Model == model {
 				return entry, nil
@@ -211,7 +211,7 @@ func (p PseudoCallState) AppendContent(content *generators.Content) (generators.
 				newParts = append(newParts, generators.FuncCall{
 					ID:   fmt.Sprintf("pseudo_%d", rand.Int64()),
 					Name: "update_user_profile",
-					Args: map[string]any{
+					Arguments: map[string]any{
 						"items": items,
 					},
 				})
@@ -314,7 +314,7 @@ func (Module) UpdateMemoryFunc(
 				}
 			}
 
-			model := filepath.Base(generator.Args().Model)
+			model := filepath.Base(generator.Spec().Model)
 			if err := appendMemory(&MemoryEntry{
 				Time:  time.Now(),
 				Model: model,

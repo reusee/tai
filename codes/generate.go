@@ -50,7 +50,7 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
-		args := generator.Args()
+		args := generator.Spec()
 		logger.Info("initial generator",
 			"model", args.Model,
 			"type", fmt.Sprintf("%T", generator),
@@ -184,4 +184,3 @@ func (Module) Generate(
 		return nil
 	}
 }
-

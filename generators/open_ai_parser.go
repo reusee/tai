@@ -155,9 +155,9 @@ func (o *OpenAIParser) checkAndEmitCall() error {
 	}
 
 	o.current.Parts = append(o.current.Parts, FuncCall{
-		ID:   o.currentFuncID,
-		Name: o.currentFuncName,
-		Args: args,
+		ID:        o.currentFuncID,
+		Name:      o.currentFuncName,
+		Arguments: args,
 	})
 
 	o.currentFuncID = ""
@@ -173,3 +173,4 @@ func deltaIsEmpty(delta ChatCompletionStreamChoiceDelta) bool {
 		len(delta.ToolCalls) == 0 &&
 		delta.ReasoningContent == ""
 }
+

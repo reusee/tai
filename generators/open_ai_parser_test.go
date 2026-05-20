@@ -207,8 +207,8 @@ func TestOpenAIParserToolCallStreamedArgs(t *testing.T) {
 		t.Errorf("wrong name: %s", funcCall.Name)
 	}
 	expectedArgs := map[string]any{"arg1": "value"}
-	if !reflect.DeepEqual(funcCall.Args, expectedArgs) {
-		t.Errorf("wrong args: got %+v, want %+v", funcCall.Args, expectedArgs)
+	if !reflect.DeepEqual(funcCall.Arguments, expectedArgs) {
+		t.Errorf("wrong args: got %+v, want %+v", funcCall.Arguments, expectedArgs)
 	}
 }
 
@@ -270,8 +270,8 @@ func TestOpenAIParserMultipleToolCalls(t *testing.T) {
 	if funcCall1.ID != "call_1" || funcCall1.Name != "func1" {
 		t.Errorf("unexpected funcCall1: %+v", funcCall1)
 	}
-	if !reflect.DeepEqual(funcCall1.Args, map[string]any{"a": float64(1)}) {
-		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Args)
+	if !reflect.DeepEqual(funcCall1.Arguments, map[string]any{"a": float64(1)}) {
+		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Arguments)
 	}
 
 	// Check second call
@@ -282,8 +282,8 @@ func TestOpenAIParserMultipleToolCalls(t *testing.T) {
 	if funcCall2.ID != "call_2" || funcCall2.Name != "func2" {
 		t.Errorf("unexpected funcCall2: %+v", funcCall2)
 	}
-	if !reflect.DeepEqual(funcCall2.Args, map[string]any{"b": float64(2)}) {
-		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Args)
+	if !reflect.DeepEqual(funcCall2.Arguments, map[string]any{"b": float64(2)}) {
+		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Arguments)
 	}
 }
 
@@ -437,8 +437,8 @@ func TestOpenAIParserToolCallNoArgs(t *testing.T) {
 	if funcCall.Name != "test_func" {
 		t.Errorf("unexpected funcCall: %+v", funcCall)
 	}
-	if len(funcCall.Args) != 0 {
-		t.Errorf("expected empty args, got: %+v", funcCall.Args)
+	if len(funcCall.Arguments) != 0 {
+		t.Errorf("expected empty args, got: %+v", funcCall.Arguments)
 	}
 }
 
@@ -615,8 +615,8 @@ func TestOpenAIParserSingleDeltaMultipleToolCalls(t *testing.T) {
 	if funcCall1.ID != "call_1" || funcCall1.Name != "func1" {
 		t.Errorf("unexpected funcCall1: %+v", funcCall1)
 	}
-	if !reflect.DeepEqual(funcCall1.Args, map[string]any{"a": float64(1)}) {
-		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Args)
+	if !reflect.DeepEqual(funcCall1.Arguments, map[string]any{"a": float64(1)}) {
+		t.Errorf("unexpected args for funcCall1: %+v", funcCall1.Arguments)
 	}
 
 	// Check second call
@@ -627,8 +627,8 @@ func TestOpenAIParserSingleDeltaMultipleToolCalls(t *testing.T) {
 	if funcCall2.ID != "call_2" || funcCall2.Name != "func2" {
 		t.Errorf("unexpected funcCall2: %+v", funcCall2)
 	}
-	if !reflect.DeepEqual(funcCall2.Args, map[string]any{"b": float64(2)}) {
-		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Args)
+	if !reflect.DeepEqual(funcCall2.Arguments, map[string]any{"b": float64(2)}) {
+		t.Errorf("unexpected args for funcCall2: %+v", funcCall2.Arguments)
 	}
 }
 
@@ -782,3 +782,4 @@ func TestOpenAIParserPartMerging(t *testing.T) {
 		t.Errorf("unexpected thought part: %+v", content.Parts)
 	}
 }
+

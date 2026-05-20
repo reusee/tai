@@ -35,7 +35,7 @@ func main() {
 		ctx := context.Background()
 
 		// generate
-		logger.Info("generate", "model", generator.Args().Model)
+		logger.Info("generate", "model", generator.Spec().Model)
 		var state generators.State
 		state = generators.NewPrompts(
 			string(systemPrompt),

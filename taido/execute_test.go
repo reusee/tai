@@ -16,7 +16,7 @@ type mockGenerator struct {
 	responses []generators.Part
 }
 
-func (m *mockGenerator) Args() generators.GeneratorArgs  { return generators.GeneratorArgs{} }
+func (m *mockGenerator) Spec() generators.Spec           { return generators.Spec{} }
 func (m *mockGenerator) CountTokens(string) (int, error) { return 0, nil }
 func (m *mockGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
 	if len(m.responses) == 0 {
@@ -79,7 +79,7 @@ func TestExecute(t *testing.T) {
 	t.Run("tool call success", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
-				generators.FuncCall{Name: "test_tool", Args: map[string]any{"v": 1}},
+				generators.FuncCall{Name: "test_tool", Arguments: map[string]any{"v": 1}},
 				generators.Text("Result received. Goal achieved."),
 			},
 		}
@@ -131,7 +131,7 @@ func TestExecute(t *testing.T) {
 	t.Run("Stop tool success", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
-				generators.FuncCall{Name: "Stop", Args: map[string]any{"reason": "done"}},
+				generators.FuncCall{Name: "Stop", Arguments: map[string]any{"reason": "done"}},
 			},
 		}
 
@@ -148,7 +148,7 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							if fn, ok := state.FuncMap()[call.Name]; ok {
-								res, err := fn.Func(call.Args)
+								res, err := fn.Func(call.Arguments)
 								if err != nil {
 									return nil, nil, err
 								}
@@ -183,7 +183,7 @@ func TestExecute(t *testing.T) {
 	t.Run("Error tool failure", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
-				generators.FuncCall{Name: "Error", Args: map[string]any{"reason": "environment incompatible"}},
+				generators.FuncCall{Name: "Error", Arguments: map[string]any{"reason": "environment incompatible"}},
 			},
 		}
 
@@ -199,7 +199,7 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							if fn, ok := state.FuncMap()[call.Name]; ok {
-								res, err := fn.Func(call.Args)
+								res, err := fn.Func(call.Arguments)
 								if err != nil {
 									return nil, nil, err
 								}
@@ -237,8 +237,8 @@ func TestExecute(t *testing.T) {
 	t.Run("Shell tool success", func(t *testing.T) {
 		gen := &mockGenerator{
 			responses: []generators.Part{
-				generators.FuncCall{Name: "Shell", Args: map[string]any{"command": "echo hello"}},
-				generators.FuncCall{Name: "Stop", Args: map[string]any{"reason": "done"}},
+				generators.FuncCall{Name: "Shell", Arguments: map[string]any{"command": "echo hello"}},
+				generators.FuncCall{Name: "Stop", Arguments: map[string]any{"reason": "done"}},
 			},
 		}
 
@@ -254,7 +254,7 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							if fn, ok := state.FuncMap()[call.Name]; ok {
-								res, err := fn.Func(call.Args)
+								res, err := fn.Func(call.Arguments)
 								if err != nil {
 									return nil, nil, err
 								}

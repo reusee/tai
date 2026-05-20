@@ -71,7 +71,7 @@ func testGenerator(
 		if call.Name != "now" {
 			t.Fatalf("got %+v", call)
 		}
-		if call.Args["timezone"] != timezone {
+		if call.Arguments["timezone"] != timezone {
 			t.Fatalf("got %+v", call)
 		}
 
@@ -228,7 +228,7 @@ func TestNonStreaming(t *testing.T) {
 
 	t.Run("gemini", func(t *testing.T) {
 		test(t, func(newGemini NewGemini) Generator {
-			return newGemini(GeneratorArgs{
+			return newGemini(Spec{
 				Model: "models/gemini-flash-latest",
 			})
 		})
@@ -236,7 +236,7 @@ func TestNonStreaming(t *testing.T) {
 
 	t.Run("openai", func(t *testing.T) {
 		test(t, func(newOpenRouter NewOpenRouter) Generator {
-			return newOpenRouter(GeneratorArgs{
+			return newOpenRouter(Spec{
 				Model: "mistralai/devstral-2512:free",
 			})
 		})

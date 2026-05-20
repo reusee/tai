@@ -142,7 +142,7 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 		case FuncCall:
 			if !ret.disableTools {
-				if err := print(false, fmt.Sprintf("[Function Call: %s(%v)]", part.Name, part.Args)); err != nil {
+				if err := print(false, fmt.Sprintf("[Function Call: %s(%v)]", part.Name, part.Arguments)); err != nil {
 					return nil, err
 				}
 			}
@@ -225,3 +225,4 @@ func (s Output) Flush() (State, error) {
 func (s Output) Unwrap() State {
 	return s.upstream
 }
+

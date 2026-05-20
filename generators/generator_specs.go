@@ -6,23 +6,17 @@ import (
 	"github.com/reusee/tai/configs"
 )
 
-type GeneratorSpec struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	GeneratorArgs
-}
-
-type GetGeneratorSpecs func() ([]GeneratorSpec, error)
+type GetGeneratorSpecs func() ([]Spec, error)
 
 func (Module) GetGeneratorSpecs(
 	loader configs.Loader,
 ) GetGeneratorSpecs {
-	return sync.OnceValues(func() (ret []GeneratorSpec, err error) {
+	return sync.OnceValues(func() (ret []Spec, err error) {
 		for value, err := range loader.IterCueValues("generators") {
 			if err != nil {
 				return nil, err
 			}
-			var specs []GeneratorSpec
+			var specs []Spec
 			if err := value.Decode(&specs); err != nil {
 				return nil, err
 			}

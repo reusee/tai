@@ -20,7 +20,7 @@ import (
 )
 
 type OpenAI struct {
-	args   GeneratorArgs
+	spec   Spec
 	apiKey string
 	client nets.HTTPClient
 
@@ -32,8 +32,8 @@ type OpenAI struct {
 
 var _ Generator = new(OpenAI)
 
-func (o *OpenAI) Args() GeneratorArgs {
-	return o.args
+func (o *OpenAI) Spec() Spec {
+	return o.spec
 }
 
 func (o *OpenAI) CountTokens(text string) (int, error) {
@@ -60,8 +60,8 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	temperature := float32(0)
-	if o.args.Temperature != nil {
-		temperature = *o.args.Temperature
+	if o.spec.Temperature != nil {
+		temperature = *o.spec.Temperature
 	}
 	if *temperatureFlag != 0 {
 		temperature = *temperatureFlag
@@ -80,7 +80,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if *tapOpenAI {
 		o.Tap()(ctx, "before CreateChatCompletionStream", map[string]any{
 			"messages": messages,
-			"args":     o.args,
+			"spec":     o.spec,
 			"tools":    tools,
 		})
 	}
@@ -91,13 +91,13 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	o.Logger().InfoContext(ctx, "generating",
-		"model", o.args.Model,
+		"model", o.spec.Model,
 		"non_streaming", nonStreaming,
 	)
 
 	maxCompletionTokens := 0
-	if o.args.MaxGenerateTokens != nil {
-		maxCompletionTokens = *o.args.MaxGenerateTokens
+	if o.spec.MaxGenerateTokens != nil {
+		maxCompletionTokens = *o.spec.MaxGenerateTokens
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
 		n := *options.MaxGenerateTokens
@@ -107,25 +107,25 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	req := ChatCompletionRequest{
-		Model:               o.args.Model,
+		Model:               o.spec.Model,
 		Messages:            messages,
 		Stream:              !nonStreaming,
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
 	}
-	if o.args.ReasoningEffort != "" {
-		req.ReasoningEffort = o.args.ReasoningEffort
+	if o.spec.ReasoningEffort != "" {
+		req.ReasoningEffort = o.spec.ReasoningEffort
 	}
 
 	if !nonStreaming {
 		req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	}
 
-	if !o.args.DisableTools {
+	if !o.spec.DisableTools {
 		req.Tools = tools
 	}
 
-	if o.args.IsOpenRouter && req.ReasoningEffort != "" {
+	if o.spec.IsOpenRouter && req.ReasoningEffort != "" {
 		req.Reasoning = &Reasoning{
 			Effort: req.ReasoningEffort,
 		}
@@ -148,12 +148,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		return nil, err
 	}
 
-	url := o.args.BaseURL + "/chat/completions"
-	if o.args.IsAzure {
+	url := o.spec.BaseURL + "/chat/completions"
+	if o.spec.IsAzure {
 		url = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-			strings.TrimSuffix(o.args.BaseURL, "/"),
-			o.args.Model,
-			o.args.APIVersion,
+			strings.TrimSuffix(o.spec.BaseURL, "/"),
+			o.spec.Model,
+			o.spec.APIVersion,
 		)
 	}
 
@@ -161,7 +161,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if err != nil {
 		return nil, err
 	}
-	if o.args.IsAzure {
+	if o.spec.IsAzure {
 		httpReq.Header.Set("api-key", o.apiKey)
 	} else {
 		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
@@ -264,16 +264,16 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				content.Parts = append(content.Parts, Text(msg.Content))
 			}
 			for _, call := range msg.ToolCalls {
-				var args map[string]any
+				var arguments map[string]any
 				if call.Function.Arguments != "" {
-					if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+					if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
 						return ret, err
 					}
 				}
 				content.Parts = append(content.Parts, FuncCall{
-					ID:   call.ID,
-					Name: call.Function.Name,
-					Args: args,
+					ID:        call.ID,
+					Name:      call.Function.Name,
+					Arguments: arguments,
 				})
 			}
 			if ret, err = ret.AppendContent(content); err != nil {
@@ -528,7 +528,7 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 				}
 
 			case FuncCall:
-				argsBytes, err := json.Marshal(part.Args)
+				argsBytes, err := json.Marshal(part.Arguments)
 				if err != nil {
 					return nil, err
 				}
@@ -567,15 +567,15 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 	return
 }
 
-type NewOpenAI func(args GeneratorArgs, apiKey string) *OpenAI
+type NewOpenAI func(spec Spec, apiKey string) *OpenAI
 
 func (Module) NewOpenAI(
 	inject dscope.InjectStruct,
 	client nets.HTTPClient,
 ) NewOpenAI {
-	return func(args GeneratorArgs, apiKey string) *OpenAI {
+	return func(spec Spec, apiKey string) *OpenAI {
 		ret := &OpenAI{
-			args:   args,
+			spec:   spec,
 			client: client,
 			apiKey: apiKey,
 		}
@@ -720,4 +720,3 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
-

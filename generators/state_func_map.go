@@ -45,7 +45,7 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 			continue
 		}
 
-		res, err := fn.Func(call.Args)
+		res, err := fn.Func(call.Arguments)
 		if err != nil {
 			return ret, err
 		}
