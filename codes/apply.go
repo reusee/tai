@@ -689,18 +689,26 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
 		funcName := d.Name.Name
-		fullName := funcName
+		possible := []string{funcName}
 		if d.Recv != nil && len(d.Recv.List) > 0 {
 			recv := d.Recv.List[0].Type
+			isPtr := false
 			if star, ok := recv.(*ast.StarExpr); ok {
 				recv = star.X
+				isPtr = true
 			}
 			if ident, ok := recv.(*ast.Ident); ok {
-				fullName = ident.Name + "." + funcName
+				// Both value and pointer forms are valid for matching;
+				// go allows calling pointer methods on values and vice versa.
+				possible = append(possible, ident.Name+"."+funcName)
+				possible = append(possible, "*"+ident.Name+"."+funcName)
+				_ = isPtr
 			}
 		}
-		if fullName == target || funcName == target {
-			return d, d, true
+		for _, cand := range possible {
+			if cand == target {
+				return d, d, true
+			}
 		}
 	case *ast.GenDecl:
 		if d.Tok == token.IMPORT && target == "IMPORT" {
@@ -729,17 +737,19 @@ func getHunkBodyName(body string) string {
 	if err != nil || info == nil || info.entityCount() == 0 {
 		return ""
 	}
-	// Try to find an entity that is likely a target or return the first one
 	for _, d := range info.Decls {
 		var name string
 		if fn, ok := d.(*ast.FuncDecl); ok {
 			name = fn.Name.Name
 			if fn.Recv != nil && len(fn.Recv.List) > 0 {
 				recv := fn.Recv.List[0].Type
+				// Use pointer form if the receiver is a pointer
 				if star, ok := recv.(*ast.StarExpr); ok {
 					recv = star.X
-				}
-				if ident, ok := recv.(*ast.Ident); ok {
+					if ident, ok := recv.(*ast.Ident); ok {
+						name = "*" + ident.Name + "." + name
+					}
+				} else if ident, ok := recv.(*ast.Ident); ok {
 					name = ident.Name + "." + name
 				}
 			}
@@ -781,10 +791,16 @@ func getIdentifiers(info *BodyInfo) []string {
 				recv := d.Recv.List[0].Type
 				if star, ok := recv.(*ast.StarExpr); ok {
 					recv = star.X
-				}
-				if ident, ok := recv.(*ast.Ident); ok {
+					if ident, ok := recv.(*ast.Ident); ok {
+						ids = append(ids, "*"+ident.Name+"."+funcName)
+						// The non-pointer form is still useful to detect conflicts
+						ids = append(ids, ident.Name+"."+funcName)
+						continue
+					}
+				} else if ident, ok := recv.(*ast.Ident); ok {
 					ids = append(ids, ident.Name+"."+funcName)
-					continue // only use full name for methods to avoid ambiguous deletions
+					ids = append(ids, "*"+ident.Name+"."+funcName)
+					continue
 				}
 			}
 			ids = append(ids, funcName)

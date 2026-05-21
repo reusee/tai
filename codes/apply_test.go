@@ -1418,3 +1418,55 @@ Content
 		t.Error("expected error when MODIFY on non-existent non-Go file, got nil")
 	}
 }
+
+func TestApplyHunksPointerReceiverMethod(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := "test.go"
+	content := []byte(`package test
+
+type foo struct{}
+
+func (f *foo) Bar() {
+	println("old bar")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := "test.go.AI"
+	aiContent := []byte(`[[[ MODIFY *foo.Bar IN test.go
+func (f *foo) Bar() {
+	println("new bar")
+}
+]]]`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new bar") {
+		t.Errorf("pointer receiver method not modified: %s", s)
+	}
+	if strings.Contains(s, "old bar") {
+		t.Errorf("old body still present: %s", s)
+	}
+	if strings.Count(s, "func (f *foo) Bar()") != 1 {
+		t.Errorf("duplicate method definition: %s", s)
+	}
+}
