@@ -5,7 +5,20 @@ import (
 	"time"
 
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/configs"
 )
+
+type ExtraSystemPrompt string
+
+var _ExtraSystemPromptConfigurable configs.Configurable = ExtraSystemPrompt("")
+
+func (e ExtraSystemPrompt) TaigoConfigurable() {}
+
+func (Module) ExtraSystemPrompt(
+	loader configs.Loader,
+) ExtraSystemPrompt {
+	return configs.First[ExtraSystemPrompt](loader, "extra_system_prompt")
+}
 
 var noMemory = cmds.Switch("-no-memory")
 
@@ -13,6 +26,7 @@ type GetSystemPrompt func() (string, error)
 
 func (Module) GetSystemPrompt(
 	currentMemory CurrentMemory,
+	extra ExtraSystemPrompt,
 ) GetSystemPrompt {
 	return func() (ret string, err error) {
 
@@ -51,6 +65,10 @@ func (Module) GetSystemPrompt(
 ` + text
 		}
 
+		if string(extra) != "" {
+			ret += "\n" + string(extra) + "\n"
+		}
+
 		location, err := time.LoadLocation("Asia/Hong_Kong")
 		if err != nil {
 			return "", err
@@ -60,3 +78,4 @@ func (Module) GetSystemPrompt(
 		return
 	}
 }
+
