@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +34,7 @@ type AppendMemory func(*MemoryEntry) error
 func (Module) Memory(
 	generator generators.Generator,
 ) (CurrentMemory, AppendMemory) {
-	var memory Memory
+
 	const fileName = "ai-memory.json"
 
 	resolvePath := sync.OnceValues(func() (string, error) {
@@ -61,73 +63,73 @@ func (Module) Memory(
 		return p, nil
 	})
 
-	load := sync.OnceValue(func() error {
-		filePath, err := resolvePath()
-		if err != nil {
-			return err
-		}
-
-		content, err := os.ReadFile(filePath)
+	readMemory := func(path string) (*Memory, error) {
+		content, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil
+				return &Memory{}, nil
 			}
-			return err
-		}
-
-		if err := json.NewDecoder(bytes.NewReader(content)).Decode(&memory); err != nil {
-			return err
-		}
-
-		return nil
-	})
-
-	currentMemory := func() (*MemoryEntry, error) {
-		if err := load(); err != nil {
 			return nil, err
 		}
-
-		if len(memory.Entries) == 0 {
-			return nil, nil
+		var m Memory
+		if err := json.NewDecoder(bytes.NewReader(content)).Decode(&m); err != nil {
+			return nil, err
 		}
-
-		model := getModelID(generator.Spec())
-		for _, entry := range slices.Backward(memory.Entries) {
-			if entry.Model == model {
-				return entry, nil
-			}
-		}
-
-		return nil, nil
+		return &m, nil
 	}
 
-	appendMemory := func(entry *MemoryEntry) error {
-		if err := load(); err != nil {
+	writeMemory := func(path string, m *Memory) error {
+		buf := new(bytes.Buffer)
+		encoder := json.NewEncoder(buf)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(m); err != nil {
 			return err
 		}
-
-		filePath, err := resolvePath()
-		if err != nil {
+		tmpFilePath := path + fmt.Sprintf(".%d.tmp", rand.Int64())
+		if err := os.WriteFile(tmpFilePath, buf.Bytes(), 0644); err != nil {
 			return err
 		}
-		lockFilePath := filePath + ".lock"
+		if err := os.Rename(tmpFilePath, path); err != nil {
+			os.Remove(tmpFilePath)
+			return err
+		}
+		return nil
+	}
 
-		// Enhanced lock acquisition with exponential backoff
+	acquireLock := func(lockFilePath string) (func(), error) {
 		var locked bool
 		const maxRetries = 20
 		const baseDelay = 100 * time.Millisecond
 		const maxDelay = 2 * time.Second
 
 		for attempt := range maxRetries {
-			if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL, 0600); err == nil {
+			if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
+				// Write PID to lock file
+				fmt.Fprintf(f, "%d", os.Getpid())
 				f.Close()
 				locked = true
 				break
 			} else if !os.IsExist(err) {
-				return fmt.Errorf("failed to create lock file: %w", err)
+				return nil, fmt.Errorf("failed to create lock file: %w", err)
 			}
 
-			// Exponential backoff with jitter
+			// Check if lock is stale: read PID and verify process
+			if data, err := os.ReadFile(lockFilePath); err == nil {
+				pidStr := strings.TrimSpace(string(data))
+				if pid, err := strconv.Atoi(pidStr); err == nil {
+					process, err := os.FindProcess(pid)
+					if err != nil {
+						os.Remove(lockFilePath)
+						continue
+					}
+					if err := process.Signal(os.Signal(nil)); err != nil {
+						// Process not found or no permission; assume stale
+						os.Remove(lockFilePath)
+						continue
+					}
+				}
+			}
+
 			if attempt < maxRetries-1 {
 				delay := min(baseDelay*time.Duration(1<<uint(attempt)), maxDelay)
 				time.Sleep(delay)
@@ -135,38 +137,57 @@ func (Module) Memory(
 		}
 
 		if !locked {
-			return fmt.Errorf("failed to acquire lock for %s after %d attempts", fileName, maxRetries)
+			return nil, fmt.Errorf("failed to acquire lock for %s after %d attempts", fileName, maxRetries)
 		}
 
-		// Ensure lock file is cleaned up
-		defer func() {
-			if removeErr := os.Remove(lockFilePath); removeErr != nil {
-				// Log error but don't fail the operation
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove lock file %s: %v\n", lockFilePath, removeErr)
+		unlock := func() {
+			os.Remove(lockFilePath)
+		}
+		return unlock, nil
+	}
+
+	currentMemory := func() (*MemoryEntry, error) {
+		filePath, err := resolvePath()
+		if err != nil {
+			return nil, err
+		}
+		m, err := readMemory(filePath)
+		if err != nil {
+			return nil, err
+		}
+		if len(m.Entries) == 0 {
+			return nil, nil
+		}
+		model := getModelID(generator.Spec())
+		for _, entry := range slices.Backward(m.Entries) {
+			if entry.Model == model {
+				return entry, nil
 			}
-		}()
-
-		memory.Entries = append(memory.Entries, entry)
-
-		// Save to file atomically with validation
-		buf := new(bytes.Buffer)
-		encoder := json.NewEncoder(buf)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(memory); err != nil {
-			return fmt.Errorf("failed to encode memory: %w", err)
 		}
+		return nil, nil
+	}
 
-		tmpFilePath := filePath + fmt.Sprintf(".%d.tmp", rand.Int64())
-
-		if err := os.WriteFile(tmpFilePath, buf.Bytes(), 0644); err != nil {
-			return fmt.Errorf("failed to write temporary file: %w", err)
+	appendMemory := func(entry *MemoryEntry) error {
+		filePath, err := resolvePath()
+		if err != nil {
+			return err
 		}
+		lockFilePath := filePath + ".lock"
 
-		if err := os.Rename(tmpFilePath, filePath); err != nil {
-			os.Remove(tmpFilePath)
-			return fmt.Errorf("failed to rename temporary file: %w", err)
+		unlock, err := acquireLock(lockFilePath)
+		if err != nil {
+			return err
 		}
+		defer unlock()
 
+		m, err := readMemory(filePath)
+		if err != nil {
+			return err
+		}
+		m.Entries = append(m.Entries, entry)
+		if err := writeMemory(filePath, m); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -336,3 +357,4 @@ func getModelID(spec generators.Spec) string {
 	}
 	return filepath.Base(name)
 }
+
