@@ -1,3 +1,9 @@
+// applications
+cmd_ai?: {
+  model_name?: string
+  model?: string
+}
+
 // action specifies the default action to perform.
 // Can be "chat" or "do".
 action?: string

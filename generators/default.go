@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
@@ -33,12 +34,15 @@ func (Module) DefaultModelName(
 	loader configs.Loader,
 	fallback FallbackModelName,
 	logger logs.Logger,
+	appName apps.Name,
 ) (ret DefaultModelName) {
 	defer func() {
 		logger.Info("default model", "name", ret)
 	}()
 	return vars.FirstNonZero(
 		DefaultModelName(*defaultModelName),
+		configs.First[DefaultModelName](loader, string(appName)+".model_name"),
+		configs.First[DefaultModelName](loader, string(appName)+".model"),
 		configs.First[DefaultModelName](loader, "model_name"),
 		configs.First[DefaultModelName](loader, "model"),
 		DefaultModelName(fallback),

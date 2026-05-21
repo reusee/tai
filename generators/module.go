@@ -2,6 +2,7 @@ package generators
 
 import (
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/logs"
@@ -14,4 +15,5 @@ type Module struct {
 	Nets    nets.Module
 	Logs    logs.Module
 	Debugs  debugs.Module
+	Apps    apps.Module
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -54,7 +55,8 @@ func main() {
 		new(Module),
 		modes.ForProduction(),
 	).Fork(
-		dscope.Provide(generators.FallbackModelName("gemini3")),
+		new(generators.FallbackModelName("gemini3")),
+		new(apps.Name("cmd_ai")),
 	)
 
 	scope, err := taiconfigs.TaigoFork(scope)
@@ -133,3 +135,4 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
+
