@@ -98,6 +98,9 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
+		if len(userPromptParts) == 0 {
+			return fmt.Errorf("code provider returned no content, check patterns and file selection")
+		}
 		var userPromptText generators.Text
 		for _, part := range userPromptParts {
 			if text, ok := part.(generators.Text); ok {
