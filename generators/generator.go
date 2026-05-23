@@ -45,8 +45,20 @@ func (Module) GetGenerator(
 			return nil, err
 		}
 		for _, spec := range specs {
-			if spec.Name != name {
-				continue
+			if spec.Name == name {
+				// direct match
+			} else {
+				// check aliases
+				found := false
+				for _, alias := range spec.Aliases {
+					if alias == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
 			}
 			switch strings.ToLower(spec.Type) {
 			case "open-router", "open_router", "openrouter":

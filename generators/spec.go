@@ -17,4 +17,5 @@ type Spec struct {
 	IsAzure           bool           `json:"is_azure"`
 	ServiceTier       string         `json:"service_tier"`
 	ReasoningEffort   string         `json:"reasoning_effort"`
+	Aliases           []string       `json:"aliases"`
 }
