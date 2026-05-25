@@ -105,13 +105,15 @@ func (Module) NewDeepseek(
 		if spec.BaseURL == "" {
 			spec.BaseURL = "https://api.deepseek.com/"
 		}
-		return newOpenAI(
+		ret := newOpenAI(
 			spec,
 			vars.FirstNonZero(
 				spec.APIKey,
 				string(apiKey),
 			),
 		)
+		ret.TokenCounterOverride = DeepseekTokenCounterFn
+		return ret
 	}
 }
 
@@ -294,4 +296,3 @@ func (Module) NewOpenCodeGo(
 		)
 	}
 }
-

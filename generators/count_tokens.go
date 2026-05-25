@@ -2,6 +2,7 @@ package generators
 
 import (
 	"sync"
+	"unicode"
 
 	"github.com/tiktoken-go/tokenizer"
 	"google.golang.org/genai"
@@ -65,4 +66,16 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 		v, _ = counters.LoadOrStore(model, counter)
 		return v.(TokenCounter)
 	}
+}
+
+var DeepseekTokenCounterFn TokenCounter = func(text string) (int, error) {
+	var total float64
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			total += 0.6
+		} else {
+			total += 0.3
+		}
+	}
+	return int(total), nil
 }

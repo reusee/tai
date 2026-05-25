@@ -25,10 +25,11 @@ type OpenAI struct {
 	apiKey string
 	client nets.HTTPClient
 
-	Count  dscope.Inject[BPETokenCounter]
-	Logger dscope.Inject[logs.Logger]
-	Tap    dscope.Inject[debugs.Tap]
-	Loader dscope.Inject[configs.Loader]
+	Count                dscope.Inject[BPETokenCounter]
+	TokenCounterOverride TokenCounter
+	Logger               dscope.Inject[logs.Logger]
+	Tap                  dscope.Inject[debugs.Tap]
+	Loader               dscope.Inject[configs.Loader]
 }
 
 var _ Generator = new(OpenAI)
@@ -38,6 +39,9 @@ func (o *OpenAI) Spec() Spec {
 }
 
 func (o *OpenAI) CountTokens(text string) (int, error) {
+	if o.TokenCounterOverride != nil {
+		return o.TokenCounterOverride(text)
+	}
 	return o.Count()(text)
 }
 
@@ -731,4 +735,3 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
-
