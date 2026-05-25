@@ -1,6 +1,7 @@
 package generators
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -272,3 +273,4 @@ func TestSpecNoProxy(t *testing.T) {
 		t.Errorf("NoProxy not restored correctly: %+v", restored)
 	}
 }
+
