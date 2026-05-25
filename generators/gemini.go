@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -32,6 +34,7 @@ func isTerminalFinishReason(reason genai.FinishReason) bool {
 type Gemini struct {
 	spec      Spec
 	GetClient dscope.Inject[GetGeminiClient]
+	APIKey    dscope.Inject[GoogleAPIKey]
 	Counter   dscope.Inject[GeminiTokenCounter]
 	Logger    dscope.Inject[logs.Logger]
 	Loader    dscope.Inject[configs.Loader]
@@ -48,9 +51,30 @@ func (g Gemini) CountTokens(text string) (int, error) {
 }
 
 func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
-	client, err := g.GetClient()(ctx, g.spec.APIKey)
-	if err != nil {
-		return ret, err
+	var client *genai.Client
+	if g.spec.NoProxy {
+		key := vars.FirstNonZero(
+			g.spec.APIKey,
+			string(g.APIKey()),
+		)
+		directClient := &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{}).DialContext,
+			},
+		}
+		client, err = genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:     key,
+			Backend:    genai.BackendGeminiAPI,
+			HTTPClient: directClient,
+		})
+		if err != nil {
+			return ret, err
+		}
+	} else {
+		client, err = g.GetClient()(ctx, g.spec.APIKey)
+		if err != nil {
+			return ret, err
+		}
 	}
 
 	ret = state
@@ -408,3 +432,4 @@ func (Module) NewGemini(
 		return ret
 	}
 }
+

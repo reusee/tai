@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -157,6 +158,16 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		)
 	}
 
+	// Select HTTP client based on NoProxy flag
+	client := o.client
+	if o.spec.NoProxy {
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{}).DialContext,
+			},
+		}
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -171,7 +182,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 
-	resp, err := o.client.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return ret, OpenAIError{
 			Err:     err,
@@ -720,3 +731,4 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
+

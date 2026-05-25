@@ -18,4 +18,5 @@ type Spec struct {
 	ServiceTier       string         `json:"service_tier"`
 	ReasoningEffort   string         `json:"reasoning_effort"`
 	Aliases           []string       `json:"aliases"`
+	NoProxy           bool           `json:"no_proxy"`
 }

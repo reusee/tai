@@ -243,3 +243,32 @@ func TestNonStreaming(t *testing.T) {
 	})
 
 }
+
+func TestSpecNoProxy(t *testing.T) {
+	spec := Spec{
+		Name:    "test",
+		Type:    "gemini",
+		Model:   "gemini-flash",
+		NoProxy: true,
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["no_proxy"]; !ok || v != true {
+		t.Errorf("no_proxy not found or wrong: %v", raw)
+	}
+
+	// round trip
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.NoProxy != true {
+		t.Errorf("NoProxy not restored correctly: %+v", restored)
+	}
+}
