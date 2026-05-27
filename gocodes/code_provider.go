@@ -2,6 +2,8 @@ package gocodes
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/anytexts"
@@ -16,6 +18,7 @@ type CodeProvider struct {
 	SimplifyFiles dscope.Inject[SimplifyFiles]
 	Logger        dscope.Inject[logs.Logger]
 	AnyTexts      dscope.Inject[anytexts.CodeProvider]
+	LoadDir       dscope.Inject[LoadDir]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
@@ -43,6 +46,9 @@ func (c CodeProvider) Parts(
 		return nil, err
 	}
 	c.Logger().Info("get files done", "num files", len(files))
+
+	// filter files based on exclusion patterns
+	files = c.filterFiles(files, patterns)
 
 	// provide files from patterns (extra context)
 	if len(patterns) > 0 {
@@ -117,9 +123,40 @@ func (c CodeProvider) Parts(
 	return
 }
 
+func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
+	if len(patterns) == 0 {
+		return files
+	}
+	dir := string(c.LoadDir())
+	var filtered []*File
+	for _, file := range files {
+		relPath, err := filepath.Rel(dir, file.Path)
+		if err != nil {
+			// If we cannot determine a relative path, include the file.
+			filtered = append(filtered, file)
+			continue
+		}
+		excluded := false
+		for _, p := range patterns {
+			if strings.HasPrefix(p, "!") {
+				pattern := p[1:]
+				if matchPattern(relPath, pattern) {
+					excluded = true
+					break
+				}
+			}
+		}
+		if !excluded {
+			filtered = append(filtered, file)
+		}
+	}
+	return filtered
+}
+
 func (Module) CodeProvider(
 	inject dscope.InjectStruct,
 ) (ret CodeProvider) {
 	inject(&ret)
 	return
 }
+

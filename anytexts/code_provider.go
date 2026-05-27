@@ -234,3 +234,4 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
+

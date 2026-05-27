@@ -200,3 +200,81 @@ func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
 		t.Fatalf("got %d, want %d", got, want)
 	}
 }
+
+func TestMatchPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		pattern string
+		match   bool
+	}{
+		{
+			name:    "simple star",
+			path:    "foo.go",
+			pattern: "*.go",
+			match:   true,
+		},
+		{
+			name:    "simple star no match",
+			path:    "foo.txt",
+			pattern: "*.go",
+			match:   false,
+		},
+		{
+			name:    "star in middle",
+			path:    "a/b/c.go",
+			pattern: "a/*/c.go",
+			match:   true,
+		},
+		{
+			name:    "double star",
+			path:    "a/b/c.go",
+			pattern: "a/**/c.go",
+			match:   true,
+		},
+		{
+			name:    "double star matches zero",
+			path:    "a/c.go",
+			pattern: "a/**/c.go",
+			match:   true,
+		},
+		{
+			name:    "double star matches multiple",
+			path:    "a/b/c/d.go",
+			pattern: "a/**/d.go",
+			match:   true,
+		},
+		{
+			name:    "double star no match",
+			path:    "b/c.go",
+			pattern: "a/**/c.go",
+			match:   false,
+		},
+		{
+			name:    "double star prefix",
+			path:    "anything/here/file.go",
+			pattern: "**/file.go",
+			match:   true,
+		},
+		{
+			name:    "question mark",
+			path:    "a.go",
+			pattern: "?.go",
+			match:   true,
+		},
+		{
+			name:    "character class",
+			path:    "abc.go",
+			pattern: "[ab]bc.go",
+			match:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchPattern(tt.path, tt.pattern)
+			if got != tt.match {
+				t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.path, tt.pattern, got, tt.match)
+			}
+		})
+	}
+}

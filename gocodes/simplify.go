@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -593,4 +594,47 @@ func deleteStructTags(file *ast.File) *ast.File {
 		}
 		return true
 	}, nil).(*ast.File)
+}
+
+// matchPattern reports whether the relative path matches the glob pattern,
+// using standard filepath.Match semantics with added support for ** matching
+// zero or more directory components.
+func matchPattern(name, pattern string) bool {
+	return matchParts(splitPath(name), splitPath(pattern))
+}
+
+func splitPath(p string) []string {
+	if p == "" {
+		return nil
+	}
+	return strings.Split(filepath.Clean(p), string(filepath.Separator))
+}
+
+func matchParts(nameParts, patternParts []string) bool {
+	if len(patternParts) == 0 {
+		return len(nameParts) == 0
+	}
+	if len(nameParts) == 0 {
+		for _, p := range patternParts {
+			if p != "**" {
+				return false
+			}
+		}
+		return true
+	}
+	p := patternParts[0]
+	if p == "**" {
+		// match zero or more directories
+		for i := 0; i <= len(nameParts); i++ {
+			if matchParts(nameParts[i:], patternParts[1:]) {
+				return true
+			}
+		}
+		return false
+	}
+	ok, err := filepath.Match(p, nameParts[0])
+	if err != nil || !ok {
+		return false
+	}
+	return matchParts(nameParts[1:], patternParts[1:])
 }
