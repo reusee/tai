@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/reusee/tai/cmds"
@@ -140,6 +141,11 @@ func (Module) SimplifyFiles(
 		transforms := makeTransforms()
 
 		sema := make(chan bool, runtime.NumCPU()*8)
+
+		// Track number of pending semaphore acquisitions for cleanup on early exit.
+		// We use a pointer int64 to share state between the dispatch and confirmation loops.
+		pendingSema := new(int64)
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -155,6 +161,7 @@ func (Module) SimplifyFiles(
 
 					select {
 					case sema <- true:
+						atomic.AddInt64(pendingSema, 1)
 					case <-ctx.Done():
 						return
 					}
@@ -203,6 +210,7 @@ func (Module) SimplifyFiles(
 
 				select {
 				case <-sema:
+					atomic.AddInt64(pendingSema, -1)
 				case <-ctx.Done():
 					break loop_ops
 				}
@@ -246,6 +254,17 @@ func (Module) SimplifyFiles(
 				}
 				file.transformCond.L.Unlock()
 
+			}
+		}
+
+		// Drain any pending semaphore slots after early exit to prevent resource leak.
+		for atomic.LoadInt64(pendingSema) > 0 {
+			select {
+			case <-sema:
+				atomic.AddInt64(pendingSema, -1)
+			default:
+				// No more available, all drained
+				atomic.StoreInt64(pendingSema, 0)
 			}
 		}
 
@@ -638,3 +657,4 @@ func matchParts(nameParts, patternParts []string) bool {
 	}
 	return matchParts(nameParts[1:], patternParts[1:])
 }
+
