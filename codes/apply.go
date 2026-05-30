@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"fmt"
 	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"golang.org/x/tools/imports"
 )
 
 // Hunk represents a single modification unit parsed from AI output.
@@ -424,9 +425,9 @@ func applyHunk(root *os.Root, h Hunk) error {
 		outputSrc = append([]byte("package p\n"), newSrc...)
 		outputPrefixLen = len("package p\n")
 	}
-	formatted, err := format.Source(outputSrc)
+	formatted, err := imports.Process(path, outputSrc, nil)
 	if err != nil {
-		return fmt.Errorf("format failed: %w", err)
+		return fmt.Errorf("goimports: %w", err)
 	}
 	if outputPrefixLen > 0 {
 		formatted = formatted[outputPrefixLen:]
