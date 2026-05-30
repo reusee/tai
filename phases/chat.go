@@ -121,11 +121,15 @@ func (Module) BuildChatPhase(
 					for c := range state.Contents() {
 						contents = append(contents, c)
 					}
+					funcMap := make(map[string]*generators.Func)
+					for k, v := range state.FuncMap() {
+						funcMap[k] = v
+					}
 					tap(ctx, "tap on chat", map[string]any{
 						"generator_args": generator.Spec(),
 						"contents":       contents,
 						"system_prompt":  state.SystemPrompt(),
-						"func_map":       state.FuncMap(),
+						"func_map":       funcMap,
 					})
 					return buildChat(generator, options)(cont), state, nil
 

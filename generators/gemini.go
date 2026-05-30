@@ -111,12 +111,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
 	if !g.spec.DisableTools {
-		if !g.spec.DisableSearch && len(ret.FuncMap()) == 0 {
-			tools = append(tools, &genai.Tool{
-				GoogleSearch: &genai.GoogleSearch{},
-			})
-		}
-
 		var funcDecls []*genai.FunctionDeclaration
 		for _, fn := range ret.FuncMap() {
 			funcDecls = append(funcDecls, fn.Decl.ToGemini())
@@ -125,6 +119,11 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			for _, fn := range set {
 				funcDecls = append(funcDecls, fn.ToGemini())
 			}
+		}
+		if !g.spec.DisableSearch && len(funcDecls) == 0 {
+			tools = append(tools, &genai.Tool{
+				GoogleSearch: &genai.GoogleSearch{},
+			})
 		}
 		if len(funcDecls) > 0 {
 			tools = append(tools, &genai.Tool{

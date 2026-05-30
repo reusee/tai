@@ -42,7 +42,7 @@ func (r RedoCheckpoint) Flush() (generators.State, error) {
 	}, nil
 }
 
-func (r RedoCheckpoint) FuncMap() map[string]*generators.Func {
+func (r RedoCheckpoint) FuncMap() iter.Seq2[string, *generators.Func] {
 	return r.upstream.FuncMap()
 }
 

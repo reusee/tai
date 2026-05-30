@@ -53,8 +53,8 @@ func (p Prompts) Contents() iter.Seq[*Content] {
 	}
 }
 
-func (p Prompts) FuncMap() map[string]*Func {
-	return map[string]*Func{}
+func (p Prompts) FuncMap() iter.Seq2[string, *Func] {
+	return func(yield func(string, *Func) bool) {}
 }
 
 func (p Prompts) SystemPrompt() string {
@@ -68,4 +68,3 @@ func (p Prompts) Flush() (State, error) {
 func (p Prompts) Unwrap() State {
 	return nil
 }
-
