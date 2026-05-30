@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -255,7 +256,7 @@ func (p PseudoCallState) AppendContent(content *generators.Content) (generators.
 	return PseudoCallState{upstream: next}, nil
 }
 
-func (p PseudoCallState) Contents() []*generators.Content {
+func (p PseudoCallState) Contents() iter.Seq[*generators.Content] {
 	return p.upstream.Contents()
 }
 
@@ -357,4 +358,3 @@ func getModelID(spec generators.Spec) string {
 	}
 	return filepath.Base(name)
 }
-

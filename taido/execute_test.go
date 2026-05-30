@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"strings"
 	"testing"
@@ -35,8 +36,14 @@ type mockState struct {
 	contents []*generators.Content
 }
 
-func (m *mockState) Contents() []*generators.Content {
-	return m.contents
+func (m *mockState) Contents() iter.Seq[*generators.Content] {
+	return func(yield func(*generators.Content) bool) {
+		for _, c := range m.contents {
+			if !yield(c) {
+				return
+			}
+		}
+	}
 }
 
 func (m *mockState) AppendContent(c *generators.Content) (generators.State, error) {
@@ -92,7 +99,10 @@ func TestExecute(t *testing.T) {
 						return nil, nil, err
 					}
 					// Simulate internal FuncMap handling for the test
-					contents := newState.Contents()
+					var contents []*generators.Content
+					for c := range newState.Contents() {
+						contents = append(contents, c)
+					}
 					last := contents[len(contents)-1]
 					hasCall := false
 					for _, part := range last.Parts {
@@ -143,7 +153,10 @@ func TestExecute(t *testing.T) {
 						return nil, nil, err
 					}
 					// Simulate FuncMap execution
-					contents := newState.Contents()
+					var contents []*generators.Content
+					for c := range newState.Contents() {
+						contents = append(contents, c)
+					}
 					last := contents[len(contents)-1]
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
@@ -194,7 +207,10 @@ func TestExecute(t *testing.T) {
 					if err != nil {
 						return nil, nil, err
 					}
-					contents := newState.Contents()
+					var contents []*generators.Content
+					for c := range newState.Contents() {
+						contents = append(contents, c)
+					}
 					last := contents[len(contents)-1]
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
@@ -249,7 +265,10 @@ func TestExecute(t *testing.T) {
 					if err != nil {
 						return nil, nil, err
 					}
-					contents := newState.Contents()
+					var contents []*generators.Content
+					for c := range newState.Contents() {
+						contents = append(contents, c)
+					}
 					last := contents[len(contents)-1]
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
@@ -315,3 +334,4 @@ func TestSystemPrompt(t *testing.T) {
 		t.Errorf("unexpected prompt: %s", p)
 	}
 }
+

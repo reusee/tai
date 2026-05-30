@@ -158,7 +158,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	}
 
 	var contents []*genai.Content
-	for _, content := range ret.Contents() {
+	for content := range ret.Contents() {
 		if content.Role == RoleLog || content.Role == RoleSystem {
 			continue
 		}
@@ -432,4 +432,3 @@ func (Module) NewGemini(
 		return ret
 	}
 }
-

@@ -1,6 +1,10 @@
 package phases
 
-import "github.com/reusee/tai/generators"
+import (
+	"iter"
+
+	"github.com/reusee/tai/generators"
+)
 
 type RedoCheckpoint struct {
 	upstream  generators.State
@@ -22,7 +26,7 @@ func (r RedoCheckpoint) AppendContent(content *generators.Content) (generators.S
 	}, nil
 }
 
-func (r RedoCheckpoint) Contents() []*generators.Content {
+func (r RedoCheckpoint) Contents() iter.Seq[*generators.Content] {
 	return r.upstream.Contents()
 }
 

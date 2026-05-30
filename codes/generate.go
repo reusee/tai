@@ -158,9 +158,13 @@ func (Module) Generate(
 				}
 
 				// tap to debug
+				var contents []*generators.Content
+				for c := range state.Contents() {
+					contents = append(contents, c)
+				}
 				globals := map[string]any{
 					"error":          phaseErr.Error(),
-					"contents":       state.Contents(),
+					"contents":       contents,
 					"system_prompts": state.SystemPrompt(),
 				}
 				var openAIError generators.OpenAIError

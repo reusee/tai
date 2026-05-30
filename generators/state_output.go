@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 
 	"golang.org/x/term"
@@ -195,7 +196,7 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 	return ret, nil
 }
 
-func (s Output) Contents() []*Content {
+func (s Output) Contents() iter.Seq[*Content] {
 	return s.upstream.Contents()
 }
 

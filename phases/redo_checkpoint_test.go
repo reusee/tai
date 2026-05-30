@@ -3,6 +3,7 @@ package phases
 import (
 	"context"
 	"errors"
+	"iter"
 	"reflect"
 	"slices"
 	"testing"
@@ -19,7 +20,15 @@ type mockState struct {
 	appendErr    error
 }
 
-func (m *mockState) Contents() []*generators.Content { return m.contents }
+func (m *mockState) Contents() iter.Seq[*generators.Content] {
+	return func(yield func(*generators.Content) bool) {
+		for _, c := range m.contents {
+			if !yield(c) {
+				return
+			}
+		}
+	}
+}
 func (m *mockState) AppendContent(c *generators.Content) (generators.State, error) {
 	if m.appendErr != nil {
 		return nil, m.appendErr
@@ -71,7 +80,14 @@ func TestRedoCheckpoint(t *testing.T) {
 	}
 
 	t.Run("Contents", func(t *testing.T) {
-		if !reflect.DeepEqual(checkpoint.Contents(), upstream.Contents()) {
+		var got, want []*generators.Content
+		for c := range checkpoint.Contents() {
+			got = append(got, c)
+		}
+		for c := range upstream.Contents() {
+			want = append(want, c)
+		}
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Contents() did not delegate to upstream")
 		}
 	})
@@ -106,8 +122,16 @@ func TestRedoCheckpoint(t *testing.T) {
 			t.Fatalf("AppendContent() did not return a RedoCheckpoint")
 		}
 
-		expectedContents := append(upstream.Contents(), newContent)
-		if !reflect.DeepEqual(newCheckpoint.Contents(), expectedContents) {
+		var expectedContents []*generators.Content
+		for c := range upstream.Contents() {
+			expectedContents = append(expectedContents, c)
+		}
+		expectedContents = append(expectedContents, newContent)
+		var gotContents []*generators.Content
+		for c := range newCheckpoint.Contents() {
+			gotContents = append(gotContents, c)
+		}
+		if !reflect.DeepEqual(gotContents, expectedContents) {
 			t.Errorf("new checkpoint has wrong contents")
 		}
 
@@ -163,3 +187,4 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 }
+

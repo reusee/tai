@@ -1,5 +1,7 @@
 package generators
 
+import "iter"
+
 type FuncMap struct {
 	upstream State
 	m        map[string]*Func
@@ -71,7 +73,7 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 	return ret, nil
 }
 
-func (f FuncMap) Contents() []*Content {
+func (f FuncMap) Contents() iter.Seq[*Content] {
 	return f.upstream.Contents()
 }
 
@@ -96,3 +98,4 @@ func (f FuncMap) Flush() (State, error) {
 func (f FuncMap) Unwrap() State {
 	return f.upstream
 }
+

@@ -99,7 +99,7 @@ func (Module) BuildChatPhase(
 						return nil, nil, err
 					}
 					output := generators.NewOutput(state, out, true)
-					for _, content := range state.Contents() {
+					for content := range state.Contents() {
 						next, err := output.AppendContent(content)
 						if err != nil {
 							return nil, nil, err
@@ -117,9 +117,13 @@ func (Module) BuildChatPhase(
 					return buildChat(generator, options)(cont), state, nil
 
 				case "/tap":
+					var contents []*generators.Content
+					for c := range state.Contents() {
+						contents = append(contents, c)
+					}
 					tap(ctx, "tap on chat", map[string]any{
 						"generator_args": generator.Spec(),
-						"contents":       state.Contents(),
+						"contents":       contents,
 						"system_prompt":  state.SystemPrompt(),
 						"func_map":       state.FuncMap(),
 					})

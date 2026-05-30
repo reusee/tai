@@ -255,7 +255,10 @@ func (Module) Execute(
 			}
 
 			// 2. Analyze state for continuation
-			contents := state.Contents()
+			var contents []*generators.Content
+			for c := range state.Contents() {
+				contents = append(contents, c)
+			}
 			if len(contents) == 0 {
 				break
 			}
@@ -289,8 +292,11 @@ func (Module) Execute(
 				// We already checked this at the top of the continuation logic, but since
 				// state was updated via newState (which includes tool results), we need to
 				// re-check if we should continue.
-				contents = state.Contents()
-				if contents[len(contents)-1].Role == generators.RoleTool {
+				contents = nil
+				for c := range state.Contents() {
+					contents = append(contents, c)
+				}
+				if len(contents) > 0 && contents[len(contents)-1].Role == generators.RoleTool {
 					continue
 				}
 

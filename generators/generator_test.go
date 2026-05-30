@@ -57,7 +57,7 @@ func testGenerator(
 		if !ok {
 			t.Fatal("Prompts not found")
 		}
-		for _, content := range prompts.Contents() {
+		for content := range prompts.Contents() {
 			for _, part := range content.Parts {
 				if call, ok := part.(FuncCall); ok {
 					calls = append(calls, call)
@@ -154,7 +154,7 @@ func testGenerator(
 		}
 
 		found := false
-		for _, content := range promptsState.Contents() {
+		for content := range promptsState.Contents() {
 			if content.Role != RoleModel && content.Role != RoleAssistant {
 				continue
 			}
@@ -211,7 +211,7 @@ func TestNonStreaming(t *testing.T) {
 		}
 
 		found := false
-		for _, content := range state.Contents() {
+		for content := range state.Contents() {
 			if content.Role != RoleModel && content.Role != RoleAssistant {
 				continue
 			}

@@ -2,6 +2,7 @@ package generators
 
 import (
 	"fmt"
+	"iter"
 	"slices"
 )
 
@@ -42,8 +43,14 @@ func (p Prompts) AppendContent(content *Content) (State, error) {
 	return ret, nil
 }
 
-func (p Prompts) Contents() []*Content {
-	return p.contents
+func (p Prompts) Contents() iter.Seq[*Content] {
+	return func(yield func(*Content) bool) {
+		for _, c := range p.contents {
+			if !yield(c) {
+				return
+			}
+		}
+	}
 }
 
 func (p Prompts) FuncMap() map[string]*Func {
@@ -61,3 +68,4 @@ func (p Prompts) Flush() (State, error) {
 func (p Prompts) Unwrap() State {
 	return nil
 }
+

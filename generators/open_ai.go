@@ -424,7 +424,7 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 		})
 	}
 
-	for _, content := range state.Contents() {
+	for content := range state.Contents() {
 		role := string(content.Role)
 		if role == string(RoleModel) {
 			role = string(RoleAssistant)
@@ -735,4 +735,3 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
-
