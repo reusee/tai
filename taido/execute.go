@@ -55,7 +55,7 @@ func (Module) Execute(
 
 		// Internal Stop tool to signal completion
 		stopped := false
-		stopFunc := &generators.Func{
+		stopFunc := &generators.Function{
 			Decl: generators.FuncDecl{
 				Name:        "Stop",
 				Description: "Signal that the goal has been achieved and terminate execution.",
@@ -78,7 +78,7 @@ func (Module) Execute(
 		// Internal Error tool to signal failure
 		errored := false
 		errorReason := ""
-		errorFunc := &generators.Func{
+		errorFunc := &generators.Function{
 			Decl: generators.FuncDecl{
 				Name:        "Error",
 				Description: "Signal that the goal cannot be achieved and terminate execution with an error.",
@@ -99,7 +99,7 @@ func (Module) Execute(
 		}
 
 		// EvalTaigo tool for internal Go execution
-		evalTaigoFunc := &generators.Func{
+		evalTaigoFunc := &generators.Function{
 			Decl: generators.FuncDecl{
 				Name:        "EvalTaigo",
 				Description: "Execute Go code using the internal Taigo VM. Use this for logic, data processing, or when a shell is not required.",
@@ -134,7 +134,7 @@ func (Module) Execute(
 		}
 
 		// Shell tool for environment interaction
-		shellFunc := &generators.Func{
+		shellFunc := &generators.Function{
 			Decl: generators.FuncDecl{
 				Name:        "Shell",
 				Description: "Execute a shell command in /bin/sh and return the output.",
@@ -174,7 +174,7 @@ func (Module) Execute(
 		}
 
 		// Taido tool for delegation
-		taidoFunc := &generators.Func{
+		taidoFunc := &generators.Function{
 			Decl: generators.FuncDecl{
 				Name:        "Taido",
 				Description: "Delegate an independent sub-task to another autonomous agent. The sub-agent will run in a separate process and return its results. Use this for isolation or to break down complex goals.",
@@ -214,7 +214,7 @@ func (Module) Execute(
 
 		// Tool wrapper for logging progress.
 		// We avoid manual ANSI hacks and instead rely on the logger for mechanical status.
-		wrapFunc := func(f *generators.Func) *generators.Func {
+		wrapFunc := func(f *generators.Function) *generators.Function {
 			original := f.Func
 			f.Func = func(args map[string]any) (map[string]any, error) {
 				logger.Info("executing tool", "tool", f.Decl.Name)
@@ -311,3 +311,4 @@ func (Module) Execute(
 		return nil
 	}
 }
+

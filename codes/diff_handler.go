@@ -45,7 +45,7 @@ type DumbDiffHandler struct{}
 
 var _ codetypes.DiffHandler = DumbDiffHandler{}
 
-func (d DumbDiffHandler) Functions() []*generators.Func {
+func (d DumbDiffHandler) Functions() []*generators.Function {
 	return nil
 }
 

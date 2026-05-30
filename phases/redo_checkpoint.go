@@ -42,8 +42,8 @@ func (r RedoCheckpoint) Flush() (generators.State, error) {
 	}, nil
 }
 
-func (r RedoCheckpoint) FuncMap() iter.Seq2[string, *generators.Func] {
-	return r.upstream.FuncMap()
+func (r RedoCheckpoint) Functions() iter.Seq2[string, *generators.Function] {
+	return r.upstream.Functions()
 }
 
 func (r RedoCheckpoint) SystemPrompt() string {
@@ -53,3 +53,4 @@ func (r RedoCheckpoint) SystemPrompt() string {
 func (r RedoCheckpoint) Unwrap() generators.State {
 	return r.upstream
 }
+

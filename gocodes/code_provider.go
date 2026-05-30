@@ -23,7 +23,7 @@ type CodeProvider struct {
 
 var _ codetypes.CodeProvider = CodeProvider{}
 
-func (c CodeProvider) Functions() (ret []*generators.Func) {
+func (c CodeProvider) Functions() (ret []*generators.Function) {
 	return
 }
 
@@ -159,4 +159,3 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
-

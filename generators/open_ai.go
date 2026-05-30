@@ -55,7 +55,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	var tools []Tool
 
-	for _, fn := range ret.FuncMap() {
+	for _, fn := range ret.Functions() {
 		tools = append(tools, fn.Decl.ToOpenAI())
 	}
 	for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
@@ -735,3 +735,4 @@ type CompletionTokensDetails struct {
 func (e *APIError) Error() string {
 	return e.Message
 }
+

@@ -14,7 +14,7 @@ import (
 type mockState struct {
 	contents     []*generators.Content
 	systemPrompt string
-	funcMap      map[string]*generators.Func
+	funcMap      map[string]*generators.Function
 	unwrapped    generators.State
 	flushErr     error
 	appendErr    error
@@ -44,8 +44,8 @@ func (m *mockState) AppendContent(c *generators.Content) (generators.State, erro
 	}, nil
 }
 func (m *mockState) SystemPrompt() string { return m.systemPrompt }
-func (m *mockState) FuncMap() iter.Seq2[string, *generators.Func] {
-	return func(yield func(string, *generators.Func) bool) {
+func (m *mockState) Functions() iter.Seq2[string, *generators.Function] {
+	return func(yield func(string, *generators.Function) bool) {
 		for k, v := range m.funcMap {
 			if !yield(k, v) {
 				return
@@ -73,7 +73,7 @@ func TestRedoCheckpoint(t *testing.T) {
 	upstream := &mockState{
 		contents:     []*generators.Content{{Role: "user"}},
 		systemPrompt: "system",
-		funcMap:      map[string]*generators.Func{"foo": {}},
+		funcMap:      map[string]*generators.Function{"foo": {}},
 		unwrapped:    nil,
 	}
 	state0 := &mockState{
@@ -107,12 +107,12 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 	t.Run("FuncMap", func(t *testing.T) {
-		got := make(map[string]*generators.Func)
-		for k, v := range checkpoint.FuncMap() {
+		got := make(map[string]*generators.Function)
+		for k, v := range checkpoint.Functions() {
 			got[k] = v
 		}
-		want := make(map[string]*generators.Func)
-		for k, v := range upstream.FuncMap() {
+		want := make(map[string]*generators.Function)
+		for k, v := range upstream.Functions() {
 			want[k] = v
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -203,3 +203,4 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 }
+

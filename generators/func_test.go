@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-var FuncNow = &Func{
+var FuncNow = &Function{
 	Decl: FuncDecl{
 		Name:        "now",
 		Description: "get current time",
@@ -122,3 +122,4 @@ func TestMakeFunc(t *testing.T) {
 		t.Errorf("expected missing argument error, got %v", err)
 	}
 }
+

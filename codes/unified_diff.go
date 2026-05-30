@@ -2,9 +2,9 @@ package codes
 
 import (
 	"github.com/reusee/dscope"
+	"github.com/reusee/prompts"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/prompts"
 )
 
 type UnifiedDiff struct {
@@ -12,7 +12,7 @@ type UnifiedDiff struct {
 
 var _ codetypes.DiffHandler = UnifiedDiff{}
 
-func (u UnifiedDiff) Functions() []*generators.Func {
+func (u UnifiedDiff) Functions() []*generators.Function {
 	return nil
 }
 

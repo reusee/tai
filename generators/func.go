@@ -6,12 +6,12 @@ import (
 	"reflect"
 )
 
-type Func struct {
+type Function struct {
 	Decl FuncDecl
 	Func func(args map[string]any) (map[string]any, error)
 }
 
-func MakeFunc(name string, fn any) (*Func, error) {
+func MakeFunc(name string, fn any) (*Function, error) {
 	fnVal := reflect.ValueOf(fn)
 	fnType := fnVal.Type()
 	if fnType.Kind() != reflect.Func {
@@ -87,7 +87,7 @@ func MakeFunc(name string, fn any) (*Func, error) {
 		return resultMap, nil
 	}
 
-	return &Func{
+	return &Function{
 		Decl: FuncDecl{
 			Name:    name,
 			Params:  params,
@@ -159,3 +159,4 @@ func convertMapValue(val any, targetType reflect.Type) (reflect.Value, error) {
 	}
 	return targetPtr.Elem(), nil
 }
+

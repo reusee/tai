@@ -12,7 +12,7 @@ type CodeProvider interface {
 		err error,
 	)
 
-	Functions() []*generators.Func
+	Functions() []*generators.Function
 
 	SystemPrompt() string
 }

@@ -200,8 +200,8 @@ func (s Output) Contents() iter.Seq[*Content] {
 	return s.upstream.Contents()
 }
 
-func (s Output) FuncMap() iter.Seq2[string, *Func] {
-	return s.upstream.FuncMap()
+func (s Output) Functions() iter.Seq2[string, *Function] {
+	return s.upstream.Functions()
 }
 
 func (s Output) SystemPrompt() string {
@@ -226,3 +226,4 @@ func (s Output) Flush() (State, error) {
 func (s Output) Unwrap() State {
 	return s.upstream
 }
+

@@ -195,7 +195,7 @@ func (Module) Memory(
 	return currentMemory, appendMemory
 }
 
-type UpdateMemoryFunc *generators.Func
+type UpdateMemoryFunc *generators.Function
 
 var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
 
@@ -268,8 +268,8 @@ func (p PseudoCallState) Flush() (generators.State, error) {
 	return PseudoCallState{upstream: next}, nil
 }
 
-func (p PseudoCallState) FuncMap() iter.Seq2[string, *generators.Func] {
-	return p.upstream.FuncMap()
+func (p PseudoCallState) Functions() iter.Seq2[string, *generators.Function] {
+	return p.upstream.Functions()
 }
 
 func (p PseudoCallState) SystemPrompt() string {
@@ -287,7 +287,7 @@ func (Module) UpdateMemoryFunc(
 	appendMemory AppendMemory,
 	generator generators.Generator,
 ) UpdateMemoryFunc {
-	return &generators.Func{
+	return &generators.Function{
 		Decl: generators.FuncDecl{
 			Name:        "update_user_profile",
 			Description: "update user profile with new or changed information",
@@ -358,3 +358,4 @@ func getModelID(spec generators.Spec) string {
 	}
 	return filepath.Base(name)
 }
+

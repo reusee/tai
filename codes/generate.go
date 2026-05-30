@@ -18,7 +18,7 @@ import (
 
 type Generate func(ctx context.Context, output io.Writer) error
 
-func countFuncsTokens(funcs []*generators.Func, count func(string) (int, error)) (int, error) {
+func countFuncsTokens(funcs []*generators.Function, count func(string) (int, error)) (int, error) {
 	if len(funcs) == 0 {
 		return 0, nil
 	}
@@ -72,7 +72,7 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
-		var allFuncs []*generators.Func
+		var allFuncs []*generators.Function
 		if !args.DisableTools {
 			allFuncs = append(allFuncs, codeProvider.Functions()...)
 			allFuncs = append(allFuncs, diffHandler.Functions()...)
@@ -191,3 +191,4 @@ func (Module) Generate(
 		return nil
 	}
 }
+

@@ -121,8 +121,8 @@ func (Module) BuildChatPhase(
 					for c := range state.Contents() {
 						contents = append(contents, c)
 					}
-					funcMap := make(map[string]*generators.Func)
-					for k, v := range state.FuncMap() {
+					funcMap := make(map[string]*generators.Function)
+					for k, v := range state.Functions() {
 						funcMap[k] = v
 					}
 					tap(ctx, "tap on chat", map[string]any{
@@ -156,3 +156,4 @@ func (Module) BuildChatPhase(
 	}
 	return
 }
+

@@ -4,13 +4,13 @@ import "iter"
 
 type FuncMap struct {
 	upstream State
-	m        map[string]*Func
+	m        map[string]*Function
 }
 
-func NewFuncMap(upstream State, funcs ...*Func) FuncMap {
+func NewFuncMap(upstream State, funcs ...*Function) FuncMap {
 	ret := FuncMap{
 		upstream: upstream,
-		m:        make(map[string]*Func),
+		m:        make(map[string]*Function),
 	}
 	for _, fn := range funcs {
 		if fn == nil {
@@ -77,8 +77,8 @@ func (f FuncMap) Contents() iter.Seq[*Content] {
 	return f.upstream.Contents()
 }
 
-func (f FuncMap) FuncMap() iter.Seq2[string, *Func] {
-	return func(yield func(string, *Func) bool) {
+func (f FuncMap) Functions() iter.Seq2[string, *Function] {
+	return func(yield func(string, *Function) bool) {
 		for k, v := range f.m {
 			if !yield(k, v) {
 				return
@@ -104,3 +104,4 @@ func (f FuncMap) Flush() (State, error) {
 func (f FuncMap) Unwrap() State {
 	return f.upstream
 }
+

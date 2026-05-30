@@ -220,7 +220,7 @@ func (c CodeProvider) Parts(
 	return
 }
 
-func (c CodeProvider) Functions() []*generators.Func {
+func (c CodeProvider) Functions() []*generators.Function {
 	return nil
 }
 
@@ -234,4 +234,3 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
-

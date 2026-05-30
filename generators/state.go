@@ -6,7 +6,8 @@ type State interface {
 	Contents() iter.Seq[*Content]
 	AppendContent(*Content) (State, error)
 	SystemPrompt() string
-	FuncMap() iter.Seq2[string, *Func]
+	Functions() iter.Seq2[string, *Function]
 	Flush() (State, error)
 	Unwrap() State
 }
+
