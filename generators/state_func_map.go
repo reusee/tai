@@ -104,3 +104,66 @@ func (f FuncMap) Flush() (State, error) {
 func (f FuncMap) Unwrap() State {
 	return f.upstream
 }
+
+func WithFunctions(upstream State, fns ...*Function) State {
+	return stateWithFunctions{
+		upstream: upstream,
+		fns:      fns,
+	}
+}
+
+func (w stateWithFunctions) Unwrap() State {
+	return w.upstream
+}
+
+func (w stateWithFunctions) Flush() (State, error) {
+	ret := w
+	var err error
+	ret.upstream, err = w.upstream.Flush()
+	if err != nil {
+		return ret, err
+	}
+	return ret, nil
+}
+
+func (w stateWithFunctions) SystemPrompt() string {
+	return w.upstream.SystemPrompt()
+}
+
+func (w stateWithFunctions) Functions() iter.Seq[*Function] {
+	return func(yield func(*Function) bool) {
+		for _, fn := range w.fns {
+			if fn == nil {
+				continue
+			}
+			if !yield(fn) {
+				return
+			}
+		}
+		for fn := range w.upstream.Functions() {
+			if !yield(fn) {
+				return
+			}
+		}
+	}
+}
+
+func (w stateWithFunctions) Contents() iter.Seq[*Content] {
+	return w.upstream.Contents()
+}
+
+func (w stateWithFunctions) AppendContent(content *Content) (State, error) {
+	ret := w
+	var err error
+	ret.upstream, err = w.upstream.AppendContent(content)
+	if err != nil {
+		return ret, err
+	}
+	return ret, nil
+}
+
+type stateWithFunctions struct {
+	upstream State
+	fns      []*Function
+}
+
