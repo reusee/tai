@@ -112,7 +112,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	var toolConfig *genai.ToolConfig
 	if !g.spec.DisableTools {
 		var funcDecls []*genai.FunctionDeclaration
-		for _, fn := range ret.Functions() {
+		for fn := range ret.Functions() {
 			funcDecls = append(funcDecls, fn.Decl.ToGemini())
 		}
 		for set := range configs.All[[]FuncDecl](g.Loader(), "functions") {
@@ -431,4 +431,3 @@ func (Module) NewGemini(
 		return ret
 	}
 }
-

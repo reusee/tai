@@ -122,8 +122,8 @@ func (Module) BuildChatPhase(
 						contents = append(contents, c)
 					}
 					funcMap := make(map[string]*generators.Function)
-					for k, v := range state.Functions() {
-						funcMap[k] = v
+					for fn := range state.Functions() {
+						funcMap[fn.Decl.Name] = fn
 					}
 					tap(ctx, "tap on chat", map[string]any{
 						"generator_args": generator.Spec(),
@@ -156,4 +156,3 @@ func (Module) BuildChatPhase(
 	}
 	return
 }
-

@@ -44,10 +44,10 @@ func (m *mockState) AppendContent(c *generators.Content) (generators.State, erro
 	}, nil
 }
 func (m *mockState) SystemPrompt() string { return m.systemPrompt }
-func (m *mockState) Functions() iter.Seq2[string, *generators.Function] {
-	return func(yield func(string, *generators.Function) bool) {
-		for k, v := range m.funcMap {
-			if !yield(k, v) {
+func (m *mockState) Functions() iter.Seq[*generators.Function] {
+	return func(yield func(*generators.Function) bool) {
+		for _, v := range m.funcMap {
+			if !yield(v) {
 				return
 			}
 		}
@@ -108,12 +108,12 @@ func TestRedoCheckpoint(t *testing.T) {
 
 	t.Run("FuncMap", func(t *testing.T) {
 		got := make(map[string]*generators.Function)
-		for k, v := range checkpoint.Functions() {
-			got[k] = v
+		for fn := range checkpoint.Functions() {
+			got[fn.Decl.Name] = fn
 		}
 		want := make(map[string]*generators.Function)
-		for k, v := range upstream.Functions() {
-			want[k] = v
+		for fn := range upstream.Functions() {
+			want[fn.Decl.Name] = fn
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("FuncMap() did not delegate to upstream")
@@ -203,4 +203,3 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 }
-

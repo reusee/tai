@@ -77,10 +77,10 @@ func (f FuncMap) Contents() iter.Seq[*Content] {
 	return f.upstream.Contents()
 }
 
-func (f FuncMap) Functions() iter.Seq2[string, *Function] {
-	return func(yield func(string, *Function) bool) {
-		for k, v := range f.m {
-			if !yield(k, v) {
+func (f FuncMap) Functions() iter.Seq[*Function] {
+	return func(yield func(*Function) bool) {
+		for _, v := range f.m {
+			if !yield(v) {
 				return
 			}
 		}
@@ -104,4 +104,3 @@ func (f FuncMap) Flush() (State, error) {
 func (f FuncMap) Unwrap() State {
 	return f.upstream
 }
-

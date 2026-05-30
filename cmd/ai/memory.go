@@ -268,7 +268,7 @@ func (p PseudoCallState) Flush() (generators.State, error) {
 	return PseudoCallState{upstream: next}, nil
 }
 
-func (p PseudoCallState) Functions() iter.Seq2[string, *generators.Function] {
+func (p PseudoCallState) Functions() iter.Seq[*generators.Function] {
 	return p.upstream.Functions()
 }
 

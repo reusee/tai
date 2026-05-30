@@ -52,8 +52,8 @@ func (m *mockState) AppendContent(c *generators.Content) (generators.State, erro
 
 func (m *mockState) SystemPrompt() string { return "" }
 
-func (m *mockState) Functions() iter.Seq2[string, *generators.Function] {
-	return func(yield func(string, *generators.Function) bool) {}
+func (m *mockState) Functions() iter.Seq[*generators.Function] {
+	return func(yield func(*generators.Function) bool) {}
 }
 
 func (m *mockState) Flush() (generators.State, error) { return m, nil }
@@ -163,8 +163,8 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							var fn *generators.Function
-							for k, v := range state.Functions() {
-								if k == call.Name {
+							for v := range state.Functions() {
+								if v.Decl.Name == call.Name {
 									fn = v
 									break
 								}
@@ -224,8 +224,8 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							var fn *generators.Function
-							for k, v := range state.Functions() {
-								if k == call.Name {
+							for v := range state.Functions() {
+								if v.Decl.Name == call.Name {
 									fn = v
 									break
 								}
@@ -289,8 +289,8 @@ func TestExecute(t *testing.T) {
 					for _, part := range last.Parts {
 						if call, ok := part.(generators.FuncCall); ok {
 							var fn *generators.Function
-							for k, v := range state.Functions() {
-								if k == call.Name {
+							for v := range state.Functions() {
+								if v.Decl.Name == call.Name {
 									fn = v
 									break
 								}
@@ -357,4 +357,3 @@ func TestSystemPrompt(t *testing.T) {
 		t.Errorf("unexpected prompt: %s", p)
 	}
 }
-
