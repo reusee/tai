@@ -508,4 +508,30 @@ func TestResolveSpec(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+
+	t.Run("root alias as path component", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:    "base",
+				Type:    "gemini",
+				Aliases: []string{"mybase"},
+				Variants: []Spec{
+					{
+						Name: "variant1",
+						Type: "openai",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("mybase/variant1", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "mybase/variant1" {
+			t.Errorf("expected name 'mybase/variant1', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+	})
 }

@@ -58,6 +58,11 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		if root.Name != "" {
 			rootMap[root.Name] = root
 		}
+		for _, alias := range root.Aliases {
+			if alias != "" {
+				rootMap[alias] = root
+			}
+		}
 	}
 
 	// traverse and merge
