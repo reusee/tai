@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/reusee/tai/cmds"
 )
@@ -36,24 +35,6 @@ func (Module) Patterns() Patterns {
 	slices.SortStableFunc(exKeys, cmp.Compare)
 	for _, k := range exKeys {
 		ret = append(ret, "!"+k)
-	}
-	// Default to ignoring LICENSE files unless explicitly included
-	includeLicense := false
-	for _, k := range keys {
-		if strings.Contains(strings.ToLower(k), "license") {
-			includeLicense = true
-			break
-		}
-	}
-	alreadyExcluded := false
-	for _, k := range exKeys {
-		if strings.Contains(strings.ToLower(k), "license") {
-			alreadyExcluded = true
-			break
-		}
-	}
-	if !includeLicense && !alreadyExcluded {
-		ret = append(ret, "!LICENSE*")
 	}
 	return ret
 }
