@@ -64,7 +64,7 @@ func (Module) NewAzure(
 		if spec.APIVersion == "" {
 			spec.APIVersion = string(apiVersion)
 		}
-		spec.IsAzure = true
+		spec.IsAzure = new(true)
 		return newOpenAI(
 			spec,
 			vars.FirstNonZero(
@@ -84,7 +84,7 @@ func (Module) NewOpenRouter(
 		if spec.BaseURL == "" {
 			spec.BaseURL = string(endpoint)
 		}
-		spec.IsOpenRouter = true
+		spec.IsOpenRouter = new(true)
 		return newOpenAI(
 			spec,
 			vars.FirstNonZero(
@@ -296,3 +296,4 @@ func (Module) NewOpenCodeGo(
 		)
 	}
 }
+

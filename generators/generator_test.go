@@ -250,7 +250,7 @@ func TestSpecNoProxy(t *testing.T) {
 		Name:    "test",
 		Type:    "gemini",
 		Model:   "gemini-flash",
-		NoProxy: true,
+		NoProxy: new(true),
 	}
 	data, err := json.Marshal(spec)
 	if err != nil {
@@ -269,7 +269,7 @@ func TestSpecNoProxy(t *testing.T) {
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.NoProxy != true {
+	if restored.NoProxy == nil || !*restored.NoProxy {
 		t.Errorf("NoProxy not restored correctly: %+v", restored)
 	}
 }
@@ -298,3 +298,183 @@ func TestDeepseekTokenCounter(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveSpec(t *testing.T) {
+	specs := []Spec{
+		{
+			Name:          "base",
+			Type:          "gemini",
+			Model:         "base-model",
+			ContextTokens: 100,
+			Temperature:   new(float32(0.5)),
+			DisableSearch: new(true),
+		},
+		{
+			Name:              "base/variant1",
+			Type:              "openai",
+			APIKey:            "key1",
+			MaxGenerateTokens: new(50),
+		},
+		{
+			Name:          "base/variant1/sub",
+			ContextTokens: 200,
+			Temperature:   new(float32(0.8)),
+		},
+	}
+
+	t.Run("resolve base", func(t *testing.T) {
+		s, err := resolveSpec("base", specs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base" {
+			t.Errorf("expected name 'base', got %q", s.Name)
+		}
+		if s.Type != "gemini" {
+			t.Errorf("expected type gemini, got %q", s.Type)
+		}
+		if s.Model != "base-model" {
+			t.Errorf("expected model base-model, got %q", s.Model)
+		}
+		if s.ContextTokens != 100 {
+			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.5 {
+			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
+		}
+		if s.MaxGenerateTokens != nil {
+			t.Errorf("expected no max generate tokens, got %v", s.MaxGenerateTokens)
+		}
+		if s.DisableSearch == nil || !*s.DisableSearch {
+			t.Errorf("expected disable search true")
+		}
+	})
+
+	t.Run("resolve variant1", func(t *testing.T) {
+		s, err := resolveSpec("base/variant1", specs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/variant1" {
+			t.Errorf("expected name 'base/variant1', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+		if s.Model != "base-model" {
+			t.Errorf("expected model base-model, got %q", s.Model)
+		}
+		if s.ContextTokens != 100 {
+			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.5 {
+			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
+		}
+		if s.MaxGenerateTokens == nil || *s.MaxGenerateTokens != 50 {
+			t.Errorf("expected max generate tokens 50, got %v", s.MaxGenerateTokens)
+		}
+		if s.APIKey != "key1" {
+			t.Errorf("expected api key key1, got %q", s.APIKey)
+		}
+		if s.DisableSearch == nil || !*s.DisableSearch {
+			t.Errorf("expected disable search true")
+		}
+	})
+
+	t.Run("resolve sub", func(t *testing.T) {
+		s, err := resolveSpec("base/variant1/sub", specs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/variant1/sub" {
+			t.Errorf("expected name 'base/variant1/sub', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+		if s.Model != "base-model" {
+			t.Errorf("expected model base-model, got %q", s.Model)
+		}
+		if s.ContextTokens != 200 {
+			t.Errorf("expected context tokens 200, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.8 {
+			t.Errorf("expected temperature 0.8, got %v", s.Temperature)
+		}
+		if s.APIKey != "key1" {
+			t.Errorf("expected api key key1, got %q", s.APIKey)
+		}
+		if s.MaxGenerateTokens == nil || *s.MaxGenerateTokens != 50 {
+			t.Errorf("expected max generate tokens 50, got %v", s.MaxGenerateTokens)
+		}
+		if s.DisableSearch == nil || !*s.DisableSearch {
+			t.Errorf("expected disable search true")
+		}
+	})
+
+	t.Run("override disable search to false", func(t *testing.T) {
+		localSpecs := []Spec{
+			{Name: "base", Type: "gemini", DisableSearch: new(true)},
+			{Name: "base/variant", Type: "openai", DisableSearch: new(false)},
+		}
+		s, err := resolveSpec("base/variant", localSpecs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.DisableSearch == nil || *s.DisableSearch != false {
+			t.Errorf("expected disable search false, got %v", s.DisableSearch)
+		}
+	})
+
+	t.Run("resolve alias", func(t *testing.T) {
+		localSpecs := []Spec{
+			{
+				Name:    "base",
+				Type:    "gemini",
+				Aliases: []string{"mybase"},
+			},
+		}
+		s, err := resolveSpec("mybase", localSpecs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base" {
+			t.Errorf("expected name 'base', got %q", s.Name)
+		}
+		if s.Type != "gemini" {
+			t.Errorf("expected type gemini, got %q", s.Type)
+		}
+	})
+
+	t.Run("resolve alias of variant", func(t *testing.T) {
+		localSpecs := []Spec{
+			{Name: "base", Type: "gemini"},
+			{Name: "base/variant", Type: "openai", Aliases: []string{"myvariant"}},
+		}
+		s, err := resolveSpec("myvariant", localSpecs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/variant" {
+			t.Errorf("expected name 'base/variant', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+	})
+
+	t.Run("resolve not found", func(t *testing.T) {
+		_, err := resolveSpec("nonexistent", specs)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("resolve empty name", func(t *testing.T) {
+		_, err := resolveSpec("/", specs)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+

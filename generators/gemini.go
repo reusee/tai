@@ -52,7 +52,7 @@ func (g Gemini) CountTokens(text string) (int, error) {
 
 func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	var client *genai.Client
-	if g.spec.NoProxy {
+	if g.spec.NoProxy != nil && *g.spec.NoProxy {
 		key := vars.FirstNonZero(
 			g.spec.APIKey,
 			string(g.APIKey()),
@@ -110,7 +110,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
-	if !g.spec.DisableTools {
+	if g.spec.DisableTools == nil || !*g.spec.DisableTools {
 		var funcDecls []*genai.FunctionDeclaration
 		for fn := range ret.Functions() {
 			funcDecls = append(funcDecls, fn.Decl.ToGemini())
@@ -120,7 +120,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				funcDecls = append(funcDecls, fn.ToGemini())
 			}
 		}
-		if !g.spec.DisableSearch && len(funcDecls) == 0 {
+		if (g.spec.DisableSearch == nil || !*g.spec.DisableSearch) && len(funcDecls) == 0 {
 			tools = append(tools, &genai.Tool{
 				GoogleSearch: &genai.GoogleSearch{},
 			})

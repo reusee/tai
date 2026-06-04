@@ -134,7 +134,7 @@ func TestAzureConfiguration(t *testing.T) {
 			APIVersion: "2024-05-01-preview",
 			APIKey:     "my-key",
 		})
-		if !g.spec.IsAzure {
+		if g.spec.IsAzure == nil || !*g.spec.IsAzure {
 			t.Fatal("IsAzure should be true")
 		}
 		if g.apiKey != "my-key" {

@@ -73,7 +73,7 @@ func (Module) Generate(
 			return err
 		}
 		var allFuncs []*generators.Function
-		if !args.DisableTools {
+		if args.DisableTools != nil && !*args.DisableTools {
 			allFuncs = append(allFuncs, codeProvider.Functions()...)
 			allFuncs = append(allFuncs, diffHandler.Functions()...)
 		}
@@ -132,7 +132,7 @@ func (Module) Generate(
 			},
 		)
 		state = generators.NewOutput(state, output, *showThoughts)
-		if !args.DisableTools {
+		if args.DisableTools != nil && !*args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
 		}
@@ -191,4 +191,3 @@ func (Module) Generate(
 		return nil
 	}
 }
-

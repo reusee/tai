@@ -126,11 +126,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	}
 
-	if !o.spec.DisableTools {
+	if o.spec.DisableTools == nil || !*o.spec.DisableTools {
 		req.Tools = tools
 	}
 
-	if o.spec.IsOpenRouter && req.ReasoningEffort != "" {
+	if o.spec.IsOpenRouter != nil && *o.spec.IsOpenRouter && req.ReasoningEffort != "" {
 		req.Reasoning = &Reasoning{
 			Effort: req.ReasoningEffort,
 		}
@@ -154,7 +154,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	url := o.spec.BaseURL + "/chat/completions"
-	if o.spec.IsAzure {
+	if o.spec.IsAzure != nil && *o.spec.IsAzure {
 		url = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
 			strings.TrimSuffix(o.spec.BaseURL, "/"),
 			o.spec.Model,
@@ -164,7 +164,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	// Select HTTP client based on NoProxy flag
 	client := o.client
-	if o.spec.NoProxy {
+	if o.spec.NoProxy != nil && *o.spec.NoProxy {
 		client = &http.Client{
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{}).DialContext,
@@ -176,7 +176,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if err != nil {
 		return nil, err
 	}
-	if o.spec.IsAzure {
+	if o.spec.IsAzure != nil && *o.spec.IsAzure {
 		httpReq.Header.Set("api-key", o.apiKey)
 	} else {
 		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)

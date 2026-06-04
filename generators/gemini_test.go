@@ -20,7 +20,7 @@ func TestGemini(t *testing.T) {
 			ContextTokens:     1 * M,
 			MaxGenerateTokens: new(64 * K),
 			Temperature:       new(float32(0.1)),
-			DisableSearch:     true,
+			DisableSearch:     new(true),
 		})
 		return generator
 	})
@@ -63,3 +63,4 @@ func TestGeminiListModels(t *testing.T) {
 
 	})
 }
+
