@@ -20,18 +20,26 @@ type GenerateOptions struct {
 
 type GetGenerator func(name string) (Generator, error)
 
-func resolveSpec(name string, specs []Spec) (Spec, error) {
-	specMap := make(map[string]Spec)
+func resolveSpec(name string, roots []Spec) (Spec, error) {
+	// build alias map
 	aliasMap := make(map[string]string)
-	for _, s := range specs {
-		if s.Name != "" {
-			specMap[s.Name] = s
+	var collectAliases func(spec Spec, prefix string)
+	collectAliases = func(spec Spec, prefix string) {
+		fullPath := spec.Name
+		if prefix != "" {
+			fullPath = prefix + "/" + spec.Name
 		}
-		for _, alias := range s.Aliases {
+		for _, alias := range spec.Aliases {
 			if alias != "" {
-				aliasMap[alias] = s.Name
+				aliasMap[alias] = fullPath
 			}
 		}
+		for _, child := range spec.Variants {
+			collectAliases(child, fullPath)
+		}
+	}
+	for _, root := range roots {
+		collectAliases(root, "")
 	}
 
 	// resolve alias
@@ -40,76 +48,87 @@ func resolveSpec(name string, specs []Spec) (Spec, error) {
 	}
 
 	parts := strings.Split(name, "/")
-	if len(parts) == 0 {
+	if len(parts) == 0 || name == "" {
 		return Spec{}, fmt.Errorf("empty name")
 	}
 
-	// collect chain
-	var chain []Spec
-	for i := 1; i <= len(parts); i++ {
-		prefix := strings.Join(parts[:i], "/")
-		if s, ok := specMap[prefix]; ok {
-			chain = append(chain, s)
+	// build root map
+	rootMap := make(map[string]Spec)
+	for _, root := range roots {
+		if root.Name != "" {
+			rootMap[root.Name] = root
 		}
-	}
-	if len(chain) == 0 {
-		return Spec{}, fmt.Errorf("spec not found: %s", name)
 	}
 
-	// merge
-	merged := chain[0]
-	for _, ov := range chain[1:] {
-		if ov.Type != "" {
-			merged.Type = ov.Type
+	// traverse and merge
+	merged := Spec{}
+	currentMap := rootMap
+
+	for _, part := range parts {
+		spec, ok := currentMap[part]
+		if !ok {
+			return Spec{}, fmt.Errorf("spec not found: %s", name)
 		}
-		if ov.BaseURL != "" {
-			merged.BaseURL = ov.BaseURL
+		// merge fields
+		if spec.Type != "" {
+			merged.Type = spec.Type
 		}
-		if ov.APIKey != "" {
-			merged.APIKey = ov.APIKey
+		if spec.BaseURL != "" {
+			merged.BaseURL = spec.BaseURL
 		}
-		if ov.Model != "" {
-			merged.Model = ov.Model
+		if spec.APIKey != "" {
+			merged.APIKey = spec.APIKey
 		}
-		if ov.ContextTokens != 0 {
-			merged.ContextTokens = ov.ContextTokens
+		if spec.Model != "" {
+			merged.Model = spec.Model
 		}
-		if ov.MaxGenerateTokens != nil {
-			merged.MaxGenerateTokens = ov.MaxGenerateTokens
+		if spec.ContextTokens != 0 {
+			merged.ContextTokens = spec.ContextTokens
 		}
-		if ov.Temperature != nil {
-			merged.Temperature = ov.Temperature
+		if spec.MaxGenerateTokens != nil {
+			merged.MaxGenerateTokens = spec.MaxGenerateTokens
 		}
-		if ov.DisableSearch != nil {
-			merged.DisableSearch = ov.DisableSearch
+		if spec.Temperature != nil {
+			merged.Temperature = spec.Temperature
 		}
-		if ov.DisableTools != nil {
-			merged.DisableTools = ov.DisableTools
+		if spec.DisableSearch != nil {
+			merged.DisableSearch = spec.DisableSearch
 		}
-		if ov.ExtraArguments != nil {
-			merged.ExtraArguments = ov.ExtraArguments
+		if spec.DisableTools != nil {
+			merged.DisableTools = spec.DisableTools
 		}
-		if ov.IsOpenRouter != nil {
-			merged.IsOpenRouter = ov.IsOpenRouter
+		if spec.ExtraArguments != nil {
+			merged.ExtraArguments = spec.ExtraArguments
 		}
-		if ov.APIVersion != "" {
-			merged.APIVersion = ov.APIVersion
+		if spec.IsOpenRouter != nil {
+			merged.IsOpenRouter = spec.IsOpenRouter
 		}
-		if ov.IsAzure != nil {
-			merged.IsAzure = ov.IsAzure
+		if spec.APIVersion != "" {
+			merged.APIVersion = spec.APIVersion
 		}
-		if ov.ServiceTier != "" {
-			merged.ServiceTier = ov.ServiceTier
+		if spec.IsAzure != nil {
+			merged.IsAzure = spec.IsAzure
 		}
-		if ov.ReasoningEffort != "" {
-			merged.ReasoningEffort = ov.ReasoningEffort
+		if spec.ServiceTier != "" {
+			merged.ServiceTier = spec.ServiceTier
 		}
-		if ov.NoProxy != nil {
-			merged.NoProxy = ov.NoProxy
+		if spec.ReasoningEffort != "" {
+			merged.ReasoningEffort = spec.ReasoningEffort
 		}
+		if spec.NoProxy != nil {
+			merged.NoProxy = spec.NoProxy
+		}
+		// descend into variants
+		nextMap := make(map[string]Spec, len(spec.Variants))
+		for _, v := range spec.Variants {
+			if v.Name != "" {
+				nextMap[v.Name] = v
+			}
+		}
+		currentMap = nextMap
 	}
+
 	merged.Name = name
-
 	return merged, nil
 }
 
@@ -211,4 +230,3 @@ func (Module) GetGenerator(
 		return nil, fmt.Errorf("invalid model: %s", name)
 	}
 }
-

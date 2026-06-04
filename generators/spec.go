@@ -4,6 +4,8 @@ const SpecTheory = `
 Spec merging uses pointer values for optional booleans (DisableSearch, DisableTools, IsOpenRouter, IsAzure, NoProxy)
 to distinguish between "explicitly set to false" and "not provided". This allows a child spec to disable a feature
 that a parent spec enabled.
+Variants allow hierarchical organization of specs where child specs are nested under their parent.
+The Name field represents the path component at its level, not the full path.
 `
 
 type Spec struct {
@@ -25,4 +27,5 @@ type Spec struct {
 	ReasoningEffort   string         `json:"reasoning_effort"`
 	Aliases           []string       `json:"aliases"`
 	NoProxy           *bool          `json:"no_proxy,omitempty"`
+	Variants          []Spec         `json:"variants,omitempty"`
 }

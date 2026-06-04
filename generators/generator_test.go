@@ -300,30 +300,34 @@ func TestDeepseekTokenCounter(t *testing.T) {
 }
 
 func TestResolveSpec(t *testing.T) {
-	specs := []Spec{
-		{
-			Name:          "base",
-			Type:          "gemini",
-			Model:         "base-model",
-			ContextTokens: 100,
-			Temperature:   new(float32(0.5)),
-			DisableSearch: new(true),
-		},
-		{
-			Name:              "base/variant1",
-			Type:              "openai",
-			APIKey:            "key1",
-			MaxGenerateTokens: new(50),
-		},
-		{
-			Name:          "base/variant1/sub",
-			ContextTokens: 200,
-			Temperature:   new(float32(0.8)),
+	base := Spec{
+		Name:          "base",
+		Type:          "gemini",
+		Model:         "base-model",
+		ContextTokens: 100,
+		Temperature:   new(float32(0.5)),
+		DisableSearch: new(true),
+		Variants: []Spec{
+			{
+				Name:              "variant1",
+				Type:              "openai",
+				APIKey:            "key1",
+				MaxGenerateTokens: new(50),
+				Aliases:           []string{"myvariant"},
+				Variants: []Spec{
+					{
+						Name:          "sub",
+						ContextTokens: 200,
+						Temperature:   new(float32(0.8)),
+					},
+				},
+			},
 		},
 	}
+	roots := []Spec{base}
 
 	t.Run("resolve base", func(t *testing.T) {
-		s, err := resolveSpec("base", specs)
+		s, err := resolveSpec("base", roots)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -351,7 +355,7 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("resolve variant1", func(t *testing.T) {
-		s, err := resolveSpec("base/variant1", specs)
+		s, err := resolveSpec("base/variant1", roots)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,7 +386,7 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("resolve sub", func(t *testing.T) {
-		s, err := resolveSpec("base/variant1/sub", specs)
+		s, err := resolveSpec("base/variant1/sub", roots)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -413,11 +417,21 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("override disable search to false", func(t *testing.T) {
-		localSpecs := []Spec{
-			{Name: "base", Type: "gemini", DisableSearch: new(true)},
-			{Name: "base/variant", Type: "openai", DisableSearch: new(false)},
+		localRoots := []Spec{
+			{
+				Name:          "base",
+				Type:          "gemini",
+				DisableSearch: new(true),
+				Variants: []Spec{
+					{
+						Name:          "variant",
+						Type:          "openai",
+						DisableSearch: new(false),
+					},
+				},
+			},
 		}
-		s, err := resolveSpec("base/variant", localSpecs)
+		s, err := resolveSpec("base/variant", localRoots)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -427,14 +441,14 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("resolve alias", func(t *testing.T) {
-		localSpecs := []Spec{
+		localRoots := []Spec{
 			{
 				Name:    "base",
 				Type:    "gemini",
 				Aliases: []string{"mybase"},
 			},
 		}
-		s, err := resolveSpec("mybase", localSpecs)
+		s, err := resolveSpec("mybase", localRoots)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -447,16 +461,12 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("resolve alias of variant", func(t *testing.T) {
-		localSpecs := []Spec{
-			{Name: "base", Type: "gemini"},
-			{Name: "base/variant", Type: "openai", Aliases: []string{"myvariant"}},
-		}
-		s, err := resolveSpec("myvariant", localSpecs)
+		s, err := resolveSpec("myvariant", roots)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s.Name != "base/variant" {
-			t.Errorf("expected name 'base/variant', got %q", s.Name)
+		if s.Name != "base/variant1" {
+			t.Errorf("expected name 'base/variant1', got %q", s.Name)
 		}
 		if s.Type != "openai" {
 			t.Errorf("expected type openai, got %q", s.Type)
@@ -464,17 +474,16 @@ func TestResolveSpec(t *testing.T) {
 	})
 
 	t.Run("resolve not found", func(t *testing.T) {
-		_, err := resolveSpec("nonexistent", specs)
+		_, err := resolveSpec("nonexistent", roots)
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
 	t.Run("resolve empty name", func(t *testing.T) {
-		_, err := resolveSpec("/", specs)
+		_, err := resolveSpec("/", roots)
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 }
-
