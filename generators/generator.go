@@ -124,6 +124,11 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if v.Name != "" {
 				nextMap[v.Name] = v
 			}
+			for _, alias := range v.Aliases {
+				if alias != "" {
+					nextMap[alias] = v
+				}
+			}
 		}
 		currentMap = nextMap
 	}

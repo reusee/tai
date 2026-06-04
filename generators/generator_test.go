@@ -473,6 +473,28 @@ func TestResolveSpec(t *testing.T) {
 		}
 	})
 
+	t.Run("resolve alias as path element", func(t *testing.T) {
+		s, err := resolveSpec("base/myvariant/sub", roots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/myvariant/sub" {
+			t.Errorf("expected name 'base/myvariant/sub', got %q", s.Name)
+		}
+		if s.Model != "base-model" {
+			t.Errorf("expected model base-model, got %q", s.Model)
+		}
+		if s.ContextTokens != 200 {
+			t.Errorf("expected context tokens 200, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.8 {
+			t.Errorf("expected temperature 0.8, got %v", s.Temperature)
+		}
+		if s.MaxGenerateTokens == nil || *s.MaxGenerateTokens != 50 {
+			t.Errorf("expected max generate tokens 50, got %v", s.MaxGenerateTokens)
+		}
+	})
+
 	t.Run("resolve not found", func(t *testing.T) {
 		_, err := resolveSpec("nonexistent", roots)
 		if err == nil {
