@@ -19,7 +19,7 @@ func testGenerator(
 ) {
 
 	t.Run("func call", func(t *testing.T) {
-		loader := configs.NewLoader([]string{}, "")
+		loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 		scope := dscope.New(
 			modes.ForTest(t),
 			&loader,
@@ -105,7 +105,7 @@ func testGenerator(
 	})
 
 	t.Run("structured output", func(t *testing.T) {
-		loader := configs.NewLoader([]string{}, "")
+		loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 		scope := dscope.New(
 			modes.ForTest(t),
 			&loader,
@@ -177,7 +177,7 @@ func testGenerator(
 
 func TestNonStreaming(t *testing.T) {
 	test := func(t *testing.T, newGenerator any) {
-		loader := configs.NewLoader([]string{}, "")
+		loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 		scope := dscope.New(
 			modes.ForTest(t),
 			&loader,

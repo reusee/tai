@@ -62,5 +62,5 @@ func (Module) ConfigsLoader(
 		}
 	}
 
-	return configs.NewLoader(paths, schema)
+	return configs.NewLoader(paths, configs.LoaderConfig{Schema: schema})
 }

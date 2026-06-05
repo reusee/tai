@@ -12,7 +12,7 @@ list?: [...int]
 `
 
 func TestLoaderAssignFirst(t *testing.T) {
-	loader := NewLoader([]string{"test.cue"}, testSchema)
+	loader := NewLoader([]string{"test.cue"}, LoaderConfig{Schema: testSchema})
 
 	var str string
 	err := loader.AssignFirst("str", &str)
@@ -43,7 +43,7 @@ func TestLoaderIterCueValues(t *testing.T) {
 	loader := NewLoader([]string{
 		"test.cue",
 		"test2.cue",
-	}, testSchema)
+	}, LoaderConfig{Schema: testSchema})
 
 	var strs []string
 	for value, err := range loader.IterCueValues("str") {
@@ -73,7 +73,7 @@ func TestLoaderIterCueValues(t *testing.T) {
 func TestUnknownField(t *testing.T) {
 	loader := NewLoader([]string{
 		"bad.cue",
-	}, testSchema)
+	}, LoaderConfig{Schema: testSchema})
 	var str string
 	err := loader.AssignFirst("unknown_field", &str)
 	if err == nil {

@@ -27,7 +27,7 @@ func TestGemini(t *testing.T) {
 }
 
 func TestGeminiListModels(t *testing.T) {
-	loader := configs.NewLoader([]string{}, "")
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
 		&loader,
@@ -63,4 +63,3 @@ func TestGeminiListModels(t *testing.T) {
 
 	})
 }
-

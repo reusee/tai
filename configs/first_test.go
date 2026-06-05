@@ -5,7 +5,7 @@ import (
 )
 
 func TestFirst(t *testing.T) {
-	loader := NewLoader([]string{"test.cue"}, testSchema)
+	loader := NewLoader([]string{"test.cue"}, LoaderConfig{Schema: testSchema})
 
 	str := First[string](loader, "str")
 	if str != "bar" {

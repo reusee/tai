@@ -12,7 +12,7 @@ func TestIsLocalAddr(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, "")),
+		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Call(func(
 		isLocalAddr IsLocalAddr,
 	) {

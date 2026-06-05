@@ -15,7 +15,7 @@ import (
 func TestContextPrompt(t *testing.T) {
 	dscope.New(
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, "")),
+		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Fork(
 		func() FileNameOK {
@@ -61,7 +61,7 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, "")),
+		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,

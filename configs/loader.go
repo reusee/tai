@@ -13,15 +13,24 @@ type Loader struct {
 	getRoots func() ([]rootInfo, error)
 }
 
-func NewLoader(filePaths []string, schemaSrc string) Loader {
+// LoaderConfig holds configuration for creating a Loader.
+type LoaderConfig struct {
+	// Schema is the CUE schema source used to validate loaded configuration files.
+	// If empty, no validation is performed.
+	Schema string
+	// Globals provides pre-defined values for the CUE evaluation context.
+	Globals map[string]any
+}
+
+func NewLoader(filePaths []string, cfg LoaderConfig) Loader {
 	return Loader{
 
 		getRoots: sync.OnceValues(func() (ret []rootInfo, err error) {
 
 			var schema cue.Value
-			if schemaSrc != "" {
+			if cfg.Schema != "" {
 				ctx := cuecontext.New()
-				schema = ctx.CompileString("close({" + schemaSrc + "})")
+				schema = ctx.CompileString("close({" + cfg.Schema + "})")
 				if err := schema.Err(); err != nil {
 					return nil, err
 				}

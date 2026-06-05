@@ -9,7 +9,7 @@ import (
 )
 
 func TestGetDefaultGenerator(t *testing.T) {
-	loader := configs.NewLoader([]string{}, "")
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		new(Module),
 		&loader,

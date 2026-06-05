@@ -11,11 +11,11 @@ import (
 func TestGeneratorSpecs(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
-		dscope.Provide(configs.NewLoader(nil, "")),
+		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
 		new(Module),
 	).Fork(
 		func() configs.Loader {
-			return configs.NewLoader([]string{"test_generator_specs.cue"}, "")
+			return configs.NewLoader([]string{"test_generator_specs.cue"}, configs.LoaderConfig{})
 		},
 	).Call(func(
 		get GetGenerator,
