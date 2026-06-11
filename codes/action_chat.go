@@ -44,13 +44,9 @@ func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
 			}
 			next := cont
 			if !*noChat {
-				next = a.BuildChat()(generator, &generators.GenerateOptions{
-					NonStreaming: true,
-				})(cont)
+				next = a.BuildChat()(generator, nil)(cont)
 			}
-			return a.BuildGenerate()(generator, &generators.GenerateOptions{
-				NonStreaming: true,
-			})(next), state, nil
+			return a.BuildGenerate()(generator, nil)(next), state, nil
 		}
 
 		if *noChat {
@@ -74,4 +70,3 @@ func (a ActionChat) DefineCmds() {
 func (a ActionChat) InitialGenerator() (generators.Generator, error) {
 	return a.GetDefaultGenerator()()
 }
-
