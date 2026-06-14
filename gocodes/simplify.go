@@ -24,7 +24,8 @@ const (
 Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
 The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
 Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
-Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.`
+Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
+File ordering (see FileOrderingTheory in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.`
 
 	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
@@ -657,4 +658,3 @@ func matchParts(nameParts, patternParts []string) bool {
 	}
 	return matchParts(nameParts[1:], patternParts[1:])
 }
-

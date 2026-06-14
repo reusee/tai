@@ -33,6 +33,19 @@ func (Module) IncludeStdLib() IncludeStdLib {
 	return IncludeStdLib(*includeStdLib)
 }
 
+const FileOrderingTheory = `
+Files are sorted so that stable context files (dependencies, non-root packages) appear
+first and volatile focus files (root package) appear last. This ordering maximizes the
+common prefix between consecutive requests: when only focus files change, all preceding
+context files remain identical, allowing LLM prefix caching to reuse cached key-value
+states for unchanged content.
+
+Sort tiebreakers rely exclusively on path-based identifiers (package path, file path) to
+guarantee deterministic ordering across runs. Volatile attributes such as modification
+time and file size are intentionally excluded to prevent spurious reordering that would
+invalidate cached prefixes.
+`
+
 type File struct {
 	Path                    string
 	IsGoFile                bool
@@ -344,30 +357,13 @@ func (Module) Files(
 				return -cmp.Compare(a.PackagePathDepth, b.PackagePathDepth)
 			}
 
-			// package name
+			// package path alphabetical
 			if a.Package.PkgPath != b.Package.PkgPath {
 				return cmp.Compare(a.Package.PkgPath, b.Package.PkgPath)
 			}
 
-			// ModTime ascending
-			if !a.ModTime.Equal(b.ModTime) {
-				return cmp.Compare(a.ModTime.UnixNano(), b.ModTime.UnixNano())
-			}
-
-			// large file last
-			aSize := 0
-			if a.TokenFile != nil {
-				aSize = a.TokenFile.Size()
-			} else {
-				aSize = len(a.Content)
-			}
-			bSize := 0
-			if b.TokenFile != nil {
-				bSize = b.TokenFile.Size()
-			} else {
-				bSize = len(b.Content)
-			}
-			return cmp.Compare(aSize, bSize)
+			// file path alphabetical — final stable tiebreaker
+			return cmp.Compare(a.Path, b.Path)
 		})
 
 		// filter
