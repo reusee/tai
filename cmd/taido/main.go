@@ -34,7 +34,6 @@ func main() {
 		modes.ForProduction(),
 	).Fork(
 		dscope.Provide(codes.CodeProviderName("any")),
-		dscope.Provide(codes.DefaultDiffHandlerName("unified")),
 	)
 
 	scope, err := taiconfigs.TaigoFork(scope)

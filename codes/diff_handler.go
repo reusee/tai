@@ -6,6 +6,7 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 )
 
@@ -31,7 +32,9 @@ func (Module) DefaultDiffHandlerName() DefaultDiffHandlerName {
 func (Module) DiffHandler(
 	name DiffHandlerName,
 	unified UnifiedDiff,
+	logger logs.Logger,
 ) codetypes.DiffHandler {
+	logger.Info("diff handler", "name", name)
 	switch name {
 	case "unified":
 		return unified
@@ -90,3 +93,4 @@ func Foo() {
 func (x XmlDiffHandler) RestatePrompt() string {
 	return `Please output your file changes using the specified XML format.`
 }
+
