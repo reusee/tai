@@ -3,10 +3,12 @@ package codes
 import (
 	"bytes"
 	"cmp"
+	"encoding/xml"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -159,11 +161,23 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 }
 
 func ApplyHunks(root *os.Root, aiFilePath string) error {
-	for {
-		content, err := os.ReadFile(aiFilePath)
-		if err != nil {
-			return err
+	content, err := os.ReadFile(aiFilePath)
+	if err != nil {
+		return err
+	}
+
+	// try XML format
+	if hunks, err := parseXmlHunks(content); err == nil && len(hunks) > 0 {
+		for _, h := range hunks {
+			if err := applyHunk(root, h); err != nil {
+				return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
+			}
 		}
+		return os.WriteFile(aiFilePath, nil, 0644)
+	}
+
+	// legacy format
+	for {
 		h, start, end, ok := parseFirstHunk(content)
 		if !ok {
 			break
@@ -171,12 +185,16 @@ func ApplyHunks(root *os.Root, aiFilePath string) error {
 		if err := applyHunk(root, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
-		// Remove the successfully applied hunk from the file content
 		newContent := append(content[:start], content[end:]...)
 		if err := os.WriteFile(aiFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
 			return err
 		}
+		content, err = os.ReadFile(aiFilePath)
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -265,6 +283,54 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 		startOffset += len(line) + 1
 	}
 	return
+}
+
+func parseXmlHunks(content []byte) ([]Hunk, error) {
+	dec := xml.NewDecoder(bytes.NewReader(content))
+	var hunks []Hunk
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || start.Name.Local != "change" {
+			continue
+		}
+		h := Hunk{}
+		for _, attr := range start.Attr {
+			switch attr.Name.Local {
+			case "op":
+				h.Op = attr.Value
+			case "target":
+				h.Target = attr.Value
+			case "file-path":
+				h.FilePath = attr.Value
+			}
+		}
+		var body bytes.Buffer
+		for {
+			tok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			switch t := tok.(type) {
+			case xml.EndElement:
+				if t.Name.Local == "change" {
+					h.Body = strings.TrimSpace(body.String())
+					hunks = append(hunks, h)
+					goto next
+				}
+			case xml.CharData:
+				body.Write(t)
+			}
+		}
+	next:
+	}
+	return hunks, nil
 }
 
 func applyHunk(root *os.Root, h Hunk) error {
