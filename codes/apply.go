@@ -160,44 +160,6 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 	return ""
 }
 
-func ApplyHunks(root *os.Root, aiFilePath string) error {
-	content, err := os.ReadFile(aiFilePath)
-	if err != nil {
-		return err
-	}
-
-	// try XML format
-	if hunks, remainingContent, err := parseXmlHunks(content); err == nil && len(hunks) > 0 {
-		for _, h := range hunks {
-			if err := applyHunk(root, h); err != nil {
-				return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
-			}
-		}
-		return os.WriteFile(aiFilePath, bytes.TrimSpace(remainingContent), 0644)
-	}
-
-	// legacy format
-	for {
-		h, start, end, ok := parseFirstHunk(content)
-		if !ok {
-			break
-		}
-		if err := applyHunk(root, h); err != nil {
-			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
-		}
-		newContent := append(content[:start], content[end:]...)
-		if err := os.WriteFile(aiFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
-			return err
-		}
-		content, err = os.ReadFile(aiFilePath)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	lines := bytes.Split(content, []byte("\n"))
 	var startOffset int

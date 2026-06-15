@@ -2,6 +2,7 @@ package codes
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
@@ -60,4 +61,8 @@ func (d DumbDiffHandler) SystemPrompt() string {
 
 func (d DumbDiffHandler) RestatePrompt() string {
 	return ""
+}
+
+func (d DumbDiffHandler) Apply(root *os.Root, diffFilePath string) error {
+	return nil
 }

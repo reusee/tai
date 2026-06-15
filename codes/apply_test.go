@@ -40,7 +40,7 @@ func (t T) Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +83,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +119,7 @@ func New() {}
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(targetFile)
@@ -165,7 +165,7 @@ func (t T) Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +208,7 @@ func NonExistent() {
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	newContent, err := os.ReadFile(targetFile)
@@ -246,7 +246,7 @@ func Existing() {}
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 	newContent, err := os.ReadFile(targetFile)
@@ -294,7 +294,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -342,7 +342,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatalf("ApplyHunks failed: %v", err)
 	}
 
@@ -386,7 +386,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -431,7 +431,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -480,7 +480,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,7 +528,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -571,7 +571,7 @@ func Bar() { println("b") }
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -616,7 +616,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -663,7 +663,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -709,7 +709,7 @@ Hope this helps!
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -751,7 +751,7 @@ func Foo() {}
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -793,7 +793,7 @@ const A = 3
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -837,7 +837,7 @@ const (
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -890,7 +890,7 @@ func (t T) Bar() { println("new bar") }
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -936,7 +936,7 @@ A = 2
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -980,7 +980,7 @@ func (f *foo) M() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1023,7 +1023,7 @@ func (f *foo) M() {}
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatalf("ApplyHunks failed: %v", err)
 	}
 
@@ -1076,7 +1076,7 @@ import (
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1119,7 +1119,7 @@ new theory content
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1156,7 +1156,7 @@ func TestApplyHunksRawValueReplacementInt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1198,7 +1198,7 @@ import "fmt"
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1253,7 +1253,7 @@ import (
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1306,7 +1306,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1352,7 +1352,7 @@ A = 42 )
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1388,7 +1388,7 @@ Hello World
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatalf("Creation of non-Go file failed: %v", err)
 	}
 	content, err := os.ReadFile(txtFile)
@@ -1406,7 +1406,7 @@ New Content
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = ApplyHunks(root, aiFile)
+	err = (UnifiedDiff{}).Apply(root, aiFile)
 	if err == nil {
 		t.Error("expected error when modifying existing non-Go file, got nil")
 	} else if !strings.Contains(err.Error(), "only .go files are supported") {
@@ -1421,7 +1421,7 @@ Content
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = ApplyHunks(root, aiFile)
+	err = (UnifiedDiff{}).Apply(root, aiFile)
 	if err == nil {
 		t.Error("expected error when MODIFY on non-existent non-Go file, got nil")
 	}
@@ -1459,7 +1459,7 @@ func (f *foo) Bar() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (UnifiedDiff{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1515,7 +1515,7 @@ func Foo() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1596,7 +1596,7 @@ func Bar() {
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1663,7 +1663,7 @@ func Bar() {}
 		t.Fatal(err)
 	}
 
-	if err := ApplyHunks(root, aiFile); err != nil {
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
 		t.Fatal(err)
 	}
 

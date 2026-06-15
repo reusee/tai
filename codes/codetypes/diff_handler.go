@@ -1,9 +1,14 @@
 package codetypes
 
-import "github.com/reusee/tai/generators"
+import (
+	"os"
+
+	"github.com/reusee/tai/generators"
+)
 
 type DiffHandler interface {
 	Functions() []*generators.Function
 	SystemPrompt() string
 	RestatePrompt() string
+	Apply(root *os.Root, diffFilePath string) error
 }

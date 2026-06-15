@@ -1,8 +1,17 @@
 package codes
 
-import "github.com/reusee/tai/generators"
+import (
+	"bytes"
+	"fmt"
+	"os"
+
+	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/generators"
+)
 
 type XmlDiffHandler struct{}
+
+var _ codetypes.DiffHandler = XmlDiffHandler{}
 
 func (x XmlDiffHandler) Functions() []*generators.Function {
 	return nil
@@ -41,4 +50,24 @@ func Foo() {
 
 func (x XmlDiffHandler) RestatePrompt() string {
 	return `Please ensure your entire response is a valid XML document with the root element <xml>. Do not output any text outside the <xml> root.`
+}
+
+func (x XmlDiffHandler) Apply(root *os.Root, diffFilePath string) error {
+	content, err := os.ReadFile(diffFilePath)
+	if err != nil {
+		return err
+	}
+
+	hunks, remainingContent, err := parseXmlHunks(content)
+	if err != nil {
+		return err
+	}
+
+	for _, h := range hunks {
+		if err := applyHunk(root, h); err != nil {
+			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
+		}
+	}
+
+	return os.WriteFile(diffFilePath, bytes.TrimSpace(remainingContent), 0644)
 }
