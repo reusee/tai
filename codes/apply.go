@@ -167,13 +167,13 @@ func ApplyHunks(root *os.Root, aiFilePath string) error {
 	}
 
 	// try XML format
-	if hunks, err := parseXmlHunks(content); err == nil && len(hunks) > 0 {
+	if hunks, remainingContent, err := parseXmlHunks(content); err == nil && len(hunks) > 0 {
 		for _, h := range hunks {
 			if err := applyHunk(root, h); err != nil {
 				return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 			}
 		}
-		return os.WriteFile(aiFilePath, nil, 0644)
+		return os.WriteFile(aiFilePath, bytes.TrimSpace(remainingContent), 0644)
 	}
 
 	// legacy format
@@ -285,21 +285,26 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	return
 }
 
-func parseXmlHunks(content []byte) ([]Hunk, error) {
+func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	dec := xml.NewDecoder(bytes.NewReader(content))
-	var hunks []Hunk
+	var ranges [][2]int64
+
 	for {
+		offset := dec.InputOffset()
 		tok, err := dec.Token()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		start, ok := tok.(xml.StartElement)
 		if !ok || start.Name.Local != "change" {
 			continue
 		}
+
+		changeStart := offset
+
 		h := Hunk{}
 		for _, attr := range start.Attr {
 			switch attr.Name.Local {
@@ -315,13 +320,15 @@ func parseXmlHunks(content []byte) ([]Hunk, error) {
 		for {
 			tok, err := dec.Token()
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			switch t := tok.(type) {
 			case xml.EndElement:
 				if t.Name.Local == "change" {
 					h.Body = strings.TrimSpace(body.String())
 					hunks = append(hunks, h)
+					changeEnd := dec.InputOffset()
+					ranges = append(ranges, [2]int64{changeStart, changeEnd})
 					goto next
 				}
 			case xml.CharData:
@@ -330,7 +337,18 @@ func parseXmlHunks(content []byte) ([]Hunk, error) {
 		}
 	next:
 	}
-	return hunks, nil
+
+	if len(ranges) == 0 {
+		return hunks, content, nil
+	}
+	remaining = make([]byte, len(content))
+	copy(remaining, content)
+	for i := len(ranges) - 1; i >= 0; i-- {
+		r := ranges[i]
+		remaining = append(remaining[:r[0]], remaining[r[1]:]...)
+	}
+
+	return hunks, remaining, nil
 }
 
 func applyHunk(root *os.Root, h Hunk) error {

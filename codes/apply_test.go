@@ -1470,3 +1470,221 @@ func (f *foo) Bar() {
 		t.Errorf("duplicate method definition: %s", s)
 	}
 }
+
+func TestApplyHunksXmlDiff(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<!-- This is a reasoning comment that should be preserved -->
+<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() {
+	println("new")
+}
+]]>
+</change>
+<!-- Another comment that should remain -->
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify target file updated
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(newContent), "new") {
+		t.Errorf("target file not updated: %s", string(newContent))
+	}
+
+	// Verify AI file preserves non-change content
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if strings.Contains(aiStr, "<change") {
+		t.Errorf("change element not removed from AI file:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "This is a reasoning comment") {
+		t.Errorf("reasoning comment lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "Another comment") {
+		t.Errorf("second comment lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "<xml>") {
+		t.Errorf("root element lost:\n%s", aiStr)
+	}
+}
+
+func TestApplyHunksXmlDiffMultipleChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old foo")
+}
+
+func Bar() {
+	println("old bar")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<!-- Fix Foo -->
+<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() {
+	println("new foo")
+}
+]]>
+</change>
+<!-- Now fix Bar -->
+<change op="MODIFY" target="Bar" file-path="` + targetFile + `">
+<![CDATA[
+func Bar() {
+	println("new bar")
+}
+]]>
+</change>
+<!-- All done -->
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify both functions updated
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new foo") {
+		t.Errorf("Foo not updated: %s", s)
+	}
+	if !strings.Contains(s, "new bar") {
+		t.Errorf("Bar not updated: %s", s)
+	}
+
+	// Verify AI file preserves comments, removes both change elements
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if strings.Contains(aiStr, "<change") {
+		t.Errorf("change elements not fully removed:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "Fix Foo") {
+		t.Errorf("first comment lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "Now fix Bar") {
+		t.Errorf("second comment lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "All done") {
+		t.Errorf("third comment lost:\n%s", aiStr)
+	}
+}
+
+func TestApplyHunksXmlDiffDeletePreservesComments(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+
+func Bar() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<!-- Remove unused Foo -->
+<change op="DELETE" target="Foo" file-path="` + targetFile + `" />
+<!-- Keep Bar -->
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyHunks(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify Foo deleted
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Contains(s, "func Foo()") {
+		t.Errorf("Foo not deleted: %s", s)
+	}
+	if !strings.Contains(s, "func Bar()") {
+		t.Errorf("Bar incorrectly removed: %s", s)
+	}
+
+	// Verify AI file preserves comments
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if strings.Contains(aiStr, "<change") {
+		t.Errorf("change element not removed:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "Remove unused Foo") {
+		t.Errorf("comment lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "Keep Bar") {
+		t.Errorf("second comment lost:\n%s", aiStr)
+	}
+}
