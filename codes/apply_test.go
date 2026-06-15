@@ -1054,7 +1054,10 @@ func TestApplyHunksModifyBegin(t *testing.T) {
 
 import "os"
 
-func A() {}
+func A() {
+	os.Getenv("")
+	fmt.Println("")
+}
 `)
 	if err := os.WriteFile(targetFile, content, 0644); err != nil {
 		t.Fatal(err)
@@ -1179,7 +1182,9 @@ func TestApplyHunksAddAfterBeginImport(t *testing.T) {
 	targetFile := "test.go"
 	content := []byte(`package test
 
-func Foo() {}
+func Foo() {
+	fmt.Println("")
+}
 `)
 	if err := os.WriteFile(targetFile, content, 0644); err != nil {
 		t.Fatal(err)
@@ -1227,7 +1232,10 @@ func TestApplyHunksImportMerging(t *testing.T) {
 
 import "os"
 
-func Foo() {}
+func Foo() {
+	os.Getenv("")
+	fmt.Println("")
+}
 `)
 	if err := os.WriteFile(targetFile, content, 0644); err != nil {
 		t.Fatal(err)
