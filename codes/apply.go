@@ -250,6 +250,8 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	dec := xml.NewDecoder(bytes.NewReader(content))
 	var ranges [][2]int64
+	var foundRoot bool
+	var rootName string
 
 	for {
 		offset := dec.InputOffset()
@@ -261,7 +263,14 @@ func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 			return nil, nil, err
 		}
 		start, ok := tok.(xml.StartElement)
-		if !ok || start.Name.Local != "change" {
+		if !ok {
+			continue
+		}
+		if !foundRoot {
+			foundRoot = true
+			rootName = start.Name.Local
+		}
+		if start.Name.Local != "change" {
 			continue
 		}
 
@@ -300,6 +309,10 @@ func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	next:
 	}
 
+	if err := validateXmlHunks(hunks, foundRoot, rootName); err != nil {
+		return nil, nil, err
+	}
+
 	if len(ranges) == 0 {
 		return hunks, content, nil
 	}
@@ -311,6 +324,42 @@ func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	}
 
 	return hunks, remaining, nil
+}
+
+func validateXmlHunks(hunks []Hunk, foundRoot bool, rootName string) error {
+	if !foundRoot {
+		return fmt.Errorf("XML validation: missing root element, expected <xml>")
+	}
+	if rootName != "xml" {
+		return fmt.Errorf("XML validation: root element must be <xml>, got <%s>", rootName)
+	}
+
+	validOps := map[string]bool{
+		"MODIFY":     true,
+		"ADD_BEFORE": true,
+		"ADD_AFTER":  true,
+		"DELETE":     true,
+	}
+
+	for i, h := range hunks {
+		if h.Op == "" {
+			return fmt.Errorf("XML validation: change %d missing 'op' attribute", i+1)
+		}
+		if !validOps[h.Op] {
+			return fmt.Errorf("XML validation: change %d has invalid op %q, must be one of: MODIFY, ADD_BEFORE, ADD_AFTER, DELETE", i+1, h.Op)
+		}
+		if h.Target == "" {
+			return fmt.Errorf("XML validation: change %d missing 'target' attribute", i+1)
+		}
+		if h.FilePath == "" {
+			return fmt.Errorf("XML validation: change %d missing 'file-path' attribute", i+1)
+		}
+		if h.Op != "DELETE" && strings.TrimSpace(h.Body) == "" {
+			return fmt.Errorf("XML validation: change %d (%s) has empty body", i+1, h.Op)
+		}
+	}
+
+	return nil
 }
 
 func applyHunk(root *os.Root, h Hunk) error {

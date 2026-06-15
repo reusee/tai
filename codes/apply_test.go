@@ -1696,3 +1696,294 @@ func Bar() {}
 		t.Errorf("second comment lost:\n%s", aiStr)
 	}
 }
+
+func TestApplyHunksXmlDiffInvalidOp(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<change op="INVALID" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for invalid op, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffMissingTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<change op="MODIFY" target="" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for missing target, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffMissingFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<change op="MODIFY" target="Foo" file-path="">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for missing file-path, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffEmptyBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+</change>
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for empty body in MODIFY, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffDeleteEmptyBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+
+func Bar() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<change op="DELETE" target="Foo" file-path="` + targetFile + `" />
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatalf("DELETE with empty body should be valid: %v", err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(newContent), "func Foo()") {
+		t.Errorf("Foo not deleted")
+	}
+}
+
+func TestApplyHunksXmlDiffMissingRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for missing root element, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffWrongRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<html>
+<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>
+</html>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for wrong root element, got nil")
+	}
+}
+
+func TestApplyHunksXmlDiffNoChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`<xml>
+<!-- No changes needed -->
+</xml>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatalf("valid XML with no changes should succeed: %v", err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, newContent) {
+		t.Errorf("file should be unchanged")
+	}
+}
