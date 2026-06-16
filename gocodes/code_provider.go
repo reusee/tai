@@ -3,6 +3,7 @@ package gocodes
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/reusee/dscope"
@@ -57,10 +58,24 @@ func (c CodeProvider) Parts(
 			projectFiles[f.Path] = f
 		}
 
+		// Collect all files from IterFiles and sort them by path to ensure
+		// deterministic ordering. IterFiles may return files in file-system
+		// order which varies across runs; without sorting, the order of parts
+		// and the subset of files selected when the token budget is limited
+		// would both be non-deterministic, causing different user prompts on
+		// repeated executions.
+		var extraFiles []anytexts.FileInfo
 		for info, err := range c.AnyTexts().IterFiles(patterns) {
 			if err != nil {
 				return nil, err
 			}
+			extraFiles = append(extraFiles, info)
+		}
+		slices.SortFunc(extraFiles, func(a, b anytexts.FileInfo) int {
+			return strings.Compare(a.Path, b.Path)
+		})
+
+		for _, info := range extraFiles {
 
 			// if file is in project, mark it as do not simplify and skip adding here
 			if f, ok := projectFiles[info.Path]; ok {
