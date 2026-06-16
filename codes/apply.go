@@ -3,12 +3,10 @@ package codes
 import (
 	"bytes"
 	"cmp"
-	"encoding/xml"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -248,68 +246,40 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 }
 
 func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
-	dec := xml.NewDecoder(bytes.NewReader(content))
-	var ranges [][2]int64
-	var foundRoot bool
-	var rootName string
-
-	for {
-		offset := dec.InputOffset()
-		tok, err := dec.Token()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, nil, err
-		}
-		start, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		if !foundRoot {
-			foundRoot = true
-			rootName = start.Name.Local
-		}
-		if start.Name.Local != "change" {
-			continue
-		}
-
-		changeStart := offset
-
-		h := Hunk{}
-		for _, attr := range start.Attr {
-			switch attr.Name.Local {
-			case "op":
-				h.Op = attr.Value
-			case "target":
-				h.Target = attr.Value
-			case "file-path":
-				h.FilePath = attr.Value
-			}
-		}
-		var body bytes.Buffer
-		for {
-			tok, err := dec.Token()
-			if err != nil {
-				return nil, nil, err
-			}
-			switch t := tok.(type) {
-			case xml.EndElement:
-				if t.Name.Local == "change" {
-					h.Body = strings.TrimSpace(body.String())
-					hunks = append(hunks, h)
-					changeEnd := dec.InputOffset()
-					ranges = append(ranges, [2]int64{changeStart, changeEnd})
-					goto next
-				}
-			case xml.CharData:
-				body.Write(t)
-			}
-		}
-	next:
+	innerStart, innerEnd, rootName, err := findXmlRoot(content)
+	if err != nil {
+		return nil, nil, err
+	}
+	if rootName != "xml" {
+		return nil, nil, fmt.Errorf("XML validation: root element must be <xml>, got <%s>", rootName)
 	}
 
-	if err := validateXmlHunks(hunks, foundRoot, rootName); err != nil {
+	inner := content[innerStart:innerEnd]
+	changes, err := extractChanges(inner)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	type changeRange struct {
+		start int64
+		end   int64
+	}
+	var ranges []changeRange
+	for _, ch := range changes {
+		h := Hunk{
+			Op:       ch.op,
+			Target:   ch.target,
+			FilePath: ch.filePath,
+			Body:     ch.body,
+		}
+		hunks = append(hunks, h)
+		ranges = append(ranges, changeRange{
+			start: int64(innerStart) + ch.offsetStart,
+			end:   int64(innerStart) + ch.offsetEnd,
+		})
+	}
+
+	if err := validateXmlHunks(hunks, true, "xml"); err != nil {
 		return nil, nil, err
 	}
 
@@ -320,10 +290,213 @@ func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	copy(remaining, content)
 	for i := len(ranges) - 1; i >= 0; i-- {
 		r := ranges[i]
-		remaining = append(remaining[:r[0]], remaining[r[1]:]...)
+		remaining = append(remaining[:r.start], remaining[r.end:]...)
 	}
 
 	return hunks, remaining, nil
+}
+
+func findXmlRoot(content []byte) (innerStart, innerEnd int, rootName string, err error) {
+	idx := bytes.Index(content, []byte("<xml"))
+	if idx == -1 {
+		return 0, 0, "", fmt.Errorf("XML validation: missing root element, expected <xml>")
+	}
+	tagEnd := bytes.IndexByte(content[idx:], '>')
+	if tagEnd == -1 {
+		return 0, 0, "", fmt.Errorf("XML validation: unclosed <xml> tag")
+	}
+	innerStart = idx + tagEnd + 1
+	rootName = "xml"
+	endTag := []byte("</xml>")
+	endIdx := bytes.Index(content[innerStart:], endTag)
+	if endIdx == -1 {
+		return 0, 0, "", fmt.Errorf("XML validation: missing </xml>")
+	}
+	innerEnd = innerStart + endIdx
+	return innerStart, innerEnd, rootName, nil
+}
+
+type changeInfo struct {
+	op, target, filePath, body string
+	offsetStart, offsetEnd     int64
+}
+
+func extractChanges(inner []byte) ([]changeInfo, error) {
+	var changes []changeInfo
+	i := 0
+	for i < len(inner) {
+		idx := bytes.Index(inner[i:], []byte("<change"))
+		if idx == -1 {
+			break
+		}
+		idx += i
+
+		tagEnd, attrs, selfClose, err := parseStartTag(inner[idx:])
+		if err != nil {
+			i = idx + 1
+			continue
+		}
+		op := attrs["op"]
+		target := attrs["target"]
+		filePath := attrs["file-path"]
+
+		if selfClose {
+			changes = append(changes, changeInfo{
+				op:          op,
+				target:      target,
+				filePath:    filePath,
+				body:        "",
+				offsetStart: int64(idx),
+				offsetEnd:   int64(idx + tagEnd),
+			})
+			i = idx + tagEnd
+			continue
+		}
+
+		endTagStart, endTagEnd, found := findEndTag(inner[idx+tagEnd:], "change")
+		if !found {
+			i = idx + tagEnd
+			continue
+		}
+		endTagStart += idx + tagEnd
+		endTagEnd += idx + tagEnd
+
+		bodyBytes := inner[idx+tagEnd : endTagStart]
+		body := extractBody(bodyBytes)
+
+		changes = append(changes, changeInfo{
+			op:          op,
+			target:      target,
+			filePath:    filePath,
+			body:        body,
+			offsetStart: int64(idx),
+			offsetEnd:   int64(endTagEnd),
+		})
+		i = endTagEnd
+	}
+	return changes, nil
+}
+
+func parseStartTag(s []byte) (tagEnd int, attrs map[string]string, selfClose bool, err error) {
+	i := 1 // skip '<'
+	for i < len(s) && isNameChar(s[i]) {
+		i++
+	}
+	attrs = make(map[string]string)
+	for i < len(s) {
+		for i < len(s) && isSpace(s[i]) {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		if s[i] == '>' {
+			tagEnd = i + 1
+			return
+		}
+		if s[i] == '/' {
+			if i+1 < len(s) && s[i+1] == '>' {
+				selfClose = true
+				tagEnd = i + 2
+				return
+			}
+			i++
+			continue
+		}
+		nameStart := i
+		for i < len(s) && isNameChar(s[i]) {
+			i++
+		}
+		name := string(s[nameStart:i])
+		for i < len(s) && (isSpace(s[i]) || s[i] == '=') {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		var value string
+		if s[i] == '"' || s[i] == '\'' {
+			quote := s[i]
+			i++
+			valStart := i
+			for i < len(s) && s[i] != quote {
+				i++
+			}
+			value = string(s[valStart:i])
+			if i < len(s) {
+				i++
+			}
+		} else {
+			valStart := i
+			for i < len(s) && !isSpace(s[i]) && s[i] != '>' && s[i] != '/' {
+				i++
+			}
+			value = string(s[valStart:i])
+		}
+		attrs[name] = value
+	}
+	return 0, nil, false, fmt.Errorf("unclosed start tag")
+}
+
+func findEndTag(s []byte, name string) (endTagStart, endTagEnd int, found bool) {
+	depth := 1
+	i := 0
+	startPrefix := []byte("<" + name)
+	endTag := []byte("</" + name + ">")
+	for i < len(s) {
+		lt := bytes.IndexByte(s[i:], '<')
+		if lt == -1 {
+			break
+		}
+		lt += i
+		if bytes.HasPrefix(s[lt:], startPrefix) {
+			after := lt + len(startPrefix)
+			if after < len(s) {
+				ch := s[after]
+				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' || ch == '/' {
+					depth++
+					i = lt + len(startPrefix)
+					continue
+				}
+			}
+		}
+		if bytes.HasPrefix(s[lt:], endTag) {
+			depth--
+			if depth == 0 {
+				return lt, lt + len(endTag), true
+			}
+			i = lt + len(endTag)
+			continue
+		}
+		i = lt + 1
+	}
+	return 0, 0, false
+}
+
+func extractBody(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	start := bytes.Index(body, []byte("<![CDATA["))
+	if start != -1 {
+		start += len("<![CDATA[")
+		end := bytes.LastIndex(body, []byte("]]>"))
+		if end != -1 && end > start {
+			body = body[start:end]
+		} else {
+			body = body[start:]
+		}
+		return string(bytes.TrimSpace(body))
+	}
+	return string(bytes.TrimSpace(body))
+}
+
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func isNameChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-' || b == '_' || b == ':'
 }
 
 func validateXmlHunks(hunks []Hunk, foundRoot bool, rootName string) error {
@@ -1027,3 +1200,4 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
+
