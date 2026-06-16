@@ -2,8 +2,11 @@ package codes
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
@@ -90,16 +93,144 @@ func (x XmlDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 		return err
 	}
 
-	hunks, remainingContent, err := parseXmlHunks(content)
-	if err != nil {
+	// Validate root element
+	if err := validateXmlRoot(content); err != nil {
 		return err
 	}
 
-	for _, h := range hunks {
+	for {
+		h, start, end, ok, err := parseFirstXmlHunk(content)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+
 		if err := applyHunk(root, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
+
+		newContent := append(content[:start], content[end:]...)
+		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
+			return err
+		}
+		content, err = os.ReadFile(diffFilePath)
+		if err != nil {
+			return err
+		}
 	}
 
-	return os.WriteFile(diffFilePath, bytes.TrimSpace(remainingContent), 0644)
+	return nil
+}
+
+func validateXmlRoot(content []byte) error {
+	dec := xml.NewDecoder(bytes.NewReader(content))
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("XML validation: %w", err)
+	}
+	start, ok := tok.(xml.StartElement)
+	if !ok {
+		return fmt.Errorf("XML validation: missing root element, expected <xml>")
+	}
+	if start.Name.Local != "xml" {
+		return fmt.Errorf("XML validation: root element must be <xml>, got <%s>", start.Name.Local)
+	}
+	return nil
+}
+
+func parseFirstXmlHunk(content []byte) (h Hunk, start int, end int, ok bool, err error) {
+	dec := xml.NewDecoder(bytes.NewReader(content))
+	var foundRoot bool
+	var rootName string
+
+	for {
+		offset := dec.InputOffset()
+		tok, err := dec.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return h, 0, 0, false, err
+		}
+		startElem, isStart := tok.(xml.StartElement)
+		if !isStart {
+			continue
+		}
+		if !foundRoot {
+			foundRoot = true
+			rootName = startElem.Name.Local
+			if rootName != "xml" {
+				return h, 0, 0, false, fmt.Errorf("XML validation: root element must be <xml>, got <%s>", rootName)
+			}
+			continue
+		}
+		if startElem.Name.Local != "change" {
+			continue
+		}
+
+		changeStart := offset
+
+		h = Hunk{}
+		for _, attr := range startElem.Attr {
+			switch attr.Name.Local {
+			case "op":
+				h.Op = attr.Value
+			case "target":
+				h.Target = attr.Value
+			case "file-path":
+				h.FilePath = attr.Value
+			}
+		}
+
+		var body bytes.Buffer
+		for {
+			tok, err := dec.Token()
+			if err != nil {
+				return h, 0, 0, false, err
+			}
+			switch t := tok.(type) {
+			case xml.EndElement:
+				if t.Name.Local == "change" {
+					h.Body = strings.TrimSpace(body.String())
+					changeEnd := dec.InputOffset()
+					// Validate hunk
+					if err := validateSingleHunk(h, false); err != nil {
+						return h, 0, 0, false, err
+					}
+					return h, int(changeStart), int(changeEnd), true, nil
+				}
+			case xml.CharData:
+				body.Write(t)
+			}
+		}
+	}
+
+	return h, 0, 0, false, nil
+}
+
+func validateSingleHunk(h Hunk, isDelete bool) error {
+	if h.Op == "" {
+		return fmt.Errorf("XML validation: change missing 'op' attribute")
+	}
+	validOps := map[string]bool{
+		"MODIFY":     true,
+		"ADD_BEFORE": true,
+		"ADD_AFTER":  true,
+		"DELETE":     true,
+	}
+	if !validOps[h.Op] {
+		return fmt.Errorf("XML validation: change has invalid op %q, must be one of: MODIFY, ADD_BEFORE, ADD_AFTER, DELETE", h.Op)
+	}
+	if h.Target == "" {
+		return fmt.Errorf("XML validation: change missing 'target' attribute")
+	}
+	if h.FilePath == "" {
+		return fmt.Errorf("XML validation: change missing 'file-path' attribute")
+	}
+	if h.Op != "DELETE" && strings.TrimSpace(h.Body) == "" {
+		return fmt.Errorf("XML validation: change (%s) has empty body", h.Op)
+	}
+	return nil
 }
