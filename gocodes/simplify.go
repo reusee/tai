@@ -25,7 +25,12 @@ Context is useful for explanation and cross-file reasoning, but its budget must 
 The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
 Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
 Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
-File ordering (see FileOrderingTheory in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.`
+File ordering (see FileOrderingTheory in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
+
+The context token budget is fixed at a constant value (maximumContextTokenBudget) rather than derived from focus file size.
+A fixed budget ensures that context files are simplified consistently across requests regardless of changes to focus files,
+preserving the prefix cache. A variable budget tied to focus file size would cause context file inclusion/exclusion to vary
+whenever focus files are edited, defeating prefix caching for the entire prompt.`
 
 	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
@@ -35,19 +40,13 @@ var showTokenCounts = cmds.Switch("-show-token-counts")
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
+// calculateMaxContextTokens returns the fixed token budget for context (non-root) files.
+// The budget is constant (maximumContextTokenBudget) to ensure that context files are
+// simplified to the same level every request, preserving the LLM prefix cache.
+// When focus files change, only focus files differ in the prompt; all preceding context
+// content remains byte-identical and fully cacheable.
 func calculateMaxContextTokens(focusTokens int) int {
-	if focusTokens < 0 {
-		focusTokens = 0
-	}
-
-	maxContextTokens := focusTokens / 3
-	if maxContextTokens < minimumContextTokenBudget {
-		return minimumContextTokenBudget
-	}
-	if maxContextTokens > maximumContextTokenBudget {
-		return maximumContextTokenBudget
-	}
-	return maxContextTokens
+	return maximumContextTokenBudget
 }
 
 func (Module) SimplifyFiles(

@@ -1,10 +1,12 @@
 package anytexts
 
 import (
+	"cmp"
 	"io"
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -76,6 +78,13 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				if err != nil {
 					return false, err
 				}
+				// Sort entries by name for deterministic ordering across filesystems.
+				// os.ReadDir does not guarantee alphabetical order; sorting here
+				// ensures that prefix caching is not invalidated by filesystem-dependent
+				// entry ordering.
+				slices.SortStableFunc(entries, func(a, b os.DirEntry) int {
+					return cmp.Compare(a.Name(), b.Name())
+				})
 				for _, entry := range entries {
 					queue = append(queue, filepath.Join(path, entry.Name()))
 				}
