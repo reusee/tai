@@ -253,7 +253,16 @@ func (Module) Files(
 			}
 		}
 		// include .md files in root package directories
-		for dir, pkg := range rootPkgDirs {
+		// Sort directories for deterministic ordering; Go map iteration is non-deterministic
+		// and would cause markdown files to be included in a different order each run,
+		// invalidating the LLM prefix cache.
+		sortedRootDirs := make([]string, 0, len(rootPkgDirs))
+		for dir := range rootPkgDirs {
+			sortedRootDirs = append(sortedRootDirs, dir)
+		}
+		slices.Sort(sortedRootDirs)
+		for _, dir := range sortedRootDirs {
+			pkg := rootPkgDirs[dir]
 			entries, err := os.ReadDir(dir)
 			if err != nil {
 				continue
@@ -276,7 +285,16 @@ func (Module) Files(
 			}
 		}
 
-		for path, pkg := range nonGoFilePaths {
+		// Sort nonGoFilePaths for deterministic ordering; Go map iteration is non-deterministic
+		// and would cause non-Go files to be included in a different order each run,
+		// invalidating the LLM prefix cache.
+		sortedNonGoPaths := make([]string, 0, len(nonGoFilePaths))
+		for path := range nonGoFilePaths {
+			sortedNonGoPaths = append(sortedNonGoPaths, path)
+		}
+		slices.Sort(sortedNonGoPaths)
+		for _, path := range sortedNonGoPaths {
+			pkg := nonGoFilePaths[path]
 			content, err := os.ReadFile(path)
 			if err != nil {
 				logger.Warn("cannot read non-go file", "path", path, "error", err)
