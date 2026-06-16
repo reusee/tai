@@ -21,10 +21,9 @@ func init() {
 }
 
 func main() {
+	cmds.Execute(os.Args[1:])
+
 	target := ".AI"
-	if len(os.Args) > 1 {
-		target = os.Args[1]
-	}
 	root, err := os.OpenRoot(".")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
