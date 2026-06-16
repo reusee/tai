@@ -30,7 +30,7 @@ To propose changes to files, include <change> elements inside the <xml> root, wi
 - file-path: the path to the file to modify.
 
 The body of the <change> element must contain the new code exactly as it should appear.
-If the body contains characters that are special in XML (like <, >, &), you MUST enclose the entire body in a <![CDATA[ ... ]]> section.
+If the body contains characters that are special in XML (like <, >, &), you generally MUST enclose the entire body in a <![CDATA[ ... ]]> section. However, CDATA sections cannot contain the literal substring ']]>'. If your Go code contains ']]>', using CDATA will cause a parsing error. Therefore, when the code you generate includes ']]>', you MUST NOT use CDATA for that change; instead, escape the special XML characters using standard XML entities: replace '<' with '&lt;', '>' with '&gt;', and '&' with '&amp;'. For all other code, you can continue using CDATA.
 
 Example:
 <xml>
@@ -71,6 +71,8 @@ func (x XmlDiffHandler) RestatePrompt() string {
 **IMPORTANT**: 
 1. Each <change> element must contain the COMPLETE declaration. Do not use ellipsis (...) or placeholders. Omissions will break the automated file update process.
 2. Every <change> must target exactly ONE top-level declaration. Never group a struct/type definition and its methods in the same <change>. They must be separate.
+
+**CDATA Safety**: CDATA sections cannot contain the literal substring ']]>'. If your generated Go code contains ']]>', do NOT use CDATA for that change; instead, escape the special XML characters using XML entity escaping (replace '<' with '&lt;', '>' with '&gt;', '&' with '&amp;').
 
 Final self-check before answering:
 - Does every MODIFY change contain a meaningful change (not just formatting)?
