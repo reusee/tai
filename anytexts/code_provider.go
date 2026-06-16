@@ -45,6 +45,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				// use as-is
 				queue = append(queue, pattern)
 			} else {
+				slices.Sort(files)
 				queue = append(queue, files...)
 			}
 		}

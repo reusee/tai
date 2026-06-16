@@ -32,7 +32,6 @@ A fixed budget ensures that context files are simplified consistently across req
 preserving the prefix cache. A variable budget tied to focus file size would cause context file inclusion/exclusion to vary
 whenever focus files are edited, defeating prefix caching for the entire prompt.`
 
-	minimumContextTokenBudget = 8 << 10
 	maximumContextTokenBudget = 32 << 10
 )
 
@@ -45,7 +44,7 @@ type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (
 // simplified to the same level every request, preserving the LLM prefix cache.
 // When focus files change, only focus files differ in the prompt; all preceding context
 // content remains byte-identical and fully cacheable.
-func calculateMaxContextTokens(focusTokens int) int {
+func calculateMaxContextTokens() int {
 	return maximumContextTokenBudget
 }
 
@@ -130,7 +129,7 @@ func (Module) SimplifyFiles(
 		}
 
 		focusTokens := allTokens - contextTokens
-		maxContextTokens := calculateMaxContextTokens(focusTokens)
+		maxContextTokens := calculateMaxContextTokens()
 		logger.InfoContext(ctx, "initial tokens",
 			"all tokens", allTokens,
 			"context tokens", contextTokens,
