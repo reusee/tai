@@ -75,7 +75,17 @@ func (c CodeProvider) Parts(
 			return strings.Compare(a.Path, b.Path)
 		})
 
+		// Deduplicate extra files by path to guard against IterFiles returning
+		// the same file multiple times (e.g., when patterns overlap). Without
+		// deduplication, duplicate additions would inflate the token budget and
+		// could shift which project files survive simplification, leading to
+		// non-deterministic prompts.
+		seenExtraPaths := make(map[string]bool)
 		for _, info := range extraFiles {
+			if seenExtraPaths[info.Path] {
+				continue
+			}
+			seenExtraPaths[info.Path] = true
 
 			// if file is in project, mark it as do not simplify and skip adding here
 			if f, ok := projectFiles[info.Path]; ok {
