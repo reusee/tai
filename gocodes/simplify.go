@@ -158,13 +158,6 @@ func (Module) SimplifyFiles(
 						continue
 					}
 
-					select {
-					case sema <- true:
-						atomic.AddInt64(pendingSema, 1)
-					case <-ctx.Done():
-						return
-					}
-
 					// set next transform and send job to workers
 					file.transformCond.L.Lock()
 					for file.Transform != nil || file.Pending != nil {
@@ -186,6 +179,13 @@ func (Module) SimplifyFiles(
 						return
 					}
 
+					select {
+					case sema <- true:
+						atomic.AddInt64(pendingSema, 1)
+					case <-ctx.Done():
+						return
+					}
+
 				}
 			}
 		}()
@@ -200,6 +200,7 @@ func (Module) SimplifyFiles(
 				}
 
 				if allTokens < maxTokens && contextTokens <= maxContextTokens {
+					cancel()
 					break loop_ops
 				}
 
