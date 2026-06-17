@@ -274,4 +274,3 @@ func validateSingleHunk(h Hunk, isDelete bool) error {
 	}
 	return nil
 }
-

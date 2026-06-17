@@ -1,6 +1,9 @@
 package generators
 
-import "iter"
+import (
+	"iter"
+	"sort"
+)
 
 type FuncMap struct {
 	upstream State
@@ -77,10 +80,19 @@ func (f FuncMap) Contents() iter.Seq[*Content] {
 	return f.upstream.Contents()
 }
 
+// TheoryOfPrefixCaching: Function declarations embedded in the prompt must
+// appear in a deterministic order across runs. Go map iteration is
+// non-deterministic, so we sort keys by name before yielding to ensure
+// the LLM prefix cache remains valid across repeated requests.
 func (f FuncMap) Functions() iter.Seq[*Function] {
 	return func(yield func(*Function) bool) {
-		for _, v := range f.m {
-			if !yield(v) {
+		names := make([]string, 0, len(f.m))
+		for name := range f.m {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if !yield(f.m[name]) {
 				return
 			}
 		}
@@ -103,6 +115,11 @@ func (f FuncMap) Flush() (State, error) {
 
 func (f FuncMap) Unwrap() State {
 	return f.upstream
+}
+
+type stateWithFunctions struct {
+	upstream State
+	fns      []*Function
 }
 
 func WithFunctions(upstream State, fns ...*Function) State {
@@ -140,6 +157,8 @@ func (w stateWithFunctions) Functions() iter.Seq[*Function] {
 				return
 			}
 		}
+		// Delegate to upstream. Note: upstream may be FuncMap, which
+		// now yields in sorted (deterministic) order.
 		for fn := range w.upstream.Functions() {
 			if !yield(fn) {
 				return
@@ -161,9 +180,3 @@ func (w stateWithFunctions) AppendContent(content *Content) (State, error) {
 	}
 	return ret, nil
 }
-
-type stateWithFunctions struct {
-	upstream State
-	fns      []*Function
-}
-
