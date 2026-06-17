@@ -1500,7 +1500,7 @@ func Foo() {
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <!-- This is a reasoning comment that should be preserved -->
 <change op="MODIFY" target="Foo" file-path="` + targetFile + `">
 <![CDATA[
@@ -1510,7 +1510,7 @@ func Foo() {
 ]]>
 </change>
 <!-- Another comment that should remain -->
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1543,7 +1543,7 @@ func Foo() {
 	if !strings.Contains(aiStr, "Another comment") {
 		t.Errorf("second comment lost:\n%s", aiStr)
 	}
-	if !strings.Contains(aiStr, "<xml>") {
+	if !strings.Contains(aiStr, "<response>") {
 		t.Errorf("root element lost:\n%s", aiStr)
 	}
 }
@@ -1573,7 +1573,7 @@ func Bar() {
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <!-- Fix Foo -->
 <change op="MODIFY" target="Foo" file-path="` + targetFile + `">
 <![CDATA[
@@ -1591,7 +1591,7 @@ func Bar() {
 ]]>
 </change>
 <!-- All done -->
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1654,11 +1654,11 @@ func Bar() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <!-- Remove unused Foo -->
 <change op="DELETE" target="Foo" file-path="` + targetFile + `" />
 <!-- Keep Bar -->
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1716,13 +1716,13 @@ func Foo() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <change op="INVALID" target="Foo" file-path="` + targetFile + `">
 <![CDATA[
 func Foo() { println("new") }
 ]]>
 </change>
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1752,13 +1752,13 @@ func Foo() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <change op="MODIFY" target="" file-path="` + targetFile + `">
 <![CDATA[
 func Foo() { println("new") }
 ]]>
 </change>
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1788,13 +1788,13 @@ func Foo() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <change op="MODIFY" target="Foo" file-path="">
 <![CDATA[
 func Foo() { println("new") }
 ]]>
 </change>
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1824,10 +1824,10 @@ func Foo() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <change op="MODIFY" target="Foo" file-path="` + targetFile + `">
 </change>
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1859,9 +1859,9 @@ func Bar() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <change op="DELETE" target="Foo" file-path="` + targetFile + `" />
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1968,9 +1968,9 @@ func Foo() {}
 	}
 
 	aiFile := filepath.Join(tmpDir, "test.go.AI")
-	aiContent := []byte(`<xml>
+	aiContent := []byte(`<response>
 <!-- No changes needed -->
-</xml>`)
+</response>`)
 	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1987,3 +1987,4 @@ func Foo() {}
 		t.Errorf("file should be unchanged")
 	}
 }
+

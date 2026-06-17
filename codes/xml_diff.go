@@ -21,13 +21,13 @@ func (x XmlDiffHandler) Functions() []*generators.Function {
 }
 
 func (x XmlDiffHandler) SystemPrompt() string {
-	return `Your entire response must be a valid XML document with the root element <xml>.
-All content, including reasoning, explanations, and file changes, must be inside this <xml> root element.
-Do not output any text outside the <xml> document.
+	return `Your entire response must be a valid XML document with the root element <response>.
+All content, including reasoning, explanations, and file changes, must be inside this <response> root element.
+Do not output any text outside the <response> document.
 You may include XML comments (<!-- ... -->) anywhere for reasoning and explanations.
-If no file changes are needed, output a minimal <xml></xml> or include a comment explaining why no changes are necessary.
+If no file changes are needed, output a minimal <response></response> or include a comment explaining why no changes are necessary.
 
-To propose changes to files, include <change> elements inside the <xml> root, with the following attributes:
+To propose changes to files, include <change> elements inside the <response> root, with the following attributes:
 - op: one of MODIFY, ADD_BEFORE, ADD_AFTER, DELETE
 - target: the name of the declaration to modify, or BEGIN/END for file-level operations.
 - file-path: the path to the file to modify.
@@ -36,7 +36,7 @@ The body of the <change> element must contain the new code exactly as it should 
 If the body contains characters that are special in XML (like <, >, &), you generally MUST enclose the entire body in a <![CDATA[ ... ]]> section. However, CDATA sections cannot contain the literal substring ']]>'. If your Go code contains ']]>', using CDATA will cause a parsing error. Therefore, when the code you generate includes ']]>', you MUST NOT use CDATA for that change; instead, escape the special XML characters using standard XML entities: replace '<' with '&lt;', '>' with '&gt;', and '&' with '&amp;'. For all other code, you can continue using CDATA.
 
 Example:
-<xml>
+<response>
 <!---
 reasoning and explanations
 -->
@@ -47,7 +47,7 @@ func Foo() {
 }
 ]]>
 </change>
-</xml>
+</response>
 
 **General Guidelines:**
 - Each <change> must contain the *entire* declaration block, including its signature, body, and associated comments. Do not use ellipsis (...) or placeholders to represent unchanged code.
@@ -69,7 +69,7 @@ func Foo() {
 }
 
 func (x XmlDiffHandler) RestatePrompt() string {
-	return `**CRITICAL**: All code modifications MUST be presented as XML <change> elements within an <xml> root as specified in the system prompt. This is not optional. Adhere strictly to the format. Do not output raw code blocks for changes. Do not output MODIFY changes with no changes. Provide appropriate comments to explain non-obvious logic, ensuring that comments and implementation remain synchronized.
+	return `**CRITICAL**: All code modifications MUST be presented as XML <change> elements within an <response> root as specified in the system prompt. This is not optional. Adhere strictly to the format. Do not output raw code blocks for changes. Do not output MODIFY changes with no changes. Provide appropriate comments to explain non-obvious logic, ensuring that comments and implementation remain synchronized.
 
 **IMPORTANT**: 
 1. Each <change> element must contain the COMPLETE declaration. Do not use ellipsis (...) or placeholders. Omissions will break the automated file update process.
@@ -132,10 +132,10 @@ func validateXmlRoot(content []byte) error {
 	}
 	start, ok := tok.(xml.StartElement)
 	if !ok {
-		return fmt.Errorf("XML validation: missing root element, expected <xml>")
+		return fmt.Errorf("XML validation: missing root element, expected <response>")
 	}
-	if start.Name.Local != "xml" {
-		return fmt.Errorf("XML validation: root element must be <xml>, got <%s>", start.Name.Local)
+	if start.Name.Local != "response" {
+		return fmt.Errorf("XML validation: root element must be <response>, got <%s>", start.Name.Local)
 	}
 	return nil
 }
@@ -161,8 +161,8 @@ func parseFirstXmlHunk(content []byte) (h Hunk, start int, end int, ok bool, err
 		if !foundRoot {
 			foundRoot = true
 			rootName = startElem.Name.Local
-			if rootName != "xml" {
-				return h, 0, 0, false, fmt.Errorf("XML validation: root element must be <xml>, got <%s>", rootName)
+			if rootName != "response" {
+				return h, 0, 0, false, fmt.Errorf("XML validation: root element must be <response>, got <%s>", rootName)
 			}
 			continue
 		}
@@ -234,3 +234,4 @@ func validateSingleHunk(h Hunk, isDelete bool) error {
 	}
 	return nil
 }
+
