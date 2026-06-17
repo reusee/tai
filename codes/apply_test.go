@@ -1988,3 +1988,114 @@ func Foo() {}
 	}
 }
 
+func TestApplyHunksXmlDiffWithPrefixAndSuffix(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	// Simulate an AI response file that has log lines before and after the XML content
+	aiContent := []byte(`[LOG] Starting AI response
+Extra prefix text that should be preserved
+<response>
+<!-- Fix Foo -->
+<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() {
+	println("new")
+}
+]]>
+</change>
+</response>
+[LOG] AI response complete
+Suffix text also preserved`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (XmlDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify target file was updated correctly
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(newContent), "new") {
+		t.Errorf("target file not updated: %s", string(newContent))
+	}
+
+	// Verify AI file preserves prefix and suffix, but removed the change element
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if !strings.Contains(aiStr, "[LOG] Starting AI response") {
+		t.Errorf("prefix lost from AI file:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "[LOG] AI response complete") {
+		t.Errorf("suffix lost from AI file:\n%s", aiStr)
+	}
+	if strings.Contains(aiStr, "<change") {
+		t.Errorf("change element not removed from AI file:\n%s", aiStr)
+	}
+	// The comments and response wrapper should remain
+	if !strings.Contains(aiStr, "<!-- Fix Foo -->") {
+		t.Errorf("comment inside response lost:\n%s", aiStr)
+	}
+	if !strings.Contains(aiStr, "<response>") || !strings.Contains(aiStr, "</response>") {
+		t.Errorf("response wrapper lost:\n%s", aiStr)
+	}
+}
+
+func TestApplyHunksXmlDiffMissingResponse(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	// File has no <response> wrapper at all
+	aiContent := []byte(`<change op="MODIFY" target="Foo" file-path="` + targetFile + `">
+<![CDATA[
+func Foo() { println("new") }
+]]>
+</change>`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (XmlDiffHandler{}).Apply(root, aiFile)
+	if err == nil {
+		t.Error("expected error for missing <response> element, got nil")
+	}
+}

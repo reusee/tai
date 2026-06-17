@@ -87,19 +87,57 @@ If no effective changes are needed, reply with "No changes required." and stop.
 `
 }
 
+// extractResponseBounds extracts the content between the first <response> opening tag
+// and the last </response> closing tag, ignoring any log prefixes or suffixes.
+// It returns the extracted content, the byte offset of the extraction start within
+// the original content, and any error encountered.
+func extractResponseBounds(content []byte) (responseContent []byte, prefixLen int, err error) {
+	// Find the first occurrence of <response opening tag
+	tagStart := bytes.Index(content, []byte("<response"))
+	if tagStart == -1 {
+		return nil, 0, fmt.Errorf("response element not found in file content")
+	}
+
+	// Find the closing > of the opening tag (handle possible attributes)
+	tagOpenEnd := bytes.IndexByte(content[tagStart:], '>')
+	if tagOpenEnd == -1 {
+		return nil, 0, fmt.Errorf("malformed <response> opening tag")
+	}
+	tagOpenEnd += tagStart
+
+	// Find the last occurrence of </response> closing tag
+	closeTag := []byte("</response>")
+	closeTagStart := bytes.LastIndex(content, closeTag)
+	if closeTagStart == -1 {
+		return nil, 0, fmt.Errorf("closing </response> tag not found in file content")
+	}
+	closeTagEnd := closeTagStart + len(closeTag)
+
+	// Ensure the closing tag appears after the opening tag
+	if closeTagStart <= tagOpenEnd {
+		return nil, 0, fmt.Errorf("</response> found before or inside <response> opening tag")
+	}
+
+	responseContent = content[tagStart:closeTagEnd]
+	prefixLen = tagStart
+	return responseContent, prefixLen, nil
+}
+
 func (x XmlDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 	content, err := os.ReadFile(diffFilePath)
 	if err != nil {
 		return err
 	}
 
-	// Validate root element
-	if err := validateXmlRoot(content); err != nil {
+	// Extract content between first <response> and last </response>,
+	// ignoring any log prefixes or suffixes that may surround the XML.
+	responseContent, prefixLen, err := extractResponseBounds(content)
+	if err != nil {
 		return err
 	}
 
 	for {
-		h, start, end, ok, err := parseFirstXmlHunk(content)
+		h, start, end, ok, err := parseFirstXmlHunk(responseContent)
 		if err != nil {
 			return err
 		}
@@ -107,15 +145,23 @@ func (x XmlDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 			break
 		}
 
+		// Adjust offsets to be relative to the original file content
+		actualStart := prefixLen + start
+		actualEnd := prefixLen + end
+
 		if err := applyHunk(root, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
 
-		newContent := append(content[:start], content[end:]...)
+		newContent := append(content[:actualStart], content[actualEnd:]...)
 		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
 			return err
 		}
 		content, err = os.ReadFile(diffFilePath)
+		if err != nil {
+			return err
+		}
+		responseContent, prefixLen, err = extractResponseBounds(content)
 		if err != nil {
 			return err
 		}
@@ -234,4 +280,3 @@ func validateSingleHunk(h Hunk, isDelete bool) error {
 	}
 	return nil
 }
-
