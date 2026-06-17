@@ -51,13 +51,7 @@ func Foo() {
 
 **General Guidelines:**
 - Each <change> must contain the *entire* declaration block, including its signature, body, and associated comments. Do not use ellipsis (...) or placeholders to represent unchanged code.
-- **Bugfix Regression Guard**: Every bug fix MUST be accompanied by a reproduction test case in the same set of changes. This ensures the fix is validated and prevents future regressions.
-- Do not remove defensive checks, boundary condition handling, or specialized error logic unless they are proven to be unreachable or incorrect. Refactoring for brevity must not sacrifice robustness.
-- **Incremental Theory Evolution**: When updating theoretical documentation recorded in global constants, modify only segments related to current changes to maintain continuity. Avoid large-scale replacements or simplifications of existing theoretical text; evolution must be incremental to ensure changes remain reviewable.
-- **Language Consistency**: Ensure comments and identifiers within changes use the same language as the surrounding code in the file, regardless of the language of the user's query or the rest of your response. Do not insert comments in the user's input language into code that primarily uses another language.
-- **Consistency and Synchrony**: Maintain strict consistency among code, comments, theory constants, and specifications (specs). If a feature is added, modified, or removed, you MUST update the corresponding documentation and specifications in the same set of changes to prevent the system's "Theory" from drifting.
 - **Preserve Construction Logic**: Maintain the symbolic structure and construction logic of declarations. If a value is defined using an expression (e.g., string concatenation, bitwise operations, or references to other constants/variables), do not "flatten" or "inline" these into literals during modification. Preserve the modularity and intent of the original code.
-- **Emotional Neutrality**: Maintain a purely objective and technical stance. Do not allow emotional, irrational, or extreme language in the request to influence the generated code or the structure of the diff.
 - All code within <change> elements must be properly formatted according to the language's conventions.
 
 **Verification and no-op policy:**
@@ -69,7 +63,7 @@ func Foo() {
 }
 
 func (x XmlDiffHandler) RestatePrompt() string {
-	return `**CRITICAL**: All code modifications MUST be presented as XML <change> elements within an <response> root as specified in the system prompt. This is not optional. Adhere strictly to the format. Do not output raw code blocks for changes. Do not output MODIFY changes with no changes. Provide appropriate comments to explain non-obvious logic, ensuring that comments and implementation remain synchronized.
+	return `**CRITICAL**: All code modifications MUST be presented as XML <change> elements within an <response> root as specified in the system prompt. This is not optional. Adhere strictly to the format. Do not output raw code blocks for changes. Do not output MODIFY changes with no changes.
 
 **IMPORTANT**: 
 1. Each <change> element must contain the COMPLETE declaration. Do not use ellipsis (...) or placeholders. Omissions will break the automated file update process.
@@ -280,3 +274,4 @@ func validateSingleHunk(h Hunk, isDelete bool) error {
 	}
 	return nil
 }
+
