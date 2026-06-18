@@ -33,39 +33,14 @@ func (Module) DefaultDiffHandlerName() DefaultDiffHandlerName {
 
 func (Module) DiffHandler(
 	name DiffHandlerName,
-	unified UnifiedDiff,
 	logger logs.Logger,
 ) codetypes.DiffHandler {
 	logger.Info("diff handler", "name", name)
 	switch name {
-	case "unified":
-		return unified
-	case "xml":
-		return XmlDiffHandler{}
-	case "boundary":
+	case "boundary", "":
 		return BoundaryDiffHandler{}
-	case "":
-		return DumbDiffHandler{}
 	}
 	panic(fmt.Errorf("unknown diff handler: %s", name))
-}
-
-type DumbDiffHandler struct{}
-
-func (d DumbDiffHandler) Functions() []*generators.Function {
-	return nil
-}
-
-func (d DumbDiffHandler) SystemPrompt() string {
-	return ""
-}
-
-func (d DumbDiffHandler) RestatePrompt() string {
-	return ""
-}
-
-func (d DumbDiffHandler) Apply(root *os.Root, diffFilePath string) error {
-	return nil
 }
 
 // BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.

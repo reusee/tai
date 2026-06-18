@@ -3,15 +3,12 @@ package codes
 import (
 	"bytes"
 	"cmp"
-	"encoding/xml"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -26,8 +23,6 @@ type Hunk struct {
 	Body     string
 	Raw      string
 }
-
-var headerRegexp = regexp.MustCompile(`^(\s*)\[\[\[ (MODIFY|ADD_BEFORE|ADD_AFTER|DELETE)\s+(\S+?)\s+IN\s+("[^"]*"|'[^']*'|\S+?)(\s*\]\]\]|\s|$)`)
 
 type BodyInfo struct {
 	Decls     []ast.Decl
@@ -160,93 +155,6 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 	return ""
 }
 
-func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
-	lines := bytes.Split(content, []byte("\n"))
-	var startOffset int
-	for i, line := range lines {
-		if m := headerRegexp.FindSubmatchIndex(line); m != nil {
-			h.Op = string(line[m[4]:m[5]])
-			h.Target = string(line[m[6]:m[7]])
-			filePathMatch := string(line[m[8]:m[9]])
-			// Remove surrounding quotes if present
-			if len(filePathMatch) >= 2 && (filePathMatch[0] == '"' || filePathMatch[0] == '\'') && filePathMatch[0] == filePathMatch[len(filePathMatch)-1] {
-				h.FilePath = filePathMatch[1 : len(filePathMatch)-1]
-			} else {
-				h.FilePath = filePathMatch
-			}
-			start = startOffset
-
-			// Special case for DELETE on same line
-			if h.Op == "DELETE" && bytes.Contains(line, []byte("]]]")) {
-				end = start + len(line)
-				h.Raw = string(content[start:end])
-				h.Body = ""
-				ok = true
-				return
-			}
-
-			// Search for closing ]]]
-			var footerOffset int = startOffset + len(line) + 1
-			for j := i + 1; j < len(lines); j++ {
-				// If we encounter another header before a footer
-				if headerRegexp.Match(lines[j]) {
-					if bytes.Contains(line, []byte("]]]")) {
-						// Header had ]]], treat as closing tag and take everything before next header as body
-						end = footerOffset - 1
-						h.Raw = string(content[start:end])
-						bodyStart := start + len(line) + 1
-						bodyEnd := end
-						if bodyEnd > bodyStart {
-							h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-						}
-						ok = true
-						return
-					}
-					// Otherwise broken hunk
-					break
-				}
-
-				trimmedLine := bytes.TrimSpace(lines[j])
-				if idx := bytes.Index(lines[j], []byte("]]]")); idx != -1 {
-					// Delimiter is ]]] at start or end of line (ignoring whitespace)
-					if bytes.HasPrefix(trimmedLine, []byte("]]]")) || bytes.HasSuffix(trimmedLine, []byte("]]]")) {
-						if bytes.HasSuffix(trimmedLine, []byte("]]]")) {
-							idx = bytes.LastIndex(lines[j], []byte("]]]"))
-						}
-						end = footerOffset + idx + 3
-						h.Raw = string(content[start:end])
-						bodyStart := start + len(line) + 1
-						bodyEnd := footerOffset + idx
-						if bodyEnd > bodyStart {
-							h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-						}
-						ok = true
-						return
-					}
-				}
-
-				footerOffset += len(lines[j]) + 1
-			}
-
-			// End of file reached
-			if bytes.Contains(line, []byte("]]]")) {
-				end = len(content)
-				h.Raw = string(content[start:end])
-				bodyStart := start + len(line) + 1
-				bodyEnd := end
-				if bodyEnd > bodyStart {
-					h.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-				}
-				ok = true
-				return
-			}
-			return
-		}
-		startOffset += len(line) + 1
-	}
-	return
-}
-
 // parseFirstBoundaryHunk extracts the first change block from content using the
 // boundary-delimited format: ---change <boundary> / ---end <boundary>.
 // Headers (op, target, file-path) are parsed from lines between the opening marker and the body.
@@ -355,121 +263,6 @@ headerLoop:
 
 	ok = true
 	return h, start, end, ok
-}
-
-func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
-	dec := xml.NewDecoder(bytes.NewReader(content))
-	var ranges [][2]int64
-	var foundRoot bool
-	var rootName string
-
-	for {
-		offset := dec.InputOffset()
-		tok, err := dec.Token()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, nil, err
-		}
-		start, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		if !foundRoot {
-			foundRoot = true
-			rootName = start.Name.Local
-		}
-		if start.Name.Local != "change" {
-			continue
-		}
-
-		changeStart := offset
-
-		h := Hunk{}
-		for _, attr := range start.Attr {
-			switch attr.Name.Local {
-			case "op":
-				h.Op = attr.Value
-			case "target":
-				h.Target = attr.Value
-			case "file-path":
-				h.FilePath = attr.Value
-			}
-		}
-		var body bytes.Buffer
-		for {
-			tok, err := dec.Token()
-			if err != nil {
-				return nil, nil, err
-			}
-			switch t := tok.(type) {
-			case xml.EndElement:
-				if t.Name.Local == "change" {
-					h.Body = strings.TrimSpace(body.String())
-					hunks = append(hunks, h)
-					changeEnd := dec.InputOffset()
-					ranges = append(ranges, [2]int64{changeStart, changeEnd})
-					goto next
-				}
-			case xml.CharData:
-				body.Write(t)
-			}
-		}
-	next:
-	}
-
-	if err := validateXmlHunks(hunks, foundRoot, rootName); err != nil {
-		return nil, nil, err
-	}
-
-	if len(ranges) == 0 {
-		return hunks, content, nil
-	}
-	remaining = make([]byte, len(content))
-	copy(remaining, content)
-	for i := len(ranges) - 1; i >= 0; i-- {
-		r := ranges[i]
-		remaining = append(remaining[:r[0]], remaining[r[1]:]...)
-	}
-
-	return hunks, remaining, nil
-}
-
-func validateXmlHunks(hunks []Hunk, foundRoot bool, rootName string) error {
-	if !foundRoot {
-		return fmt.Errorf("XML validation: missing root element, expected <xml>")
-	}
-	if rootName != "xml" {
-		return fmt.Errorf("XML validation: root element must be <xml>, got <%s>", rootName)
-	}
-
-	validOps := map[string]bool{
-		"MODIFY":     true,
-		"ADD_BEFORE": true,
-		"ADD_AFTER":  true,
-		"DELETE":     true,
-	}
-
-	for i, h := range hunks {
-		if h.Op == "" {
-			return fmt.Errorf("XML validation: change %d missing 'op' attribute", i+1)
-		}
-		if !validOps[h.Op] {
-			return fmt.Errorf("XML validation: change %d has invalid op %q, must be one of: MODIFY, ADD_BEFORE, ADD_AFTER, DELETE", i+1, h.Op)
-		}
-		if h.Target == "" {
-			return fmt.Errorf("XML validation: change %d missing 'target' attribute", i+1)
-		}
-		if h.FilePath == "" {
-			return fmt.Errorf("XML validation: change %d missing 'file-path' attribute", i+1)
-		}
-		if h.Op != "DELETE" && strings.TrimSpace(h.Body) == "" {
-			return fmt.Errorf("XML validation: change %d (%s) has empty body", i+1, h.Op)
-		}
-	}
-
-	return nil
 }
 
 func applyHunk(root *os.Root, h Hunk) error {

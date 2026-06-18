@@ -12,12 +12,6 @@ import (
 var diff codetypes.DiffHandler
 
 func init() {
-	cmds.Define("-unified", cmds.Func(func() {
-		diff = codes.UnifiedDiff{}
-	}))
-	cmds.Define("-xml", cmds.Func(func() {
-		diff = codes.XmlDiffHandler{}
-	}))
 	cmds.Define("-boundary", cmds.Func(func() {
 		diff = codes.BoundaryDiffHandler{}
 	}))
