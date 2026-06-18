@@ -2099,3 +2099,256 @@ func Foo() { println("new") }
 		t.Error("expected error for missing <response> element, got nil")
 	}
 }
+
+func TestApplyHunksBoundaryDiff(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`Here is my analysis of the code...
+
+---change b93f8a2c-1d4e-5f6a-b789-0123456789ab
+op: MODIFY
+target: Foo
+file-path: ` + targetFile + `
+
+func Foo() {
+	println("new")
+}
+
+---end b93f8a2c-1d4e-5f6a-b789-0123456789ab
+
+This should fix the issue.`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (BoundaryDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new") {
+		t.Errorf("content not updated: %s", s)
+	}
+
+	// Verify that reasoning is preserved in AI file
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if !strings.Contains(aiStr, "Here is my analysis") {
+		t.Errorf("reasoning lost from AI file: %s", aiStr)
+	}
+	if !strings.Contains(aiStr, "This should fix the issue") {
+		t.Errorf("trailing comment lost from AI file: %s", aiStr)
+	}
+	if strings.Contains(aiStr, "---change") {
+		t.Errorf("change block not removed from AI file: %s", aiStr)
+	}
+}
+
+func TestApplyHunksBoundaryDiffDelete(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {}
+func Bar() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`---change abc123
+op: DELETE
+target: Foo
+file-path: ` + targetFile + `
+
+---end abc123`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (BoundaryDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Contains(s, "func Foo()") {
+		t.Errorf("Foo not deleted: %s", s)
+	}
+	if !strings.Contains(s, "func Bar()") {
+		t.Errorf("Bar incorrectly removed: %s", s)
+	}
+}
+
+func TestApplyHunksBoundaryDiffMultiple(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Foo() {
+	println("old foo")
+}
+
+func Bar() {
+	println("old bar")
+}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`First, fixing Foo...
+
+---change uuid-1
+op: MODIFY
+target: Foo
+file-path: ` + targetFile + `
+
+func Foo() {
+	println("new foo")
+}
+
+---end uuid-1
+
+Now fixing Bar...
+
+---change uuid-1
+op: MODIFY
+target: Bar
+file-path: ` + targetFile + `
+
+func Bar() {
+	println("new bar")
+}
+
+---end uuid-1
+
+Done.`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (BoundaryDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if !strings.Contains(s, "new foo") || !strings.Contains(s, "new bar") {
+		t.Errorf("not all hunks applied: %s", s)
+	}
+	if strings.Count(s, "func Foo()") != 1 || strings.Count(s, "func Bar()") != 1 {
+		t.Errorf("duplicated declarations: %s", s)
+	}
+
+	// Verify AI file preserves comments
+	aiRemaining, err := os.ReadFile(aiFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aiStr := string(aiRemaining)
+	if strings.Contains(aiStr, "---change") {
+		t.Errorf("change blocks not fully removed: %s", aiStr)
+	}
+	if !strings.Contains(aiStr, "First, fixing Foo") || !strings.Contains(aiStr, "Done") {
+		t.Errorf("comments lost: %s", aiStr)
+	}
+}
+
+func TestApplyHunksBoundaryDiffModifyNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(tmpDir, "test.go")
+	content := []byte(`package test
+
+func Existing() {}
+`)
+	if err := os.WriteFile(targetFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	aiFile := filepath.Join(tmpDir, "test.go.AI")
+	aiContent := []byte(`---change abc
+op: MODIFY
+target: NonExistent
+file-path: ` + targetFile + `
+
+func NonExistent() {
+	println("new")
+}
+
+---end abc`)
+	if err := os.WriteFile(aiFile, aiContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not error - MODIFY on non-existent target is a no-op
+	if err := (BoundaryDiffHandler{}).Apply(root, aiFile); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(newContent)
+	if strings.Contains(s, "func NonExistent") {
+		t.Errorf("NonExistent function incorrectly added: %s", s)
+	}
+	if !strings.Contains(s, "func Existing") {
+		t.Errorf("existing function lost: %s", s)
+	}
+}

@@ -247,6 +247,116 @@ func parseFirstHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	return
 }
 
+// parseFirstBoundaryHunk extracts the first change block from content using the
+// boundary-delimited format: ---change <boundary> / ---end <boundary>.
+// Headers (op, target, file-path) are parsed from lines between the opening marker and the body.
+// A blank line separates headers from the code body.
+func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
+	changePrefix := []byte("---change ")
+	idx := bytes.Index(content, changePrefix)
+	if idx == -1 {
+		return h, 0, 0, false
+	}
+
+	// Ensure the marker is at the start of a line (or at the start of content)
+	if idx > 0 && content[idx-1] != '\n' {
+		return h, 0, 0, false
+	}
+
+	start = idx
+
+	// Extract boundary string after ---change until end of line
+	lineStart := idx + len(changePrefix)
+	lineEnd := bytes.IndexByte(content[lineStart:], '\n')
+	if lineEnd == -1 {
+		return h, 0, 0, false
+	}
+	lineEnd += lineStart
+	boundary := strings.TrimSpace(string(content[lineStart:lineEnd]))
+	if boundary == "" {
+		return h, 0, 0, false
+	}
+
+	// Parse headers until blank line or unrecognized content
+	pos := lineEnd + 1
+	bodyStart := pos
+
+headerLoop:
+	for pos < len(content) {
+		if pos < len(content) && content[pos] == '\n' {
+			// Blank line found (just \n)
+			pos++
+			bodyStart = pos
+			break
+		}
+		headerEnd := bytes.IndexByte(content[pos:], '\n')
+		if headerEnd == -1 {
+			bodyStart = pos
+			break
+		}
+		headerEnd += pos
+		line := strings.TrimSpace(string(content[pos:headerEnd]))
+
+		if line == "" {
+			// Blank line separates headers from body
+			pos = headerEnd + 1
+			bodyStart = pos
+			break
+		}
+
+		// Check if this line is a recognized header (key: value)
+		colonIdx := strings.Index(line, ":")
+		if colonIdx < 0 {
+			// Not a header line, assume body starts here
+			bodyStart = pos
+			break
+		}
+
+		key := strings.TrimSpace(line[:colonIdx])
+		switch key {
+		case "op", "target", "file-path":
+			val := strings.TrimSpace(line[colonIdx+1:])
+			switch key {
+			case "op":
+				h.Op = val
+			case "target":
+				h.Target = val
+			case "file-path":
+				h.FilePath = val
+			}
+		default:
+			// Unrecognized header key, stop parsing headers
+			bodyStart = pos
+			break headerLoop
+		}
+
+		pos = headerEnd + 1
+	}
+
+	// Find ---end BOUNDARY marker
+	endMarker := "---end " + boundary
+	bodyEnd := bytes.Index(content[bodyStart:], []byte(endMarker))
+	if bodyEnd == -1 {
+		return h, 0, 0, false
+	}
+	bodyEnd += bodyStart
+
+	// Extract body text between headers and end marker
+	body := strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+	h.Body = body
+
+	// Calculate the end of the entire block (after the ---end line)
+	endLineEnd := bytes.IndexByte(content[bodyEnd:], '\n')
+	if endLineEnd == -1 {
+		end = len(content)
+	} else {
+		end = bodyEnd + endLineEnd + 1
+	}
+
+	ok = true
+	return h, start, end, ok
+}
+
 func parseXmlHunks(content []byte) (hunks []Hunk, remaining []byte, err error) {
 	dec := xml.NewDecoder(bytes.NewReader(content))
 	var ranges [][2]int64

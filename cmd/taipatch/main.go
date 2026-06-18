@@ -18,6 +18,9 @@ func init() {
 	cmds.Define("-xml", cmds.Func(func() {
 		diff = codes.XmlDiffHandler{}
 	}))
+	cmds.Define("-boundary", cmds.Func(func() {
+		diff = codes.BoundaryDiffHandler{}
+	}))
 }
 
 func main() {
@@ -30,7 +33,7 @@ func main() {
 		os.Exit(1)
 	}
 	if diff == nil {
-		diff = codes.XmlDiffHandler{}
+		diff = codes.BoundaryDiffHandler{}
 	}
 	if err := diff.Apply(root, target); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
