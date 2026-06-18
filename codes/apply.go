@@ -158,7 +158,9 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 // parseFirstBoundaryHunk extracts the first change block from content using the
 // boundary-delimited format: ---change <boundary> / ---end <boundary>.
 // Headers (op, target, file-path) are parsed from lines between the opening marker and the body.
-// A blank line separates headers from the code body.
+// A blank line separates headers from the code body. Header parsing stops once all three
+// headers have been collected, so that body content that accidentally looks like a header
+// is never misinterpreted.
 func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	changePrefix := []byte("---change ")
 	idx := bytes.Index(content, changePrefix)
@@ -185,14 +187,14 @@ func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool
 		return h, 0, 0, false
 	}
 
-	// Parse headers until blank line or unrecognized content
+	// Parse headers until blank line or all three fields are set.
 	pos := lineEnd + 1
 	bodyStart := pos
-
+	var haveOp, haveTarget, haveFilePath bool
 headerLoop:
 	for pos < len(content) {
-		if pos < len(content) && content[pos] == '\n' {
-			// Blank line found (just \n)
+		if content[pos] == '\n' {
+			// Blank line: headers end, body starts after this newline
 			pos++
 			bodyStart = pos
 			break
@@ -206,34 +208,48 @@ headerLoop:
 		line := strings.TrimSpace(string(content[pos:headerEnd]))
 
 		if line == "" {
-			// Blank line separates headers from body
+			// Empty/whitespace line acts as blank line separator
 			pos = headerEnd + 1
 			bodyStart = pos
 			break
 		}
 
-		// Check if this line is a recognized header (key: value)
+		// If all three headers are already set, stop parsing headers;
+		// the remaining content is body.
+		if haveOp && haveTarget && haveFilePath {
+			bodyStart = pos
+			break
+		}
+
 		colonIdx := strings.Index(line, ":")
 		if colonIdx < 0 {
-			// Not a header line, assume body starts here
+			// Not a header line; body starts here
 			bodyStart = pos
 			break
 		}
 
 		key := strings.TrimSpace(line[:colonIdx])
 		switch key {
-		case "op", "target", "file-path":
-			val := strings.TrimSpace(line[colonIdx+1:])
-			switch key {
-			case "op":
+		case "op":
+			if !haveOp {
+				val := strings.TrimSpace(line[colonIdx+1:])
 				h.Op = val
-			case "target":
+				haveOp = true
+			}
+		case "target":
+			if !haveTarget {
+				val := strings.TrimSpace(line[colonIdx+1:])
 				h.Target = val
-			case "file-path":
+				haveTarget = true
+			}
+		case "file-path":
+			if !haveFilePath {
+				val := strings.TrimSpace(line[colonIdx+1:])
 				h.FilePath = val
+				haveFilePath = true
 			}
 		default:
-			// Unrecognized header key, stop parsing headers
+			// Unrecognized header key, treat as body start
 			bodyStart = pos
 			break headerLoop
 		}
@@ -459,24 +475,8 @@ func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
-		if h.Op == "MODIFY" && f != nil {
-			// Find the start of the first non-import declaration
-			var firstNonImport ast.Decl
-			for _, decl := range f.Decls {
-				if g, ok := decl.(*ast.GenDecl); ok && g.Tok == token.IMPORT {
-					continue
-				}
-				firstNonImport = decl
-				break
-			}
-			if firstNonImport != nil {
-				start := 0
-				end := fset.Position(getActualPos(firstNonImport)).Offset - prefixLen
-				return start, end, h.Body, nil
-			} else {
-				// File only has package and imports (or is empty)
-				return 0, fileSize, h.Body, nil
-			}
+		if h.Op == "MODIFY" {
+			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target BEGIN; use ADD_BEFORE")
 		}
 		if h.Op == "ADD_AFTER" && f != nil {
 			// Find position after package declaration
@@ -489,6 +489,9 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 		return 0, 0, h.Body, nil
 	}
 	if h.Target == "END" {
+		if h.Op == "MODIFY" {
+			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target END; use ADD_AFTER")
+		}
 		return fileSize, fileSize, h.Body, nil
 	}
 	if f == nil {
@@ -636,6 +639,14 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 							}
 						}
 					}
+				}
+			}
+
+			// For ADD operations inside a multi-spec GenDecl, redirect to the parent
+			// GenDecl to avoid inserting inside the parentheses.
+			if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && len(genDecl.Specs) > 1 {
+				if start == nodeStart && end == nodeEnd {
+					start, end = parentStart, parentEnd
 				}
 			}
 		} else {
