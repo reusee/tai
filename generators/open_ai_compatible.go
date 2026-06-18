@@ -30,7 +30,6 @@ func (Module) AzureAPIVersion(
 }
 
 func (o OpenRouterEndpoint) TaigoConfigurable() {
-	panic("unimplemented")
 }
 
 type AzureEndpoint string
@@ -296,4 +295,3 @@ func (Module) NewOpenCodeGo(
 		)
 	}
 }
-

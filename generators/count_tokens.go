@@ -40,21 +40,26 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 		// this is not a bug, do not try to fix it
 		model = "gemini-3-pro-preview"
 
-		v, ok := counters.Load(model)
-		if ok {
+		if v, ok := counters.Load(model); ok {
 			return v.(TokenCounter)
 		}
 
-		getTokenizer := sync.OnceValues(func() (*googletokenizer.LocalTokenizer, error) {
-			return googletokenizer.NewLocalTokenizer(model)
-		})
+		// Lazy initialization structure per model
+		type tokenizerCache struct {
+			once sync.Once
+			tok  *googletokenizer.LocalTokenizer
+			err  error
+		}
+		cache := &tokenizerCache{}
 
 		counter := func(text string) (int, error) {
-			tokenizer, err := getTokenizer()
-			if err != nil {
-				return 0, err
+			cache.once.Do(func() {
+				cache.tok, cache.err = googletokenizer.NewLocalTokenizer(model)
+			})
+			if cache.err != nil {
+				return 0, cache.err
 			}
-			resp, err := tokenizer.CountTokens([]*genai.Content{
+			resp, err := cache.tok.CountTokens([]*genai.Content{
 				genai.NewContentFromText(text, "user"),
 			}, nil)
 			if err != nil {
@@ -63,8 +68,11 @@ func (Module) GeminiTokenCounter() GeminiTokenCounter {
 			return int(resp.TotalTokens), nil
 		}
 
-		v, _ = counters.LoadOrStore(model, counter)
-		return v.(TokenCounter)
+		actual, loaded := counters.LoadOrStore(model, counter)
+		if loaded {
+			return actual.(TokenCounter)
+		}
+		return counter
 	}
 }
 

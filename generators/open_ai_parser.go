@@ -141,8 +141,13 @@ func (o *OpenAIParser) checkAndEmitCall() error {
 		return nil
 	}
 
+	// Ensure we have a content to attach the function call to.
+	// In a well-formed stream this should always exist, but an
+	// unexpected delta order could leave it nil.
 	if o.current == nil {
-		panic("impossible")
+		o.current = &Content{
+			Role: RoleModel,
+		}
 	}
 
 	var args map[string]any
@@ -173,4 +178,3 @@ func deltaIsEmpty(delta ChatCompletionStreamChoiceDelta) bool {
 		len(delta.ToolCalls) == 0 &&
 		delta.ReasoningContent == ""
 }
-
