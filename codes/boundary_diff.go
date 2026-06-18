@@ -39,7 +39,7 @@ file-path: <absolute_path>
 ---end <boundary>
 
 **Rules:**
-- <boundary>: Generate a boundary string composed of three random uncommon words separated by hyphens (e.g., 'cobalt-vigil-frost').
+- <boundary>: Generate a boundary string composed of two random uncommon meaningless Chinese characters (e.g., '瞪辄').
   The same boundary MUST be used for both the ---change and ---end markers of a block.
   A sufficiently random boundary ensures it cannot conflict with any code content.
   Use a different boundary for each response.
@@ -63,7 +63,7 @@ file-path: <absolute_path>
 
 I analyzed the code and found an issue with the Foo function...
 
----change cobalt-vigil-frost
+---change 瞪辄
 op: MODIFY
 target: Foo
 file-path: <absolute_path>
@@ -73,16 +73,16 @@ func Foo() {
 	println("fixed")
 }
 
----end cobalt-vigil-frost
+---end 瞪辄
 
 The Bar function is now unused and should be removed...
 
----change cobalt-vigil-frost
+---change 瞪辄
 op: DELETE
 target: Bar
 file-path: <absolute_path>
 
----end cobalt-vigil-frost
+---end 瞪辄
 
 These changes should resolve the issue.
 `
@@ -99,7 +99,7 @@ file-path: <absolute_path>
 
 ---end <random_boundary>
 
-- Generate a boundary string of three random uncommon words (e.g., 'cobalt-vigil-frost') for each response.
+- Generate a boundary string of two random uncommon meaningless Chinese characters (e.g., '瞪辄') for each response.
 - Each block targets exactly ONE declaration. Do NOT group.
 - Include the COMPLETE declaration code. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
