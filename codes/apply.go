@@ -780,14 +780,6 @@ func getHunkBodyName(body string) string {
 	return ""
 }
 
-func getHunkBodyKind(body string) string {
-	info, err := getBodyInfo(body)
-	if err != nil || info == nil || info.entityCount() == 0 {
-		return ""
-	}
-	return getDeclKind(info.Decls[0])
-}
-
 func getIdentifiers(info *BodyInfo) []string {
 	var ids []string
 	if info == nil {
