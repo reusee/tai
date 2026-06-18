@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -12,7 +13,7 @@ func TestOpenAI(t *testing.T) {
 		newOpenRouter NewOpenRouter,
 	) Generator {
 		return newOpenRouter(Spec{
-			Model:             "mistralai/devstral-2512:free",
+			Model:             "openai/gpt-oss-120b:free",
 			ContextTokens:     128 << 10,
 			MaxGenerateTokens: new(8 << 10),
 		})
@@ -57,7 +58,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 		if len(messages) != 1 {
 			t.Fatalf("got %+v", messages)
 		}
-		if messages[0].Content != "foobar" {
+		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "foobar" {
 			t.Fatalf("got %+v", messages)
 		}
 
@@ -83,8 +84,8 @@ func TestStateToOpenAIMessages(t *testing.T) {
 		if messages[0].ReasoningContent != "thinking" {
 			t.Errorf("wrong reasoning: %s", messages[0].ReasoningContent)
 		}
-		if messages[0].Content != "answer" {
-			t.Errorf("wrong content: %s", messages[0].Content)
+		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "answer" {
+			t.Errorf("wrong content: %v", messages[0].Content)
 		}
 	})
 
@@ -111,8 +112,8 @@ func TestStateToOpenAIMessages(t *testing.T) {
 		if len(messages) != 1 {
 			t.Fatalf("expected 1 message, got %d: %+v", len(messages), messages)
 		}
-		if messages[0].Content != "thinking...more thinking..." {
-			t.Errorf("wrong content: %s", messages[0].Content)
+		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "thinking...more thinking..." {
+			t.Errorf("wrong content: %v", messages[0].Content)
 		}
 		if len(messages[0].ToolCalls) != 1 {
 			t.Errorf("wrong tool calls: %+v", messages[0].ToolCalls)
@@ -122,9 +123,11 @@ func TestStateToOpenAIMessages(t *testing.T) {
 }
 
 func TestAzureConfiguration(t *testing.T) {
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		new(Module),
 		modes.ForTest(t),
+		&loader,
 	).Call(func(
 		newAzure NewAzure,
 	) {

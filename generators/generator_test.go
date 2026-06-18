@@ -238,7 +238,7 @@ func TestNonStreaming(t *testing.T) {
 	t.Run("openai", func(t *testing.T) {
 		test(t, func(newOpenRouter NewOpenRouter) Generator {
 			return newOpenRouter(Spec{
-				Model: "mistralai/devstral-2512:free",
+				Model: "openai/gpt-oss-120b:free",
 			})
 		})
 	})
@@ -535,3 +535,4 @@ func TestResolveSpec(t *testing.T) {
 		}
 	})
 }
+

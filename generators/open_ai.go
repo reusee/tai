@@ -275,8 +275,8 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			if msg.ReasoningContent != "" {
 				content.Parts = append(content.Parts, Thought(msg.ReasoningContent))
 			}
-			if msg.Content != "" {
-				content.Parts = append(content.Parts, Text(msg.Content))
+			if contentStr, ok := msg.Content.(string); ok && contentStr != "" {
+				content.Parts = append(content.Parts, Text(contentStr))
 			}
 			for _, call := range msg.ToolCalls {
 				var arguments map[string]any
@@ -424,38 +424,66 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 		})
 	}
 
+	addText := func(role, text string) {
+		if len(messages) > 0 && messages[len(messages)-1].Role == role {
+			last := &messages[len(messages)-1]
+			switch c := last.Content.(type) {
+			case string:
+				last.Content = c + text
+			case []ChatMessagePart:
+				last.Content = append(c, ChatMessagePart{
+					Type: "text",
+					Text: text,
+				})
+			case nil:
+				last.Content = text
+			default:
+				panic("unexpected content type")
+			}
+		} else {
+			messages = append(messages, ChatCompletionMessage{
+				Role:    role,
+				Content: text,
+			})
+		}
+	}
+
+	addMultiContentPart := func(role string, part ChatMessagePart) {
+		if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
+			last := &messages[len(messages)-1]
+			switch c := last.Content.(type) {
+			case string:
+				last.Content = []ChatMessagePart{
+					{Type: "text", Text: c},
+					part,
+				}
+			case []ChatMessagePart:
+				last.Content = append(c, part)
+			case nil:
+				last.Content = []ChatMessagePart{part}
+			default:
+				panic("unexpected content type")
+			}
+		} else {
+			messages = append(messages, ChatCompletionMessage{
+				Role:    role,
+				Content: []ChatMessagePart{part},
+			})
+		}
+	}
+
 	for content := range state.Contents() {
 		role := string(content.Role)
 		if role == string(RoleModel) {
 			role = string(RoleAssistant)
 		}
-
 		for _, part := range content.Parts {
 			switch part := part.(type) {
-
 			case Text:
 				if len(part) == 0 {
 					continue
 				}
-				if len(messages) > 0 && messages[len(messages)-1].Role == role {
-					last := &messages[len(messages)-1]
-					if last.Content == "" && len(last.MultiContent) == 0 {
-						last.Content = string(part)
-					} else if last.Content != "" {
-						last.Content += string(part)
-					} else {
-						last.MultiContent = append(last.MultiContent, ChatMessagePart{
-							Type: "text",
-							Text: string(part),
-						})
-					}
-				} else {
-					messages = append(messages, ChatCompletionMessage{
-						Role:    role,
-						Content: string(part),
-					})
-				}
-
+				addText(role, string(part))
 			case Thought:
 				if role == string(RoleAssistant) {
 					if len(messages) > 0 && messages[len(messages)-1].Role == role {
@@ -467,7 +495,6 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 						})
 					}
 				}
-
 			case FileURL:
 				if len(part) == 0 {
 					continue
@@ -478,70 +505,23 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 						URL: string(part),
 					},
 				}
-				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
-					last := &messages[len(messages)-1]
-					if last.Content != "" {
-						last.MultiContent = append([]ChatMessagePart{{
-							Type: "text",
-							Text: last.Content,
-						}}, imgPart)
-						last.Content = ""
-					} else {
-						last.MultiContent = append(last.MultiContent, imgPart)
-					}
-				} else {
-					messages = append(messages, ChatCompletionMessage{
-						Role:         role,
-						MultiContent: []ChatMessagePart{imgPart},
-					})
-				}
-
+				addMultiContentPart(role, imgPart)
 			case FileContent:
-				var msgPart ChatMessagePart
 				if isTextMIMEType(part.MimeType) {
-					msgPart = ChatMessagePart{
-						Type: "text",
-						Text: string(part.Content),
-					}
-				} else {
-					dataURL := fmt.Sprintf("data:%s;base64,%s",
-						part.MimeType,
-						base64.StdEncoding.EncodeToString(part.Content),
-					)
-					msgPart = ChatMessagePart{
-						Type: "image_url",
-						ImageURL: &ChatMessageImageURL{
-							URL: dataURL,
-						},
-					}
+					addText(role, string(part.Content))
+					continue
 				}
-				if len(messages) > 0 && messages[len(messages)-1].Role == role && len(messages[len(messages)-1].ToolCalls) == 0 {
-					last := &messages[len(messages)-1]
-					if msgPart.Type == "text" && last.Content != "" {
-						last.Content += msgPart.Text
-					} else if last.Content != "" {
-						last.MultiContent = append([]ChatMessagePart{{
-							Type: "text",
-							Text: last.Content,
-						}}, msgPart)
-						last.Content = ""
-					} else {
-						last.MultiContent = append(last.MultiContent, msgPart)
-					}
-				} else {
-					if msgPart.Type == "text" {
-						messages = append(messages, ChatCompletionMessage{
-							Role:    role,
-							Content: msgPart.Text,
-						})
-					} else {
-						messages = append(messages, ChatCompletionMessage{
-							Role:         role,
-							MultiContent: []ChatMessagePart{msgPart},
-						})
-					}
+				dataURL := fmt.Sprintf("data:%s;base64,%s",
+					part.MimeType,
+					base64.StdEncoding.EncodeToString(part.Content),
+				)
+				msgPart := ChatMessagePart{
+					Type: "image_url",
+					ImageURL: &ChatMessageImageURL{
+						URL: dataURL,
+					},
 				}
-
+				addMultiContentPart(role, msgPart)
 			case FuncCall:
 				argsBytes, err := json.Marshal(part.Arguments)
 				if err != nil {
@@ -563,7 +543,6 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 						ToolCalls: []ToolCall{toolCall},
 					})
 				}
-
 			case CallResult:
 				resultsBytes, err := json.Marshal(part.Results)
 				if err != nil {
@@ -574,7 +553,6 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 					ToolCallID: part.ID,
 					Content:    string(resultsBytes),
 				})
-
 			}
 		}
 	}
@@ -636,12 +614,11 @@ type Reasoning struct {
 }
 
 type ChatCompletionMessage struct {
-	Role             string            `json:"role"`
-	Content          string            `json:"content,omitempty"`
-	ReasoningContent string            `json:"reasoning_content,omitempty"`
-	MultiContent     []ChatMessagePart `json:"multi_content,omitempty"`
-	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
-	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	Role             string     `json:"role"`
+	Content          any        `json:"content,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 type ChatMessagePart struct {

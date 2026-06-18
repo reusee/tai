@@ -28,7 +28,6 @@ var _ State = FuncMap{}
 
 func (f FuncMap) AppendContent(content *Content) (State, error) {
 	ret := f // copy
-
 	var err error
 	ret.upstream, err = f.upstream.AppendContent(content)
 	if err != nil {
@@ -60,11 +59,10 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 			Name:    call.Name,
 			Results: res,
 		})
-
 	}
 
 	if len(results) > 0 {
-		ret.upstream, err = f.upstream.AppendContent(&Content{
+		ret.upstream, err = ret.upstream.AppendContent(&Content{
 			Role:  RoleTool,
 			Parts: results,
 		})

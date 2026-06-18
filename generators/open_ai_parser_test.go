@@ -36,8 +36,8 @@ func TestOpenAIParserEmptyDelta(t *testing.T) {
 	if len(contents) != 1 {
 		t.Fatal(err)
 	}
-	if contents[0].Role != RoleAssistant {
-		t.Fatalf("got %+v", contents)
+	if contents[0].Role != RoleModel {
+		t.Fatalf("got %v", contents[0].Role)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestOpenAIParserEmptyRole(t *testing.T) {
 	if len(contents) != 1 {
 		t.Fatal()
 	}
-	if contents[0].Role != RoleAssistant {
+	if contents[0].Role != RoleModel {
 		t.Fatalf("got %+v", contents)
 	}
 }
@@ -190,7 +190,7 @@ func TestOpenAIParserToolCallStreamedArgs(t *testing.T) {
 		t.Fatalf("expected 1 content, got %d", len(contents))
 	}
 	content := contents[0]
-	if content.Role != RoleAssistant {
+	if content.Role != RoleModel {
 		t.Fatalf("wrong role: %s", content.Role)
 	}
 	if len(content.Parts) != 1 {
@@ -426,6 +426,9 @@ func TestOpenAIParserToolCallNoArgs(t *testing.T) {
 		t.Fatalf("expected 1 content, got %d", len(contents))
 	}
 	content := contents[0]
+	if content.Role != RoleModel {
+		t.Fatalf("wrong role: %s", content.Role)
+	}
 	if len(content.Parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(content.Parts))
 	}
@@ -782,4 +785,3 @@ func TestOpenAIParserPartMerging(t *testing.T) {
 		t.Errorf("unexpected thought part: %+v", content.Parts)
 	}
 }
-
