@@ -2,12 +2,12 @@ package anytexts
 
 import (
 	"cmp"
-	"io"
 	"iter"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/dscope"
@@ -29,6 +29,7 @@ type FileInfo struct {
 	Content  []byte
 	IsText   bool
 	MimeType string
+	ModTime  time.Time
 }
 
 func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
@@ -38,7 +39,14 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			patterns = []string{"."}
 		}
 
+		// Collect candidate files with modification times
+		type candidate struct {
+			path    string
+			modTime time.Time
+		}
+		var candidates []candidate
 		var queue []string
+
 		for _, pattern := range patterns {
 			files, err := filepath.Glob(pattern)
 			if err != nil {
@@ -50,110 +58,109 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 		}
 
-		handlePath := func(path string) (stop bool, err error) {
-			baseName := filepath.Base(path)
+		for len(queue) > 0 {
+			path := queue[0]
+			queue = queue[1:]
 
+			baseName := filepath.Base(path)
 			// ignore hidden files
 			if baseName != "." && strings.HasPrefix(baseName, ".") {
-				return false, nil
+				continue
 			}
 			// ignore _ files
 			if strings.HasPrefix(baseName, "_") {
-				return false, nil
+				continue
 			}
 
-			file, err := os.Open(path)
+			info, err := os.Stat(path)
 			if err != nil {
-				return false, err
-			}
-			defer file.Close()
-
-			stat, err := file.Stat()
-			if err != nil {
-				return false, err
+				yield(FileInfo{}, err)
+				return
 			}
 
-			if stat.IsDir() {
-				// queue dir files
-				entries, err := file.ReadDir(0)
+			if info.IsDir() {
+				entries, err := os.ReadDir(path)
 				if err != nil {
-					return false, err
+					yield(FileInfo{}, err)
+					return
 				}
 				// Sort entries by name for deterministic ordering across filesystems.
-				// os.ReadDir does not guarantee alphabetical order; sorting here
-				// ensures that prefix caching is not invalidated by filesystem-dependent
-				// entry ordering.
 				slices.SortStableFunc(entries, func(a, b os.DirEntry) int {
 					return cmp.Compare(a.Name(), b.Name())
 				})
 				for _, entry := range entries {
 					queue = append(queue, filepath.Join(path, entry.Name()))
 				}
-
-			} else {
-				// plain file
-
-				// filter
-				if !c.FileNameOK()(path) {
-					return false, nil
-				}
-				if !c.NameMatch()(path) {
-					return false, nil
-				}
-
-				content, err := io.ReadAll(file)
-				if err != nil {
-					return false, err
-				}
-
-				// mime type
-				mtype := mimetype.Detect(content)
-				ok := false
-				isText := false
-			l:
-				for t := mtype; t != nil; t = t.Parent() {
-					if t.Is("text/plain") {
-						ok = true
-						isText = true
-						break
-					}
-					for m := range includeNonTextMimeTypes {
-						if t.Is(m) {
-							ok = true
-							break l
-						}
-					}
-				}
-
-				if !ok {
-					return false, nil
-				}
-
-				if !yield(FileInfo{
-					Path:     path,
-					Content:  content,
-					IsText:   isText,
-					MimeType: mtype.String(),
-				}, nil) {
-					return true, nil
-				}
-
+				continue
 			}
 
-			return false, nil
+			// plain file
+			if !c.FileNameOK()(path) {
+				continue
+			}
+			if !c.NameMatch()(path) {
+				continue
+			}
+
+			candidates = append(candidates, candidate{
+				path:    path,
+				modTime: info.ModTime(),
+			})
 		}
 
-		for len(queue) > 0 {
-			path := queue[0]
-			queue = queue[1:]
-			if stop, err := handlePath(path); err != nil {
+		// Sort files by modification time ascending (oldest first) to maximize
+		// the common prefix across requests: older files are less likely to change
+		// and therefore form a stable cacheable prefix.
+		slices.SortFunc(candidates, func(a, b candidate) int {
+			if a.modTime.Before(b.modTime) {
+				return -1
+			} else if b.modTime.Before(a.modTime) {
+				return 1
+			}
+			return cmp.Compare(a.path, b.path)
+		})
+
+		// Process candidates in sorted order
+		for _, cand := range candidates {
+			content, err := os.ReadFile(cand.path)
+			if err != nil {
 				yield(FileInfo{}, err)
 				return
-			} else if stop {
-				break
+			}
+
+			// mime type
+			mtype := mimetype.Detect(content)
+			ok := false
+			isText := false
+		loop:
+			for t := mtype; t != nil; t = t.Parent() {
+				if t.Is("text/plain") {
+					ok = true
+					isText = true
+					break
+				}
+				for m := range includeNonTextMimeTypes {
+					if t.Is(m) {
+						ok = true
+						break loop
+					}
+				}
+			}
+
+			if !ok {
+				continue
+			}
+
+			if !yield(FileInfo{
+				Path:     cand.path,
+				Content:  content,
+				IsText:   isText,
+				MimeType: mtype.String(),
+				ModTime:  cand.modTime,
+			}, nil) {
+				return
 			}
 		}
-
 	}
 }
 

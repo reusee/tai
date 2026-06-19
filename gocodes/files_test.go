@@ -29,76 +29,89 @@ func TestFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		first := files[len(files)-1]
-		if first.Path != filepath.Join(dir, "main.go") {
-			t.Fatalf("got %v", first.Path)
+		// Find expected files by path; do not assume a particular order.
+		var mainFile, aTxtFile, dep1File *File
+		for _, f := range files {
+			switch f.Path {
+			case filepath.Join(dir, "main.go"):
+				mainFile = f
+			case filepath.Join(dir, "a.txt"):
+				aTxtFile = f
+			case filepath.Join(dir, "..", "dep1", "dep1.go"):
+				dep1File = f
+			}
 		}
-		if first.TokenFile == nil {
-			t.Fatal()
+		if mainFile == nil {
+			t.Fatal("main.go not found")
 		}
-		if first.AstFile == nil {
-			t.Fatal()
+		if aTxtFile == nil {
+			t.Fatal("a.txt not found")
 		}
-		if first.Package == nil {
-			t.Fatal()
-		}
-		if !first.PackageIsRoot {
-			t.Fatal()
-		}
-		if first.PackageDistanceFromRoot != 0 {
-			t.Fatal()
-		}
-		if first.Module == nil {
-			t.Fatal()
-		}
-		if !first.ModuleIsRoot {
-			t.Fatal()
+		if dep1File == nil {
+			t.Fatal("dep1.go not found")
 		}
 
-		second := files[len(files)-2]
-		if second.Path != filepath.Join(dir, "a.txt") {
-			t.Fatalf("got %v", second.Path)
+		// main.go checks
+		if mainFile.TokenFile == nil {
+			t.Error("main.go TokenFile is nil")
 		}
-		if second.Package == nil {
-			t.Fatal()
+		if mainFile.AstFile == nil {
+			t.Error("main.go AstFile is nil")
 		}
-		if !second.PackageIsRoot {
-			t.Fatal()
+		if mainFile.Package == nil {
+			t.Error("main.go Package is nil")
 		}
-		if second.PackageDistanceFromRoot != 0 {
-			t.Fatalf("got %v", second.PackageDistanceFromRoot)
+		if !mainFile.PackageIsRoot {
+			t.Error("main.go not marked as root package")
 		}
-		if second.Module == nil {
-			t.Fatal()
+		if mainFile.PackageDistanceFromRoot != 0 {
+			t.Errorf("main.go distance %d, want 0", mainFile.PackageDistanceFromRoot)
 		}
-		if !second.ModuleIsRoot {
-			t.Fatal()
+		if mainFile.Module == nil {
+			t.Error("main.go Module is nil")
+		}
+		if !mainFile.ModuleIsRoot {
+			t.Error("main.go not marked as root module")
 		}
 
-		third := files[len(files)-3]
-		if third.Path != filepath.Join(dir, "..", "dep1", "dep1.go") {
-			t.Fatalf("got %v", third.Path)
+		// a.txt checks
+		if aTxtFile.Package == nil {
+			t.Error("a.txt Package is nil")
 		}
-		if third.TokenFile == nil {
-			t.Fatal()
+		if !aTxtFile.PackageIsRoot {
+			t.Error("a.txt not marked as root package")
 		}
-		if third.AstFile == nil {
-			t.Fatal()
+		if aTxtFile.PackageDistanceFromRoot != 0 {
+			t.Errorf("a.txt distance %d, want 0", aTxtFile.PackageDistanceFromRoot)
 		}
-		if third.Package == nil {
-			t.Fatal()
+		if aTxtFile.Module == nil {
+			t.Error("a.txt Module is nil")
 		}
-		if third.PackageIsRoot {
-			t.Fatal()
+		if !aTxtFile.ModuleIsRoot {
+			t.Error("a.txt not marked as root module")
 		}
-		if third.PackageDistanceFromRoot != 1 {
-			t.Fatal()
+
+		// dep1.go checks
+		if dep1File.TokenFile == nil {
+			t.Error("dep1.go TokenFile is nil")
 		}
-		if third.Module == nil {
-			t.Fatal()
+		if dep1File.AstFile == nil {
+			t.Error("dep1.go AstFile is nil")
 		}
-		if !third.ModuleIsRoot {
-			t.Fatal()
+		if dep1File.Package == nil {
+			t.Error("dep1.go Package is nil")
+		}
+		if dep1File.PackageIsRoot {
+			t.Error("dep1.go incorrectly marked as root package")
+		}
+		if dep1File.PackageDistanceFromRoot != 1 {
+			t.Errorf("dep1.go distance %d, want 1", dep1File.PackageDistanceFromRoot)
+		}
+		if dep1File.Module == nil {
+			t.Error("dep1.go Module is nil")
+		}
+		if !dep1File.ModuleIsRoot {
+			t.Error("dep1.go not marked as root module")
 		}
 
 	})

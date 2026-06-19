@@ -58,12 +58,9 @@ func (c CodeProvider) Parts(
 			projectFiles[f.Path] = f
 		}
 
-		// Collect all files from IterFiles and sort them by path to ensure
-		// deterministic ordering. IterFiles may return files in file-system
-		// order which varies across runs; without sorting, the order of parts
-		// and the subset of files selected when the token budget is limited
-		// would both be non-deterministic, causing different user prompts on
-		// repeated executions.
+		// Collect all files from IterFiles and sort them by modification time
+		// (oldest first) to maximize the common prefix across requests.
+		// The file path is used as a tiebreaker for determinism.
 		var extraFiles []anytexts.FileInfo
 		for info, err := range c.AnyTexts().IterFiles(patterns) {
 			if err != nil {
@@ -72,6 +69,11 @@ func (c CodeProvider) Parts(
 			extraFiles = append(extraFiles, info)
 		}
 		slices.SortFunc(extraFiles, func(a, b anytexts.FileInfo) int {
+			if a.ModTime.Before(b.ModTime) {
+				return -1
+			} else if b.ModTime.Before(a.ModTime) {
+				return 1
+			}
 			return strings.Compare(a.Path, b.Path)
 		})
 

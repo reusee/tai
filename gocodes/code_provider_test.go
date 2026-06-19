@@ -37,22 +37,31 @@ func TestContextPrompt(t *testing.T) {
 			t.Fatalf("got %v", len(parts))
 		}
 
-		if text, ok := parts[0].(generators.Text); !ok {
-			t.Fatalf("got %#v", parts[0])
-		} else if !strings.Contains(string(text), filepath.Join(dir, "..", "dep1", "dep1.go")) {
-			t.Fatalf("got %v", text)
+		var foundDep1, foundATxt, foundMain bool
+		for _, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				t.Fatalf("got %#v", part)
+			}
+			s := string(text)
+			if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
+				foundDep1 = true
+			}
+			if strings.Contains(s, filepath.Join(dir, "a.txt")) {
+				foundATxt = true
+			}
+			if strings.Contains(s, filepath.Join(dir, "main.go")) {
+				foundMain = true
+			}
 		}
-
-		if text, ok := parts[1].(generators.Text); !ok {
-			t.Fatalf("got %#v", parts[1])
-		} else if !strings.Contains(string(text), filepath.Join(dir, "a.txt")) {
-			t.Fatalf("got %v", text)
+		if !foundDep1 {
+			t.Errorf("dep1.go not found")
 		}
-
-		if text, ok := parts[2].(generators.Text); !ok {
-			t.Fatalf("got %#v", parts[2])
-		} else if !strings.Contains(string(text), filepath.Join(dir, "main.go")) {
-			t.Fatalf("got %v", text)
+		if !foundATxt {
+			t.Errorf("a.txt not found")
+		}
+		if !foundMain {
+			t.Errorf("main.go not found")
 		}
 
 	})

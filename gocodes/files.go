@@ -40,10 +40,10 @@ common prefix between consecutive requests: when only focus files change, all pr
 context files remain identical, allowing LLM prefix caching to reuse cached key-value
 states for unchanged content.
 
-Sort tiebreakers rely exclusively on path-based identifiers (package path, file path) to
-guarantee deterministic ordering across runs. Volatile attributes such as modification
-time and file size are intentionally excluded to prevent spurious reordering that would
-invalidate cached prefixes.
+Within each priority group, files are further ordered by modification time (oldest first)
+so that recently edited files appear at the end of the group. This keeps the prefix of
+older, unchanged files stable even when a few files are actively being edited.
+The file path serves as the final deterministic tiebreaker.
 `
 
 type File struct {
@@ -380,6 +380,13 @@ func (Module) Files(
 				return cmp.Compare(a.Package.PkgPath, b.Package.PkgPath)
 			}
 
+			// modification time: older files first so recently edited files appear last,
+			// maximizing LLM prefix cache utilization across requests.
+			if a.ModTime.Before(b.ModTime) {
+				return -1
+			} else if b.ModTime.Before(a.ModTime) {
+				return 1
+			}
 			// file path alphabetical — final stable tiebreaker
 			return cmp.Compare(a.Path, b.Path)
 		})
