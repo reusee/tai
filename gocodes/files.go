@@ -40,10 +40,13 @@ common prefix between consecutive requests: when only focus files change, all pr
 context files remain identical, allowing LLM prefix caching to reuse cached key-value
 states for unchanged content.
 
-Within each priority group, files are further ordered by modification time (oldest first)
-so that recently edited files appear at the end of the group. This keeps the prefix of
-older, unchanged files stable even when a few files are actively being edited.
-The file path serves as the final deterministic tiebreaker.
+Within each priority group, files are ordered by their path as the primary key. This
+ensures a fully deterministic order that is independent of modification times. Using
+modification times would cause reordering whenever timestamps change (e.g., after a
+fresh checkout or touch), destroying the entire prefix cache. Path-based ordering
+guarantees that unchanged files always appear in the same position, maximizing cache
+reuse across requests. Modification time is kept as a final tiebreaker for hypothetical
+cases where two files could share the same path (impossible in practice).
 `
 
 type File struct {
@@ -387,15 +390,20 @@ func (Module) Files(
 				return cmp.Compare(a.Package.PkgPath, b.Package.PkgPath)
 			}
 
-			// modification time: older files first so recently edited files appear last,
-			// maximizing LLM prefix cache utilization across requests.
+			// file path alphabetical — primary stable key.
+			// Using modification time before path would cause reordering
+			// when timestamps change without content change (e.g., after git checkout),
+			// destroying the LLM prefix cache.
+			if a.Path != b.Path {
+				return cmp.Compare(a.Path, b.Path)
+			}
+			// modification time — final tiebreaker for identical paths (should never happen)
 			if a.ModTime.Before(b.ModTime) {
 				return -1
 			} else if b.ModTime.Before(a.ModTime) {
 				return 1
 			}
-			// file path alphabetical — final stable tiebreaker
-			return cmp.Compare(a.Path, b.Path)
+			return 0
 		})
 
 		// filter

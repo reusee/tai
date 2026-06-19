@@ -58,9 +58,10 @@ func (c CodeProvider) Parts(
 			projectFiles[f.Path] = f
 		}
 
-		// Collect all files from IterFiles and sort them by modification time
-		// (oldest first) to maximize the common prefix across requests.
-		// The file path is used as a tiebreaker for determinism.
+		// Collect all files from IterFiles and sort them by path first, then by modification
+		// time (oldest first) as a tiebreaker. Sorting by path as the primary key ensures
+		// deterministic order that resists filesystem timestamp changes, maximizing the
+		// LLM prefix cache.
 		var extraFiles []anytexts.FileInfo
 		for info, err := range c.AnyTexts().IterFiles(patterns) {
 			if err != nil {
@@ -69,12 +70,15 @@ func (c CodeProvider) Parts(
 			extraFiles = append(extraFiles, info)
 		}
 		slices.SortFunc(extraFiles, func(a, b anytexts.FileInfo) int {
+			if a.Path != b.Path {
+				return strings.Compare(a.Path, b.Path)
+			}
 			if a.ModTime.Before(b.ModTime) {
 				return -1
 			} else if b.ModTime.Before(a.ModTime) {
 				return 1
 			}
-			return strings.Compare(a.Path, b.Path)
+			return 0
 		})
 
 		// Deduplicate extra files by path to guard against IterFiles returning
