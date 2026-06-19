@@ -48,13 +48,18 @@ file-path: <absolute_path>
   - ADD_BEFORE: Add new code before an existing declaration.
   - ADD_AFTER: Add new code after an existing declaration.
   - DELETE: Remove an existing declaration.
-- <target>: The exact name of a top-level declaration (function, method, type, const, var) 
-  or BEGIN/END for file-level operations. For methods, use TypeName.MethodName or *TypeName.MethodName.
+- <target>: The exact name of **exactly ONE** top-level declaration (function, method, type, const, var) 
+  or BEGIN/END for file-level operations. The target must uniquely identify a single top-level entity.
+  For methods, use TypeName.MethodName or *TypeName.MethodName.
 - <file-path>: The absolute path to the file being modified.
-- <code>: For MODIFY and ADD operations, provide the COMPLETE declaration including its signature,
-  body, and associated comments. Do NOT use ellipsis (...) or placeholders.
+- <code>: For MODIFY and ADD operations, provide the COMPLETE definition of the target entity, including its 
+  signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition 
+  and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders.
   The code must be complete and properly formatted. For DELETE operations, the code section can be empty.
-- Each change block MUST target exactly ONE top-level declaration.
+- **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY 
+  that entity's complete definition. If you need to modify or add a type together with its methods, 
+  you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block 
+  for the type definition, and individual blocks for each method (targeted as TypeName.MethodName).
   Do NOT group a type definition with its methods in the same block.
 - Content outside change blocks (including reasoning, explanations, and comments) is preserved verbatim.
 - If no changes are needed, simply omit all change blocks.
@@ -89,7 +94,7 @@ These changes should resolve the issue.
 }
 
 func (b BoundaryDiffHandler) RestatePrompt() string {
-	return `**REMINDER**: All code modifications MUST use the boundary-delimited format:
+	return `**CRITICAL**: All code modifications MUST use the boundary-delimited format:
 ---change <random_boundary>
 op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE>
 target: <identifier>
@@ -100,8 +105,9 @@ file-path: <absolute_path>
 ---end <random_boundary>
 
 - Generate a boundary string of two random uncommon meaningless Chinese characters (e.g., '瞪辄') for each response.
-- Each block targets exactly ONE declaration. Do NOT group.
-- Include the COMPLETE declaration code. No ellipsis or placeholders.
+- **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
+- For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
+- Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
 `
 }
