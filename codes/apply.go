@@ -307,7 +307,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 	if !strings.HasSuffix(path, ".go") {
 		if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
 			// Allow creating new non-Go file
-			body := stripMarkdown(h.Body)
+			body := h.Body
 			if dir := filepath.Dir(path); dir != "." {
 				if err := rootMkdirAll(root, dir, 0755); err != nil {
 					return err
@@ -328,7 +328,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 		}
 	}
 
-	h.Body = stripMarkdown(h.Body)
+	h.Body = h.Body
 	bodyInfo, _ := getBodyInfo(h.Body)
 	if bodyInfo != nil {
 		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
@@ -892,26 +892,6 @@ func stripPackage(body string) string {
 	return strings.TrimSpace(body[offset:])
 }
 
-func stripMarkdown(s string) string {
-	s = strings.TrimSpace(s)
-	start := strings.Index(s, "```")
-	if start == -1 {
-		return s
-	}
-	// skip the line with ```
-	nextNl := strings.Index(s[start:], "\n")
-	if nextNl == -1 {
-		return s
-	}
-	contentStart := start + nextNl + 1
-
-	end := strings.LastIndex(s, "```")
-	if end <= contentStart {
-		return s
-	}
-	return strings.TrimSpace(s[contentStart:end])
-}
-
 func getActualPos(node ast.Node) token.Pos {
 	switch n := node.(type) {
 	case *ast.FuncDecl:
@@ -933,3 +913,4 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
+
