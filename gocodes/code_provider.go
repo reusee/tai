@@ -24,6 +24,16 @@ type CodeProvider struct {
 
 var _ codetypes.CodeProvider = CodeProvider{}
 
+// pendingExtraPart holds an extra file part to be added after project files.
+// Deferring extra file addition ensures project files form the stable prefix
+// for LLM prefix caching, while extra files (which vary by request pattern)
+// form the volatile suffix.
+type pendingExtraPart struct {
+	part   generators.Part
+	tokens int
+	path   string
+}
+
 func (c CodeProvider) Functions() (ret []*generators.Function) {
 	return
 }
@@ -51,7 +61,12 @@ func (c CodeProvider) Parts(
 	// filter files based on exclusion patterns
 	files = c.filterFiles(files, patterns)
 
-	// provide files from patterns (extra context)
+	// Collect extra files from patterns for later addition after project files.
+	// Extra files are placed after project files to maximize the common prefix
+	// for LLM prefix caching: project files are stable across requests, while
+	// extra files vary by pattern and would shift all subsequent content if
+	// placed first.
+	var pendingExtras []pendingExtraPart
 	if len(patterns) > 0 {
 		projectFiles := make(map[string]*File)
 		for _, f := range files {
@@ -111,31 +126,38 @@ func (c CodeProvider) Parts(
 				if numTokens > maxTokens {
 					continue
 				}
-				maxTokens -= numTokens
-				if *showTokenCounts {
-					c.Logger().Info("extra context file", "path", info.Path, "tokens", numTokens)
-				}
-				totalTokens += numTokens
-				parts = append(parts, generators.Text(text))
+				pendingExtras = append(pendingExtras, pendingExtraPart{
+					part:   generators.Text(text),
+					tokens: numTokens,
+					path:   info.Path,
+				})
 
 			} else {
 				// binary or other media
-				parts = append(parts, generators.Text("File: "+info.Path+"\n"))
-				parts = append(parts, generators.FileContent{
-					Content:  info.Content,
-					MimeType: info.MimeType,
+				pendingExtras = append(pendingExtras, pendingExtraPart{
+					part: generators.Text("File: " + info.Path + "\n"),
+					path: info.Path,
 				})
-				// approximate token count for binary content is not implemented,
-				// but it will be capped by the model's overall context window.
+				pendingExtras = append(pendingExtras, pendingExtraPart{
+					part: generators.FileContent{
+						Content:  info.Content,
+						MimeType: info.MimeType,
+					},
+					path: info.Path,
+				})
 			}
 		}
 	}
 
+	// Simplify project files with the full token budget.
+	// Using the full budget ensures project file simplification is deterministic
+	// regardless of extra file sizes, preserving the LLM prefix cache.
 	files, err = c.SimplifyFiles()(files, maxTokens, countTokens)
 	if err != nil {
 		return nil, err
 	}
 
+	// Add project files first — these form the stable prefix for LLM caching.
 	for _, file := range files {
 		if len(file.Confirmed.Content) == 0 {
 			panic(fmt.Errorf("empty file: %+v", file))
@@ -145,6 +167,20 @@ func (c CodeProvider) Parts(
 		}
 		totalTokens += file.Confirmed.NumTokens
 		parts = append(parts, generators.Text(file.Confirmed.Content))
+	}
+
+	// Add extra files after project files — these form the volatile suffix.
+	// Extra files vary by request pattern; placing them last ensures they
+	// cannot shift the position of stable project file content.
+	for _, pp := range pendingExtras {
+		if pp.tokens > 0 && totalTokens+pp.tokens > maxTokens && maxTokens > 0 {
+			continue
+		}
+		if *showTokenCounts && pp.tokens > 0 {
+			c.Logger().Info("extra context file", "path", pp.path, "tokens", pp.tokens)
+		}
+		totalTokens += pp.tokens
+		parts = append(parts, pp.part)
 	}
 
 	if *showTokenCounts {
