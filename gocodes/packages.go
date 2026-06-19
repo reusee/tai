@@ -1,8 +1,10 @@
 package gocodes
 
 import (
+	"cmp"
 	"errors"
 	"go/token"
+	"slices"
 	"sync"
 
 	"github.com/reusee/tai/logs"
@@ -61,6 +63,12 @@ func (Module) Packages(
 		if err != nil {
 			return
 		}
+		// Sort packages by import path for deterministic ordering across runs.
+		// This guarantees that all downstream processing (BFS distance calculation,
+		// file sorting, etc.) produces identical results, preserving the LLM prefix cache.
+		slices.SortFunc(rootPkgs, func(a, b *packages.Package) int {
+			return cmp.Compare(a.PkgPath, b.PkgPath)
+		})
 
 		if len(contextPatterns) > 0 {
 			var err2 error
@@ -68,6 +76,10 @@ func (Module) Packages(
 			if err2 != nil {
 				err = errors.Join(err, err2)
 			}
+			// Sort context packages similarly for deterministic ordering.
+			slices.SortFunc(contextPkgs, func(a, b *packages.Package) int {
+				return cmp.Compare(a.PkgPath, b.PkgPath)
+			})
 		}
 
 		var errs []error

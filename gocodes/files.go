@@ -267,6 +267,13 @@ func (Module) Files(
 			if err != nil {
 				continue
 			}
+			// Sort entries by name for deterministic ordering.
+			// Without sorting, the filesystem order could change when files are added/removed,
+			// shifting the position of existing markdown files in the prompt and breaking
+			// the LLM prefix cache.
+			slices.SortStableFunc(entries, func(a, b os.DirEntry) int {
+				return strings.Compare(a.Name(), b.Name())
+			})
 			for _, entry := range entries {
 				if entry.IsDir() {
 					continue
