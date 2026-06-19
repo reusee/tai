@@ -155,12 +155,6 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 	return ""
 }
 
-// parseFirstBoundaryHunk extracts the first change block from content using the
-// boundary-delimited format: ---change <boundary> / ---end <boundary>.
-// Headers (op, target, file-path) are parsed from lines between the opening marker and the body.
-// A blank line separates headers from the code body. Header parsing stops once all three
-// headers have been collected, so that body content that accidentally looks like a header
-// is never misinterpreted.
 func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
 	changePrefix := []byte("---change ")
 	idx := bytes.Index(content, changePrefix)
@@ -229,22 +223,28 @@ headerLoop:
 		}
 
 		key := strings.TrimSpace(line[:colonIdx])
+		val := strings.TrimSpace(line[colonIdx+1:])
 		switch key {
 		case "op":
 			if !haveOp {
-				val := strings.TrimSpace(line[colonIdx+1:])
-				h.Op = val
+				if opToken := strings.Fields(val); len(opToken) > 0 {
+					h.Op = opToken[0]
+				} else {
+					h.Op = val
+				}
 				haveOp = true
 			}
 		case "target":
 			if !haveTarget {
-				val := strings.TrimSpace(line[colonIdx+1:])
-				h.Target = val
+				if targetToken := strings.Fields(val); len(targetToken) > 0 {
+					h.Target = targetToken[0]
+				} else {
+					h.Target = val
+				}
 				haveTarget = true
 			}
 		case "file-path":
 			if !haveFilePath {
-				val := strings.TrimSpace(line[colonIdx+1:])
 				h.FilePath = val
 				haveFilePath = true
 			}
@@ -257,13 +257,21 @@ headerLoop:
 		pos = headerEnd + 1
 	}
 
-	// Find ---end BOUNDARY marker
+	// All required headers must be present
+	if !haveOp || !haveTarget || !haveFilePath {
+		return h, 0, 0, false
+	}
+
+	// Find ---end BOUNDARY marker. Require it at the start of a line.
 	endMarker := "---end " + boundary
 	bodyEnd := bytes.Index(content[bodyStart:], []byte(endMarker))
 	if bodyEnd == -1 {
 		return h, 0, 0, false
 	}
 	bodyEnd += bodyStart
+	if bodyEnd != bodyStart && content[bodyEnd-1] != '\n' {
+		return h, 0, 0, false
+	}
 
 	// Extract body text between headers and end marker
 	body := strings.TrimSpace(string(content[bodyStart:bodyEnd]))
@@ -328,7 +336,6 @@ func applyHunk(root *os.Root, h Hunk) error {
 		}
 	}
 
-	h.Body = h.Body
 	bodyInfo, _ := getBodyInfo(h.Body)
 	if bodyInfo != nil {
 		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
@@ -913,4 +920,3 @@ func getActualPos(node ast.Node) token.Pos {
 	}
 	return node.Pos()
 }
-
