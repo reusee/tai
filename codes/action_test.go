@@ -1,6 +1,7 @@
 package codes
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -82,5 +83,47 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	}
 	if !strings.Contains(h2.Body, "op: MODIFY // comment") {
 		t.Fatal("body should contain the header-like line")
+	}
+}
+
+func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nconst (\n\tbbb = 1\n\tccc = 2\n\tddd = 3\n)\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := Hunk{
+		Op:       "ADD_BEFORE",
+		Target:   "ccc",
+		FilePath: "test.go",
+		Body:     "const aaa = 42",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+
+	if !strings.Contains(resultStr, "const aaa = 42") {
+		t.Fatalf("result does not contain 'const aaa = 42':\n%s", resultStr)
+	}
+	aaaIdx := strings.Index(resultStr, "const aaa = 42")
+	bbbIdx := strings.Index(resultStr, "bbb = 1")
+	if aaaIdx == -1 || bbbIdx == -1 || aaaIdx > bbbIdx {
+		t.Fatalf("'const aaa = 42' should appear before 'bbb = 1':\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "ccc = 2") || !strings.Contains(resultStr, "ddd = 3") {
+		t.Fatalf("const block should be intact:\n%s", resultStr)
 	}
 }

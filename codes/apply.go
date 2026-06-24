@@ -15,6 +15,14 @@ import (
 	"golang.org/x/tools/imports"
 )
 
+const HunkApplicationTheory = `
+Hunk application translates parsed change blocks into byte-level edits on source files.
+When an ADD operation targets a spec nested inside a multi-spec declaration block (e.g.,
+const or var groups), the insertion point redirects to the parent block boundary to avoid
+producing invalid code inside the parentheses. The inserted body must remain a complete,
+self-contained declaration so the resulting source is valid Go.
+`
+
 // Hunk represents a single modification unit parsed from AI output.
 type Hunk struct {
 	Op       string
@@ -649,11 +657,17 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 				}
 			}
 
-			// For ADD operations inside a multi-spec GenDecl, redirect to the parent
-			// GenDecl to avoid inserting inside the parentheses.
+			// For ADD operations targeting a spec inside a multi-spec GenDecl,
+			// redirect to the parent GenDecl range to avoid inserting inside the
+			// parentheses. The full body declaration (with keyword) must be used
+			// instead of the extracted spec source, so the inserted code is valid Go.
 			if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && len(genDecl.Specs) > 1 {
 				if start == nodeStart && end == nodeEnd {
 					start, end = parentStart, parentEnd
+					finalBody = h.Body
+					if bodyInfo != nil && bodyInfo.Keyword != "" {
+						finalBody = bodyInfo.Keyword + " " + finalBody
+					}
 				}
 			}
 		} else {
