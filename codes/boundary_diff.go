@@ -39,7 +39,7 @@ file-path: <absolute_path>
 ---end <boundary>
 
 **Rules:**
-- <boundary>: Generate a boundary string composed of two random uncommon meaningless Chinese characters (e.g., '瞪辄').
+- <boundary>: Generate a boundary string composed of two random uncommon meaningless Chinese characters.
   The same boundary MUST be used for both the ---change and ---end markers of a block.
   A sufficiently random boundary ensures it cannot conflict with any code content.
   Use a different boundary for each response.
@@ -68,7 +68,7 @@ file-path: <absolute_path>
 
 I analyzed the code and found an issue with the Foo function...
 
----change 瞪辄
+---change 徕珑
 op: MODIFY
 target: Foo
 file-path: <absolute_path>
@@ -78,16 +78,16 @@ func Foo() {
 	println("fixed")
 }
 
----end 瞪辄
+---end 徕珑
 
 The Bar function is now unused and should be removed...
 
----change 瞪辄
+---change 徕珑
 op: DELETE
 target: Bar
 file-path: <absolute_path>
 
----end 瞪辄
+---end 徕珑
 
 These changes should resolve the issue.
 `
@@ -104,7 +104,7 @@ file-path: <absolute_path>
 
 ---end <random_boundary>
 
-- Generate a boundary string of two random uncommon meaningless Chinese characters (e.g., '瞪辄') for each response.
+- Generate a boundary string of two random uncommon meaningless Chinese characters for each response.
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
@@ -138,3 +138,4 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 
 	return nil
 }
+
