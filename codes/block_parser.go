@@ -6,12 +6,15 @@ import (
 	"strings"
 )
 
-// BlockFormatTheory explains the design of the boundary block format.
 const BlockFormatTheory = `
 The boundary block format is a general-purpose structured output format for AI models.
 It uses delimited blocks with a random boundary string to avoid parsing conflicts with content.
 Each block has a kind (e.g., "change", "call"), headers as key-value pairs, and a body.
 This format replaces ad-hoc XML or JSON escaping with a simple, parseable structure.
+
+**Line-start requirement**: The opening marker (---kind boundary) and the closing marker
+(---end boundary) must each appear at the beginning of a line. Any occurrence of "---"
+that is not at the start of a line is treated as regular content and will not start a block.
 `
 
 // BlockFormatSystemPrompt returns a system prompt describing the general boundary block format.
@@ -90,6 +93,7 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 	if idx == -1 {
 		return
 	}
+	// The opening marker must be at the beginning of a line.
 	if idx > 0 && content[idx-1] != '\n' {
 		return
 	}
@@ -204,7 +208,8 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 		return
 	}
 	bodyEnd += bodyStart
-	if bodyEnd != bodyStart && content[bodyEnd-1] != '\n' {
+	// The closing marker must also be at the beginning of a line.
+	if bodyEnd > 0 && content[bodyEnd-1] != '\n' {
 		return
 	}
 
@@ -262,4 +267,3 @@ func ParseCalls(content []byte) ([]Call, error) {
 	}
 	return calls, nil
 }
-

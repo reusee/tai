@@ -104,6 +104,38 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	})
 }
 
+func TestBoundaryBlockLineStart(t *testing.T) {
+	// --- not at beginning of line should not be recognized as a block start
+	content1 := []byte("some text ---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n---end 瑱魃\n")
+	_, _, _, ok := ParseFirstBlock(content1, ParseBlockConfig{
+		KnownHeaders:    []string{"op", "target", "file-path"},
+		RequiredHeaders: []string{"op", "target", "file-path"},
+	})
+	if ok {
+		t.Fatal("expected no block for mid-line start marker")
+	}
+
+	// ---end not at beginning of line should not be recognized
+	content2 := []byte("---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text---end 瑱魃\n")
+	_, _, _, ok = ParseFirstBlock(content2, ParseBlockConfig{
+		KnownHeaders:    []string{"op", "target", "file-path"},
+		RequiredHeaders: []string{"op", "target", "file-path"},
+	})
+	if ok {
+		t.Fatal("expected no block for mid-line end marker")
+	}
+
+	// Properly placed markers (start and end at beginning of lines) should succeed
+	content3 := []byte("---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n---end 瑱魃\n")
+	_, _, _, ok = ParseFirstBlock(content3, ParseBlockConfig{
+		KnownHeaders:    []string{"op", "target", "file-path"},
+		RequiredHeaders: []string{"op", "target", "file-path"},
+	})
+	if !ok {
+		t.Fatal("expected block for line-start markers")
+	}
+}
+
 func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
