@@ -164,137 +164,28 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 }
 
 func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
-	changePrefix := []byte("---change ")
-	idx := bytes.Index(content, changePrefix)
-	if idx == -1 {
+	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
+		KnownHeaders:    []string{"op", "target", "file-path"},
+		RequiredHeaders: []string{"op", "target", "file-path"},
+	})
+	if !ok || block.Kind != "change" {
 		return h, 0, 0, false
 	}
 
-	// Ensure the marker is at the start of a line (or at the start of content)
-	if idx > 0 && content[idx-1] != '\n' {
-		return h, 0, 0, false
+	h.Op = block.Headers["op"]
+	h.Target = block.Headers["target"]
+	h.FilePath = block.Headers["file-path"]
+	h.Body = block.Body
+
+	// Extract first word for op and target to be lenient with trailing comments
+	if opToken := strings.Fields(h.Op); len(opToken) > 0 {
+		h.Op = opToken[0]
+	}
+	if targetToken := strings.Fields(h.Target); len(targetToken) > 0 {
+		h.Target = targetToken[0]
 	}
 
-	start = idx
-
-	// Extract boundary string after ---change until end of line
-	lineStart := idx + len(changePrefix)
-	lineEnd := bytes.IndexByte(content[lineStart:], '\n')
-	if lineEnd == -1 {
-		return h, 0, 0, false
-	}
-	lineEnd += lineStart
-	boundary := strings.TrimSpace(string(content[lineStart:lineEnd]))
-	if boundary == "" {
-		return h, 0, 0, false
-	}
-
-	// Parse headers until blank line or all three fields are set.
-	pos := lineEnd + 1
-	bodyStart := pos
-	var haveOp, haveTarget, haveFilePath bool
-headerLoop:
-	for pos < len(content) {
-		if content[pos] == '\n' {
-			// Blank line: headers end, body starts after this newline
-			pos++
-			bodyStart = pos
-			break
-		}
-		headerEnd := bytes.IndexByte(content[pos:], '\n')
-		if headerEnd == -1 {
-			bodyStart = pos
-			break
-		}
-		headerEnd += pos
-		line := strings.TrimSpace(string(content[pos:headerEnd]))
-
-		if line == "" {
-			// Empty/whitespace line acts as blank line separator
-			pos = headerEnd + 1
-			bodyStart = pos
-			break
-		}
-
-		// If all three headers are already set, stop parsing headers;
-		// the remaining content is body.
-		if haveOp && haveTarget && haveFilePath {
-			bodyStart = pos
-			break
-		}
-
-		colonIdx := strings.Index(line, ":")
-		if colonIdx < 0 {
-			// Not a header line; body starts here
-			bodyStart = pos
-			break
-		}
-
-		key := strings.TrimSpace(line[:colonIdx])
-		val := strings.TrimSpace(line[colonIdx+1:])
-		switch key {
-		case "op":
-			if !haveOp {
-				if opToken := strings.Fields(val); len(opToken) > 0 {
-					h.Op = opToken[0]
-				} else {
-					h.Op = val
-				}
-				haveOp = true
-			}
-		case "target":
-			if !haveTarget {
-				if targetToken := strings.Fields(val); len(targetToken) > 0 {
-					h.Target = targetToken[0]
-				} else {
-					h.Target = val
-				}
-				haveTarget = true
-			}
-		case "file-path":
-			if !haveFilePath {
-				h.FilePath = val
-				haveFilePath = true
-			}
-		default:
-			// Unrecognized header key, treat as body start
-			bodyStart = pos
-			break headerLoop
-		}
-
-		pos = headerEnd + 1
-	}
-
-	// All required headers must be present
-	if !haveOp || !haveTarget || !haveFilePath {
-		return h, 0, 0, false
-	}
-
-	// Find ---end BOUNDARY marker. Require it at the start of a line.
-	endMarker := "---end " + boundary
-	bodyEnd := bytes.Index(content[bodyStart:], []byte(endMarker))
-	if bodyEnd == -1 {
-		return h, 0, 0, false
-	}
-	bodyEnd += bodyStart
-	if bodyEnd != bodyStart && content[bodyEnd-1] != '\n' {
-		return h, 0, 0, false
-	}
-
-	// Extract body text between headers and end marker
-	body := strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-	h.Body = body
-
-	// Calculate the end of the entire block (after the ---end line)
-	endLineEnd := bytes.IndexByte(content[bodyEnd:], '\n')
-	if endLineEnd == -1 {
-		end = len(content)
-	} else {
-		end = bodyEnd + endLineEnd + 1
-	}
-
-	ok = true
-	return h, start, end, ok
+	return h, start, end, true
 }
 
 func applyHunk(root *os.Root, h Hunk) error {

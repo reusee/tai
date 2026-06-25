@@ -22,6 +22,41 @@ func (b BoundaryDiffHandler) Functions() []*generators.Function {
 }
 
 func (b BoundaryDiffHandler) SystemPrompt() string {
+	return ChangeBlockSystemPrompt()
+}
+
+func (b BoundaryDiffHandler) RestatePrompt() string {
+	return ChangeBlockRestatePrompt()
+}
+
+func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
+	content, err := os.ReadFile(diffFilePath)
+	if err != nil {
+		return err
+	}
+
+	for {
+		h, start, end, ok := parseFirstBoundaryHunk(content)
+		if !ok {
+			break
+		}
+		if err := applyHunk(root, h); err != nil {
+			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
+		}
+		newContent := append(content[:start], content[end:]...)
+		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
+			return err
+		}
+		content, err = os.ReadFile(diffFilePath)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ChangeBlockSystemPrompt() string {
 	return `**Code Change Output Format (Boundary-Delimited):**
 
 Your response can include reasoning, explanations, and code modifications in any order.
@@ -92,7 +127,7 @@ These changes should resolve the issue.
 `
 }
 
-func (b BoundaryDiffHandler) RestatePrompt() string {
+func ChangeBlockRestatePrompt() string {
 	return `**CRITICAL**: All code modifications MUST use the boundary-delimited format:
 ---change <random_boundary>
 op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME>
@@ -110,31 +145,4 @@ file-path: <absolute_path>
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
 `
-}
-
-func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
-	content, err := os.ReadFile(diffFilePath)
-	if err != nil {
-		return err
-	}
-
-	for {
-		h, start, end, ok := parseFirstBoundaryHunk(content)
-		if !ok {
-			break
-		}
-		if err := applyHunk(root, h); err != nil {
-			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
-		}
-		newContent := append(content[:start], content[end:]...)
-		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
-			return err
-		}
-		content, err = os.ReadFile(diffFilePath)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
