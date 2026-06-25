@@ -30,8 +30,8 @@ To propose code modifications, use delimited change blocks with a randomly gener
 **Change Block Format:**
 
 ---change <boundary>
-op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE>
-target: <declaration_identifier|BEGIN|END>
+op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME>
+target: <declaration_identifier|BEGIN|END|new_file_path>
 file-path: <absolute_path>
 
 <complete_declaration_code>
@@ -48,14 +48,13 @@ file-path: <absolute_path>
   - ADD_BEFORE: Add new code before an existing declaration.
   - ADD_AFTER: Add new code after an existing declaration.
   - DELETE: Remove an existing declaration.
-- <target>: The exact name of **exactly ONE** top-level declaration (function, method, type, const, var) 
-  or BEGIN/END for file-level operations. The target must uniquely identify a single top-level entity.
-  For methods, use TypeName.MethodName or *TypeName.MethodName.
+  - RENAME: Rename a file. ` + "`" + `target` + "`" + ` is the new file path, ` + "`" + `file-path` + "`" + ` is the current file path. The code block is ignored and may be empty.
+- <target>: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`" + `target` + "`" + ` is the new file path (relative or absolute).
 - <file-path>: The absolute path to the file being modified.
 - <code>: For MODIFY and ADD operations, provide the COMPLETE definition of the target entity, including its 
   signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition 
   and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders.
-  The code must be complete and properly formatted. For DELETE operations, the code section can be empty.
+  The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY 
   that entity's complete definition. If you need to modify or add a type together with its methods, 
   you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block 
@@ -96,8 +95,8 @@ These changes should resolve the issue.
 func (b BoundaryDiffHandler) RestatePrompt() string {
 	return `**CRITICAL**: All code modifications MUST use the boundary-delimited format:
 ---change <random_boundary>
-op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE>
-target: <identifier>
+op: <MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME>
+target: <identifier_or_new_file_path>
 file-path: <absolute_path>
 
 <complete code>
@@ -107,6 +106,7 @@ file-path: <absolute_path>
 - Generate a boundary string of two random uncommon meaningless Chinese characters for each response.
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
+- For RENAME, ` + "`" + `target` + "`" + ` is the new file path; the code block is ignored.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
 `
@@ -138,4 +138,3 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 
 	return nil
 }
-

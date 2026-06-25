@@ -84,6 +84,24 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	if !strings.Contains(h2.Body, "op: MODIFY // comment") {
 		t.Fatal("body should contain the header-like line")
 	}
+
+	// RENAME operation with empty body
+	t.Run("RENAME", func(t *testing.T) {
+		content := "---change 徕珑\nop: RENAME\ntarget: new.go\nfile-path: old.go\n\n---end 徕珑\n"
+		h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if h.Op != "RENAME" {
+			t.Fatalf("expected RENAME, got %s", h.Op)
+		}
+		if h.Target != "new.go" {
+			t.Fatalf("expected new.go, got %s", h.Target)
+		}
+		if h.FilePath != "old.go" {
+			t.Fatalf("expected old.go, got %s", h.FilePath)
+		}
+	})
 }
 
 func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
@@ -125,5 +143,50 @@ func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 	}
 	if !strings.Contains(resultStr, "ccc = 2") || !strings.Contains(resultStr, "ddd = 3") {
 		t.Fatalf("const block should be intact:\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkRename(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := Hunk{
+		Op:       "RENAME",
+		Target:   "newname.go",
+		FilePath: "test.go",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	// Old file must be gone
+	_, err = root.Stat("test.go")
+	if err == nil {
+		t.Fatal("old file should not exist")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected IsNotExist, got %v", err)
+	}
+
+	// New file must exist with original content
+	_, err = root.Stat("newname.go")
+	if err != nil {
+		t.Fatalf("new file should exist: %v", err)
+	}
+	content, err := root.ReadFile("newname.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != original {
+		t.Fatalf("expected %q, got %q", original, string(content))
 	}
 }

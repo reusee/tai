@@ -314,6 +314,31 @@ func applyHunk(root *os.Root, h Hunk) error {
 		return fmt.Errorf("path escapes current directory: %s", path)
 	}
 
+	// Handle RENAME before any file content checks
+	if h.Op == "RENAME" {
+		newPath := h.Target
+		if filepath.IsAbs(newPath) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(cwd, newPath)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("new path outside of current directory: %s", newPath)
+			}
+			newPath = rel
+		}
+		if strings.HasPrefix(filepath.Clean(newPath), "..") {
+			return fmt.Errorf("new path escapes current directory: %s", newPath)
+		}
+		if dir := filepath.Dir(newPath); dir != "." {
+			if err := rootMkdirAll(root, dir, 0755); err != nil {
+				return err
+			}
+		}
+		return root.Rename(path, newPath)
+	}
+
 	src, err := root.ReadFile(path) // Use os.Root for safe reading
 	if err != nil && !os.IsNotExist(err) {
 		return err
