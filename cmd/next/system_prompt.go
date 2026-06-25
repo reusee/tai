@@ -7,6 +7,7 @@ import (
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 )
@@ -57,7 +58,7 @@ func (Module) SystemPrompt(
 	}
 	if hasGoFiles {
 		logger.Info("has go file")
-		ret += "\n\n" + prompts.UnifiedDiff + "\n\n"
+		ret += "\n\n" + SystemPrompt((codes.BoundaryDiffHandler{}).SystemPrompt()) + "\n\n"
 	}
 
 	if extra != "" {
