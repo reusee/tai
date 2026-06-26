@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
@@ -67,7 +68,8 @@ func main() {
 	scope.Call(func(
 		logger logs.Logger,
 		getSystemPrompt GetSystemPrompt,
-		updateMemoryFunc UpdateMemoryFunc,
+		currentMemory CurrentMemory,
+		appendMemory AppendMemory,
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
 		generator generators.Generator,
@@ -89,7 +91,6 @@ func main() {
 		for pattern := range flagFiles {
 			paths, err := filepath.Glob(pattern)
 			if err != nil {
-				// ignore
 				files = append(files, pattern)
 			} else {
 				for _, path := range paths {
@@ -131,10 +132,6 @@ func main() {
 			},
 		)
 		state = generators.NewOutput(state, os.Stdout, true).WithTools(false)
-		if !*noMemory {
-			state = generators.NewFuncMap(state, updateMemoryFunc)
-			state = NewPseudoCallState(state)
-		}
 
 		phase := buildGenerate(generator, nil)(
 			buildChat(generator, nil)(
@@ -144,6 +141,29 @@ func main() {
 		for phase != nil {
 			phase, state, err = phase(ctx, state)
 			ce(err)
+		}
+
+		// update memory from block
+		if !*noMemory {
+			var assistantBuilder strings.Builder
+			for content := range state.Contents() {
+				if content.Role == generators.RoleAssistant {
+					for _, part := range content.Parts {
+						if text, ok := part.(generators.Text); ok {
+							assistantBuilder.WriteString(string(text))
+							assistantBuilder.WriteByte('\n')
+						}
+					}
+				}
+			}
+			if err := updateMemoryFromBlock(
+				currentMemory,
+				appendMemory,
+				getModelID(generator.Spec()),
+				assistantBuilder.String(),
+			); err != nil {
+				logger.ErrorContext(ctx, "update memory", "err", err)
+			}
 		}
 
 	})
