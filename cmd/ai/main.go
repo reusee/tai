@@ -20,8 +20,6 @@ import (
 	"golang.org/x/term"
 )
 
-var chatArgs = cmds.Var[string]("chat")
-
 const Theory = `
 Memory and Tool Usage:
 The AI's memory is implemented as a persistent user profile (ai-memory.json).
@@ -74,9 +72,10 @@ func main() {
 		buildChat phases.BuildChat,
 		generator generators.Generator,
 		flagFiles flags.Files,
+		flagChats flags.Chats,
 	) {
 
-		input := *chatArgs
+		input := strings.Join(flagChats, "\n")
 
 		stdin := getStdinContent()
 		if len(stdin) > 0 {
@@ -178,3 +177,4 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
+

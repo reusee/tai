@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
@@ -94,9 +95,7 @@ func expandGoExprs(s string, env *taivm.Env) string {
 
 type Chats map[string]string
 
-var actionNameFlag string
-
-var actionArgumentFlag ActionArgument
+var actionNameFlag string = "chat"
 
 var noChat = cmds.Switch("-no-chat")
 
@@ -169,9 +168,10 @@ func (Module) ActionArgument(
 	loader configs.Loader,
 	chats Chats,
 	env taiconfigs.ConfigGoEnv,
+	flagChats flags.Chats,
 ) ActionArgument {
 	arg := vars.FirstNonZero(
-		actionArgumentFlag,
+		ActionArgument(strings.Join(flagChats, "\n")),
 		configs.First[ActionArgument](loader, "action_argument"),
 	)
 	if v, ok := chats[string(arg)]; ok {
@@ -186,3 +186,4 @@ func (Module) ActionArgument(
 
 	return arg
 }
+

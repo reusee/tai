@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/phases"
 )
@@ -61,10 +60,6 @@ func (a ActionChat) Name() string {
 }
 
 func (a ActionChat) DefineCmds() {
-	cmds.Define(a.Name(), cmds.Func(func(args *string) {
-		actionNameFlag = a.Name()
-		actionArgumentFlag = ActionArgument(*args)
-	}).Desc("chat interactively"))
 }
 
 func (a ActionChat) InitialGenerator() (generators.Generator, error) {
