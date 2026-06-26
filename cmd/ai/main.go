@@ -130,7 +130,9 @@ func main() {
 				},
 			},
 		)
-		state = generators.NewOutput(state, os.Stdout, true).WithTools(false)
+		buf := new(strings.Builder)
+		w := io.MultiWriter(os.Stdout, buf)
+		state = generators.NewOutput(state, w, true).WithTools(false)
 
 		phase := buildGenerate(generator, nil)(
 			buildChat(generator, nil)(
@@ -144,22 +146,11 @@ func main() {
 
 		// update memory from block
 		if !*noMemory {
-			var assistantBuilder strings.Builder
-			for content := range state.Contents() {
-				if content.Role == generators.RoleAssistant {
-					for _, part := range content.Parts {
-						if text, ok := part.(generators.Text); ok {
-							assistantBuilder.WriteString(string(text))
-							assistantBuilder.WriteByte('\n')
-						}
-					}
-				}
-			}
 			if err := updateMemoryFromBlock(
 				currentMemory,
 				appendMemory,
 				getModelID(generator.Spec()),
-				assistantBuilder.String(),
+				buf.String(),
 			); err != nil {
 				logger.ErrorContext(ctx, "update memory", "err", err)
 			}
@@ -177,4 +168,3 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
-
