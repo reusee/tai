@@ -36,7 +36,7 @@ func (Module) Generate(
 	diffHandler codetypes.DiffHandler,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
-	action Action,
+	actionChat ActionChat,
 	maxTokens taiconfigs.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
@@ -46,7 +46,7 @@ func (Module) Generate(
 	return func(ctx context.Context, output io.Writer) error {
 
 		// generator
-		generator, err := action.InitialGenerator()
+		generator, err := actionChat.GetDefaultGenerator()()
 		if err != nil {
 			return err
 		}
@@ -138,7 +138,7 @@ func (Module) Generate(
 		}
 
 		// run
-		phase := action.InitialPhase(nil)
+		phase := actionChat.InitialPhase(nil)
 		for phase != nil {
 			newPhase, newState, phaseErr := phase(ctx, state)
 

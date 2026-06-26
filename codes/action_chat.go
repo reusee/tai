@@ -15,8 +15,6 @@ type ActionChat struct {
 	GetDefaultGenerator dscope.Inject[GetDefaultGenerator]
 }
 
-var _ Action = ActionChat{}
-
 func (Module) ActionChat(
 	inject dscope.InjectStruct,
 ) (ret ActionChat) {
@@ -53,15 +51,4 @@ func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
 		}
 		return a.BuildChat()(generator, nil)(cont), state, nil
 	}
-}
-
-func (a ActionChat) Name() string {
-	return "chat"
-}
-
-func (a ActionChat) DefineCmds() {
-}
-
-func (a ActionChat) InitialGenerator() (generators.Generator, error) {
-	return a.GetDefaultGenerator()()
 }
