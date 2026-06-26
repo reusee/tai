@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/taivm"
 )
 
@@ -149,7 +150,7 @@ func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := codetypes.Hunk{
 		Op:       "ADD_BEFORE",
 		Target:   "ccc",
 		FilePath: "test.go",
@@ -191,7 +192,7 @@ func TestApplyHunkRename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := codetypes.Hunk{
 		Op:       "RENAME",
 		Target:   "newname.go",
 		FilePath: "test.go",

@@ -29,8 +29,11 @@ func main() {
 	if diff == nil {
 		diff = codes.BoundaryDiffHandler{}
 	}
-	if err := diff.Apply(root, target); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	for hunk, err := range diff.Apply(root, target) {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Applied %s %s\n", hunk.Op, hunk.Target)
 	}
 }

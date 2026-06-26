@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/reusee/tai/codes/codetypes"
 	"golang.org/x/tools/imports"
 )
 
@@ -23,15 +24,6 @@ const or var groups), the insertion point redirects to the parent block boundary
 producing invalid code inside the parentheses. The inserted body must remain a complete,
 self-contained declaration so the resulting source is valid Go.
 `
-
-// Hunk represents a single modification unit parsed from AI output.
-type Hunk struct {
-	Op       string
-	Target   string
-	FilePath string
-	Body     string
-	Raw      string
-}
 
 type BodyInfo struct {
 	Decls     []ast.Decl
@@ -171,7 +163,7 @@ type changeXML struct {
 	FilePath string `xml:"file-path,attr"`
 }
 
-func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
+func parseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool) {
 	// Try old header-based format first
 	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
@@ -241,7 +233,7 @@ func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool
 	return h, start, end, true
 }
 
-func applyHunk(root *os.Root, h Hunk) error {
+func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
 		cwd, err := os.Getwd()
@@ -324,7 +316,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 
 	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
 	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
-		if s, e, fb, err := findTargetRange(fset, f, Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
+		if s, e, fb, err := findTargetRange(fset, f, codetypes.Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
 			h.Op = "MODIFY"
 			h.Target = bodyName
 			start, end, finalBody = s, e, fb
@@ -362,7 +354,7 @@ func applyHunk(root *os.Root, h Hunk) error {
 				continue
 			}
 			// Find range of this identifier in the original file
-			s, e, _, err := findTargetRange(fset, f, Hunk{Op: "DELETE", Target: id}, nil, len(src), prefixLen)
+			s, e, _, err := findTargetRange(fset, f, codetypes.Hunk{Op: "DELETE", Target: id}, nil, len(src), prefixLen)
 			if err == nil {
 				// Check for overlap with existing items
 				overlap := false
@@ -457,7 +449,7 @@ func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
 	return root.Mkdir(path, perm)
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
+func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
 		if h.Op == "MODIFY" {
 			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target BEGIN; use ADD_BEFORE")

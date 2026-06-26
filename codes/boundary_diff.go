@@ -3,6 +3,7 @@ package codes
 import (
 	"bytes"
 	"fmt"
+	"iter"
 	"os"
 
 	"github.com/reusee/tai/codes/codetypes"
@@ -29,32 +30,37 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 	return ChangeBlockRestatePrompt()
 }
 
-func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
-	content, err := os.ReadFile(diffFilePath)
-	if err != nil {
-		return err
-	}
-
-	for {
-		h, start, end, ok := parseFirstBoundaryHunk(content)
-		if !ok {
-			break
-		}
-		if err := applyHunk(root, h); err != nil {
-			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
-		}
-		fmt.Printf("Applied %s %s\n", h.Op, h.Target)
-		newContent := append(content[:start], content[end:]...)
-		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
-			return err
-		}
-		content, err = os.ReadFile(diffFilePath)
+func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2[codetypes.Hunk, error] {
+	return func(yield func(codetypes.Hunk, error) bool) {
+		content, err := os.ReadFile(diffFilePath)
 		if err != nil {
-			return err
+			yield(codetypes.Hunk{}, err)
+			return
+		}
+		for {
+			h, start, end, ok := parseFirstBoundaryHunk(content)
+			if !ok {
+				break
+			}
+			if err := applyHunk(root, h); err != nil {
+				yield(h, fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err))
+				return
+			}
+			newContent := append(content[:start], content[end:]...)
+			if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
+				yield(codetypes.Hunk{}, err)
+				return
+			}
+			content, err = os.ReadFile(diffFilePath)
+			if err != nil {
+				yield(codetypes.Hunk{}, err)
+				return
+			}
+			if !yield(h, nil) {
+				return
+			}
 		}
 	}
-
-	return nil
 }
 
 func ChangeBlockSystemPrompt() string {
