@@ -2,8 +2,8 @@ package generators
 
 import (
 	"github.com/reusee/tai/apps"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 )
@@ -19,10 +19,6 @@ func (Module) GetDefaultGenerator(
 	}
 }
 
-var (
-	defaultModelName = cmds.Var[string]("-model")
-)
-
 type DefaultModelName string
 
 var _ configs.Configurable = DefaultModelName("")
@@ -35,12 +31,13 @@ func (Module) DefaultModelName(
 	fallback FallbackModelName,
 	logger logs.Logger,
 	appName apps.Name,
+	flagModelName flags.ModelName,
 ) (ret DefaultModelName) {
 	defer func() {
 		logger.Info("default model", "name", ret)
 	}()
 	return vars.FirstNonZero(
-		DefaultModelName(*defaultModelName),
+		DefaultModelName(flagModelName),
 		configs.First[DefaultModelName](loader, string(appName)+".model_name"),
 		configs.First[DefaultModelName](loader, string(appName)+".model"),
 		configs.First[DefaultModelName](loader, "model_name"),

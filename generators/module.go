@@ -5,6 +5,7 @@ import (
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 )
@@ -16,4 +17,5 @@ type Module struct {
 	Logs    logs.Module
 	Debugs  debugs.Module
 	Apps    apps.Module
+	Flags   flags.Module
 }
