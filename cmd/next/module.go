@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/taiconfigs"
 )
@@ -12,4 +13,5 @@ type Module struct {
 	Generator generators.Module
 	AnyTexts  anytexts.Module
 	Configs   taiconfigs.Module
+	Flags     flags.Module
 }

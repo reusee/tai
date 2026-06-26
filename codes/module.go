@@ -3,6 +3,7 @@ package codes
 import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/phases"
@@ -16,4 +17,5 @@ type Module struct {
 	GoCodes    gocodes.Module
 	AnyTexts   anytexts.Module
 	Phases     phases.Module
+	Flags      flags.Module
 }

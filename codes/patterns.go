@@ -6,18 +6,14 @@ import (
 	"slices"
 
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 )
 
 type Patterns []string
 
-var cmdPatterns = map[string]bool{}
-
 var cmdExcludePatterns = map[string]bool{}
 
 func init() {
-	cmds.Define("-file", cmds.Func(func(pattern string) {
-		cmdPatterns[pattern] = true
-	}))
 	cmds.Define("-exclude", cmds.Func(func(pattern string) {
 		cmdExcludePatterns[pattern] = true
 	}))
@@ -26,8 +22,10 @@ func init() {
 	}))
 }
 
-func (Module) Patterns() Patterns {
-	keys := slices.Collect(maps.Keys(cmdPatterns))
+func (Module) Patterns(
+	flagFiles flags.Files,
+) Patterns {
+	keys := slices.Collect(maps.Keys(flagFiles))
 	slices.SortStableFunc(keys, cmp.Compare)
 	var ret Patterns
 	ret = append(ret, keys...)
@@ -38,3 +36,4 @@ func (Module) Patterns() Patterns {
 	}
 	return ret
 }
+

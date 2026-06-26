@@ -1,7 +1,11 @@
 package main
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/taiconfigs"
 )
@@ -13,6 +17,7 @@ func (Module) UserPrompt(
 	generator Generator,
 	systemPrompt SystemPrompt,
 	maxTokens taiconfigs.MaxTokens,
+	flagFiles flags.Files,
 ) UserPrompt {
 
 	args := generator.Spec()
@@ -32,7 +37,7 @@ func (Module) UserPrompt(
 	parts, err := codeProvider.Parts(
 		maxInputTokens,
 		generator.CountTokens,
-		patterns,
+		slices.Collect(maps.Keys(flagFiles)),
 	)
 	ce(err)
 

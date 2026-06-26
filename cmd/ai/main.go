@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
@@ -69,6 +71,7 @@ func main() {
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
 		generator generators.Generator,
+		flagFiles flags.Files,
 	) {
 
 		input := *chatArgs
@@ -81,6 +84,26 @@ func main() {
 
 		systemPrompt, err := getSystemPrompt()
 		ce(err)
+
+		var files []string
+		for pattern := range flagFiles {
+			paths, err := filepath.Glob(pattern)
+			if err != nil {
+				// ignore
+				files = append(files, pattern)
+			} else {
+				for _, path := range paths {
+					info, err := os.Stat(path)
+					if err != nil {
+						continue
+					}
+					if info.IsDir() {
+						continue
+					}
+					files = append(files, path)
+				}
+			}
+		}
 
 		var parts []generators.Part
 
@@ -135,4 +158,3 @@ func getStdinContent() (ret []byte) {
 	ce(err)
 	return
 }
-

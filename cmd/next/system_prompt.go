@@ -2,6 +2,8 @@ package main
 
 import (
 	_ "embed"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/reusee/prompts"
@@ -9,6 +11,7 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/logs"
 )
 
@@ -44,9 +47,12 @@ func (Module) SystemPrompt(
 	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
 	extra ExtraSystemPrompt,
+	flagFiles flags.Files,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
+
+	patterns := slices.Collect(maps.Keys(flagFiles))
 
 	hasGoFiles := false
 	for info, err := range codeProvider.IterFiles(patterns) {
