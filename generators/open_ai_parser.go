@@ -58,11 +58,15 @@ func (o *OpenAIParser) Input(delta ChatCompletionStreamChoiceDelta) (ret []*Cont
 		}
 	}
 
-	if delta.ReasoningContent != "" {
+	reasoning := delta.ReasoningContent
+	if reasoning == "" {
+		reasoning = delta.Reasoning
+	}
+	if reasoning != "" {
 		if err := o.checkAndEmitCall(); err != nil {
 			return nil, err
 		}
-		o.appendPart(Thought(delta.ReasoningContent))
+		o.appendPart(Thought(reasoning))
 		lastThought := o.current.Parts[len(o.current.Parts)-1].(Thought)
 		if len(lastThought) > 64 {
 			ret = append(ret, o.current)
@@ -176,5 +180,6 @@ func deltaIsEmpty(delta ChatCompletionStreamChoiceDelta) bool {
 	return delta.Content == "" &&
 		delta.Role == "" &&
 		len(delta.ToolCalls) == 0 &&
-		delta.ReasoningContent == ""
+		delta.ReasoningContent == "" &&
+		delta.Reasoning == ""
 }

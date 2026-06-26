@@ -785,3 +785,45 @@ func TestOpenAIParserPartMerging(t *testing.T) {
 		t.Errorf("unexpected thought part: %+v", content.Parts)
 	}
 }
+
+func TestOpenAIParserReasoningField(t *testing.T) {
+	parser := new(OpenAIParser)
+
+	// Use "reasoning" field instead of "reasoning_content"
+	_, err := parser.Input(ChatCompletionStreamChoiceDelta{
+		Role:      string(RoleAssistant),
+		Reasoning: "thinking via reasoning field",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = parser.Input(ChatCompletionStreamChoiceDelta{
+		Content: "answer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contents, err := parser.End()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("expected 1 content, got %d", len(contents))
+	}
+	content := contents[0]
+	if len(content.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d: %+v", len(content.Parts), content.Parts)
+	}
+
+	thought, ok := content.Parts[0].(Thought)
+	if !ok || thought != "thinking via reasoning field" {
+		t.Errorf("unexpected thought: %+v", content.Parts[0])
+	}
+
+	text, ok := content.Parts[1].(Text)
+	if !ok || text != "answer" {
+		t.Errorf("unexpected text: %+v", content.Parts[1])
+	}
+}

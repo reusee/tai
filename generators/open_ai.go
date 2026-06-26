@@ -272,8 +272,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			content := &Content{
 				Role: role,
 			}
-			if msg.ReasoningContent != "" {
-				content.Parts = append(content.Parts, Thought(msg.ReasoningContent))
+			reasoningContent := msg.ReasoningContent
+			if reasoningContent == "" {
+				reasoningContent = msg.Reasoning
+			}
+			if reasoningContent != "" {
+				content.Parts = append(content.Parts, Thought(reasoningContent))
 			}
 			if contentStr, ok := msg.Content.(string); ok && contentStr != "" {
 				content.Parts = append(content.Parts, Text(contentStr))
@@ -617,6 +621,7 @@ type ChatCompletionMessage struct {
 	Role             string     `json:"role"`
 	Content          any        `json:"content,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Reasoning        string     `json:"reasoning,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
@@ -687,6 +692,7 @@ type ChatCompletionStreamChoiceDelta struct {
 	Role             string     `json:"role,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Reasoning        string     `json:"reasoning,omitempty"`
 }
 
 type ErrorResponse struct {
