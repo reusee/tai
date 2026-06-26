@@ -222,3 +222,37 @@ func TestApplyHunkRename(t *testing.T) {
 		t.Fatalf("expected %q, got %q", original, string(content))
 	}
 }
+
+func TestParseFirstBoundaryHunkXML(t *testing.T) {
+	content := "---change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n---end 徕珑\n"
+	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if h.Op != "MODIFY" {
+		t.Fatalf("expected MODIFY, got %s", h.Op)
+	}
+	if h.Target != "Foo" {
+		t.Fatalf("expected Foo, got %s", h.Target)
+	}
+	if h.FilePath != "/test.go" {
+		t.Fatalf("expected /test.go, got %s", h.FilePath)
+	}
+	if h.Body != "func Foo() {}" {
+		t.Fatalf("unexpected body: %q", h.Body)
+	}
+}
+
+func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
+	content := "---change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n---end 徕珑\n"
+	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if h.Op != "RENAME" || h.Target != "new.go" || h.FilePath != "old.go" {
+		t.Fatalf("unexpected hunk: %+v", h)
+	}
+	if h.Body != "" {
+		t.Fatalf("body should be empty, got %q", h.Body)
+	}
+}

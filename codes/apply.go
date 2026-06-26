@@ -3,6 +3,7 @@ package codes
 import (
 	"bytes"
 	"cmp"
+	"encoding/xml"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -163,21 +164,73 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 	return ""
 }
 
+// changeXML represents the XML metadata tag in a change block.
+type changeXML struct {
+	Op       string `xml:"op,attr"`
+	Target   string `xml:"target,attr"`
+	FilePath string `xml:"file-path,attr"`
+}
+
 func parseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool) {
+	// Try old header-based format first
 	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
 		RequiredHeaders: []string{"op", "target", "file-path"},
 	})
-	if !ok || block.Kind != "change" {
-		return h, 0, 0, false
+	if ok && block.Kind == "change" {
+		h.Op = block.Headers["op"]
+		h.Target = block.Headers["target"]
+		h.FilePath = block.Headers["file-path"]
+		h.Body = block.Body
+	} else {
+		// Try new XML metadata format
+		block, start, end, ok = ParseFirstBlock(content, ParseBlockConfig{
+			KnownHeaders:    nil,
+			RequiredHeaders: nil,
+		})
+		if !ok || block.Kind != "change" {
+			return h, 0, 0, false
+		}
+		bodyBytes := []byte(block.Body)
+		// Body should start with <change ... /> tag
+		idx := 0
+		// skip leading whitespace
+		for idx < len(bodyBytes) && (bodyBytes[idx] == ' ' || bodyBytes[idx] == '\t') {
+			idx++
+		}
+		if idx >= len(bodyBytes) || bodyBytes[idx] != '<' {
+			return h, 0, 0, false
+		}
+		// find end of self-closing tag
+		tagEnd := -1
+		for i := idx; i < len(bodyBytes)-1; i++ {
+			if bodyBytes[i] == '/' && bodyBytes[i+1] == '>' {
+				tagEnd = i + 2
+				break
+			}
+		}
+		if tagEnd < 0 {
+			return h, 0, 0, false
+		}
+		tagData := bodyBytes[idx:tagEnd]
+		var cx changeXML
+		decoder := xml.NewDecoder(bytes.NewReader(tagData))
+		if err := decoder.Decode(&cx); err != nil {
+			return h, 0, 0, false
+		}
+		h.Op = cx.Op
+		h.Target = cx.Target
+		h.FilePath = cx.FilePath
+		// Code body is everything after the tag and a blank line
+		bodyStart := tagEnd
+		// skip newline(s)
+		for bodyStart < len(bodyBytes) && (bodyBytes[bodyStart] == '\n' || bodyBytes[bodyStart] == '\r') {
+			bodyStart++
+		}
+		h.Body = string(bodyBytes[bodyStart:])
 	}
 
-	h.Op = block.Headers["op"]
-	h.Target = block.Headers["target"]
-	h.FilePath = block.Headers["file-path"]
-	h.Body = block.Body
-
-	// Extract first word for op and target to be lenient with trailing comments
+	// Clean up op/target by taking first word (lenient with trailing comments)
 	if opToken := strings.Fields(h.Op); len(opToken) > 0 {
 		h.Op = opToken[0]
 	}
