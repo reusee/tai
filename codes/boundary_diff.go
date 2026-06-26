@@ -43,6 +43,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) error {
 		if err := applyHunk(root, h); err != nil {
 			return fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err)
 		}
+		fmt.Printf("Applied %s %s\n", h.Op, h.Target)
 		newContent := append(content[:start], content[end:]...)
 		if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
 			return err
