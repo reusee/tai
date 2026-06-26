@@ -84,148 +84,167 @@ type ParseBlockConfig struct {
 	RequiredHeaders []string
 }
 
-// ParseFirstBlock parses the first boundary block in content.
-// It returns the block, the start and end byte offsets of the block in content,
-// and whether a block was found.
 func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start int, end int, ok bool) {
-	prefix := []byte("---")
-	idx := bytes.Index(content, prefix)
-	if idx == -1 {
-		return
-	}
-	// The opening marker must be at the beginning of a line.
-	if idx > 0 && content[idx-1] != '\n' {
-		return
-	}
-	start = idx
-
-	// Extract kind and boundary from the opening line
-	lineStart := idx + len(prefix)
-	lineEnd := bytes.IndexByte(content[lineStart:], '\n')
-	if lineEnd == -1 {
-		return
-	}
-	lineEnd += lineStart
-	openingLine := string(content[lineStart:lineEnd])
-	parts := strings.SplitN(strings.TrimSpace(openingLine), " ", 2)
-	if len(parts) != 2 {
-		return
-	}
-	block.Kind = strings.TrimSpace(parts[0])
-	boundary := strings.TrimSpace(parts[1])
-	if block.Kind == "" || boundary == "" {
-		return
-	}
-	block.Boundary = boundary
-
-	// Parse headers
-	pos := lineEnd + 1
-	bodyStart := pos
-	block.Headers = make(map[string]string)
-
-	requiredSet := make(map[string]bool)
-	for _, h := range cfg.RequiredHeaders {
-		requiredSet[strings.ToLower(h)] = false
-	}
-	requiredCount := len(cfg.RequiredHeaders)
-	foundRequired := 0
-
-	knownSet := make(map[string]bool)
-	if cfg.KnownHeaders != nil {
-		for _, h := range cfg.KnownHeaders {
-			knownSet[strings.ToLower(h)] = true
+	searchFrom := 0
+	for {
+		idx := bytes.Index(content[searchFrom:], []byte("---"))
+		if idx == -1 {
+			return
 		}
-	}
-	hasKnown := len(knownSet) > 0
+		idx += searchFrom
 
-	for pos < len(content) {
-		if content[pos] == '\n' {
-			// Blank line (just newline)
-			pos++
-			bodyStart = pos
-			break
+		// The opening marker must be at the beginning of a line.
+		if idx > 0 && content[idx-1] != '\n' {
+			searchFrom = idx + 3 // skip past this "---"
+			continue
 		}
-		headerEnd := bytes.IndexByte(content[pos:], '\n')
-		if headerEnd == -1 {
-			bodyStart = pos
-			break
+		blockStart := idx
+
+		// Extract kind and boundary from the opening line
+		lineStart := idx + 3
+		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
+		if lineEnd == -1 {
+			searchFrom = idx + 1
+			continue
 		}
-		headerEnd += pos
-		line := strings.TrimSpace(string(content[pos:headerEnd]))
-
-		if line == "" {
-			// Whitespace-only line acts as blank line separator
-			pos = headerEnd + 1
-			bodyStart = pos
-			break
+		lineEnd += lineStart
+		openingLine := string(content[lineStart:lineEnd])
+		parts := strings.SplitN(strings.TrimSpace(openingLine), " ", 2)
+		if len(parts) != 2 {
+			searchFrom = idx + 1
+			continue
 		}
-
-		// If all required headers are already collected, stop parsing headers
-		if requiredCount > 0 && foundRequired == requiredCount {
-			bodyStart = pos
-			break
+		kind := strings.TrimSpace(parts[0])
+		boundary := strings.TrimSpace(parts[1])
+		if kind == "" || boundary == "" {
+			searchFrom = idx + 1
+			continue
 		}
+		block.Kind = kind
+		block.Boundary = boundary
 
-		colonIdx := strings.Index(line, ":")
-		if colonIdx < 0 {
-			// Not a header line; body starts here
-			bodyStart = pos
-			break
+		// Parse headers
+		pos := lineEnd + 1
+		bodyStart := pos
+		block.Headers = make(map[string]string)
+
+		requiredSet := make(map[string]bool)
+		for _, h := range cfg.RequiredHeaders {
+			requiredSet[strings.ToLower(h)] = false
 		}
+		requiredCount := len(cfg.RequiredHeaders)
+		foundRequired := 0
 
-		key := strings.TrimSpace(line[:colonIdx])
-		val := strings.TrimSpace(line[colonIdx+1:])
-		keyLower := strings.ToLower(key)
-
-		// Check if the key is known, if we have a known set
-		if hasKnown && !knownSet[keyLower] {
-			// Unknown header key, treat as body start
-			bodyStart = pos
-			break
-		}
-
-		if _, exists := block.Headers[keyLower]; !exists {
-			block.Headers[keyLower] = val
-			if requiredSet[keyLower] == false {
-				requiredSet[keyLower] = true
-				foundRequired++
+		knownSet := make(map[string]bool)
+		if cfg.KnownHeaders != nil {
+			for _, h := range cfg.KnownHeaders {
+				knownSet[strings.ToLower(h)] = true
 			}
 		}
+		hasKnown := len(knownSet) > 0
 
-		pos = headerEnd + 1
-	}
+		for pos < len(content) {
+			if content[pos] == '\n' {
+				// Blank line (just newline)
+				pos++
+				bodyStart = pos
+				break
+			}
+			headerEnd := bytes.IndexByte(content[pos:], '\n')
+			if headerEnd == -1 {
+				bodyStart = pos
+				break
+			}
+			headerEnd += pos
+			line := strings.TrimSpace(string(content[pos:headerEnd]))
 
-	// Check required headers
-	if requiredCount > 0 && foundRequired != requiredCount {
-		ok = false
+			if line == "" {
+				// Whitespace-only line acts as blank line separator
+				pos = headerEnd + 1
+				bodyStart = pos
+				break
+			}
+
+			// If all required headers are already collected, stop parsing headers
+			if requiredCount > 0 && foundRequired == requiredCount {
+				bodyStart = pos
+				break
+			}
+
+			colonIdx := strings.Index(line, ":")
+			if colonIdx < 0 {
+				// Not a header line; body starts here
+				bodyStart = pos
+				break
+			}
+
+			key := strings.TrimSpace(line[:colonIdx])
+			val := strings.TrimSpace(line[colonIdx+1:])
+			keyLower := strings.ToLower(key)
+
+			// Check if the key is known, if we have a known set
+			if hasKnown && !knownSet[keyLower] {
+				// Unknown header key, treat as body start
+				bodyStart = pos
+				break
+			}
+
+			if _, exists := block.Headers[keyLower]; !exists {
+				block.Headers[keyLower] = val
+				if isRequired, present := requiredSet[keyLower]; present && !isRequired {
+					requiredSet[keyLower] = true
+					foundRequired++
+				}
+			}
+
+			pos = headerEnd + 1
+		}
+
+		// Check required headers
+		if requiredCount > 0 && foundRequired != requiredCount {
+			searchFrom = blockStart + 1
+			continue
+		}
+
+		// Find a valid ---end BOUNDARY marker at line start
+		endMarker := "---end " + boundary
+		searchEndFrom := bodyStart
+		validEnd := -1
+		for {
+			offset := bytes.Index(content[searchEndFrom:], []byte(endMarker))
+			if offset == -1 {
+				break
+			}
+			candidate := searchEndFrom + offset
+			// The closing marker must be at the beginning of a line.
+			if candidate > 0 && content[candidate-1] != '\n' {
+				// Not at line start, skip past this occurrence
+				searchEndFrom = candidate + len(endMarker)
+				continue
+			}
+			validEnd = candidate
+			break
+		}
+		if validEnd == -1 {
+			searchFrom = blockStart + 1
+			continue
+		}
+		bodyEnd := validEnd
+
+		// Extract body text
+		block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+		// Calculate end of entire block
+		endLineEnd := bytes.IndexByte(content[bodyEnd:], '\n')
+		if endLineEnd == -1 {
+			end = len(content)
+		} else {
+			end = bodyEnd + endLineEnd + 1
+		}
+
+		start = blockStart
+		ok = true
 		return
 	}
-
-	// Find ---end BOUNDARY marker
-	endMarker := "---end " + boundary
-	bodyEnd := bytes.Index(content[bodyStart:], []byte(endMarker))
-	if bodyEnd == -1 {
-		return
-	}
-	bodyEnd += bodyStart
-	// The closing marker must also be at the beginning of a line.
-	if bodyEnd > 0 && content[bodyEnd-1] != '\n' {
-		return
-	}
-
-	// Extract body text
-	block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-
-	// Calculate end of entire block
-	endLineEnd := bytes.IndexByte(content[bodyEnd:], '\n')
-	if endLineEnd == -1 {
-		end = len(content)
-	} else {
-		end = bodyEnd + endLineEnd + 1
-	}
-
-	ok = true
-	return
 }
 
 // Call represents a function call extracted from a "call" block.

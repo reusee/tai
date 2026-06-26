@@ -256,3 +256,33 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 		t.Fatalf("body should be empty, got %q", h.Body)
 	}
 }
+
+func TestParseFirstBlockSkipMalformed(t *testing.T) {
+	// Content with a malformed block (marker not at line start) followed by a valid block
+	content := []byte("some text ---change 徕珑\nop: MODIFY\ntarget: Foo\nfile-path: /f.go\n\ninvalid body\n---end 徕珑\n\n---change 栢彣\nop: MODIFY\ntarget: Bar\nfile-path: /b.go\n\nfunc Bar() {}\n---end 栢彣\n")
+	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
+		KnownHeaders:    []string{"op", "target", "file-path"},
+		RequiredHeaders: []string{"op", "target", "file-path"},
+	})
+	if !ok {
+		t.Fatal("expected a valid block to be found")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %s", block.Kind)
+	}
+	if block.Headers["op"] != "MODIFY" {
+		t.Fatalf("expected op MODIFY, got %s", block.Headers["op"])
+	}
+	if block.Headers["target"] != "Bar" {
+		t.Fatalf("expected target Bar, got %s", block.Headers["target"])
+	}
+	if block.Headers["file-path"] != "/b.go" {
+		t.Fatalf("expected file-path /b.go, got %s", block.Headers["file-path"])
+	}
+	if start < len("some text ") {
+		t.Fatalf("expected first valid block to start after malformed one, start=%d", start)
+	}
+	if end != len(content) {
+		t.Fatalf("expected block to consume entire remaining valid content, end=%d", end)
+	}
+}
