@@ -11,7 +11,7 @@ import (
 )
 
 // BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.
-// Changes are wrapped in ---change <boundary> / ---end <boundary> blocks, where the boundary
+// Changes are wrapped in :::change <boundary> / :::end <boundary> blocks, where the boundary
 // is a random string chosen by the AI to prevent parsing conflicts with code content.
 // This format eliminates escape requirements (unlike XML) while maintaining structural parseability.
 type BoundaryDiffHandler struct{}
@@ -71,16 +71,16 @@ To propose code modifications, use delimited change blocks with a randomly gener
 
 **Change Block Format:**
 
----change <boundary>
+:::change <boundary>
 <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME>" target="<declaration_identifier|BEGIN|END|new_file_path>" file-path="<absolute_path>" />
 
 <complete_declaration_code>
 
----end <boundary>
+:::end <boundary>
 
 **Rules:**
 - <boundary>: Generate a boundary string composed of two random uncommon meaningless Chinese characters.
-  The same boundary MUST be used for both the ---change and ---end markers of a block.
+  The same boundary MUST be used for both the :::change and :::end markers of a block.
   A sufficiently random boundary ensures it cannot conflict with any code content.
   Use a different boundary for each response.
 - The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `.
@@ -101,7 +101,7 @@ To propose code modifications, use delimited change blocks with a randomly gener
 
 I analyzed the code and found an issue with the Foo function...
 
----change 徕珑
+:::change 徕珑
 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go" />
 
 // Foo does something important.
@@ -109,14 +109,14 @@ func Foo() {
 	println("fixed")
 }
 
----end 徕珑
+:::end 徕珑
 
 The Bar function is now unused and should be removed...
 
----change 徕珑
+:::change 徕珑
 <change op="DELETE" target="Bar" file-path="/home/user/foo.go" />
 
----end 徕珑
+:::end 徕珑
 
 These changes should resolve the issue.
 `
@@ -124,12 +124,12 @@ These changes should resolve the issue.
 
 func ChangeBlockRestatePrompt() string {
 	return `**CRITICAL**: All code modifications MUST use the boundary-delimited format with an XML metadata tag:
----change <random_boundary>
+:::change <random_boundary>
 <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME>" target="<identifier_or_new_file_path>" file-path="<absolute_path>" />
 
 <complete code>
 
----end <random_boundary>
+:::end <random_boundary>
 
 - Generate a boundary string of two random uncommon meaningless Chinese characters for each response.
 - The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `.
@@ -140,3 +140,4 @@ func ChangeBlockRestatePrompt() string {
 - If no changes are needed, omit all change blocks.
 `
 }
+

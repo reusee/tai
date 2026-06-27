@@ -12,12 +12,11 @@ It uses delimited blocks with a random boundary string to avoid parsing conflict
 Each block has a kind (e.g., "change", "call"), headers as key-value pairs, and a body.
 This format replaces ad-hoc XML or JSON escaping with a simple, parseable structure.
 
-**Line-start requirement**: The opening marker (---kind boundary) and the closing marker
-(---end boundary) must each appear at the beginning of a line. Any occurrence of "---"
+**Line-start requirement**: The opening marker (:::kind boundary) and the closing marker
+(:::end boundary) must each appear at the beginning of a line. Any occurrence of ":::"
 that is not at the start of a line is treated as regular content and will not start a block.
 `
 
-// BlockFormatSystemPrompt returns a system prompt describing the general boundary block format.
 func BlockFormatSystemPrompt() string {
 	return `**Structured Output Format (Boundary-Delimited):**
 
@@ -25,12 +24,12 @@ Your response can include structured content (code changes, function calls, etc.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
----<kind> <boundary>
+:::<kind> <boundary>
 [headers]
 
 <body>
 
----end <boundary>
+:::end <boundary>
 
 - <kind>: The type of block, e.g., "change", "call", "memory-item".
 - <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
@@ -41,7 +40,6 @@ This format avoids escaping issues and is easy to parse.
 `
 }
 
-// CallFormatSystemPrompt returns additional rules for call blocks.
 func CallFormatSystemPrompt() string {
 	return `**Function Call Blocks (kind "call"):**
 
@@ -50,7 +48,7 @@ The body must be a JSON object representing the arguments to the function.
 
 Example:
 
----call 徕珑
+:::call 徕珑
 function: read_file
 id: call_1
 
@@ -60,7 +58,7 @@ id: call_1
   "limit": 100
 }
 
----end 徕珑
+:::end 徕珑
 `
 }
 
@@ -87,7 +85,7 @@ type ParseBlockConfig struct {
 func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start int, end int, ok bool) {
 	searchFrom := 0
 	for {
-		idx := bytes.Index(content[searchFrom:], []byte("---"))
+		idx := bytes.Index(content[searchFrom:], []byte(":::"))
 		if idx == -1 {
 			return
 		}
@@ -95,7 +93,7 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 
 		// The opening marker must be at the beginning of a line.
 		if idx > 0 && content[idx-1] != '\n' {
-			searchFrom = idx + 3 // skip past this "---"
+			searchFrom = idx + 3 // skip past this ":::"
 			continue
 		}
 		blockStart := idx
@@ -206,8 +204,8 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 			continue
 		}
 
-		// Find a valid ---end BOUNDARY marker at line start
-		endMarker := "---end " + boundary
+		// Find a valid :::end BOUNDARY marker at line start
+		endMarker := ":::end " + boundary
 		searchEndFrom := bodyStart
 		validEnd := -1
 		for {

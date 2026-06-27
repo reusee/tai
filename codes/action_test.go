@@ -50,7 +50,7 @@ func TestExpandGoExprs(t *testing.T) {
 
 func TestParseFirstBoundaryHunk(t *testing.T) {
 	// Valid with blank line
-	content := "---change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n---end abc-def-gh\n"
+	content := ":::change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
 	h, start, end, ok := parseFirstBoundaryHunk([]byte(content))
 	if !ok {
 		t.Fatal("expected ok")
@@ -74,7 +74,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	_ = start
 
 	// Body line that looks like a header after all headers are set (no blank line)
-	content2 := "---change x-y-z\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\nop: MODIFY // comment\nfunc myFunc() {}\n\n---end x-y-z\n"
+	content2 := ":::change x-y-z\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\nop: MODIFY // comment\nfunc myFunc() {}\n\n:::end x-y-z\n"
 	h2, _, _, ok2 := parseFirstBoundaryHunk([]byte(content2))
 	if !ok2 {
 		t.Fatal("expected ok for content2")
@@ -88,7 +88,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 
 	// RENAME operation with empty body
 	t.Run("RENAME", func(t *testing.T) {
-		content := "---change 徕珑\nop: RENAME\ntarget: new.go\nfile-path: old.go\n\n---end 徕珑\n"
+		content := ":::change 徕珑\nop: RENAME\ntarget: new.go\nfile-path: old.go\n\n:::end 徕珑\n"
 		h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
 		if !ok {
 			t.Fatal("expected ok")
@@ -106,8 +106,8 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 }
 
 func TestBoundaryBlockLineStart(t *testing.T) {
-	// --- not at beginning of line should not be recognized as a block start
-	content1 := []byte("some text ---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n---end 瑱魃\n")
+	// ::: not at beginning of line should not be recognized as a block start
+	content1 := []byte("some text :::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
 	_, _, _, ok := ParseFirstBlock(content1, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
 		RequiredHeaders: []string{"op", "target", "file-path"},
@@ -116,8 +116,8 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 		t.Fatal("expected no block for mid-line start marker")
 	}
 
-	// ---end not at beginning of line should not be recognized
-	content2 := []byte("---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text---end 瑱魃\n")
+	// :::end not at beginning of line should not be recognized
+	content2 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text:::end 瑱魃\n")
 	_, _, _, ok = ParseFirstBlock(content2, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
 		RequiredHeaders: []string{"op", "target", "file-path"},
@@ -127,7 +127,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 	}
 
 	// Properly placed markers (start and end at beginning of lines) should succeed
-	content3 := []byte("---change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n---end 瑱魃\n")
+	content3 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
 	_, _, _, ok = ParseFirstBlock(content3, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
 		RequiredHeaders: []string{"op", "target", "file-path"},
@@ -225,7 +225,7 @@ func TestApplyHunkRename(t *testing.T) {
 }
 
 func TestParseFirstBoundaryHunkXML(t *testing.T) {
-	content := "---change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n---end 徕珑\n"
+	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"
 	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
 	if !ok {
 		t.Fatal("expected ok")
@@ -245,7 +245,7 @@ func TestParseFirstBoundaryHunkXML(t *testing.T) {
 }
 
 func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
-	content := "---change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n---end 徕珑\n"
+	content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n:::end 徕珑\n"
 	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
 	if !ok {
 		t.Fatal("expected ok")
@@ -260,7 +260,7 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
-	content := []byte("some text ---change 徕珑\nop: MODIFY\ntarget: Foo\nfile-path: /f.go\n\ninvalid body\n---end 徕珑\n\n---change 栢彣\nop: MODIFY\ntarget: Bar\nfile-path: /b.go\n\nfunc Bar() {}\n---end 栢彣\n")
+	content := []byte("some text :::change 徕珑\nop: MODIFY\ntarget: Foo\nfile-path: /f.go\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\nop: MODIFY\ntarget: Bar\nfile-path: /b.go\n\nfunc Bar() {}\n:::end 栢彣\n")
 	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
 		KnownHeaders:    []string{"op", "target", "file-path"},
 		RequiredHeaders: []string{"op", "target", "file-path"},
