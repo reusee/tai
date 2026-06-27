@@ -8,7 +8,10 @@ import (
 type SystemPrompt string
 
 func (Module) SystemPrompt() SystemPrompt {
-	location, _ := time.LoadLocation("Asia/Hong_Kong")
+	location, err := time.LoadLocation("Asia/Hong_Kong")
+	if err != nil {
+		location = time.UTC
+	}
 	now := time.Now().In(location).Format("2006-01-02 15:04:05")
 
 	prompt := `
