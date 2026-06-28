@@ -38,7 +38,7 @@ func (Module) GetSystemPrompt(
 
 		if !*noMemory {
 
-			ret += codes.BlockFormatSystemPrompt()
+			ret += codes.BlockFormatSystemPrompt
 
 			ret += `
 在每一轮对话中，你的任务流程如下：
@@ -89,4 +89,3 @@ func (Module) GetSystemPrompt(
 		return
 	}
 }
-

@@ -18,8 +18,7 @@ This format replaces ad-hoc XML or JSON escaping with a simple, parseable struct
 that is not at the start of a line is treated as regular content and will not start a block.
 `
 
-func BlockFormatSystemPrompt() string {
-	return `**Structured Output Format (Boundary-Delimited):**
+const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
 
 Your response can include structured content (code changes, etc.) using delimited blocks.
 This format avoids escaping issues and is easy to parse.
@@ -32,12 +31,11 @@ This format avoids escaping issues and is easy to parse.
 :::end <boundary>
 
 - <kind>: The type of block, e.g., "change", "memory-item".
-- <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
+- <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any code content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - If no blocks are needed, simply omit them.
 `
-}
 
 // Block represents a parsed boundary block.
 type Block struct {
