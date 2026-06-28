@@ -443,10 +443,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 		}
 		if h.Op == "ADD_AFTER" && f != nil {
 			// Find position after package declaration
-			pos := fset.Position(f.Name.End()).Offset - prefixLen
-			if pos < 0 {
-				pos = 0
-			}
+			pos := max(fset.Position(f.Name.End()).Offset-prefixLen, 0)
 			return pos, pos, h.Body, nil
 		}
 		return 0, 0, h.Body, nil
@@ -684,10 +681,8 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 				_ = isPtr
 			}
 		}
-		for _, cand := range possible {
-			if cand == target {
-				return d, d, true
-			}
+		if slices.Contains(possible, target) {
+			return d, d, true
 		}
 	case *ast.GenDecl:
 		if d.Tok == token.IMPORT && target == "IMPORT" {

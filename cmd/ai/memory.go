@@ -237,13 +237,7 @@ func updateMemoryFromBlock(
 
 	finalItems := slices.Clone(items)
 	for _, currentItem := range currentItems {
-		found := false
-		for _, item := range items {
-			if item == currentItem {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(items, currentItem)
 		if !found {
 			finalItems = append(finalItems, currentItem)
 		}
@@ -267,4 +261,3 @@ func getModelID(spec generators.Spec) string {
 	}
 	return filepath.Base(spec.Model)
 }
-

@@ -304,8 +304,8 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 			if rt.Kind() == reflect.Struct {
 				var fields []string
 				var embedded []string
-				for i := 0; i < rt.NumField(); i++ {
-					f := rt.Field(i)
+				for f := range rt.Fields() {
+					f := f
 					fields = append(fields, f.Name)
 					if f.Anonymous {
 						embedded = append(embedded, f.Name)
@@ -332,9 +332,7 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 			c.structEmbedded[name] = embedded
 		}
 	}
-	for name, t := range externalValueTypes {
-		c.globals[name] = t
-	}
+	maps.Copy(c.globals, externalValueTypes)
 }
 
 func (c *compiler) getPackage() *Package {
@@ -2734,8 +2732,8 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 		if rt.Kind() == reflect.Struct {
 			var fields []string
 			var embedded []string
-			for i := 0; i < rt.NumField(); i++ {
-				f := rt.Field(i)
+			for f := range rt.Fields() {
+				f := f
 				fields = append(fields, f.Name)
 				if f.Anonymous {
 					embedded = append(embedded, f.Name)
@@ -2980,9 +2978,7 @@ func (c *compiler) resolveInterfaceType(e *ast.InterfaceType) (*taivm.Type, erro
 			}
 			if len(field.Names) == 0 { // Embedded interface
 				if t.Kind == taivm.KindInterface {
-					for k, v := range t.Methods {
-						methods[k] = v
-					}
+					maps.Copy(methods, t.Methods)
 				}
 				continue
 			}

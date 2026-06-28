@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -1245,13 +1246,7 @@ func (v *VM) opMakeStruct(inst OpCode, yield func(*Interrupt, error) bool) bool 
 		if t != nil {
 			for _, f := range t.Fields {
 				if f.Anonymous {
-					found := false
-					for _, e := range embedded {
-						if e == f.Name {
-							found = true
-							break
-						}
-					}
+					found := slices.Contains(embedded, f.Name)
 					if !found {
 						embedded = append(embedded, f.Name)
 					}
@@ -1628,12 +1623,12 @@ func (v *VM) opSwap(yield func(*Interrupt, error) bool) bool {
 }
 
 func (v *VM) opDumpTrace(yield func(*Interrupt, error) bool) bool {
-	var msg string
+	var msg strings.Builder
 	for _, frame := range v.CallStack {
-		msg += fmt.Sprintf("%s:%d\n", frame.Fun.Name, frame.ReturnIP)
+		msg.WriteString(fmt.Sprintf("%s:%d\n", frame.Fun.Name, frame.ReturnIP))
 	}
-	msg += fmt.Sprintf("%s:%d", v.CurrentFun.Name, v.IP-1)
-	return yield(nil, fmt.Errorf("%s", msg))
+	msg.WriteString(fmt.Sprintf("%s:%d", v.CurrentFun.Name, v.IP-1))
+	return yield(nil, fmt.Errorf("%s", msg.String()))
 }
 
 func (v *VM) opBitwise(op OpCode, yield func(*Interrupt, error) bool) bool {

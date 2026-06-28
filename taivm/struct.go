@@ -1,5 +1,7 @@
 package taivm
 
+import "maps"
+
 type Struct struct {
 	TypeName string
 	Fields   map[string]any
@@ -8,9 +10,7 @@ type Struct struct {
 
 func (s *Struct) Copy() *Struct {
 	newFields := make(map[string]any, len(s.Fields))
-	for k, v := range s.Fields {
-		newFields[k] = v
-	}
+	maps.Copy(newFields, s.Fields)
 	return &Struct{
 		TypeName: s.TypeName,
 		Fields:   newFields,

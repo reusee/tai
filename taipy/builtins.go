@@ -235,7 +235,7 @@ func minMax(args []any, wantCmp int) (any, error) {
 			n := v.Len()
 			items = make([]any, 0, n)
 			curr := v.Start
-			for i := int64(0); i < n; i++ {
+			for range n {
 				items = append(items, curr)
 				curr += v.Step
 			}

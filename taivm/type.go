@@ -132,7 +132,7 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 	// 匿名复合类型通过工厂方法递归规范化
 	if t.Name() == "" {
 		switch t.Kind() {
-		case reflect.Ptr:
+		case reflect.Pointer:
 			return PointerTo(fromReflectType(t.Elem(), cache))
 		case reflect.Slice:
 			return SliceOf(fromReflectType(t.Elem(), cache))
@@ -235,7 +235,7 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 		res.Kind = KindMap
 		res.Key = fromReflectType(t.Key(), cache)
 		res.Elem = fromReflectType(t.Elem(), cache)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		res.Kind = KindPtr
 		res.Elem = fromReflectType(t.Elem(), cache)
 	case reflect.Slice:
@@ -263,8 +263,8 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 
 	if t.NumMethod() > 0 {
 		res.Methods = make(map[string]*Type)
-		for i := 0; i < t.NumMethod(); i++ {
-			m := t.Method(i)
+		for m := range t.Methods() {
+			m := m
 			res.Methods[m.Name] = fromReflectType(m.Type, cache)
 		}
 	}
@@ -393,7 +393,7 @@ func (t *Type) Match(val any) bool {
 	if t.External != nil {
 		if val == nil {
 			k := t.External.Kind()
-			return k == reflect.Interface || k == reflect.Ptr || k == reflect.Slice || k == reflect.Map || k == reflect.Func || k == reflect.Chan
+			return k == reflect.Interface || k == reflect.Pointer || k == reflect.Slice || k == reflect.Map || k == reflect.Func || k == reflect.Chan
 		}
 		return reflect.TypeOf(val).AssignableTo(t.External)
 	}
@@ -562,4 +562,3 @@ func (t *Type) interfaceString() string {
 	sb.WriteString(" }")
 	return sb.String()
 }
-

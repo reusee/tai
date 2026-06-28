@@ -145,9 +145,7 @@ func (Module) SimplifyFiles(
 		// We use a pointer int64 to share state between the dispatch and confirmation loops.
 		pendingSema := new(int64)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for _, transform := range transforms {
 				for i := range files {
 					file := files[i]
@@ -188,7 +186,7 @@ func (Module) SimplifyFiles(
 
 				}
 			}
-		}()
+		})
 
 		var numFilesFromRootPackageDeleted int
 	loop_ops:
@@ -319,9 +317,7 @@ func (Module) SimplifyFiles(
 
 func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.FileSet, counter generators.TokenCounter, wg *sync.WaitGroup) {
 	for range runtime.NumCPU() {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 
@@ -333,7 +329,7 @@ func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.Fil
 
 				}
 			}
-		}()
+		})
 	}
 }
 

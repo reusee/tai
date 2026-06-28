@@ -25,7 +25,7 @@ func MakeFunc(name string, fn any) (*Function, error) {
 		paramName := fmt.Sprintf("arg%d", i)
 		paramNames[i] = paramName
 		var paramVar Var
-		if paramType.Kind() == reflect.Ptr {
+		if paramType.Kind() == reflect.Pointer {
 			elemVar := toVar(paramType.Elem(), paramName)
 			elemVar.Optional = true
 			paramVar = elemVar
@@ -45,7 +45,7 @@ func MakeFunc(name string, fn any) (*Function, error) {
 	}
 	var returns Vars
 	resultIdx := 0
-	for i := 0; i < numOut; i++ {
+	for i := range numOut {
 		outType := fnType.Out(i)
 		if hasErrorReturn && i == numOut-1 {
 			continue
@@ -119,8 +119,8 @@ func toVar(t reflect.Type, name string) Var {
 	case reflect.Struct:
 		v.Type = TypeObject
 		var props Vars
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
+		for field := range t.Fields() {
+			field := field
 			if !field.IsExported() {
 				continue
 			}
@@ -128,7 +128,7 @@ func toVar(t reflect.Type, name string) Var {
 			props = append(props, fieldVar)
 		}
 		v.Properties = props
-	case reflect.Ptr:
+	case reflect.Pointer:
 		elemVar := toVar(t.Elem(), name)
 		elemVar.Optional = true
 		return elemVar
@@ -146,7 +146,7 @@ func convertMapValue(val any, targetType reflect.Type) (reflect.Value, error) {
 		return reflect.Value{}, err
 	}
 	var targetPtr reflect.Value
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		targetPtr = reflect.New(targetType.Elem())
 	} else {
 		targetPtr = reflect.New(targetType)
@@ -154,9 +154,8 @@ func convertMapValue(val any, targetType reflect.Type) (reflect.Value, error) {
 	if err := json.Unmarshal(data, targetPtr.Interface()); err != nil {
 		return reflect.Value{}, err
 	}
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		return targetPtr, nil
 	}
 	return targetPtr.Elem(), nil
 }
-

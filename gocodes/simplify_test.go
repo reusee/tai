@@ -20,7 +20,7 @@ func TestSimplify(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -64,7 +64,7 @@ func TestSimplifySingleFile(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := t.TempDir()

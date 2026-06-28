@@ -15,7 +15,7 @@ func (t testInt) TaigoConfigurable() {}
 
 func TestTaigoDefs(t *testing.T) {
 	scope := dscope.New(
-		dscope.Provide(testInt(1)),
+		new(testInt(1)),
 	)
 
 	env := &taigo.Env{

@@ -5007,7 +5007,7 @@ func TestVM_IndexBounds(t *testing.T) {
 
 	t.Run("GetIndex_PointerOutOfBounds", func(t *testing.T) {
 		l := &List{Elements: []any{1, 2, 3}}
-		p := &Pointer{Target: l, Key: 1, ArrayType: FromReflectType(reflect.TypeOf([2]any{}))} // &l[1] (l[1], l[2])
+		p := &Pointer{Target: l, Key: 1, ArrayType: FromReflectType(reflect.TypeFor[[2]any]())} // &l[1] (l[1], l[2])
 		main := &Function{
 			Constants: []any{p, 2}, // Accessing index 2 of pointer (offset 1+2=3), which is out of bounds for l
 			Code: []OpCode{
@@ -5033,15 +5033,15 @@ func TestType_String(t *testing.T) {
 		typ  *Type
 		want string
 	}{
-		{FromReflectType(reflect.TypeOf(0)), "int"},
-		{FromReflectType(reflect.TypeOf([]int{})), "[]int"},
-		{FromReflectType(reflect.TypeOf([2]int{})), "[2]int"},
-		{FromReflectType(reflect.TypeOf(map[string]int{})), "map[string]int"},
-		{FromReflectType(reflect.TypeOf(func(int, ...string) (bool, error) { return false, nil })), "func(int, ...string) (bool, error)"},
-		{FromReflectType(reflect.TypeOf((*interface {
-			Foo(int) string
+		{FromReflectType(reflect.TypeFor[int]()), "int"},
+		{FromReflectType(reflect.TypeFor[[]int]()), "[]int"},
+		{FromReflectType(reflect.TypeFor[[2]int]()), "[2]int"},
+		{FromReflectType(reflect.TypeFor[map[string]int]()), "map[string]int"},
+		{FromReflectType(reflect.TypeFor[func(int, ...string) (bool, error)]()), "func(int, ...string) (bool, error)"},
+		{FromReflectType(reflect.TypeFor[interface {
 			Bar()
-		})(nil)).Elem()), "interface { Bar(); Foo(int) string }"},
+			Foo(int) string
+		}]()), "interface { Bar(); Foo(int) string }"},
 		{&Type{Kind: KindInt}, "int"},
 		{&Type{Name: "MyInt", Kind: KindInt}, "MyInt"},
 	}

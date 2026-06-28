@@ -11,7 +11,7 @@ import (
 func TestGeneratorSpecs(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
-		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		new(Module),
 	).Fork(
 		func() configs.Loader {
