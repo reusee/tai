@@ -15,7 +15,7 @@ func TestContextPrompt(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		dscope.Provide(configs.NewLoader(nil, configs.LoaderConfig{})),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -25,10 +25,9 @@ func TestContextPrompt(t *testing.T) {
 		},
 	).Call(func(
 		provider CodeProvider,
-		count generators.GeminiTokenCounter,
 	) {
 
-		parts, err := provider.Parts(256, count("gemini-1.5-pro"), nil)
+		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,3 +66,4 @@ func TestContextPrompt(t *testing.T) {
 	})
 
 }
+

@@ -199,7 +199,15 @@ func (Module) SimplifyFiles(
 					continue
 				}
 
-				if allTokens < maxTokens && contextTokens <= maxContextTokens {
+				// Stop simplifying as soon as context tokens fall within the fixed
+				// budget. Only the context budget gates simplification — the total
+				// token count (allTokens) is intentionally excluded so that context
+				// files are simplified to the same level every request regardless of
+				// focus file size, preserving the LLM prefix cache. The maxTokens
+				// parameter does not influence context simplification depth; it is
+				// used solely by the caller (CodeProvider.Parts) for the extra-files
+				// budget.
+				if contextTokens <= maxContextTokens {
 					cancel()
 					break loop_ops
 				}
