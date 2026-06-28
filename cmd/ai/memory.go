@@ -262,9 +262,8 @@ func updateMemoryFromBlock(
 var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
 
 func getModelID(spec generators.Spec) string {
-	name := spec.Name
-	if name == "" {
-		name = spec.Model
+	if spec.Family != "" {
+		return filepath.Base(spec.Family)
 	}
-	return filepath.Base(name)
+	return filepath.Base(spec.Model)
 }
