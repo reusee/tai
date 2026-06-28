@@ -49,8 +49,8 @@ func TestExpandGoExprs(t *testing.T) {
 }
 
 func TestParseFirstBoundaryHunk(t *testing.T) {
-	// Valid with blank line
-	content := ":::change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
+	// Valid with XML metadata and blank line
+	content := ":::change abc-def-gh\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
 	h, start, end, ok := parseFirstBoundaryHunk([]byte(content))
 	if !ok {
 		t.Fatal("expected ok")
@@ -73,22 +73,22 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	}
 	_ = start
 
-	// Body line that looks like a header after all headers are set (no blank line)
-	content2 := ":::change x-y-z\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\nop: MODIFY // comment\nfunc myFunc() {}\n\n:::end x-y-z\n"
+	// Body content with header-like lines is preserved after the XML tag
+	content2 := ":::change x-y-z\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nop: MODIFY // comment in body\nfunc myFunc() {}\n\n:::end x-y-z\n"
 	h2, _, _, ok2 := parseFirstBoundaryHunk([]byte(content2))
 	if !ok2 {
 		t.Fatal("expected ok for content2")
 	}
 	if h2.Op != "MODIFY" {
-		t.Fatal("op should remain MODIFY, not overwritten")
+		t.Fatal("op should be MODIFY")
 	}
-	if !strings.Contains(h2.Body, "op: MODIFY // comment") {
+	if !strings.Contains(h2.Body, "op: MODIFY // comment in body") {
 		t.Fatal("body should contain the header-like line")
 	}
 
 	// RENAME operation with empty body
 	t.Run("RENAME", func(t *testing.T) {
-		content := ":::change 徕珑\nop: RENAME\ntarget: new.go\nfile-path: old.go\n\n:::end 徕珑\n"
+		content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n\n:::end 徕珑\n"
 		h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
 		if !ok {
 			t.Fatal("expected ok")
@@ -103,35 +103,35 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 			t.Fatalf("expected old.go, got %s", h.FilePath)
 		}
 	})
+
+	// Header-based (key-value) format is no longer supported
+	t.Run("HeaderFormatRejected", func(t *testing.T) {
+		content := ":::change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
+		_, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+		if ok {
+			t.Fatal("header-based format should be rejected")
+		}
+	})
 }
 
 func TestBoundaryBlockLineStart(t *testing.T) {
 	// ::: not at beginning of line should not be recognized as a block start
 	content1 := []byte("some text :::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
-	_, _, _, ok := ParseFirstBlock(content1, ParseBlockConfig{
-		KnownHeaders:    []string{"op", "target", "file-path"},
-		RequiredHeaders: []string{"op", "target", "file-path"},
-	})
+	_, _, _, ok := ParseFirstBlock(content1)
 	if ok {
 		t.Fatal("expected no block for mid-line start marker")
 	}
 
 	// :::end not at beginning of line should not be recognized
 	content2 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text:::end 瑱魃\n")
-	_, _, _, ok = ParseFirstBlock(content2, ParseBlockConfig{
-		KnownHeaders:    []string{"op", "target", "file-path"},
-		RequiredHeaders: []string{"op", "target", "file-path"},
-	})
+	_, _, _, ok = ParseFirstBlock(content2)
 	if ok {
 		t.Fatal("expected no block for mid-line end marker")
 	}
 
 	// Properly placed markers (start and end at beginning of lines) should succeed
 	content3 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
-	_, _, _, ok = ParseFirstBlock(content3, ParseBlockConfig{
-		KnownHeaders:    []string{"op", "target", "file-path"},
-		RequiredHeaders: []string{"op", "target", "file-path"},
-	})
+	_, _, _, ok = ParseFirstBlock(content3)
 	if !ok {
 		t.Fatal("expected block for line-start markers")
 	}
@@ -260,56 +260,27 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
-	content := []byte("some text :::change 徕珑\nop: MODIFY\ntarget: Foo\nfile-path: /f.go\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\nop: MODIFY\ntarget: Bar\nfile-path: /b.go\n\nfunc Bar() {}\n:::end 栢彣\n")
-	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
-		KnownHeaders:    []string{"op", "target", "file-path"},
-		RequiredHeaders: []string{"op", "target", "file-path"},
-	})
+	content := []byte("some text :::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\" />\n\nfunc Bar() {}\n:::end 栢彣\n")
+	block, start, end, ok := ParseFirstBlock(content)
 	if !ok {
 		t.Fatal("expected a valid block to be found")
 	}
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
 	}
-	if block.Headers["op"] != "MODIFY" {
-		t.Fatalf("expected op MODIFY, got %s", block.Headers["op"])
+	if block.Boundary != "栢彣" {
+		t.Fatalf("expected boundary 栢彣, got %s", block.Boundary)
 	}
-	if block.Headers["target"] != "Bar" {
-		t.Fatalf("expected target Bar, got %s", block.Headers["target"])
+	if !strings.Contains(block.Body, "target=\"Bar\"") {
+		t.Fatalf("expected body to contain 'target=\"Bar\"': %s", block.Body)
 	}
-	if block.Headers["file-path"] != "/b.go" {
-		t.Fatalf("expected file-path /b.go, got %s", block.Headers["file-path"])
+	if !strings.Contains(block.Body, "func Bar() {}") {
+		t.Fatalf("expected body to contain 'func Bar() {}': %s", block.Body)
 	}
 	if start < len("some text ") {
 		t.Fatalf("expected first valid block to start after malformed one, start=%d", start)
 	}
 	if end != len(content) {
 		t.Fatalf("expected block to consume entire remaining valid content, end=%d", end)
-	}
-}
-
-func TestParseCallsCollectsOptionalIDHeader(t *testing.T) {
-	// Reproduction: a "call" block places the optional "id" header after the
-	// required "function" header. The parser must collect "id" instead of
-	// treating it as body content, and the JSON body must still parse.
-	content := []byte(":::call 徕珑\nfunction: read_file\nid: call_1\n\n{\"path\": \"/foo\"}\n:::end 徕珑\n")
-	calls, err := ParseCalls(content)
-	if err != nil {
-		t.Fatalf("ParseCalls failed: %v", err)
-	}
-	if len(calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(calls))
-	}
-	if calls[0].Function != "read_file" {
-		t.Fatalf("expected function read_file, got %q", calls[0].Function)
-	}
-	if calls[0].ID != "call_1" {
-		t.Fatalf("expected id call_1, got %q", calls[0].ID)
-	}
-	if calls[0].Arguments == nil {
-		t.Fatal("expected non-nil arguments parsed from body")
-	}
-	if path, _ := calls[0].Arguments["path"].(string); path != "/foo" {
-		t.Fatalf("expected path /foo, got %q", path)
 	}
 }

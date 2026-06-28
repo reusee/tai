@@ -201,7 +201,7 @@ type memoryRoot struct {
 }
 
 func parseMemoryItems(text string) ([]string, error) {
-	block, _, _, ok := codes.ParseFirstBlock([]byte(text), codes.ParseBlockConfig{})
+	block, _, _, ok := codes.ParseFirstBlock([]byte(text))
 	if !ok || block.Kind != "memory" {
 		return nil, nil
 	}
@@ -267,3 +267,4 @@ func getModelID(spec generators.Spec) string {
 	}
 	return filepath.Base(spec.Model)
 }
+

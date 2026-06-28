@@ -164,73 +164,60 @@ type changeXML struct {
 }
 
 func parseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool) {
-	// Try old header-based format first
-	block, start, end, ok := ParseFirstBlock(content, ParseBlockConfig{
-		KnownHeaders:    []string{"op", "target", "file-path"},
-		RequiredHeaders: []string{"op", "target", "file-path"},
-	})
-	if ok && block.Kind == "change" {
-		h.Op = block.Headers["op"]
-		h.Target = block.Headers["target"]
-		h.FilePath = block.Headers["file-path"]
-		h.Body = block.Body
-	} else {
-		// Try new XML metadata format
-		block, start, end, ok = ParseFirstBlock(content, ParseBlockConfig{
-			KnownHeaders:    nil,
-			RequiredHeaders: nil,
-		})
-		if !ok || block.Kind != "change" {
-			return h, 0, 0, false
-		}
-		bodyBytes := []byte(block.Body)
-		// Body should start with <change ... /> tag
-		idx := 0
-		// skip leading whitespace
-		for idx < len(bodyBytes) && (bodyBytes[idx] == ' ' || bodyBytes[idx] == '\t') {
-			idx++
-		}
-		if idx >= len(bodyBytes) || bodyBytes[idx] != '<' {
-			return h, 0, 0, false
-		}
-		// find end of self-closing tag
-		tagEnd := -1
-		for i := idx; i < len(bodyBytes)-1; i++ {
-			if bodyBytes[i] == '/' && bodyBytes[i+1] == '>' {
-				tagEnd = i + 2
-				break
-			}
-		}
-		if tagEnd < 0 {
-			return h, 0, 0, false
-		}
-		tagData := bodyBytes[idx:tagEnd]
-		var cx changeXML
-		decoder := xml.NewDecoder(bytes.NewReader(tagData))
-		if err := decoder.Decode(&cx); err != nil {
-			return h, 0, 0, false
-		}
-		h.Op = cx.Op
-		h.Target = cx.Target
-		h.FilePath = cx.FilePath
-		// Code body is everything after the tag and a blank line
-		bodyStart := tagEnd
-		// skip newline(s)
-		for bodyStart < len(bodyBytes) && (bodyBytes[bodyStart] == '\n' || bodyBytes[bodyStart] == '\r') {
-			bodyStart++
-		}
-		h.Body = string(bodyBytes[bodyStart:])
+	block, start, end, ok := ParseFirstBlock(content)
+	if !ok || block.Kind != "change" {
+		return h, 0, 0, false
 	}
 
-	// Clean up op/target by taking first word (lenient with trailing comments)
-	if opToken := strings.Fields(h.Op); len(opToken) > 0 {
-		h.Op = opToken[0]
-	}
-	if targetToken := strings.Fields(h.Target); len(targetToken) > 0 {
-		h.Target = targetToken[0]
+	h, parsedOk := parseChangeXMLBody(block.Body)
+	if !parsedOk {
+		return h, 0, 0, false
 	}
 
 	return h, start, end, true
+}
+
+// parseChangeXMLBody parses the XML metadata format for change blocks.
+// The body should start with a self-closing <change ... /> tag, followed by
+// a blank line and the complete declaration code.
+func parseChangeXMLBody(body string) (h codetypes.Hunk, ok bool) {
+	bodyBytes := []byte(body)
+	idx := 0
+	// skip leading whitespace
+	for idx < len(bodyBytes) && (bodyBytes[idx] == ' ' || bodyBytes[idx] == '\t') {
+		idx++
+	}
+	if idx >= len(bodyBytes) || bodyBytes[idx] != '<' {
+		return h, false
+	}
+	// find end of self-closing tag
+	tagEnd := -1
+	for i := idx; i < len(bodyBytes)-1; i++ {
+		if bodyBytes[i] == '/' && bodyBytes[i+1] == '>' {
+			tagEnd = i + 2
+			break
+		}
+	}
+	if tagEnd < 0 {
+		return h, false
+	}
+	tagData := bodyBytes[idx:tagEnd]
+	var cx changeXML
+	decoder := xml.NewDecoder(bytes.NewReader(tagData))
+	if err := decoder.Decode(&cx); err != nil {
+		return h, false
+	}
+	// Code body is everything after the tag and newline(s)
+	bodyStart := tagEnd
+	for bodyStart < len(bodyBytes) && (bodyBytes[bodyStart] == '\n' || bodyBytes[bodyStart] == '\r') {
+		bodyStart++
+	}
+	return codetypes.Hunk{
+		Op:       cx.Op,
+		Target:   cx.Target,
+		FilePath: cx.FilePath,
+		Body:     string(bodyBytes[bodyStart:]),
+	}, true
 }
 
 func applyHunk(root *os.Root, h codetypes.Hunk) error {
