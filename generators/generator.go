@@ -87,6 +87,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		if spec.Model != "" {
 			merged.Model = spec.Model
 		}
+		if spec.Family != "" {
+			merged.Family = spec.Family
+		}
 		if spec.ContextTokens != 0 {
 			merged.ContextTokens = spec.ContextTokens
 		}

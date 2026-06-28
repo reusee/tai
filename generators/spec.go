@@ -6,6 +6,7 @@ to distinguish between "explicitly set to false" and "not provided". This allows
 that a parent spec enabled.
 Variants allow hierarchical organization of specs where child specs are nested under their parent.
 The Name field represents the path component at its level, not the full path.
+The Family field represents the model name without version information and is merged from parent to child when non-empty.
 `
 
 type Spec struct {
@@ -14,6 +15,7 @@ type Spec struct {
 	BaseURL           string         `json:"base_url"`
 	APIKey            string         `json:"api_key"`
 	Model             string         `json:"model"`
+	Family            string         `json:"family"`
 	ContextTokens     int            `json:"context_tokens"`
 	MaxGenerateTokens *int           `json:"max_generate_tokens"`
 	Temperature       *float32       `json:"temperature"`
