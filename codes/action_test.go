@@ -287,3 +287,29 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 		t.Fatalf("expected block to consume entire remaining valid content, end=%d", end)
 	}
 }
+
+func TestParseCallsCollectsOptionalIDHeader(t *testing.T) {
+	// Reproduction: a "call" block places the optional "id" header after the
+	// required "function" header. The parser must collect "id" instead of
+	// treating it as body content, and the JSON body must still parse.
+	content := []byte(":::call 徕珑\nfunction: read_file\nid: call_1\n\n{\"path\": \"/foo\"}\n:::end 徕珑\n")
+	calls, err := ParseCalls(content)
+	if err != nil {
+		t.Fatalf("ParseCalls failed: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Function != "read_file" {
+		t.Fatalf("expected function read_file, got %q", calls[0].Function)
+	}
+	if calls[0].ID != "call_1" {
+		t.Fatalf("expected id call_1, got %q", calls[0].ID)
+	}
+	if calls[0].Arguments == nil {
+		t.Fatal("expected non-nil arguments parsed from body")
+	}
+	if path, _ := calls[0].Arguments["path"].(string); path != "/foo" {
+		t.Fatalf("expected path /foo, got %q", path)
+	}
+}

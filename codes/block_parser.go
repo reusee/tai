@@ -76,9 +76,13 @@ type ParseBlockConfig struct {
 	// Any header not in this list will stop header parsing and be treated as body.
 	KnownHeaders []string
 
-	// RequiredHeaders specifies header keys that must be present.
-	// When all required headers have been collected, header parsing stops
-	// even if more key-value lines follow.
+	// RequiredHeaders specifies header keys that must be present for a block
+	// to be valid. Header parsing continues collecting known, non-duplicate
+	// header lines until a blank line, a line without a colon, an unknown key,
+	// or a duplicate key after all required headers are collected. This allows
+	// optional known headers (e.g., "id" for call blocks) to be collected after
+	// the required set, while stray header-like lines following the required set
+	// are treated as body content.
 	RequiredHeaders []string
 }
 
@@ -163,12 +167,6 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 				break
 			}
 
-			// If all required headers are already collected, stop parsing headers
-			if requiredCount > 0 && foundRequired == requiredCount {
-				bodyStart = pos
-				break
-			}
-
 			colonIdx := strings.Index(line, ":")
 			if colonIdx < 0 {
 				// Not a header line; body starts here
@@ -187,12 +185,27 @@ func ParseFirstBlock(content []byte, cfg ParseBlockConfig) (block Block, start i
 				break
 			}
 
-			if _, exists := block.Headers[keyLower]; !exists {
-				block.Headers[keyLower] = val
-				if isRequired, present := requiredSet[keyLower]; present && !isRequired {
-					requiredSet[keyLower] = true
-					foundRequired++
+			if _, exists := block.Headers[keyLower]; exists {
+				// Once all required headers are collected, a duplicate header
+				// line marks the start of the body. This treats stray
+				// header-like lines (e.g., a repeated "op:" line) following the
+				// required set as body content, while still allowing optional
+				// known headers that have not yet been collected (e.g., "id"
+				// for call blocks) to be parsed normally.
+				if requiredCount > 0 && foundRequired == requiredCount {
+					bodyStart = pos
+					break
 				}
+				// Duplicate header before all required headers are collected:
+				// ignore the duplicate value and continue parsing.
+				pos = headerEnd + 1
+				continue
+			}
+
+			block.Headers[keyLower] = val
+			if isRequired, present := requiredSet[keyLower]; present && !isRequired {
+				requiredSet[keyLower] = true
+				foundRequired++
 			}
 
 			pos = headerEnd + 1
