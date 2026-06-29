@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
@@ -29,8 +29,6 @@ func countFuncsTokens(funcs []*generators.Function, count func(string) (int, err
 	return count(string(data))
 }
 
-var showThoughts = cmds.Switch("-thoughts")
-
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
@@ -41,6 +39,7 @@ func (Module) Generate(
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
 	patterns Patterns,
+	flagThoughts flags.Thoughts,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -131,7 +130,7 @@ func (Module) Generate(
 				},
 			},
 		)
-		state = generators.NewOutput(state, output, *showThoughts)
+		state = generators.NewOutput(state, output, bool(flagThoughts))
 		if args.DisableTools != nil && !*args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
@@ -167,8 +166,7 @@ func (Module) Generate(
 					"contents":       contents,
 					"system_prompts": state.SystemPrompt(),
 				}
-				var openAIError generators.OpenAIError
-				if errors.As(phaseErr, &openAIError) {
+				if openAIError, ok := errors.AsType[generators.OpenAIError](phaseErr); ok {
 					globals["openai"] = openAIError
 				}
 				tap(ctx, "codes generate error", globals)
@@ -189,4 +187,3 @@ func (Module) Generate(
 		return nil
 	}
 }
-
