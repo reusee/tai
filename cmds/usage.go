@@ -32,7 +32,6 @@ func (p *Executor) printCommandsUsage(commands map[string]*Command, indent int) 
 		if cmd.Func.IsValid() {
 			funcType := cmd.Func.Type()
 			for argType := range funcType.Ins() {
-				argType := argType
 				fmt.Printf(" <%s>", argType.Kind().String())
 			}
 		}

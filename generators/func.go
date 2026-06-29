@@ -120,7 +120,6 @@ func toVar(t reflect.Type, name string) Var {
 		v.Type = TypeObject
 		var props Vars
 		for field := range t.Fields() {
-			field := field
 			if !field.IsExported() {
 				continue
 			}

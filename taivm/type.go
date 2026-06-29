@@ -264,7 +264,6 @@ func fromReflectType(t reflect.Type, cache map[reflect.Type]*Type) *Type {
 	if t.NumMethod() > 0 {
 		res.Methods = make(map[string]*Type)
 		for m := range t.Methods() {
-			m := m
 			res.Methods[m.Name] = fromReflectType(m.Type, cache)
 		}
 	}

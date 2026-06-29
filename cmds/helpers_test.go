@@ -1,7 +1,6 @@
 package cmds
 
 import (
-	"fmt"
 	"testing"
 )
 

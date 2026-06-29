@@ -305,7 +305,6 @@ func (c *compiler) initExternal(externalTypes, externalValueTypes map[string]*ta
 				var fields []string
 				var embedded []string
 				for f := range rt.Fields() {
-					f := f
 					fields = append(fields, f.Name)
 					if f.Anonymous {
 						embedded = append(embedded, f.Name)
@@ -2733,7 +2732,6 @@ func (c *compiler) compileTypeSpec(spec *ast.TypeSpec) error {
 			var fields []string
 			var embedded []string
 			for f := range rt.Fields() {
-				f := f
 				fields = append(fields, f.Name)
 				if f.Anonymous {
 					embedded = append(embedded, f.Name)

@@ -676,7 +676,7 @@ func getZeroValue(t reflect.Type) any {
 
 func copyAnyString(dst []any, src string) int {
 	n := min(len(dst), len(src))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		dst[i] = int(src[i])
 	}
 	return n
