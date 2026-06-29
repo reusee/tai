@@ -1,11 +1,13 @@
 package anytexts
 
 import (
+	"maps"
 	"regexp"
+	"slices"
+	"strings"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/vars"
+	"github.com/reusee/tai/flags"
 )
 
 type FileNameOK func(name string) bool
@@ -32,8 +34,6 @@ func (Module) NameMatch(
 	}
 }
 
-var matchFlag = cmds.Var[string]("-match")
-
 type Match string
 
 var _ configs.Configurable = Match("")
@@ -42,9 +42,20 @@ func (m Match) TaigoConfigurable() {}
 
 func (Module) Match(
 	loader configs.Loader,
+	flagMatch flags.Match,
 ) Match {
-	return vars.FirstNonZero(
-		Match(*matchFlag),
-		configs.First[Match](loader, "match"),
-	)
+
+	patterns := slices.Collect(maps.Keys(flagMatch))
+	if len(patterns) > 0 {
+		for i := range patterns {
+			patterns[i] = "(" + patterns[i] + ")"
+		}
+		return Match(strings.Join(patterns, "|"))
+	}
+
+	if pattern := configs.First[Match](loader, "match"); pattern != "" {
+		return pattern
+	}
+
+	return ""
 }

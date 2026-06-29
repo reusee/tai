@@ -8,7 +8,6 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
@@ -17,7 +16,7 @@ import (
 
 type ExtraSystemPrompt string
 
-var _ExtraSystemPromptConfigurable configs.Configurable = ExtraSystemPrompt("")
+var _ configs.Configurable = ExtraSystemPrompt("")
 
 func (e ExtraSystemPrompt) TaigoConfigurable() {}
 
@@ -29,25 +28,13 @@ func (Module) ExtraSystemPrompt(
 
 type SystemPrompt string
 
-var (
-	focus  []string
-	ignore []string
-)
-
-func init() {
-	cmds.Define("-focus", cmds.Func(func(what string) {
-		focus = append(focus, what)
-	}).Desc("add focus"))
-	cmds.Define("-ignore", cmds.Func(func(what string) {
-		ignore = append(ignore, what)
-	}).Desc("add ignore"))
-}
-
 func (Module) SystemPrompt(
 	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
 	extra ExtraSystemPrompt,
 	flagFiles flags.Files,
+	flagFocus flags.Focus,
+	flagIgnore flags.Ignore,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
@@ -71,13 +58,14 @@ func (Module) SystemPrompt(
 		ret += "\n\n" + SystemPrompt(extra) + "\n"
 	}
 
-	if len(focus) > 0 {
+	if len(flagFocus) > 0 {
 		ret += "\n\n专注于这些方面：\n"
-		for _, what := range focus {
+		for _, what := range flagFocus {
 			ret += "- " + SystemPrompt(what) + "\n"
 		}
 	}
 
+	ignore := slices.Collect(maps.Keys(flagIgnore))
 	if len(ignore) > 0 {
 		ret += "\n\n忽略这些方面：\n"
 		for _, what := range ignore {

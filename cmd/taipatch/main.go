@@ -6,16 +6,7 @@ import (
 
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
-	"github.com/reusee/tai/codes/codetypes"
 )
-
-var diff codetypes.DiffHandler
-
-func init() {
-	cmds.Define("-boundary", cmds.Func(func() {
-		diff = codes.BoundaryDiffHandler{}
-	}))
-}
 
 func main() {
 	cmds.Execute(os.Args[1:])
@@ -26,10 +17,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	if diff == nil {
-		diff = codes.BoundaryDiffHandler{}
-	}
-	for hunk, err := range diff.Apply(root, target) {
+	var handler codes.BoundaryDiffHandler
+	for hunk, err := range handler.Apply(root, target) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -37,3 +26,4 @@ func main() {
 		fmt.Printf("Applied %s %s\n", hunk.Op, hunk.Target)
 	}
 }
+

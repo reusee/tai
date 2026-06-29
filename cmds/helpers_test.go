@@ -36,17 +36,6 @@ func TestSwitch(t *testing.T) {
 	}
 }
 
-func TestCollect(t *testing.T) {
-	list := Collect[string]("TestCollect")
-	GlobalExecutor.MustExecute([]string{
-		"TestCollect", "a",
-		"TestCollect", "b",
-	})
-	if str := fmt.Sprintf("%v", *list); str != "[a b]" {
-		t.Fatalf("got %s", str)
-	}
-}
-
 func TestTypedVar(t *testing.T) {
 	type Foo string
 	v := Var[Foo]("TestTypedVar")

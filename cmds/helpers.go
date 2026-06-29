@@ -32,12 +32,3 @@ func Switch(name string) *bool {
 
 	return &value
 }
-
-func Collect[T any](name string) *[]T {
-	var value []T
-	// append
-	Define(name, Func(func(v T) {
-		value = append(value, v)
-	}))
-	return &value
-}
