@@ -16,6 +16,19 @@ import (
 	"github.com/reusee/tai/logs"
 )
 
+const TheoryOfSymlinkTraversal = `
+Symbolic links are followed so that content from other directories or files can
+be included via symlinks. Cycle detection is based on the principle that a
+symlink creates a cycle if and only if its resolved target is an ancestor of the
+current path in the directory hierarchy. The check resolves both the symlink
+target and the parent of the current path to their canonical filesystem paths,
+then uses filepath.Rel to determine whether the parent is a descendant of the
+target. This allows symlinks to non-ancestor directories (cross-references)
+while preventing infinite traversal through cyclic links. Broken symlinks
+whose targets cannot be resolved are silently skipped rather than aborting the
+entire traversal.
+`
+
 type CodeProvider struct {
 	FileNameOK dscope.Inject[FileNameOK]
 	NameMatch  dscope.Inject[NameMatch]
@@ -72,10 +85,34 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				continue
 			}
 
-			info, err := os.Stat(path)
+			// Use Lstat to detect symlinks without following them, so we can
+			// guard against cycles when following symbolic links.
+			info, err := os.Lstat(path)
 			if err != nil {
 				yield(FileInfo{}, err)
 				return
+			}
+
+			// Follow symbolic links while detecting cycles: a symlink whose
+			// resolved target is an ancestor of the current path would create
+			// an infinite loop and is skipped. Broken symlinks are silently
+			// skipped rather than aborting the traversal.
+			if info.Mode()&os.ModeSymlink != 0 {
+				realPath, err := filepath.EvalSymlinks(path)
+				if err != nil {
+					// Broken or unresolved symlink; skip silently.
+					continue
+				}
+				if isAncestor(realPath, path) {
+					// Symlink cycle detected; skip to avoid infinite traversal.
+					continue
+				}
+				// Follow the symlink to get the target's file info.
+				info, err = os.Stat(realPath)
+				if err != nil {
+					// Symlink target inaccessible; skip silently.
+					continue
+				}
 			}
 
 			if info.IsDir() {
@@ -162,6 +199,28 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 		}
 	}
+}
+
+// isAncestor reports whether ancestor is an ancestor directory of the parent
+// of path in the real filesystem. Both paths are resolved to their canonical
+// forms before comparison. This is used to detect symbolic link cycles: if a
+// symlink's target is an ancestor of the current path, following the link
+// would revisit a directory already on the traversal path.
+func isAncestor(ancestor, path string) bool {
+	parentReal, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		parentReal = filepath.Dir(path)
+	}
+	ancestor = filepath.Clean(ancestor)
+	parentReal = filepath.Clean(parentReal)
+	if ancestor == parentReal {
+		return true
+	}
+	rel, err := filepath.Rel(ancestor, parentReal)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..")
 }
 
 func (c CodeProvider) Parts(
