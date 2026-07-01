@@ -172,9 +172,18 @@ func (c CodeProvider) Parts(
 	// Add extra files after project files — these form the volatile suffix.
 	// Extra files vary by request pattern; placing them last ensures they
 	// cannot shift the position of stable project file content.
+	//
+	// Token budget truncation uses break (not continue) to preserve prefix
+	// cache stability: when maxTokens varies across requests (e.g., switching
+	// models with different context windows), truncating from the end ensures
+	// that files included in smaller-budget requests remain at the exact same
+	// positions in larger-budget requests. With continue, a large file in the
+	// middle would be skipped but subsequent smaller files would still be
+	// appended, shifting their positions and invalidating the cache for all
+	// content from that point onward.
 	for _, pp := range pendingExtras {
 		if pp.tokens > 0 && totalTokens+pp.tokens > maxTokens && maxTokens > 0 {
-			continue
+			break
 		}
 		if *showTokenCounts && pp.tokens > 0 {
 			c.Logger().Info("extra context file", "path", pp.path, "tokens", pp.tokens)
