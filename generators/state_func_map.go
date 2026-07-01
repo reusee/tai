@@ -5,6 +5,18 @@ import (
 	"sort"
 )
 
+const TheoryOfPrefixCaching = `
+Function declarations and schema fields embedded in the prompt must appear in
+a deterministic order across runs to preserve the LLM prefix cache. Go map
+iteration is non-deterministic, so all function collections are sorted by name
+before yielding. When multiple state layers contribute functions (e.g., FuncMap
+wrapping another FuncMap), all layers are merged and globally sorted by name,
+with outer layers taking precedence over inner layers for duplicate names.
+Schema "required" fields are sorted alphabetically so that adding a new required
+field inserts it at its natural position without reordering existing fields,
+minimizing token-level changes to the serialized schema.
+`
+
 type FuncMap struct {
 	upstream State
 	m        map[string]*Function
@@ -78,19 +90,33 @@ func (f FuncMap) Contents() iter.Seq[*Content] {
 	return f.upstream.Contents()
 }
 
-// TheoryOfPrefixCaching: Function declarations embedded in the prompt must
-// appear in a deterministic order across runs. Go map iteration is
-// non-deterministic, so we sort keys by name before yielding to ensure
-// the LLM prefix cache remains valid across repeated requests.
 func (f FuncMap) Functions() iter.Seq[*Function] {
 	return func(yield func(*Function) bool) {
-		names := make([]string, 0, len(f.m))
-		for name := range f.m {
+		// Collect functions from this layer and upstream, then globally sort.
+		// This layer's functions take precedence over upstream functions
+		// with the same name, following the layering semantics where outer
+		// layers override inner layers. Global sorting across all layers
+		// ensures that adding a function to any layer inserts it at its
+		// natural alphabetical position without reordering existing entries,
+		// minimizing token-level changes that would invalidate the prefix cache.
+		all := make(map[string]*Function)
+		for fn := range f.upstream.Functions() {
+			if fn != nil {
+				all[fn.Decl.Name] = fn
+			}
+		}
+		for name, fn := range f.m {
+			all[name] = fn
+		}
+		names := make([]string, 0, len(all))
+		for name := range all {
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		sort.SliceStable(names, func(i, j int) bool {
+			return names[i] < names[j]
+		})
 		for _, name := range names {
-			if !yield(f.m[name]) {
+			if !yield(all[name]) {
 				return
 			}
 		}
@@ -147,18 +173,32 @@ func (w stateWithFunctions) SystemPrompt() string {
 
 func (w stateWithFunctions) Functions() iter.Seq[*Function] {
 	return func(yield func(*Function) bool) {
+		// Collect functions from this layer and upstream, then globally sort.
+		// This layer's functions take precedence over upstream functions
+		// with the same name, following the layering semantics where outer
+		// layers override inner layers. Global sorting ensures deterministic
+		// ordering for prefix caching.
+		all := make(map[string]*Function)
+		for fn := range w.upstream.Functions() {
+			if fn != nil {
+				all[fn.Decl.Name] = fn
+			}
+		}
 		for _, fn := range w.fns {
 			if fn == nil {
 				continue
 			}
-			if !yield(fn) {
-				return
-			}
+			all[fn.Decl.Name] = fn
 		}
-		// Delegate to upstream. Note: upstream may be FuncMap, which
-		// now yields in sorted (deterministic) order.
-		for fn := range w.upstream.Functions() {
-			if !yield(fn) {
+		names := make([]string, 0, len(all))
+		for name := range all {
+			names = append(names, name)
+		}
+		sort.SliceStable(names, func(i, j int) bool {
+			return names[i] < names[j]
+		})
+		for _, name := range names {
+			if !yield(all[name]) {
 				return
 			}
 		}

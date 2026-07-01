@@ -84,7 +84,7 @@ func (c CodeProvider) Parts(
 			}
 			extraFiles = append(extraFiles, info)
 		}
-		slices.SortFunc(extraFiles, func(a, b anytexts.FileInfo) int {
+		slices.SortStableFunc(extraFiles, func(a, b anytexts.FileInfo) int {
 			if a.Path != b.Path {
 				return strings.Compare(a.Path, b.Path)
 			}

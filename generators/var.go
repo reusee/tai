@@ -2,6 +2,7 @@ package generators
 
 import (
 	"fmt"
+	"sort"
 
 	"google.golang.org/genai"
 )
@@ -26,6 +27,11 @@ func (v Vars) ToGemini() *genai.Schema {
 			required = append(required, variable.Name)
 		}
 	}
+	// Sort required fields alphabetically to ensure deterministic schema
+	// serialization. Without sorting, adding a new required field could
+	// reorder existing fields in the JSON output, invalidating the prefix
+	// cache for the entire schema portion of the request.
+	sort.Strings(required)
 	return &genai.Schema{
 		Type:        genai.TypeObject,
 		Properties:  props,
@@ -71,6 +77,9 @@ func (v Vars) ToOpenAI() map[string]any {
 			required = append(required, variable.Name)
 		}
 	}
+	// Sort required fields alphabetically for deterministic schema serialization,
+	// preserving the prefix cache when new required fields are added.
+	sort.Strings(required)
 	return map[string]any{
 		"type":        "object",
 		"properties":  props,

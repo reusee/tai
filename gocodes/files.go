@@ -263,7 +263,7 @@ func (Module) Files(
 		for dir := range rootPkgDirs {
 			sortedRootDirs = append(sortedRootDirs, dir)
 		}
-		slices.Sort(sortedRootDirs)
+		slices.SortStableFunc(sortedRootDirs, cmp.Compare)
 		for _, dir := range sortedRootDirs {
 			pkg := rootPkgDirs[dir]
 			entries, err := os.ReadDir(dir)
@@ -302,7 +302,7 @@ func (Module) Files(
 		for path := range nonGoFilePaths {
 			sortedNonGoPaths = append(sortedNonGoPaths, path)
 		}
-		slices.Sort(sortedNonGoPaths)
+		slices.SortStableFunc(sortedNonGoPaths, cmp.Compare)
 		for _, path := range sortedNonGoPaths {
 			pkg := nonGoFilePaths[path]
 			content, err := os.ReadFile(path)
@@ -512,3 +512,4 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
+

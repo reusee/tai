@@ -294,12 +294,12 @@ func TestWithFunctions(t *testing.T) {
 		t.Fatal("bad system prompt")
 	}
 
-	// functions should be visible
+	// functions should be visible, globally sorted by name
 	var names []string
 	for fn := range s.Functions() {
 		names = append(names, fn.Decl.Name)
 	}
-	if len(names) != 2 || names[0] != "foo" || names[1] != "bar" {
+	if len(names) != 2 || names[0] != "bar" || names[1] != "foo" {
 		t.Fatalf("unexpected functions: %v", names)
 	}
 

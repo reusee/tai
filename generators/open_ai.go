@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/reusee/dscope"
@@ -58,10 +59,18 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	for fn := range ret.Functions() {
 		tools = append(tools, fn.Decl.ToOpenAI())
 	}
+	// Collect and sort user-defined function declarations by name for
+	// deterministic ordering across requests. Config file iteration order
+	// may vary, which would break the LLM prefix cache.
+	var configFuncs []FuncDecl
 	for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
-		for _, fn := range set {
-			tools = append(tools, fn.ToOpenAI())
-		}
+		configFuncs = append(configFuncs, set...)
+	}
+	sort.SliceStable(configFuncs, func(i, j int) bool {
+		return configFuncs[i].Name < configFuncs[j].Name
+	})
+	for _, fn := range configFuncs {
+		tools = append(tools, fn.ToOpenAI())
 	}
 
 	temperature := float32(0)
@@ -69,7 +78,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		temperature = *o.spec.Temperature
 	}
 	if *temperatureFlag != 0 {
-		temperature = *temperatureFlag
+		temperature = float32(*temperatureFlag)
 	}
 
 	if *debugOpenAI {

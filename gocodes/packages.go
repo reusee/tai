@@ -66,7 +66,7 @@ func (Module) Packages(
 		// Sort packages by import path for deterministic ordering across runs.
 		// This guarantees that all downstream processing (BFS distance calculation,
 		// file sorting, etc.) produces identical results, preserving the LLM prefix cache.
-		slices.SortFunc(rootPkgs, func(a, b *packages.Package) int {
+		slices.SortStableFunc(rootPkgs, func(a, b *packages.Package) int {
 			return cmp.Compare(a.PkgPath, b.PkgPath)
 		})
 
@@ -77,7 +77,7 @@ func (Module) Packages(
 				err = errors.Join(err, err2)
 			}
 			// Sort context packages similarly for deterministic ordering.
-			slices.SortFunc(contextPkgs, func(a, b *packages.Package) int {
+			slices.SortStableFunc(contextPkgs, func(a, b *packages.Package) int {
 				return cmp.Compare(a.PkgPath, b.PkgPath)
 			})
 		}

@@ -29,6 +29,17 @@ whose targets cannot be resolved are silently skipped rather than aborting the
 entire traversal.
 `
 
+const TheoryOfFileOrdering = `
+Files are sorted by path as the primary key to ensure a fully deterministic
+order that is independent of modification times. Using modification time as
+the primary sort key would cause reordering whenever timestamps change
+(e.g., after a git checkout or touch), destroying the LLM prefix cache.
+Path-based ordering guarantees that unchanged files always appear in the
+same position, maximizing cache reuse across requests. Modification time
+is retained only as a final tiebreaker for the hypothetical case where two
+files share the same path (impossible in practice).
+`
+
 type CodeProvider struct {
 	FileNameOK dscope.Inject[FileNameOK]
 	NameMatch  dscope.Inject[NameMatch]
@@ -66,7 +77,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				// use as-is
 				queue = append(queue, pattern)
 			} else {
-				slices.Sort(files)
+				slices.SortStableFunc(files, cmp.Compare[string])
 				queue = append(queue, files...)
 			}
 		}
@@ -145,16 +156,18 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			})
 		}
 
-		// Sort files by modification time ascending (oldest first) to maximize
-		// the common prefix across requests: older files are less likely to change
-		// and therefore form a stable cacheable prefix.
-		slices.SortFunc(candidates, func(a, b candidate) int {
+		// Sort files by path as the primary key for deterministic ordering.
+		// See TheoryOfFileOrdering for rationale.
+		slices.SortStableFunc(candidates, func(a, b candidate) int {
+			if a.path != b.path {
+				return cmp.Compare(a.path, b.path)
+			}
 			if a.modTime.Before(b.modTime) {
 				return -1
 			} else if b.modTime.Before(a.modTime) {
 				return 1
 			}
-			return cmp.Compare(a.path, b.path)
+			return 0
 		})
 
 		// Process candidates in sorted order
@@ -310,3 +323,4 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
+
