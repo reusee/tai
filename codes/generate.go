@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -18,7 +20,17 @@ import (
 
 type Generate func(ctx context.Context, output io.Writer) error
 
-func countFuncsTokens(funcs []*generators.Function, count func(string) (int, error)) (int, error) {
+const TheoryOfTokenBudgetStability = `
+Accurate token budgeting preserves the prefix cache by ensuring deterministic
+file inclusion across requests. Function declarations from all sources — state
+layers, code/diff providers, and configuration files — must be counted together
+and sorted by name before measuring their token cost. Without config functions
+in the count, the user-content budget is overestimated, which can cause context
+window overflows that force file inclusion to change between requests,
+invalidating the entire prefix cache.
+`
+
+func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, error)) (int, error) {
 	if len(funcs) == 0 {
 		return 0, nil
 	}
@@ -40,6 +52,7 @@ func (Module) Generate(
 	tap debugs.Tap,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
+	loader configs.Loader,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -71,12 +84,30 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
-		var allFuncs []*generators.Function
+
+		// Collect function declarations from all sources for accurate token
+		// counting. Functions from state providers AND configuration files are
+		// merged and sorted by name to match the order used in API requests.
+		// Without config functions in the count, the user-content budget is
+		// overestimated, which can cause context window overflows that force
+		// file inclusion to change between requests, invalidating the prefix
+		// cache. See TheoryOfTokenBudgetStability for rationale.
+		var allFuncDecls []generators.FuncDecl
 		if args.DisableTools != nil && !*args.DisableTools {
-			allFuncs = append(allFuncs, codeProvider.Functions()...)
-			allFuncs = append(allFuncs, diffHandler.Functions()...)
+			for _, fn := range codeProvider.Functions() {
+				allFuncDecls = append(allFuncDecls, fn.Decl)
+			}
+			for _, fn := range diffHandler.Functions() {
+				allFuncDecls = append(allFuncDecls, fn.Decl)
+			}
+			for set := range configs.All[[]generators.FuncDecl](loader, "functions") {
+				allFuncDecls = append(allFuncDecls, set...)
+			}
+			sort.SliceStable(allFuncDecls, func(i, j int) bool {
+				return allFuncDecls[i].Name < allFuncDecls[j].Name
+			})
 		}
-		funcTokens, err := countFuncsTokens(allFuncs, generator.CountTokens)
+		funcTokens, err := countFuncsTokens(allFuncDecls, generator.CountTokens)
 		if err != nil {
 			return err
 		}
