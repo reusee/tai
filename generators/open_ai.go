@@ -56,20 +56,22 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	var tools []Tool
 
+	// Collect all function declarations from state and config into a single
+	// slice, then sort globally by name. Global sorting maximizes prefix
+	// cache reuse: adding a function from any source inserts it at its
+	// natural alphabetical position, shifting only the functions that follow.
+	// See TheoryOfPrefixCaching for rationale.
+	var allFuncs []FuncDecl
 	for fn := range ret.Functions() {
-		tools = append(tools, fn.Decl.ToOpenAI())
+		allFuncs = append(allFuncs, fn.Decl)
 	}
-	// Collect and sort user-defined function declarations by name for
-	// deterministic ordering across requests. Config file iteration order
-	// may vary, which would break the LLM prefix cache.
-	var configFuncs []FuncDecl
 	for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
-		configFuncs = append(configFuncs, set...)
+		allFuncs = append(allFuncs, set...)
 	}
-	sort.SliceStable(configFuncs, func(i, j int) bool {
-		return configFuncs[i].Name < configFuncs[j].Name
+	sort.SliceStable(allFuncs, func(i, j int) bool {
+		return allFuncs[i].Name < allFuncs[j].Name
 	})
-	for _, fn := range configFuncs {
+	for _, fn := range allFuncs {
 		tools = append(tools, fn.ToOpenAI())
 	}
 
@@ -486,6 +488,14 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 	}
 
 	for content := range state.Contents() {
+		// Skip log and system content to prevent internal metadata (Usage,
+		// FinishReason, Error) from being sent to the API. This also preserves
+		// prefix cache stability: log messages interspersed with conversation
+		// messages would shift the position of cached content. The Gemini path
+		// already filters these roles; this brings the OpenAI path to parity.
+		if content.Role == RoleLog || content.Role == RoleSystem {
+			continue
+		}
 		role := string(content.Role)
 		if role == string(RoleModel) {
 			role = string(RoleAssistant)

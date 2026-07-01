@@ -64,6 +64,42 @@ func TestStateToOpenAIMessages(t *testing.T) {
 
 	})
 
+	t.Run("log content with text is filtered", func(t *testing.T) {
+		state := NewPrompts("", []*Content{
+			{
+				Role: RoleLog,
+				Parts: []Part{
+					Text("internal log message"),
+				},
+			},
+			{
+				Role: RoleUser,
+				Parts: []Part{
+					Text("user message"),
+				},
+			},
+		})
+
+		messages, err := stateToOpenAIMessages(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// The log content must be filtered out entirely; only the user
+		// message should appear. Without filtering, the log message would
+		// be sent to the API with an invalid role "log", corrupting the
+		// request and destabilizing the prefix cache.
+		if len(messages) != 1 {
+			t.Fatalf("expected 1 message, got %d: %+v", len(messages), messages)
+		}
+		if messages[0].Role != string(RoleUser) {
+			t.Fatalf("expected user role, got %s", messages[0].Role)
+		}
+		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "user message" {
+			t.Fatalf("expected 'user message', got %v", messages[0].Content)
+		}
+	})
+
 	t.Run("reasoning content", func(t *testing.T) {
 		state := NewPrompts("", []*Content{
 			{

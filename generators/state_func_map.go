@@ -15,6 +15,13 @@ with outer layers taking precedence over inner layers for duplicate names.
 Schema "required" fields are sorted alphabetically so that adding a new required
 field inserts it at its natural position without reordering existing fields,
 minimizing token-level changes to the serialized schema.
+When building tool declarations for API requests, functions from state layers
+and config files are merged into a single list and sorted globally by name,
+rather than concatenating separately sorted groups. Global sorting ensures that
+adding a function from any source inserts it at its natural alphabetical position,
+shifting only the functions that follow. With separate group sorting, adding a
+state function would shift all config functions appended after state functions,
+causing unnecessary cache invalidation.
 `
 
 type FuncMap struct {

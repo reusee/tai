@@ -112,21 +112,23 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
 	if g.spec.DisableTools == nil || !*g.spec.DisableTools {
-		var funcDecls []*genai.FunctionDeclaration
+		// Collect all function declarations from state and config into a
+		// single slice, then sort globally by name. Global sorting maximizes
+		// prefix cache reuse: adding a function from any source inserts it
+		// at its natural alphabetical position, shifting only the functions
+		// that follow. See TheoryOfPrefixCaching for rationale.
+		var allFuncs []FuncDecl
 		for fn := range ret.Functions() {
-			funcDecls = append(funcDecls, fn.Decl.ToGemini())
+			allFuncs = append(allFuncs, fn.Decl)
 		}
-		// Collect and sort user-defined function declarations by name for
-		// deterministic ordering across requests. Config file iteration order
-		// may vary, which would break the LLM prefix cache.
-		var configFuncs []FuncDecl
 		for set := range configs.All[[]FuncDecl](g.Loader(), "functions") {
-			configFuncs = append(configFuncs, set...)
+			allFuncs = append(allFuncs, set...)
 		}
-		sort.SliceStable(configFuncs, func(i, j int) bool {
-			return configFuncs[i].Name < configFuncs[j].Name
+		sort.SliceStable(allFuncs, func(i, j int) bool {
+			return allFuncs[i].Name < allFuncs[j].Name
 		})
-		for _, fn := range configFuncs {
+		var funcDecls []*genai.FunctionDeclaration
+		for _, fn := range allFuncs {
 			funcDecls = append(funcDecls, fn.ToGemini())
 		}
 		if (g.spec.DisableSearch == nil || !*g.spec.DisableSearch) && len(funcDecls) == 0 {
