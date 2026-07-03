@@ -201,7 +201,10 @@ type memoryRoot struct {
 }
 
 func parseMemoryItems(text string) ([]string, error) {
-	block, _, _, ok := codes.ParseFirstBlock([]byte(text))
+	block, _, _, ok, err := codes.ParseFirstBlock([]byte(text))
+	if err != nil {
+		return nil, err
+	}
 	if !ok || block.Kind != "memory" {
 		return nil, nil
 	}

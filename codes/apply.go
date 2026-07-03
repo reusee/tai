@@ -163,18 +163,21 @@ type changeXML struct {
 	FilePath string `xml:"file-path,attr"`
 }
 
-func parseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool) {
-	block, start, end, ok := ParseFirstBlock(content)
+func parseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool, err error) {
+	block, start, end, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		return h, 0, 0, false, err
+	}
 	if !ok || block.Kind != "change" {
-		return h, 0, 0, false
+		return h, 0, 0, false, nil
 	}
 
 	h, parsedOk := parseChangeXMLBody(block.Body)
 	if !parsedOk {
-		return h, 0, 0, false
+		return h, 0, 0, false, nil
 	}
 
-	return h, start, end, true
+	return h, start, end, true, nil
 }
 
 // parseChangeXMLBody parses the XML metadata format for change blocks.

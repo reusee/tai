@@ -2,6 +2,7 @@ package codes
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 )
 
@@ -16,6 +17,10 @@ This format replaces ad-hoc XML or JSON escaping with a simple, parseable struct
 **Line-start requirement**: The opening marker (:::kind boundary) and the closing marker
 (:::end boundary) must each appear at the beginning of a line. Any occurrence of ":::"
 that is not at the start of a line is treated as regular content and will not start a block.
+
+**Unclosed block detection**: An opening marker at line start without a matching closing
+marker is a malformed block. The parser reports an error rather than silently skipping it,
+ensuring that incomplete output from the AI is surfaced to the user.
 `
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
@@ -44,7 +49,7 @@ type Block struct {
 	Body     string
 }
 
-func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool) {
+func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
 		idx := bytes.Index(content[searchFrom:], []byte(":::"))
@@ -113,8 +118,12 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool) 
 			break
 		}
 		if validEnd == -1 {
-			searchFrom = blockStart + 1
-			continue
+			// Opening marker found but no matching closing marker.
+			// Report an error instead of silently skipping the block.
+			return Block{}, 0, 0, false, fmt.Errorf(
+				"unclosed block: kind %q boundary %q has no matching end marker %q",
+				kind, boundary, endMarker,
+			)
 		}
 		bodyEnd := validEnd
 

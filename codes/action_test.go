@@ -2,6 +2,7 @@ package codes
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,7 +52,10 @@ func TestExpandGoExprs(t *testing.T) {
 func TestParseFirstBoundaryHunk(t *testing.T) {
 	// Valid with XML metadata and blank line
 	content := ":::change abc-def-gh\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
-	h, start, end, ok := parseFirstBoundaryHunk([]byte(content))
+	h, start, end, ok, err := parseFirstBoundaryHunk([]byte(content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -75,7 +79,10 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 
 	// Body content with header-like lines is preserved after the XML tag
 	content2 := ":::change x-y-z\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nop: MODIFY // comment in body\nfunc myFunc() {}\n\n:::end x-y-z\n"
-	h2, _, _, ok2 := parseFirstBoundaryHunk([]byte(content2))
+	h2, _, _, ok2, err2 := parseFirstBoundaryHunk([]byte(content2))
+	if err2 != nil {
+		t.Fatalf("unexpected error: %v", err2)
+	}
 	if !ok2 {
 		t.Fatal("expected ok for content2")
 	}
@@ -89,7 +96,10 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	// RENAME operation with empty body
 	t.Run("RENAME", func(t *testing.T) {
 		content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n\n:::end 徕珑\n"
-		h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if !ok {
 			t.Fatal("expected ok")
 		}
@@ -107,7 +117,10 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	// Header-based (key-value) format is no longer supported
 	t.Run("HeaderFormatRejected", func(t *testing.T) {
 		content := ":::change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
-		_, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if ok {
 			t.Fatal("header-based format should be rejected")
 		}
@@ -117,21 +130,31 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 func TestBoundaryBlockLineStart(t *testing.T) {
 	// ::: not at beginning of line should not be recognized as a block start
 	content1 := []byte("some text :::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
-	_, _, _, ok := ParseFirstBlock(content1)
+	_, _, _, ok, err := ParseFirstBlock(content1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ok {
 		t.Fatal("expected no block for mid-line start marker")
 	}
 
-	// :::end not at beginning of line should not be recognized
+	// :::end not at beginning of line: opening marker is valid but no
+	// line-start end marker exists, so this is an unclosed block error.
 	content2 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text:::end 瑱魃\n")
-	_, _, _, ok = ParseFirstBlock(content2)
+	_, _, _, ok, err = ParseFirstBlock(content2)
+	if err == nil {
+		t.Fatal("expected error for unclosed block with mid-line end marker")
+	}
 	if ok {
 		t.Fatal("expected no block for mid-line end marker")
 	}
 
 	// Properly placed markers (start and end at beginning of lines) should succeed
 	content3 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
-	_, _, _, ok = ParseFirstBlock(content3)
+	_, _, _, ok, err = ParseFirstBlock(content3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected block for line-start markers")
 	}
@@ -226,7 +249,10 @@ func TestApplyHunkRename(t *testing.T) {
 
 func TestParseFirstBoundaryHunkXML(t *testing.T) {
 	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"
-	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+	h, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -246,7 +272,10 @@ func TestParseFirstBoundaryHunkXML(t *testing.T) {
 
 func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 	content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n:::end 徕珑\n"
-	h, _, _, ok := parseFirstBoundaryHunk([]byte(content))
+	h, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -261,7 +290,10 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
 	content := []byte("some text :::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\" />\n\nfunc Bar() {}\n:::end 栢彣\n")
-	block, start, end, ok := ParseFirstBlock(content)
+	block, start, end, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected a valid block to be found")
 	}
@@ -282,5 +314,57 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	}
 	if end != len(content) {
 		t.Fatalf("expected block to consume entire remaining valid content, end=%d", end)
+	}
+}
+
+func TestParseFirstBlockUnclosed(t *testing.T) {
+	// Opening marker at line start with no end marker at all
+	content := []byte(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\nfunc Foo() {}\n")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block with no end marker")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed block")
+	}
+
+	// Opening marker found but end marker has a different boundary
+	content2 := []byte(":::change 徕珑\nbody\n:::end 栢彣\n")
+	_, _, _, ok, err = ParseFirstBlock(content2)
+	if err == nil {
+		t.Fatal("expected error for mismatched end marker boundary")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for mismatched end marker boundary")
+	}
+}
+
+func TestApplyUnclosedBlockError(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\nfunc Foo() {}\n"
+	diffPath := filepath.Join(dir, "diff.txt")
+	if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := BoundaryDiffHandler{}
+	sawError := false
+	for _, err := range handler.Apply(root, diffPath) {
+		if err == nil {
+			t.Fatal("expected error, got a hunk")
+		}
+		sawError = true
+		if !strings.Contains(err.Error(), "unclosed") {
+			t.Fatalf("expected unclosed block error, got: %v", err)
+		}
+	}
+	if !sawError {
+		t.Fatal("expected an error from Apply")
 	}
 }

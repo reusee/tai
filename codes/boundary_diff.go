@@ -104,7 +104,11 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			return
 		}
 		for {
-			h, start, end, ok := parseFirstBoundaryHunk(content)
+			h, start, end, ok, err := parseFirstBoundaryHunk(content)
+			if err != nil {
+				yield(codetypes.Hunk{}, err)
+				return
+			}
 			if !ok {
 				break
 			}
