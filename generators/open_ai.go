@@ -56,23 +56,25 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	var tools []Tool
 
-	// Collect all function declarations from state and config into a single
-	// slice, then sort globally by name. Global sorting maximizes prefix
-	// cache reuse: adding a function from any source inserts it at its
-	// natural alphabetical position, shifting only the functions that follow.
-	// See TheoryOfPrefixCaching for rationale.
-	var allFuncs []FuncDecl
-	for fn := range ret.Functions() {
-		allFuncs = append(allFuncs, fn.Decl)
-	}
-	for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
-		allFuncs = append(allFuncs, set...)
-	}
-	sort.SliceStable(allFuncs, func(i, j int) bool {
-		return allFuncs[i].Name < allFuncs[j].Name
-	})
-	for _, fn := range allFuncs {
-		tools = append(tools, fn.ToOpenAI())
+	if o.spec.DisableTools == nil || !*o.spec.DisableTools {
+		// Collect all function declarations from state and config into a single
+		// slice, then sort globally by name. Global sorting maximizes prefix
+		// cache reuse: adding a function from any source inserts it at its
+		// natural alphabetical position, shifting only the functions that follow.
+		// See TheoryOfPrefixCaching for rationale.
+		var allFuncs []FuncDecl
+		for fn := range ret.Functions() {
+			allFuncs = append(allFuncs, fn.Decl)
+		}
+		for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
+			allFuncs = append(allFuncs, set...)
+		}
+		sort.SliceStable(allFuncs, func(i, j int) bool {
+			return allFuncs[i].Name < allFuncs[j].Name
+		})
+		for _, fn := range allFuncs {
+			tools = append(tools, fn.ToOpenAI())
+		}
 	}
 
 	temperature := float32(0)
@@ -392,8 +394,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 						"details", content,
 					)
 				}
+				// Return ret to preserve partial state accumulated during
+				// streaming. Returning nil would discard content from
+				// previous successful AppendContent calls, losing all
+				// streamed content received before the error.
 				if ret, err = ret.AppendContent(content); err != nil {
-					return nil, err
+					return ret, err
 				}
 			}
 

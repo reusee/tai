@@ -1,12 +1,45 @@
 package generators
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 )
+
+// errorAfterNState wraps a State and fails AppendContent after maxCalls
+// successful calls. Used to test that Generate preserves partial state
+// when AppendContent fails mid-stream.
+type errorAfterNState struct {
+	State
+	calls    int
+	maxCalls int
+}
+
+func (s *errorAfterNState) AppendContent(content *Content) (State, error) {
+	s.calls++
+	if s.calls > s.maxCalls {
+		return s, errors.New("append content failed")
+	}
+	inner, err := s.State.AppendContent(content)
+	if err != nil {
+		return s, err
+	}
+	s.State = inner
+	return s, nil
+}
 
 func TestOpenAI(t *testing.T) {
 	testGenerator(t, func(
@@ -183,4 +216,66 @@ func TestAzureConfiguration(t *testing.T) {
 			t.Fatalf("wrong version: %s", g.spec.APIVersion)
 		}
 	})
+}
+
+func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
+	// Text longer than 64 chars triggers the parser to flush a content
+	// chunk, causing AppendContent to be called during streaming.
+	longText := strings.Repeat("a", 70)
+
+	chunk1, _ := json.Marshal(ChatCompletionStreamResponse{
+		Choices: []ChatCompletionStreamChoice{
+			{Delta: ChatCompletionStreamChoiceDelta{Role: "assistant", Content: longText}},
+		},
+	})
+	chunk2, _ := json.Marshal(ChatCompletionStreamResponse{
+		Choices: []ChatCompletionStreamChoice{
+			{Delta: ChatCompletionStreamChoiceDelta{Content: longText}},
+		},
+	})
+
+	sseBody := fmt.Sprintf("data: %s\n\ndata: %s\n\ndata: [DONE]\n\n", chunk1, chunk2)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody)
+	}))
+	defer server.Close()
+
+	baseState := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
+	})
+
+	// Allow 1 successful AppendContent; the 2nd call (from the second
+	// flushed chunk) will fail. The first chunk's content is already
+	// in ret when the error occurs.
+	failingState := &errorAfterNState{
+		State:    baseState,
+		maxCalls: 1,
+	}
+
+	disableTools := true
+	openai := &OpenAI{
+		spec: Spec{
+			BaseURL:      server.URL,
+			Model:        "test-model",
+			DisableTools: &disableTools,
+		},
+		apiKey: "test-key",
+		client: server.Client(),
+	}
+	openai.Logger = func() logs.Logger {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	openai.Tap = func() debugs.Tap {
+		return func(context.Context, string, map[string]any) {}
+	}
+
+	ret, err := openai.Generate(context.Background(), failingState, nil)
+	if err == nil {
+		t.Fatal("expected error from failing AppendContent")
+	}
+	if ret == nil {
+		t.Fatal("expected partial state to be preserved on error, got nil")
+	}
 }
