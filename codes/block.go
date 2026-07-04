@@ -18,6 +18,10 @@ This format replaces ad-hoc XML or JSON escaping with a simple, parseable struct
 (:::end boundary) must each appear at the beginning of a line. Any occurrence of ":::"
 that is not at the start of a line is treated as regular content and will not start a block.
 
+**No surrounding blank lines**: Blocks do not require blank lines before or after them.
+A block can appear directly adjacent to other text or other blocks; the only structural
+requirement is that each marker starts at the beginning of a line.
+
 **Unclosed block detection**: An opening marker at line start without a matching closing
 marker is a malformed block. The parser reports an error rather than silently skipping it,
 ensuring that incomplete output from the AI is surfaced to the user.
@@ -30,15 +34,14 @@ This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
 :::<kind> <boundary>
-
 <kind-specific content>
-
 :::end <boundary>
 
 - <kind>: The type of block, e.g., "change", "memory-item".
 - <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any code content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
+- No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
 - If no blocks are needed, simply omit them.
 `
 

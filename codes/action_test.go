@@ -310,6 +310,63 @@ func TestParseFirstBoundaryHunkWrite(t *testing.T) {
 	}
 }
 
+func TestParseFirstBoundaryHunkNoBlankLines(t *testing.T) {
+	// Code body without blank lines before or after the XML tag
+	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\nfunc Foo() {}\n:::end 徕珑\n"
+	h, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if h.Op != "MODIFY" {
+		t.Fatalf("expected MODIFY, got %s", h.Op)
+	}
+	if h.Target != "Foo" {
+		t.Fatalf("expected Foo, got %s", h.Target)
+	}
+	if h.Body != "func Foo() {}" {
+		t.Fatalf("unexpected body: %q", h.Body)
+	}
+}
+
+func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nfunc Old() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "Old",
+		FilePath: "test.go",
+		Body:     "func New() {}",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if strings.Contains(resultStr, "Old") {
+		t.Fatalf("result should not contain Old:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "func New() {}") {
+		t.Fatalf("result should contain New:\n%s", resultStr)
+	}
+}
+
 func TestApplyHunkWrite(t *testing.T) {
 	t.Run("ReplaceGoFile", func(t *testing.T) {
 		dir := t.TempDir()
