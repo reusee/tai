@@ -566,3 +566,94 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		t.Fatal("expected an error from Apply")
 	}
 }
+
+func TestApplyFinishBlock(t *testing.T) {
+	t.Run("AtEnd", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n\n:::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n"
+		diffPath := filepath.Join(dir, "diff.txt")
+		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		handler := BoundaryDiffHandler{}
+		count := 0
+		for _, err := range handler.Apply(root, diffPath) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 hunk, got %d", count)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "Old") {
+			t.Fatalf("result should not contain Old:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "func New() {}") {
+			t.Fatalf("result should contain New:\n%s", resultStr)
+		}
+	})
+
+	t.Run("BeforeChange", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// finish block before change block — should be skipped and change still applied
+		content := ":::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n\n:::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n"
+		diffPath := filepath.Join(dir, "diff.txt")
+		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		handler := BoundaryDiffHandler{}
+		count := 0
+		for _, err := range handler.Apply(root, diffPath) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 hunk, got %d", count)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "Old") {
+			t.Fatalf("result should not contain Old:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "func New() {}") {
+			t.Fatalf("result should contain New:\n%s", resultStr)
+		}
+	})
+}

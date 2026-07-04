@@ -25,6 +25,11 @@ requirement is that each marker starts at the beginning of a line.
 **Unclosed block detection**: An opening marker at line start without a matching closing
 marker is a malformed block. The parser reports an error rather than silently skipping it,
 ensuring that incomplete output from the AI is surfaced to the user.
+
+**Terminal summary blocks**: A "finish" block at the end of the output provides a
+one-sentence summary of all changes. It is structurally identical to other blocks but
+carries no file modifications; the diff consumer skips non-change kinds without error,
+treating them as informational metadata.
 `
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
@@ -37,7 +42,7 @@ This format avoids escaping issues and is easy to parse.
 <kind-specific content>
 :::end <boundary>
 
-- <kind>: The type of block, e.g., "change", "memory-item".
+- <kind>: The type of block, e.g., "change", "finish", "memory-item".
 - <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any code content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.

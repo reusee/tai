@@ -10,6 +10,14 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
+const TheoryOfFinishBlock = `
+The finish block is a terminal signal placed at the end of the AI's output. It
+contains a one-sentence summary of all changes made. The Apply method skips
+non-change blocks (including finish) without error, treating them as informational
+metadata rather than file modifications. This provides a clear completion marker
+and a human-readable summary without interfering with hunk processing.
+`
+
 // BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.
 // Changes are wrapped in :::change <boundary> / :::end <boundary> blocks, where the boundary
 // is a random string chosen by the AI to prevent parsing conflicts with code content.
@@ -36,7 +44,7 @@ The "change" kind defines code modifications using the boundary block format. Ea
 :::end <boundary>
 
 **Rules:**
-- The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `.
+- The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `
   - ` + "`op`" + `: The operation to perform:
     - MODIFY: Replace an existing top-level declaration.
     - ADD_BEFORE: Add new code before an existing declaration.
@@ -74,6 +82,25 @@ func New() *Config {
 }
 :::end 徕珑
 These changes should resolve the issue.
+:::finish 徕珑
+Fixed the Foo function, removed the unused Bar function, and rewrote the config file.
+:::end 徕珑
+
+**Finish Block Kind:**
+
+The "finish" kind signals the end of all code modifications and provides a one-sentence summary of the changes made. It MUST be the last block in the response.
+
+**Finish Block Format:**
+
+:::finish <boundary>
+<one-sentence summary of all changes>
+:::end <boundary>
+
+**Rules:**
+- The finish block MUST be the last block in the response, after all change blocks.
+- The body is a single sentence summarizing what was done.
+- Use the same boundary format (two random uncommon meaningless Chinese characters) as change blocks.
+- Generate exactly one finish block per response.
 
 `
 }
@@ -86,7 +113,7 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 :::end <random_boundary>
 
 - Generate a boundary string of two random uncommon meaningless Chinese characters for each response.
-- The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `.
+- The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`" + `target` + "`" + ` is the new file path; the code block is ignored.
@@ -94,6 +121,12 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - No blank lines are required before or after the code body, nor before or after a block.
 - If no changes are needed, omit all change blocks.
+- After all change blocks, generate a finish block with a one-sentence summary of all changes made:
+:::finish <random_boundary>
+<one-sentence summary>
+:::end <random_boundary>
+- The finish block MUST be the last block in the response.
+- If no changes were made, generate a finish block with "No changes were needed." as the summary.
 
 `
 }
@@ -106,7 +139,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			return
 		}
 		for {
-			h, start, end, ok, err := parseFirstBoundaryHunk(content)
+			block, start, end, ok, err := ParseFirstBlock(content)
 			if err != nil {
 				yield(codetypes.Hunk{}, err)
 				return
@@ -114,20 +147,37 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			if !ok {
 				break
 			}
+			// Non-change blocks (e.g., finish summary) carry no file
+			// modifications and are skipped without error. See TheoryOfFinishBlock.
+			if block.Kind != "change" {
+				newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
+				if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
+					yield(codetypes.Hunk{}, err)
+					return
+				}
+				content = newContent
+				continue
+			}
+			h, parsedOk := parseChangeXMLBody(block.Body)
+			if !parsedOk {
+				newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
+				if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
+					yield(codetypes.Hunk{}, err)
+					return
+				}
+				content = newContent
+				continue
+			}
 			if err := applyHunk(root, h); err != nil {
 				yield(h, fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err))
 				return
 			}
-			newContent := append(content[:start], content[end:]...)
-			if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
+			newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
+			if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
 				yield(codetypes.Hunk{}, err)
 				return
 			}
-			content, err = os.ReadFile(diffFilePath)
-			if err != nil {
-				yield(codetypes.Hunk{}, err)
-				return
-			}
+			content = newContent
 			if !yield(h, nil) {
 				return
 			}
