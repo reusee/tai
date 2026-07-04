@@ -9,9 +9,9 @@ import (
 const BlockFormatTheory = `
 The boundary block format is a general-purpose structured output format for AI models.
 It uses delimited blocks with a random boundary string to avoid parsing conflicts with content.
-Each block has a kind (e.g., "change") and a body.
+Each block has a kind and a body.
 Only the start marker (:::kind boundary) and end marker (:::end boundary) are unified structure.
-The content between the markers is defined by the specific kind (e.g., XML metadata for change blocks).
+The content between the markers is defined by the specific kind.
 This format replaces ad-hoc XML or JSON escaping with a simple, parseable structure.
 
 **Line-start requirement**: The opening marker (:::kind boundary) and the closing marker
@@ -25,16 +25,11 @@ requirement is that each marker starts at the beginning of a line.
 **Unclosed block detection**: An opening marker at line start without a matching closing
 marker is a malformed block. The parser reports an error rather than silently skipping it,
 ensuring that incomplete output from the AI is surfaced to the user.
-
-**Terminal summary blocks**: A "finish" block at the end of the output provides a
-one-sentence summary of all changes. It is structurally identical to other blocks but
-carries no file modifications; the diff consumer skips non-change kinds without error,
-treating them as informational metadata.
 `
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
 
-Your response can include structured content (code changes, etc.) using delimited blocks.
+Your response can include structured content using delimited blocks.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
@@ -42,8 +37,8 @@ This format avoids escaping issues and is easy to parse.
 <kind-specific content>
 :::end <boundary>
 
-- <kind>: The type of block, e.g., "change", "finish", "memory-item".
-- <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any code content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
+- <kind>: The type of block. The valid kinds and their content formats are defined by the specific kind documentation.
+- <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
