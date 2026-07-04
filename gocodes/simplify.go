@@ -342,7 +342,6 @@ type Transform struct {
 	DeleteTestFiles     bool
 	DeleteMarkdownFiles bool
 	DeleteComments      bool
-	DeleteStructTags    bool
 	DeleteFunctionBody  bool
 	DeleteFile          bool
 }
@@ -360,10 +359,6 @@ func makeTransforms() (ops []*Transform) {
 		DeleteComments:    true,
 	})
 	ops = append(ops, &Transform{
-		MatchModuleIsRoot: new(false),
-		DeleteStructTags:  true,
-	})
-	ops = append(ops, &Transform{
 		MatchModuleIsRoot:  new(false),
 		DeleteFunctionBody: true,
 	})
@@ -379,11 +374,6 @@ func makeTransforms() (ops []*Transform) {
 		MatchModuleIsRoot:  new(true),
 		MatchPackageIsRoot: new(false),
 		DeleteComments:     true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  new(true),
-		MatchPackageIsRoot: new(false),
-		DeleteStructTags:   true,
 	})
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot:  new(true),
@@ -511,18 +501,6 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 		return
 	}
 
-	// delete struct tags
-	if f.Transform.DeleteStructTags && f.Confirmed != nil {
-		if !f.IsGoFile {
-			return
-		}
-		f.Pending = &Transformed{
-			What: "delete struct tags",
-			Ast:  deleteStructTags(f.Confirmed.Ast),
-		}
-		return
-	}
-
 	// delete function body
 	if f.Transform.DeleteFunctionBody && f.Confirmed != nil {
 		if !f.IsGoFile {
@@ -601,19 +579,6 @@ func deleteFunctionBody(file *ast.File) *ast.File {
 				},
 			}
 			cursor.Replace(&newDecl)
-		}
-		return true
-	}, nil).(*ast.File)
-}
-
-func deleteStructTags(file *ast.File) *ast.File {
-	return astutil.Apply(file, func(cursor *astutil.Cursor) bool {
-		if field, ok := cursor.Node().(*ast.Field); ok {
-			if field.Tag != nil {
-				newField := *field
-				newField.Tag = nil
-				cursor.Replace(&newField)
-			}
 		}
 		return true
 	}, nil).(*ast.File)
