@@ -23,6 +23,8 @@ When an ADD operation targets a spec nested inside a multi-spec declaration bloc
 const or var groups), the insertion point redirects to the parent block boundary to avoid
 producing invalid code inside the parentheses. The inserted body must remain a complete,
 self-contained declaration so the resulting source is valid Go.
+WRITE bypasses declaration-level parsing and replaces the entire file content. Go files
+are still processed through goimports to keep imports synchronized after full replacement.
 `
 
 type BodyInfo struct {
@@ -263,6 +265,26 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			}
 		}
 		return root.Rename(path, newPath)
+	}
+
+	// Handle WRITE: replace the entire file content, bypassing declaration-level parsing.
+	// The target field is ignored; file-path determines the destination.
+	// Go files are processed through goimports to keep imports synchronized.
+	if h.Op == "WRITE" {
+		if dir := filepath.Dir(path); dir != "." {
+			if err := rootMkdirAll(root, dir, 0755); err != nil {
+				return err
+			}
+		}
+		content := []byte(h.Body)
+		if strings.HasSuffix(path, ".go") {
+			formatted, err := imports.Process(path, content, nil)
+			if err != nil {
+				return fmt.Errorf("goimports: %w", err)
+			}
+			content = formatted
+		}
+		return root.WriteFile(path, bytes.TrimSpace(content), 0644)
 	}
 
 	src, err := root.ReadFile(path) // Use os.Root for safe reading

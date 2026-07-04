@@ -287,6 +287,147 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 	}
 }
 
+func TestParseFirstBoundaryHunkWrite(t *testing.T) {
+	content := ":::change 徕珑\n<change op=\"WRITE\" file-path=\"/test.go\" />\n\npackage x\n\nfunc New() {}\n:::end 徕珑\n"
+	h, _, _, ok, err := parseFirstBoundaryHunk([]byte(content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if h.Op != "WRITE" {
+		t.Fatalf("expected WRITE, got %s", h.Op)
+	}
+	if h.FilePath != "/test.go" {
+		t.Fatalf("expected /test.go, got %s", h.FilePath)
+	}
+	if !strings.Contains(h.Body, "package x") {
+		t.Fatalf("body should contain package declaration: %q", h.Body)
+	}
+	if !strings.Contains(h.Body, "func New() {}") {
+		t.Fatalf("body should contain func New: %q", h.Body)
+	}
+}
+
+func TestApplyHunkWrite(t *testing.T) {
+	t.Run("ReplaceGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "test.go",
+			Body:     "package x\n\nfunc New() {}\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "Old") {
+			t.Fatalf("result should not contain Old:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "func New() {}") {
+			t.Fatalf("result should contain New:\n%s", resultStr)
+		}
+	})
+
+	t.Run("CreateGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "new.go",
+			Body:     "package x\n\nfunc New() {}\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		_, err = root.Stat("new.go")
+		if err != nil {
+			t.Fatalf("new file should exist: %v", err)
+		}
+	})
+
+	t.Run("ReplaceNonGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "old content"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "readme.md",
+			Body:     "# New Title\n\nNew content\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		result, err := root.ReadFile("readme.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "old content") {
+			t.Fatalf("result should not contain old content:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "# New Title") {
+			t.Fatalf("result should contain new title:\n%s", resultStr)
+		}
+	})
+
+	t.Run("CreateNonGoFileNested", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "sub/dir/notes.md",
+			Body:     "# Notes\n\nSome content\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		_, err = root.Stat("sub/dir/notes.md")
+		if err != nil {
+			t.Fatalf("file should exist: %v", err)
+		}
+	})
+}
+
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
 	content := []byte("some text :::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\" />\n\nfunc Bar() {}\n:::end 栢彣\n")
