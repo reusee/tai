@@ -536,3 +536,222 @@ func TestResolveSpec(t *testing.T) {
 	})
 }
 
+func TestResolveSpecRedirect(t *testing.T) {
+	t.Run("redirect to child", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Redirect: "child",
+				Variants: []Spec{
+					{
+						Name:  "child",
+						Type:  "openai",
+						Model: "child-model",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child" {
+			t.Errorf("expected name 'base/child', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+		if s.Model != "child-model" {
+			t.Errorf("expected model child-model, got %q", s.Model)
+		}
+	})
+
+	t.Run("redirect does not apply to child paths", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Redirect: "child1",
+				Variants: []Spec{
+					{
+						Name:  "child1",
+						Type:  "openai",
+						Model: "model1",
+					},
+					{
+						Name:  "child2",
+						Type:  "openai",
+						Model: "model2",
+					},
+				},
+			},
+		}
+		// Resolving "base" redirects to "base/child1"
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child1" {
+			t.Fatalf("expected name 'base/child1', got %q", s.Name)
+		}
+		// Resolving "base/child2" should NOT redirect, even though
+		// the parent "base" has a redirect. Only the final spec's
+		// redirect applies.
+		s, err = resolveSpec("base/child2", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child2" {
+			t.Errorf("expected name 'base/child2', got %q", s.Name)
+		}
+		if s.Model != "model2" {
+			t.Errorf("expected model model2, got %q", s.Model)
+		}
+	})
+
+	t.Run("redirect chain", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Redirect: "child",
+				Variants: []Spec{
+					{
+						Name:     "child",
+						Type:     "openai",
+						Redirect: "grandchild",
+						Variants: []Spec{
+							{
+								Name:  "grandchild",
+								Model: "grand-model",
+							},
+						},
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child/grandchild" {
+			t.Errorf("expected name 'base/child/grandchild', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+		if s.Model != "grand-model" {
+			t.Errorf("expected model grand-model, got %q", s.Model)
+		}
+	})
+
+	t.Run("redirect to nonexistent path", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Redirect: "nonexistent",
+			},
+		}
+		_, err := resolveSpec("base", localRoots)
+		if err == nil {
+			t.Fatal("expected error for nonexistent redirect target")
+		}
+	})
+
+	t.Run("redirect cycle detected", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Aliases:  []string{"base/child"},
+				Redirect: "child",
+				Variants: []Spec{
+					{
+						Name:  "child",
+						Model: "child-model",
+					},
+				},
+			},
+		}
+		// "base" redirects to "base/child", which is an alias for "base",
+		// creating a cycle that must be detected.
+		_, err := resolveSpec("base", localRoots)
+		if err == nil {
+			t.Fatal("expected cycle detection error")
+		}
+	})
+
+	t.Run("redirect preserves inherited fields", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:          "base",
+				Type:          "gemini",
+				ContextTokens: 100,
+				Temperature:   new(float32(0.5)),
+				Redirect:      "child",
+				Variants: []Spec{
+					{
+						Name:  "child",
+						Model: "child-model",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child" {
+			t.Errorf("expected name 'base/child', got %q", s.Name)
+		}
+		if s.Type != "gemini" {
+			t.Errorf("expected type gemini, got %q", s.Type)
+		}
+		if s.ContextTokens != 100 {
+			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.5 {
+			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
+		}
+		if s.Model != "child-model" {
+			t.Errorf("expected model child-model, got %q", s.Model)
+		}
+	})
+
+	t.Run("multi-component redirect", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:     "base",
+				Type:     "gemini",
+				Redirect: "child/grandchild",
+				Variants: []Spec{
+					{
+						Name: "child",
+						Type: "openai",
+						Variants: []Spec{
+							{
+								Name:  "grandchild",
+								Model: "grand-model",
+							},
+						},
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child/grandchild" {
+			t.Errorf("expected name 'base/child/grandchild', got %q", s.Name)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+		if s.Model != "grand-model" {
+			t.Errorf("expected model grand-model, got %q", s.Model)
+		}
+	})
+}

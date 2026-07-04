@@ -21,128 +21,150 @@ type GenerateOptions struct {
 type GetGenerator func(name string) (Generator, error)
 
 func resolveSpec(name string, roots []Spec) (Spec, error) {
-	// build alias map
-	aliasMap := make(map[string]string)
-	var collectAliases func(spec Spec, prefix string)
-	collectAliases = func(spec Spec, prefix string) {
-		fullPath := spec.Name
-		if prefix != "" {
-			fullPath = prefix + "/" + spec.Name
-		}
-		for _, alias := range spec.Aliases {
-			if alias != "" {
-				aliasMap[alias] = fullPath
+	visited := make(map[string]bool)
+
+	for {
+		// build alias map
+		aliasMap := make(map[string]string)
+		var collectAliases func(spec Spec, prefix string)
+		collectAliases = func(spec Spec, prefix string) {
+			fullPath := spec.Name
+			if prefix != "" {
+				fullPath = prefix + "/" + spec.Name
 			}
-		}
-		for _, child := range spec.Variants {
-			collectAliases(child, fullPath)
-		}
-	}
-	for _, root := range roots {
-		collectAliases(root, "")
-	}
-
-	// resolve alias
-	if target, ok := aliasMap[name]; ok {
-		name = target
-	}
-
-	parts := strings.Split(name, "/")
-	if len(parts) == 0 || name == "" {
-		return Spec{}, fmt.Errorf("empty name")
-	}
-
-	// build root map
-	rootMap := make(map[string]Spec)
-	for _, root := range roots {
-		if root.Name != "" {
-			rootMap[root.Name] = root
-		}
-		for _, alias := range root.Aliases {
-			if alias != "" {
-				rootMap[alias] = root
-			}
-		}
-	}
-
-	// traverse and merge
-	merged := Spec{}
-	currentMap := rootMap
-
-	for _, part := range parts {
-		spec, ok := currentMap[part]
-		if !ok {
-			return Spec{}, fmt.Errorf("spec not found: %s", name)
-		}
-		// merge fields
-		if spec.Type != "" {
-			merged.Type = spec.Type
-		}
-		if spec.BaseURL != "" {
-			merged.BaseURL = spec.BaseURL
-		}
-		if spec.APIKey != "" {
-			merged.APIKey = spec.APIKey
-		}
-		if spec.Model != "" {
-			merged.Model = spec.Model
-		}
-		if spec.Family != "" {
-			merged.Family = spec.Family
-		}
-		if spec.ContextTokens != 0 {
-			merged.ContextTokens = spec.ContextTokens
-		}
-		if spec.MaxGenerateTokens != nil {
-			merged.MaxGenerateTokens = spec.MaxGenerateTokens
-		}
-		if spec.Temperature != nil {
-			merged.Temperature = spec.Temperature
-		}
-		if spec.DisableSearch != nil {
-			merged.DisableSearch = spec.DisableSearch
-		}
-		if spec.DisableTools != nil {
-			merged.DisableTools = spec.DisableTools
-		}
-		if spec.ExtraArguments != nil {
-			merged.ExtraArguments = spec.ExtraArguments
-		}
-		if spec.IsOpenRouter != nil {
-			merged.IsOpenRouter = spec.IsOpenRouter
-		}
-		if spec.APIVersion != "" {
-			merged.APIVersion = spec.APIVersion
-		}
-		if spec.IsAzure != nil {
-			merged.IsAzure = spec.IsAzure
-		}
-		if spec.ServiceTier != "" {
-			merged.ServiceTier = spec.ServiceTier
-		}
-		if spec.ReasoningEffort != "" {
-			merged.ReasoningEffort = spec.ReasoningEffort
-		}
-		if spec.NoProxy != nil {
-			merged.NoProxy = spec.NoProxy
-		}
-		// descend into variants
-		nextMap := make(map[string]Spec, len(spec.Variants))
-		for _, v := range spec.Variants {
-			if v.Name != "" {
-				nextMap[v.Name] = v
-			}
-			for _, alias := range v.Aliases {
+			for _, alias := range spec.Aliases {
 				if alias != "" {
-					nextMap[alias] = v
+					aliasMap[alias] = fullPath
+				}
+			}
+			for _, child := range spec.Variants {
+				collectAliases(child, fullPath)
+			}
+		}
+		for _, root := range roots {
+			collectAliases(root, "")
+		}
+
+		// resolve alias
+		if target, ok := aliasMap[name]; ok {
+			name = target
+		}
+
+		if visited[name] {
+			return Spec{}, fmt.Errorf("redirect cycle detected: %s", name)
+		}
+		visited[name] = true
+
+		parts := strings.Split(name, "/")
+		if len(parts) == 0 || name == "" {
+			return Spec{}, fmt.Errorf("empty name")
+		}
+
+		// build root map
+		rootMap := make(map[string]Spec)
+		for _, root := range roots {
+			if root.Name != "" {
+				rootMap[root.Name] = root
+			}
+			for _, alias := range root.Aliases {
+				if alias != "" {
+					rootMap[alias] = root
 				}
 			}
 		}
-		currentMap = nextMap
-	}
 
-	merged.Name = name
-	return merged, nil
+		// traverse and merge
+		merged := Spec{}
+		currentMap := rootMap
+		var lastRedirect string
+
+		for _, part := range parts {
+			spec, ok := currentMap[part]
+			if !ok {
+				return Spec{}, fmt.Errorf("spec not found: %s", name)
+			}
+			// merge fields
+			if spec.Type != "" {
+				merged.Type = spec.Type
+			}
+			if spec.BaseURL != "" {
+				merged.BaseURL = spec.BaseURL
+			}
+			if spec.APIKey != "" {
+				merged.APIKey = spec.APIKey
+			}
+			if spec.Model != "" {
+				merged.Model = spec.Model
+			}
+			if spec.Family != "" {
+				merged.Family = spec.Family
+			}
+			if spec.ContextTokens != 0 {
+				merged.ContextTokens = spec.ContextTokens
+			}
+			if spec.MaxGenerateTokens != nil {
+				merged.MaxGenerateTokens = spec.MaxGenerateTokens
+			}
+			if spec.Temperature != nil {
+				merged.Temperature = spec.Temperature
+			}
+			if spec.DisableSearch != nil {
+				merged.DisableSearch = spec.DisableSearch
+			}
+			if spec.DisableTools != nil {
+				merged.DisableTools = spec.DisableTools
+			}
+			if spec.ExtraArguments != nil {
+				merged.ExtraArguments = spec.ExtraArguments
+			}
+			if spec.IsOpenRouter != nil {
+				merged.IsOpenRouter = spec.IsOpenRouter
+			}
+			if spec.APIVersion != "" {
+				merged.APIVersion = spec.APIVersion
+			}
+			if spec.IsAzure != nil {
+				merged.IsAzure = spec.IsAzure
+			}
+			if spec.ServiceTier != "" {
+				merged.ServiceTier = spec.ServiceTier
+			}
+			if spec.ReasoningEffort != "" {
+				merged.ReasoningEffort = spec.ReasoningEffort
+			}
+			if spec.NoProxy != nil {
+				merged.NoProxy = spec.NoProxy
+			}
+			// Redirect is not merged from parent to child; only the
+			// final spec in the path determines whether a redirect applies.
+			lastRedirect = spec.Redirect
+			// descend into variants
+			nextMap := make(map[string]Spec, len(spec.Variants))
+			for _, v := range spec.Variants {
+				if v.Name != "" {
+					nextMap[v.Name] = v
+				}
+				for _, alias := range v.Aliases {
+					if alias != "" {
+						nextMap[alias] = v
+					}
+				}
+			}
+			currentMap = nextMap
+		}
+
+		merged.Name = name
+
+		// Handle redirect: if the last spec in the path has a Redirect
+		// field, re-resolve with the extended path. The redirect value
+		// is appended to the current path as additional components.
+		if lastRedirect != "" {
+			name = name + "/" + lastRedirect
+			continue
+		}
+
+		return merged, nil
+	}
 }
 
 func (Module) GetGenerator(
