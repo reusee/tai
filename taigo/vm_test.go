@@ -1931,6 +1931,22 @@ func TestVMRangeFunc1Arg(t *testing.T) {
 	checkInt(t, vm, "sum", 30)
 }
 
+func TestVMRangeContinue(t *testing.T) {
+	vm := runVM(t, `
+		package main
+		var sum = 0
+		func init() {
+			for i := range 5 {
+				if i == 2 {
+					continue
+				}
+				sum += i
+			}
+		}
+	`)
+	checkInt(t, vm, "sum", 8)
+}
+
 func TestVMConstantFolding(t *testing.T) {
 	vm := runVM(t, `
 		package main

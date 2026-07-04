@@ -2413,7 +2413,15 @@ func (c *compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 	if stmt.Tok == token.CONTINUE && !scope.isLoop {
 		return fmt.Errorf("continue label %s not on loop", stmt.Label.Name)
 	}
-	for i := len(c.loops) - 1; i >= targetIdx; i-- {
+	// Pop iterators of range loops being exited. For break, the target loop
+	// is also exited, so its iterator is popped. For continue, the target
+	// loop is re-entered and must keep its iterator on the stack; only inner
+	// loops strictly above the target have their iterators popped.
+	popUntil := targetIdx
+	if stmt.Tok == token.CONTINUE {
+		popUntil = targetIdx + 1
+	}
+	for i := len(c.loops) - 1; i >= popUntil; i-- {
 		if c.loops[i].isRange {
 			c.emit(taivm.OpPop)
 		}
