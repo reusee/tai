@@ -101,6 +101,23 @@ func (p *Executor) MustExecute(args []string) {
 	}
 }
 
+// TheoryOfCommandExecution captures the design rationale of the command
+// executor. The Executor evaluates commands in a loop, treating
+// sub-commands as additive extensions to the current command namespace.
+// Parameters of a command function are bound positionally to remaining
+// arguments through reflective parsing; a parameter of pointer kind is
+// optional and takes a zero value when no argument is supplied. Numeric
+// parsing must respect the declared parameter's bit width so that
+// out-of-range inputs are rejected rather than silently truncated.
+const TheoryOfCommandExecution = `
+The Executor evaluates commands in a loop, treating sub-commands as additive
+extensions to the current command namespace. Parameters of a command function
+are bound positionally to remaining arguments through reflective parsing. A
+parameter of pointer kind is optional and takes a zero value when no argument
+is supplied. Numeric parsing must respect the declared parameter's bit width
+so out-of-range inputs are rejected rather than silently truncated.
+`
+
 func getArg(t reflect.Type, args []string) (ret reflect.Value, err error) {
 	if len(args) == 0 {
 
@@ -133,7 +150,10 @@ func getArg(t reflect.Type, args []string) (ret reflect.Value, err error) {
 		return
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		v, err := strconv.ParseInt(str, 10, 64)
+		// Honor the declared parameter's bit width so out-of-range inputs
+		// are reported as errors instead of being silently truncated by
+		// reflect.Value.SetInt. t.Bits() returns 8/16/32/64 as appropriate.
+		v, err := strconv.ParseInt(str, 10, t.Bits())
 		if err != nil {
 			return ret, fmt.Errorf("convert %s to int: %w", str, err)
 		}
@@ -141,7 +161,7 @@ func getArg(t reflect.Type, args []string) (ret reflect.Value, err error) {
 		return ret, nil
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		v, err := strconv.ParseUint(str, 10, 64)
+		v, err := strconv.ParseUint(str, 10, t.Bits())
 		if err != nil {
 			return ret, fmt.Errorf("convert %s to unsigned int: %w", str, err)
 		}
@@ -149,7 +169,7 @@ func getArg(t reflect.Type, args []string) (ret reflect.Value, err error) {
 		return ret, nil
 
 	case reflect.Float32, reflect.Float64:
-		v, err := strconv.ParseFloat(str, 64)
+		v, err := strconv.ParseFloat(str, t.Bits())
 		if err != nil {
 			return ret, fmt.Errorf("convert %s to float: %w", str, err)
 		}

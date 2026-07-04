@@ -43,6 +43,33 @@ func TestExecutor(t *testing.T) {
 
 }
 
+func TestInt8Range(t *testing.T) {
+	executor := NewExecutor()
+	var n int8
+	executor.Define("set", Func(func(v int8) {
+		n = v
+	}))
+
+	// in-range value parses normally
+	if err := executor.Execute([]string{"set", "42"}); err != nil {
+		t.Fatal(err)
+	}
+	if n != 42 {
+		t.Fatalf("expected 42, got %d", n)
+	}
+
+	// out-of-range value must surface an error rather than silently wrap.
+	// Before the fix, ParseInt used bitSize 64 and SetInt truncated
+	// int8(300) to 44 with no error.
+	err := executor.Execute([]string{"set", "300"})
+	if err == nil {
+		t.Fatal("expected error for int8 overflow, got nil")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("expected out of range error, got %v", err)
+	}
+}
+
 func TestSubCommands(t *testing.T) {
 	executor := NewExecutor()
 	var bar, baz int
