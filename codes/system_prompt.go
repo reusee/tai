@@ -30,6 +30,7 @@ func (Module) SystemPrompt(
 			codeProvider.SystemPrompt() + "\n" +
 			diffHandler.SystemPrompt() + "\n" +
 			FinishBlockSystemPrompt + "\n" +
+			RequestContextSystemPrompt + "\n" +
 			string(extra),
 	)
 }

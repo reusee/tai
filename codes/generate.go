@@ -14,6 +14,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taiconfigs"
 )
@@ -53,6 +54,7 @@ func (Module) Generate(
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
 	loader configs.Loader,
+	httpClient nets.HTTPClient,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -167,7 +169,13 @@ func (Module) Generate(
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
 		}
 
+		// Wrap state with BlockState to parse request-context blocks from
+		// model output. See TheoryOfRequestContext.
+		blockState := NewBlockState(state)
+		state = blockState
+
 		// run
+		requestContextRounds := 0
 		phase := actionChat.InitialPhase(nil)
 		for phase != nil {
 			newPhase, newState, phaseErr := phase(ctx, state)
@@ -212,6 +220,27 @@ func (Module) Generate(
 				// ok
 				phase = newPhase
 				state = newState
+
+				// Check for request-context blocks from model output.
+				// If found, fetch the requested context, append it as user
+				// content, and create a new generate phase.
+				// See TheoryOfRequestContext.
+				var hasRequestContext bool
+				state, hasRequestContext, err = processRequestContextBlocks(blockState, ctx, httpClient, state)
+				if err != nil {
+					return err
+				}
+				if hasRequestContext {
+					requestContextRounds++
+					if requestContextRounds > maxRequestContextRounds {
+						return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
+					}
+					var next phases.Phase
+					if !*noChat {
+						next = buildChat(generator, nil)(nil)
+					}
+					phase = actionChat.BuildGenerate()(generator, nil)(next)
+				}
 			}
 		}
 

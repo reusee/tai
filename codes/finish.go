@@ -56,6 +56,7 @@ func (Module) RestatePrompt(
 ) RestatePrompt {
 	return RestatePrompt(
 		diffHandler.RestatePrompt() + "\n" +
-			FinishBlockRestatePrompt,
+			FinishBlockRestatePrompt + "\n" +
+			RequestContextRestatePrompt,
 	)
 }
