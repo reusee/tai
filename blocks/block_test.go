@@ -145,6 +145,10 @@ func TestExtractHanBoundary(t *testing.T) {
 		{"", ""},
 		{" 徕", "徕"},
 		{"徕", "徕"},
+		// CJK Unified Ideographs Extension B (U+20000+) is part of the Han
+		// script. unicode.Is(unicode.Han, r) accepts it, whereas the prior
+		// manual range check (capped at U+FAFF) did not.
+		{"\U00020000", "\U00020000"},
 	}
 	for _, tc := range tests {
 		got := extractHanBoundary(tc.input)

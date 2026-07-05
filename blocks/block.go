@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const BlockFormatTheory = `
@@ -252,12 +253,7 @@ func extractHanBoundary(s string) string {
 	s = strings.TrimSpace(s)
 	var buf []rune
 	for _, r := range s {
-		// CJK Han ideographs: Extension A (U+3400–U+4DBF), Unified Ideographs
-		// (U+4E00–U+9FFF), and Compatibility Ideographs (U+F900–U+FAFF).
-		isHan := (r >= 0x3400 && r <= 0x4DBF) ||
-			(r >= 0x4E00 && r <= 0x9FFF) ||
-			(r >= 0xF900 && r <= 0xFAFF)
-		if isHan {
+		if unicode.Is(unicode.Han, r) {
 			buf = append(buf, r)
 		} else {
 			break
