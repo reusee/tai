@@ -24,6 +24,15 @@ type CodeProvider struct {
 
 var _ codetypes.CodeProvider = CodeProvider{}
 
+const TheoryOfExtraFileContext = `
+Extra files requested via patterns are appended after project files to preserve
+the LLM prefix cache (project files form the stable prefix, extra files form the
+volatile suffix). Binary extra files must be wrapped with begin/end markers
+matching the text file format, including the MIME type, so the model can identify
+the attachment boundary. Without end markers, the model cannot determine where
+the binary attachment ends and subsequent content begins.
+`
+
 // pendingExtraPart holds an extra file part to be added after project files.
 // Deferring extra file addition ensures project files form the stable prefix
 // for LLM prefix caching, while extra files (which vary by request pattern)
@@ -133,9 +142,10 @@ func (c CodeProvider) Parts(
 				})
 
 			} else {
-				// binary or other media
+				// Binary extra files are wrapped with begin/end markers matching
+				// the text file format. See TheoryOfExtraFileContext.
 				pendingExtras = append(pendingExtras, pendingExtraPart{
-					part: generators.Text("File: " + info.Path + "\n"),
+					part: generators.Text("``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")\n"),
 					path: info.Path,
 				})
 				pendingExtras = append(pendingExtras, pendingExtraPart{
@@ -143,6 +153,10 @@ func (c CodeProvider) Parts(
 						Content:  info.Content,
 						MimeType: info.MimeType,
 					},
+					path: info.Path,
+				})
+				pendingExtras = append(pendingExtras, pendingExtraPart{
+					part: generators.Text("\n``` end of context file " + info.Path + "\n"),
 					path: info.Path,
 				})
 			}

@@ -40,6 +40,15 @@ is retained only as a final tiebreaker for the hypothetical case where two
 files share the same path (impossible in practice).
 `
 
+const TheoryOfBinaryFileMarkers = `
+Binary files included in the model context must be wrapped with begin/end markers
+matching the text file format, so the model can identify the attachment boundary.
+The marker includes the MIME type to help the model understand the content type.
+Without end markers, the model cannot determine where the binary attachment ends
+and the next file's content begins, especially when multiple binary files are
+included consecutively.
+`
+
 type CodeProvider struct {
 	FileNameOK dscope.Inject[FileNameOK]
 	NameMatch  dscope.Inject[NameMatch]
@@ -283,12 +292,19 @@ func (c CodeProvider) Parts(
 			}
 
 		} else {
-			// binary
-			parts = append(parts, generators.Text("File: "+info.Path+"\n"))
+			// Binary files are wrapped with begin/end markers matching the text
+			// file format so the model can identify the attachment boundary.
+			// See TheoryOfBinaryFileMarkers.
+			parts = append(parts, generators.Text(
+				"``` begin of file "+info.Path+" (binary, "+info.MimeType+")\n",
+			))
 			parts = append(parts, generators.FileContent{
 				Content:  info.Content,
 				MimeType: info.MimeType,
 			})
+			parts = append(parts, generators.Text(
+				"\n``` end of file "+info.Path+"\n",
+			))
 
 			if *debug {
 				c.Logger().Info("binary file",
@@ -323,4 +339,3 @@ func (Module) CodeProvider(
 	inject(&ret)
 	return
 }
-

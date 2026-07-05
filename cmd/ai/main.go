@@ -108,17 +108,20 @@ func main() {
 		var parts []generators.Part
 
 		for _, filePath := range files {
-			part, err := filePathToPart(filePath)
+			fileParts, err := filePathToParts(filePath)
 			ce(err)
-			parts = append(parts, part)
+			parts = append(parts, fileParts...)
 			logger.Info("file",
 				"path", filePath,
 			)
 		}
 
-		parts = append(parts, generators.Text(vars.FirstNonZero(
-			input,
-		)))
+		// User input is wrapped with markers so the model can distinguish
+		// between reference file context and the task request.
+		// See TheoryOfContextStructure in files.go.
+		parts = append(parts, generators.Text(
+			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
+		))
 
 		var state generators.State
 		state = generators.NewPrompts(
