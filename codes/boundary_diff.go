@@ -14,8 +14,11 @@ const TheoryOfFinishBlock = `
 The finish block is a terminal signal placed at the end of the AI's output. It
 contains a one-sentence summary of all changes made. The Apply method skips
 non-change blocks (including finish) without error, treating them as informational
-metadata rather than file modifications. This provides a clear completion marker
-and a human-readable summary without interfering with hunk processing.
+metadata rather than file modifications. Only successfully applied change blocks
+are removed from the diff file; non-change blocks and unparseable change blocks
+are preserved so the summary and any unprocessed content remain available after
+processing. This provides a clear completion marker and a human-readable summary
+without interfering with hunk processing.
 `
 
 // BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.
@@ -142,8 +145,9 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			yield(codetypes.Hunk{}, err)
 			return
 		}
+		cursor := 0
 		for {
-			block, start, end, ok, err := ParseFirstBlock(content)
+			block, relStart, relEnd, ok, err := ParseFirstBlock(content[cursor:])
 			if err != nil {
 				yield(codetypes.Hunk{}, err)
 				return
@@ -151,37 +155,44 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			if !ok {
 				break
 			}
+			start := cursor + relStart
+			end := cursor + relEnd
 			// Non-change blocks (e.g., finish summary) carry no file
-			// modifications and are skipped without error. See TheoryOfFinishBlock.
+			// modifications and are preserved in the diff file. Only
+			// successfully applied change blocks are removed. See
+			// TheoryOfFinishBlock.
 			if block.Kind != "change" {
-				newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
-				if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
-					yield(codetypes.Hunk{}, err)
-					return
-				}
-				content = newContent
+				cursor = end
 				continue
 			}
 			h, parsedOk := parseChangeXMLBody(block.Body)
 			if !parsedOk {
-				newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
-				if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
-					yield(codetypes.Hunk{}, err)
-					return
-				}
-				content = newContent
+				// Unparseable change blocks are not applied and therefore
+				// preserved rather than deleted from the diff file.
+				cursor = end
 				continue
 			}
 			if err := applyHunk(root, h); err != nil {
 				yield(h, fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err))
 				return
 			}
-			newContent := bytes.TrimSpace(append(content[:start], content[end:]...))
-			if err := os.WriteFile(diffFilePath, newContent, 0644); err != nil {
+			// Remove only the applied change block from the diff file. The
+			// in-memory content is kept untrimmed so block offsets stay
+			// stable for subsequent searches; the persisted file is trimmed
+			// for cleanliness.
+			newContent := append(content[:start], content[end:]...)
+			if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
 				yield(codetypes.Hunk{}, err)
 				return
 			}
 			content = newContent
+			// Everything before `start` has already been processed (preserved
+			// non-change blocks or previously removed change blocks), so
+			// resume searching from `start`, clamped to the content length.
+			cursor = start
+			if cursor > len(content) {
+				cursor = len(content)
+			}
 			if !yield(h, nil) {
 				return
 			}

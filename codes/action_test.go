@@ -657,3 +657,70 @@ func TestApplyFinishBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestApplyPreservesNonChangeBlocks(t *testing.T) {
+	run := func(t *testing.T, content string) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		diffPath := filepath.Join(dir, "diff.txt")
+		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		handler := BoundaryDiffHandler{}
+		count := 0
+		for _, err := range handler.Apply(root, diffPath) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 hunk, got %d", count)
+		}
+
+		remaining, err := os.ReadFile(diffPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		remainingStr := string(remaining)
+		if strings.Contains(remainingStr, "徕珑") {
+			t.Fatalf("applied change block should be removed from diff file:\n%s", remainingStr)
+		}
+		if !strings.Contains(remainingStr, "Renamed Old to New.") {
+			t.Fatalf("finish block should be preserved in diff file:\n%s", remainingStr)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "Old") {
+			t.Fatalf("result should not contain Old:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "func New() {}") {
+			t.Fatalf("result should contain New:\n%s", resultStr)
+		}
+	}
+
+	changeBlock := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n"
+	finishBlock := ":::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n"
+
+	t.Run("ChangeThenFinish", func(t *testing.T) {
+		run(t, changeBlock+"\n"+finishBlock)
+	})
+	t.Run("FinishThenChange", func(t *testing.T) {
+		run(t, finishBlock+"\n"+changeBlock)
+	})
+}
