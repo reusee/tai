@@ -30,7 +30,12 @@ The fetch tag supports optional HTTP headers (user-agent, referer, cookie) so th
 model can access resources that require them, but remains read-only (HTTP GET).
 The glob tag lists files matching a pattern without reading their contents,
 allowing the model to discover files before requesting their content. It applies
-the same path sanity check as the file tag.
+the same path sanity check as the file tag. The glob tag supports ** (globstar)
+patterns for recursive directory traversal, which filepath.Glob alone does not
+handle. When ** appears as a complete path segment, it matches zero or more
+directories; a custom walker resolves these patterns by splitting on **, walking
+the base directory, and matching the suffix pattern against the trailing path
+components of each file.
 `
 
 const RequestContextSystemPrompt = `**Request-Context Block Kind:**
@@ -271,6 +276,10 @@ func readContextFile(path string) (string, error) {
 // sanity check as readContextFile: absolute patterns are permitted, while
 // relative patterns containing parent-directory traversal are rejected.
 // See TheoryOfRequestContext.
+//
+// filepath.Glob does not support ** (globstar) patterns, where ** as a
+// complete path segment matches zero or more directories. When the pattern
+// contains **, globWithDoubleStar resolves it via a recursive directory walk.
 func globFiles(pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
@@ -278,11 +287,115 @@ func globFiles(pattern string) ([]string, error) {
 			return nil, fmt.Errorf("pattern escapes current directory: %s", pattern)
 		}
 	}
+	if strings.Contains(pattern, "**") {
+		return globWithDoubleStar(pattern)
+	}
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, err
 	}
 	return matches, nil
+}
+
+// globWithDoubleStar resolves glob patterns containing ** (globstar) by
+// walking the base directory (the portion of the pattern before the first **)
+// and matching each file's relative path against the suffix pattern (the
+// portion after **). The base directory may itself contain simple glob
+// characters (e.g., src*/**/*.go), which are resolved with filepath.Glob.
+// Results from filepath.Walk are in lexical order; when multiple base
+// directories are matched, the concatenation is sorted for consistency
+// with filepath.Glob.
+func globWithDoubleStar(pattern string) ([]string, error) {
+	idx := strings.Index(pattern, "**")
+	if idx == -1 {
+		return filepath.Glob(pattern)
+	}
+
+	// Base directory: everything before **, trimmed of trailing separator.
+	baseDirPattern := strings.TrimSuffix(pattern[:idx], string(filepath.Separator))
+	if baseDirPattern == "" {
+		baseDirPattern = "."
+	}
+
+	// Suffix pattern: everything after ** and the following separator.
+	suffix := pattern[idx+2:]
+	suffix = strings.TrimPrefix(suffix, string(filepath.Separator))
+
+	// Resolve base directories (may contain simple glob characters).
+	var baseDirs []string
+	if strings.ContainsAny(baseDirPattern, "*?[") {
+		matches, err := filepath.Glob(baseDirPattern)
+		if err != nil {
+			return nil, err
+		}
+		baseDirs = matches
+	} else {
+		baseDirs = []string{baseDirPattern}
+	}
+
+	var matches []string
+	for _, baseDir := range baseDirs {
+		info, err := os.Stat(baseDir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		err = filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				return nil
+			}
+			rel, relErr := filepath.Rel(baseDir, path)
+			if relErr != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if suffix == "" || matchGlobPath(suffix, rel) {
+				matches = append(matches, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Sort for consistency with filepath.Glob when multiple base
+	// directories produce interleaved results. filepath.Walk already
+	// traverses in lexical order within a single base directory.
+	if len(baseDirs) > 1 {
+		for i := 1; i < len(matches); i++ {
+			for j := i; j > 0 && matches[j-1] > matches[j]; j-- {
+				matches[j-1], matches[j] = matches[j], matches[j-1]
+			}
+		}
+	}
+	return matches, nil
+}
+
+// matchGlobPath checks if a path matches a glob pattern that may contain
+// path separators. The ** globstar (handled by the caller) matches any number
+// of leading directories, so the suffix pattern only needs to match the
+// last len(patternParts) components of the path. Each component is matched
+// using filepath.Match, where * matches non-separator characters.
+func matchGlobPath(pattern, path string) bool {
+	if pattern == "" {
+		return path == ""
+	}
+	patternParts := strings.Split(pattern, "/")
+	pathParts := strings.Split(path, "/")
+	if len(patternParts) > len(pathParts) {
+		return false
+	}
+	offset := len(pathParts) - len(patternParts)
+	for i, p := range patternParts {
+		matched, err := filepath.Match(p, pathParts[offset+i])
+		if err != nil || !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req RequestContextRequest) (string, error) {

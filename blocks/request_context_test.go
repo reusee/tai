@@ -185,6 +185,52 @@ func TestGlobFiles(t *testing.T) {
 	}
 }
 
+func TestGlobFilesDoubleStar(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "deep", "c.go"), []byte("c"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "deep", "d.txt"), []byte("d"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// **/*.go matches all .go files recursively
+	matches, err := globFiles(filepath.Join(dir, "**", "*.go"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 .go matches, got %d: %v", len(matches), matches)
+	}
+
+	// **/*.txt matches all .txt files recursively
+	matches, err = globFiles(filepath.Join(dir, "**", "*.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 .txt match, got %d: %v", len(matches), matches)
+	}
+
+	// sub/**/*.go matches .go files under sub/ recursively
+	matches, err = globFiles(filepath.Join(dir, "sub", "**", "*.go"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches under sub/, got %d: %v", len(matches), matches)
+	}
+}
+
 func TestFetchRequestContextFile(t *testing.T) {
 	dir := t.TempDir()
 	content := "file content here"
@@ -237,6 +283,37 @@ func TestFetchRequestContextGlob(t *testing.T) {
 	}
 	if !strings.Contains(string(text), "<context type=\"glob\"") {
 		t.Fatalf("expected text to contain glob context tag: %q", text)
+	}
+}
+
+func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := []RequestContextRequest{
+		{Type: "glob", Pattern: filepath.Join(dir, "**", "*.go")},
+	}
+	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected Text part, got %T", parts[0])
+	}
+	if !strings.Contains(string(text), "a.go") {
+		t.Fatalf("expected text to contain a.go: %q", text)
+	}
+	if !strings.Contains(string(text), "b.go") {
+		t.Fatalf("expected text to contain b.go: %q", text)
 	}
 }
 
