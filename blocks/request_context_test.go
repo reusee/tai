@@ -48,12 +48,28 @@ func TestParseRequestContextBody(t *testing.T) {
 			},
 		},
 		{
+			name: "single glob",
+			body: `<glob pattern="src/*.go" />`,
+			expected: []RequestContextRequest{
+				{Type: "glob", Pattern: "src/*.go"},
+			},
+		},
+		{
 			name: "multiple mixed",
 			body: `<file path="a.go" />` + "\n" + `<fetch addr="https://x.com" />` + "\n" + `<file path="b.go" />`,
 			expected: []RequestContextRequest{
 				{Type: "file", Path: "a.go"},
 				{Type: "fetch", Addr: "https://x.com"},
 				{Type: "file", Path: "b.go"},
+			},
+		},
+		{
+			name: "multiple mixed with glob",
+			body: `<file path="a.go" />` + "\n" + `<glob pattern="*.go" />` + "\n" + `<fetch addr="https://x.com" />`,
+			expected: []RequestContextRequest{
+				{Type: "file", Path: "a.go"},
+				{Type: "glob", Pattern: "*.go"},
+				{Type: "fetch", Addr: "https://x.com"},
 			},
 		},
 		{
@@ -69,6 +85,11 @@ func TestParseRequestContextBody(t *testing.T) {
 		{
 			name:    "fetch missing addr",
 			body:    `<fetch />`,
+			wantErr: true,
+		},
+		{
+			name:    "glob missing pattern",
+			body:    `<glob />`,
 			wantErr: true,
 		},
 	}
@@ -127,6 +148,43 @@ func TestReadContextFile(t *testing.T) {
 	}
 }
 
+func TestGlobFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.txt"), []byte("c"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Match .go files
+	matches, err := globFiles(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
+	}
+
+	// No matches
+	matches, err = globFiles(filepath.Join(dir, "*.nonexistent"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected 0 matches, got %d", len(matches))
+	}
+
+	// Path escape
+	_, err = globFiles("../../../etc/*")
+	if err == nil {
+		t.Fatal("expected error for path escape")
+	}
+}
+
 func TestFetchRequestContextFile(t *testing.T) {
 	dir := t.TempDir()
 	content := "file content here"
@@ -148,6 +206,37 @@ func TestFetchRequestContextFile(t *testing.T) {
 	}
 	if !strings.Contains(string(text), content) {
 		t.Fatalf("expected text to contain %q, got %q", content, text)
+	}
+}
+
+func TestFetchRequestContextGlob(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := []RequestContextRequest{
+		{Type: "glob", Pattern: filepath.Join(dir, "*.go")},
+	}
+	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected Text part, got %T", parts[0])
+	}
+	if !strings.Contains(string(text), "a.go") {
+		t.Fatalf("expected text to contain a.go: %q", text)
+	}
+	if !strings.Contains(string(text), "b.go") {
+		t.Fatalf("expected text to contain b.go: %q", text)
+	}
+	if !strings.Contains(string(text), "<context type=\"glob\"") {
+		t.Fatalf("expected text to contain glob context tag: %q", text)
 	}
 }
 

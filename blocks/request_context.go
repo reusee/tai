@@ -28,6 +28,9 @@ references while rejecting relative paths that escape the current directory via
 parent-directory traversal, balancing flexibility with a basic sanity check.
 The fetch tag supports optional HTTP headers (user-agent, referer, cookie) so the
 model can access resources that require them, but remains read-only (HTTP GET).
+The glob tag lists files matching a pattern without reading their contents,
+allowing the model to discover files before requesting their content. It applies
+the same path sanity check as the file tag.
 `
 
 const RequestContextSystemPrompt = `**Request-Context Block Kind:**
@@ -43,6 +46,7 @@ The "request-context" kind allows you to request additional context needed to co
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
 - ` + "`<fetch addr=\"...\" user-agent=\"...\" referer=\"...\" cookie=\"...\" />`" + `: Fetch content from a network address (HTTP GET). The addr should be a valid URL. The user-agent, referer, and cookie attributes are optional and set the corresponding HTTP headers on the request.
+- ` + "`<glob pattern=\"...\" />`" + `: List files matching a glob pattern. The pattern should be relative to the project root or absolute. Returns matching file paths without reading their contents.
 
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
@@ -63,16 +67,23 @@ I need to fetch a web page that requires a custom user-agent and cookie...
 <fetch addr="https://example.com/api" user-agent="MyBot/1.0" cookie="session=abc123" />
 :::end 栢彣
 
+I need to discover files matching a pattern...
+:::request-context 骐骎
+<glob pattern="src/**/*.go" />
+:::end 骐骎
+
 Note: The boundaries above are illustrative only. **Never reuse these boundary strings.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
 `
 
-const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources), emit a request-context block:
+const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources, file listings), emit a request-context block:
 :::request-context <random_boundary>
 <file path="..." />
 <fetch addr="..." user-agent="..." referer="..." cookie="..." />
+<glob pattern="..." />
 :::end <random_boundary>
 - Use a distinct, freshly generated random boundary for each request-context block.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
+- The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
@@ -86,6 +97,7 @@ type RequestContextRequest struct {
 	UserAgent string
 	Referer   string
 	Cookie    string
+	Pattern   string
 }
 
 // parseRequestContextBody parses the XML tags in a request-context block body.
@@ -140,6 +152,17 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 				Referer:   referer,
 				Cookie:    cookie,
 			})
+		case "glob":
+			var pattern string
+			for _, attr := range start.Attr {
+				if attr.Name.Local == "pattern" {
+					pattern = attr.Value
+				}
+			}
+			if pattern == "" {
+				return nil, fmt.Errorf("glob tag missing pattern attribute")
+			}
+			requests = append(requests, RequestContextRequest{Type: "glob", Pattern: pattern})
 		}
 	}
 	return requests, nil
@@ -166,6 +189,13 @@ func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, reques
 				continue
 			}
 			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"fetch\" addr=%q>\n%s\n</context>\n\n", req.Addr, content)))
+		case "glob":
+			matches, err := globFiles(req.Pattern)
+			if err != nil {
+				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"glob\" pattern=%q>\n[error: %v]\n</context>\n\n", req.Pattern, err)))
+				continue
+			}
+			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"glob\" pattern=%q>\n%s\n</context>\n\n", req.Pattern, strings.Join(matches, "\n"))))
 		}
 	}
 	return parts
@@ -233,6 +263,24 @@ func readContextFile(path string) (string, error) {
 		return "", err
 	}
 	return string(content), nil
+}
+
+// globFiles lists files matching a glob pattern. It applies the same path
+// sanity check as readContextFile: absolute patterns are permitted, while
+// relative patterns containing parent-directory traversal are rejected.
+// See TheoryOfRequestContext.
+func globFiles(pattern string) ([]string, error) {
+	if !filepath.IsAbs(pattern) {
+		cleaned := filepath.Clean(pattern)
+		if strings.HasPrefix(cleaned, "..") {
+			return nil, fmt.Errorf("pattern escapes current directory: %s", pattern)
+		}
+	}
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+	return matches, nil
 }
 
 func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req RequestContextRequest) (string, error) {
