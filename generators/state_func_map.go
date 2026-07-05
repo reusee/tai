@@ -2,6 +2,7 @@ package generators
 
 import (
 	"iter"
+	"maps"
 	"sort"
 )
 
@@ -112,9 +113,7 @@ func (f FuncMap) Functions() iter.Seq[*Function] {
 				all[fn.Decl.Name] = fn
 			}
 		}
-		for name, fn := range f.m {
-			all[name] = fn
-		}
+		maps.Copy(all, f.m)
 		names := make([]string, 0, len(all))
 		for name := range all {
 			names = append(names, name)
