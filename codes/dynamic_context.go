@@ -15,10 +15,6 @@ integrity — teaching the model about a capability without parsing its output, 
 parsing output without teaching the model, would be incoherent.
 `
 
-// dynamicContextFlag is the CLI flag binding for -dynamic-context.
-// It is exposed to the dscope graph via the DynamicContext provider method.
-var dynamicContextFlag = cmds.Switch("-dynamic-context")
-
 // DynamicContext controls whether request-context block support is enabled.
 // When true, the system prompt includes request-context instructions, the
 // state is wrapped with BlockState for block parsing, and
@@ -26,6 +22,15 @@ var dynamicContextFlag = cmds.Switch("-dynamic-context")
 // When false, all three are omitted. See TheoryOfDynamicContext.
 type DynamicContext bool
 
-func (Module) DynamicContext() DynamicContext {
-	return DynamicContext(*dynamicContextFlag)
+var dynamicContextFlag DynamicContext
+
+func init() {
+	cmds.Define("-dynamic-context", cmds.Func(func() {
+		dynamicContextFlag = true
+	}).Alias("-dyn"))
 }
+
+func (Module) DynamicContext() DynamicContext {
+	return dynamicContextFlag
+}
+
