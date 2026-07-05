@@ -42,6 +42,14 @@ Chinese characters, never copied from the illustrative examples. The example blo
 system prompt deliberately use distinct boundaries to demonstrate this rule, and those exact
 strings are forbidden for reuse. The randomness of the boundary is the integrity guarantee of
 the format.
+
+A block opened with boundary X must be closed with the same boundary X. A closing marker
+:::end Y where Y differs from the opening boundary is a mismatched boundary error: the
+parser reports it instead of silently dropping the block, because a mismatch indicates the
+model lost track of which boundary it used. This is distinct from an unclosed block (no
+:::end marker at all), which may simply be incomplete during streaming and is tolerated
+until more output arrives. Surfacing mismatched-boundary errors prevents the silent loss of
+modifications when the model closes the wrong block.
 `
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
@@ -79,6 +87,11 @@ This format avoids escaping issues and is easy to parse.
 - Generate a fresh random pair of two uncommon, meaningless Chinese characters as the boundary for each block.
 - **Never reuse a boundary string that appears in any example in this prompt.** The example boundaries are illustrative only; copying them causes the parser to mismatch :::end markers and corrupt blocks.
 - Each block in a response must use a distinct boundary so the parser can unambiguously pair each opening marker with its closing marker.
+
+**Boundary Matching (CRITICAL):**
+- The closing marker MUST use the EXACT same boundary string as the opening marker. A block opened with :::change 徕珑 MUST be closed with :::end 徕珑, never :::end 栢彣 or any other boundary.
+- A mismatched closing marker is a HARD ERROR. The parser rejects the entire block and reports an error, so all modifications in that block are LOST. Never close a block with a different boundary than you opened it with.
+- Before writing each :::end marker, verify its boundary matches the corresponding opening ::: marker of the same block. The most common cause of mismatched boundaries is copying a boundary from another block or from an example instead of reusing the one you opened with.
 `
 
 // Block represents a parsed boundary block.
@@ -137,32 +150,77 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		// Body is everything between the opening line and the end marker.
 		bodyStart := lineEnd + 1
 
-		// Find a valid :::end BOUNDARY marker at line start
-		endMarker := ":::end " + boundary
+		// Scan for the next :::end marker at line start and compare its
+		// boundary against the opening marker's boundary. A matching
+		// boundary closes the block. A line-start :::end with a different
+		// boundary is a mismatched boundary error: the model closed the
+		// wrong block, so the error is surfaced instead of silently
+		// dropping the block. The absence of any :::end marker is an
+		// unclosed (possibly incomplete) block, tolerated during streaming.
+		// See TheoryOfBoundaryUniqueness.
+		endMarkerPrefix := []byte(":::end ")
 		searchEndFrom := bodyStart
 		validEnd := -1
+		mismatchedBoundary := ""
+		mismatchedEnd := 0
 		for {
-			offset := bytes.Index(content[searchEndFrom:], []byte(endMarker))
+			offset := bytes.Index(content[searchEndFrom:], endMarkerPrefix)
 			if offset == -1 {
 				break
 			}
 			candidate := searchEndFrom + offset
 			// The closing marker must be at the beginning of a line.
 			if candidate > 0 && content[candidate-1] != '\n' {
-				// Not at line start, skip past this occurrence
-				searchEndFrom = candidate + len(endMarker)
+				searchEndFrom = candidate + len(endMarkerPrefix)
 				continue
 			}
-			validEnd = candidate
-			break
+			// Extract the boundary from this end marker line.
+			lineContentStart := candidate + len(endMarkerPrefix)
+			lineEndOffset := bytes.IndexByte(content[lineContentStart:], '\n')
+			if lineEndOffset == -1 {
+				// The end marker line is incomplete (no newline yet).
+				// During streaming this may be a fragment, so treat it
+				// as incomplete rather than a definitive mismatch.
+				break
+			}
+			endLine := string(content[lineContentStart : lineContentStart+lineEndOffset])
+			endBoundary := strings.TrimSpace(endLine)
+			if endBoundary == boundary {
+				validEnd = candidate
+				break
+			}
+			// Mismatched boundary: a line-start :::end with a different
+			// boundary. Record the first one and continue searching, in
+			// case a matching marker appears later (an orphan end marker
+			// embedded in the body).
+			if mismatchedBoundary == "" {
+				mismatchedBoundary = endBoundary
+				mismatchedEnd = lineContentStart + lineEndOffset + 1
+			}
+			searchEndFrom = lineContentStart + lineEndOffset + 1
 		}
 		if validEnd == -1 {
-			// Opening marker found but no matching closing marker.
-			// Report an error instead of silently skipping the block.
-			return Block{}, 0, 0, false, fmt.Errorf(
-				"unclosed block: kind %q boundary %q has no matching end marker %q",
-				kind, boundary, endMarker,
-			)
+			if mismatchedBoundary != "" {
+				// A line-start :::end with a different boundary was found
+				// but no matching :::end boundary exists. This is a
+				// definitive error: the model closed the block with the
+				// wrong boundary. Advance past the mismatched end marker so
+				// the caller can consume the malformed block and continue
+				// parsing subsequent content.
+				return Block{}, blockStart, mismatchedEnd, false, &BlockParseError{
+					Mismatched: true,
+					Opened:     boundary,
+					Closed:     mismatchedBoundary,
+				}
+			}
+			// Opening marker found but no end marker at all. During
+			// streaming this may be incomplete; report as unclosed so the
+			// caller can distinguish a transient incomplete block from a
+			// definitive mismatch.
+			return Block{}, 0, 0, false, &BlockParseError{
+				BlockKind: kind,
+				Boundary:  boundary,
+			}
 		}
 		bodyEnd := validEnd
 
@@ -180,4 +238,24 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		ok = true
 		return
 	}
+}
+
+// BlockParseError is returned by ParseFirstBlock for unclosed or mismatched
+// boundary blocks. The Mismatched field distinguishes a definitive mismatched
+// boundary (the model closed the wrong block) from an unclosed block (no end
+// marker at all), which may be incomplete during streaming. See
+// TheoryOfBoundaryUniqueness.
+type BlockParseError struct {
+	Mismatched bool
+	Opened     string
+	Closed     string
+	BlockKind  string
+	Boundary   string
+}
+
+func (e *BlockParseError) Error() string {
+	if e.Mismatched {
+		return fmt.Sprintf("mismatched boundary: block opened with %q but closed with %q", e.Opened, e.Closed)
+	}
+	return fmt.Sprintf("unclosed block: kind %q boundary %q has no matching end marker", e.BlockKind, e.Boundary)
 }

@@ -11,9 +11,6 @@ processing. This provides a clear completion marker and a human-readable summary
 without interfering with hunk processing.
 `
 
-// FinishBlockSystemPrompt teaches the model the finish block format.
-// It is separate from the boundary diff handler because the finish block is
-// a generic block kind, not specific to diff handling. See TheoryOfFinishBlock.
 const FinishBlockSystemPrompt = `**Finish Block Kind:**
 
 The "finish" kind signals the end of all code modifications and provides a one-sentence summary of the changes made. It MUST be the last block in the response, after all change blocks.
@@ -29,15 +26,14 @@ The "finish" kind signals the end of all code modifications and provides a one-s
 - The body is a single sentence summarizing what was done.
 - Use the same boundary format (two random uncommon meaningless Chinese characters) as change blocks.
 - Generate exactly one finish block per response.
+- The closing :::end marker MUST use the same boundary as the opening :::finish marker. A mismatched boundary is a hard error that drops the finish block.
 `
 
-// FinishBlockRestatePrompt provides the finish block instructions for the
-// restate prompt. It is separate from the boundary diff handler because the
-// finish block is a generic block kind. See TheoryOfFinishBlock.
 const FinishBlockRestatePrompt = `- After all change blocks, generate a finish block with a one-sentence summary of all changes made:
 :::finish <random_boundary>
 <one-sentence summary>
 :::end <random_boundary>
 - The finish block MUST be the last block in the response.
 - If no changes were made, generate a finish block with "No changes were needed." as the summary.
+- The closing :::end marker MUST use the same boundary as the opening :::finish marker; a mismatched boundary is a hard error.
 `

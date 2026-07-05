@@ -78,6 +78,10 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	if ok {
 		t.Fatal("expected ok to be false for unclosed block")
 	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr || e.Mismatched {
+		t.Fatalf("expected unclosed BlockParseError, got %T: %v", err, err)
+	}
 
 	// Opening marker found but end marker has a different boundary
 	content2 := []byte(":::change 徕珑\nbody\n:::end 栢彣\n")
@@ -87,5 +91,9 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected ok to be false for mismatched end marker boundary")
+	}
+	e, isParseErr = err.(*BlockParseError)
+	if !isParseErr || !e.Mismatched {
+		t.Fatalf("expected mismatched BlockParseError, got %T: %v", err, err)
 	}
 }

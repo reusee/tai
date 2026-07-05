@@ -52,6 +52,7 @@ The "request-context" kind allows you to request additional context needed to co
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
 - Use a distinct, freshly generated random boundary for each block, following the same boundary uniqueness rules as change blocks.
+- The closing :::end marker MUST use the same boundary as the opening :::request-context marker. A mismatched boundary is a hard error that drops the block.
 - After emitting a request-context block, stop generating and wait for the system to provide the requested context.
 - Do not include request-context blocks alongside change blocks in the same response. If you need more context, request it first, then emit change blocks in a subsequent response after the context is provided.
 
@@ -82,6 +83,7 @@ const RequestContextRestatePrompt = `- If you need additional context (file cont
 <glob pattern="..." />
 :::end <random_boundary>
 - Use a distinct, freshly generated random boundary for each request-context block.
+- The closing :::end marker MUST use the same boundary as the opening :::request-context marker; a mismatched boundary is a hard error.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.

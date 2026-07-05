@@ -183,3 +183,30 @@ func containsStr(s, substr string) bool {
 	}
 	return false
 }
+
+func TestBlockStateMismatchedBoundaryError(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// The model opens a block with boundary 徕珑 but closes it with 栢彣.
+	// This mismatched boundary must be surfaced as an error rather than
+	// silently dropping the block and losing the modifications in it.
+	content := &generators.Content{
+		Role: generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(
+			":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 栢彣\n",
+		)},
+	}
+	_, err := state.AppendContent(content)
+	if err == nil {
+		t.Fatal("expected mismatched boundary error, got nil")
+	}
+	e, ok := err.(*BlockParseError)
+	if !ok || !e.Mismatched {
+		t.Fatalf("expected mismatched BlockParseError, got %T: %v", err, err)
+	}
+	// No blocks should be produced for the malformed block.
+	if blocks := state.PopBlocks(); len(blocks) != 0 {
+		t.Fatalf("expected 0 blocks for mismatched boundary, got %d", len(blocks))
+	}
+}
