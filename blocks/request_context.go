@@ -1,4 +1,4 @@
-package codes
+package blocks
 
 import (
 	"context"
@@ -77,8 +77,6 @@ const RequestContextRestatePrompt = `- If you need additional context (file cont
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
 `
-
-const maxRequestContextRounds = 5
 
 // RequestContextRequest represents a single context request parsed from the block body.
 type RequestContextRequest struct {
@@ -173,11 +171,11 @@ func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, reques
 	return parts
 }
 
-// processRequestContextBlocks checks BlockState for request-context blocks,
+// ProcessRequestContextBlocks checks BlockState for request-context blocks,
 // fetches the requested content, and appends it as user content to the state.
 // Returns the updated state, whether any request-context blocks were found,
 // and any error from appending content.
-func processRequestContextBlocks(
+func ProcessRequestContextBlocks(
 	blockState *BlockState,
 	ctx context.Context,
 	httpClient nets.HTTPClient,

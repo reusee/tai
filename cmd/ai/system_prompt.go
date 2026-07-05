@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
-	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/configs"
 )
 
@@ -38,7 +38,7 @@ func (Module) GetSystemPrompt(
 
 		if !*noMemory {
 
-			ret += codes.BlockFormatSystemPrompt
+			ret += blocks.BlockFormatSystemPrompt
 
 			ret += `
 在每一轮对话中，你的任务流程如下：

@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
@@ -18,6 +19,8 @@ import (
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taiconfigs"
 )
+
+const maxRequestContextRounds = 5
 
 type Generate func(ctx context.Context, output io.Writer) error
 
@@ -171,7 +174,7 @@ func (Module) Generate(
 
 		// Wrap state with BlockState to parse request-context blocks from
 		// model output. See TheoryOfRequestContext.
-		blockState := NewBlockState(state)
+		blockState := blocks.NewBlockState(state)
 		state = blockState
 
 		// run
@@ -226,7 +229,7 @@ func (Module) Generate(
 				// content, and create a new generate phase.
 				// See TheoryOfRequestContext.
 				var hasRequestContext bool
-				state, hasRequestContext, err = processRequestContextBlocks(blockState, ctx, httpClient, state)
+				state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, httpClient, state)
 				if err != nil {
 					return err
 				}

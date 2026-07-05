@@ -1,4 +1,4 @@
-package codes
+package blocks
 
 import (
 	"bytes"

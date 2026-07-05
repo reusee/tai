@@ -1,8 +1,4 @@
-package codes
-
-import (
-	"github.com/reusee/tai/codes/codetypes"
-)
+package blocks
 
 const TheoryOfFinishBlock = `
 The finish block is a terminal signal placed at the end of the AI's output. It
@@ -45,18 +41,3 @@ const FinishBlockRestatePrompt = `- After all change blocks, generate a finish b
 - The finish block MUST be the last block in the response.
 - If no changes were made, generate a finish block with "No changes were needed." as the summary.
 `
-
-// RestatePrompt assembles the full restate prompt from the diff handler
-// and the finish block restate. It is separate from the DiffHandler interface
-// because the finish block is not part of the diff handler. See TheoryOfFinishBlock.
-type RestatePrompt string
-
-func (Module) RestatePrompt(
-	diffHandler codetypes.DiffHandler,
-) RestatePrompt {
-	return RestatePrompt(
-		diffHandler.RestatePrompt() + "\n" +
-			FinishBlockRestatePrompt + "\n" +
-			RequestContextRestatePrompt,
-	)
-}

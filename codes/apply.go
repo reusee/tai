@@ -3,7 +3,6 @@ package codes
 import (
 	"bytes"
 	"cmp"
-	"encoding/xml"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -156,73 +155,6 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 		}
 	}
 	return ""
-}
-
-// changeXML represents the XML metadata tag in a change block.
-type changeXML struct {
-	Op       string `xml:"op,attr"`
-	Target   string `xml:"target,attr"`
-	FilePath string `xml:"file-path,attr"`
-}
-
-func parseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool, err error) {
-	block, start, end, ok, err := ParseFirstBlock(content)
-	if err != nil {
-		return h, 0, 0, false, err
-	}
-	if !ok || block.Kind != "change" {
-		return h, 0, 0, false, nil
-	}
-
-	h, parsedOk := parseChangeXMLBody(block.Body)
-	if !parsedOk {
-		return h, 0, 0, false, nil
-	}
-
-	return h, start, end, true, nil
-}
-
-// parseChangeXMLBody parses the XML metadata format for change blocks.
-// The body should start with a self-closing <change ... /> tag, followed by
-// a blank line and the complete declaration code.
-func parseChangeXMLBody(body string) (h codetypes.Hunk, ok bool) {
-	bodyBytes := []byte(body)
-	idx := 0
-	// skip leading whitespace
-	for idx < len(bodyBytes) && (bodyBytes[idx] == ' ' || bodyBytes[idx] == '\t') {
-		idx++
-	}
-	if idx >= len(bodyBytes) || bodyBytes[idx] != '<' {
-		return h, false
-	}
-	// find end of self-closing tag
-	tagEnd := -1
-	for i := idx; i < len(bodyBytes)-1; i++ {
-		if bodyBytes[i] == '/' && bodyBytes[i+1] == '>' {
-			tagEnd = i + 2
-			break
-		}
-	}
-	if tagEnd < 0 {
-		return h, false
-	}
-	tagData := bodyBytes[idx:tagEnd]
-	var cx changeXML
-	decoder := xml.NewDecoder(bytes.NewReader(tagData))
-	if err := decoder.Decode(&cx); err != nil {
-		return h, false
-	}
-	// Code body is everything after the tag and newline(s)
-	bodyStart := tagEnd
-	for bodyStart < len(bodyBytes) && (bodyBytes[bodyStart] == '\n' || bodyBytes[bodyStart] == '\r') {
-		bodyStart++
-	}
-	return codetypes.Hunk{
-		Op:       cx.Op,
-		Target:   cx.Target,
-		FilePath: cx.FilePath,
-		Body:     string(bodyBytes[bodyStart:]),
-	}, true
 }
 
 func applyHunk(root *os.Root, h codetypes.Hunk) error {

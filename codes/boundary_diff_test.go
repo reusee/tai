@@ -3,6 +3,8 @@ package codes
 import (
 	"strings"
 	"testing"
+
+	"github.com/reusee/tai/blocks"
 )
 
 func TestBoundaryUniquenessInPrompts(t *testing.T) {
@@ -44,26 +46,23 @@ func TestBoundaryUniquenessInPrompts(t *testing.T) {
 	}
 }
 
-// TestBlockFormatSystemPromptBoundaryUniqueness verifies the base block format
-// prompt contains the boundary uniqueness section that forbids reusing example
-// boundaries.
 func TestBlockFormatSystemPromptBoundaryUniqueness(t *testing.T) {
-	if !strings.Contains(BlockFormatSystemPrompt, "Boundary Uniqueness") {
+	if !strings.Contains(blocks.BlockFormatSystemPrompt, "Boundary Uniqueness") {
 		t.Fatal("BlockFormatSystemPrompt must contain a Boundary Uniqueness section")
 	}
-	if !strings.Contains(BlockFormatSystemPrompt, "Never reuse") {
+	if !strings.Contains(blocks.BlockFormatSystemPrompt, "Never reuse") {
 		t.Fatal("BlockFormatSystemPrompt must instruct the model never to reuse example boundaries")
 	}
 }
 
 func TestBlockFormatSystemPromptLineStart(t *testing.T) {
-	if !strings.Contains(BlockFormatSystemPrompt, "Line-Start Requirement") {
+	if !strings.Contains(blocks.BlockFormatSystemPrompt, "Line-Start Requirement") {
 		t.Fatal("BlockFormatSystemPrompt must contain a Line-Start Requirement section")
 	}
-	if !strings.Contains(BlockFormatSystemPrompt, "beginning of a line") {
+	if !strings.Contains(blocks.BlockFormatSystemPrompt, "beginning of a line") {
 		t.Fatal("BlockFormatSystemPrompt must instruct the model to place markers at the beginning of a line")
 	}
-	if !strings.Contains(BlockFormatSystemPrompt, "NEVER place a marker at the end of a line") {
+	if !strings.Contains(blocks.BlockFormatSystemPrompt, "NEVER place a marker at the end of a line") {
 		t.Fatal("BlockFormatSystemPrompt must explicitly forbid placing markers at the end of a line")
 	}
 }

@@ -2,6 +2,7 @@ package codes
 
 import (
 	"github.com/reusee/prompts"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/configs"
 )
@@ -29,8 +30,8 @@ func (Module) SystemPrompt(
 		prompts.Codes + "\n" +
 			codeProvider.SystemPrompt() + "\n" +
 			diffHandler.SystemPrompt() + "\n" +
-			FinishBlockSystemPrompt + "\n" +
-			RequestContextSystemPrompt + "\n" +
+			blocks.FinishBlockSystemPrompt + "\n" +
+			blocks.RequestContextSystemPrompt + "\n" +
 			string(extra),
 	)
 }

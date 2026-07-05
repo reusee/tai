@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 )
 
@@ -201,7 +201,7 @@ type memoryRoot struct {
 }
 
 func parseMemoryItems(text string) ([]string, error) {
-	block, _, _, ok, err := codes.ParseFirstBlock([]byte(text))
+	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(text))
 	if err != nil {
 		return nil, err
 	}
