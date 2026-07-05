@@ -24,14 +24,16 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
+	dynamicContext DynamicContext,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
-	return SystemPrompt(
-		prompts.Codes + "\n" +
-			codeProvider.SystemPrompt() + "\n" +
-			diffHandler.SystemPrompt() + "\n" +
-			blocks.FinishBlockSystemPrompt + "\n" +
-			blocks.RequestContextSystemPrompt + "\n" +
-			string(extra),
-	)
+	prompt := prompts.Codes + "\n" +
+		codeProvider.SystemPrompt() + "\n" +
+		diffHandler.SystemPrompt() + "\n" +
+		blocks.FinishBlockSystemPrompt + "\n"
+	if bool(dynamicContext) {
+		prompt += blocks.RequestContextSystemPrompt + "\n"
+	}
+	prompt += string(extra)
+	return SystemPrompt(prompt)
 }

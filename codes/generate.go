@@ -58,6 +58,7 @@ func (Module) Generate(
 	flagThoughts flags.Thoughts,
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
+	dynamicContext DynamicContext,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -173,9 +174,12 @@ func (Module) Generate(
 		}
 
 		// Wrap state with BlockState to parse request-context blocks from
-		// model output. See TheoryOfRequestContext.
-		blockState := blocks.NewBlockState(state)
-		state = blockState
+		// model output. See TheoryOfRequestContext and TheoryOfDynamicContext.
+		var blockState *blocks.BlockState
+		if bool(dynamicContext) {
+			blockState = blocks.NewBlockState(state)
+			state = blockState
+		}
 
 		// run
 		requestContextRounds := 0
@@ -227,22 +231,24 @@ func (Module) Generate(
 				// Check for request-context blocks from model output.
 				// If found, fetch the requested context, append it as user
 				// content, and create a new generate phase.
-				// See TheoryOfRequestContext.
-				var hasRequestContext bool
-				state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, httpClient, state)
-				if err != nil {
-					return err
-				}
-				if hasRequestContext {
-					requestContextRounds++
-					if requestContextRounds > maxRequestContextRounds {
-						return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
+				// See TheoryOfRequestContext and TheoryOfDynamicContext.
+				if bool(dynamicContext) {
+					var hasRequestContext bool
+					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, httpClient, state)
+					if err != nil {
+						return err
 					}
-					var next phases.Phase
-					if !*noChat {
-						next = buildChat(generator, nil)(nil)
+					if hasRequestContext {
+						requestContextRounds++
+						if requestContextRounds > maxRequestContextRounds {
+							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
+						}
+						var next phases.Phase
+						if !*noChat {
+							next = buildChat(generator, nil)(nil)
+						}
+						phase = actionChat.BuildGenerate()(generator, nil)(next)
 					}
-					phase = actionChat.BuildGenerate()(generator, nil)(next)
 				}
 			}
 		}
