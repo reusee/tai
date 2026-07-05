@@ -27,6 +27,23 @@ marker is a malformed block. The parser reports an error rather than silently sk
 ensuring that incomplete output from the AI is surfaced to the user.
 `
 
+const TheoryOfBoundaryUniqueness = `
+The boundary string is the sole disambiguator between consecutive delimited blocks within
+a single response. The parser closes a block at the first :::end <boundary> marker found at
+line start, so any collision between a block's boundary and an example boundary shown in
+the system prompt (or with another block's boundary in the same response) makes the parser
+close at the wrong marker, swallowing subsequent content or dropping modifications.
+Therefore the boundary must be a freshly generated random pair of uncommon, meaningless
+Chinese characters, never copied from the illustrative examples. The example blocks in the
+system prompt deliberately use distinct boundaries to demonstrate this rule, and those exact
+strings are forbidden for reuse. The randomness of the boundary is the integrity guarantee of
+the format.
+`
+
+// BlockFormatSystemPrompt teaches the model the boundary-delimited block format.
+// The "Boundary Uniqueness (CRITICAL)" section operationalizes TheoryOfBoundaryUniqueness:
+// the model must generate a fresh random boundary per block and must never copy an example
+// boundary, because the parser closes a block at the first matching :::end marker.
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
 
 Your response can include structured content using delimited blocks.
@@ -38,11 +55,16 @@ This format avoids escaping issues and is easy to parse.
 :::end <boundary>
 
 - <kind>: The type of block. The valid kinds and their content formats are defined by the specific kind documentation.
-- <boundary>: A random string composed of two uncommon meaningless Chinese characters (e.g., 徕珑). A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers.
+- <boundary>: A random string composed of two uncommon meaningless Chinese characters. A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers of a single block.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
 - If no blocks are needed, simply omit them.
+
+**Boundary Uniqueness (CRITICAL):**
+- Generate a fresh random pair of two uncommon, meaningless Chinese characters as the boundary for each block.
+- **Never reuse a boundary string that appears in any example in this prompt.** The example boundaries are illustrative only; copying them causes the parser to mismatch :::end markers and corrupt blocks.
+- Each block in a response must use a distinct boundary so the parser can unambiguously pair each opening marker with its closing marker.
 `
 
 // Block represents a parsed boundary block.

@@ -56,6 +56,7 @@ The "change" kind defines code modifications using the boundary block format. Ea
   - ` + "`file-path`" + `: The absolute path to the file being modified.
 - The code body directly follows the XML tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
+- **Boundary uniqueness**: Use a distinct, freshly generated random boundary for each block. Never reuse a boundary string shown in the examples below; the parser matches the first :::end <boundary> marker, so a reused boundary closes the wrong block and corrupts the output.
 - No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
 
 **Example:**
@@ -69,22 +70,24 @@ func Foo() {
 }
 :::end 徕珑
 The Bar function is now unused and should be removed...
-:::change 徕珑
+:::change 栢彣
 <change op="DELETE" target="Bar" file-path="/home/user/foo.go" />
-:::end 徕珑
+:::end 栢彣
 The config file needs to be completely rewritten...
-:::change 徕珑
+:::change 瑱魃
 <change op="WRITE" file-path="/home/user/config.go" />
 package config
 
 func New() *Config {
 	return &Config{}
 }
-:::end 徕珑
+:::end 瑱魃
 These changes should resolve the issue.
-:::finish 徕珑
+:::finish 桀骥
 Fixed the Foo function, removed the unused Bar function, and rewrote the config file.
-:::end 徕珑
+:::end 桀骥
+
+Note: Each block above uses a distinct boundary (徕珑, 栢彣, 瑱魃, 桀骥) for illustration only. **Never reuse these or any boundary string that appears in this prompt.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
 
 **Finish Block Kind:**
 
@@ -112,7 +115,8 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 <complete code>
 :::end <random_boundary>
 
-- Generate a boundary string of two random uncommon meaningless Chinese characters for each response.
+- Generate a boundary string of two random uncommon meaningless Chinese characters for each block. Each block in the response MUST use a distinct boundary.
+- **Never reuse a boundary string that appears in the system prompt examples** (such as 徕珑, 栢彣, 瑱魃, or 桀骥). Reusing an example boundary causes the parser to close the wrong block. Always generate a fresh random pair that does not appear anywhere in this prompt.
 - The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
