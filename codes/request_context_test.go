@@ -34,6 +34,20 @@ func TestParseRequestContextBody(t *testing.T) {
 			},
 		},
 		{
+			name: "fetch with headers",
+			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" referer="https://ref.example.com" cookie="session=abc123" />`,
+			expected: []RequestContextRequest{
+				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
+			},
+		},
+		{
+			name: "fetch with partial headers",
+			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" />`,
+			expected: []RequestContextRequest{
+				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0"},
+			},
+		},
+		{
 			name: "multiple mixed",
 			body: `<file path="a.go" />` + "\n" + `<fetch addr="https://x.com" />` + "\n" + `<file path="b.go" />`,
 			expected: []RequestContextRequest{
@@ -75,7 +89,7 @@ func TestParseRequestContextBody(t *testing.T) {
 				t.Fatalf("expected %d requests, got %d", len(tc.expected), len(got))
 			}
 			for i, req := range got {
-				if req.Type != tc.expected[i].Type || req.Path != tc.expected[i].Path || req.Addr != tc.expected[i].Addr {
+				if req != tc.expected[i] {
 					t.Fatalf("request %d: expected %+v, got %+v", i, tc.expected[i], req)
 				}
 			}
@@ -157,6 +171,41 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	}
 	if !strings.Contains(string(text), responseBody) {
 		t.Fatalf("expected text to contain %q, got %q", responseBody, text)
+	}
+}
+
+func TestFetchRequestContextHeaders(t *testing.T) {
+	var gotUserAgent, gotReferer, gotCookie string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotReferer = r.Header.Get("Referer")
+		gotCookie = r.Header.Get("Cookie")
+		w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	requests := []RequestContextRequest{
+		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
+	}
+	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected Text part, got %T", parts[0])
+	}
+	if !strings.Contains(string(text), "ok") {
+		t.Fatalf("expected text to contain response body, got %q", text)
+	}
+	if gotUserAgent != "MyBot/1.0" {
+		t.Fatalf("expected User-Agent %q, got %q", "MyBot/1.0", gotUserAgent)
+	}
+	if gotReferer != "https://ref.example.com" {
+		t.Fatalf("expected Referer %q, got %q", "https://ref.example.com", gotReferer)
+	}
+	if gotCookie != "session=abc123" {
+		t.Fatalf("expected Cookie %q, got %q", "session=abc123", gotCookie)
 	}
 }
 

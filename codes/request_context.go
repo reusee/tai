@@ -26,6 +26,8 @@ order of XML tags within the block determines the order of context parts in the
 appended user message. File path handling permits absolute paths as explicit
 references while rejecting relative paths that escape the current directory via
 parent-directory traversal, balancing flexibility with a basic sanity check.
+The fetch tag supports optional HTTP headers (user-agent, referer, cookie) so the
+model can access resources that require them, but remains read-only (HTTP GET).
 `
 
 const RequestContextSystemPrompt = `**Request-Context Block Kind:**
@@ -40,7 +42,7 @@ The "request-context" kind allows you to request additional context needed to co
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
-- ` + "`<fetch addr=\"...\" />`" + `: Fetch content from a network address (HTTP GET). The addr should be a valid URL.
+- ` + "`<fetch addr=\"...\" user-agent=\"...\" referer=\"...\" cookie=\"...\" />`" + `: Fetch content from a network address (HTTP GET). The addr should be a valid URL. The user-agent, referer, and cookie attributes are optional and set the corresponding HTTP headers on the request.
 
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
@@ -56,15 +58,21 @@ I need to see the content of a file to proceed...
 <file path="src/main.go" />
 :::end 徕珑
 
-Note: The boundary above is illustrative only. **Never reuse this boundary string.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
+I need to fetch a web page that requires a custom user-agent and cookie...
+:::request-context 栢彣
+<fetch addr="https://example.com/api" user-agent="MyBot/1.0" cookie="session=abc123" />
+:::end 栢彣
+
+Note: The boundaries above are illustrative only. **Never reuse these boundary strings.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
 `
 
 const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources), emit a request-context block:
 :::request-context <random_boundary>
 <file path="..." />
-<fetch addr="..." />
+<fetch addr="..." user-agent="..." referer="..." cookie="..." />
 :::end <random_boundary>
 - Use a distinct, freshly generated random boundary for each request-context block.
+- The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
@@ -74,9 +82,12 @@ const maxRequestContextRounds = 5
 
 // RequestContextRequest represents a single context request parsed from the block body.
 type RequestContextRequest struct {
-	Type string
-	Path string
-	Addr string
+	Type      string
+	Path      string
+	Addr      string
+	UserAgent string
+	Referer   string
+	Cookie    string
 }
 
 // parseRequestContextBody parses the XML tags in a request-context block body.
@@ -108,16 +119,29 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 			}
 			requests = append(requests, RequestContextRequest{Type: "file", Path: path})
 		case "fetch":
-			var addr string
+			var addr, userAgent, referer, cookie string
 			for _, attr := range start.Attr {
-				if attr.Name.Local == "addr" {
+				switch attr.Name.Local {
+				case "addr":
 					addr = attr.Value
+				case "user-agent":
+					userAgent = attr.Value
+				case "referer":
+					referer = attr.Value
+				case "cookie":
+					cookie = attr.Value
 				}
 			}
 			if addr == "" {
 				return nil, fmt.Errorf("fetch tag missing addr attribute")
 			}
-			requests = append(requests, RequestContextRequest{Type: "fetch", Addr: addr})
+			requests = append(requests, RequestContextRequest{
+				Type:      "fetch",
+				Addr:      addr,
+				UserAgent: userAgent,
+				Referer:   referer,
+				Cookie:    cookie,
+			})
 		}
 	}
 	return requests, nil
@@ -138,7 +162,7 @@ func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, reques
 			}
 			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"file\" path=%q>\n%s\n</context>\n\n", req.Path, content)))
 		case "fetch":
-			content, err := fetchURL(ctx, httpClient, req.Addr)
+			content, err := fetchURL(ctx, httpClient, req)
 			if err != nil {
 				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"fetch\" addr=%q>\n[error: %v]\n</context>\n\n", req.Addr, err)))
 				continue
@@ -213,12 +237,21 @@ func readContextFile(path string) (string, error) {
 	return string(content), nil
 }
 
-func fetchURL(ctx context.Context, httpClient nets.HTTPClient, addr string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", addr, nil)
+func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req RequestContextRequest) (string, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.Addr, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := httpClient.Do(req)
+	if req.UserAgent != "" {
+		httpReq.Header.Set("User-Agent", req.UserAgent)
+	}
+	if req.Referer != "" {
+		httpReq.Header.Set("Referer", req.Referer)
+	}
+	if req.Cookie != "" {
+		httpReq.Header.Set("Cookie", req.Cookie)
+	}
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
