@@ -129,3 +129,49 @@ func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 		t.Fatalf("body should contain both body lines: %q", block.Body)
 	}
 }
+
+func TestExtractHanBoundary(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"徕珑", "徕珑"},
+		{"徕珑 extra", "徕珑"},
+		{" 徕珑 ", "徕珑"},
+		{"徕珑\n", "徕珑"},
+		{"徕 栢", "徕"},
+		{"徕珑(注)", "徕珑"},
+		{"abc", ""},
+		{"", ""},
+		{" 徕", "徕"},
+		{"徕", "徕"},
+	}
+	for _, tc := range tests {
+		got := extractHanBoundary(tc.input)
+		if got != tc.expected {
+			t.Errorf("extractHanBoundary(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+func TestParseFirstBlockTrailingBoundaryContent(t *testing.T) {
+	// Trailing non-Han content after the boundary is ignored on both the
+	// opening and closing markers; the boundary is the leading Han chars.
+	content := []byte(":::change 徕珑 extra stuff\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑 also extra\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %s", block.Kind)
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %q", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
+	}
+}

@@ -22,6 +22,14 @@ marker is found, the block is unclosed (incomplete) and left in the buffer for t
 AppendContent call, because streaming output may arrive in fragments. Text preceding the
 first block marker is prose and is discarded once a block is found, because BlockState's
 purpose is block extraction, not prose preservation.
+
+At Flush, the parser switches to final mode: an unclosed block is treated as ended rather
+than left pending, so its body is finalized as all remaining buffered content and the buffer
+is fully consumed. Any remaining unparseable fragments are discarded so content appended
+after Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush
+content within the same block. Boundary strings are parsed as leading Han (Chinese)
+ideographs only; a non-Han character terminates the boundary so trailing model-added
+content does not corrupt block matching.
 `
 
 // BlockState wraps an upstream State and incrementally parses boundary-delimited
@@ -64,7 +72,7 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 				s.buf = append(s.buf, string(text)...)
 			}
 		}
-		if err := s.parseBlocks(); err != nil {
+		if err := s.parseBlocks(false); err != nil {
 			return s, err
 		}
 	}
@@ -72,14 +80,16 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 }
 
 // parseBlocks repeatedly parses complete blocks from the internal buffer.
-// It must be called with s.mu held. An unclosed block (no matching end
-// marker found) is treated as incomplete and left in the buffer for the
-// next AppendContent call, because streaming output may arrive in fragments.
-// A line-start :::end with a different boundary is treated as body content,
-// not an error.
-func (s *BlockState) parseBlocks() error {
+// It must be called with s.mu held. When final is false, an unclosed block
+// (no matching end marker found) is treated as incomplete and left in the
+// buffer for the next AppendContent call, because streaming output may arrive
+// in fragments. When final is true (at Flush), an unclosed block is treated as
+// ended and finalized so the buffer is consumed and subsequent content is not
+// combined with it. A line-start :::end with a different boundary is treated as
+// body content, not an error.
+func (s *BlockState) parseBlocks(final bool) error {
 	for {
-		block, _, end, ok, err := ParseFirstBlock(s.buf)
+		block, _, end, ok, err := parseFirstBlock(s.buf, final)
 		if err != nil {
 			// Unclosed block: incomplete, wait for more output.
 			break
@@ -108,7 +118,11 @@ func (s *BlockState) Functions() iter.Seq[*generators.Function] {
 	return s.upstream.Functions()
 }
 
-// Flush flushes the upstream state and performs a final block parse attempt.
+// Flush flushes the upstream state and performs a final block parse. In final
+// mode, an unclosed block is treated as ended rather than left pending, so its
+// body is finalized and the buffer is consumed. Any remaining unparseable
+// fragments are discarded so content appended after Flush is not combined with
+// pre-Flush content. See TheoryOfBlockState.
 func (s *BlockState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {
@@ -117,9 +131,12 @@ func (s *BlockState) Flush() (generators.State, error) {
 	s.upstream = newUpstream
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.parseBlocks(); err != nil {
+	if err := s.parseBlocks(true); err != nil {
 		return s, err
 	}
+	// Discard any remaining unparseable fragments so post-flush content
+	// does not combine with pre-flush fragments. See TheoryOfBlockState.
+	s.buf = s.buf[:0]
 	return s, nil
 }
 

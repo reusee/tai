@@ -97,7 +97,24 @@ type Block struct {
 	Body     string
 }
 
+// ParseFirstBlock parses the first complete boundary block from content.
+// An unclosed block (opening marker with no matching end marker at line
+// start) returns a BlockParseError. During streaming, this indicates
+// incomplete output that may be completed by subsequent chunks. Use
+// parseFirstBlock with final=true to finalize unclosed blocks at Flush.
 func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
+	return parseFirstBlock(content, false)
+}
+
+// parseFirstBlock is the core block parser. When final is false (streaming),
+// an unclosed block returns a BlockParseError so the caller can wait for more
+// output. When final is true (e.g., at Flush), an unclosed block is treated as
+// ended: the block is returned as complete with the body being all remaining
+// content after the opening line, and end is set to len(content) so the
+// buffer is fully consumed. This prevents post-flush content from combining
+// with pre-flush content within the same block. See TheoryOfBlockState and
+// TheoryOfBoundaryUniqueness.
+func parseFirstBlock(content []byte, final bool) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
 		idx := bytes.Index(content[searchFrom:], []byte(":::"))
@@ -128,7 +145,7 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 			continue
 		}
 		kind := strings.TrimSpace(parts[0])
-		boundary := strings.TrimSpace(parts[1])
+		boundary := extractHanBoundary(parts[1])
 		if kind == "" || boundary == "" {
 			searchFrom = idx + 1
 			continue
@@ -178,7 +195,7 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 				break
 			}
 			endLine := string(content[lineContentStart : lineContentStart+lineEndOffset])
-			endBoundary := strings.TrimSpace(endLine)
+			endBoundary := extractHanBoundary(endLine)
 			if endBoundary == boundary {
 				validEnd = candidate
 				break
@@ -188,6 +205,17 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 			searchEndFrom = lineContentStart + lineEndOffset + 1
 		}
 		if validEnd == -1 {
+			if final {
+				// At Flush, treat an unclosed block as ended: the body is
+				// all remaining buffered content after the opening line, and
+				// the entire buffer is consumed so post-flush content does
+				// not combine with pre-flush content. See TheoryOfBlockState.
+				block.Body = strings.TrimSpace(string(content[bodyStart:]))
+				start = blockStart
+				end = len(content)
+				ok = true
+				return
+			}
 			// No matching end marker found. During streaming this may
 			// be incomplete; report as unclosed.
 			return Block{}, 0, 0, false, &BlockParseError{
@@ -211,6 +239,31 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		ok = true
 		return
 	}
+}
+
+// extractHanBoundary extracts the leading Han (Chinese) ideographs from s.
+// Leading and trailing whitespace are trimmed first. Parsing then collects
+// consecutive Han characters and stops at the first non-Han character, which
+// is ignored and terminates the boundary. This ensures trailing content after
+// the boundary string (e.g., model-added annotations) does not corrupt block
+// matching. A field with no Han characters yields an empty string, causing the
+// marker to be skipped. See TheoryOfBoundaryUniqueness.
+func extractHanBoundary(s string) string {
+	s = strings.TrimSpace(s)
+	var buf []rune
+	for _, r := range s {
+		// CJK Han ideographs: Extension A (U+3400–U+4DBF), Unified Ideographs
+		// (U+4E00–U+9FFF), and Compatibility Ideographs (U+F900–U+FAFF).
+		isHan := (r >= 0x3400 && r <= 0x4DBF) ||
+			(r >= 0x4E00 && r <= 0x9FFF) ||
+			(r >= 0xF900 && r <= 0xFAFF)
+		if isHan {
+			buf = append(buf, r)
+		} else {
+			break
+		}
+	}
+	return string(buf)
 }
 
 // BlockParseError is returned by ParseFirstBlock for unclosed boundary blocks.

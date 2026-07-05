@@ -244,3 +244,51 @@ func TestBlockStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 		t.Fatalf("body should contain both body lines: %q", blocks[0].Body)
 	}
 }
+
+func TestBlockStateFlushTreatsUnclosedAsEnded(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// Append an unclosed block (no end marker yet).
+	if _, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// No complete block before Flush.
+	if blocks := state.PopBlocks(); len(blocks) != 0 {
+		t.Fatalf("expected 0 blocks before flush, got %d", len(blocks))
+	}
+
+	// Flush finalizes the unclosed block as ended.
+	if _, err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	blocks := state.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block after flush, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	}
+	if !contains(blocks[0].Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", blocks[0].Body)
+	}
+	// The buffer is fully consumed at Flush.
+	if pending := state.PendingText(); pending != "" {
+		t.Fatalf("expected empty pending text after flush, got %q", pending)
+	}
+
+	// Post-flush content must not combine with pre-flush content.
+	// The orphan :::end marker produces no block.
+	if _, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(":::end 徕珑\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if blocks := state.PopBlocks(); len(blocks) != 0 {
+		t.Fatalf("expected 0 blocks for orphan end marker after flush, got %d", len(blocks))
+	}
+}

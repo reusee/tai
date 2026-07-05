@@ -7,7 +7,7 @@ import (
 
 func TestParseFirstBoundaryHunk(t *testing.T) {
 	// Valid with XML metadata and blank line
-	content := ":::change abc-def-gh\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
+	content := ":::change 测试\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nfunc myFunc() {}\n\n:::end 测试\n"
 	h, start, end, ok, err := ParseFirstBoundaryHunk([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -34,7 +34,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	_ = start
 
 	// Body content with header-like lines is preserved after the XML tag
-	content2 := ":::change x-y-z\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nop: MODIFY // comment in body\nfunc myFunc() {}\n\n:::end x-y-z\n"
+	content2 := ":::change 边界\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nop: MODIFY // comment in body\nfunc myFunc() {}\n\n:::end 边界\n"
 	h2, _, _, ok2, err2 := ParseFirstBoundaryHunk([]byte(content2))
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
@@ -72,7 +72,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 
 	// Header-based (key-value) format is no longer supported
 	t.Run("HeaderFormatRejected", func(t *testing.T) {
-		content := ":::change abc-def-gh\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end abc-def-gh\n"
+		content := ":::change 格式\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end 格式\n"
 		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
