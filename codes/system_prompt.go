@@ -29,6 +29,7 @@ func (Module) SystemPrompt(
 		prompts.Codes + "\n" +
 			codeProvider.SystemPrompt() + "\n" +
 			diffHandler.SystemPrompt() + "\n" +
+			FinishBlockSystemPrompt + "\n" +
 			string(extra),
 	)
 }

@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// TestBoundaryUniquenessInPrompts is a regression test for the issue where the
-// model copied example boundary strings (e.g., 徕珑) verbatim from the system
-// prompt, causing the parser to close blocks at the wrong :::end marker. The
-// prompts must instruct the model to generate a fresh random boundary per block
-// and must never reuse the example boundaries. See TheoryOfBoundaryUniqueness.
 func TestBoundaryUniquenessInPrompts(t *testing.T) {
 	handler := BoundaryDiffHandler{}
 	systemPrompt := handler.SystemPrompt()
@@ -31,11 +26,11 @@ func TestBoundaryUniquenessInPrompts(t *testing.T) {
 	// The example in SystemPrompt must demonstrate distinct boundaries per block
 	// rather than reusing one boundary for every block (the original bug).
 	exampleStart := strings.Index(systemPrompt, "**Example:**")
-	finishStart := strings.Index(systemPrompt, "**Finish Block Kind:**")
-	if exampleStart == -1 || finishStart == -1 || finishStart <= exampleStart {
-		t.Fatal("could not locate example section in SystemPrompt")
+	noteStart := strings.Index(systemPrompt, "Note: Each block above")
+	if exampleStart == -1 || noteStart == -1 || noteStart <= exampleStart {
+		t.Fatal("could not locate example section in system prompt")
 	}
-	example := systemPrompt[exampleStart:finishStart]
+	example := systemPrompt[exampleStart:noteStart]
 	boundaries := extractChangeBoundariesFromExample(example)
 	if len(boundaries) < 3 {
 		t.Fatalf("expected at least 3 change blocks in example, got %d", len(boundaries))
