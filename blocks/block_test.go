@@ -79,21 +79,53 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 		t.Fatal("expected ok to be false for unclosed block")
 	}
 	e, isParseErr := err.(*BlockParseError)
-	if !isParseErr || e.Mismatched {
-		t.Fatalf("expected unclosed BlockParseError, got %T: %v", err, err)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 
-	// Opening marker found but end marker has a different boundary
+	// Opening marker found but end marker has a different boundary.
+	// The non-matching :::end 栢彣 is treated as body content. Since no
+	// matching :::end 徕珑 exists, the block is unclosed.
 	content2 := []byte(":::change 徕珑\nbody\n:::end 栢彣\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
-		t.Fatal("expected error for mismatched end marker boundary")
+		t.Fatal("expected error for unclosed block with non-matching end marker")
 	}
 	if ok {
-		t.Fatal("expected ok to be false for mismatched end marker boundary")
+		t.Fatal("expected ok to be false for unclosed block")
 	}
 	e, isParseErr = err.(*BlockParseError)
-	if !isParseErr || !e.Mismatched {
-		t.Fatalf("expected mismatched BlockParseError, got %T: %v", err, err)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+}
+
+func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
+	// A body containing a line-start :::end with a different boundary
+	// is treated as body content. The block closes at the matching
+	// :::end 徕珑 marker, and the non-matching :::end 栢彣 line is
+	// preserved in the body.
+	content := []byte(":::change 徕珑\nbody line 1\n:::end 栢彣\nbody line 2\n:::end 徕珑\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" || block.Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", block.Kind, block.Boundary)
+	}
+	if !strings.Contains(block.Body, ":::end 栢彣") {
+		t.Fatalf("body should contain non-matching :::end as content: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "body line 1") || !strings.Contains(block.Body, "body line 2") {
+		t.Fatalf("body should contain both body lines: %q", block.Body)
 	}
 }

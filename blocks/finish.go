@@ -26,7 +26,7 @@ The "finish" kind signals the end of all code modifications and provides a one-s
 - The body is a single sentence summarizing what was done.
 - Use the same boundary format (two random uncommon meaningless Chinese characters) as change blocks.
 - Generate exactly one finish block per response.
-- The closing :::end marker MUST use the same boundary as the opening :::finish marker. A mismatched boundary is a hard error that drops the finish block.
+- The closing :::end marker MUST use the same boundary as the opening :::finish marker. A line-start :::end with a different boundary is treated as body content, not a closing marker, so the block remains unclosed.
 `
 
 const FinishBlockRestatePrompt = `- After all change blocks, generate a finish block with a one-sentence summary of all changes made:
@@ -35,5 +35,5 @@ const FinishBlockRestatePrompt = `- After all change blocks, generate a finish b
 :::end <random_boundary>
 - The finish block MUST be the last block in the response.
 - If no changes were made, generate a finish block with "No changes were needed." as the summary.
-- The closing :::end marker MUST use the same boundary as the opening :::finish marker; a mismatched boundary is a hard error.
+- The closing :::end marker MUST use the same boundary as the opening :::finish marker; a line-start :::end with a different boundary is treated as body content, not a closing marker.
 `

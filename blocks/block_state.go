@@ -15,15 +15,13 @@ and finish blocks) without losing non-block prose. Parsed blocks are buffered an
 read or drained for downstream processing while generation continues.
 
 The parser is incremental: each AppendContent call appends new text to an internal buffer
-and re-attempts to parse complete blocks. The parser distinguishes two failure modes for an
-opening marker without a matching close. An unclosed block (no :::end marker at all) is
-treated as incomplete and left in the buffer for the next AppendContent call, because
-streaming output may arrive in fragments. A mismatched boundary (a line-start :::end marker
-with a different boundary than the opening marker) is a definitive error: it indicates the
-model closed the wrong block, and the error is surfaced from AppendContent or Flush rather
-than silently swallowed, so the caller learns that the modifications in that block were
-lost. Text preceding the first block marker is prose and is discarded once a block is found,
-because BlockState's purpose is block extraction, not prose preservation.
+and re-attempts to parse complete blocks. A block is only complete when a matching
+:::end <boundary> marker is found at line start. A line-start :::end with a different
+boundary is treated as body content and does not close the block. If no matching end
+marker is found, the block is unclosed (incomplete) and left in the buffer for the next
+AppendContent call, because streaming output may arrive in fragments. Text preceding the
+first block marker is prose and is discarded once a block is found, because BlockState's
+purpose is block extraction, not prose preservation.
 `
 
 // BlockState wraps an upstream State and incrementally parses boundary-delimited
@@ -49,8 +47,7 @@ var _ generators.State = (*BlockState)(nil)
 
 // AppendContent passes content to the upstream state and extracts text parts
 // from model-generated content (assistant or model role) for incremental block
-// parsing. A mismatched boundary error from the parser is surfaced to the
-// caller; an unclosed (incomplete) block is kept in the buffer for later chunks.
+// parsing. An unclosed (incomplete) block is kept in the buffer for later chunks.
 func (s *BlockState) AppendContent(content *generators.Content) (generators.State, error) {
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
@@ -75,25 +72,15 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 }
 
 // parseBlocks repeatedly parses complete blocks from the internal buffer.
-// It must be called with s.mu held. An unclosed block (no end marker at all)
-// is treated as incomplete and left in the buffer for the next AppendContent
-// call. A mismatched boundary (a line-start :::end with a different boundary
-// than the opening marker) is a definitive error: the malformed block is
-// consumed and the error is returned so the caller learns that the model's
-// modifications in that block were lost.
+// It must be called with s.mu held. An unclosed block (no matching end
+// marker found) is treated as incomplete and left in the buffer for the
+// next AppendContent call, because streaming output may arrive in fragments.
+// A line-start :::end with a different boundary is treated as body content,
+// not an error.
 func (s *BlockState) parseBlocks() error {
 	for {
 		block, _, end, ok, err := ParseFirstBlock(s.buf)
 		if err != nil {
-			if e, isParseErr := err.(*BlockParseError); isParseErr && e.Mismatched {
-				// Consume the malformed block up to the mismatched end
-				// marker so subsequent parsing can proceed, then surface
-				// the error so the caller learns modifications were lost.
-				if end > 0 {
-					s.buf = s.buf[end:]
-				}
-				return err
-			}
 			// Unclosed block: incomplete, wait for more output.
 			break
 		}
@@ -122,7 +109,6 @@ func (s *BlockState) Functions() iter.Seq[*generators.Function] {
 }
 
 // Flush flushes the upstream state and performs a final block parse attempt.
-// A mismatched boundary error from the parser is surfaced to the caller.
 func (s *BlockState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {

@@ -184,13 +184,15 @@ func containsStr(s, substr string) bool {
 	return false
 }
 
-func TestBlockStateMismatchedBoundaryError(t *testing.T) {
+func TestBlockStateNonMatchingEndIsBodyContent(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	state := NewBlockState(upstream)
 
-	// The model opens a block with boundary 徕珑 but closes it with 栢彣.
-	// This mismatched boundary must be surfaced as an error rather than
-	// silently dropping the block and losing the modifications in it.
+	// The model opens a block with boundary 徕珑. The body contains a
+	// line-start :::end with a different boundary (栢彣). This should be
+	// treated as body content, not a closing marker. Since no matching
+	// :::end 徕珑 exists, the block is unclosed (incomplete) and no
+	// error should be surfaced during streaming.
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(
@@ -198,15 +200,47 @@ func TestBlockStateMismatchedBoundaryError(t *testing.T) {
 		)},
 	}
 	_, err := state.AppendContent(content)
-	if err == nil {
-		t.Fatal("expected mismatched boundary error, got nil")
+	if err != nil {
+		t.Fatalf("expected no error for non-matching end marker treated as body content, got %v", err)
 	}
-	e, ok := err.(*BlockParseError)
-	if !ok || !e.Mismatched {
-		t.Fatalf("expected mismatched BlockParseError, got %T: %v", err, err)
-	}
-	// No blocks should be produced for the malformed block.
+	// No blocks should be produced for the incomplete block.
 	if blocks := state.PopBlocks(); len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for mismatched boundary, got %d", len(blocks))
+		t.Fatalf("expected 0 blocks for unclosed block, got %d", len(blocks))
+	}
+	// The content should remain in the buffer as pending text.
+	pending := state.PendingText()
+	if !contains(pending, ":::change 徕珑") {
+		t.Fatalf("pending text should contain the opening marker: %q", pending)
+	}
+}
+
+func TestBlockStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// A body containing a line-start :::end with a different boundary
+	// is treated as body content. When the matching :::end 徕珑
+	// arrives, the block is parsed correctly with the non-matching
+	// :::end 栢彣 preserved in the body.
+	text := ":::change 徕珑\nbody line 1\n:::end 栢彣\nbody line 2\n:::end 徕珑\n"
+	if _, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := state.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	}
+	if !contains(blocks[0].Body, ":::end 栢彣") {
+		t.Fatalf("body should contain non-matching :::end as content: %q", blocks[0].Body)
+	}
+	if !contains(blocks[0].Body, "body line 1") || !contains(blocks[0].Body, "body line 2") {
+		t.Fatalf("body should contain both body lines: %q", blocks[0].Body)
 	}
 }
