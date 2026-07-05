@@ -49,7 +49,8 @@ The "change" kind defines code modifications using the boundary block format. Ea
 - The code body directly follows the XML tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
 - **Boundary uniqueness**: Use a distinct, freshly generated random boundary for each block. Never reuse a boundary string shown in the examples below; the parser matches the first :::end <boundary> marker, so a reused boundary closes the wrong block and corrupts the output.
-- No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
+- No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but every marker must start at the beginning of its own line.
+- **Line-start requirement**: Every marker (:::change ... and :::end ...) MUST start at the beginning of its own line. Never glue a marker to the end of a prose line; always start it on a new line.
 
 **Example:**
 
@@ -99,6 +100,7 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 - For WRITE, ` + "`" + `target` + "`" + ` is ignored; the code body is the complete new file content.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - No blank lines are required before or after the code body, nor before or after a block.
+- **Line-start requirement**: Each marker (:::change ... and :::end ...) MUST start at the beginning of its own line. Never append a marker to the end of a prose line; always start it on a new line after a newline.
 - If no changes are needed, omit all change blocks.
 `
 }

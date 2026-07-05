@@ -56,6 +56,40 @@ func TestBlockFormatSystemPromptBoundaryUniqueness(t *testing.T) {
 	}
 }
 
+func TestBlockFormatSystemPromptLineStart(t *testing.T) {
+	if !strings.Contains(BlockFormatSystemPrompt, "Line-Start Requirement") {
+		t.Fatal("BlockFormatSystemPrompt must contain a Line-Start Requirement section")
+	}
+	if !strings.Contains(BlockFormatSystemPrompt, "beginning of a line") {
+		t.Fatal("BlockFormatSystemPrompt must instruct the model to place markers at the beginning of a line")
+	}
+	if !strings.Contains(BlockFormatSystemPrompt, "NEVER place a marker at the end of a line") {
+		t.Fatal("BlockFormatSystemPrompt must explicitly forbid placing markers at the end of a line")
+	}
+}
+
+func TestRestatePromptLineStart(t *testing.T) {
+	handler := BoundaryDiffHandler{}
+	restate := handler.RestatePrompt()
+	if !strings.Contains(restate, "Line-start requirement") {
+		t.Fatal("RestatePrompt must contain a line-start requirement instruction")
+	}
+	if !strings.Contains(restate, "beginning of its own line") {
+		t.Fatal("RestatePrompt must instruct markers to start at the beginning of their own line")
+	}
+}
+
+func TestSystemPromptLineStart(t *testing.T) {
+	handler := BoundaryDiffHandler{}
+	systemPrompt := handler.SystemPrompt()
+	if !strings.Contains(systemPrompt, "Line-start requirement") {
+		t.Fatal("SystemPrompt must contain a line-start requirement instruction")
+	}
+	if !strings.Contains(systemPrompt, "beginning of its own line") {
+		t.Fatal("SystemPrompt must instruct markers to start at the beginning of their own line")
+	}
+}
+
 // extractChangeBoundariesFromExample collects the boundary string from each
 // :::change <boundary> marker in the given text.
 func extractChangeBoundariesFromExample(text string) []string {

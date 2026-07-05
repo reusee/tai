@@ -17,6 +17,10 @@ This format replaces ad-hoc XML or JSON escaping with a simple, parseable struct
 **Line-start requirement**: The opening marker (:::kind boundary) and the closing marker
 (:::end boundary) must each appear at the beginning of a line. Any occurrence of ":::"
 that is not at the start of a line is treated as regular content and will not start a block.
+Models tend to glue the opening marker to the end of a preceding prose line rather than
+starting it on its own line, which causes the block to be silently ignored. The system
+prompt must therefore emphasize this rule with explicit correct/incorrect examples so the
+model internalizes the newline-before-marker discipline.
 
 **No surrounding blank lines**: Blocks do not require blank lines before or after them.
 A block can appear directly adjacent to other text or other blocks; the only structural
@@ -40,10 +44,6 @@ strings are forbidden for reuse. The randomness of the boundary is the integrity
 the format.
 `
 
-// BlockFormatSystemPrompt teaches the model the boundary-delimited block format.
-// The "Boundary Uniqueness (CRITICAL)" section operationalizes TheoryOfBoundaryUniqueness:
-// the model must generate a fresh random boundary per block and must never copy an example
-// boundary, because the parser closes a block at the first matching :::end marker.
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
 
 Your response can include structured content using delimited blocks.
@@ -58,8 +58,22 @@ This format avoids escaping issues and is easy to parse.
 - <boundary>: A random string composed of two uncommon meaningless Chinese characters. A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers of a single block.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
-- No blank lines are required before or after a block. A block can appear directly adjacent to other text or other blocks.
+- No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but every marker must start at the beginning of its own line.
 - If no blocks are needed, simply omit them.
+
+**Line-Start Requirement (CRITICAL):**
+- The opening marker (:::<kind> <boundary>) and the closing marker (:::end <boundary>) MUST each appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- NEVER place a marker at the end of a line of text. If you have prose immediately before a block, end the prose with a newline first, then start the marker on its own new line.
+- Any ":::" that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and your changes will be lost.
+- Do this (marker starts on its own line after the prose):
+  Some explanation text.
+  :::change 徕珑
+  <code here>
+  :::end 徕珑
+- NOT this (marker glued to the end of the prose line — the block will NOT be parsed and your changes will be lost):
+  Some explanation text.:::change 徕珑
+  <code here>
+  :::end 徕珑
 
 **Boundary Uniqueness (CRITICAL):**
 - Generate a fresh random pair of two uncommon, meaningless Chinese characters as the boundary for each block.
