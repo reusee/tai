@@ -306,19 +306,19 @@ func globFiles(pattern string) ([]string, error) {
 // directories are matched, the concatenation is sorted for consistency
 // with filepath.Glob.
 func globWithDoubleStar(pattern string) ([]string, error) {
-	idx := strings.Index(pattern, "**")
-	if idx == -1 {
+	before, after, ok := strings.Cut(pattern, "**")
+	if !ok {
 		return filepath.Glob(pattern)
 	}
 
 	// Base directory: everything before **, trimmed of trailing separator.
-	baseDirPattern := strings.TrimSuffix(pattern[:idx], string(filepath.Separator))
+	baseDirPattern := strings.TrimSuffix(before, string(filepath.Separator))
 	if baseDirPattern == "" {
 		baseDirPattern = "."
 	}
 
 	// Suffix pattern: everything after ** and the following separator.
-	suffix := pattern[idx+2:]
+	suffix := after
 	suffix = strings.TrimPrefix(suffix, string(filepath.Separator))
 
 	// Resolve base directories (may contain simple glob characters).
