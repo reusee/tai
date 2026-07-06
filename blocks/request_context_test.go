@@ -148,6 +148,36 @@ func TestReadContextFile(t *testing.T) {
 	}
 }
 
+func TestReadContextFileNotPathEscapeForDoubleDotPrefix(t *testing.T) {
+	// A filename starting with ".." but not representing parent-directory
+	// traversal (e.g., "..notescape.txt") must not be rejected by the path
+	// escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
+	// incorrectly matched any name starting with two dots.
+	dir := t.TempDir()
+	filename := "..notescape.txt"
+	content := "test content"
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readContextFile(filename)
+	if err != nil {
+		t.Fatalf("unexpected error reading file with .. prefix: %v", err)
+	}
+	if got != content {
+		t.Fatalf("expected %q, got %q", content, got)
+	}
+}
+
 func TestGlobFiles(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
@@ -182,6 +212,41 @@ func TestGlobFiles(t *testing.T) {
 	_, err = globFiles("../../../etc/*")
 	if err == nil {
 		t.Fatal("expected error for path escape")
+	}
+}
+
+func TestGlobFilesNotPathEscapeForDoubleDotPrefix(t *testing.T) {
+	// A directory name starting with ".." but not representing parent-
+	// directory traversal (e.g., "..notescape") must not be rejected by the
+	// path escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
+	// incorrectly matched any name starting with two dots.
+	dir := t.TempDir()
+	dotDir := filepath.Join(dir, "..notescape")
+	if err := os.MkdirAll(dotDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dotDir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dotDir, "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := globFiles("..notescape/*.go")
+	if err != nil {
+		t.Fatalf("unexpected error globbing ..notescape/*.go: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
 	}
 }
 

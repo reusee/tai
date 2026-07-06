@@ -254,14 +254,16 @@ func ProcessRequestContextBlocks(
 	return state, hasRequestContext, nil
 }
 
+// readContextFile reads a local file at the given path. Absolute paths are
+// permitted because they represent explicit, intentional references by the
+// model. Relative paths containing parent-directory traversal are rejected as
+// a sanity check against accidental escapes. The check distinguishes ".."
+// (parent directory) and "../"-prefixed paths from names that merely start with
+// two dots (e.g., "..hidden", "..."). See TheoryOfRequestContext.
 func readContextFile(path string) (string, error) {
-	// Absolute paths are permitted because they represent explicit,
-	// intentional references by the model. Relative paths containing
-	// parent-directory traversal are rejected as a sanity check against
-	// accidental escapes. See TheoryOfRequestContext.
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
-		if strings.HasPrefix(cleaned, "..") {
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes current directory: %s", path)
 		}
 	}
@@ -283,7 +285,7 @@ func readContextFile(path string) (string, error) {
 func globFiles(pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
-		if strings.HasPrefix(cleaned, "..") {
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("pattern escapes current directory: %s", pattern)
 		}
 	}
