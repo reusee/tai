@@ -51,6 +51,16 @@ system prompt deliberately use distinct boundaries to demonstrate this rule, and
 strings are forbidden for reuse. The randomness of the boundary is the integrity guarantee of
 the format: if the model reuses an example boundary, a subsequent real block opened with that
 same boundary would close at the wrong marker.
+
+The boundary characters must also be disjoint from the block body. Because the parser closes
+the block at the first line-start :::end whose boundary matches, a body line that begins with
+":::end " followed by the same two ideographs would prematurely terminate the block and
+discard all remaining content. Block bodies are predominantly source code (ASCII), so most
+Han characters never occur in them; the collision risk arises when the body contains Chinese
+comments, string literals, or documentation that reproduces block markers. The model should
+therefore select rare, uncommon ideographs that do not appear anywhere in the code or text it
+is about to emit, satisfying the anti-reuse guarantee and the body-disjointness guarantee
+simultaneously.
 `
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
@@ -64,7 +74,7 @@ This format avoids escaping issues and is easy to parse.
 :::end <boundary>
 
 - <kind>: The type of block. The valid kinds and their content formats are defined by the specific kind documentation.
-- <boundary>: A random string composed of two uncommon meaningless Chinese characters. A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers of a single block.
+- <boundary>: A random string composed of two uncommon meaningless Chinese characters that do not appear in the block body. A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers of a single block.
 - Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but every marker must start at the beginning of its own line.
@@ -88,6 +98,7 @@ This format avoids escaping issues and is easy to parse.
 - Generate a fresh random pair of two uncommon, meaningless Chinese characters as the boundary for each block.
 - **Never reuse a boundary string that appears in any example in this prompt.** The example boundaries are illustrative only; copying them causes the parser to mismatch :::end markers and corrupt blocks.
 - Each block in a response must use a distinct boundary so the parser can unambiguously pair each opening marker with its closing marker.
+- **Avoid body-content characters**: Select boundary characters that do not appear anywhere in the block body (the code or text between the markers). A body line that starts with ":::end " followed by the same boundary prematurely closes the block and truncates the remaining content. Since block bodies are predominantly source code (ASCII), most Han characters are safe; pick rare, uncommon ideographs absent from any Chinese comments, string literals, or documentation you are about to emit.
 
 **Boundary Matching (CRITICAL):**
 - The closing marker MUST use the EXACT same boundary string as the opening marker. A block opened with :::change 徕珑 MUST be closed with :::end 徕珑, never :::end 栢彣 or any other boundary.
