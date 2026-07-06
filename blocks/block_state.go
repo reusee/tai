@@ -30,6 +30,10 @@ after Flush (e.g., from a subsequent generation cycle) is never combined with pr
 content within the same block. Boundary strings are parsed as leading Han (Chinese)
 ideographs only; a non-Han character terminates the boundary so trailing model-added
 content does not corrupt block matching.
+
+Parsed blocks can be consumed selectively by kind via PopBlocksByKind, so processing
+one kind of block (e.g., request-context) does not discard blocks of other kinds (e.g.,
+change) that must remain available for subsequent processing.
 `
 
 // BlockState wraps an upstream State and incrementally parses boundary-delimited
@@ -166,6 +170,27 @@ func (s *BlockState) PopBlocks() []Block {
 	blocks := s.blocks
 	s.blocks = nil
 	return blocks
+}
+
+// PopBlocksByKind removes and returns blocks of the specified kind from the
+// internal buffer, preserving all other parsed blocks. This allows callers to
+// selectively consume blocks (e.g., request-context blocks) without discarding
+// blocks of other kinds (e.g., change blocks) that must remain available for
+// subsequent processing.
+func (s *BlockState) PopBlocksByKind(kind string) []Block {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var matched []Block
+	var remaining []Block
+	for _, b := range s.blocks {
+		if b.Kind == kind {
+			matched = append(matched, b)
+		} else {
+			remaining = append(remaining, b)
+		}
+	}
+	s.blocks = remaining
+	return matched
 }
 
 // PendingText returns the remaining unparsed text in the buffer that has not yet

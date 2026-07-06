@@ -557,3 +557,37 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
 	}
 }
+
+func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// Append a change block with no request-context blocks.
+	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"
+	if _, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// ProcessRequestContextBlocks must not discard non-request-context blocks.
+	// Before the fix, PopBlocks() removed all blocks including the change block,
+	// causing it to be silently lost.
+	_, hasRC, err := ProcessRequestContextBlocks(state, context.Background(), nil, nil, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRC {
+		t.Fatal("expected no request-context blocks")
+	}
+
+	// The change block must still be available after processing.
+	blocks := state.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 change block to be preserved, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "change" {
+		t.Fatalf("expected change block, got %s", blocks[0].Kind)
+	}
+}
