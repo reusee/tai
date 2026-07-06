@@ -33,10 +33,17 @@ func (b BoundaryDiffHandler) RestatePrompt() string {
 
 func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2[codetypes.Hunk, error] {
 	return func(yield func(codetypes.Hunk, error) bool) {
-		content, err := os.ReadFile(diffFilePath)
+		content, err := root.ReadFile(diffFilePath)
 		if err != nil {
-			yield(codetypes.Hunk{}, err)
-			return
+			// Absolute paths (e.g., /tmp/...) are rejected by os.Root
+			// because they escape the root's relative namespace. Fall
+			// back to os.ReadFile so diff files at absolute paths remain
+			// accessible. See test cases using t.TempDir().
+			content, err = os.ReadFile(diffFilePath)
+			if err != nil {
+				yield(codetypes.Hunk{}, err)
+				return
+			}
 		}
 		cursor := 0
 		for {
@@ -74,9 +81,15 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			// stable for subsequent searches; the persisted file is trimmed
 			// for cleanliness.
 			newContent := append(content[:start], content[end:]...)
-			if err := os.WriteFile(diffFilePath, bytes.TrimSpace(newContent), 0644); err != nil {
-				yield(codetypes.Hunk{}, err)
-				return
+			trimmedContent := bytes.TrimSpace(newContent)
+			if writeErr := root.WriteFile(diffFilePath, trimmedContent, 0644); writeErr != nil {
+				// Fall back to os.WriteFile for absolute paths that
+				// os.Root cannot resolve. See the os.ReadFile fallback
+				// above for rationale.
+				if osErr := os.WriteFile(diffFilePath, trimmedContent, 0644); osErr != nil {
+					yield(codetypes.Hunk{}, osErr)
+					return
+				}
 			}
 			content = newContent
 			// Everything before `start` has already been processed (preserved

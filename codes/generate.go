@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 
 	"github.com/reusee/tai/blocks"
@@ -62,6 +63,14 @@ func (Module) Generate(
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
+
+		// Open a root on the current directory to restrict all file I/O
+		// to the project tree. See TheoryOfRequestContext.
+		root, err := os.OpenRoot(".")
+		if err != nil {
+			return err
+		}
+		defer root.Close()
 
 		// generator
 		generator, err := actionChat.GetDefaultGenerator()()
@@ -234,7 +243,7 @@ func (Module) Generate(
 				// See TheoryOfRequestContext and TheoryOfDynamicContext.
 				if bool(dynamicContext) {
 					var hasRequestContext bool
-					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, httpClient, state)
+					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, root, httpClient, state)
 					if err != nil {
 						return err
 					}

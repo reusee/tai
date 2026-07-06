@@ -120,14 +120,20 @@ func TestParseRequestContextBody(t *testing.T) {
 
 func TestReadContextFile(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	content := "hello world"
 	path := filepath.Join(dir, "test.txt")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Read existing file
-	got, err := readContextFile(path)
+	// Read existing file using root with relative path
+	got, err := readContextFile(root, "test.txt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,13 +142,13 @@ func TestReadContextFile(t *testing.T) {
 	}
 
 	// Read non-existent file
-	_, err = readContextFile(filepath.Join(dir, "nonexistent.txt"))
+	_, err = readContextFile(root, "nonexistent.txt")
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
 	}
 
 	// Path escape
-	_, err = readContextFile("../../../etc/passwd")
+	_, err = readContextFile(root, "../../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}
@@ -154,22 +160,19 @@ func TestReadContextFileNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 	// escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
 	// incorrectly matched any name starting with two dots.
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	filename := "..notescape.txt"
 	content := "test content"
 	if err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := readContextFile(filename)
+	got, err := readContextFile(root, filename)
 	if err != nil {
 		t.Fatalf("unexpected error reading file with .. prefix: %v", err)
 	}
@@ -180,6 +183,12 @@ func TestReadContextFileNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 
 func TestGlobFiles(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +200,7 @@ func TestGlobFiles(t *testing.T) {
 	}
 
 	// Match .go files
-	matches, err := globFiles(filepath.Join(dir, "*.go"))
+	matches, err := globFiles(root, "*.go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +209,7 @@ func TestGlobFiles(t *testing.T) {
 	}
 
 	// No matches
-	matches, err = globFiles(filepath.Join(dir, "*.nonexistent"))
+	matches, err = globFiles(root, "*.nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +218,7 @@ func TestGlobFiles(t *testing.T) {
 	}
 
 	// Path escape
-	_, err = globFiles("../../../etc/*")
+	_, err = globFiles(root, "../../../etc/*")
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}
@@ -221,6 +230,12 @@ func TestGlobFilesNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 	// path escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
 	// incorrectly matched any name starting with two dots.
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	dotDir := filepath.Join(dir, "..notescape")
 	if err := os.MkdirAll(dotDir, 0755); err != nil {
 		t.Fatal(err)
@@ -232,16 +247,7 @@ func TestGlobFilesNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	matches, err := globFiles("..notescape/*.go")
+	matches, err := globFiles(root, "..notescape/*.go")
 	if err != nil {
 		t.Fatalf("unexpected error globbing ..notescape/*.go: %v", err)
 	}
@@ -252,6 +258,12 @@ func TestGlobFilesNotPathEscapeForDoubleDotPrefix(t *testing.T) {
 
 func TestGlobFilesDoubleStar(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	if err := os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +281,7 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	}
 
 	// **/*.go matches all .go files recursively
-	matches, err := globFiles(filepath.Join(dir, "**", "*.go"))
+	matches, err := globFiles(root, "**/*.go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,7 +290,7 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	}
 
 	// **/*.txt matches all .txt files recursively
-	matches, err = globFiles(filepath.Join(dir, "**", "*.txt"))
+	matches, err = globFiles(root, "**/*.txt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -287,7 +299,7 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	}
 
 	// sub/**/*.go matches .go files under sub/ recursively
-	matches, err = globFiles(filepath.Join(dir, "sub", "**", "*.go"))
+	matches, err = globFiles(root, "sub/**/*.go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -298,6 +310,12 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 
 func TestFetchRequestContextFile(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	content := "file content here"
 	path := filepath.Join(dir, "test.txt")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -305,9 +323,9 @@ func TestFetchRequestContextFile(t *testing.T) {
 	}
 
 	requests := []RequestContextRequest{
-		{Type: "file", Path: path},
+		{Type: "file", Path: "test.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -322,6 +340,12 @@ func TestFetchRequestContextFile(t *testing.T) {
 
 func TestFetchRequestContextGlob(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -330,9 +354,9 @@ func TestFetchRequestContextGlob(t *testing.T) {
 	}
 
 	requests := []RequestContextRequest{
-		{Type: "glob", Pattern: filepath.Join(dir, "*.go")},
+		{Type: "glob", Pattern: "*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -353,6 +377,12 @@ func TestFetchRequestContextGlob(t *testing.T) {
 
 func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -364,9 +394,9 @@ func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
 	}
 
 	requests := []RequestContextRequest{
-		{Type: "glob", Pattern: filepath.Join(dir, "**", "*.go")},
+		{Type: "glob", Pattern: "**/*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -389,10 +419,17 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// root is not used for fetch, but required by fetchRequestContext.
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	requests := []RequestContextRequest{
 		{Type: "fetch", Addr: server.URL},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -415,10 +452,16 @@ func TestFetchRequestContextHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	requests := []RequestContextRequest{
 		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -441,11 +484,18 @@ func TestFetchRequestContextHeaders(t *testing.T) {
 }
 
 func TestFetchRequestContextError(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
 	// File not found
 	requests := []RequestContextRequest{
-		{Type: "file", Path: "/nonexistent/path/file.txt"},
+		{Type: "file", Path: "nonexistent.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -455,5 +505,55 @@ func TestFetchRequestContextError(t *testing.T) {
 	}
 	if !strings.Contains(string(text), "error") {
 		t.Fatalf("expected error text, got %q", text)
+	}
+}
+
+func TestReadContextFileAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := "absolute path content"
+	path := filepath.Join(dir, "abs.txt")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read using absolute path — should resolve within the root.
+	got, err := readContextFile(root, path)
+	if err != nil {
+		t.Fatalf("unexpected error reading absolute path: %v", err)
+	}
+	if got != content {
+		t.Fatalf("expected %q, got %q", content, got)
+	}
+}
+
+func TestGlobFilesAbsolutePattern(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Match .go files using an absolute pattern.
+	pattern := filepath.Join(dir, "*.go")
+	matches, err := globFiles(root, pattern)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
 	}
 }

@@ -26,16 +26,21 @@ order of XML tags within the block determines the order of context parts in the
 appended user message. File path handling permits absolute paths as explicit
 references while rejecting relative paths that escape the current directory via
 parent-directory traversal, balancing flexibility with a basic sanity check.
+Absolute file paths are resolved relative to the root directory when within it,
+or read directly from the filesystem when outside it, so the model can reference
+files in system directories like /tmp.
 The fetch tag supports optional HTTP headers (user-agent, referer, cookie) so the
 model can access resources that require them, but remains read-only (HTTP GET).
 The glob tag lists files matching a pattern without reading their contents,
 allowing the model to discover files before requesting their content. It applies
-the same path sanity check as the file tag. The glob tag supports ** (globstar)
-patterns for recursive directory traversal, which filepath.Glob alone does not
-handle. When ** appears as a complete path segment, it matches zero or more
-directories; a custom walker resolves these patterns by splitting on **, walking
-the base directory, and matching the suffix pattern against the trailing path
-components of each file.
+the same path sanity check as the file tag. Glob patterns are resolved relative
+to the root directory so that filepath.Glob and filepath.Walk search within the
+root's tree rather than the process's current working directory. The glob tag
+supports ** (globstar) patterns for recursive directory traversal, which
+filepath.Glob alone does not handle. When ** appears as a complete path segment,
+it matches zero or more directories; a custom walker resolves these patterns by
+splitting on **, walking the base directory, and matching the suffix pattern
+against the trailing path components of each file.
 `
 
 const RequestContextSystemPrompt = `**Request-Context Block Kind:**
@@ -172,12 +177,12 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 // fetchRequestContext fetches the requested context and returns parts.
 // File read errors and fetch errors are returned as error text parts rather
 // than aborting the entire generation, so the model can adapt.
-func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, requests []RequestContextRequest) []generators.Part {
+func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, requests []RequestContextRequest) []generators.Part {
 	var parts []generators.Part
 	for _, req := range requests {
 		switch req.Type {
 		case "file":
-			content, err := readContextFile(req.Path)
+			content, err := readContextFile(root, req.Path)
 			if err != nil {
 				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"file\" path=%q>\n[error: %v]\n</context>\n\n", req.Path, err)))
 				continue
@@ -191,7 +196,7 @@ func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, reques
 			}
 			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"fetch\" addr=%q>\n%s\n</context>\n\n", req.Addr, content)))
 		case "glob":
-			matches, err := globFiles(req.Pattern)
+			matches, err := globFiles(root, req.Pattern)
 			if err != nil {
 				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"glob\" pattern=%q>\n[error: %v]\n</context>\n\n", req.Pattern, err)))
 				continue
@@ -209,6 +214,7 @@ func fetchRequestContext(ctx context.Context, httpClient nets.HTTPClient, reques
 func ProcessRequestContextBlocks(
 	blockState *BlockState,
 	ctx context.Context,
+	root *os.Root,
 	httpClient nets.HTTPClient,
 	state generators.State,
 ) (generators.State, bool, error) {
@@ -233,7 +239,7 @@ func ProcessRequestContextBlocks(
 			}
 			continue
 		}
-		parts := fetchRequestContext(ctx, httpClient, requests)
+		parts := fetchRequestContext(ctx, root, httpClient, requests)
 		if len(parts) > 0 {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
@@ -248,20 +254,54 @@ func ProcessRequestContextBlocks(
 	return state, hasRequestContext, nil
 }
 
+// pathEscapesDir reports whether a cleaned relative path escapes the current
+// directory via parent-directory traversal. It distinguishes ".." (parent
+// directory) and "../"-prefixed paths from names that merely start with two
+// dots (e.g., "..hidden", "..."), which are valid directory or file names.
+// See TheoryOfRequestContext.
+func pathEscapesDir(cleaned string) bool {
+	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
+}
+
 // readContextFile reads a local file at the given path. Absolute paths are
 // permitted because they represent explicit, intentional references by the
 // model. Relative paths containing parent-directory traversal are rejected as
 // a sanity check against accidental escapes. The check distinguishes ".."
 // (parent directory) and "../"-prefixed paths from names that merely start with
-// two dots (e.g., "..hidden", "..."). See TheoryOfRequestContext.
-func readContextFile(path string) (string, error) {
+// two dots (e.g., "..hidden", "..."). Absolute paths are resolved relative to
+// the root directory when within it, or read directly from the filesystem when
+// outside it, so the model can reference files in system directories like /tmp.
+// See TheoryOfRequestContext.
+func readContextFile(root *os.Root, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
-		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		if pathEscapesDir(cleaned) {
 			return "", fmt.Errorf("path escapes current directory: %s", path)
 		}
 	}
-	content, err := os.ReadFile(path)
+	// Absolute paths are permitted as explicit references. os.Root methods
+	// reject absolute paths, so convert to a root-relative path when the
+	// absolute path is within the root, or fall back to os.ReadFile for
+	// paths outside the root. See TheoryOfRequestContext.
+	if filepath.IsAbs(path) {
+		rootDir, err := filepath.Abs(root.Name())
+		if err != nil {
+			return "", err
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err == nil && !pathEscapesDir(filepath.Clean(rel)) {
+			content, err := root.ReadFile(rel)
+			if err == nil {
+				return string(content), nil
+			}
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(content), nil
+	}
+	content, err := root.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -271,26 +311,58 @@ func readContextFile(path string) (string, error) {
 // globFiles lists files matching a glob pattern. It applies the same path
 // sanity check as readContextFile: absolute patterns are permitted, while
 // relative patterns containing parent-directory traversal are rejected.
-// See TheoryOfRequestContext.
+// Patterns are resolved relative to the root directory (via root.Name) so
+// that filepath.Glob and filepath.Walk search within the root's tree rather
+// than the process's current working directory. See TheoryOfRequestContext.
 //
 // filepath.Glob does not support ** (globstar) patterns, where ** as a
 // complete path segment matches zero or more directories. When the pattern
 // contains **, globWithDoubleStar resolves it via a recursive directory walk.
-func globFiles(pattern string) ([]string, error) {
+func globFiles(root *os.Root, pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
-		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		if pathEscapesDir(cleaned) {
 			return nil, fmt.Errorf("pattern escapes current directory: %s", pattern)
 		}
 	}
-	if strings.Contains(pattern, "**") {
-		return globWithDoubleStar(pattern)
-	}
-	matches, err := filepath.Glob(pattern)
+	// Resolve the pattern relative to the root directory so that
+	// filepath.Glob and filepath.Walk search within the root's tree,
+	// not the process's current working directory. See TheoryOfRequestContext.
+	rootDir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
 	}
-	return matches, nil
+	searchPattern := pattern
+	if !filepath.IsAbs(pattern) {
+		searchPattern = filepath.Join(rootDir, pattern)
+	}
+	var matches []string
+	if strings.Contains(pattern, "**") {
+		matches, err = globWithDoubleStar(searchPattern)
+	} else {
+		matches, err = filepath.Glob(searchPattern)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Filter matches to those within the root. Convert absolute paths
+	// to root-relative paths for the stat check, since os.Root methods
+	// do not accept absolute paths. See TheoryOfRequestContext.
+	var filtered []string
+	for _, m := range matches {
+		relPath := m
+		if filepath.IsAbs(m) {
+			rel, relErr := filepath.Rel(rootDir, m)
+			if relErr != nil || pathEscapesDir(filepath.Clean(rel)) {
+				continue
+			}
+			relPath = rel
+		}
+		if _, statErr := root.Stat(relPath); statErr == nil {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered, nil
 }
 
 // globWithDoubleStar resolves glob patterns containing ** (globstar) by
