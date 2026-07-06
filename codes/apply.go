@@ -253,7 +253,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	if bodyInfo != nil {
 		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
 	}
-	bodyName := getHunkBodyName(h.Body)
+	bodyName := getHunkBodyNameFromInfo(bodyInfo)
 
 	var start, end int
 	var finalBody string = h.Body
@@ -468,7 +468,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 
 			// Heuristic: if MODIFY and body doesn't seem to contain the target declaration,
 			// try to reconstruct it as a raw value replacement for const/var.
-			if h.Op == "MODIFY" && (bodyInfo == nil || bodyInfo.entityCount() == 0 || getHunkBodyName(finalBody) != h.Target) {
+			if h.Op == "MODIFY" && (bodyInfo == nil || bodyInfo.entityCount() == 0 || getHunkBodyNameFromInfo(bodyInfo) != h.Target) {
 				isString := false
 				if vs, ok := node.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
 					if bl, ok := vs.Values[0].(*ast.BasicLit); ok && bl.Kind == token.STRING {
@@ -537,17 +537,20 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 							tok = token.TYPE
 						}
 						if kind != "" {
+							// Reuse the already-parsed bodyInfo instead of calling
+							// getBodyInfo(finalBody) again. bodyInfo.Keyword == ""
+							// means the body was self-sufficient (no keyword prefix
+							// needed during parsing), so it already contains the
+							// keyword. If heuristic updated bodyInfo above, the
+							// updated value is used here, matching the prior
+							// semantics of re-parsing finalBody.
 							hasKeyword := false
-							if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
-								// If the body parsed successfully without prepending a keyword, assume it's self-sufficient.
-								if info.Keyword == "" {
+							if bodyInfo != nil && bodyInfo.entityCount() > 0 {
+								if bodyInfo.Keyword == "" {
 									hasKeyword = true
-								} else {
-									// If it used a keyword, check if the first decl has it.
-									if gd, ok := info.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
-										if info.Fset.Position(gd.Pos()).Offset >= info.PrefixLen {
-											hasKeyword = true
-										}
+								} else if gd, ok := bodyInfo.Decls[0].(*ast.GenDecl); ok && gd.Tok == tok {
+									if bodyInfo.Fset.Position(gd.Pos()).Offset >= bodyInfo.PrefixLen {
+										hasKeyword = true
 									}
 								}
 							}
@@ -577,17 +580,16 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 			start, end = nodeStart, nodeEnd
 			if h.Op == "MODIFY" {
 				if _, ok := node.(*ast.FuncDecl); ok {
+					// Reuse the already-parsed bodyInfo instead of calling
+					// getBodyInfo(finalBody) again. See the spec branch above
+					// for the rationale on Keyword == "".
 					hasKeyword := false
-					if info, _ := getBodyInfo(finalBody); info != nil && len(info.Decls) > 0 {
-						// If the body parsed successfully without prepending a keyword, assume it's self-sufficient.
-						if info.Keyword == "" {
+					if bodyInfo != nil && bodyInfo.entityCount() > 0 {
+						if bodyInfo.Keyword == "" {
 							hasKeyword = true
-						} else {
-							// If it used a keyword, check if the first decl has it.
-							if _, ok := info.Decls[0].(*ast.FuncDecl); ok {
-								if info.Fset.Position(info.Decls[0].Pos()).Offset >= info.PrefixLen {
-									hasKeyword = true
-								}
+						} else if _, ok := bodyInfo.Decls[0].(*ast.FuncDecl); ok {
+							if bodyInfo.Fset.Position(bodyInfo.Decls[0].Pos()).Offset >= bodyInfo.PrefixLen {
+								hasKeyword = true
 							}
 						}
 					}
@@ -663,9 +665,12 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 	return nil, nil, false
 }
 
-func getHunkBodyName(body string) string {
-	info, err := getBodyInfo(body)
-	if err != nil || info == nil || info.entityCount() == 0 {
+// getHunkBodyNameFromInfo extracts the primary entity name from a parsed
+// BodyInfo without re-parsing the body. Callers that already hold a BodyInfo
+// (e.g., applyHunk, findTargetRange) should use this instead of
+// getHunkBodyName to avoid redundant AST parsing.
+func getHunkBodyNameFromInfo(info *BodyInfo) string {
+	if info == nil || info.entityCount() == 0 {
 		return ""
 	}
 	for _, d := range info.Decls {
@@ -699,6 +704,14 @@ func getHunkBodyName(body string) string {
 		}
 	}
 	return ""
+}
+
+func getHunkBodyName(body string) string {
+	info, err := getBodyInfo(body)
+	if err != nil || info == nil {
+		return ""
+	}
+	return getHunkBodyNameFromInfo(info)
 }
 
 func getIdentifiers(info *BodyInfo) []string {
