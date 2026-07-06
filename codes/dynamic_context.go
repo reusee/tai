@@ -6,13 +6,17 @@ const TheoryOfDynamicContext = `
 Dynamic context allows the model to request additional files or network resources
 mid-generation by emitting request-context blocks. This enables multi-round context
 expansion but adds latency and complexity. When disabled, the model operates solely
-with the context provided in the initial request, and three components are omitted
-in tandem: the request-context system prompt section that teaches the model how to
-emit request-context blocks, the BlockState decorator that intercepts model output
-for block parsing, and the ProcessRequestContextBlocks call that fetches requested
-resources. All three must be enabled or disabled together to maintain conceptual
-integrity — teaching the model about a capability without parsing its output, or
-parsing output without teaching the model, would be incoherent.
+with the context provided in the initial request, and two request-context-specific
+components are omitted in tandem: the request-context system prompt section that
+teaches the model how to emit request-context blocks, and the
+ProcessRequestContextBlocks call that fetches requested resources. The BlockState
+decorator that intercepts model output for block parsing is shared infrastructure:
+it is activated when either dynamic context or immediate apply is enabled, because
+both features parse structured blocks from streamed output. The request-context
+system prompt and ProcessRequestContextBlocks must still be enabled or disabled
+together to maintain conceptual integrity — teaching the model about a capability
+without parsing its output, or parsing output without teaching the model, would be
+incoherent.
 `
 
 // DynamicContext controls whether request-context block support is enabled.
@@ -33,4 +37,3 @@ func init() {
 func (Module) DynamicContext() DynamicContext {
 	return dynamicContextFlag
 }
-

@@ -60,6 +60,7 @@ func (Module) Generate(
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	dynamicContext DynamicContext,
+	apply Apply,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -182,10 +183,13 @@ func (Module) Generate(
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
 		}
 
-		// Wrap state with BlockState to parse request-context blocks from
-		// model output. See TheoryOfRequestContext and TheoryOfDynamicContext.
+		// Wrap state with BlockState to parse structured blocks from model
+		// output. BlockState is activated when dynamic context (request-context
+		// blocks) or immediate apply (change blocks) is enabled, since both
+		// features intercept blocks from streamed output.
+		// See TheoryOfRequestContext, TheoryOfDynamicContext, and TheoryOfImmediateApply.
 		var blockState *blocks.BlockState
-		if bool(dynamicContext) {
+		if bool(dynamicContext) || bool(apply) {
 			blockState = blocks.NewBlockState(state)
 			state = blockState
 		}
@@ -236,6 +240,15 @@ func (Module) Generate(
 				// ok
 				phase = newPhase
 				state = newState
+
+				// Apply change blocks immediately as they are parsed from
+				// model output. An apply error aborts generation.
+				// See TheoryOfImmediateApply.
+				if bool(apply) {
+					if err := applyChangeBlocks(blockState, root); err != nil {
+						return err
+					}
+				}
 
 				// Check for request-context blocks from model output.
 				// If found, fetch the requested context, append it as user
