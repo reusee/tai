@@ -56,9 +56,6 @@ The "request-context" kind allows you to request additional context needed to co
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
-- Use a distinct, freshly generated random boundary for each block, following the same boundary uniqueness rules as change blocks.
-- The closing :::end marker MUST use the same boundary as the opening :::request-context marker. A line-start :::end with a different boundary is treated as body content, not a closing marker, so the block remains unclosed.
-- **Avoid body-content characters**: Select boundary characters that do not appear anywhere in the block body (the XML tags, file paths, URLs, or patterns between the markers). A body line that starts with ":::end " followed by the same boundary prematurely closes the block and truncates the remaining content. Pick rare, uncommon ideographs absent from any Chinese text in the paths or attributes you are emitting.
 - After emitting a request-context block, stop generating and wait for the system to provide the requested context.
 - Do not include request-context blocks alongside change blocks in the same response. If you need more context, request it first, then emit change blocks in a subsequent response after the context is provided.
 
@@ -78,8 +75,6 @@ I need to discover files matching a pattern...
 :::request-context 骐骎
 <glob pattern="src/**/*.go" />
 :::end 骐骎
-
-Note: The boundaries above are illustrative only. **Never reuse these boundary strings.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
 `
 
 const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources, file listings), emit a request-context block:
@@ -88,14 +83,11 @@ const RequestContextRestatePrompt = `- If you need additional context (file cont
 <fetch addr="..." user-agent="..." referer="..." cookie="..." />
 <glob pattern="..." />
 :::end <random_boundary>
-- Use a distinct, freshly generated random boundary for each request-context block.
-- The closing :::end marker MUST use the same boundary as the opening :::request-context marker; a line-start :::end with a different boundary is treated as body content, not a closing marker.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
-- **Avoid body-content characters**: Pick boundary characters that do not appear anywhere in the block body. A body line starting with ":::end " followed by the same boundary prematurely closes the block, so the boundary ideographs must be absent from the XML tags, paths, URLs, or patterns you emit.
 `
 
 // RequestContextRequest represents a single context request parsed from the block body.

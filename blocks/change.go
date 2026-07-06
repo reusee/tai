@@ -100,11 +100,6 @@ The "change" kind defines code modifications using the boundary block format. Ea
   - ` + "`file-path`" + `: The absolute path to the file being modified.
 - The code body directly follows the XML tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
-- **Boundary uniqueness**: Use a distinct, freshly generated random boundary for each block. Never reuse a boundary string shown in the examples below; the parser matches the first :::end <boundary> marker, so a reused boundary closes the wrong block and corrupts the output.
-- **Boundary matching**: The closing :::end marker MUST use the exact same boundary as the opening :::change marker. A line-start :::end with a different boundary is treated as body content, not a closing marker, so the block remains unclosed. Always reuse the boundary you opened the block with; never copy a boundary from another block or from an example into the closing marker.
-- **Avoid body-content characters**: Select boundary characters that do not appear anywhere in the block body (the code or text between the markers). A body line that starts with ":::end " followed by the same boundary prematurely closes the block and truncates the remaining content. Since the code body is predominantly ASCII, most Han characters are safe; pick rare, uncommon ideographs absent from any Chinese comments, string literals, or documentation within the declaration you are emitting.
-- No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but every marker must start at the beginning of its own line.
-- **Line-start requirement**: Every marker (:::change ... and :::end ...) MUST start at the beginning of its own line. Never glue a marker to the end of a prose line; always start it on a new line.
 
 **Example:**
 
@@ -133,8 +128,6 @@ These changes should resolve the issue.
 :::finish 桀骥
 Fixed the Foo function, removed the unused Bar function, and rewrote the config file.
 :::end 桀骥
-
-Note: Each block above uses a distinct boundary (徕珑, 栢彣, 瑱魃, 桀骥) for illustration only. **Never reuse these or any boundary string that appears in this prompt.** Generate a fresh random pair of two uncommon, meaningless Chinese characters for every block.
 `
 
 const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with an XML metadata tag:
@@ -143,17 +136,11 @@ const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use 
 <complete code>
 :::end <random_boundary>
 
-- Generate a boundary string of two random uncommon meaningless Chinese characters for each block. Each block in the response MUST use a distinct boundary.
-- **Never reuse a boundary string that appears in the system prompt examples** (such as 徕珑, 栢彣, 瑱魃, or 桀骥). Reusing an example boundary causes the parser to close the wrong block. Always generate a fresh random pair that does not appear anywhere in this prompt.
-- **Boundary matching**: The closing :::end marker MUST use the exact same boundary as the opening :::change marker. A line-start :::end with a different boundary is treated as body content, not a closing marker, so the block remains unclosed. Always close a block with the same boundary you opened it with.
-- **Avoid body-content characters**: Pick boundary characters that do not appear anywhere in the block body. A body line starting with ":::end " followed by the same boundary prematurely closes the block, so the boundary ideographs must be absent from the code/text you emit. Choose rare, uncommon Han characters that do not occur in Chinese comments, string literals, or documentation within the declaration.
 - The metadata is a self-closing XML tag: ` + "`<change op=\"...\" target=\"...\" file-path=\"...\" />`" + `
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`" + `target` + "`" + ` is the new file path; the code block is ignored.
 - For WRITE, ` + "`" + `target` + "`" + ` is ignored; the code body is the complete new file content.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
-- No blank lines are required before or after the code body, nor before or after a block.
-- **Line-start requirement**: Each marker (:::change ... and :::end ...) MUST start at the beginning of its own line. Never append a marker to the end of a prose line; always start it on a new line after a newline.
 - If no changes are needed, omit all change blocks.
 `
