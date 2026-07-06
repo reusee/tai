@@ -14,6 +14,10 @@ intercepting text parts appended by the model to extract structured blocks (e.g.
 and finish blocks) without losing non-block prose. Parsed blocks are buffered and can be
 read or drained for downstream processing while generation continues.
 
+Only Text parts are collected into the parse buffer; Thought parts (model reasoning) are
+explicitly excluded because they may contain illustrative block markers that are not actual
+block output, and parsing them would produce spurious blocks.
+
 The parser is incremental: each AppendContent call appends new text to an internal buffer
 and re-attempts to parse complete blocks. A block is only complete when a matching
 :::end <boundary> marker is found at line start. A line-start :::end with a different
@@ -59,7 +63,10 @@ var _ generators.State = (*BlockState)(nil)
 
 // AppendContent passes content to the upstream state and extracts text parts
 // from model-generated content (assistant or model role) for incremental block
-// parsing. An unclosed (incomplete) block is kept in the buffer for later chunks.
+// parsing. Thought parts are intentionally excluded: they represent model
+// reasoning that may contain illustrative block markers, not actual block
+// output, so parsing them would produce spurious blocks. An unclosed
+// (incomplete) block is kept in the buffer for later chunks.
 func (s *BlockState) AppendContent(content *generators.Content) (generators.State, error) {
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
@@ -72,6 +79,12 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		for _, part := range content.Parts {
+			// Thoughts are model reasoning, not block output. They may
+			// contain illustrative block markers that must not be parsed
+			// as real blocks. See TheoryOfBlockState.
+			if _, ok := part.(generators.Thought); ok {
+				continue
+			}
 			if text, ok := part.(generators.Text); ok {
 				s.buf = append(s.buf, string(text)...)
 			}

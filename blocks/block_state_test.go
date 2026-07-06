@@ -150,6 +150,49 @@ func TestBlockStateIgnoresUserRole(t *testing.T) {
 	}
 }
 
+func TestBlockStateIgnoresThoughts(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// A Thought part containing complete block markers must not produce
+	// a block, because thoughts are model reasoning, not block output.
+	content := &generators.Content{
+		Role: generators.RoleAssistant,
+		Parts: []generators.Part{
+			generators.Thought(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"),
+		},
+	}
+	if _, err := state.AppendContent(content); err != nil {
+		t.Fatal(err)
+	}
+	if blocks := state.PopBlocks(); len(blocks) != 0 {
+		t.Fatalf("expected 0 blocks from thought part, got %d", len(blocks))
+	}
+	if pending := state.PendingText(); pending != "" {
+		t.Fatalf("expected empty buffer, got %q", pending)
+	}
+
+	// A Text part following a Thought part must still be parsed normally,
+	// and the Thought's block markers must not combine with the Text.
+	content2 := &generators.Content{
+		Role: generators.RoleAssistant,
+		Parts: []generators.Part{
+			generators.Thought(":::change 栢彣\nbody\n:::end 栢彣\n"),
+			generators.Text(":::change 瑱魃\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\" />\n\nfunc Bar() {}\n:::end 瑱魃\n"),
+		},
+	}
+	if _, err := state.AppendContent(content2); err != nil {
+		t.Fatal(err)
+	}
+	blocks := state.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block from text part, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "change" || blocks[0].Boundary != "瑱魃" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	}
+}
+
 func TestBlockStatePendingText(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	state := NewBlockState(upstream)
