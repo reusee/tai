@@ -24,6 +24,7 @@ const (
 Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
 The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
 Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
+Comment deletion does not affect import usage, so goimports is skipped for comment-only transforms to avoid redundant parsing.
 Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
 File ordering (see FileOrderingTheory in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
 
@@ -344,6 +345,11 @@ type Transform struct {
 	DeleteComments      bool
 	DeleteFunctionBody  bool
 	DeleteFile          bool
+
+	// SkipImports skips goimports processing when the transform cannot
+	// change import usage (e.g., comment deletion), avoiding redundant
+	// parsing and formatting overhead.
+	SkipImports bool
 }
 
 func makeTransforms() (ops []*Transform) {
@@ -357,6 +363,7 @@ func makeTransforms() (ops []*Transform) {
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot: new(false),
 		DeleteComments:    true,
+		SkipImports:       true,
 	})
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot:  new(false),
@@ -374,6 +381,7 @@ func makeTransforms() (ops []*Transform) {
 		MatchModuleIsRoot:  new(true),
 		MatchPackageIsRoot: new(false),
 		DeleteComments:     true,
+		SkipImports:        true,
 	})
 	ops = append(ops, &Transform{
 		MatchModuleIsRoot:  new(true),
@@ -418,6 +426,10 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 		// Pending must be confirmed before calling applyTransform
 		panic("pending is not null")
 	}
+
+	// Capture skipImports before the formatting defer runs so it is
+	// available even after f.Transform is set to nil by a later defer.
+	skipImports := f.Transform.SkipImports
 	defer func() {
 		if f.Pending == nil {
 			return
@@ -425,7 +437,7 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 		var content string
 		if f.Pending.Ast != nil {
 			buf := new(bytes.Buffer)
-			if err := formatASTForPrompt(buf, f.Pending.Ast, fset, f.PackageIsRoot, f.Path); err != nil {
+			if err := formatASTForPrompt(buf, f.Pending.Ast, fset, f.PackageIsRoot, f.Path, skipImports); err != nil {
 				panic(err)
 			}
 			content = buf.String()

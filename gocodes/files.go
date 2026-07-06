@@ -145,6 +145,13 @@ func (Module) Files(
 		}
 		allPkgs := append(rootPkgs, contextPkgs...)
 
+		// rootPkgSet provides O(1) root package membership checks, replacing
+		// O(n) slices.Contains calls that would dominate with many packages/files.
+		rootPkgSet := make(map[*packages.Package]bool, len(rootPkgs))
+		for _, pkg := range rootPkgs {
+			rootPkgSet[pkg] = true
+		}
+
 		// root modules
 		rootModulePaths := make(map[string]bool)
 		for _, pkg := range allPkgs {
@@ -212,7 +219,7 @@ func (Module) Files(
 				panic(fmt.Errorf("package not found for file %s", file.TokenFile.Name()))
 			}
 			file.Package = pkg
-			file.PackageIsRoot = slices.Contains(rootPkgs, file.Package)
+			file.PackageIsRoot = rootPkgSet[file.Package]
 			file.PackageDistanceFromRoot = packageDistanceFromRoot[file.Package]
 			file.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
 			file.Module = file.Package.Module
@@ -303,46 +310,76 @@ func (Module) Files(
 			sortedNonGoPaths = append(sortedNonGoPaths, path)
 		}
 		slices.SortStableFunc(sortedNonGoPaths, cmp.Compare)
-		for _, path := range sortedNonGoPaths {
-			pkg := nonGoFilePaths[path]
-			content, err := os.ReadFile(path)
-			if err != nil {
-				logger.Warn("cannot read non-go file", "path", path, "error", err)
-				continue
-			}
-			info, _ := os.Stat(path)
 
-			// check if text file
-			mime := mimetype.Detect(content)
-			if !strings.HasPrefix(mime.String(), "text/") {
-				if mime.String() == "application/octet-stream" {
-					// unknown, check for null bytes
-					if bytes.Contains(content, []byte{0}) {
-						continue // binary
-					}
-				} else {
-					// not text
-					continue
+		// Read non-Go files in parallel to reduce I/O latency.
+		// Results are stored in an indexed slice to preserve the sorted order
+		// established by sortedNonGoPaths, ensuring deterministic output.
+		nonGoResults := make([]*File, len(sortedNonGoPaths))
+		var nonGoWg sync.WaitGroup
+		nonGoSem := make(chan struct{}, 16) // bounded concurrency for I/O-bound work
+
+		for i, path := range sortedNonGoPaths {
+			nonGoWg.Add(1)
+			nonGoSem <- struct{}{}
+			go func(i int, path string) {
+				defer nonGoWg.Done()
+				defer func() { <-nonGoSem }()
+
+				pkg := nonGoFilePaths[path]
+				content, err := os.ReadFile(path)
+				if err != nil {
+					logger.Warn("cannot read non-go file", "path", path, "error", err)
+					return
 				}
-			}
+				info, _ := os.Stat(path)
 
-			f := &File{
-				Path:                    path,
-				IsGoFile:                false,
-				Content:                 content,
-				Package:                 pkg,
-				PackageIsRoot:           slices.Contains(rootPkgs, pkg),
-				PackageDistanceFromRoot: packageDistanceFromRoot[pkg],
-				PackagePathDepth:        len(strings.Split(pkg.PkgPath, "/")),
-				Module:                  pkg.Module,
-				ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
-				ModuleIsNil:             pkg.Module == nil,
-				transformCond:           sync.NewCond(new(sync.Mutex)),
+				// check if text file
+				mime := mimetype.Detect(content)
+				if !strings.HasPrefix(mime.String(), "text/") {
+					if mime.String() == "application/octet-stream" {
+						// unknown, check for null bytes.
+						// Only scan the first 8KB: text files never contain null
+						// bytes and binary files have them in the first few
+						// bytes, so scanning the full content is wasteful for
+						// large text files.
+						checkLen := len(content)
+						if checkLen > 8192 {
+							checkLen = 8192
+						}
+						if bytes.Contains(content[:checkLen], []byte{0}) {
+							return // binary
+						}
+					} else {
+						// not text
+						return
+					}
+				}
+
+				f := &File{
+					Path:                    path,
+					IsGoFile:                false,
+					Content:                 content,
+					Package:                 pkg,
+					PackageIsRoot:           rootPkgSet[pkg],
+					PackageDistanceFromRoot: packageDistanceFromRoot[pkg],
+					PackagePathDepth:        len(strings.Split(pkg.PkgPath, "/")),
+					Module:                  pkg.Module,
+					ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
+					ModuleIsNil:             pkg.Module == nil,
+					transformCond:           sync.NewCond(new(sync.Mutex)),
+				}
+				if info != nil {
+					f.ModTime = info.ModTime()
+				}
+				nonGoResults[i] = f
+			}(i, path)
+		}
+		nonGoWg.Wait()
+
+		for _, f := range nonGoResults {
+			if f != nil {
+				files = append(files, f)
 			}
-			if info != nil {
-				f.ModTime = info.ModTime()
-			}
-			files = append(files, f)
 		}
 
 		// sort
@@ -428,7 +465,15 @@ func (Module) Files(
 	})
 }
 
-func formatASTForPrompt(w io.Writer, fileAST *ast.File, fset *token.FileSet, isRoot bool, path string) error {
+// formatBufPool reuses bytes.Buffer instances across concurrent transform
+// workers to reduce GC pressure during the simplification pipeline.
+var formatBufPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+func formatASTForPrompt(w io.Writer, fileAst *ast.File, fset *token.FileSet, isRoot bool, path string, skipImports bool) error {
 	if isRoot {
 		_, err := fmt.Fprint(w, "``` begin of focus file "+path+"\n")
 		if err != nil {
@@ -441,15 +486,27 @@ func formatASTForPrompt(w io.Writer, fileAST *ast.File, fset *token.FileSet, isR
 		}
 	}
 
-	buf := new(bytes.Buffer)
-	err := format.Node(buf, fset, fileAST)
+	buf := formatBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer formatBufPool.Put(buf)
+
+	err := format.Node(buf, fset, fileAst)
 	if err != nil {
 		panic(err)
 	}
-	res, err := imports.Process(path, buf.Bytes(), nil)
-	if err != nil {
+
+	var res []byte
+	if skipImports {
+		// Comment deletion does not change import usage, so goimports
+		// would be a no-op. Skip it to avoid redundant parsing.
 		res = buf.Bytes()
+	} else {
+		res, err = imports.Process(path, buf.Bytes(), nil)
+		if err != nil {
+			res = buf.Bytes()
+		}
 	}
+
 	_, err = w.Write(res)
 	if err != nil {
 		return err
@@ -512,4 +569,3 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 
 	return nil
 }
-
