@@ -18,6 +18,8 @@ context or immediate apply is enabled, because both features parse structured
 blocks from streamed output. An apply error aborts generation immediately so the
 user can inspect the partial state and the failing hunk rather than continuing
 to produce changes that build on a broken foundation.
+Immediate apply is enabled by default; the -no-apply flag disables it so change
+blocks are not applied to the working tree during generation.
 `
 
 // Apply controls whether change blocks are applied to the working tree
@@ -27,12 +29,12 @@ to produce changes that build on a broken foundation.
 // An apply error aborts generation. See TheoryOfImmediateApply.
 type Apply bool
 
-var applyFlag Apply
+var applyFlag Apply = true
 
 func init() {
-	cmds.Define("-apply", cmds.Func(func() {
-		applyFlag = true
-	}))
+	cmds.Define("-no-apply", cmds.Func(func() {
+		applyFlag = false
+	}).Desc("disable immediate apply of change blocks"))
 }
 
 func (Module) Apply() Apply {
