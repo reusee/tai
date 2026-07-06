@@ -292,3 +292,37 @@ func TestBlockStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 		t.Fatalf("expected 0 blocks for orphan end marker after flush, got %d", len(blocks))
 	}
 }
+
+func TestBlockStateEndMarkerNoTrailingNewline(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	state := NewBlockState(upstream)
+
+	// The end marker is at the very end without a trailing newline.
+	// The block should be parsed correctly during streaming.
+	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑"
+	if _, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := state.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	}
+	if !contains(blocks[0].Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", blocks[0].Body)
+	}
+	if contains(blocks[0].Body, ":::end") {
+		t.Fatalf("body should not contain the end marker: %q", blocks[0].Body)
+	}
+
+	// No pending text should remain after a fully parsed block.
+	if pending := state.PendingText(); pending != "" {
+		t.Fatalf("expected empty pending text, got %q", pending)
+	}
+}

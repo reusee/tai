@@ -179,3 +179,95 @@ func TestParseFirstBlockTrailingBoundaryContent(t *testing.T) {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
 }
+
+func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
+	// End marker at the very end of content without a trailing newline.
+	// The block should be correctly parsed during streaming (non-final).
+	// Before the fix, this returned a BlockParseError because the parser
+	// could not locate the end of the closing marker line without a newline.
+	content := []byte(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑")
+	block, _, end, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %s", block.Kind)
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
+	}
+	if strings.Contains(block.Body, ":::end") {
+		t.Fatalf("body should not contain the end marker: %q", block.Body)
+	}
+	if end != len(content) {
+		t.Fatalf("expected end %d, got %d", len(content), end)
+	}
+}
+
+func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
+	// Two blocks, the second ending without a trailing newline.
+	content := []byte(":::change 徕珑\nfunc Foo() {}\n:::end 徕珑\n:::change 栢彣\nfunc Bar() {}\n:::end 栢彣")
+
+	// First block
+	block, _, end, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error for first block: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected first block to be found")
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected first boundary 徕珑, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("first body should contain code: %q", block.Body)
+	}
+
+	// Second block (from remaining content after first block)
+	remaining := content[end:]
+	block2, _, end2, ok2, err2 := ParseFirstBlock(remaining)
+	if err2 != nil {
+		t.Fatalf("unexpected error for second block: %v", err2)
+	}
+	if !ok2 {
+		t.Fatal("expected second block to be found")
+	}
+	if block2.Boundary != "栢彣" {
+		t.Fatalf("expected second boundary 栢彣, got %s", block2.Boundary)
+	}
+	if !strings.Contains(block2.Body, "func Bar() {}") {
+		t.Fatalf("second body should contain code: %q", block2.Body)
+	}
+	if strings.Contains(block2.Body, ":::end") {
+		t.Fatalf("second body should not contain end marker: %q", block2.Body)
+	}
+	if end2 != len(remaining) {
+		t.Fatalf("expected second end %d, got %d", len(remaining), end2)
+	}
+}
+
+func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
+	// A non-matching end marker at the end without a trailing newline.
+	// The block should remain unclosed because no matching :::end exists.
+	content := []byte(":::change 徕珑\nbody\n:::end 栢彣")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block with non-matching end marker at EOF")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed block")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+}

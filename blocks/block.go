@@ -40,6 +40,10 @@ different boundary is treated as body content, not a closing marker, because the
 legitimately contain example end markers or other text that starts with ":::end ". The
 parser does not report a mismatched-boundary error; it simply continues scanning for the
 matching boundary. If no matching :::end <boundary> is found, the block is unclosed.
+The closing marker line does not require a trailing newline: when the end marker is the
+last content in the buffer, the boundary is extracted from the remaining content. If the
+boundary is incomplete (still streaming), the shorter extracted string will not match, so
+the block remains unclosed until the full boundary arrives.
 
 Therefore the boundary must be a freshly generated random pair of uncommon, meaningless
 Chinese characters, never copied from the illustrative examples. The example blocks in the
@@ -189,13 +193,17 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 			// Extract the boundary from this end marker line.
 			lineContentStart := candidate + len(endMarkerPrefix)
 			lineEndOffset := bytes.IndexByte(content[lineContentStart:], '\n')
+			var endLine string
 			if lineEndOffset == -1 {
-				// The end marker line is incomplete (no newline yet).
-				// During streaming this may be a fragment, so treat it
-				// as incomplete rather than a definitive match.
-				break
+				// The end marker is the last line without a trailing newline.
+				// Extract the boundary from the remaining content. If the
+				// boundary is incomplete (still streaming), extractHanBoundary
+				// returns a shorter string that won't match, so this is safe.
+				// See TheoryOfBoundaryUniqueness.
+				endLine = string(content[lineContentStart:])
+			} else {
+				endLine = string(content[lineContentStart : lineContentStart+lineEndOffset])
 			}
-			endLine := string(content[lineContentStart : lineContentStart+lineEndOffset])
 			endBoundary := extractHanBoundary(endLine)
 			if endBoundary == boundary {
 				validEnd = candidate
@@ -203,14 +211,18 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 			}
 			// A line-start :::end with a different boundary is body
 			// content. Continue scanning for the matching boundary.
+			if lineEndOffset == -1 {
+				// No more content to scan; stop searching.
+				break
+			}
 			searchEndFrom = lineContentStart + lineEndOffset + 1
 		}
 		if validEnd == -1 {
 			if final {
 				// At Flush, treat an unclosed block as ended: the body is
 				// all remaining buffered content after the opening line, and
-				// the entire buffer is consumed so post-flush content does
-				// not combine with pre-flush content. See TheoryOfBlockState.
+				// the entire buffer is consumed so post-flush content does not
+				// combine with pre-flush content. See TheoryOfBlockState.
 				block.Body = strings.TrimSpace(string(content[bodyStart:]))
 				start = blockStart
 				end = len(content)
