@@ -284,74 +284,93 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	type rangeItem struct {
 		start, end int
 		body       string
+		isPrimary  bool
 	}
 	var items []rangeItem
-	items = append(items, rangeItem{start: start, end: end, body: finalBody})
+	items = append(items, rangeItem{start: start, end: end, body: finalBody, isPrimary: true})
 
 	// Detect and remove other occurrences of entities present in the hunk body
 	// to prevent duplication when a hunk contains multiple declarations (e.g. Type + Methods).
 	if bodyInfo != nil && bodyInfo.entityCount() > 1 && f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		ids := getIdentifiers(bodyInfo)
+		// Build a delete-range index in a single pass over declarations,
+		// instead of calling findTargetRange (O(D)) for each identifier.
+		deleteRanges := buildDeleteRanges(fset, f, prefixLen)
 		for _, id := range ids {
 			// Skip the primary target or anything that matches it
 			if id == h.Target {
 				continue
 			}
-			// Find range of this identifier in the original file
-			s, e, _, err := findTargetRange(fset, f, codetypes.Hunk{Op: "DELETE", Target: id}, nil, len(src), prefixLen)
-			if err == nil {
-				// Check for overlap with existing items
-				overlap := false
-				for _, item := range items {
-					if (s >= item.start && s < item.end) || (e > item.start && e <= item.end) || (item.start >= s && item.start < e) {
-						overlap = true
-						break
-					}
+			r, ok := deleteRanges[id]
+			if !ok {
+				continue
+			}
+			s, e := r[0], r[1]
+			// Check for overlap with existing items
+			overlap := false
+			for _, item := range items {
+				if (s >= item.start && s < item.end) || (e > item.start && e <= item.end) || (item.start >= s && item.start < e) {
+					overlap = true
+					break
 				}
-				if !overlap {
-					items = append(items, rangeItem{start: s, end: e, body: ""})
-				}
+			}
+			if !overlap {
+				items = append(items, rangeItem{start: s, end: e, body: "", isPrimary: false})
 			}
 		}
 	}
 
-	// Sort items by start offset descending to apply changes from end to start
+	// Sort items by start offset ascending for the single-pass forward builder.
 	slices.SortStableFunc(items, func(a, b rangeItem) int {
-		return cmp.Compare(b.start, a.start)
+		return cmp.Compare(a.start, b.start)
 	})
 
+	// Only strip package prefix if the body might contain one. If bodyInfo
+	// prepended a "package p\n" prefix (PrefixLen > 0), the body was already
+	// stripped of any package declaration during parsing.
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
+		needStripPackage := bodyInfo == nil || bodyInfo.PrefixLen == 0
 		for i := range items {
-			if items[i].body != "" {
+			if items[i].body != "" && needStripPackage {
 				items[i].body = stripPackage(items[i].body)
 			}
 		}
 	}
 
-	var newSrc []byte
-	newSrc = src
+	// Build the result in a single forward pass over the original source.
+	// Items are non-overlapping (guaranteed by the overlap check above) and
+	// sorted ascending by start, so each edit operates on a distinct range.
+	// This avoids repeated O(n) slice copies that the previous end-to-start
+	// in-place append approach incurred for each item.
+	newSrc := make([]byte, 0, len(src))
+	pos := 0
 	for _, item := range items {
-		if item.start == start && item.end == end {
-			// primary target
+		if item.start < pos {
+			continue // skip overlapping edits (shouldn't happen due to overlap check)
+		}
+		newSrc = append(newSrc, src[pos:item.start]...)
+		if item.isPrimary {
 			switch h.Op {
 			case "MODIFY":
 				body := item.body
 				if h.Target == "BEGIN" && item.end < len(src) && !strings.HasSuffix(body, "\n") {
 					body += "\n"
 				}
-				newSrc = append(newSrc[:item.start], append([]byte(body), newSrc[item.end:]...)...)
+				newSrc = append(newSrc, []byte(body)...)
 			case "DELETE":
-				newSrc = append(newSrc[:item.start], newSrc[item.end:]...)
+				// no content added
 			case "ADD_BEFORE":
-				newSrc = append(newSrc[:item.start], append([]byte(item.body+"\n\n"), newSrc[item.start:]...)...)
+				newSrc = append(newSrc, []byte(item.body+"\n\n")...)
+				newSrc = append(newSrc, src[item.start:item.end]...)
 			case "ADD_AFTER":
-				newSrc = append(newSrc[:item.end], append([]byte("\n\n"+item.body), newSrc[item.end:]...)...)
+				newSrc = append(newSrc, src[item.start:item.end]...)
+				newSrc = append(newSrc, []byte("\n\n"+item.body)...)
 			}
-		} else {
-			// other entities found in hunk body: delete them from their original locations
-			newSrc = append(newSrc[:item.start], newSrc[item.end:]...)
 		}
+		// Non-primary items are deletions: no content added.
+		pos = item.end
 	}
+	newSrc = append(newSrc, src[pos:]...)
 
 	outputSrc := newSrc
 	outputPrefixLen := 0
@@ -663,6 +682,88 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 		}
 	}
 	return nil, nil, false
+}
+
+// buildDeleteRanges builds a map from declaration name to the byte range
+// that would be removed by a DELETE operation. This allows the duplicate
+// detection in applyHunk to look up ranges in O(1) per identifier instead
+// of calling findTargetRange (O(D) per identifier) for each one.
+// The range logic mirrors findTargetRange's DELETE path: for a spec in a
+// multi-spec GenDecl, only the spec range is returned; for a single-spec
+// GenDecl, the entire GenDecl range is returned.
+func buildDeleteRanges(fset *token.FileSet, f *ast.File, prefixLen int) map[string][2]int {
+	ranges := make(map[string][2]int)
+	if f == nil {
+		return ranges
+	}
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			start := fset.Position(getActualPos(d)).Offset - prefixLen
+			end := fset.Position(d.End()).Offset - prefixLen
+			r := [2]int{start, end}
+			ranges[d.Name.Name] = r
+			if d.Recv != nil && len(d.Recv.List) > 0 {
+				recv := d.Recv.List[0].Type
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv = star.X
+				}
+				if ident, ok := recv.(*ast.Ident); ok {
+					ranges[ident.Name+"."+d.Name.Name] = r
+					ranges["*"+ident.Name+"."+d.Name.Name] = r
+				}
+			}
+		case *ast.GenDecl:
+			if d.Tok == token.IMPORT {
+				continue
+			}
+			if len(d.Specs) > 1 {
+				for _, spec := range d.Specs {
+					var names []string
+					var node ast.Node
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						names = []string{s.Name.Name}
+						node = s
+					case *ast.ValueSpec:
+						for _, n := range s.Names {
+							names = append(names, n.Name)
+						}
+						node = s
+					}
+					if node == nil {
+						continue
+					}
+					start := fset.Position(getActualPos(node)).Offset - prefixLen
+					end := fset.Position(node.End()).Offset - prefixLen
+					r := [2]int{start, end}
+					for _, n := range names {
+						ranges[n] = r
+					}
+				}
+			} else if len(d.Specs) == 1 {
+				var names []string
+				switch s := d.Specs[0].(type) {
+				case *ast.TypeSpec:
+					names = []string{s.Name.Name}
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						names = append(names, n.Name)
+					}
+				}
+				if len(names) == 0 {
+					continue
+				}
+				start := fset.Position(getActualPos(d)).Offset - prefixLen
+				end := fset.Position(d.End()).Offset - prefixLen
+				r := [2]int{start, end}
+				for _, n := range names {
+					ranges[n] = r
+				}
+			}
+		}
+	}
+	return ranges
 }
 
 // getHunkBodyNameFromInfo extracts the primary entity name from a parsed

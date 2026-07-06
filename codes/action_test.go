@@ -477,3 +477,52 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 		run(t, finishBlock+"\n"+changeBlock)
 	})
 }
+
+func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\n" +
+		"type Foo struct {\n\tBar int\n}\n\n" +
+		"func (f *Foo) GetBar() int {\n\treturn f.Bar\n}\n\n" +
+		"func (f *Foo) SetBar(b int) {\n\tf.Bar = b\n}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := "type Foo struct {\n\tBar int\n\tBaz int\n}\n\n" +
+		"func (f *Foo) GetBar() int {\n\treturn f.Bar\n}\n\n" +
+		"func (f *Foo) SetBar(b int) {\n\tf.Bar = b\n}\n"
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "Foo",
+		FilePath: "test.go",
+		Body:     body,
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+
+	if !strings.Contains(resultStr, "Baz int") {
+		t.Fatalf("result should contain Baz field:\n%s", resultStr)
+	}
+	if count := strings.Count(resultStr, "type Foo struct"); count != 1 {
+		t.Fatalf("expected 1 Foo type, got %d:\n%s", count, resultStr)
+	}
+	if count := strings.Count(resultStr, "func (f *Foo) GetBar()"); count != 1 {
+		t.Fatalf("expected 1 GetBar method, got %d:\n%s", count, resultStr)
+	}
+	if count := strings.Count(resultStr, "func (f *Foo) SetBar(b int)"); count != 1 {
+		t.Fatalf("expected 1 SetBar method, got %d:\n%s", count, resultStr)
+	}
+}

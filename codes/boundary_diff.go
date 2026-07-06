@@ -11,6 +11,14 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
+const TheoryOfBatchDiffWrite = `
+The diff file is mutated in memory as change blocks are applied and persisted only once
+at the end of processing (or on early exit), rather than after every hunk. This reduces
+I/O from O(N*S) to O(S) for N hunks in a file of size S, without changing the on-disk
+result: applied change blocks are removed and non-change blocks (e.g., finish summaries)
+are preserved exactly as before.
+`
+
 // BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.
 // Changes are wrapped in :::change <boundary> / :::end <boundary> blocks, where the boundary
 // is a random string chosen by the AI to prevent parsing conflicts with code content.
@@ -45,10 +53,27 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				return
 			}
 		}
+
+		// writeDiff persists the current in-memory content to the diff file.
+		// Called once at the end of processing instead of after every hunk,
+		// reducing I/O from O(N*S) to O(S) for N hunks in a file of size S.
+		// See TheoryOfBatchDiffWrite.
+		writeDiff := func() error {
+			trimmed := bytes.TrimSpace(content)
+			if err := root.WriteFile(diffFilePath, trimmed, 0644); err != nil {
+				return os.WriteFile(diffFilePath, trimmed, 0644)
+			}
+			return nil
+		}
+
+		modified := false
 		cursor := 0
 		for {
 			block, relStart, relEnd, ok, err := blocks.ParseFirstBlock(content[cursor:])
 			if err != nil {
+				if modified {
+					writeDiff()
+				}
 				yield(codetypes.Hunk{}, err)
 				return
 			}
@@ -73,30 +98,25 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				continue
 			}
 			if err := applyHunk(root, h); err != nil {
+				if modified {
+					writeDiff()
+				}
 				yield(h, fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err))
 				return
 			}
-			// Remove only the applied change block from the diff file. The
-			// in-memory content is kept untrimmed so block offsets stay
-			// stable for subsequent searches; the persisted file is trimmed
-			// for cleanliness.
-			newContent := append(content[:start], content[end:]...)
-			trimmedContent := bytes.TrimSpace(newContent)
-			if writeErr := root.WriteFile(diffFilePath, trimmedContent, 0644); writeErr != nil {
-				// Fall back to os.WriteFile for absolute paths that
-				// os.Root cannot resolve. See the os.ReadFile fallback
-				// above for rationale.
-				if osErr := os.WriteFile(diffFilePath, trimmedContent, 0644); osErr != nil {
-					yield(codetypes.Hunk{}, osErr)
-					return
-				}
-			}
-			content = newContent
-			// Everything before `start` has already been processed (preserved
-			// non-change blocks or previously removed change blocks), so
-			// resume searching from `start`, clamped to the content length.
+			// Remove the applied change block from in-memory content; the
+			// disk write is deferred to the end of processing.
+			content = append(content[:start], content[end:]...)
+			modified = true
 			cursor = min(start, len(content))
 			if !yield(h, nil) {
+				writeDiff()
+				return
+			}
+		}
+		if modified {
+			if err := writeDiff(); err != nil {
+				yield(codetypes.Hunk{}, err)
 				return
 			}
 		}
