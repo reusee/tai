@@ -177,7 +177,11 @@ func (Module) Generate(
 				},
 			},
 		)
-		state = generators.NewOutput(state, output, bool(flagThoughts))
+		showThoughts := true
+		if flagThoughts != nil {
+			showThoughts = *flagThoughts
+		}
+		state = generators.NewOutput(state, output, showThoughts)
 		if args.DisableTools != nil && !*args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
