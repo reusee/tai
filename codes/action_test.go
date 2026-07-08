@@ -526,3 +526,82 @@ func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
 		t.Fatalf("expected 1 SetBar method, got %d:\n%s", count, resultStr)
 	}
 }
+
+func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	assertSingleTrailingNewline := func(t *testing.T, content []byte) {
+		t.Helper()
+		if len(content) == 0 {
+			t.Fatal("content is empty")
+		}
+		if content[len(content)-1] != '\n' {
+			t.Fatalf("content must end with '\\n', got: %q", string(content))
+		}
+		if len(content) >= 2 && content[len(content)-2] == '\n' {
+			t.Fatalf("content must end with exactly one '\\n', got: %q", string(content))
+		}
+	}
+
+	t.Run("Modify", func(t *testing.T) {
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("modify.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := codetypes.Hunk{
+			Op:       "MODIFY",
+			Target:   "Old",
+			FilePath: "modify.go",
+			Body:     "func New() {}",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		result, err := root.ReadFile("modify.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSingleTrailingNewline(t, result)
+	})
+
+	t.Run("WriteGo", func(t *testing.T) {
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "write.go",
+			Body:     "package x\n\nfunc New() {}\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		result, err := root.ReadFile("write.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSingleTrailingNewline(t, result)
+	})
+
+	t.Run("WriteNonGo", func(t *testing.T) {
+		h := codetypes.Hunk{
+			Op:       "WRITE",
+			FilePath: "readme.md",
+			Body:     "# Title\n\nContent\n",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		result, err := root.ReadFile("readme.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSingleTrailingNewline(t, result)
+	})
+}

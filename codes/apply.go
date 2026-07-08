@@ -24,6 +24,9 @@ producing invalid code inside the parentheses. The inserted body must remain a c
 self-contained declaration so the resulting source is valid Go.
 WRITE bypasses declaration-level parsing and replaces the entire file content. Go files
 are still processed through goimports to keep imports synchronized after full replacement.
+Final output normalization ensures every written file ends with exactly one trailing
+newline, matching the convention enforced by go fmt. This replaces the prior use of
+bytes.TrimSpace which stripped the trailing newline entirely.
 `
 
 type BodyInfo struct {
@@ -157,6 +160,18 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 	return ""
 }
 
+// finalizeContent ensures content ends with exactly one trailing newline,
+// matching the convention enforced by go fmt. goimports output already ends
+// with a single '\n', but bytes.TrimSpace was stripping it, producing files
+// that did not end with a newline — inconsistent with go fmt.
+func finalizeContent(content []byte) []byte {
+	trimmed := bytes.TrimRight(content, "\r\n")
+	if len(trimmed) == 0 {
+		return nil
+	}
+	return append(trimmed, '\n')
+}
+
 func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
@@ -216,7 +231,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			}
 			content = formatted
 		}
-		return root.WriteFile(path, bytes.TrimSpace(content), 0644)
+		return root.WriteFile(path, finalizeContent(content), 0644)
 	}
 
 	src, err := root.ReadFile(path) // Use os.Root for safe reading
@@ -391,7 +406,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			return err
 		}
 	}
-	return root.WriteFile(path, bytes.TrimSpace(formatted), 0644) // Use os.Root for safe writing
+	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
 }
 
 func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
