@@ -3,6 +3,6 @@ package modes
 type Mode int
 
 var (
-	ModeDevelopment Mode = 0
-	ModeProduction  Mode = 1
+	ModeProduction  Mode = 0
+	ModeDevelopment Mode = 1
 )
