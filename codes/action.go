@@ -7,7 +7,6 @@ import (
 	"go/scanner"
 	"go/token"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/taiconfigs"
@@ -83,8 +82,6 @@ func expandGoExprs(s string, env *taivm.Env) string {
 
 type Chats map[string]string
 
-var noChat = cmds.Switch("-no-chat")
-
 func (Module) Chats(
 	loader configs.Loader,
 ) Chats {
@@ -113,3 +110,4 @@ func (Module) ActionArgument(
 
 	return arg
 }
+

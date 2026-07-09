@@ -234,11 +234,7 @@ func (Module) Generate(
 				}
 				tap(ctx, "codes generate error", globals)
 
-				// let user determine what to do
-				if *noChat {
-					return phaseErr
-				}
-				phase = buildChat(generator, nil)(phase)
+				return phaseErr
 
 			} else {
 				// ok
@@ -269,11 +265,7 @@ func (Module) Generate(
 						if requestContextRounds > maxRequestContextRounds {
 							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
 						}
-						var next phases.Phase
-						if !*noChat {
-							next = buildChat(generator, nil)(nil)
-						}
-						phase = actionChat.BuildGenerate()(generator, nil)(next)
+						phase = actionChat.BuildGenerate()(generator, nil)(nil)
 					}
 				}
 			}
