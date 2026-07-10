@@ -63,6 +63,10 @@ type FuncCall struct {
 	Name      string
 	Arguments map[string]any
 	Origin    any
+
+	// Handled is set to true by a FuncMap layer after the function has been
+	// executed, so that inner layers skip it and avoid double execution.
+	Handled bool
 }
 
 func (FuncCall) isPart() {}

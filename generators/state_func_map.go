@@ -48,17 +48,18 @@ var _ State = FuncMap{}
 
 func (f FuncMap) AppendContent(content *Content) (State, error) {
 	ret := f // copy
-	var err error
-	ret.upstream, err = f.upstream.AppendContent(content)
-	if err != nil {
-		return ret, err
-	}
 
-	// call
+	// Process function calls in this layer BEFORE passing to upstream.
+	// This ensures outer layers take precedence over inner layers and
+	// prevents double execution when multiple FuncMap layers are stacked.
 	var results []Part
-	for _, part := range content.Parts {
+	for i, part := range content.Parts {
 		call, ok := part.(FuncCall)
 		if !ok {
+			continue
+		}
+		// Skip calls already handled by an outer layer.
+		if call.Handled {
 			continue
 		}
 		fn, ok := f.m[call.Name]
@@ -79,8 +80,20 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 			Name:    call.Name,
 			Results: res,
 		})
+
+		// Mark the call as handled so inner layers skip it.
+		call.Handled = true
+		content.Parts[i] = call
 	}
 
+	// Pass the (possibly modified) content to upstream.
+	var err error
+	ret.upstream, err = f.upstream.AppendContent(content)
+	if err != nil {
+		return ret, err
+	}
+
+	// Append results after upstream has recorded the call.
 	if len(results) > 0 {
 		ret.upstream, err = ret.upstream.AppendContent(&Content{
 			Role:  RoleTool,
