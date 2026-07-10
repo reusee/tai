@@ -3259,6 +3259,37 @@ func TestVM_Slice_NegativeStep(t *testing.T) {
 	}
 }
 
+func TestVM_Slice_NegativeStep_StopBeyondLength(t *testing.T) {
+	l := &List{Elements: []any{0, 1, 2, 3, 4}}
+	// a[2:10:-1] should return [2,1,0]
+	vm := NewVM(&Function{
+		Constants: []any{l, 2, 10, -1},
+		Code: []OpCode{
+			OpLoadConst.With(0),
+			OpLoadConst.With(1),
+			OpLoadConst.With(2),
+			OpLoadConst.With(3),
+			OpGetSlice,
+			OpReturn,
+		},
+	})
+	for _, err := range vm.Run {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := vm.pop().(*List).Elements
+	expected := []any{2, 1, 0}
+	if len(res) != len(expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+	for i := range res {
+		if res[i] != expected[i] {
+			t.Errorf("index %d: expected %v, got %v", i, expected[i], res[i])
+		}
+	}
+}
+
 func TestVM_Bitwise_Uint(t *testing.T) {
 	cases := []struct {
 		Val      any

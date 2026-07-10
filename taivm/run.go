@@ -752,7 +752,11 @@ func resolveSliceIndices(length int, start, stop, step any) (int, int, int, erro
 		if stepInt > 0 {
 			stopInt = length
 		} else {
-			stopInt = length - 1
+			if stopInt > length {
+				stopInt = -1
+			} else {
+				stopInt = length
+			}
 		}
 	}
 
