@@ -39,6 +39,7 @@ type Gemini struct {
 	Counter   dscope.Inject[GeminiTokenCounter]
 	Logger    dscope.Inject[logs.Logger]
 	Loader    dscope.Inject[configs.Loader]
+	Effort    dscope.Inject[EffortFlag]
 }
 
 var _ Generator = Gemini{}
@@ -95,8 +96,12 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	thinkingConfig := &genai.ThinkingConfig{
 		IncludeThoughts: true,
 	}
-	if g.spec.ReasoningEffort != "" {
-		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(g.spec.ReasoningEffort)
+	reasoningEffort := g.spec.ReasoningEffort
+	if flagEffort := string(g.Effort()); flagEffort != "" {
+		reasoningEffort = flagEffort
+	}
+	if reasoningEffort != "" {
+		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(reasoningEffort)
 	} else {
 		// set budget from max output tokens
 		var maxThinkingTokens *int32

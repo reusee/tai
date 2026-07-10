@@ -31,6 +31,7 @@ type OpenAI struct {
 	Logger               dscope.Inject[logs.Logger]
 	Tap                  dscope.Inject[debugs.Tap]
 	Loader               dscope.Inject[configs.Loader]
+	Effort               dscope.Inject[EffortFlag]
 }
 
 var _ Generator = new(OpenAI)
@@ -131,8 +132,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
 	}
-	if o.spec.ReasoningEffort != "" {
-		req.ReasoningEffort = o.spec.ReasoningEffort
+	reasoningEffort := o.spec.ReasoningEffort
+	if flagEffort := string(o.Effort()); flagEffort != "" {
+		reasoningEffort = flagEffort
+	}
+	if reasoningEffort != "" {
+		req.ReasoningEffort = reasoningEffort
 	}
 
 	if !nonStreaming {
