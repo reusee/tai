@@ -51,3 +51,19 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 		}
 	})
 }
+
+func TestSystemPromptReadOnlyFiles(t *testing.T) {
+	module := Module{}
+	prompt := module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		ExtraSystemPrompt(""),
+	)
+	if !strings.Contains(string(prompt), "Read-Only Files") {
+		t.Fatal("system prompt must include the read-only files section")
+	}
+	if !strings.Contains(string(prompt), "read-only") {
+		t.Fatal("system prompt must reference read-only files")
+	}
+}
