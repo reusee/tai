@@ -144,9 +144,10 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
-		if len(userPromptParts) == 0 {
-			return fmt.Errorf("code provider returned no content, check patterns and file selection")
-		}
+		// A new repository may have no code to provide as context. Allow the
+		// code provider to return no parts; the user's action argument
+		// (appended later by ActionChat.InitialPhase) is sufficient to drive
+		// generation in that case.
 		var userPromptText generators.Text
 		for _, part := range userPromptParts {
 			if text, ok := part.(generators.Text); ok {
@@ -159,6 +160,7 @@ func (Module) Generate(
 		}
 		logger.Info("user prompt ready",
 			"tokens", userPromptTokens,
+			"parts", len(userPromptParts),
 		)
 
 		if *debug {
@@ -167,15 +169,19 @@ func (Module) Generate(
 		}
 
 		// initial state
-		var state generators.State
-		state = generators.NewPrompts(
-			string(systemPrompt),
-			[]*generators.Content{
+		var initialContents []*generators.Content
+		if len(userPromptParts) > 0 {
+			initialContents = []*generators.Content{
 				{
 					Role:  "user",
 					Parts: userPromptParts,
 				},
-			},
+			}
+		}
+		var state generators.State
+		state = generators.NewPrompts(
+			string(systemPrompt),
+			initialContents,
 		)
 		showThoughts := true
 		if flagThoughts != nil {
