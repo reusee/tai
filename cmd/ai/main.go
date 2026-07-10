@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/reusee/dscope"
@@ -104,6 +105,7 @@ func main() {
 				}
 			}
 		}
+		sort.Strings(files)
 
 		var parts []generators.Part
 
