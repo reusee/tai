@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
@@ -107,31 +108,9 @@ func (Module) Files(
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
-		// fset
 		fset, err := getFileSet()
 		if err != nil {
 			return nil, err
-		}
-
-		// info from file set
-		tokenFileToFile := make(map[*token.File]*File)
-		for file := range fset.Iterate {
-			path := file.Name()
-			if !strings.HasSuffix(path, ".go") {
-				// non-Go file
-				continue
-			}
-			f := &File{
-				Path:          path,
-				IsGoFile:      true,
-				TokenFile:     file,
-				transformCond: sync.NewCond(new(sync.Mutex)),
-			}
-			if info, err := os.Stat(path); err == nil {
-				f.ModTime = info.ModTime()
-			}
-			files = append(files, f)
-			tokenFileToFile[file] = f
 		}
 
 		// packages
@@ -188,51 +167,89 @@ func (Module) Files(
 			}
 		}
 
-		// mappings from packages
-		tokenFileToAstFile := make(map[*token.File]*ast.File)
-		astFileToPackage := make(map[*ast.File]*packages.Package)
+		// Discover Go files from pkg.GoFiles and parse individually.
+		// Without NeedSyntax, pkg.Syntax is nil, so files are discovered from
+		// pkg.GoFiles and parsed with parser.ParseFile using a dedicated fset.
+		// Only files within maxDistance are parsed, avoiding OOM from parsing
+		// all transitive dependency ASTs. See TheoryOfLightweightPackageLoading
+		// in packages.go for the rationale.
+		seenPaths := make(map[string]bool)
+		type goFileEntry struct {
+			path string
+			pkg  *packages.Package
+		}
+		var allGoFiles []goFileEntry
 		packages.Visit(allPkgs, nil, func(pkg *packages.Package) {
-			for _, astFile := range pkg.Syntax {
-				tokenFile := fset.File(astFile.Name.Pos())
-				if tokenFile == nil {
-					panic(fmt.Errorf("token file not found for %s.%s", pkg.PkgPath, astFile.Name))
+			for _, path := range pkg.GoFiles {
+				if seenPaths[path] {
+					continue
 				}
-				tokenFileToAstFile[tokenFile] = astFile
-				astFileToPackage[astFile] = pkg
+				seenPaths[path] = true
+				allGoFiles = append(allGoFiles, goFileEntry{path: path, pkg: pkg})
 			}
 		})
+		slices.SortStableFunc(allGoFiles, func(a, b goFileEntry) int {
+			return cmp.Compare(a.path, b.path)
+		})
 
-		// files info
-		seenPaths := make(map[string]bool)
-		for _, file := range files {
-			seenPaths[file.Path] = true
-			if !file.IsGoFile {
+		for _, entry := range allGoFiles {
+			pkg := entry.pkg
+			distance := packageDistanceFromRoot[pkg]
+			// Filter early: skip files beyond maxDistance or in stdlib
+			// without -include-std, avoiding unnecessary parsing and memory.
+			if distance > int(maxDistance) {
 				continue
 			}
-			astFile, ok := tokenFileToAstFile[file.TokenFile]
-			if !ok {
-				panic(fmt.Errorf("ast file not found for file %s", file.TokenFile.Name()))
+			if pkg.Module == nil && !includeStdLib {
+				continue
 			}
-			file.AstFile = astFile
-			pkg, ok := astFileToPackage[file.AstFile]
-			if !ok {
-				panic(fmt.Errorf("package not found for file %s", file.TokenFile.Name()))
-			}
-			file.Package = pkg
-			file.PackageIsRoot = rootPkgSet[file.Package]
-			file.PackageDistanceFromRoot = packageDistanceFromRoot[file.Package]
-			file.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
-			file.Module = file.Package.Module
-			file.ModuleIsRoot = file.Module != nil && rootModulePaths[file.Module.Path]
-			file.ModuleIsNil = file.Module == nil
 
-			// Construct DefinedObjects
-			file.DefinedObjects = make(map[types.Object]bool)
-			for ident, obj := range file.Package.TypesInfo.Defs {
-				if ident.Pos().IsValid() && fset.File(ident.Pos()) == file.TokenFile {
-					file.DefinedObjects[obj] = true
+			path := entry.path
+			f := &File{
+				Path:          path,
+				IsGoFile:      true,
+				transformCond: sync.NewCond(new(sync.Mutex)),
+			}
+			if info, err := os.Stat(path); err == nil {
+				f.ModTime = info.ModTime()
+			}
+
+			// Parse the file individually. This replaces the previous
+			// approach of relying on pkg.Syntax (which required NeedSyntax
+			// and retained all ASTs in memory).
+			src, err := os.ReadFile(path)
+			if err != nil {
+				logger.Warn("cannot read go file", "path", path, "error", err)
+				continue
+			}
+			astFile, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+			if err != nil {
+				logger.Warn("cannot parse go file", "path", path, "error", err)
+				continue
+			}
+			f.TokenFile = fset.File(astFile.Pos())
+			f.AstFile = astFile
+
+			f.Package = pkg
+			f.PackageIsRoot = rootPkgSet[pkg]
+			f.PackageDistanceFromRoot = distance
+			f.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
+			f.Module = pkg.Module
+			f.ModuleIsRoot = pkg.Module != nil && rootModulePaths[pkg.Module.Path]
+			f.ModuleIsNil = pkg.Module == nil
+
+			// DefinedObjects requires NeedTypesInfo, which is no longer loaded
+			// to reduce memory. Skip when TypesInfo is nil.
+			if pkg.TypesInfo != nil {
+				f.DefinedObjects = make(map[types.Object]bool)
+				for ident, obj := range pkg.TypesInfo.Defs {
+					if ident.Pos().IsValid() && fset.File(ident.Pos()) == f.TokenFile {
+						f.DefinedObjects[obj] = true
+					}
 				}
 			}
+
+			files = append(files, f)
 		}
 
 		// collect non-Go files
@@ -326,6 +343,16 @@ func (Module) Files(
 				defer func() { <-nonGoSem }()
 
 				pkg := nonGoFilePaths[path]
+				// Filter early: skip files beyond maxDistance or in stdlib
+				// without -include-std, avoiding reading unnecessary content.
+				distance := packageDistanceFromRoot[pkg]
+				if distance > int(maxDistance) {
+					return
+				}
+				if pkg.Module == nil && !includeStdLib {
+					return
+				}
+
 				content, err := os.ReadFile(path)
 				if err != nil {
 					logger.Warn("cannot read non-go file", "path", path, "error", err)
@@ -361,7 +388,7 @@ func (Module) Files(
 					Content:                 content,
 					Package:                 pkg,
 					PackageIsRoot:           rootPkgSet[pkg],
-					PackageDistanceFromRoot: packageDistanceFromRoot[pkg],
+					PackageDistanceFromRoot: distance,
 					PackagePathDepth:        len(strings.Split(pkg.PkgPath, "/")),
 					Module:                  pkg.Module,
 					ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
@@ -443,23 +470,9 @@ func (Module) Files(
 			return 0
 		})
 
-		// filter
-		filtered := files[:0]
-		for _, file := range files {
-
-			if file.Module == nil && !includeStdLib {
-				// no module, stdlib
-				continue
-			}
-
-			if file.PackageDistanceFromRoot > int(maxDistance) {
-				// distance too far
-				continue
-			}
-
-			filtered = append(filtered, file)
-		}
-		files = filtered
+		// Filter is now applied during file creation (Go files and non-Go files
+		// are both filtered by distance and stdlib before being added to the
+		// slice), so no separate filter step is needed.
 
 		return
 	})

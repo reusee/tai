@@ -11,6 +11,19 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+const TheoryOfLightweightPackageLoading = `
+The packages loader runs without NeedSyntax, NeedTypesInfo, or NeedTypesSizes
+to avoid retaining ASTs and type-checking results for all transitive
+dependencies in memory. With NeedDeps, the full dependency graph is available
+for BFS distance calculation, but dependency ASTs are freed after type
+checking (NeedTypes) rather than retained in pkg.Syntax. Go file ASTs are
+parsed lazily in files.go via parser.ParseFile for only the files within
+MaxPackageDistanceFromRoot, using a dedicated fset not shared with the
+packages loader. This avoids OOM on large projects where loading all
+transitive dependencies with full syntax and type info would consume
+gigabytes of memory.
+`
+
 // packages returned by the loader
 // usually the one package that in the WorkingDir
 type GetPackages = func() ([]*packages.Package, error)
@@ -46,15 +59,11 @@ func (Module) Packages(
 				packages.NeedImports |
 				packages.NeedDeps |
 				packages.NeedTypes |
-				packages.NeedSyntax |
-				packages.NeedTypesInfo |
-				packages.NeedTypesSizes |
 				packages.NeedForTest |
 				packages.NeedModule |
 				packages.NeedEmbedFiles |
 				packages.NeedEmbedPatterns,
 			Tests: !bool(noTests),
-			Fset:  fset,
 			Env:   envs,
 			Dir:   string(loadDir),
 		}
