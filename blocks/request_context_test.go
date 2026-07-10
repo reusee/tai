@@ -306,6 +306,15 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	if len(matches) != 2 {
 		t.Fatalf("expected 2 matches under sub/, got %d: %v", len(matches), matches)
 	}
+
+	// Bare ** matches all files recursively
+	matches, err = globFiles(root, "**")
+	if err != nil {
+		t.Fatalf("unexpected error for bare **: %v", err)
+	}
+	if len(matches) != 4 {
+		t.Fatalf("expected 4 matches for bare **, got %d: %v", len(matches), matches)
+	}
 }
 
 func TestFetchRequestContextFile(t *testing.T) {

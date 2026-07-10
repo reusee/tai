@@ -448,9 +448,11 @@ func globWithDoubleStar(pattern string) ([]string, error) {
 // of leading directories, so the suffix pattern only needs to match the
 // last len(patternParts) components of the path. Each component is matched
 // using filepath.Match, where * matches non-separator characters.
+// An empty pattern (which occurs when the original glob ends with **) matches
+// any path, because ** with no trailing pattern means "match everything".
 func matchGlobPath(pattern, path string) bool {
 	if pattern == "" {
-		return path == ""
+		return true
 	}
 	patternParts := strings.Split(pattern, "/")
 	pathParts := strings.Split(path, "/")
