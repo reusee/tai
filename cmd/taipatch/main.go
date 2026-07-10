@@ -26,4 +26,3 @@ func main() {
 		fmt.Printf("Applied %s %s\n", hunk.Op, hunk.Target)
 	}
 }
-

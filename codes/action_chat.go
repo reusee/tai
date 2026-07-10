@@ -46,4 +46,3 @@ func (a ActionChat) InitialPhase(cont phases.Phase) phases.Phase {
 		return cont, state, nil
 	}
 }
-

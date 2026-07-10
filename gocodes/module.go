@@ -13,4 +13,3 @@ type Module struct {
 	Configs    configs.Module
 	AnyTexts   anytexts.Module
 }
-

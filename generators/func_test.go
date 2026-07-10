@@ -122,4 +122,3 @@ func TestMakeFunc(t *testing.T) {
 		t.Errorf("expected missing argument error, got %v", err)
 	}
 }
-

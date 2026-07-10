@@ -53,4 +53,3 @@ func (r RedoCheckpoint) SystemPrompt() string {
 func (r RedoCheckpoint) Unwrap() generators.State {
 	return r.upstream
 }
-

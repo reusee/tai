@@ -66,4 +66,3 @@ func TestContextPrompt(t *testing.T) {
 	})
 
 }
-

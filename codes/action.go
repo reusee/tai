@@ -110,4 +110,3 @@ func (Module) ActionArgument(
 
 	return arg
 }
-
