@@ -3,6 +3,7 @@ package anytexts
 import (
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,9 @@ func TestSymlinks(t *testing.T) {
 				if text, ok := part.(generators.Text); ok {
 					if strings.Contains(string(text), "symlink content") {
 						found = true
+						if strings.Contains(string(text), "(read-only)") {
+							t.Fatal("internal symlink file should not be marked as read-only")
+						}
 					}
 				}
 			}
@@ -181,6 +185,106 @@ func TestSymlinks(t *testing.T) {
 			}
 			if count != 1 {
 				t.Fatalf("expected sub/file.txt to appear once, got %d", count)
+			}
+		})
+	})
+
+	t.Run("ExternalSymlink", func(t *testing.T) {
+		dir := t.TempDir()
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chdir(oldWd)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create an external directory with a file outside the current directory.
+		externalDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(externalDir, "external.txt"), []byte("external content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Create a symlink in the current directory pointing to the external file.
+		if err := os.Symlink(filepath.Join(externalDir, "external.txt"), "link.txt"); err != nil {
+			t.Fatal(err)
+		}
+
+		dscope.New(
+			new(Module),
+			new(configs.NewLoader(nil, configs.LoaderConfig{})),
+			modes.ForTest(t),
+		).Call(func(
+			provider CodeProvider,
+			countTokens generators.BPETokenCounter,
+		) {
+			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, part := range parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "external content") {
+						found = true
+						if !strings.Contains(string(text), "(read-only)") {
+							t.Fatal("external symlink file should be marked as read-only")
+						}
+					}
+				}
+			}
+			if !found {
+				t.Fatal("external symlinked file content not found")
+			}
+		})
+	})
+
+	t.Run("ExternalSymlinkDirectory", func(t *testing.T) {
+		dir := t.TempDir()
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chdir(oldWd)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create an external directory with a file.
+		externalDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(externalDir, "nested.txt"), []byte("nested external content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Create a symlink to the external directory.
+		if err := os.Symlink(externalDir, "ext"); err != nil {
+			t.Fatal(err)
+		}
+
+		dscope.New(
+			new(Module),
+			new(configs.NewLoader(nil, configs.LoaderConfig{})),
+			modes.ForTest(t),
+		).Call(func(
+			provider CodeProvider,
+			countTokens generators.BPETokenCounter,
+		) {
+			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, part := range parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "nested external content") {
+						found = true
+						if !strings.Contains(string(text), "(read-only)") {
+							t.Fatal("file under external symlink directory should be marked as read-only")
+						}
+					}
+				}
+			}
+			if !found {
+				t.Fatal("file under external symlink directory not found")
 			}
 		})
 	})

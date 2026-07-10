@@ -29,6 +29,18 @@ whose targets cannot be resolved are silently skipped rather than aborting the
 entire traversal.
 `
 
+const TheoryOfReadOnlySymlinks = `
+Files introduced via symbolic links that point outside the current working
+directory are marked as read-only in the file context markers. The model is
+warned not to modify these files because they reside outside the project tree
+and attempting to write to them may cause permission errors or unintended
+modifications to external files. This applies both to files that are direct
+symlinks to external locations and to files discovered inside directories
+that are symlinks to external locations. Symlinks to files or directories
+within the current directory are not marked as read-only since they are part
+of the project.
+`
+
 const TheoryOfFileOrdering = `
 Files are sorted by path as the primary key to ensure a fully deterministic
 order that is independent of modification times. Using modification time as
@@ -63,6 +75,7 @@ type FileInfo struct {
 	IsText   bool
 	MimeType string
 	ModTime  time.Time
+	ReadOnly bool
 }
 
 func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
@@ -74,8 +87,9 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 		// Collect candidate files with modification times
 		type candidate struct {
-			path    string
-			modTime time.Time
+			path     string
+			modTime  time.Time
+			readOnly bool
 		}
 		var candidates []candidate
 		var queue []string
@@ -90,6 +104,11 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				queue = append(queue, files...)
 			}
 		}
+
+		// Track symlink paths that point to directories outside the current
+		// directory. Files discovered under these paths are marked as read-only
+		// because they reside outside the project tree.
+		externalSymlinkDirs := make(map[string]bool)
 
 		for len(queue) > 0 {
 			path := queue[0]
@@ -113,6 +132,15 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				return
 			}
 
+			var readOnly bool
+
+			// Check if this path is under a directory that was introduced via
+			// a symlink to an external location. Files under such directories
+			// inherit the read-only status.
+			if isUnderExternalDir(path, externalSymlinkDirs) {
+				readOnly = true
+			}
+
 			// Follow symbolic links while detecting cycles: a symlink whose
 			// resolved target is an ancestor of the current path would create
 			// an infinite loop and is skipped. Broken symlinks are silently
@@ -132,6 +160,16 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				if err != nil {
 					// Symlink target inaccessible; skip silently.
 					continue
+				}
+				// If the symlink target is outside the current directory,
+				// mark this path as read-only. If the target is a directory,
+				// also record it so files discovered under it inherit the
+				// read-only status.
+				if isOutsideCurrentDir(realPath) {
+					readOnly = true
+					if info.IsDir() {
+						externalSymlinkDirs[path] = true
+					}
 				}
 			}
 
@@ -160,8 +198,9 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 
 			candidates = append(candidates, candidate{
-				path:    path,
-				modTime: info.ModTime(),
+				path:     path,
+				modTime:  info.ModTime(),
+				readOnly: readOnly,
 			})
 		}
 
@@ -216,6 +255,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				IsText:   isText,
 				MimeType: mtype.String(),
 				ModTime:  cand.modTime,
+				ReadOnly: cand.readOnly,
 			}, nil) {
 				return
 			}
@@ -245,6 +285,58 @@ func isAncestor(ancestor, path string) bool {
 	return !strings.HasPrefix(rel, "..")
 }
 
+// isOutsideCurrentDir reports whether the given path is outside the current
+// working directory. It is used to detect symbolic links that point to files
+// or directories outside the project tree, which should be treated as read-only.
+//
+// The path argument is expected to be already canonicalized (e.g. via
+// filepath.EvalSymlinks), so the working directory must be canonicalized the
+// same way before comparison. On platforms where the working directory
+// contains symlink components (such as macOS, where /var is a symlink to
+// /private/var), os.Getwd returns the logical path while the path argument
+// is canonical. Comparing a logical path against a canonical path makes
+// filepath.Rel produce a ".."-prefixed result even for internal targets,
+// falsely marking them as external and read-only.
+//
+// filepath.EvalSymlinks returns a relative path when the input is relative.
+// The path is converted to absolute (joined with the canonicalized working
+// directory) before comparison so that filepath.Rel can compute a valid
+// relative path; otherwise mixing an absolute cwd with a relative path
+// causes filepath.Rel to error and falsely classify internal targets as
+// external.
+func isOutsideCurrentDir(path string) bool {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	rel, err := filepath.Rel(cwd, path)
+	if err != nil {
+		return true
+	}
+	return strings.HasPrefix(rel, "..")
+}
+
+// isUnderExternalDir checks whether the given path is under a directory that
+// was introduced via a symlink to an external location. Files under such
+// directories inherit the read-only status from the directory symlink.
+func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
+	dir := filepath.Dir(path)
+	for dir != "." && dir != "/" && dir != "" {
+		if externalDirs[dir] {
+			return true
+		}
+		dir = filepath.Dir(dir)
+	}
+	return false
+}
+
 func (c CodeProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),
@@ -262,7 +354,11 @@ func (c CodeProvider) Parts(
 
 		if info.IsText {
 
-			text := "``` begin of file " + info.Path + "\n" +
+			readOnlyNote := ""
+			if info.ReadOnly {
+				readOnlyNote = " (read-only)"
+			}
+			text := "``` begin of file " + info.Path + readOnlyNote + "\n" +
 				string(info.Content) + "\n" +
 				"``` end of file " + info.Path + "\n"
 
@@ -288,6 +384,7 @@ func (c CodeProvider) Parts(
 					"path", info.Path,
 					"tokens", numTokens,
 					"mime type", info.MimeType,
+					"read only", info.ReadOnly,
 				)
 			}
 
@@ -295,8 +392,12 @@ func (c CodeProvider) Parts(
 			// Binary files are wrapped with begin/end markers matching the text
 			// file format so the model can identify the attachment boundary.
 			// See TheoryOfBinaryFileMarkers.
+			readOnlyNote := ""
+			if info.ReadOnly {
+				readOnlyNote = ", read-only"
+			}
 			parts = append(parts, generators.Text(
-				"``` begin of file "+info.Path+" (binary, "+info.MimeType+")\n",
+				"``` begin of file "+info.Path+" (binary, "+info.MimeType+")"+readOnlyNote+"\n",
 			))
 			parts = append(parts, generators.FileContent{
 				Content:  info.Content,
@@ -310,6 +411,7 @@ func (c CodeProvider) Parts(
 				c.Logger().Info("binary file",
 					"path", info.Path,
 					"mime type", info.MimeType,
+					"read only", info.ReadOnly,
 				)
 			}
 

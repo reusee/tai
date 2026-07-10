@@ -124,7 +124,11 @@ func (c CodeProvider) Parts(
 			}
 
 			if info.IsText {
-				text := "``` begin of context file " + info.Path + "\n" +
+				readOnlyNote := ""
+				if info.ReadOnly {
+					readOnlyNote = " (read-only)"
+				}
+				text := "``` begin of context file " + info.Path + readOnlyNote + "\n" +
 					string(info.Content) + "\n" +
 					"``` end of context file " + info.Path + "\n"
 
@@ -144,8 +148,12 @@ func (c CodeProvider) Parts(
 			} else {
 				// Binary extra files are wrapped with begin/end markers matching
 				// the text file format. See TheoryOfExtraFileContext.
+				readOnlyNote := ""
+				if info.ReadOnly {
+					readOnlyNote = ", read-only"
+				}
 				pendingExtras = append(pendingExtras, pendingExtraPart{
-					part: generators.Text("``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")\n"),
+					part: generators.Text("``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"),
 					path: info.Path,
 				})
 				pendingExtras = append(pendingExtras, pendingExtraPart{
