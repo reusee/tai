@@ -172,6 +172,14 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
+// pathEscapesDir reports whether a cleaned relative path escapes the current
+// directory via parent-directory traversal. It distinguishes ".." (parent
+// directory) and "../"-prefixed paths from names that merely start with two
+// dots (e.g., "..hidden", "..."), which are valid directory or file names.
+func pathEscapesDir(cleaned string) bool {
+	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
+}
+
 func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
@@ -180,12 +188,12 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			return err
 		}
 		rel, err := filepath.Rel(cwd, path)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil || pathEscapesDir(rel) {
 			return fmt.Errorf("path outside of current directory: %s", path)
 		}
 		path = rel
 	}
-	if strings.HasPrefix(filepath.Clean(path), "..") { // Proactively block directory escape
+	if pathEscapesDir(filepath.Clean(path)) { // Proactively block directory escape
 		return fmt.Errorf("path escapes current directory: %s", path)
 	}
 
@@ -198,12 +206,12 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 				return err
 			}
 			rel, err := filepath.Rel(cwd, newPath)
-			if err != nil || strings.HasPrefix(rel, "..") {
+			if err != nil || pathEscapesDir(rel) {
 				return fmt.Errorf("new path outside of current directory: %s", newPath)
 			}
 			newPath = rel
 		}
-		if strings.HasPrefix(filepath.Clean(newPath), "..") {
+		if pathEscapesDir(filepath.Clean(newPath)) {
 			return fmt.Errorf("new path escapes current directory: %s", newPath)
 		}
 		if dir := filepath.Dir(newPath); dir != "." {

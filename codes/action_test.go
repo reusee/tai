@@ -290,6 +290,47 @@ func TestApplyHunkWrite(t *testing.T) {
 	})
 }
 
+func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	// A file whose name starts with ".." but is not a parent-directory
+	// traversal (e.g., "..notescape.go") must be accepted by applyHunk.
+	// Before the fix, strings.HasPrefix(filepath.Clean(path), "..")
+	// incorrectly rejected any path starting with two dots.
+	filename := "..notescape.go"
+	original := "package x\n\nfunc Old() {}\n"
+	if err := root.WriteFile(filename, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "Old",
+		FilePath: filename,
+		Body:     "func New() {}",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed for path starting with double dots: %v", err)
+	}
+
+	result, err := root.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if strings.Contains(resultStr, "Old") {
+		t.Fatalf("result should not contain Old:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "func New() {}") {
+		t.Fatalf("result should contain New:\n%s", resultStr)
+	}
+}
+
 func TestApplyUnclosedBlockError(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
