@@ -354,3 +354,46 @@ func Foo() {
 	})
 
 }
+
+func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
+	// Reproduction: the lightweight loader must not request NeedTypes, otherwise
+	// packages.Load type-checks the full NeedDeps graph and OOMs on large trees.
+	// Assert Mode bits after a successful load against the real module wiring.
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+
+	dir := filepath.Join(testdataDir, "main")
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(dir)
+		},
+	).Call(func(
+		getRoot GetRootPackages,
+	) {
+		pkgs, err := getRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkgs) == 0 {
+			t.Fatal("expected at least one root package")
+		}
+		// NeedTypes is offline: Types stays nil; TypesInfo stays nil.
+		// Both were previously unusable for DefinedObjects without
+		// NeedTypesInfo, and NeedTypes itself was the remaining OOM driver.
+		for _, pkg := range pkgs {
+			if pkg.Types != nil {
+				t.Fatalf("pkg.Types must be nil without NeedTypes, got non-nil for %s", pkg.PkgPath)
+			}
+			if pkg.TypesInfo != nil {
+				t.Fatalf("pkg.TypesInfo must be nil without NeedTypesInfo, got non-nil for %s", pkg.PkgPath)
+			}
+			// GoFiles must still be available for free file discovery.
+			if len(pkg.GoFiles) == 0 {
+				t.Fatalf("pkg.GoFiles must be populated via NeedFiles for %s", pkg.PkgPath)
+			}
+		}
+	})
+}

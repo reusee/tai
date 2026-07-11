@@ -13,6 +13,10 @@ func (Module) PackagesMap(
 	getContextPackages GetContextPackages,
 ) GetPackagesMap {
 	return func() (map[*types.Package]*packages.Package, error) {
+		// NeedTypes is intentionally not loaded (see TheoryOfLightweightPackageLoading),
+		// so pkg.Types is always nil. Return an empty map rather than walking a
+		// type graph that no longer exists, avoiding accidental reintroduction of
+		// global type-checking.
 		rootPkgs, err := getRootPackages()
 		if err != nil {
 			return nil, err
@@ -21,10 +25,8 @@ func (Module) PackagesMap(
 		if err != nil {
 			return nil, err
 		}
-		ret := make(map[*types.Package]*packages.Package)
-		packages.Visit(append(rootPkgs, contextPkgs...), nil, func(pkg *packages.Package) {
-			ret[pkg.Types] = pkg
-		})
-		return ret, nil
+		_ = rootPkgs
+		_ = contextPkgs
+		return map[*types.Package]*packages.Package{}, nil
 	}
 }

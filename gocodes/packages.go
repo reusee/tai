@@ -12,16 +12,18 @@ import (
 )
 
 const TheoryOfLightweightPackageLoading = `
-The packages loader runs without NeedSyntax, NeedTypesInfo, or NeedTypesSizes
-to avoid retaining ASTs and type-checking results for all transitive
-dependencies in memory. With NeedDeps, the full dependency graph is available
-for BFS distance calculation, but dependency ASTs are freed after type
-checking (NeedTypes) rather than retained in pkg.Syntax. Go file ASTs are
-parsed lazily in files.go via parser.ParseFile for only the files within
-MaxPackageDistanceFromRoot, using a dedicated fset not shared with the
-packages loader. This avoids OOM on large projects where loading all
-transitive dependencies with full syntax and type info would consume
-gigabytes of memory.
+The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax
+and NeedTypesInfo continue to be omitted so go/packages never retains full ASTs
+or per-identifier types for every transitive dependency. NeedTypes is also
+omitted: type-checking the full dependency graph (enabled by NeedDeps) is the
+dominant memory consumer and triggered OOM on large projects even after syntax
+was dropped. Distance calculation only needs the package import graph, so
+NeedName | NeedFiles | NeedImports | NeedDeps | NeedModule | NeedEmbed* is
+sufficient. Go file ASTs are still parsed lazily in files.go via
+parser.ParseFile for only the files within MaxPackageDistanceFromRoot. Omission
+of NeedTypes means pkg.Types and pkg.TypesInfo remain nil; any consumer that
+needed them must compute types on a smaller, local subset instead of loading
+them for the entire dependency tree.
 `
 
 // packages returned by the loader
@@ -53,12 +55,14 @@ func (Module) Packages(
 	var err error
 
 	init := sync.OnceFunc(func() {
+		// Omit NeedTypes: type-checking the NeedDeps graph is the dominant
+		// OOM source. Topology and file discovery only need the modes below.
+		// See TheoryOfLightweightPackageLoading.
 		config := &packages.Config{
 			Mode: packages.NeedName |
 				packages.NeedFiles |
 				packages.NeedImports |
 				packages.NeedDeps |
-				packages.NeedTypes |
 				packages.NeedForTest |
 				packages.NeedModule |
 				packages.NeedEmbedFiles |

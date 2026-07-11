@@ -63,8 +63,11 @@ type File struct {
 	Module                  *packages.Module
 	ModuleIsRoot            bool
 	ModuleIsNil             bool
-	DefinedObjects          map[types.Object]bool
-	DoNotSimplify           bool
+	// DefinedObjects is unused under the lightweight loader: NeedTypesInfo is
+	// not loaded, so no object map is populated. Kept nil for APIs that still
+	// read the field.
+	DefinedObjects map[types.Object]bool
+	DoNotSimplify  bool
 
 	transformCond *sync.Cond
 	Transform     *Transform
