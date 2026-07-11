@@ -23,6 +23,13 @@ imports up to the configured distance bound. This keeps the in-memory package
 set proportional to the visible working set rather than the entire module graph.
 Go file ASTs are still parsed lazily in files.go via parser.ParseFile for only
 the files within the distance bound.
+
+The iterative loading resolves imports by explicit PkgPath strings. Unlike
+pattern-based loading (e.g., ./...), go list enforces go.mod consistency when
+given explicit import paths and fails with "updates to go.mod needed" if the
+module file is not perfectly tidy. GOFLAGS=-mod=mod is injected via the Envs
+provider (see TheoryOfModModEnv in load_env.go) so go can update go.mod
+automatically instead of erroring.
 `
 
 // packages returned by the loader
