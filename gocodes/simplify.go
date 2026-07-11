@@ -65,7 +65,11 @@ func (Module) SimplifyFiles(
 		originalFiles := make([]*File, len(files))
 		copy(originalFiles, files)
 
-		// Clean up file state on exit to avoid leaking state into cached File objects
+		// Clean up file state on exit to avoid leaking state into cached File objects.
+		// Confirmed.Ast is released here (after all transforms are done) because
+		// only Confirmed.Content is read by the caller. This recovers the AST
+		// memory that was previously freed prematurely in applyTransform's
+		// formatting defer, which broke subsequent AST-based transforms.
 		defer func() {
 			for _, f := range originalFiles {
 				if f == nil {
@@ -75,6 +79,9 @@ func (Module) SimplifyFiles(
 				f.Transform = nil
 				f.Pending = nil
 				f.DoNotSimplify = false
+				if f.Confirmed != nil {
+					f.Confirmed.Ast = nil
+				}
 				f.transformCond.Broadcast()
 				f.transformCond.L.Unlock()
 			}
@@ -446,10 +453,11 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 			}
 			content = buf.String()
 			f.Pending.Content = buf.Bytes()
-			// Release the AST immediately after formatting so the GC can
-			// reclaim it before the confirmation loop clears f.Pending.
-			// This reduces the peak live heap when many files are in flight.
-			f.Pending.Ast = nil
+			// Keep f.Pending.Ast alive: subsequent transforms (DeleteComments,
+			// DeleteFunctionBody) read f.Confirmed.Ast after confirmation.
+			// Releasing it here caused deleteComments(nil) to return nil,
+			// incorrectly marking files for deletion. The AST is released
+			// in the SimplifyFiles cleanup defer after all transforms finish.
 		} else if len(f.Pending.Content) > 0 {
 			content = string(f.Pending.Content)
 		}
