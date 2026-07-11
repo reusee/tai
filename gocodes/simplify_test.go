@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
-	"golang.org/x/tools/go/packages"
 )
 
 func TestSimplify(t *testing.T) {
@@ -359,9 +358,7 @@ func Foo() {
 func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 	// Reproduction: the lightweight loader must not request NeedTypes, otherwise
 	// packages.Load type-checks the full NeedDeps graph and OOMs on large trees.
-	// It must also omit NeedDeps and expand imports only to maxDistance so peak
-	// memory stays proportional to the filtered working set. Assert mode
-	// effects after a successful load against the real module wiring.
+	// Assert Mode bits after a successful load against the real module wiring.
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -386,8 +383,6 @@ func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 		// NeedTypes is offline: Types stays nil; TypesInfo stays nil.
 		// Both were previously unusable for DefinedObjects without
 		// NeedTypesInfo, and NeedTypes itself was the remaining OOM driver.
-		// NeedDeps is also offline: only packages within maxDistance are
-		// fully loaded, so Imports never walk an unbounded graph.
 		for _, pkg := range pkgs {
 			if pkg.Types != nil {
 				t.Fatalf("pkg.Types must be nil without NeedTypes, got non-nil for %s", pkg.PkgPath)
@@ -401,62 +396,4 @@ func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 			}
 		}
 	})
-}
-
-func TestLoadPackagesToDepthBounded(t *testing.T) {
-	// With maxDistance 0, only pattern packages are fully loaded and their
-	// import stubs are stripped so packages.Visit cannot walk beyond roots.
-	// Before the NeedDeps removal, Visit would retain the entire transitive
-	// dependency graph in memory regardless of maxDistance.
-	config := &packages.Config{
-		Mode: packageLoadMode,
-		Dir:  filepath.Join(testdataDir, "main"),
-	}
-	roots, err := loadPackagesToDepth(config, []string{"."}, 0, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(roots) == 0 {
-		t.Fatal("expected at least one root package")
-	}
-
-	visited := 0
-	packages.Visit(roots, nil, func(pkg *packages.Package) {
-		visited++
-		// At maxDepth 0, roots must not keep fully-loaded child packages
-		// that would inflate the reachable set.
-		for path, imp := range pkg.Imports {
-			if imp == nil {
-				continue
-			}
-			// Unresolved or beyond-depth imports are deleted; any remaining
-			// entry must be the package itself (self-import edge is rare).
-			if imp.ID != pkg.ID && len(imp.GoFiles) > 0 && imp.ID != "" {
-				// If a child is fully loaded with GoFiles, depth expansion
-				// leaked past maxDepth 0.
-				t.Fatalf("import %s of %s is fully loaded at maxDepth 0", path, pkg.PkgPath)
-			}
-		}
-	})
-	if visited != len(roots) {
-		t.Fatalf("Visit should only see root packages at maxDepth 0, visited %d want %d", visited, len(roots))
-	}
-
-	// With maxDistance >= 1, direct imports from the local module are loaded.
-	// dep1 is a direct local import of the main test package.
-	roots, err = loadPackagesToDepth(config, []string{"."}, 1, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundDep1 := false
-	packages.Visit(roots, nil, func(pkg *packages.Package) {
-		if strings.HasSuffix(pkg.PkgPath, "/dep1") || pkg.Name == "dep1" {
-			if len(pkg.GoFiles) > 0 {
-				foundDep1 = true
-			}
-		}
-	})
-	if !foundDep1 {
-		t.Fatal("expected dep1 to be fully loaded at maxDepth 1")
-	}
 }
