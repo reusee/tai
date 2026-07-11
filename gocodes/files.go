@@ -145,6 +145,11 @@ func (Module) Files(
 			}
 		}
 
+		// Distance is computed only within the packages retained by
+		// loadPackagesToDepth (see TheoryOfLightweightPackageLoading). Cap
+		// enqueueing at maxDistance so BFS cannot accumulate map entries for
+		// packages that will never contribute files.
+		maxPackageDistance := int(maxDistance)
 		packageDistanceFromRoot := make(map[*packages.Package]int)
 		queue := []*packages.Package{}
 		for _, pkg := range rootPkgs {
@@ -162,9 +167,16 @@ func (Module) Files(
 			currentPkg := queue[head]
 			head++
 			currentDistance := packageDistanceFromRoot[currentPkg]
+			if currentDistance >= maxPackageDistance {
+				// Children would fall outside the distance budget for file
+				// inclusion; skip enqueueing them so the distance map and
+				// reachable package set stay bounded.
+				continue
+			}
 			for _, importedPkg := range currentPkg.Imports {
-				if existingDistance, ok := packageDistanceFromRoot[importedPkg]; !ok || currentDistance+1 < existingDistance {
-					packageDistanceFromRoot[importedPkg] = currentDistance + 1
+				nextDistance := currentDistance + 1
+				if existingDistance, ok := packageDistanceFromRoot[importedPkg]; !ok || nextDistance < existingDistance {
+					packageDistanceFromRoot[importedPkg] = nextDistance
 					queue = append(queue, importedPkg)
 				}
 			}
@@ -200,7 +212,7 @@ func (Module) Files(
 			distance := packageDistanceFromRoot[pkg]
 			// Filter early: skip files beyond maxDistance or in stdlib
 			// without -include-std, avoiding unnecessary parsing and memory.
-			if distance > int(maxDistance) {
+			if distance > maxPackageDistance {
 				continue
 			}
 			if pkg.Module == nil && !includeStdLib {
@@ -349,7 +361,7 @@ func (Module) Files(
 				// Filter early: skip files beyond maxDistance or in stdlib
 				// without -include-std, avoiding reading unnecessary content.
 				distance := packageDistanceFromRoot[pkg]
-				if distance > int(maxDistance) {
+				if distance > maxPackageDistance {
 					return
 				}
 				if pkg.Module == nil && !includeStdLib {
