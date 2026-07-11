@@ -356,9 +356,11 @@ func Foo() {
 }
 
 func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
-	// Reproduction: the lightweight loader must not request NeedTypes, otherwise
-	// packages.Load type-checks the full NeedDeps graph and OOMs on large trees.
-	// Assert Mode bits after a successful load against the real module wiring.
+	// Reproduction: the loader must not request NeedTypes, otherwise
+	// packages.Load type-checks the dependency graph and OOMs on large trees.
+	// NeedDeps is used (dependencies are loaded) but NeedTypes is omitted (no
+	// type checking), so memory stays bounded. Assert that Types and TypesInfo
+	// remain nil after a successful load against the real module wiring.
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -381,8 +383,8 @@ func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 			t.Fatal("expected at least one root package")
 		}
 		// NeedTypes is offline: Types stays nil; TypesInfo stays nil.
-		// Both were previously unusable for DefinedObjects without
-		// NeedTypesInfo, and NeedTypes itself was the remaining OOM driver.
+		// NeedDeps loads dependencies but NeedTypes is omitted so no
+		// type checking occurs, keeping memory bounded.
 		for _, pkg := range pkgs {
 			if pkg.Types != nil {
 				t.Fatalf("pkg.Types must be nil without NeedTypes, got non-nil for %s", pkg.PkgPath)

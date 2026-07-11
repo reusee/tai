@@ -13,23 +13,17 @@ import (
 
 const TheoryOfLightweightPackageLoading = `
 The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax,
-NeedTypesInfo, and NeedTypes continue to be omitted so go/packages never retains
-full ASTs, per-identifier types, or complete type-checking results for every
-transitive dependency. NeedDeps is also omitted: loading the full dependency
-graph pulls tens of thousands of packages into memory even though only packages
-within MaxPackageDistanceFromRoot (default 2) are ever read. Instead, the loader
-resolves only the root and context packages and then iteratively loads their
-imports up to the configured distance bound. This keeps the in-memory package
-set proportional to the visible working set rather than the entire module graph.
-Go file ASTs are still parsed lazily in files.go via parser.ParseFile for only
-the files within the distance bound.
-
-The iterative loading resolves imports by explicit PkgPath strings. Unlike
-pattern-based loading (e.g., ./...), go list enforces go.mod consistency when
-given explicit import paths and fails with "updates to go.mod needed" if the
-module file is not perfectly tidy. GOFLAGS=-mod=mod is injected via the Envs
-provider (see TheoryOfModModEnv in load_env.go) so go can update go.mod
-automatically instead of erroring.
+NeedTypesInfo, and NeedTypes are omitted so go/packages never retains full ASTs,
+per-identifier types, or complete type-checking results for any dependency.
+NeedDeps is used so go/packages resolves the full dependency graph in a single
+go list invocation. The prior approach of iteratively loading imports by explicit
+PkgPath strings triggered go.mod consistency checks on every packages.Load call,
+producing excessive go.mod computation overhead that outweighed the memory savings
+of a smaller in-memory package set. Distances from root packages are computed via
+BFS over the Imports graph populated by NeedDeps, and only packages within
+MaxPackageDistanceFromRoot (default 2) have their files discovered and parsed.
+Go file ASTs are parsed lazily in files.go via parser.ParseFile for only the files
+within the distance bound.
 `
 
 // packages returned by the loader
@@ -61,15 +55,17 @@ func (Module) Packages(
 	var err error
 
 	init := sync.OnceFunc(func() {
-		// Omit NeedDeps: loading the full transitive dependency graph is the
-		// remaining OOM driver after NeedTypes was removed. Packages beyond
-		// MaxPackageDistanceFromRoot are never read; they are resolved
-		// iteratively in Files() instead.
+		// NeedDeps loads the full dependency graph in a single go list
+		// invocation. Packages beyond MaxPackageDistanceFromRoot are still
+		// filtered out in Files() via BFS distance computation, but loading
+		// them all at once avoids the go.mod overhead of multiple
+		// packages.Load calls with explicit PkgPath.
 		// See TheoryOfLightweightPackageLoading.
 		config := &packages.Config{
 			Mode: packages.NeedName |
 				packages.NeedFiles |
 				packages.NeedImports |
+				packages.NeedDeps |
 				packages.NeedForTest |
 				packages.NeedModule |
 				packages.NeedEmbedFiles |

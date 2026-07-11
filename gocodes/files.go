@@ -108,9 +108,6 @@ func (Module) Files(
 	logger logs.Logger,
 	maxDistance MaxPackageDistanceFromRoot,
 	includeStdLib IncludeStdLib,
-	noTests NoTests,
-	envs Envs,
-	loadDir LoadDir,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -129,30 +126,10 @@ func (Module) Files(
 			return nil, err
 		}
 
-		// Build the set of packages within MaxPackageDistanceFromRoot by
-		// iteratively loading imports up to the configured bound. This
-		// replaces the previous NeedDeps approach that loaded the entire
-		// transitive dependency graph into memory.
-		// See TheoryOfLightweightPackageLoading in packages.go.
-		config := &packages.Config{
-			Mode: packages.NeedName |
-				packages.NeedFiles |
-				packages.NeedImports |
-				packages.NeedForTest |
-				packages.NeedModule |
-				packages.NeedEmbedFiles |
-				packages.NeedEmbedPatterns,
-			Tests: !bool(noTests),
-			Env:   envs,
-			Dir:   string(loadDir),
-		}
-
-		// allPkgs accumulates every package within the distance bound.
-		allPkgs := append([]*packages.Package{}, rootPkgs...)
-		allPkgs = append(allPkgs, contextPkgs...)
-
 		// packageDistanceFromRoot records the shortest import distance from
-		// any root or context package. Populated during iterative loading.
+		// any root or context package. Computed via BFS over the Imports graph
+		// populated by NeedDeps in a single packages.Load call.
+		// See TheoryOfLightweightPackageLoading in packages.go.
 		packageDistanceFromRoot := make(map[*packages.Package]int)
 		for _, pkg := range rootPkgs {
 			packageDistanceFromRoot[pkg] = 0
@@ -163,43 +140,35 @@ func (Module) Files(
 			}
 		}
 
-		// seenPaths tracks PkgPath strings already loaded or scheduled,
-		// preventing duplicate loads when a package is reachable through
-		// multiple import paths.
-		seenPaths := make(map[string]bool)
-		for _, pkg := range allPkgs {
-			seenPaths[pkg.PkgPath] = true
-		}
-
-		// Iteratively load imports up to maxDistance.
-		for d := 1; d <= int(maxDistance); d++ {
-			var toLoad []string
-			for _, pkg := range allPkgs {
-				if packageDistanceFromRoot[pkg] != d-1 {
+		// BFS to compute distances up to maxDistance. With NeedDeps, all
+		// transitive dependencies are already loaded and accessible via
+		// pkg.Imports, so no additional packages.Load calls are needed.
+		queue := append([]*packages.Package{}, rootPkgs...)
+		queue = append(queue, contextPkgs...)
+		for len(queue) > 0 {
+			pkg := queue[0]
+			queue = queue[1:]
+			d := packageDistanceFromRoot[pkg]
+			if d >= int(maxDistance) {
+				continue
+			}
+			for _, imp := range pkg.Imports {
+				if imp == nil {
 					continue
 				}
-				for _, imp := range pkg.Imports {
-					if !seenPaths[imp.PkgPath] {
-						seenPaths[imp.PkgPath] = true
-						toLoad = append(toLoad, imp.PkgPath)
-					}
+				if _, ok := packageDistanceFromRoot[imp]; !ok {
+					packageDistanceFromRoot[imp] = d + 1
+					queue = append(queue, imp)
 				}
 			}
-			if len(toLoad) == 0 {
-				break
+		}
+
+		// Collect all packages within the distance bound.
+		allPkgs := make([]*packages.Package, 0, len(packageDistanceFromRoot))
+		for pkg, d := range packageDistanceFromRoot {
+			if d <= int(maxDistance) {
+				allPkgs = append(allPkgs, pkg)
 			}
-			// Sort for deterministic ordering.
-			slices.SortStableFunc(toLoad, cmp.Compare[string])
-			newPkgs, err := packages.Load(config, toLoad...)
-			if err != nil {
-				return nil, err
-			}
-			for _, pkg := range newPkgs {
-				if _, ok := packageDistanceFromRoot[pkg]; !ok {
-					packageDistanceFromRoot[pkg] = d
-				}
-			}
-			allPkgs = append(allPkgs, newPkgs...)
 		}
 
 		// rootPkgSet provides O(1) root package membership checks.

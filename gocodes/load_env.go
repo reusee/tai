@@ -6,14 +6,11 @@ import (
 )
 
 const TheoryOfModModEnv = `
-The iterative package loader in Files() resolves imports by explicit PkgPath
-strings rather than by pattern (e.g., ./...). When go list receives explicit
-import paths, it enforces go.mod consistency and fails with "updates to go.mod
-needed" if the module file is out of sync. Injecting GOFLAGS=-mod=mod into the
-load environment allows go to update go.mod automatically instead of erroring.
-The helper preserves any existing GOFLAGS value, appending -mod=mod only when
-no -mod= flag is already present, to avoid conflicting with -mod=vendor or
-other explicit module modes.
+GOFLAGS=-mod=mod is injected into the load environment so go list can update
+go.mod automatically if it is out of sync, rather than failing with "updates
+to go.mod needed". The helper preserves any existing GOFLAGS value, appending
+-mod=mod only when no -mod= flag is already present, to avoid conflicting with
+-mod=vendor or other explicit module modes.
 `
 
 // withModModEnv returns a copy of envs with -mod=mod added to GOFLAGS.
