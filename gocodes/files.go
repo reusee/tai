@@ -108,6 +108,9 @@ func (Module) Files(
 	logger logs.Logger,
 	maxDistance MaxPackageDistanceFromRoot,
 	includeStdLib IncludeStdLib,
+	noTests NoTests,
+	envs Envs,
+	loadDir LoadDir,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -125,10 +128,81 @@ func (Module) Files(
 		if err != nil {
 			return nil, err
 		}
-		allPkgs := append(rootPkgs, contextPkgs...)
 
-		// rootPkgSet provides O(1) root package membership checks, replacing
-		// O(n) slices.Contains calls that would dominate with many packages/files.
+		// Build the set of packages within MaxPackageDistanceFromRoot by
+		// iteratively loading imports up to the configured bound. This
+		// replaces the previous NeedDeps approach that loaded the entire
+		// transitive dependency graph into memory.
+		// See TheoryOfLightweightPackageLoading in packages.go.
+		config := &packages.Config{
+			Mode: packages.NeedName |
+				packages.NeedFiles |
+				packages.NeedImports |
+				packages.NeedForTest |
+				packages.NeedModule |
+				packages.NeedEmbedFiles |
+				packages.NeedEmbedPatterns,
+			Tests: !bool(noTests),
+			Env:   envs,
+			Dir:   string(loadDir),
+		}
+
+		// allPkgs accumulates every package within the distance bound.
+		allPkgs := append([]*packages.Package{}, rootPkgs...)
+		allPkgs = append(allPkgs, contextPkgs...)
+
+		// packageDistanceFromRoot records the shortest import distance from
+		// any root or context package. Populated during iterative loading.
+		packageDistanceFromRoot := make(map[*packages.Package]int)
+		for _, pkg := range rootPkgs {
+			packageDistanceFromRoot[pkg] = 0
+		}
+		for _, pkg := range contextPkgs {
+			if _, ok := packageDistanceFromRoot[pkg]; !ok {
+				packageDistanceFromRoot[pkg] = 0
+			}
+		}
+
+		// seenPaths tracks PkgPath strings already loaded or scheduled,
+		// preventing duplicate loads when a package is reachable through
+		// multiple import paths.
+		seenPaths := make(map[string]bool)
+		for _, pkg := range allPkgs {
+			seenPaths[pkg.PkgPath] = true
+		}
+
+		// Iteratively load imports up to maxDistance.
+		for d := 1; d <= int(maxDistance); d++ {
+			var toLoad []string
+			for _, pkg := range allPkgs {
+				if packageDistanceFromRoot[pkg] != d-1 {
+					continue
+				}
+				for _, imp := range pkg.Imports {
+					if !seenPaths[imp.PkgPath] {
+						seenPaths[imp.PkgPath] = true
+						toLoad = append(toLoad, imp.PkgPath)
+					}
+				}
+			}
+			if len(toLoad) == 0 {
+				break
+			}
+			// Sort for deterministic ordering.
+			slices.SortStableFunc(toLoad, cmp.Compare[string])
+			newPkgs, err := packages.Load(config, toLoad...)
+			if err != nil {
+				return nil, err
+			}
+			for _, pkg := range newPkgs {
+				if _, ok := packageDistanceFromRoot[pkg]; !ok {
+					packageDistanceFromRoot[pkg] = d
+				}
+			}
+			allPkgs = append(allPkgs, newPkgs...)
+		}
+
+		// rootPkgSet provides O(1) root package membership checks.
 		rootPkgSet := make(map[*packages.Package]bool, len(rootPkgs))
 		for _, pkg := range rootPkgs {
 			rootPkgSet[pkg] = true
@@ -145,52 +219,25 @@ func (Module) Files(
 			}
 		}
 
-		packageDistanceFromRoot := make(map[*packages.Package]int)
-		queue := []*packages.Package{}
-		for _, pkg := range rootPkgs {
-			packageDistanceFromRoot[pkg] = 0
-			queue = append(queue, pkg)
-		}
-		for _, pkg := range contextPkgs {
-			if _, ok := packageDistanceFromRoot[pkg]; !ok {
-				packageDistanceFromRoot[pkg] = 0
-				queue = append(queue, pkg)
-			}
-		}
-		head := 0
-		for head < len(queue) {
-			currentPkg := queue[head]
-			head++
-			currentDistance := packageDistanceFromRoot[currentPkg]
-			for _, importedPkg := range currentPkg.Imports {
-				if existingDistance, ok := packageDistanceFromRoot[importedPkg]; !ok || currentDistance+1 < existingDistance {
-					packageDistanceFromRoot[importedPkg] = currentDistance + 1
-					queue = append(queue, importedPkg)
-				}
-			}
-		}
-
 		// Discover Go files from pkg.GoFiles and parse individually.
-		// Without NeedSyntax, pkg.Syntax is nil, so files are discovered from
-		// pkg.GoFiles and parsed with parser.ParseFile using a dedicated fset.
 		// Only files within maxDistance are parsed, avoiding OOM from parsing
 		// all transitive dependency ASTs. See TheoryOfLightweightPackageLoading
 		// in packages.go for the rationale.
-		seenPaths := make(map[string]bool)
+		seenFilePaths := make(map[string]bool)
 		type goFileEntry struct {
 			path string
 			pkg  *packages.Package
 		}
 		var allGoFiles []goFileEntry
-		packages.Visit(allPkgs, nil, func(pkg *packages.Package) {
+		for _, pkg := range allPkgs {
 			for _, path := range pkg.GoFiles {
-				if seenPaths[path] {
+				if seenFilePaths[path] {
 					continue
 				}
-				seenPaths[path] = true
+				seenFilePaths[path] = true
 				allGoFiles = append(allGoFiles, goFileEntry{path: path, pkg: pkg})
 			}
-		})
+		}
 		slices.SortStableFunc(allGoFiles, func(a, b goFileEntry) int {
 			return cmp.Compare(a.path, b.path)
 		})
@@ -257,14 +304,14 @@ func (Module) Files(
 
 		// collect non-Go files
 		nonGoFilePaths := make(map[string]*packages.Package)
-		packages.Visit(allPkgs, nil, func(pkg *packages.Package) {
+		for _, pkg := range allPkgs {
 			allFiles := [][]string{
 				pkg.EmbedFiles,
 				pkg.OtherFiles,
 			}
 			for _, fileList := range allFiles {
 				for _, path := range fileList {
-					if seenPaths[path] {
+					if seenFilePaths[path] {
 						continue
 					}
 					if _, ok := nonGoFilePaths[path]; !ok {
@@ -272,7 +319,7 @@ func (Module) Files(
 					}
 				}
 			}
-		})
+		}
 
 		// root packages directories
 		rootPkgDirs := make(map[string]*packages.Package)
@@ -312,7 +359,7 @@ func (Module) Files(
 				lowerName := strings.ToLower(name)
 				if strings.HasSuffix(lowerName, ".md") && !strings.HasPrefix(lowerName, "_") {
 					path := filepath.Join(dir, name)
-					if !seenPaths[path] {
+					if !seenFilePaths[path] {
 						if _, ok := nonGoFilePaths[path]; !ok {
 							nonGoFilePaths[path] = pkg
 							logger.Info("include markdown file", "path", path)
@@ -472,10 +519,6 @@ func (Module) Files(
 			}
 			return 0
 		})
-
-		// Filter is now applied during file creation (Go files and non-Go files
-		// are both filtered by distance and stdlib before being added to the
-		// slice), so no separate filter step is needed.
 
 		return
 	})

@@ -12,18 +12,17 @@ import (
 )
 
 const TheoryOfLightweightPackageLoading = `
-The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax
-and NeedTypesInfo continue to be omitted so go/packages never retains full ASTs
-or per-identifier types for every transitive dependency. NeedTypes is also
-omitted: type-checking the full dependency graph (enabled by NeedDeps) is the
-dominant memory consumer and triggered OOM on large projects even after syntax
-was dropped. Distance calculation only needs the package import graph, so
-NeedName | NeedFiles | NeedImports | NeedDeps | NeedModule | NeedEmbed* is
-sufficient. Go file ASTs are still parsed lazily in files.go via
-parser.ParseFile for only the files within MaxPackageDistanceFromRoot. Omission
-of NeedTypes means pkg.Types and pkg.TypesInfo remain nil; any consumer that
-needed them must compute types on a smaller, local subset instead of loading
-them for the entire dependency tree.
+The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax,
+NeedTypesInfo, and NeedTypes continue to be omitted so go/packages never retains
+full ASTs, per-identifier types, or complete type-checking results for every
+transitive dependency. NeedDeps is also omitted: loading the full dependency
+graph pulls tens of thousands of packages into memory even though only packages
+within MaxPackageDistanceFromRoot (default 2) are ever read. Instead, the loader
+resolves only the root and context packages and then iteratively loads their
+imports up to the configured distance bound. This keeps the in-memory package
+set proportional to the visible working set rather than the entire module graph.
+Go file ASTs are still parsed lazily in files.go via parser.ParseFile for only
+the files within the distance bound.
 `
 
 // packages returned by the loader
@@ -55,14 +54,15 @@ func (Module) Packages(
 	var err error
 
 	init := sync.OnceFunc(func() {
-		// Omit NeedTypes: type-checking the NeedDeps graph is the dominant
-		// OOM source. Topology and file discovery only need the modes below.
+		// Omit NeedDeps: loading the full transitive dependency graph is the
+		// remaining OOM driver after NeedTypes was removed. Packages beyond
+		// MaxPackageDistanceFromRoot are never read; they are resolved
+		// iteratively in Files() instead.
 		// See TheoryOfLightweightPackageLoading.
 		config := &packages.Config{
 			Mode: packages.NeedName |
 				packages.NeedFiles |
 				packages.NeedImports |
-				packages.NeedDeps |
 				packages.NeedForTest |
 				packages.NeedModule |
 				packages.NeedEmbedFiles |
