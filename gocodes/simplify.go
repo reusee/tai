@@ -317,17 +317,21 @@ func (Module) SimplifyFiles(
 }
 
 func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.FileSet, counter generators.TokenCounter, wg *sync.WaitGroup) {
-	for range runtime.NumCPU() {
+	// Cap the number of concurrent token‑counting workers to a fixed limit
+	// rather than using runtime.NumCPU(). Formatting large ASTs and running
+	// the tokenizer both allocate substantial memory; unbounded concurrency
+	// on high‑core machines can cause sporadic OOM when many large files
+	// happen to be processed simultaneously.
+	const maxTokenCounterWorkers = 8
+	numWorkers := min(runtime.NumCPU(), maxTokenCounterWorkers)
+	for range numWorkers {
 		wg.Go(func() {
 			for {
 				select {
-
 				case <-ctx.Done():
 					return
-
 				case file := <-jobChan:
 					file.applyTransform(fset, counter)
-
 				}
 			}
 		})
@@ -442,6 +446,10 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 			}
 			content = buf.String()
 			f.Pending.Content = buf.Bytes()
+			// Release the AST immediately after formatting so the GC can
+			// reclaim it before the confirmation loop clears f.Pending.
+			// This reduces the peak live heap when many files are in flight.
+			f.Pending.Ast = nil
 		} else if len(f.Pending.Content) > 0 {
 			content = string(f.Pending.Content)
 		}
