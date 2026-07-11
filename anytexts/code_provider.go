@@ -18,15 +18,15 @@ import (
 
 const TheoryOfSymlinkTraversal = `
 Symbolic links are followed so that content from other directories or files can
-be included via symlinks. Cycle detection is based on the principle that a
-symlink creates a cycle if and only if its resolved target is an ancestor of the
-current path in the directory hierarchy. The check resolves both the symlink
-target and the parent of the current path to their canonical filesystem paths,
-then uses filepath.Rel to determine whether the parent is a descendant of the
-target. This allows symlinks to non-ancestor directories (cross-references)
-while preventing infinite traversal through cyclic links. Broken symlinks
-whose targets cannot be resolved are silently skipped rather than aborting the
-entire traversal.
+be included via symlinks. Cycle detection uses two complementary mechanisms:
+1. Ancestor check: a symlink whose resolved target is an ancestor of the current
+   path would create an infinite loop and is skipped.
+2. Visited set: a map of resolved real paths records every symlink target that
+   has been followed. If a symlink resolves to a path already in the set, it is
+   skipped to break cycles that do not involve an ancestor relationship (e.g.,
+   mutual symlinks between sibling directories).
+Broken symlinks whose targets cannot be resolved are silently skipped rather than
+aborting the entire traversal.
 `
 
 const TheoryOfReadOnlySymlinks = `
@@ -110,6 +110,11 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 		// because they reside outside the project tree.
 		externalSymlinkDirs := make(map[string]bool)
 
+		// Track resolved real paths of symlink targets that have been followed.
+		// This breaks cycles that the ancestor check alone cannot detect, such
+		// as mutual symlinks between sibling directories.
+		visitedSymlinks := make(map[string]bool)
+
 		for len(queue) > 0 {
 			path := queue[0]
 			queue = queue[1:]
@@ -143,8 +148,10 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 			// Follow symbolic links while detecting cycles: a symlink whose
 			// resolved target is an ancestor of the current path would create
-			// an infinite loop and is skipped. Broken symlinks are silently
-			// skipped rather than aborting the traversal.
+			// an infinite loop and is skipped. Additionally, a visited set of
+			// resolved real paths breaks cycles that do not involve an ancestor
+			// relationship. Broken symlinks are silently skipped rather than
+			// aborting the traversal.
 			if info.Mode()&os.ModeSymlink != 0 {
 				realPath, err := filepath.EvalSymlinks(path)
 				if err != nil {
@@ -152,9 +159,14 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 					continue
 				}
 				if isAncestor(realPath, path) {
-					// Symlink cycle detected; skip to avoid infinite traversal.
+					// Symlink cycle detected via ancestor check; skip to avoid infinite traversal.
 					continue
 				}
+				if visitedSymlinks[realPath] {
+					// Symlink cycle detected via visited set; skip to avoid infinite traversal.
+					continue
+				}
+				visitedSymlinks[realPath] = true
 				// Follow the symlink to get the target's file info.
 				info, err = os.Stat(realPath)
 				if err != nil {
