@@ -299,6 +299,23 @@ func TestDeepseekTokenCounter(t *testing.T) {
 	}
 }
 
+func TestTemperatureZeroIncludedInJSON(t *testing.T) {
+	// Regression: omitempty on Temperature caused 0 to be omitted from the
+	// request JSON, making the API fall back to its default (typically 1.0)
+	// instead of the intended deterministic temperature 0.
+	req := ChatCompletionRequest{
+		Model:       "test-model",
+		Temperature: 0,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"temperature":0`) {
+		t.Fatalf("temperature 0 must be included in JSON, got: %s", string(data))
+	}
+}
+
 func TestResolveSpec(t *testing.T) {
 	base := Spec{
 		Name:          "base",

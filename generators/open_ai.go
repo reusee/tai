@@ -619,7 +619,7 @@ type ChatCompletionRequest struct {
 	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`
 	Reasoning           *Reasoning              `json:"reasoning,omitempty"`
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
-	Temperature         float32                 `json:"temperature,omitempty"`
+	Temperature         float32                 `json:"temperature"`
 	Tools               []Tool                  `json:"tools,omitempty"`
 	ResponseFormat      *ResponseFormat         `json:"response_format,omitempty"`
 }
