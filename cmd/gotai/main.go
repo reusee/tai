@@ -8,7 +8,6 @@ import (
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/debugs"
-	"github.com/reusee/tai/memlimit"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/taiconfigs"
 )
@@ -19,7 +18,6 @@ func main() {
 	maybeRunInContainer()
 
 	cmds.Execute(os.Args[1:])
-	memlimit.ApplyFromFlag()
 
 	scope := dscope.New(
 		new(codes.Module),
