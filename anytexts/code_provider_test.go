@@ -354,3 +354,54 @@ func TestFileOrderingByPath(t *testing.T) {
 		}
 	})
 }
+
+func TestExcludePatternDirectoryPrefix(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile("keep.txt", []byte("keep content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll("pkg", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("pkg/file.go", []byte("package pkg"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+		modes.ForTest(t),
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{".", "!./pkg"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundKeep := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				s := string(text)
+				if strings.Contains(s, "keep content") {
+					foundKeep = true
+				}
+				if strings.Contains(s, "pkg/file.go") {
+					t.Fatal("pkg/file.go should be excluded by !./pkg pattern")
+				}
+			}
+		}
+		if !foundKeep {
+			t.Fatal("keep.txt should be included")
+		}
+	})
+}

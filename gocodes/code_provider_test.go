@@ -66,3 +66,35 @@ func TestContextPrompt(t *testing.T) {
 	})
 
 }
+
+func TestExcludePatternDirectoryPrefix(t *testing.T) {
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+
+	dir := filepath.Join(testdataDir, "main")
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(dir)
+		},
+	).Call(func(
+		provider CodeProvider,
+	) {
+		// Exclude the dep1 directory. Before the fix, this pattern only
+		// matched files exactly named "dep1", not files under the dep1
+		// directory, so dep1.go would not be excluded.
+		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, []string{"!../dep1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "dep1.go") {
+					t.Fatalf("dep1.go should be excluded by !../dep1 pattern")
+				}
+			}
+		}
+	})
+}

@@ -349,6 +349,28 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 	return false
 }
 
+// isExcludedPath checks whether the given path is excluded by any exclusion
+// pattern. Non-glob patterns are treated as directory prefixes: "pkg"
+// excludes both "pkg" itself and everything under "pkg/". Glob patterns
+// are matched with filepath.Match.
+func isExcludedPath(path string, excludePatterns []string) bool {
+	cleanedPath := filepath.Clean(path)
+	for _, pattern := range excludePatterns {
+		cleanedPattern := filepath.Clean(pattern)
+		if cleanedPath == cleanedPattern {
+			return true
+		}
+		if !strings.ContainsAny(cleanedPattern, "*?[") &&
+			strings.HasPrefix(cleanedPath, cleanedPattern+string(filepath.Separator)) {
+			return true
+		}
+		if matched, err := filepath.Match(pattern, path); err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
 func (c CodeProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),
@@ -357,11 +379,27 @@ func (c CodeProvider) Parts(
 	parts []generators.Part,
 	err error,
 ) {
+	// Separate inclusion and exclusion patterns. Exclusion patterns use a
+	// "!" prefix; they are not file paths and must not be passed to IterFiles,
+	// which would attempt to os.Lstat them and abort iteration on error.
+	var includePatterns, excludePatterns []string
+	for _, p := range patterns {
+		if strings.HasPrefix(p, "!") {
+			excludePatterns = append(excludePatterns, p[1:])
+		} else {
+			includePatterns = append(includePatterns, p)
+		}
+	}
 
 	totalTokens := 0
-	for info, err := range c.IterFiles(patterns) {
+	for info, err := range c.IterFiles(includePatterns) {
 		if err != nil {
 			return nil, err
+		}
+
+		// Skip files excluded by patterns.
+		if isExcludedPath(info.Path, excludePatterns) {
+			continue
 		}
 
 		if info.IsText {

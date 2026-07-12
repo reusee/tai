@@ -70,13 +70,26 @@ func (c CodeProvider) Parts(
 	// filter files based on exclusion patterns
 	files = c.filterFiles(files, patterns)
 
+	// Separate inclusion and exclusion patterns. Exclusion patterns use a
+	// "!" prefix; they are not file paths and must not be passed to IterFiles,
+	// which would attempt to os.Lstat them and abort iteration on error.
+	// See TheoryOfExclusionPatterns.
+	var includePatterns, excludePatterns []string
+	for _, p := range patterns {
+		if strings.HasPrefix(p, "!") {
+			excludePatterns = append(excludePatterns, p[1:])
+		} else {
+			includePatterns = append(includePatterns, p)
+		}
+	}
+
 	// Collect extra files from patterns for later addition after project files.
 	// Extra files are placed after project files to maximize the common prefix
 	// for LLM prefix caching: project files are stable across requests, while
 	// extra files vary by pattern and would shift all subsequent content if
 	// placed first.
 	var pendingExtras []pendingExtraPart
-	if len(patterns) > 0 {
+	if len(includePatterns) > 0 {
 		projectFiles := make(map[string]*File)
 		for _, f := range files {
 			projectFiles[f.Path] = f
@@ -87,7 +100,7 @@ func (c CodeProvider) Parts(
 		// deterministic order that resists filesystem timestamp changes, maximizing the
 		// LLM prefix cache.
 		var extraFiles []anytexts.FileInfo
-		for info, err := range c.AnyTexts().IterFiles(patterns) {
+		for info, err := range c.AnyTexts().IterFiles(includePatterns) {
 			if err != nil {
 				return nil, err
 			}
@@ -117,6 +130,11 @@ func (c CodeProvider) Parts(
 			}
 			seenExtraPaths[info.Path] = true
 
+			// Skip files excluded by patterns.
+			if isExcludedPath(info.Path, excludePatterns) {
+				continue
+			}
+
 			// if file is in project, mark it as do not simplify and skip adding here
 			if f, ok := projectFiles[info.Path]; ok {
 				f.DoNotSimplify = true
@@ -124,6 +142,7 @@ func (c CodeProvider) Parts(
 			}
 
 			if info.IsText {
+
 				readOnlyNote := ""
 				if info.ReadOnly {
 					readOnlyNote = " (read-only)"
@@ -221,11 +240,51 @@ func (c CodeProvider) Parts(
 	return
 }
 
+const TheoryOfExclusionPatterns = `
+Exclusion patterns (prefixed with "!") filter files from the context provided
+to the model. A non-glob pattern like "pkg" matches both a file named "pkg"
+and all files under the "pkg/" directory, acting as a directory prefix filter.
+Glob patterns (containing *, ?, or []) are matched via matchPattern, which
+supports ** for recursive directory matching. Exclusion patterns must be
+separated from inclusion patterns before being passed to IterFiles, because
+IterFiles treats all patterns as file paths to glob-expand; passing a
+"!"-prefixed pattern would cause os.Lstat to fail and abort iteration.
+`
+
+// isExcludedPath checks whether the given relative path is excluded by any
+// exclusion pattern. Supports glob matching via matchPattern, plus directory
+// prefix matching for non-glob patterns (e.g., "pkg" excludes all files
+// under the "pkg" directory). See TheoryOfExclusionPatterns.
+func isExcludedPath(relPath string, excludePatterns []string) bool {
+	cleanedRelPath := filepath.Clean(relPath)
+	for _, pattern := range excludePatterns {
+		if matchPattern(relPath, pattern) {
+			return true
+		}
+		cleanedPattern := filepath.Clean(pattern)
+		if !strings.ContainsAny(cleanedPattern, "*?[") &&
+			(strings.HasPrefix(cleanedRelPath, cleanedPattern+string(filepath.Separator)) ||
+				cleanedRelPath == cleanedPattern) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
 	if len(patterns) == 0 {
 		return files
 	}
 	dir := string(c.LoadDir())
+	var excludePatterns []string
+	for _, p := range patterns {
+		if strings.HasPrefix(p, "!") {
+			excludePatterns = append(excludePatterns, p[1:])
+		}
+	}
+	if len(excludePatterns) == 0 {
+		return files
+	}
 	var filtered []*File
 	for _, file := range files {
 		relPath, err := filepath.Rel(dir, file.Path)
@@ -234,17 +293,7 @@ func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
 			filtered = append(filtered, file)
 			continue
 		}
-		excluded := false
-		for _, p := range patterns {
-			if strings.HasPrefix(p, "!") {
-				pattern := p[1:]
-				if matchPattern(relPath, pattern) {
-					excluded = true
-					break
-				}
-			}
-		}
-		if !excluded {
+		if !isExcludedPath(relPath, excludePatterns) {
 			filtered = append(filtered, file)
 		}
 	}
