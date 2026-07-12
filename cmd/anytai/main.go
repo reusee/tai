@@ -7,12 +7,14 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/memlimit"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/taiconfigs"
 )
 
 func main() {
 	cmds.Execute(os.Args[1:])
+	memlimit.ApplyFromFlag()
 
 	scope := dscope.New(
 		new(codes.Module),

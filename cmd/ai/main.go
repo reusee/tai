@@ -14,6 +14,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/memlimit"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/taiconfigs"
@@ -51,6 +52,7 @@ To ensure reliability:
 
 func main() {
 	cmds.Execute(os.Args[1:])
+	memlimit.ApplyFromFlag()
 	ctx := context.Background()
 
 	scope := dscope.New(

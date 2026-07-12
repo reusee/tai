@@ -6,10 +6,12 @@ import (
 
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/memlimit"
 )
 
 func main() {
 	cmds.Execute(os.Args[1:])
+	memlimit.ApplyFromFlag()
 
 	target := ".AI"
 	root, err := os.OpenRoot(".")
