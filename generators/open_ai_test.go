@@ -279,3 +279,41 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 		t.Fatal("expected partial state to be preserved on error, got nil")
 	}
 }
+
+func TestOpenAIErrorNoErrorField(t *testing.T) {
+	// Regression: when the API returns a non-200 status with valid JSON
+	// that lacks an "error" field, the code would panic with a nil pointer
+	// dereference when trying to set errResp.Error.HTTPStatusCode.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message": "something went wrong"}`)
+	}))
+	defer server.Close()
+
+	disableTools := true
+	openai := &OpenAI{
+		spec: Spec{
+			BaseURL:      server.URL,
+			Model:        "test-model",
+			DisableTools: &disableTools,
+		},
+		apiKey: "test-key",
+		client: server.Client(),
+	}
+	openai.Logger = func() logs.Logger {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	openai.Tap = func() debugs.Tap {
+		return func(context.Context, string, map[string]any) {}
+	}
+
+	state := NewPrompts("", []*Content{
+		{Role: RoleUser, Parts: []Part{Text("hi")}},
+	})
+
+	_, err := openai.Generate(context.Background(), state, nil)
+	// Should return an error, not panic
+	if err == nil {
+		t.Fatal("expected error for non-200 status without error field")
+	}
+}

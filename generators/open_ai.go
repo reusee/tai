@@ -216,7 +216,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		var errResp ErrorResponse
-		if err := json.Unmarshal(body, &errResp); err != nil {
+		// Check both unmarshal failure and nil Error field: some providers
+		// return valid JSON without an "error" field (e.g. {"message": "..."}),
+		// which would leave errResp.Error nil and cause a panic on the next
+		// line when setting HTTPStatusCode.
+		if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == nil {
 			err := fmt.Errorf("bad status: %d, body: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusTooManyRequests {
 				return ret, errors.Join(err, ErrRetryable)
