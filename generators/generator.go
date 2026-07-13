@@ -156,10 +156,16 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		merged.Name = name
 
 		// Handle redirect: if the last spec in the path has a Redirect
-		// field, re-resolve with the extended path. The redirect value
-		// is appended to the current path as additional components.
+		// field, re-resolve with the redirected path. A relative redirect
+		// (e.g., "child") is appended to the current path as additional
+		// components. An absolute redirect starting with "/" (e.g.,
+		// "/foo/bar") resolves from the root, replacing the current path.
 		if lastRedirect != "" {
-			name = name + "/" + lastRedirect
+			if strings.HasPrefix(lastRedirect, "/") {
+				name = lastRedirect[1:]
+			} else {
+				name = name + "/" + lastRedirect
+			}
 			continue
 		}
 
