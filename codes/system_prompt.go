@@ -37,9 +37,27 @@ via symbolic links to external locations.
   explain the rationale, but do not emit a change block for it.
 `
 
+const ContinueBlockSystemPrompt = `
+Continue Block Kind:
+
+The "continue" kind signals that the task is not yet complete and more rounds of generation are needed. It MUST be the last block in the response, after all change blocks.
+
+**Continue Block Format:**
+
+:::continue <boundary>
+<next user message content>
+:::end <boundary>
+
+**Rules:**
+- Use a continue block when the task cannot be completed in a single response (e.g., due to output length limits or multi-step workflows). The body contains the next user message that will be fed back into the system to continue the task.
+- A response MUST contain either a finish block (if the task is complete) or a continue block (if more work is needed), but NOT both.
+- The continue block must be the last block in the response; no change blocks or other blocks may appear after it.
+- The boundary is a random string chosen by the AI to prevent conflicts with the body content.
+`
+
 type ExtraSystemPrompt string
 
-var _ExtraSystemPromptConfigurable configs.Configurable = ExtraSystemPrompt("")
+var _ configs.Configurable = ExtraSystemPrompt("")
 
 func (e ExtraSystemPrompt) TaigoConfigurable() {}
 
@@ -61,7 +79,8 @@ func (Module) SystemPrompt(
 		codeProvider.SystemPrompt() + "\n" +
 		diffHandler.SystemPrompt() + "\n" +
 		blocks.FinishBlockSystemPrompt + "\n" +
-		ReadOnlyFilesSystemPrompt + "\n"
+		ReadOnlyFilesSystemPrompt + "\n" +
+		ContinueBlockSystemPrompt + "\n"
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}

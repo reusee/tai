@@ -23,6 +23,21 @@ import (
 
 const maxRequestContextRounds = 5
 
+const (
+	maxContinueRounds = 10
+
+	TheoryOfContinueBlocks = `
+Continue blocks allow the model to self-drive multi-turn generation by emitting
+a continue block at the end of a response when the task is not yet complete.
+The system parses the continue block, extracts its body as the next user message,
+and automatically starts a new generation round. This enables the model to
+produce arbitrarily long outputs by chaining multiple rounds. A maximum of
+maxContinueRounds (10) is enforced to prevent infinite loops. Each round must
+end with either a finish block (task complete) or a continue block (more work
+needed), but not both.
+`
+)
+
 type Generate func(ctx context.Context, output io.Writer) error
 
 const TheoryOfTokenBudgetStability = `
@@ -194,18 +209,14 @@ func (Module) Generate(
 		}
 
 		// Wrap state with BlockState to parse structured blocks from model
-		// output. BlockState is activated when dynamic context (request-context
-		// blocks) or immediate apply (change blocks) is enabled, since both
-		// features intercept blocks from streamed output.
-		// See TheoryOfRequestContext, TheoryOfDynamicContext, and TheoryOfImmediateApply.
-		var blockState *blocks.BlockState
-		if bool(dynamicContext) || bool(apply) {
-			blockState = blocks.NewBlockState(state)
-			state = blockState
-		}
+		// output. BlockState is always activated to support continue blocks,
+		// change blocks, and request-context blocks.
+		blockState := blocks.NewBlockState(state)
+		state = blockState
 
 		// run
 		requestContextRounds := 0
+		continueRounds := 0
 		phase := actionChat.InitialPhase(nil)
 		for phase != nil {
 			newPhase, newState, phaseErr := phase(ctx, state)
@@ -272,11 +283,55 @@ func (Module) Generate(
 							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
 						}
 						phase = actionChat.BuildGenerate()(generator, nil)(nil)
+						continue
 					}
+				}
+
+				// Check for continue blocks from model output.
+				// If found, use the content as the next user message
+				// and continue generation.
+				var hasContinue bool
+				state, hasContinue, err = processContinueBlocks(blockState, state)
+				if err != nil {
+					return err
+				}
+				if hasContinue {
+					continueRounds++
+					if continueRounds > maxContinueRounds {
+						return fmt.Errorf("max continue rounds (%d) exceeded", maxContinueRounds)
+					}
+					phase = actionChat.BuildGenerate()(generator, nil)(nil)
+					continue
 				}
 			}
 		}
 
 		return nil
 	}
+}
+
+// processContinueBlocks checks for continue blocks in the block state and,
+// if present, appends the first continue block's body as a user message to
+// the state. It returns the new state, a boolean indicating whether a
+// continue block was found, and any error.
+func processContinueBlocks(blockState *blocks.BlockState, state generators.State) (generators.State, bool, error) {
+	if blockState == nil {
+		return state, false, nil
+	}
+	continueBlocks := blockState.PopBlocksByKind("continue")
+	if len(continueBlocks) == 0 {
+		return state, false, nil
+	}
+	// Use the first continue block's body as the next user content
+	nextUserContent := continueBlocks[0].Body
+	newState, err := state.AppendContent(&generators.Content{
+		Role: "user",
+		Parts: []generators.Part{
+			generators.Text(nextUserContent),
+		},
+	})
+	if err != nil {
+		return state, false, err
+	}
+	return newState, true, nil
 }

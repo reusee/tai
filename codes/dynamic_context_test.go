@@ -67,3 +67,19 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		t.Fatal("system prompt must reference read-only files")
 	}
 }
+
+func TestSystemPromptContinueBlock(t *testing.T) {
+	module := Module{}
+	prompt := module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		ExtraSystemPrompt(""),
+	)
+	if !strings.Contains(string(prompt), "Continue Block Kind") {
+		t.Fatal("system prompt must include continue block section")
+	}
+	if !strings.Contains(string(prompt), ":::continue") {
+		t.Fatal("system prompt must include continue block format")
+	}
+}

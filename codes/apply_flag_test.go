@@ -115,3 +115,64 @@ func TestApplyDefaultEnabled(t *testing.T) {
 		t.Fatal("applyFlag should default to true (immediate apply enabled by default)")
 	}
 }
+
+func TestProcessContinueBlocks(t *testing.T) {
+	// Create a state with BlockState wrapping
+	state := generators.NewPrompts("", nil)
+	blockState := blocks.NewBlockState(state)
+
+	// Append a continue block
+	text := ":::continue 徕珑\nPlease continue the task.\n:::end 徕珑\n"
+	_, err := blockState.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newState, hasContinue, err := processContinueBlocks(blockState, generators.State(blockState))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasContinue {
+		t.Fatal("expected hasContinue to be true")
+	}
+
+	// Verify the user content was appended
+	found := false
+	for c := range newState.Contents() {
+		if c.Role == "user" {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "Please continue the task.") {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected user content with continue message")
+	}
+
+	// Verify that continue blocks were consumed
+	if remaining := blockState.PopBlocksByKind("continue"); len(remaining) != 0 {
+		t.Fatalf("expected 0 remaining continue blocks, got %d", len(remaining))
+	}
+}
+
+func TestProcessContinueBlocksNoBlock(t *testing.T) {
+	state := generators.NewPrompts("", nil)
+	blockState := blocks.NewBlockState(state)
+
+	newState, hasContinue, err := processContinueBlocks(blockState, generators.State(blockState))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasContinue {
+		t.Fatal("expected hasContinue to be false")
+	}
+	// State should be unchanged (same reference or equivalent)
+	if newState != generators.State(blockState) {
+		// It's okay if it's a different wrapper, but contents should be same
+	}
+}
