@@ -446,16 +446,33 @@ func (c CodeProvider) Parts(
 			if info.ReadOnly {
 				readOnlyNote = ", read-only"
 			}
-			parts = append(parts, generators.Text(
-				"``` begin of file "+info.Path+" (binary, "+info.MimeType+")"+readOnlyNote+"\n",
-			))
+			beginMarker := "``` begin of file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"
+			endMarker := "\n``` end of file " + info.Path + "\n"
+
+			// Count text markers for the token budget. Binary content itself
+			// cannot be accurately counted by a text tokenizer, but the markers
+			// are text and must be accounted for to prevent budget overflow.
+			markerTokens, err := countTokens(beginMarker + endMarker)
+			if err != nil {
+				return nil, err
+			}
+			if totalTokens+markerTokens > maxTokens {
+				c.Logger().Info("binary file skipped due to token limit",
+					"at file", info.Path,
+					"marker tokens", markerTokens,
+					"total tokens", totalTokens,
+					"max tokens", maxTokens,
+				)
+				break
+			}
+			totalTokens += markerTokens
+
+			parts = append(parts, generators.Text(beginMarker))
 			parts = append(parts, generators.FileContent{
 				Content:  info.Content,
 				MimeType: info.MimeType,
 			})
-			parts = append(parts, generators.Text(
-				"\n``` end of file "+info.Path+"\n",
-			))
+			parts = append(parts, generators.Text(endMarker))
 
 			if *debug {
 				c.Logger().Info("binary file",

@@ -405,3 +405,73 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 		}
 	})
 }
+
+func TestBinaryFileTokenBudget(t *testing.T) {
+	// Enable PNG inclusion for this test.
+	includeNonTextMimeTypes["image/png"] = true
+	defer func() {
+		delete(includeNonTextMimeTypes, "image/png")
+	}()
+
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a text file and a binary PNG file. The text file sorts first
+	// alphabetically (a.txt < b.png), so it is processed before the binary
+	// file in the IterFiles loop.
+	if err := os.WriteFile("a.txt", []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pngContent := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	if err := os.WriteFile("b.png", pngContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+		modes.ForTest(t),
+	).Call(func(
+		provider CodeProvider,
+	) {
+		// With DeepseekTokenCounterFn, the text file markers + content
+		// ("``` begin of file a.txt\nhello\n``` end of file a.txt\n")
+		// are ~52 runes * 0.3 = 15 tokens. The binary file markers are
+		// ~65 runes * 0.3 = 19 tokens. With maxTokens=16, the text file
+		// fits (15 <= 16) but the binary file markers push the total to
+		// 34 > 16, so the binary file is skipped.
+		// Before the fix, binary markers were not counted, so the binary
+		// file would always be included regardless of the budget.
+		parts, err := provider.Parts(16, generators.DeepseekTokenCounterFn, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		foundText := false
+		foundBinary := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				s := string(text)
+				if strings.Contains(s, "a.txt") {
+					foundText = true
+				}
+				if strings.Contains(s, "b.png") {
+					foundBinary = true
+				}
+			}
+		}
+		if !foundText {
+			t.Fatal("text file should be included within token budget")
+		}
+		if foundBinary {
+			t.Fatal("binary file should be skipped due to token limit (markers now counted)")
+		}
+	})
+}

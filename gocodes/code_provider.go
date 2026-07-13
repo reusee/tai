@@ -171,9 +171,21 @@ func (c CodeProvider) Parts(
 				if info.ReadOnly {
 					readOnlyNote = ", read-only"
 				}
+				beginMarker := "``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"
+				endMarker := "\n``` end of context file " + info.Path + "\n"
+
+				// Count text markers for the token budget. Binary content itself
+				// cannot be accurately counted by a text tokenizer, but the markers
+				// are text and must be accounted for to prevent budget overflow.
+				markerTokens, err := countTokens(beginMarker + endMarker)
+				if err != nil {
+					return nil, err
+				}
+
 				pendingExtras = append(pendingExtras, pendingExtraPart{
-					part: generators.Text("``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"),
-					path: info.Path,
+					part:   generators.Text(beginMarker),
+					tokens: markerTokens,
+					path:   info.Path,
 				})
 				pendingExtras = append(pendingExtras, pendingExtraPart{
 					part: generators.FileContent{
@@ -183,7 +195,7 @@ func (c CodeProvider) Parts(
 					path: info.Path,
 				})
 				pendingExtras = append(pendingExtras, pendingExtraPart{
-					part: generators.Text("\n``` end of context file " + info.Path + "\n"),
+					part: generators.Text(endMarker),
 					path: info.Path,
 				})
 			}
