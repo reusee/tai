@@ -35,6 +35,15 @@ produce arbitrarily long outputs by chaining multiple rounds. A maximum of
 maxContinueRounds (10) is enforced to prevent infinite loops. Each round must
 end with either a finish block (task complete) or a continue block (more work
 needed), but not both.
+
+The primary trigger for using continue blocks is the number of expected change
+blocks: when a task requires more than approximately 5-7 change blocks, the
+model should decompose it into multiple rounds. Secondary triggers include
+natural phase boundaries (e.g., interface refactoring followed by caller
+updates) and dependency chains where later steps depend on earlier results.
+Each round should produce a coherent, reviewable set of changes; prefer fewer,
+larger rounds over many tiny rounds to minimize round-trip overhead.
+
 For complex tasks, the model maintains a task list in the continue block body.
 In each round, the model selects one or more tasks from the list to execute,
 produces the corresponding change blocks, and ends with a continue block

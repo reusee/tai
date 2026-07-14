@@ -42,8 +42,24 @@ Continue Block Kind:
 
 The "continue" kind signals that the task is not yet complete and more rounds of generation are needed. It MUST be the last block in the response, after all change blocks.
 
+**When to Use Continue Blocks:**
+
+Use a continue block when any of the following conditions apply:
+- The task requires more than approximately 5-7 change blocks, which may exceed a single response's practical output capacity. Counting the expected change blocks before starting is the most reliable trigger.
+- The task naturally decomposes into independent phases with clear boundaries (e.g., "refactor the interface" followed by "update all callers"). Each phase becomes a separate round.
+- Later steps depend on the results or review of earlier steps, making incremental delivery safer than producing all changes at once.
+- The estimated total output (code bodies plus explanatory prose) would approach or exceed the model's per-response limit, risking truncation.
+
+Do NOT use continue blocks for:
+- Simple, atomic changes that fit comfortably in one response (typically ≤5 change blocks).
+- Single-file modifications with few change blocks.
+- Tasks where all changes are tightly coupled and reviewing them together is essential for correctness.
+
+**Round Granularity:**
+Each round should produce a coherent, reviewable set of changes. Prefer fewer, larger rounds over many tiny rounds to reduce round-trip overhead. A round that produces only one trivial change block wastes the continue mechanism; group related changes into the same round. The maximum number of continue rounds is 10.
+
 **Task Decomposition Strategy:**
-When performing a complex task, first conceive the overall process, break it down into specific subtasks, and generate a concrete task list. The continue block body contains this task list. In each round, select one or more tasks from the list to execute, produce the corresponding change blocks, and end with a continue block containing the updated task list — marking completed tasks and listing remaining tasks. This cycle repeats until all tasks are complete, at which point a finish block is used instead of a continue block.
+When a task warrants continue blocks, first conceive the overall process, break it down into specific subtasks, and generate a concrete task list. The continue block body contains this task list. In each round, select one or more tasks from the list to execute, produce the corresponding change blocks, and end with a continue block containing the updated task list — marking completed tasks and listing remaining tasks. This cycle repeats until all tasks are complete, at which point a finish block is used instead of a continue block.
 
 The task list should clearly distinguish:
 - Completed tasks (e.g., marked with [x] or strikethrough)
