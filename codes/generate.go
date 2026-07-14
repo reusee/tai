@@ -35,6 +35,11 @@ produce arbitrarily long outputs by chaining multiple rounds. A maximum of
 maxContinueRounds (10) is enforced to prevent infinite loops. Each round must
 end with either a finish block (task complete) or a continue block (more work
 needed), but not both.
+For complex tasks, the model is expected to first decompose the work into a
+concrete plan of subtasks, then implement each subtask in a separate round
+using continue blocks to chain the rounds together. This avoids hitting the
+single-request generation limit and keeps each round focused and reviewable.
+Simple tasks that fit within a single response need not be decomposed.
 `
 )
 

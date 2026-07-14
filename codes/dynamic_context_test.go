@@ -82,4 +82,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 	if !strings.Contains(string(prompt), ":::continue") {
 		t.Fatal("system prompt must include continue block format")
 	}
+	if !strings.Contains(string(prompt), "Task Decomposition") {
+		t.Fatal("system prompt must include task decomposition strategy for complex tasks")
+	}
 }

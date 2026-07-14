@@ -42,6 +42,10 @@ Continue Block Kind:
 
 The "continue" kind signals that the task is not yet complete and more rounds of generation are needed. It MUST be the last block in the response, after all change blocks.
 
+**Task Decomposition Strategy:**
+When performing a complex task, first conceive the overall process, break it down into specific subtasks, and generate a concrete plan. Then use continue blocks to implement the plan step by step, one subtask per round, to avoid hitting the single-request generation limit. Each round should produce the change blocks for one subtask and end with a continue block containing the next subtask's description (or a finish block when all subtasks are complete).
+Simple tasks that can be completed within a single response need not be split — generate the full output directly without continue blocks.
+
 **Continue Block Format:**
 
 :::continue <boundary>
