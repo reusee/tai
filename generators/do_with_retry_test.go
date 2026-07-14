@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/reusee/tai/logs"
 )
 
 func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
@@ -16,7 +18,7 @@ func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
 		return 0, errors.Join(errors.New("no output"), ErrRetryable)
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	result, err := doWithRetry(context.Background(), logger, fn, 0)
 
 	if err == nil {
@@ -46,7 +48,7 @@ func TestDoWithRetrySuccessOnRetry(t *testing.T) {
 		return 42, nil
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	result, err := doWithRetry(context.Background(), logger, fn, 0)
 
 	if err != nil {
@@ -68,14 +70,14 @@ func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
 		return 0, testErr
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	_, err := doWithRetry(context.Background(), logger, fn, 0)
 
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !errors.Is(err, testErr) {
-		t.Fatalf("expected original error to be preserved, got: %v", err)
+		t.Fatalf("expected original error to be preserved, got %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("expected 1 call (no retry for non-retryable), got %d", calls)

@@ -30,7 +30,9 @@ func init() {
 	}).Desc("set log level to error"))
 }
 
-type Logger = *slog.Logger
+type Logger struct {
+	*slog.Logger
+}
 
 func (Module) Logger(
 	writer Writer,
@@ -78,9 +80,9 @@ func (Module) Logger(
 		handlers = append(handlers, journalHandler)
 	}
 
-	return slog.New(&Handler{
+	return Logger{slog.New(&Handler{
 		Handler: slogmulti.Fanout(handlers...),
-	})
+	})}
 }
 
 func toJournalKey(str string) string {

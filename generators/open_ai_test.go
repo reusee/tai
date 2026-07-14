@@ -268,7 +268,7 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 		},
 	}
 	openai.Logger = func() logs.Logger {
-		return slog.New(slog.NewTextHandler(io.Discard, nil))
+		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	}
 	openai.Tap = func() debugs.Tap {
 		return func(context.Context, string, map[string]any) {}
@@ -306,7 +306,7 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 		},
 	}
 	openai.Logger = func() logs.Logger {
-		return slog.New(slog.NewTextHandler(io.Discard, nil))
+		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	}
 	openai.Tap = func() debugs.Tap {
 		return func(context.Context, string, map[string]any) {}
