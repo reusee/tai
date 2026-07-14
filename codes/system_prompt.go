@@ -43,7 +43,13 @@ Continue Block Kind:
 The "continue" kind signals that the task is not yet complete and more rounds of generation are needed. It MUST be the last block in the response, after all change blocks.
 
 **Task Decomposition Strategy:**
-When performing a complex task, first conceive the overall process, break it down into specific subtasks, and generate a concrete plan. Then use continue blocks to implement the plan step by step, one subtask per round, to avoid hitting the single-request generation limit. Each round should produce the change blocks for one subtask and end with a continue block containing the next subtask's description (or a finish block when all subtasks are complete).
+When performing a complex task, first conceive the overall process, break it down into specific subtasks, and generate a concrete task list. The continue block body contains this task list. In each round, select one or more tasks from the list to execute, produce the corresponding change blocks, and end with a continue block containing the updated task list — marking completed tasks and listing remaining tasks. This cycle repeats until all tasks are complete, at which point a finish block is used instead of a continue block.
+
+The task list should clearly distinguish:
+- Completed tasks (e.g., marked with [x] or strikethrough)
+- Remaining tasks (e.g., marked with [ ] or unmarked)
+- Tasks being executed in the current round
+
 Simple tasks that can be completed within a single response need not be split — generate the full output directly without continue blocks.
 
 **Continue Block Format:**
@@ -53,7 +59,7 @@ Simple tasks that can be completed within a single response need not be split �
 :::end <boundary>
 
 **Rules:**
-- Use a continue block when the task cannot be completed in a single response (e.g., due to output length limits or multi-step workflows). The body contains the next user message that will be fed back into the system to continue the task.
+- Use a continue block when the task cannot be completed in a single response (e.g., due to output length limits or multi-step workflows). The body contains the next user message that will be fed back into the system to continue the task. For multi-round tasks, the body is the updated task list showing completed and remaining tasks.
 - A response MUST contain either a finish block (if the task is complete) or a continue block (if more work is needed), but NOT both.
 - The continue block must be the last block in the response; no change blocks or other blocks may appear after it.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.

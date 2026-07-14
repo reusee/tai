@@ -85,4 +85,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 	if !strings.Contains(string(prompt), "Task Decomposition") {
 		t.Fatal("system prompt must include task decomposition strategy for complex tasks")
 	}
+	if !strings.Contains(string(prompt), "task list") {
+		t.Fatal("system prompt must include task list concept for multi-round continue blocks")
+	}
 }
