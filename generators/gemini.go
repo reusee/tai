@@ -447,7 +447,7 @@ func (Module) GetGeminiClient(
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
 			APIKey:     key,
 			Backend:    genai.BackendGeminiAPI,
-			HTTPClient: httpClient,
+			HTTPClient: httpClient.Client,
 		})
 		if err != nil {
 			return nil, err

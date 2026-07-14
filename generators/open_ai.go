@@ -183,9 +183,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	// Select HTTP client based on NoProxy flag
 	client := o.client
 	if o.spec.NoProxy != nil && *o.spec.NoProxy {
-		client = &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{}).DialContext,
+		client = nets.HTTPClient{
+			Client: &http.Client{
+				Transport: &http.Transport{
+					DialContext: (&net.Dialer{}).DialContext,
+				},
 			},
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/nets"
 )
 
 // errorAfterNState wraps a State and fails AppendContent after maxCalls
@@ -262,7 +263,9 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 			DisableTools: &disableTools,
 		},
 		apiKey: "test-key",
-		client: server.Client(),
+		client: nets.HTTPClient{
+			server.Client(),
+		},
 	}
 	openai.Logger = func() logs.Logger {
 		return slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -298,7 +301,9 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 			DisableTools: &disableTools,
 		},
 		apiKey: "test-key",
-		client: server.Client(),
+		client: nets.HTTPClient{
+			server.Client(),
+		},
 	}
 	openai.Logger = func() logs.Logger {
 		return slog.New(slog.NewTextHandler(io.Discard, nil))

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/nets"
 )
 
 func TestParseRequestContextBody(t *testing.T) {
@@ -334,7 +335,7 @@ func TestFetchRequestContextFile(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "file", Path: "test.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -365,7 +366,7 @@ func TestFetchRequestContextGlob(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "glob", Pattern: "*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -405,7 +406,7 @@ func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "glob", Pattern: "**/*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -438,7 +439,7 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "fetch", Addr: server.URL},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -470,7 +471,7 @@ func TestFetchRequestContextHeaders(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -504,7 +505,7 @@ func TestFetchRequestContextError(t *testing.T) {
 	requests := []RequestContextRequest{
 		{Type: "file", Path: "nonexistent.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), root, &http.Client{}, requests)
+	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -583,7 +584,7 @@ func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	// ProcessRequestContextBlocks must not discard non-request-context blocks.
 	// Before the fix, PopBlocks() removed all blocks including the change block,
 	// causing it to be silently lost.
-	_, hasRC, err := ProcessRequestContextBlocks(state, context.Background(), nil, nil, state)
+	_, hasRC, err := ProcessRequestContextBlocks(state, context.Background(), nil, nets.HTTPClient{}, state)
 	if err != nil {
 		t.Fatal(err)
 	}
