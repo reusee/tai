@@ -93,6 +93,7 @@ func (Module) Generate(
 	httpClient nets.HTTPClient,
 	dynamicContext DynamicContext,
 	apply Apply,
+	shell Shell,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -304,15 +305,33 @@ func (Module) Generate(
 					}
 				}
 
-				// Check for continue blocks from model output.
-				// If found, use the content as the next user message
-				// and continue generation.
-				var hasContinue bool
-				state, hasContinue, err = processContinueBlocks(blockState, state)
-				if err != nil {
-					return err
+				// Collect next-round user parts from shell and continue blocks.
+				// Both produce user content that triggers a new generation round.
+				// They are processed together so that if both are present in the
+				// same response, the combined output is fed as a single user
+				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
+				var nextUserParts []generators.Part
+				if bool(shell) {
+					parts, err := processShellBlocks(blockState)
+					if err != nil {
+						return err
+					}
+					nextUserParts = append(nextUserParts, parts...)
 				}
-				if hasContinue {
+				if continueBlocks := blockState.PopBlocksByKind("continue"); len(continueBlocks) > 0 {
+					for _, block := range continueBlocks {
+						nextUserParts = append(nextUserParts, generators.Text(block.Body))
+					}
+				}
+				if len(nextUserParts) > 0 {
+					var err error
+					state, err = state.AppendContent(&generators.Content{
+						Role:  "user",
+						Parts: nextUserParts,
+					})
+					if err != nil {
+						return err
+					}
 					continueRounds++
 					if continueRounds > maxContinueRounds {
 						return fmt.Errorf("max continue rounds (%d) exceeded", maxContinueRounds)

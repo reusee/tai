@@ -99,6 +99,7 @@ func (Module) SystemPrompt(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
 	dynamicContext DynamicContext,
+	shell Shell,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
 	prompt := prompts.Codes + "\n" +
@@ -109,6 +110,9 @@ func (Module) SystemPrompt(
 		ContinueBlockSystemPrompt + "\n"
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
+	}
+	if bool(shell) {
+		prompt += ShellBlockSystemPrompt + "\n"
 	}
 	prompt += string(extra)
 	return SystemPrompt(prompt)

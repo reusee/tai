@@ -32,6 +32,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			mockCodeProvider{},
 			BoundaryDiffHandler{},
 			DynamicContext(false),
+			Shell(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -44,6 +45,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			mockCodeProvider{},
 			BoundaryDiffHandler{},
 			DynamicContext(true),
+			Shell(false),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -58,6 +60,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		mockCodeProvider{},
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Shell(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Read-Only Files") {
@@ -74,6 +77,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		mockCodeProvider{},
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Shell(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Continue Block Kind") {
