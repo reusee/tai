@@ -23,6 +23,8 @@ func (Module) ExtraSystemPrompt(
 
 var noMemory = cmds.Switch("-no-memory")
 
+var shellEnabled = cmds.Switch("-shell")
+
 type GetSystemPrompt func() (string, error)
 
 func (Module) GetSystemPrompt(
@@ -36,9 +38,10 @@ func (Module) GetSystemPrompt(
 在与用户交流时，输出易于阅读的文本，避免使用markdown格式，不要加入任何表示格式的符号，避免生成表格。
 `
 
-		if !*noMemory {
+		// Block format is needed for memory blocks, shell blocks, and continue blocks.
+		ret += blocks.BlockFormatSystemPrompt
 
-			ret += blocks.BlockFormatSystemPrompt
+		if !*noMemory {
 
 			ret += `
 在每一轮对话中，你的任务流程如下：
@@ -75,6 +78,12 @@ func (Module) GetSystemPrompt(
 用户画像：
 ` + text
 		}
+
+		if *shellEnabled {
+			ret += blocks.ShellBlockSystemPrompt
+		}
+
+		ret += blocks.ContinueBlockSystemPrompt
 
 		if string(extra) != "" {
 			ret += "\n" + string(extra) + "\n"

@@ -10,6 +10,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/apps"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -47,6 +48,24 @@ To ensure reliability:
    medical procedure) and their personal status (e.g., undergoing that procedure). 
    This prevents the user profile from being polluted with hallucinations or 
    unverified assumptions.
+
+Shell and Continue Blocks:
+Shell blocks allow the model to execute shell commands and receive the output
+as part of the next generation round. This enables autonomous testing, build
+verification, and codebase exploration. Shell block execution is disabled by
+default for safety; the -shell flag enables it.
+
+Continue blocks allow the model to self-drive multi-turn generation by emitting
+a continue block when the task is not yet complete. The system parses the
+continue block, extracts its body as the next user message, and automatically
+starts a new generation round. This enables the model to produce arbitrarily
+long outputs by chaining multiple rounds.
+
+Both block kinds require ParserState in the state chain to intercept and parse
+model output incrementally. After each generation cycle, the parser is flushed
+and checked for shell and continue blocks. Shell blocks are processed first;
+if none are found, continue blocks are processed. If either kind is found, the
+results are appended as user content and a new generation cycle begins.
 `
 
 func main() {
@@ -125,8 +144,8 @@ func main() {
 			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
 		))
 
-		var state generators.State
-		state = generators.NewPrompts(
+		var baseState generators.State
+		baseState = generators.NewPrompts(
 			systemPrompt,
 			[]*generators.Content{
 				{
@@ -137,16 +156,61 @@ func main() {
 		)
 		buf := new(strings.Builder)
 		w := io.MultiWriter(os.Stdout, buf)
-		state = generators.NewOutput(state, w, true).WithTools(false)
+		baseState = generators.NewOutput(baseState, w, true).WithTools(false)
 
-		phase := buildGenerate(generator, nil)(
-			buildChat(generator, nil)(
-				nil,
-			),
-		)
-		for phase != nil {
-			phase, state, err = phase(ctx, state)
+		// Generation loop with shell and continue block processing.
+		// ParserState intercepts model output to extract structured blocks.
+		// Shell blocks execute commands and feed results back as user content.
+		// Continue blocks feed the block body back as the next user message.
+		for {
+			parserState := blocks.NewParserState(baseState)
+			state := generators.State(parserState)
+
+			phase := buildGenerate(generator, nil)(
+				buildChat(generator, nil)(
+					nil,
+				),
+			)
+			for phase != nil {
+				phase, state, err = phase(ctx, state)
+				ce(err)
+			}
+
+			// Flush to finalize any unclosed blocks in ParserState.
+			state, err = state.Flush()
 			ce(err)
+
+			// Update baseState for potential next cycle.
+			baseState = parserState.Unwrap()
+
+			// Process shell blocks if enabled.
+			if *shellEnabled {
+				shellParts, shellErr := blocks.ProcessShellBlocks(parserState)
+				if shellErr != nil {
+					logger.ErrorContext(ctx, "shell block", "err", shellErr)
+				}
+				if len(shellParts) > 0 {
+					baseState, err = baseState.AppendContent(&generators.Content{
+						Role:  "user",
+						Parts: shellParts,
+					})
+					ce(err)
+					continue
+				}
+			}
+
+			// Process continue blocks.
+			continueParts := blocks.ProcessContinueBlocks(parserState)
+			if len(continueParts) > 0 {
+				baseState, err = baseState.AppendContent(&generators.Content{
+					Role:  "user",
+					Parts: continueParts,
+				})
+				ce(err)
+				continue
+			}
+
+			break
 		}
 
 		// update memory from block
