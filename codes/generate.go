@@ -23,16 +23,12 @@ import (
 
 const maxRequestContextRounds = 5
 
-const (
-	maxContinueRounds = 10
-
-	TheoryOfContinueBlocks = `
+const TheoryOfContinueBlocks = `
 Continue blocks allow the model to self-drive multi-turn generation by emitting
 a continue block at the end of a response when the task is not yet complete.
 The system parses the continue block, extracts its body as the next user message,
 and automatically starts a new generation round. This enables the model to
-produce arbitrarily long outputs by chaining multiple rounds. A maximum of
-maxContinueRounds (10) is enforced to prevent infinite loops. Each round must
+produce arbitrarily long outputs by chaining multiple rounds. Each round must
 end with either a finish block (task complete) or a continue block (more work
 needed), but not both.
 
@@ -53,7 +49,6 @@ point a finish block is used instead. This avoids hitting the single-request
 generation limit and keeps each round focused and reviewable.
 Simple tasks that fit within a single response need not be decomposed.
 `
-)
 
 type Generate func(ctx context.Context, output io.Writer) error
 
@@ -234,7 +229,6 @@ func (Module) Generate(
 
 		// run
 		requestContextRounds := 0
-		continueRounds := 0
 		phase := actionChat.InitialPhase(nil)
 		for phase != nil {
 			newPhase, newState, phaseErr := phase(ctx, state)
@@ -331,10 +325,6 @@ func (Module) Generate(
 					})
 					if err != nil {
 						return err
-					}
-					continueRounds++
-					if continueRounds > maxContinueRounds {
-						return fmt.Errorf("max continue rounds (%d) exceeded", maxContinueRounds)
 					}
 					phase = actionChat.BuildGenerate()(generator, nil)(nil)
 					continue
