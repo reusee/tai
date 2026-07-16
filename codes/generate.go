@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
@@ -51,7 +52,6 @@ func (Module) Generate(
 	diffHandler codetypes.DiffHandler,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
-	actionArgument ActionArgument,
 	getDefaultGenerator GetDefaultGenerator,
 	buildGenerate phases.BuildGenerate,
 	maxTokens taiconfigs.MaxTokens,
@@ -64,6 +64,7 @@ func (Module) Generate(
 	dynamicContext DynamicContext,
 	apply Apply,
 	shell Shell,
+	flagChats flags.Chats,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -209,11 +210,12 @@ func (Module) Generate(
 		// as user content and start generation; otherwise there is nothing
 		// to do. This inlines the former ActionChat.InitialPhase logic.
 		var phase phases.Phase
-		if arg := actionArgument; arg != "" {
+
+		if chats := strings.Join(flagChats, "\n"); chats != "" {
 			state, err = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
-					generators.Text(string(arg)),
+					generators.Text(chats),
 				},
 			})
 			if err != nil {
