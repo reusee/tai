@@ -23,33 +23,6 @@ import (
 
 const maxRequestContextRounds = 5
 
-const TheoryOfContinueBlocks = `
-Continue blocks allow the model to self-drive multi-turn generation by emitting
-a continue block at the end of a response when the task is not yet complete.
-The system parses the continue block, extracts its body as the next user message,
-and automatically starts a new generation round. This enables the model to
-produce arbitrarily long outputs by chaining multiple rounds. Each round must
-end with either a finish block (task complete) or a continue block (more work
-needed), but not both.
-
-The primary trigger for using continue blocks is the number of expected change
-blocks: when a task requires more than approximately 5-7 change blocks, the
-model should decompose it into multiple rounds. Secondary triggers include
-natural phase boundaries (e.g., interface refactoring followed by caller
-updates) and dependency chains where later steps depend on earlier results.
-Each round should produce a coherent, reviewable set of changes; prefer fewer,
-larger rounds over many tiny rounds to minimize round-trip overhead.
-
-For complex tasks, the model maintains a task list in the continue block body.
-In each round, the model selects one or more tasks from the list to execute,
-produces the corresponding change blocks, and ends with a continue block
-containing the updated task list — marking completed tasks and listing
-remaining tasks. This cycle repeats until all tasks are complete, at which
-point a finish block is used instead. This avoids hitting the single-request
-generation limit and keeps each round focused and reviewable.
-Simple tasks that fit within a single response need not be decomposed.
-`
-
 type Generate func(ctx context.Context, output io.Writer) error
 
 const TheoryOfTokenBudgetStability = `
@@ -312,11 +285,7 @@ func (Module) Generate(
 					}
 					nextUserParts = append(nextUserParts, parts...)
 				}
-				if continueBlocks := parserState.PopBlocksByKind("continue"); len(continueBlocks) > 0 {
-					for _, block := range continueBlocks {
-						nextUserParts = append(nextUserParts, generators.Text(block.Body))
-					}
-				}
+				nextUserParts = append(nextUserParts, blocks.ProcessContinueBlocks(parserState)...)
 				if len(nextUserParts) > 0 {
 					var err error
 					state, err = state.AppendContent(&generators.Content{
@@ -334,30 +303,4 @@ func (Module) Generate(
 
 		return nil
 	}
-}
-
-// processContinueBlocks checks for continue blocks in the block state and,
-// if present, appends the first continue block's body as a user message to
-// the state. It returns the new state, a boolean indicating whether a
-// continue block was found, and any error.
-func processContinueBlocks(parserState *blocks.ParserState, state generators.State) (generators.State, bool, error) {
-	if parserState == nil {
-		return state, false, nil
-	}
-	continueBlocks := parserState.PopBlocksByKind("continue")
-	if len(continueBlocks) == 0 {
-		return state, false, nil
-	}
-	// Use the first continue block's body as the next user content
-	nextUserContent := continueBlocks[0].Body
-	newState, err := state.AppendContent(&generators.Content{
-		Role: "user",
-		Parts: []generators.Part{
-			generators.Text(nextUserContent),
-		},
-	})
-	if err != nil {
-		return state, false, err
-	}
-	return newState, true, nil
 }
