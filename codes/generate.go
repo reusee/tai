@@ -52,7 +52,7 @@ func (Module) Generate(
 	diffHandler codetypes.DiffHandler,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
-	getDefaultGenerator GetDefaultGenerator,
+	getDefaultGenerator generators.GetDefaultGenerator,
 	buildGenerate phases.BuildGenerate,
 	maxTokens taiconfigs.MaxTokens,
 	buildChat phases.BuildChat,
