@@ -200,6 +200,9 @@ func (Module) Files(
 		var allGoFiles []goFileEntry
 		for _, pkg := range allPkgs {
 			for _, path := range pkg.GoFiles {
+				if !strings.HasSuffix(path, ".go") {
+					continue
+				}
 				if seenFilePaths[path] {
 					continue
 				}
