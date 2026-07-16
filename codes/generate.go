@@ -221,11 +221,11 @@ func (Module) Generate(
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
 		}
 
-		// Wrap state with BlockState to parse structured blocks from model
-		// output. BlockState is always activated to support continue blocks,
+		// Wrap state with ParserState to parse structured blocks from model
+		// output. ParserState is always activated to support continue blocks,
 		// change blocks, and request-context blocks.
-		blockState := blocks.NewBlockState(state)
-		state = blockState
+		parserState := blocks.NewParserState(state)
+		state = parserState
 
 		// run
 		requestContextRounds := 0
@@ -274,7 +274,7 @@ func (Module) Generate(
 				// model output. An apply error aborts generation.
 				// See TheoryOfImmediateApply.
 				if bool(apply) {
-					if err := applyChangeBlocks(blockState, root); err != nil {
+					if err := applyChangeBlocks(parserState, root); err != nil {
 						return err
 					}
 				}
@@ -285,7 +285,7 @@ func (Module) Generate(
 				// See TheoryOfRequestContext and TheoryOfDynamicContext.
 				if bool(dynamicContext) {
 					var hasRequestContext bool
-					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(blockState, ctx, root, httpClient, state)
+					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(parserState, ctx, root, httpClient, state)
 					if err != nil {
 						return err
 					}
@@ -306,13 +306,13 @@ func (Module) Generate(
 				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
 				var nextUserParts []generators.Part
 				if bool(shell) {
-					parts, err := processShellBlocks(blockState)
+					parts, err := processShellBlocks(parserState)
 					if err != nil {
 						return err
 					}
 					nextUserParts = append(nextUserParts, parts...)
 				}
-				if continueBlocks := blockState.PopBlocksByKind("continue"); len(continueBlocks) > 0 {
+				if continueBlocks := parserState.PopBlocksByKind("continue"); len(continueBlocks) > 0 {
 					for _, block := range continueBlocks {
 						nextUserParts = append(nextUserParts, generators.Text(block.Body))
 					}
@@ -340,11 +340,11 @@ func (Module) Generate(
 // if present, appends the first continue block's body as a user message to
 // the state. It returns the new state, a boolean indicating whether a
 // continue block was found, and any error.
-func processContinueBlocks(blockState *blocks.BlockState, state generators.State) (generators.State, bool, error) {
-	if blockState == nil {
+func processContinueBlocks(parserState *blocks.ParserState, state generators.State) (generators.State, bool, error) {
+	if parserState == nil {
 		return state, false, nil
 	}
-	continueBlocks := blockState.PopBlocksByKind("continue")
+	continueBlocks := parserState.PopBlocksByKind("continue")
 	if len(continueBlocks) == 0 {
 		return state, false, nil
 	}

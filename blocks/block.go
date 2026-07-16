@@ -128,7 +128,7 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 // ended: the block is returned as complete with the body being all remaining
 // content after the opening line, and end is set to len(content) so the
 // buffer is fully consumed. This prevents post-flush content from combining
-// with pre-flush content within the same block. See TheoryOfBlockState and
+// with pre-flush content within the same block. See TheoryOfParserState and
 // TheoryOfBoundaryUniqueness.
 func parseFirstBlock(content []byte, final bool) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
@@ -233,7 +233,7 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 				// At Flush, treat an unclosed block as ended: the body is
 				// all remaining buffered content after the opening line, and
 				// the entire buffer is consumed so post-flush content does not
-				// combine with pre-flush content. See TheoryOfBlockState.
+				// combine with pre-flush content. See TheoryOfParserState.
 				block.Body = strings.TrimSpace(string(content[bodyStart:]))
 				start = blockStart
 				end = len(content)

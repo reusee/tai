@@ -89,11 +89,11 @@ func executeShellCommand(cmdStr string) string {
 // processShellBlocks executes all shell blocks in the block state and returns
 // the outputs as generator parts to be appended as user content.
 // It pops all shell blocks from the block state.
-func processShellBlocks(blockState *blocks.BlockState) ([]generators.Part, error) {
-	if blockState == nil {
+func processShellBlocks(parserState *blocks.ParserState) ([]generators.Part, error) {
+	if parserState == nil {
 		return nil, nil
 	}
-	shellBlocks := blockState.PopBlocksByKind("shell")
+	shellBlocks := parserState.PopBlocksByKind("shell")
 	if len(shellBlocks) == 0 {
 		return nil, nil
 	}

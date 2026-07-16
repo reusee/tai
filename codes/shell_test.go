@@ -40,11 +40,11 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 
 func TestProcessShellBlocks(t *testing.T) {
 	state := generators.NewPrompts("", nil)
-	blockState := blocks.NewBlockState(state)
+	parserState := blocks.NewParserState(state)
 
 	// Append a shell block with echo command
 	text := ":::shell 徕珑\necho hello world\n:::end 徕珑\n"
-	_, err := blockState.AppendContent(&generators.Content{
+	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
@@ -52,7 +52,7 @@ func TestProcessShellBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parts, err := processShellBlocks(blockState)
+	parts, err := processShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("processShellBlocks failed: %v", err)
 	}
@@ -68,17 +68,17 @@ func TestProcessShellBlocks(t *testing.T) {
 	}
 
 	// Shell blocks should have been consumed
-	if remaining := blockState.PopBlocksByKind("shell"); len(remaining) != 0 {
+	if remaining := parserState.PopBlocksByKind("shell"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining shell blocks, got %d", len(remaining))
 	}
 }
 
 func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	state := generators.NewPrompts("", nil)
-	blockState := blocks.NewBlockState(state)
+	parserState := blocks.NewParserState(state)
 
 	text := ":::shell 徕珑\nexit 1\n:::end 徕珑\n"
-	_, err := blockState.AppendContent(&generators.Content{
+	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
@@ -86,7 +86,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parts, err := processShellBlocks(blockState)
+	parts, err := processShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("processShellBlocks failed: %v", err)
 	}
@@ -101,9 +101,9 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 
 func TestProcessShellBlocksEmpty(t *testing.T) {
 	state := generators.NewPrompts("", nil)
-	blockState := blocks.NewBlockState(state)
+	parserState := blocks.NewParserState(state)
 
-	parts, err := processShellBlocks(blockState)
+	parts, err := processShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("processShellBlocks failed: %v", err)
 	}

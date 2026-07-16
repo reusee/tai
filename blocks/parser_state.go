@@ -7,8 +7,8 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
-const TheoryOfBlockState = `
-BlockState is a State decorator that incrementally parses boundary-delimited blocks
+const TheoryOfParserState = `
+ParserState is a State decorator that incrementally parses boundary-delimited blocks
 from streamed model output. It sits between the generator and the downstream consumer,
 intercepting text parts appended by the model to extract structured blocks (e.g., change
 and finish blocks) without losing non-block prose. Parsed blocks are buffered and can be
@@ -24,7 +24,7 @@ and re-attempts to parse complete blocks. A block is only complete when a matchi
 boundary is treated as body content and does not close the block. If no matching end
 marker is found, the block is unclosed (incomplete) and left in the buffer for the next
 AppendContent call, because streaming output may arrive in fragments. Text preceding the
-first block marker is prose and is discarded once a block is found, because BlockState's
+first block marker is prose and is discarded once a block is found, because ParserState's
 purpose is block extraction, not prose preservation.
 
 At Flush, the parser switches to final mode: an unclosed block is treated as ended rather
@@ -40,11 +40,11 @@ one kind of block (e.g., request-context) does not discard blocks of other kinds
 change) that must remain available for subsequent processing.
 `
 
-// BlockState wraps an upstream State and incrementally parses boundary-delimited
+// ParserState wraps an upstream State and incrementally parses boundary-delimited
 // blocks from streamed model output. As the model appends text parts, the
 // accumulated text is scanned for complete blocks using ParseFirstBlock. Parsed
 // blocks are buffered and can be read or drained for downstream processing.
-type BlockState struct {
+type ParserState struct {
 	upstream generators.State
 
 	mu     sync.Mutex
@@ -52,22 +52,16 @@ type BlockState struct {
 	blocks []Block
 }
 
-// NewBlockState creates a BlockState that wraps the given upstream State.
-func NewBlockState(upstream generators.State) *BlockState {
-	return &BlockState{
+// NewParserState creates a ParserState that wraps the given upstream State.
+func NewParserState(upstream generators.State) *ParserState {
+	return &ParserState{
 		upstream: upstream,
 	}
 }
 
-var _ generators.State = (*BlockState)(nil)
+var _ generators.State = (*ParserState)(nil)
 
-// AppendContent passes content to the upstream state and extracts text parts
-// from model-generated content (assistant or model role) for incremental block
-// parsing. Thought parts are intentionally excluded: they represent model
-// reasoning that may contain illustrative block markers, not actual block
-// output, so parsing them would produce spurious blocks. An unclosed
-// (incomplete) block is kept in the buffer for later chunks.
-func (s *BlockState) AppendContent(content *generators.Content) (generators.State, error) {
+func (s *ParserState) AppendContent(content *generators.Content) (generators.State, error) {
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
 		return nil, err
@@ -81,7 +75,7 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 		for _, part := range content.Parts {
 			// Thoughts are model reasoning, not block output. They may
 			// contain illustrative block markers that must not be parsed
-			// as real blocks. See TheoryOfBlockState.
+			// as real blocks. See TheoryOfParserState.
 			if _, ok := part.(generators.Thought); ok {
 				continue
 			}
@@ -96,15 +90,7 @@ func (s *BlockState) AppendContent(content *generators.Content) (generators.Stat
 	return s, nil
 }
 
-// parseBlocks repeatedly parses complete blocks from the internal buffer.
-// It must be called with s.mu held. When final is false, an unclosed block
-// (no matching end marker found) is treated as incomplete and left in the
-// buffer for the next AppendContent call, because streaming output may arrive
-// in fragments. When final is true (at Flush), an unclosed block is treated as
-// ended and finalized so the buffer is consumed and subsequent content is not
-// combined with it. A line-start :::end with a different boundary is treated as
-// body content, not an error.
-func (s *BlockState) parseBlocks(final bool) error {
+func (s *ParserState) parseBlocks(final bool) error {
 	for {
 		block, _, end, ok, err := parseFirstBlock(s.buf, final)
 		if err != nil {
@@ -120,27 +106,19 @@ func (s *BlockState) parseBlocks(final bool) error {
 	return nil
 }
 
-// Contents returns the upstream state's content iterator.
-func (s *BlockState) Contents() iter.Seq[*generators.Content] {
+func (s *ParserState) Contents() iter.Seq[*generators.Content] {
 	return s.upstream.Contents()
 }
 
-// SystemPrompt returns the upstream state's system prompt.
-func (s *BlockState) SystemPrompt() string {
+func (s *ParserState) SystemPrompt() string {
 	return s.upstream.SystemPrompt()
 }
 
-// Functions returns the upstream state's function iterator.
-func (s *BlockState) Functions() iter.Seq[*generators.Function] {
+func (s *ParserState) Functions() iter.Seq[*generators.Function] {
 	return s.upstream.Functions()
 }
 
-// Flush flushes the upstream state and performs a final block parse. In final
-// mode, an unclosed block is treated as ended rather than left pending, so its
-// body is finalized and the buffer is consumed. Any remaining unparseable
-// fragments are discarded so content appended after Flush is not combined with
-// pre-Flush content. See TheoryOfBlockState.
-func (s *BlockState) Flush() (generators.State, error) {
+func (s *ParserState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {
 		return nil, err
@@ -152,18 +130,16 @@ func (s *BlockState) Flush() (generators.State, error) {
 		return s, err
 	}
 	// Discard any remaining unparseable fragments so post-flush content
-	// does not combine with pre-flush fragments. See TheoryOfBlockState.
+	// does not combine with pre-flush fragments. See TheoryOfParserState.
 	s.buf = s.buf[:0]
 	return s, nil
 }
 
-// Unwrap returns the upstream state.
-func (s *BlockState) Unwrap() generators.State {
+func (s *ParserState) Unwrap() generators.State {
 	return s.upstream
 }
 
-// Blocks returns an iterator over all parsed blocks without consuming them.
-func (s *BlockState) Blocks() iter.Seq[Block] {
+func (s *ParserState) Blocks() iter.Seq[Block] {
 	return func(yield func(Block) bool) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -175,9 +151,7 @@ func (s *BlockState) Blocks() iter.Seq[Block] {
 	}
 }
 
-// PopBlocks returns all parsed blocks and clears the internal block buffer.
-// This allows downstream processing to consume blocks incrementally as they arrive.
-func (s *BlockState) PopBlocks() []Block {
+func (s *ParserState) PopBlocks() []Block {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	blocks := s.blocks
@@ -185,12 +159,7 @@ func (s *BlockState) PopBlocks() []Block {
 	return blocks
 }
 
-// PopBlocksByKind removes and returns blocks of the specified kind from the
-// internal buffer, preserving all other parsed blocks. This allows callers to
-// selectively consume blocks (e.g., request-context blocks) without discarding
-// blocks of other kinds (e.g., change blocks) that must remain available for
-// subsequent processing.
-func (s *BlockState) PopBlocksByKind(kind string) []Block {
+func (s *ParserState) PopBlocksByKind(kind string) []Block {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var matched []Block
@@ -206,10 +175,7 @@ func (s *BlockState) PopBlocksByKind(kind string) []Block {
 	return matched
 }
 
-// PendingText returns the remaining unparsed text in the buffer that has not yet
-// formed a complete block. This is useful for debugging or for processing partial
-// output after generation completes.
-func (s *BlockState) PendingText() string {
+func (s *ParserState) PendingText() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return string(s.buf)

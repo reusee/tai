@@ -19,7 +19,7 @@ The request-context block allows the model to request additional context during
 a generation cycle. When the model needs more information (e.g., file contents or
 network resources), it emits a request-context block containing one or more XML
 tags describing the desired context. The generate loop detects these blocks via
-BlockState, fetches the requested data, appends it as user content, and initiates
+ParserState, fetches the requested data, appends it as user content, and initiates
 another generation request. This block is strictly read-only: it must not produce
 any side effects such as writing files or making state-changing API calls. The
 order of XML tags within the block determines the order of context parts in the
@@ -41,7 +41,7 @@ filepath.Glob alone does not handle. When ** appears as a complete path segment,
 it matches zero or more directories; a custom walker resolves these patterns by
 splitting on **, walking the base directory, and matching the suffix pattern
 against the trailing path components of each file.
-Only request-context blocks are consumed from BlockState during context processing;
+Only request-context blocks are consumed from ParserState during context processing;
 blocks of other kinds are preserved so they remain available after the context is provided.
 `
 
@@ -209,20 +209,20 @@ func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTT
 	return parts
 }
 
-// ProcessRequestContextBlocks checks BlockState for request-context blocks,
+// ProcessRequestContextBlocks checks ParserState for request-context blocks,
 // fetches the requested content, and appends it as user content to the state.
 // Only request-context blocks are consumed; blocks of other kinds (e.g., change)
-// are preserved in BlockState for subsequent processing. Returns the updated
+// are preserved in ParserState for subsequent processing. Returns the updated
 // state, whether any request-context blocks were found, and any error from
 // appending content.
 func ProcessRequestContextBlocks(
-	blockState *BlockState,
+	parserState *ParserState,
 	ctx context.Context,
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	state generators.State,
 ) (generators.State, bool, error) {
-	blocks := blockState.PopBlocksByKind("request-context")
+	blocks := parserState.PopBlocksByKind("request-context")
 	hasRequestContext := false
 	for _, block := range blocks {
 		hasRequestContext = true

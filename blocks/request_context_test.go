@@ -570,7 +570,7 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 
 func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// Append a change block with no request-context blocks.
 	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"

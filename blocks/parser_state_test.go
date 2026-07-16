@@ -7,7 +7,7 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
-// mockState is a minimal State implementation for testing BlockState.
+// mockState is a minimal State implementation for testing ParserState.
 type mockState struct {
 	systemPrompt string
 	contents     []*generators.Content
@@ -44,9 +44,9 @@ func (m *mockState) Unwrap() generators.State {
 	return nil
 }
 
-func TestBlockStateStreamParsing(t *testing.T) {
+func TestParserStateStreamParsing(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// Fragment 1: prose only, no block marker
 	if _, err := state.AppendContent(&generators.Content{
@@ -94,9 +94,9 @@ func TestBlockStateStreamParsing(t *testing.T) {
 	}
 }
 
-func TestBlockStateMultipleBlocks(t *testing.T) {
+func TestParserStateMultipleBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n:::change 栢彣\n<change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\" />\n:::end 栢彣\n:::finish 桀骥\nDone.\n:::end 桀骥\n"
 	if _, err := state.AppendContent(&generators.Content{
@@ -121,9 +121,9 @@ func TestBlockStateMultipleBlocks(t *testing.T) {
 	}
 }
 
-func TestBlockStateUnwrapAndPassthrough(t *testing.T) {
+func TestParserStateUnwrapAndPassthrough(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	if state.Unwrap() != upstream {
 		t.Fatal("Unwrap should return the upstream state")
@@ -133,9 +133,9 @@ func TestBlockStateUnwrapAndPassthrough(t *testing.T) {
 	}
 }
 
-func TestBlockStateIgnoresUserRole(t *testing.T) {
+func TestParserStateIgnoresUserRole(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// User role content should not be parsed for blocks
 	if _, err := state.AppendContent(&generators.Content{
@@ -150,9 +150,9 @@ func TestBlockStateIgnoresUserRole(t *testing.T) {
 	}
 }
 
-func TestBlockStateIgnoresThoughts(t *testing.T) {
+func TestParserStateIgnoresThoughts(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// A Thought part containing complete block markers must not produce
 	// a block, because thoughts are model reasoning, not block output.
@@ -193,9 +193,9 @@ func TestBlockStateIgnoresThoughts(t *testing.T) {
 	}
 }
 
-func TestBlockStatePendingText(t *testing.T) {
+func TestParserStatePendingText(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// Append incomplete block
 	if _, err := state.AppendContent(&generators.Content{
@@ -227,9 +227,9 @@ func containsStr(s, substr string) bool {
 	return false
 }
 
-func TestBlockStateNonMatchingEndIsBodyContent(t *testing.T) {
+func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// The model opens a block with boundary 徕珑. The body contains a
 	// line-start :::end with a different boundary (栢彣). This should be
@@ -257,9 +257,9 @@ func TestBlockStateNonMatchingEndIsBodyContent(t *testing.T) {
 	}
 }
 
-func TestBlockStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
+func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// A body containing a line-start :::end with a different boundary
 	// is treated as body content. When the matching :::end 徕珑
@@ -288,9 +288,9 @@ func TestBlockStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	}
 }
 
-func TestBlockStateFlushTreatsUnclosedAsEnded(t *testing.T) {
+func TestParserStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// Append an unclosed block (no end marker yet).
 	if _, err := state.AppendContent(&generators.Content{
@@ -336,9 +336,9 @@ func TestBlockStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 	}
 }
 
-func TestBlockStateEndMarkerNoTrailingNewline(t *testing.T) {
+func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewBlockState(upstream)
+	state := NewParserState(upstream)
 
 	// The end marker is at the very end without a trailing newline.
 	// The block should be parsed correctly during streaming.
