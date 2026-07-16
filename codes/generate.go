@@ -279,7 +279,7 @@ func (Module) Generate(
 				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
 				var nextUserParts []generators.Part
 				if bool(shell) {
-					parts, err := processShellBlocks(parserState)
+					parts, err := blocks.ProcessShellBlocks(parserState)
 					if err != nil {
 						return err
 					}

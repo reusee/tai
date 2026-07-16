@@ -68,7 +68,7 @@ func (Module) SystemPrompt(
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}
 	if bool(shell) {
-		prompt += ShellBlockSystemPrompt + "\n"
+		prompt += blocks.ShellBlockSystemPrompt + "\n"
 	}
 	prompt += string(extra)
 	return SystemPrompt(prompt)
