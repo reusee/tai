@@ -51,7 +51,9 @@ func (Module) Generate(
 	diffHandler codetypes.DiffHandler,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
-	actionChat ActionChat,
+	actionArgument ActionArgument,
+	getDefaultGenerator GetDefaultGenerator,
+	buildGenerate phases.BuildGenerate,
 	maxTokens taiconfigs.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
@@ -75,7 +77,7 @@ func (Module) Generate(
 		defer root.Close()
 
 		// generator
-		generator, err := actionChat.GetDefaultGenerator()()
+		generator, err := getDefaultGenerator()
 		if err != nil {
 			return err
 		}
@@ -147,7 +149,7 @@ func (Module) Generate(
 		}
 		// A new repository may have no code to provide as context. Allow the
 		// code provider to return no parts; the user's action argument
-		// (appended later by ActionChat.InitialPhase) is sufficient to drive
+		// (appended below before the generation loop) is sufficient to drive
 		// generation in that case.
 		var userPromptText generators.Text
 		for _, part := range userPromptParts {
@@ -202,7 +204,24 @@ func (Module) Generate(
 
 		// run
 		requestContextRounds := 0
-		phase := actionChat.InitialPhase(nil)
+
+		// Set up initial phase: if an action argument is present, append it
+		// as user content and start generation; otherwise there is nothing
+		// to do. This inlines the former ActionChat.InitialPhase logic.
+		var phase phases.Phase
+		if arg := actionArgument; arg != "" {
+			state, err = state.AppendContent(&generators.Content{
+				Role: "user",
+				Parts: []generators.Part{
+					generators.Text(string(arg)),
+				},
+			})
+			if err != nil {
+				return err
+			}
+			phase = buildGenerate(generator, nil)(nil)
+		}
+
 		for phase != nil {
 			newPhase, newState, phaseErr := phase(ctx, state)
 
@@ -267,7 +286,7 @@ func (Module) Generate(
 						if requestContextRounds > maxRequestContextRounds {
 							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
 						}
-						phase = actionChat.BuildGenerate()(generator, nil)(nil)
+						phase = buildGenerate(generator, nil)(nil)
 						continue
 					}
 				}
@@ -295,7 +314,7 @@ func (Module) Generate(
 					if err != nil {
 						return err
 					}
-					phase = actionChat.BuildGenerate()(generator, nil)(nil)
+					phase = buildGenerate(generator, nil)(nil)
 					continue
 				}
 			}
