@@ -117,6 +117,26 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	}
 }
 
+func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
+	module := Module{}
+	prompt := string(module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		Shell(false),
+		ExtraSystemPrompt(""),
+	))
+	if !strings.Contains(prompt, "precede any action") {
+		t.Fatal("system prompt must state that decomposition must precede any action including analysis")
+	}
+	if !strings.Contains(prompt, "partition the input space") {
+		t.Fatal("system prompt must require partitioning the input space for composite tasks")
+	}
+	if !strings.Contains(prompt, "find bugs and fix") {
+		t.Fatal("system prompt must use the find-bugs-and-fix example to illustrate analysis-phase decomposition")
+	}
+}
+
 func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
 	prompt := string(module.SystemPrompt(

@@ -56,6 +56,16 @@ The planning round applies structural and scheduling decomposition strategies
 subsequent execution rounds apply adaptive and quality strategies as execution
 reveals new information. This makes decomposition a living hypothesis refined
 across rounds rather than a one-shot guess.
+
+Decomposition must precede any action, including analysis and reasoning, not
+just code changes. A composite task such as "find bugs and fix" contains an
+analysis phase (finding bugs) that may itself span many files or modules and
+exceed the generation limit if performed in a single round. The planning round
+must therefore partition the input space — for example by file or module group
+— so that each round analyzes or acts on only a subset. Decomposing only the
+fix phase after completing the analysis phase in one unbounded round defeats
+the purpose: the analysis round itself may truncate, losing bugs and wasting
+the round.
 `
 
 const MandatoryPlanningSystemPrompt = `**Mandatory Planning and Multi-Round Generation:**
@@ -77,6 +87,12 @@ output bounded so that no single response approaches the limit.
   Task Decomposition Strategies section under Continue Block Kind) to produce
   the initial task list. No single strategy suffices; blend structural,
   adaptive, quality, and scheduling strategies based on task shape and risk.
+- Decomposition MUST precede any action, including analysis and reasoning, not
+  just change blocks. For composite tasks like "find bugs and fix", the
+  analysis phase itself may span many files or modules; the planning round must
+  partition the input space (e.g., by file or module group) so each round
+  handles only a subset. Do not perform analysis first and then decompose only
+  the fix phase — the analysis round itself may exceed the generation limit.
 - Each subsequent round executes one or a few tasks from the list, then ends
   with a continue block carrying the updated task list (completed tasks marked,
   remaining tasks listed), until all tasks are complete.

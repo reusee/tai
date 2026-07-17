@@ -42,6 +42,15 @@ and scheduling strategies to produce the initial task list. Subsequent rounds
 apply adaptive and quality strategies as execution reveals new information.
 The continue block body carries the evolving task list, so decomposition is
 visible, reviewable, and correctable across rounds.
+
+Decomposition must precede any action, including analysis and reasoning, not
+just code changes. A composite task such as "find bugs and fix" contains an
+analysis phase that may itself span many files or modules; if decomposition is
+applied only to the fix phase after a single unbounded analysis round, that
+analysis round may exceed the generation limit and truncate, losing findings
+and wasting the round. The planning round must therefore partition the input
+space so that each round — whether analyzing or implementing — handles only a
+subset of the inputs.
 `
 
 const TheoryOfContinueBlocks = `
@@ -53,13 +62,16 @@ produce arbitrarily long outputs by chaining multiple rounds. Each round must
 end with either a finish block (task complete) or a continue block (more work
 needed), but not both.
 
-The primary trigger for using continue blocks is the number of expected change
-blocks: when a task requires more than approximately 5-7 change blocks, the
-model should decompose it into multiple rounds. Secondary triggers include
-natural phase boundaries (e.g., interface refactoring followed by caller
-updates) and dependency chains where later steps depend on earlier results.
-Each round should produce a coherent, reviewable set of changes; prefer fewer,
-larger rounds over many tiny rounds to minimize round-trip overhead.
+The primary trigger for using continue blocks is the expected output volume of
+a single round: when a task requires more than approximately 5-7 change blocks,
+or when an analysis phase must process many files or modules, the model should
+decompose it into multiple rounds. Analysis-heavy tasks are a primary trigger
+because the analysis itself — before any change blocks are produced — can
+exceed the generation limit if performed in a single round. Secondary triggers
+include natural phase boundaries (e.g., interface refactoring followed by
+caller updates) and dependency chains where later steps depend on earlier
+results. Each round should produce a coherent, reviewable set of changes; prefer
+fewer, larger rounds over many tiny rounds to minimize round-trip overhead.
 
 For complex tasks, the model maintains a task list in the continue block body.
 In each round, the model selects one or more tasks from the list to execute,
@@ -75,7 +87,9 @@ triggers above are always evaluated during planning rather than used to decide
 whether to use continue blocks at all. Task decomposition itself follows the
 portfolio of strategies documented in TheoryOfTaskDecomposition: no single
 strategy suffices, and the model must blend structural, adaptive, quality, and
-scheduling strategies based on task shape and observed progress.
+scheduling strategies based on task shape and observed progress. Decomposition
+must precede any action including analysis, so the planning round partitions
+the input space before the model begins analyzing or implementing.
 `
 
 const ContinueBlockSystemPrompt = `
@@ -90,6 +104,7 @@ Use a continue block when any of the following conditions apply:
 - The task naturally decomposes into independent phases with clear boundaries (e.g., "refactor the interface" followed by "update all callers"). Each phase becomes a separate round.
 - Later steps depend on the results or review of earlier steps, making incremental delivery safer than producing all changes at once.
 - The estimated total output (code bodies plus explanatory prose) would approach or exceed the model's per-response limit, risking truncation.
+- The task includes an analysis phase (e.g., "find bugs and fix") that must process many files or modules. The analysis itself — before any change blocks are produced — can exceed the generation limit if performed in a single round. Decompose the analysis by input partition (e.g., one round per file or module group) so each round analyzes only a subset. Do not perform the analysis first and then decompose only the fix phase.
 
 The mandatory planning mandate (see Mandatory Planning and Multi-Round Generation in the system prompt) requires every task to begin with a planning round that emits a continue block, so the conditions above are always evaluated during planning rather than used to decide whether to use continue blocks at all.
 
