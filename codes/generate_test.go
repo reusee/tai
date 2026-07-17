@@ -88,3 +88,34 @@ func TestCountContents(t *testing.T) {
 		}
 	})
 }
+
+func TestPrintRoundStatsWithSummaries(t *testing.T) {
+	var buf bytes.Buffer
+	stats := []roundStat{
+		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
+		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
+	}
+	printRoundStats(&buf, stats)
+	output := buf.String()
+	if !strings.Contains(output, "=== Round Summaries ===") {
+		t.Fatalf("expected summaries section, got: %s", output)
+	}
+	if !strings.Contains(output, "Round 1: Analyzed the code.") {
+		t.Fatalf("expected round 1 summary, got: %s", output)
+	}
+	if !strings.Contains(output, "Round 2: Fixed the bug.") {
+		t.Fatalf("expected round 2 summary, got: %s", output)
+	}
+}
+
+func TestPrintRoundStatsNoSummaries(t *testing.T) {
+	var buf bytes.Buffer
+	stats := []roundStat{
+		{Round: 1, PromptTokens: 1000, CompletionTokens: 500},
+	}
+	printRoundStats(&buf, stats)
+	output := buf.String()
+	if strings.Contains(output, "=== Round Summaries ===") {
+		t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
+	}
+}

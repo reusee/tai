@@ -63,6 +63,7 @@ type roundStat struct {
 	CompletionTokens int
 	ThoughtTokens    int
 	CachedTokens     int
+	Summary          string
 }
 
 func printRoundStats(w io.Writer, stats []roundStat) {
@@ -85,6 +86,24 @@ func printRoundStats(w io.Writer, stats []roundStat) {
 	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------")
 	fmt.Fprintf(w, "%-6s %12d %12d %12d %12d\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached)
 	fmt.Fprintf(w, "==============================\n")
+
+	// Print round summaries if any exist. See TheoryOfSummaryBlocks.
+	hasSummaries := false
+	for _, s := range stats {
+		if s.Summary != "" {
+			hasSummaries = true
+			break
+		}
+	}
+	if hasSummaries {
+		fmt.Fprintf(w, "\n=== Round Summaries ===\n")
+		for _, s := range stats {
+			if s.Summary != "" {
+				fmt.Fprintf(w, "Round %d: %s\n", s.Round, s.Summary)
+			}
+		}
+		fmt.Fprintf(w, "==============================\n")
+	}
 }
 
 func countContents(state generators.State) int {
@@ -338,6 +357,22 @@ func (Module) Generate(
 						}
 					}
 					contentIndex++
+				}
+
+				// Collect summary blocks from model output and attach to
+				// the last round statistic created in this round.
+				// See TheoryOfSummaryBlocks.
+				summaries := blocks.ProcessSummaryBlocks(parserState)
+				if len(summaries) > 0 {
+					summaryText := strings.Join(summaries, "\n")
+					if len(roundStats) > 0 {
+						roundStats[len(roundStats)-1].Summary = summaryText
+					} else {
+						roundStats = append(roundStats, roundStat{
+							Round:   len(roundStats) + 1,
+							Summary: summaryText,
+						})
+					}
 				}
 
 				// Apply change blocks immediately as they are parsed from

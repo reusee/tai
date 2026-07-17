@@ -132,7 +132,8 @@ func (Module) SystemPrompt(
 		blocks.FinishBlockSystemPrompt + "\n" +
 		ReadOnlyFilesSystemPrompt + "\n" +
 		blocks.ContinueBlockSystemPrompt + "\n" +
-		MandatoryPlanningSystemPrompt + "\n"
+		MandatoryPlanningSystemPrompt + "\n" +
+		blocks.SummaryBlockSystemPrompt + "\n"
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}

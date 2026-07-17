@@ -181,3 +181,20 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemPromptSummaryBlock(t *testing.T) {
+	module := Module{}
+	prompt := module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		Shell(false),
+		ExtraSystemPrompt(""),
+	)
+	if !strings.Contains(string(prompt), "Summary Block Kind") {
+		t.Fatal("system prompt must include summary block section")
+	}
+	if !strings.Contains(string(prompt), ":::summary") {
+		t.Fatal("system prompt must include summary block format")
+	}
+}
