@@ -37,6 +37,48 @@ via symbolic links to external locations.
   explain the rationale, but do not emit a change block for it.
 `
 
+const TheoryOfMandatoryPlanning = `
+Mandatory planning requires every task to begin with an overall plan and task
+decomposition, emitted as a plan-only first round, followed by execution
+rounds delimited by continue blocks. The motivation is output-length safety:
+models with long reasoning chains can exceed the maximum generation length on
+large or complex tasks, truncating the response mid-block and wasting the
+round. A plan-only first round followed by small execution rounds keeps each
+round's thinking and output bounded, so no single response approaches the
+generation limit. The mandate applies uniformly to every task, including
+apparently trivial ones, because truncation risk cannot be reliably predicted
+from the request alone; the cost is one extra short round-trip per task. This
+refines the continue block guidance: the exemption that allowed simple tasks
+to complete in a single response without a continue block is superseded.
+`
+
+const MandatoryPlanningSystemPrompt = `**Mandatory Planning and Multi-Round Generation:**
+
+Every task MUST be planned before any change blocks are emitted, and executed
+across multiple generation rounds delimited by continue blocks. This mandate
+exists because long reasoning chains can exceed the maximum generation length
+on large or complex tasks; splitting the work keeps each round's thinking and
+output bounded so that no single response approaches the limit.
+
+**Rules:**
+- The first response to any task MUST be an overall plan: analyze the request,
+  decompose it into a concrete task list, and note dependencies between tasks.
+  Emit NO change blocks in the planning round. For small tasks the plan can be
+  brief — a short task list is sufficient.
+- The planning round MUST end with a continue block containing the task list,
+  never a finish block, because no changes have been produced yet.
+- Each subsequent round executes one or a few tasks from the list, then ends
+  with a continue block carrying the updated task list (completed tasks marked,
+  remaining tasks listed), until all tasks are complete.
+- Keep each execution round small. When in doubt, split finer: more rounds
+  with less output per round is always safer than fewer rounds that risk
+  truncation.
+- The final round ends with a finish block instead of a continue block.
+- This mandate applies to EVERY task, including apparently trivial ones, and
+  supersedes any guidance elsewhere that permits completing simple tasks in a
+  single response without a continue block.
+`
+
 type ExtraSystemPrompt string
 
 var _ configs.Configurable = ExtraSystemPrompt("")
@@ -63,7 +105,8 @@ func (Module) SystemPrompt(
 		diffHandler.SystemPrompt() + "\n" +
 		blocks.FinishBlockSystemPrompt + "\n" +
 		ReadOnlyFilesSystemPrompt + "\n" +
-		blocks.ContinueBlockSystemPrompt + "\n"
+		blocks.ContinueBlockSystemPrompt + "\n" +
+		MandatoryPlanningSystemPrompt + "\n"
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}

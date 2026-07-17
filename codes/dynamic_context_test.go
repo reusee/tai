@@ -93,3 +93,26 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		t.Fatal("system prompt must include task list concept for multi-round continue blocks")
 	}
 }
+
+func TestSystemPromptMandatoryPlanning(t *testing.T) {
+	module := Module{}
+	prompt := string(module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		Shell(false),
+		ExtraSystemPrompt(""),
+	))
+	if !strings.Contains(prompt, "Mandatory Planning") {
+		t.Fatal("system prompt must include the mandatory planning section")
+	}
+	if !strings.Contains(prompt, "overall plan") {
+		t.Fatal("system prompt must require an overall plan before any change blocks")
+	}
+	if !strings.Contains(prompt, "Emit NO change blocks in the planning round") {
+		t.Fatal("system prompt must forbid change blocks in the planning round")
+	}
+	if !strings.Contains(prompt, "supersedes") {
+		t.Fatal("system prompt must state the mandate supersedes the single-response exemption")
+	}
+}
