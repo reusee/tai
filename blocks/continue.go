@@ -4,6 +4,46 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
+const TheoryOfTaskDecomposition = `
+Task decomposition is not a single algorithm but a portfolio of strategies
+applied in combination. No one strategy suffices for all tasks; the model must
+select and blend strategies based on task shape, risk profile, and observed
+progress. The strategies fall into four categories.
+
+Structural strategies determine how work is divided: by input partition (e.g.,
+one round per focus-file group), by logical step sequence, or by architectural
+layer (interface definition before implementation before caller updates).
+Structural strategies produce the initial task list during the planning round.
+
+Adaptive strategies determine how the model responds during generation: if
+output is already long (reasoning or code), truncate immediately and continue
+in the next round rather than risking truncation; if a round reveals that a
+coarse task hides finer subtasks, refine the task list progressively; if an
+error occurs, dedicate the next round to diagnosis and fix; if execution
+feedback contradicts the plan, adjust the task list dynamically. Adaptive
+strategies make decomposition a living hypothesis, not a fixed decree.
+
+Quality strategies determine how correctness is ensured: include dedicated
+verification rounds (tests, build checks) after implementation; isolate
+high-uncertainty tasks as probing rounds that validate critical assumptions
+before committing to a path; gather context before making changes so the
+model never acts on unverified assumptions. Quality strategies front-load
+risk reduction.
+
+Scheduling strategies determine ordering and sizing: order by dependency so
+depended-upon tasks execute first; isolate high blast-radius changes to
+separate rounds; split by estimated token consumption so no round approaches
+the output limit; distinguish one-way door (irreversible) from two-way door
+(reversible) decisions, giving one-way doors a separate round with
+pre-validation. Scheduling strategies keep each round safe and bounded.
+
+The mandatory planning round (see TheoryOfMandatoryPlanning) applies structural
+and scheduling strategies to produce the initial task list. Subsequent rounds
+apply adaptive and quality strategies as execution reveals new information.
+The continue block body carries the evolving task list, so decomposition is
+visible, reviewable, and correctable across rounds.
+`
+
 const TheoryOfContinueBlocks = `
 Continue blocks allow the model to self-drive multi-turn generation by emitting
 a continue block at the end of a response when the task is not yet complete.
@@ -28,7 +68,14 @@ containing the updated task list — marking completed tasks and listing
 remaining tasks. This cycle repeats until all tasks are complete, at which
 point a finish block is used instead. This avoids hitting the single-request
 generation limit and keeps each round focused and reviewable.
-Simple tasks that fit within a single response need not be decomposed.
+
+The mandatory planning mandate (see TheoryOfMandatoryPlanning) requires every
+task to begin with a planning round that emits a continue block, so the
+triggers above are always evaluated during planning rather than used to decide
+whether to use continue blocks at all. Task decomposition itself follows the
+portfolio of strategies documented in TheoryOfTaskDecomposition: no single
+strategy suffices, and the model must blend structural, adaptive, quality, and
+scheduling strategies based on task shape and observed progress.
 `
 
 const ContinueBlockSystemPrompt = `
@@ -44,23 +91,43 @@ Use a continue block when any of the following conditions apply:
 - Later steps depend on the results or review of earlier steps, making incremental delivery safer than producing all changes at once.
 - The estimated total output (code bodies plus explanatory prose) would approach or exceed the model's per-response limit, risking truncation.
 
-Do NOT use continue blocks for:
-- Simple, atomic changes that fit comfortably in one response (typically ≤5 change blocks).
-- Single-file modifications with few change blocks.
-- Tasks where all changes are tightly coupled and reviewing them together is essential for correctness.
+The mandatory planning mandate (see Mandatory Planning and Multi-Round Generation in the system prompt) requires every task to begin with a planning round that emits a continue block, so the conditions above are always evaluated during planning rather than used to decide whether to use continue blocks at all.
 
 **Round Granularity:**
 Each round should produce a coherent, reviewable set of changes. Prefer fewer, larger rounds over many tiny rounds to reduce round-trip overhead. A round that produces only one trivial change block wastes the continue mechanism; group related changes into the same round.
 
-**Task Decomposition Strategy:**
-When a task warrants continue blocks, first conceive the overall process, break it down into specific subtasks, and generate a concrete task list. The continue block body contains this task list. In each round, select one or more tasks from the list to execute, produce the corresponding change blocks, and end with a continue block containing the updated task list — marking completed tasks and listing remaining tasks. This cycle repeats until all tasks are complete, at which point a finish block is used instead of a continue block.
+**Task Decomposition Strategies:**
+
+Task decomposition is not a single algorithm but a portfolio of strategies applied in combination. No one strategy suffices for all tasks; select and blend strategies based on task shape, risk profile, and observed progress. The strategies fall into four categories.
+
+Structural strategies determine how work is divided:
+- Input-driven: split by input partition (e.g., one round per focus-file group), so each round handles a coherent subset of the input.
+- Logical-step-driven: split by explicit sequential steps when the task has a clear order of operations.
+- Interface-first: for architectural changes, split as "define interface, implement, update callers" so each layer is reviewed before the next depends on it.
+
+Adaptive strategies determine how the model responds during generation:
+- Output-length-driven: if output is already long (reasoning or code), truncate immediately and continue in the next round rather than risking mid-block truncation.
+- Progressive refinement: if a round reveals that a coarse task hides finer subtasks, refine the task list progressively in subsequent rounds.
+- Error recovery: after an error, dedicate the next round to diagnosis and fix before continuing the original plan.
+- Feedback-driven: adjust the task list after each round based on execution feedback; decomposition is a living hypothesis, not a fixed decree.
+
+Quality strategies determine how correctness is ensured:
+- Verification-driven: include dedicated verification rounds (tests, build checks) after implementation, before declaring the task complete.
+- Risk-driven: isolate high-uncertainty tasks as probing rounds that validate critical assumptions before committing to a path.
+- Context-collection-first: gather context (via request-context blocks) before making changes, so the model never acts on unverified assumptions.
+
+Scheduling strategies determine ordering and sizing:
+- Dependency-driven: order by task dependencies so depended-upon tasks execute first.
+- Blast-radius-driven: isolate high-impact changes to separate rounds so their effects can be reviewed independently.
+- Token-budget-driven: split by estimated token consumption so no round approaches the output limit.
+- Reversibility-driven: distinguish one-way door (irreversible) from two-way door (reversible) decisions; give one-way doors a separate round with pre-validation.
+
+The planning round applies structural and scheduling strategies to produce the initial task list. Subsequent rounds apply adaptive and quality strategies as execution reveals new information. The continue block body carries the evolving task list, so decomposition is visible, reviewable, and correctable across rounds.
 
 The task list should clearly distinguish:
 - Completed tasks (e.g., marked with [x] or strikethrough)
 - Remaining tasks (e.g., marked with [ ] or unmarked)
 - Tasks being executed in the current round
-
-Simple tasks that can be completed within a single response need not be split — generate the full output directly without continue blocks.
 
 **Continue Block Format:**
 

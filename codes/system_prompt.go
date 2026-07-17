@@ -50,6 +50,12 @@ apparently trivial ones, because truncation risk cannot be reliably predicted
 from the request alone; the cost is one extra short round-trip per task. This
 refines the continue block guidance: the exemption that allowed simple tasks
 to complete in a single response without a continue block is superseded.
+
+The planning round applies structural and scheduling decomposition strategies
+(see TheoryOfTaskDecomposition) to produce the initial task list, while
+subsequent execution rounds apply adaptive and quality strategies as execution
+reveals new information. This makes decomposition a living hypothesis refined
+across rounds rather than a one-shot guess.
 `
 
 const MandatoryPlanningSystemPrompt = `**Mandatory Planning and Multi-Round Generation:**
@@ -67,6 +73,10 @@ output bounded so that no single response approaches the limit.
   brief — a short task list is sufficient.
 - The planning round MUST end with a continue block containing the task list,
   never a finish block, because no changes have been produced yet.
+- During planning, select and blend task decomposition strategies (see the
+  Task Decomposition Strategies section under Continue Block Kind) to produce
+  the initial task list. No single strategy suffices; blend structural,
+  adaptive, quality, and scheduling strategies based on task shape and risk.
 - Each subsequent round executes one or a few tasks from the list, then ends
   with a continue block carrying the updated task list (completed tasks marked,
   remaining tasks listed), until all tasks are complete.

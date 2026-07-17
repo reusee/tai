@@ -116,3 +116,48 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		t.Fatal("system prompt must state the mandate supersedes the single-response exemption")
 	}
 }
+
+func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
+	module := Module{}
+	prompt := string(module.SystemPrompt(
+		mockCodeProvider{},
+		BoundaryDiffHandler{},
+		DynamicContext(false),
+		Shell(false),
+		ExtraSystemPrompt(""),
+	))
+
+	categories := []string{
+		"Structural strategies",
+		"Adaptive strategies",
+		"Quality strategies",
+		"Scheduling strategies",
+	}
+	for _, c := range categories {
+		if !strings.Contains(prompt, c) {
+			t.Fatalf("system prompt must include category %q", c)
+		}
+	}
+
+	strategies := []string{
+		"Input-driven",
+		"Logical-step-driven",
+		"Interface-first",
+		"Output-length-driven",
+		"Progressive refinement",
+		"Error recovery",
+		"Feedback-driven",
+		"Verification-driven",
+		"Risk-driven",
+		"Context-collection-first",
+		"Dependency-driven",
+		"Blast-radius-driven",
+		"Token-budget-driven",
+		"Reversibility-driven",
+	}
+	for _, s := range strategies {
+		if !strings.Contains(prompt, s) {
+			t.Fatalf("system prompt must include strategy %q", s)
+		}
+	}
+}
