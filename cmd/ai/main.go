@@ -176,16 +176,26 @@ func main() {
 				ce(err)
 			}
 
+			// Determine the final ParserState after the phase chain.
+			// The phase chain may return a nil state; we fall back to the
+			// original parserState which is mutated in-place by AppendContent.
+			finalParserState := parserState
+			if state != nil {
+				if ps, ok := state.(*blocks.ParserState); ok {
+					finalParserState = ps
+				}
+			}
+
 			// Flush to finalize any unclosed blocks in ParserState.
-			state, err = state.Flush()
+			_, err = finalParserState.Flush()
 			ce(err)
 
 			// Update baseState for potential next cycle.
-			baseState = parserState.Unwrap()
+			baseState = finalParserState.Unwrap()
 
 			// Process shell blocks if enabled.
 			if *shellEnabled {
-				shellParts, shellErr := blocks.ProcessShellBlocks(parserState)
+				shellParts, shellErr := blocks.ProcessShellBlocks(finalParserState)
 				if shellErr != nil {
 					logger.ErrorContext(ctx, "shell block", "err", shellErr)
 				}
@@ -200,7 +210,7 @@ func main() {
 			}
 
 			// Process continue blocks.
-			continueParts := blocks.ProcessContinueBlocks(parserState)
+			continueParts := blocks.ProcessContinueBlocks(finalParserState)
 			if len(continueParts) > 0 {
 				baseState, err = baseState.AppendContent(&generators.Content{
 					Role:  "user",
