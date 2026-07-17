@@ -47,6 +47,54 @@ func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, erro
 	return count(string(data))
 }
 
+const TheoryOfRoundStatistics = `
+Round statistics track per-round token usage (prompt, completion, thoughts,
+cached) across the full generation session. Statistics are collected after
+each successful phase execution by scanning newly appended contents for
+Usage parts, and printed once at the end of the session via a deferred
+call. Deferred printing avoids interleaving statistics with model output
+during generation and ensures stats are reported even when the session
+ends early due to an error.
+`
+
+type roundStat struct {
+	Round            int
+	PromptTokens     int
+	CompletionTokens int
+	ThoughtTokens    int
+	CachedTokens     int
+}
+
+func printRoundStats(w io.Writer, stats []roundStat) {
+	if len(stats) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n=== Generation Statistics ===\n")
+	fmt.Fprintf(w, "Total rounds: %d\n\n", len(stats))
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached")
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------")
+	var totalPrompt, totalCompletion, totalThoughts, totalCached int
+	for _, s := range stats {
+		fmt.Fprintf(w, "%-6d %12d %12d %12d %12d\n",
+			s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens)
+		totalPrompt += s.PromptTokens
+		totalCompletion += s.CompletionTokens
+		totalThoughts += s.ThoughtTokens
+		totalCached += s.CachedTokens
+	}
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------")
+	fmt.Fprintf(w, "%-6s %12d %12d %12d %12d\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached)
+	fmt.Fprintf(w, "==============================\n")
+}
+
+func countContents(state generators.State) int {
+	count := 0
+	for range state.Contents() {
+		count++
+	}
+	return count
+}
+
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
@@ -224,7 +272,15 @@ func (Module) Generate(
 			phase = buildGenerate(generator, nil)(nil)
 		}
 
+		// Track per-round token statistics for end-of-session reporting.
+		// See TheoryOfRoundStatistics.
+		var roundStats []roundStat
+		defer func() {
+			printRoundStats(os.Stdout, roundStats)
+		}()
+
 		for phase != nil {
+			prevContentCount := countContents(state)
 			newPhase, newState, phaseErr := phase(ctx, state)
 
 			if phaseErr != nil {
@@ -263,6 +319,26 @@ func (Module) Generate(
 				// ok
 				phase = newPhase
 				state = newState
+
+				// Collect round statistics from newly appended contents.
+				// See TheoryOfRoundStatistics.
+				contentIndex := 0
+				for c := range state.Contents() {
+					if contentIndex >= prevContentCount {
+						for _, part := range c.Parts {
+							if usage, ok := part.(generators.Usage); ok {
+								roundStats = append(roundStats, roundStat{
+									Round:            len(roundStats) + 1,
+									PromptTokens:     usage.Prompt.TokenCount,
+									CompletionTokens: usage.Candidates.TokenCount,
+									ThoughtTokens:    usage.Thoughts.TokenCount,
+									CachedTokens:     usage.Prompt.TokenCountCached,
+								})
+							}
+						}
+					}
+					contentIndex++
+				}
 
 				// Apply change blocks immediately as they are parsed from
 				// model output. An apply error aborts generation.
