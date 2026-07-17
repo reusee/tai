@@ -63,6 +63,7 @@ type File struct {
 	Module                  *packages.Module
 	ModuleIsRoot            bool
 	ModuleIsNil             bool
+	IsEmbed                 bool
 	// DefinedObjects is unused under the lightweight loader: NeedTypesInfo is
 	// not loaded, so no object map is populated. Kept nil for APIs that still
 	// read the field.
@@ -276,19 +277,23 @@ func (Module) Files(
 
 		// collect non-Go files
 		nonGoFilePaths := make(map[string]*packages.Package)
+		embedFilePaths := make(map[string]bool)
 		for _, pkg := range allPkgs {
-			allFiles := [][]string{
-				pkg.EmbedFiles,
-				pkg.OtherFiles,
+			for _, path := range pkg.EmbedFiles {
+				if seenFilePaths[path] {
+					continue
+				}
+				embedFilePaths[path] = true
+				if _, ok := nonGoFilePaths[path]; !ok {
+					nonGoFilePaths[path] = pkg
+				}
 			}
-			for _, fileList := range allFiles {
-				for _, path := range fileList {
-					if seenFilePaths[path] {
-						continue
-					}
-					if _, ok := nonGoFilePaths[path]; !ok {
-						nonGoFilePaths[path] = pkg
-					}
+			for _, path := range pkg.OtherFiles {
+				if seenFilePaths[path] {
+					continue
+				}
+				if _, ok := nonGoFilePaths[path]; !ok {
+					nonGoFilePaths[path] = pkg
 				}
 			}
 		}
@@ -415,6 +420,7 @@ func (Module) Files(
 					Module:                  pkg.Module,
 					ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
 					ModuleIsNil:             pkg.Module == nil,
+					IsEmbed:                 embedFilePaths[path],
 					transformCond:           sync.NewCond(new(sync.Mutex)),
 				}
 				if info != nil {

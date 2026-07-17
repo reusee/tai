@@ -83,6 +83,34 @@ func (c CodeProvider) Parts(
 		}
 	}
 
+	// Filter out large embed files (>64KB) unless explicitly requested via
+	// inclusion patterns. See TheoryOfEmbedFileSizeLimit.
+	const maxEmbedFileSize = 64 << 10
+	{
+		var filteredFiles []*File
+		for _, f := range files {
+			if f.IsEmbed && len(f.Content) > maxEmbedFileSize {
+				relPath, err := filepath.Rel(string(c.LoadDir()), f.Path)
+				if err != nil {
+					filteredFiles = append(filteredFiles, f)
+					continue
+				}
+				explicitlyRequested := false
+				for _, pattern := range includePatterns {
+					if matchPattern(relPath, pattern) {
+						explicitlyRequested = true
+						break
+					}
+				}
+				if !explicitlyRequested {
+					continue
+				}
+			}
+			filteredFiles = append(filteredFiles, f)
+		}
+		files = filteredFiles
+	}
+
 	// Collect extra files from patterns for later addition after project files.
 	// Extra files are placed after project files to maximize the common prefix
 	// for LLM prefix caching: project files are stable across requests, while
@@ -261,6 +289,16 @@ supports ** for recursive directory matching. Exclusion patterns must be
 separated from inclusion patterns before being passed to IterFiles, because
 IterFiles treats all patterns as file paths to glob-expand; passing a
 "!"-prefixed pattern would cause os.Lstat to fail and abort iteration.
+`
+
+const TheoryOfEmbedFileSizeLimit = `
+Embed files larger than 64KB are excluded from project file context by default
+to prevent large embedded assets (e.g., binary blobs, templates, static files)
+from consuming the token budget. These files can still be included explicitly
+via the -file flag, which adds them as extra context files. The 64KB threshold
+is chosen because embed files below this size are typically configuration or
+small templates that provide useful context, while larger files are almost
+always static assets that add noise without aiding code generation.
 `
 
 // isExcludedPath checks whether the given relative path is excluded by any
