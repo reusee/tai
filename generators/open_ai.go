@@ -78,12 +78,16 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 
-	temperature := float32(0)
+	// Use pointer types so that nil (not specified) is omitted from the
+	// request JSON, while an explicit 0 is still encoded.
+	var temperature *float32
 	if o.spec.Temperature != nil {
-		temperature = *o.spec.Temperature
+		t := *o.spec.Temperature
+		temperature = &t
 	}
 	if *temperatureFlag != 0 {
-		temperature = float32(*temperatureFlag)
+		t := float32(*temperatureFlag)
+		temperature = &t
 	}
 
 	if *debugOpenAI {
@@ -114,14 +118,17 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		"non_streaming", nonStreaming,
 	)
 
-	maxCompletionTokens := 0
+	// Use pointer type so that nil (not specified) is omitted from the
+	// request JSON, while an explicit 0 is still encoded.
+	var maxCompletionTokens *int
 	if o.spec.MaxGenerateTokens != nil {
-		maxCompletionTokens = *o.spec.MaxGenerateTokens
+		n := *o.spec.MaxGenerateTokens
+		maxCompletionTokens = &n
 	}
 	if options != nil && options.MaxGenerateTokens != nil {
 		n := *options.MaxGenerateTokens
-		if maxCompletionTokens == 0 || n < maxCompletionTokens {
-			maxCompletionTokens = n
+		if maxCompletionTokens == nil || n < *maxCompletionTokens {
+			maxCompletionTokens = &n
 		}
 	}
 
@@ -628,8 +635,8 @@ type ChatCompletionRequest struct {
 	StreamOptions       *StreamOptions          `json:"stream_options,omitempty"`
 	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`
 	Reasoning           *Reasoning              `json:"reasoning,omitempty"`
-	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
-	Temperature         float32                 `json:"temperature"`
+	MaxCompletionTokens *int                    `json:"max_completion_tokens,omitempty"`
+	Temperature         *float32                `json:"temperature,omitempty"`
 	Tools               []Tool                  `json:"tools,omitempty"`
 	ResponseFormat      *ResponseFormat         `json:"response_format,omitempty"`
 }

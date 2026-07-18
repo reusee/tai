@@ -322,3 +322,22 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 		t.Fatal("expected error for non-200 status without error field")
 	}
 }
+
+func TestTemperatureAndMaxTokensOmittedWhenNotSet(t *testing.T) {
+	// When neither temperature nor max_completion_tokens is specified
+	// (nil pointers), both must be omitted from the request JSON so the
+	// API uses its own defaults.
+	req := ChatCompletionRequest{
+		Model: "test-model",
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"temperature"`) {
+		t.Fatalf("temperature should be omitted when not set, got: %s", string(data))
+	}
+	if strings.Contains(string(data), `"max_completion_tokens"`) {
+		t.Fatalf("max_completion_tokens should be omitted when not set, got: %s", string(data))
+	}
+}
