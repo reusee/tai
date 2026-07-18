@@ -3,21 +3,21 @@ module github.com/reusee/tai
 go 1.26.1
 
 require (
-	cuelang.org/go v0.17.0
+	cuelang.org/go v0.17.1
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260704130133-8f415c4bf94e
+	github.com/reusee/dscope v0.0.0-20260713161331-d38456fd1dc6
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
-	github.com/reusee/prompts v0.0.0-20260703093522-dcf3ff2d5a92
+	github.com/reusee/prompts v0.0.0-20260710040307-7ed7dbe4d845
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.8.0
 	github.com/systemd/slog-journal v0.1.2
-	github.com/tiktoken-go/tokenizer v0.8.0
-	go.starlark.net v0.0.0-20260630144053-529d8e869a14
-	golang.org/x/net v0.56.0
-	golang.org/x/term v0.44.0
-	golang.org/x/tools v0.47.0
-	google.golang.org/genai v1.62.0
+	github.com/tiktoken-go/tokenizer v0.8.1
+	go.starlark.net v0.0.0-20260708150628-5395d018f003
+	golang.org/x/net v0.57.0
+	golang.org/x/term v0.45.0
+	golang.org/x/tools v0.48.0
+	google.golang.org/genai v1.64.0
 )
 
 require (
@@ -29,13 +29,12 @@ require (
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.4.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.3 // indirect
-	github.com/dlclark/regexp2/v2 v2.1.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/eliben/go-sentencepiece v0.7.0 // indirect
 	github.com/emicklei/proto v1.14.3 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-quicktest/qt v1.102.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -56,11 +55,11 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/api v0.278.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
