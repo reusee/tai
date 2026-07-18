@@ -14,6 +14,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Shell(false),
+			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Shell Block Kind") {
@@ -27,6 +28,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Shell(true),
+			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Shell Block Kind") {

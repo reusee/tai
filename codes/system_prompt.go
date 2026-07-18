@@ -45,11 +45,15 @@ models with long reasoning chains can exceed the maximum generation length on
 large or complex tasks, truncating the response mid-block and wasting the
 round. A plan-only first round followed by small execution rounds keeps each
 round's thinking and output bounded, so no single response approaches the
-generation limit. The mandate applies uniformly to every task, including
-apparently trivial ones, because truncation risk cannot be reliably predicted
-from the request alone; the cost is one extra short round-trip per task. This
-refines the continue block guidance: the exemption that allowed simple tasks
-to complete in a single response without a continue block is superseded.
+generation limit. The mandate is opt-in via the -plan flag; when disabled (the
+default), the planning system prompt is omitted and the model may complete
+tasks in a single response without a continue block. When enabled, the
+mandate applies uniformly to every task, including apparently trivial ones,
+because truncation risk cannot be reliably predicted from the request alone;
+the cost is one extra short round-trip per task. This refines the continue
+block guidance: the exemption that allowed simple tasks to complete in a
+single response without a continue block is superseded when planning is
+enabled.
 
 Planning is an extension layered on top of the continue block mechanism (see
 TheoryOfContinueBlocks): the mechanism only transports the block body back as
@@ -283,6 +287,7 @@ func (Module) SystemPrompt(
 	diffHandler codetypes.DiffHandler,
 	dynamicContext DynamicContext,
 	shell Shell,
+	plan Plan,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
 	prompt := prompts.Codes + "\n" +
@@ -290,9 +295,11 @@ func (Module) SystemPrompt(
 		diffHandler.SystemPrompt() + "\n" +
 		blocks.FinishBlockSystemPrompt + "\n" +
 		ReadOnlyFilesSystemPrompt + "\n" +
-		blocks.ContinueBlockSystemPrompt + "\n" +
-		MandatoryPlanningSystemPrompt + "\n" +
-		blocks.SummaryBlockSystemPrompt + "\n"
+		blocks.ContinueBlockSystemPrompt + "\n"
+	if bool(plan) {
+		prompt += MandatoryPlanningSystemPrompt + "\n"
+	}
+	prompt += blocks.SummaryBlockSystemPrompt + "\n"
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}

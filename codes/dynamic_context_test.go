@@ -33,6 +33,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Shell(false),
+			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -46,6 +47,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			BoundaryDiffHandler{},
 			DynamicContext(true),
 			Shell(false),
+			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -61,6 +63,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Read-Only Files") {
@@ -78,6 +81,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(true),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Continue Block Kind") {
@@ -101,6 +105,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "Mandatory Planning") {
@@ -124,6 +129,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "precede any action") {
@@ -144,6 +150,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 
@@ -189,6 +196,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Shell(false),
+		Plan(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Summary Block Kind") {
