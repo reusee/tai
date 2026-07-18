@@ -100,14 +100,14 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 		// think mark
 		if !ret.lastOutputIsThought && isThought {
 			// open
-			if _, err := fmt.Fprint(s.w, " ModelState\n"); err != nil {
+			if _, err := fmt.Fprint(s.w, "<think>\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = true
 		}
 		if ret.lastOutputIsThought && !isThought {
 			// close
-			if _, err := fmt.Fprint(s.w, "\n Unlock\n"); err != nil {
+			if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = false
