@@ -45,7 +45,7 @@ func TestGeminiListModels(t *testing.T) {
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
 			APIKey:     string(apiKey),
 			Backend:    genai.BackendGeminiAPI,
-			HTTPClient: httpClient,
+			HTTPClient: httpClient.Client,
 		})
 		if err != nil {
 			t.Fatal(err)

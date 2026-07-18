@@ -396,10 +396,7 @@ func (Module) Files(
 						// bytes and binary files have them in the first few
 						// bytes, so scanning the full content is wasteful for
 						// large text files.
-						checkLen := len(content)
-						if checkLen > 8192 {
-							checkLen = 8192
-						}
+						checkLen := min(len(content), 8192)
 						if bytes.Contains(content[:checkLen], []byte{0}) {
 							return // binary
 						}
