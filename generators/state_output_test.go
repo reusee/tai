@@ -351,3 +351,32 @@ func TestWithFunctions(t *testing.T) {
 		t.Fatalf("functions lost after Flush: %v", names)
 	}
 }
+
+func TestOutputThoughtColor(t *testing.T) {
+	buf := new(bytes.Buffer)
+	output := Output{
+		upstream:     NewPrompts("", nil),
+		w:            buf,
+		isTerminal:   true,
+		showThoughts: true,
+	}
+	_, err := output.AppendContent(&Content{
+		Role: RoleModel,
+		Parts: []Part{
+			Thought("deep reasoning"),
+			Text("answer"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	// Thoughts must use ColorThought, not the role color (ColorReset for model)
+	if !strings.Contains(got, ColorThought) {
+		t.Fatalf("expected thought color %q in output, got %q", ColorThought, got)
+	}
+	// ColorThought must differ from ColorLog (previously both were red)
+	if ColorThought == ColorLog {
+		t.Fatal("ColorThought must be distinct from ColorLog")
+	}
+}

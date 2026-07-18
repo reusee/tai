@@ -71,8 +71,14 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 
 	separated := false
 	print := func(isThought bool, str string) (err error) {
-		if roleColor != "" {
-			if _, err := fmt.Fprint(s.w, roleColor); err != nil {
+		// Thoughts use a distinct light color separate from role colors
+		// so reasoning content stands out visually.
+		color := roleColor
+		if isThought && s.isTerminal {
+			color = ColorThought
+		}
+		if color != "" {
+			if _, err := fmt.Fprint(s.w, color); err != nil {
 				return err
 			}
 			defer func() {
@@ -94,14 +100,14 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 		// think mark
 		if !ret.lastOutputIsThought && isThought {
 			// open
-			if _, err := fmt.Fprint(s.w, "<think>\n"); err != nil {
+			if _, err := fmt.Fprint(s.w, " ModelState\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = true
 		}
 		if ret.lastOutputIsThought && !isThought {
 			// close
-			if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
+			if _, err := fmt.Fprint(s.w, "\n Unlock\n"); err != nil {
 				return err
 			}
 			ret.lastOutputIsThought = false

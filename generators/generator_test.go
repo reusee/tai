@@ -305,7 +305,7 @@ func TestTemperatureZeroIncludedInJSON(t *testing.T) {
 	// instead of the intended deterministic temperature 0.
 	req := ChatCompletionRequest{
 		Model:       "test-model",
-		Temperature: 0,
+		Temperature: new(float32(0)),
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
