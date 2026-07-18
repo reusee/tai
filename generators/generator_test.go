@@ -964,6 +964,64 @@ func TestResolveSpecMaxThinkingTokens(t *testing.T) {
 	})
 }
 
+func TestResolveSpecPreservedThinking(t *testing.T) {
+	t.Run("inherited from parent", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				PreservedThinking: new(true),
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.PreservedThinking == nil || !*s.PreservedThinking {
+			t.Errorf("expected PreservedThinking true, got %v", s.PreservedThinking)
+		}
+	})
+
+	t.Run("overridden by child", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				PreservedThinking: new(true),
+				Variants: []Spec{
+					{
+						Name:              "child",
+						PreservedThinking: new(false),
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base/child", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.PreservedThinking == nil || *s.PreservedThinking {
+			t.Errorf("expected PreservedThinking false, got %v", s.PreservedThinking)
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name: "base",
+				Type: "gemini",
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.PreservedThinking != nil {
+			t.Errorf("expected nil PreservedThinking, got %v", s.PreservedThinking)
+		}
+	})
+}
+
 func TestSpecMaxThinkingTokensJSON(t *testing.T) {
 	spec := Spec{
 		Name:              "test",
@@ -989,5 +1047,33 @@ func TestSpecMaxThinkingTokensJSON(t *testing.T) {
 	}
 	if restored.MaxThinkingTokens == nil || *restored.MaxThinkingTokens != 5000 {
 		t.Errorf("MaxThinkingTokens not restored correctly: %+v", restored)
+	}
+}
+
+func TestSpecPreservedThinkingJSON(t *testing.T) {
+	spec := Spec{
+		Name:              "test",
+		Type:              "gemini",
+		PreservedThinking: new(true),
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["preserved_thinking"]; !ok || v != true {
+		t.Errorf("preserved_thinking not found or wrong: %v", raw)
+	}
+
+	// round trip
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.PreservedThinking == nil || !*restored.PreservedThinking {
+		t.Errorf("PreservedThinking not restored correctly: %+v", restored)
 	}
 }

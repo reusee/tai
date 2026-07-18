@@ -194,6 +194,18 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			Role: role,
 		}
 		for _, part := range content.Parts {
+			// Thoughts are only sent to the server when PreservedThinking is
+			// enabled. By default, reasoning content is stripped from outgoing
+			// requests to avoid sending it back to the model.
+			if thought, isThought := part.(Thought); isThought {
+				if g.spec.PreservedThinking != nil && *g.spec.PreservedThinking && len(thought) > 0 {
+					pbContent.Parts = append(pbContent.Parts, &genai.Part{
+						Text:    string(thought),
+						Thought: true,
+					})
+				}
+				continue
+			}
 			pbPart, err := part.ToGemini()
 			if err != nil {
 				return ret, err

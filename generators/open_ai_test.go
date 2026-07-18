@@ -84,7 +84,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 			},
 		})
 
-		messages, err := stateToOpenAIMessages(state)
+		messages, err := stateToOpenAIMessages(state, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 			},
 		})
 
-		messages, err := stateToOpenAIMessages(state)
+		messages, err := stateToOpenAIMessages(state, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +144,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 				},
 			},
 		})
-		messages, err := stateToOpenAIMessages(state)
+		messages, err := stateToOpenAIMessages(state, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,6 +153,31 @@ func TestStateToOpenAIMessages(t *testing.T) {
 		}
 		if messages[0].ReasoningContent != "thinking" {
 			t.Errorf("wrong reasoning: %s", messages[0].ReasoningContent)
+		}
+		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "answer" {
+			t.Errorf("wrong content: %v", messages[0].Content)
+		}
+	})
+
+	t.Run("thoughts filtered when not preserved", func(t *testing.T) {
+		state := NewPrompts("", []*Content{
+			{
+				Role: RoleModel,
+				Parts: []Part{
+					Thought("thinking"),
+					Text("answer"),
+				},
+			},
+		})
+		messages, err := stateToOpenAIMessages(state, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(messages) != 1 {
+			t.Fatalf("got %+v", messages)
+		}
+		if messages[0].ReasoningContent != "" {
+			t.Errorf("thoughts should be filtered when not preserved, got reasoning: %s", messages[0].ReasoningContent)
 		}
 		if contentStr, ok := messages[0].Content.(string); !ok || contentStr != "answer" {
 			t.Errorf("wrong content: %v", messages[0].Content)
@@ -175,7 +200,7 @@ func TestStateToOpenAIMessages(t *testing.T) {
 				},
 			},
 		})
-		messages, err := stateToOpenAIMessages(state)
+		messages, err := stateToOpenAIMessages(state, false)
 		if err != nil {
 			t.Fatal(err)
 		}

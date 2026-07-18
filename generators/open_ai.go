@@ -50,7 +50,8 @@ func (o *OpenAI) CountTokens(text string) (int, error) {
 func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	ret = state
 
-	messages, err := stateToOpenAIMessages(ret)
+	preservedThinking := o.spec.PreservedThinking != nil && *o.spec.PreservedThinking
+	messages, err := stateToOpenAIMessages(ret, preservedThinking)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +460,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	return ret, nil
 }
 
-func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err error) {
+func stateToOpenAIMessages(state State, preservedThinking bool) (messages []ChatCompletionMessage, err error) {
 	if state.SystemPrompt() != "" {
 		messages = append(messages, ChatCompletionMessage{
 			Role:    string(RoleSystem),
@@ -536,6 +537,12 @@ func stateToOpenAIMessages(state State) (messages []ChatCompletionMessage, err e
 				}
 				addText(role, string(part))
 			case Thought:
+				// Thoughts are only sent to the server when PreservedThinking
+				// is enabled. By default, reasoning content is stripped from
+				// outgoing requests to avoid sending it back to the model.
+				if !preservedThinking {
+					continue
+				}
 				if role == string(RoleAssistant) {
 					if len(messages) > 0 && messages[len(messages)-1].Role == role {
 						messages[len(messages)-1].ReasoningContent += string(part)

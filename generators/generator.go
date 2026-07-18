@@ -138,6 +138,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.NoProxy != nil {
 				merged.NoProxy = spec.NoProxy
 			}
+			if spec.PreservedThinking != nil {
+				merged.PreservedThinking = spec.PreservedThinking
+			}
 			// Redirect is not merged from parent to child; only the
 			// final spec in the path determines whether a redirect applies.
 			lastRedirect = spec.Redirect
