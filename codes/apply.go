@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/codes/codetypes"
+	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/analysis/passes/modernize"
 	"golang.org/x/tools/imports"
 )
 
@@ -414,7 +416,13 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			return err
 		}
 	}
-	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
+	if err := root.WriteFile(path, finalizeContent(formatted), 0644); err != nil {
+		return err
+	}
+	if strings.HasSuffix(path, ".go") {
+		optimizeGoFile(root, path)
+	}
+	return nil
 }
 
 func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
@@ -970,4 +978,74 @@ func getActualPos(node ast.Node) token.Pos {
 		}
 	}
 	return node.Pos()
+}
+
+// optimizeGoFile runs modernize analyzers on the given Go file and applies
+// suggested fixes. It is called after each hunk is applied to keep the
+// codebase modernized incrementally. Errors during optimization are logged
+// to stderr but do not cause the apply to fail, because the code is already
+// valid and the optimization is best-effort.
+func optimizeGoFile(root *os.Root, filePath string) {
+	dir := filepath.Dir(filePath)
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax |
+			packages.NeedFset,
+		Dir: dir,
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "optimizeGoFile: loading package for %s: %v\n", filePath, err)
+		return
+	}
+	if len(pkgs) == 0 {
+		return
+	}
+	pkg := pkgs[0]
+	if len(pkg.Errors) > 0 {
+		// Package has errors; skip optimization to avoid cascading failures.
+		return
+	}
+
+	var diags []analysis.Diagnostic
+	for _, a := range modernize.Suite {
+		pass := &analysis.Pass{
+			Analyzer:  a,
+			Fset:      pkg.Fset,
+			Files:     pkg.Syntax,
+			Pkg:       pkg.Types,
+			TypesInfo: pkg.TypesInfo,
+			Report: func(d analysis.Diagnostic) {
+				diags = append(diags, d)
+			},
+		}
+		if _, err := a.Run(pass); err != nil {
+			fmt.Fprintf(os.Stderr, "optimizeGoFile: analyzer %s: %v\n", a.Name, err)
+			return
+		}
+	}
+
+	var fileDiags []analysis.Diagnostic
+	for _, d := range diags {
+		if d.Position.Filename == filePath {
+			fileDiags = append(fileDiags, d)
+		}
+	}
+	if len(fileDiags) == 0 {
+		return
+	}
+
+	fixed, err := analysisutil.ApplyFixes(pkg.Fset, fileDiags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "optimizeGoFile: applying fixes: %v\n", err)
+		return
+	}
+	for f, content := range fixed {
+		if f.Name() == filePath {
+			if err := root.WriteFile(filePath, finalizeContent(content), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "optimizeGoFile: writing fixed file: %v\n", err)
+			}
+			break
+		}
+	}
 }
