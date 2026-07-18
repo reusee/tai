@@ -148,11 +148,15 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		req.Tools = tools
 	}
 
-	if o.spec.IsOpenRouter != nil && *o.spec.IsOpenRouter && req.ReasoningEffort != "" {
-		req.Reasoning = &Reasoning{
-			Effort: req.ReasoningEffort,
+	if o.spec.IsOpenRouter != nil && *o.spec.IsOpenRouter && (req.ReasoningEffort != "" || o.spec.MaxThinkingTokens != nil) {
+		req.Reasoning = &Reasoning{}
+		if req.ReasoningEffort != "" {
+			req.Reasoning.Effort = req.ReasoningEffort
+			req.ReasoningEffort = ""
 		}
-		req.ReasoningEffort = ""
+		if o.spec.MaxThinkingTokens != nil {
+			req.Reasoning.MaxTokens = *o.spec.MaxThinkingTokens
+		}
 	}
 
 	if options != nil && options.ResponseSchema != nil {

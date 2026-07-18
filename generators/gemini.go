@@ -96,21 +96,28 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	thinkingConfig := &genai.ThinkingConfig{
 		IncludeThoughts: true,
 	}
-	reasoningEffort := g.spec.ReasoningEffort
-	if flagEffort := string(g.Effort()); flagEffort != "" {
-		reasoningEffort = flagEffort
-	}
-	if reasoningEffort != "" {
-		thinkingConfig.ThinkingLevel = genai.ThinkingLevel(reasoningEffort)
+	if g.spec.MaxThinkingTokens != nil {
+		// Explicit thinking token budget takes precedence over effort level
+		// and the fallback computation from max output tokens.
+		budget := int32(*g.spec.MaxThinkingTokens)
+		thinkingConfig.ThinkingBudget = &budget
 	} else {
-		// set budget from max output tokens
-		var maxThinkingTokens *int32
-		if maxOutputTokens != 0 {
-			maxThinking := maxOutputTokens / 4
-			maxThinkingTokens = &maxThinking
+		reasoningEffort := g.spec.ReasoningEffort
+		if flagEffort := string(g.Effort()); flagEffort != "" {
+			reasoningEffort = flagEffort
 		}
-		if maxThinkingTokens != nil {
-			thinkingConfig.ThinkingBudget = maxThinkingTokens
+		if reasoningEffort != "" {
+			thinkingConfig.ThinkingLevel = genai.ThinkingLevel(reasoningEffort)
+		} else {
+			// set budget from max output tokens
+			var maxThinkingTokens *int32
+			if maxOutputTokens != 0 {
+				maxThinking := maxOutputTokens / 4
+				maxThinkingTokens = &maxThinking
+			}
+			if maxThinkingTokens != nil {
+				thinkingConfig.ThinkingBudget = maxThinkingTokens
+			}
 		}
 	}
 

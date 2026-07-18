@@ -905,3 +905,89 @@ func TestResolveSpecRedirect(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveSpecMaxThinkingTokens(t *testing.T) {
+	t.Run("inherited from parent", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				MaxThinkingTokens: new(1000),
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxThinkingTokens == nil || *s.MaxThinkingTokens != 1000 {
+			t.Errorf("expected MaxThinkingTokens 1000, got %v", s.MaxThinkingTokens)
+		}
+	})
+
+	t.Run("overridden by child", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				MaxThinkingTokens: new(1000),
+				Variants: []Spec{
+					{
+						Name:              "child",
+						MaxThinkingTokens: new(2000),
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base/child", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxThinkingTokens == nil || *s.MaxThinkingTokens != 2000 {
+			t.Errorf("expected MaxThinkingTokens 2000, got %v", s.MaxThinkingTokens)
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name: "base",
+				Type: "gemini",
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.MaxThinkingTokens != nil {
+			t.Errorf("expected nil MaxThinkingTokens, got %v", s.MaxThinkingTokens)
+		}
+	})
+}
+
+func TestSpecMaxThinkingTokensJSON(t *testing.T) {
+	spec := Spec{
+		Name:              "test",
+		Type:              "gemini",
+		MaxThinkingTokens: new(5000),
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["max_thinking_tokens"]; !ok || v != float64(5000) {
+		t.Errorf("max_thinking_tokens not found or wrong: %v", raw)
+	}
+
+	// round trip
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.MaxThinkingTokens == nil || *restored.MaxThinkingTokens != 5000 {
+		t.Errorf("MaxThinkingTokens not restored correctly: %+v", restored)
+	}
+}

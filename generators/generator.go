@@ -105,6 +105,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.MaxGenerateTokens != nil {
 				merged.MaxGenerateTokens = spec.MaxGenerateTokens
 			}
+			if spec.MaxThinkingTokens != nil {
+				merged.MaxThinkingTokens = spec.MaxThinkingTokens
+			}
 			if spec.Temperature != nil {
 				merged.Temperature = spec.Temperature
 			}

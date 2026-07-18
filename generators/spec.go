@@ -23,6 +23,7 @@ type Spec struct {
 	Family            string         `json:"family"`
 	ContextTokens     int            `json:"context_tokens"`
 	MaxGenerateTokens *int           `json:"max_generate_tokens"`
+	MaxThinkingTokens *int           `json:"max_thinking_tokens,omitempty"`
 	Temperature       *float32       `json:"temperature"`
 	DisableSearch     *bool          `json:"disable_search,omitempty"`
 	DisableTools      *bool          `json:"disable_tools,omitempty"`
