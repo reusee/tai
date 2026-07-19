@@ -147,24 +147,3 @@ func TestParseFirstBoundaryHunkWrite(t *testing.T) {
 		t.Fatalf("body should contain func New: %q", h.Body)
 	}
 }
-
-func TestParseFirstBoundaryHunkNoBlankLines(t *testing.T) {
-	// Code body without blank lines before or after the XML tag
-	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\nfunc Foo() {}\n:::end 徕珑\n"
-	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if h.Op != "MODIFY" {
-		t.Fatalf("expected MODIFY, got %s", h.Op)
-	}
-	if h.Target != "Foo" {
-		t.Fatalf("expected Foo, got %s", h.Target)
-	}
-	if h.Body != "func Foo() {}" {
-		t.Fatalf("unexpected body: %q", h.Body)
-	}
-}

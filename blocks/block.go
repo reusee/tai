@@ -64,20 +64,16 @@ do not appear anywhere in the code or text it is about to emit, satisfying the a
 guarantee and the body-disjointness guarantee simultaneously.
 `
 
-const TheoryOfDualBlockFormats = `
-The parser supports two boundary-delimited block formats simultaneously. The
-original format places the boundary before the kind as an XML opening tag:
-:::<boundary> <kind attr=".."> ... :::<boundary> </kind>. The newer format
-places the kind before the boundary and uses a separate metadata line:
-:::<kind> <boundary> ... :::end <boundary>. For change blocks in the newer
-format, a self-closing XML tag on the line after the opening marker carries
-the operation attributes (op, target, file-path). The parser distinguishes the
-two formats by checking whether the opening line starts with Han characters
-(old format: boundary first) or a non-Han kind word (new format: kind first).
-Closing markers are format-specific: old format uses :::<boundary> </kind>,
-new format uses :::end <boundary>. Both formats permit trailing non-Han
-content after the boundary on the opening and closing lines; the boundary is
-always the leading Han ideographs, and extra content is ignored.
+const TheoryOfBlockFormat = `
+The parser uses a single boundary-delimited block format. The boundary (a
+random string of two uncommon, meaningless Chinese characters) precedes the
+kind as an XML opening tag:
+:::<boundary> <kind attr=".."> ... :::<boundary> </kind>. The boundary is
+extracted as the leading Han ideographs from the opening and closing lines;
+trailing non-Han content after the boundary is ignored. Closing markers
+(:::<boundary> </kind>) are always rejected as opening markers. The boundary
+string is the sole disambiguator between consecutive blocks within a single
+response.
 `
 
 // blockParseResult holds the outcome of attempting to parse a block in one
@@ -152,14 +148,6 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 	return parseFirstBlock(content, false)
 }
 
-// parseFirstBlock is the core block parser. When final is false (streaming),
-// an unclosed block returns a BlockParseError so the caller can wait for more
-// output. When final is true (e.g., at Flush), an unclosed block is treated as
-// ended: the block is returned as complete with the body being all remaining
-// content after the opening line, and end is set to len(content) so the
-// buffer is fully consumed. This prevents post-flush content from combining
-// with pre-flush content within the same block. See TheoryOfParserState and
-// TheoryOfBoundaryUniqueness.
 func parseFirstBlock(content []byte, final bool) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
@@ -186,15 +174,10 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 		lineEnd += lineStart
 		openingLine := string(content[lineStart:lineEnd])
 
-		// Try old format: :::<boundary> <kind ...> (possibly with extra
-		// content between boundary and XML tag). See TheoryOfDualBlockFormats.
-		if r, matched := tryParseOldFormat(content, openingLine, lineEnd, blockStart, final); matched {
-			return r.block, r.start, r.end, r.ok, r.err
-		}
-
-		// Try new format: :::<kind> <boundary> with optional metadata
-		// line for change blocks. See TheoryOfDualBlockFormats.
-		if r, matched := tryParseNewFormat(content, openingLine, lineEnd, blockStart, final); matched {
+		// Parse the block in the boundary-delimited format:
+		// :::<boundary> <kind ...> ... :::<boundary> </kind>
+		// See TheoryOfBlockFormat.
+		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart, final); matched {
 			return r.block, r.start, r.end, r.ok, r.err
 		}
 
@@ -202,13 +185,13 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 	}
 }
 
-// tryParseOldFormat attempts to parse an old format opening line where the
-// boundary (leading Han ideographs) precedes an XML opening tag. Trailing
-// non-Han content between the boundary and the XML tag (e.g., "extra") is
-// skipped by searching for the first '<' in the rest of the line. Closing
-// markers (:::<boundary> </kind>) are rejected. Returns matched=false when
-// the line does not conform to the old format. See TheoryOfDualBlockFormats.
-func tryParseOldFormat(content []byte, openingLine string, lineEnd, blockStart int, final bool) (result blockParseResult, matched bool) {
+// tryParseBlock attempts to parse an opening line where the boundary (leading
+// Han ideographs) precedes an XML opening tag. Trailing non-Han content
+// between the boundary and the XML tag (e.g., "extra") is skipped by searching
+// for the first '<' in the rest of the line. Closing markers
+// (:::<boundary> </kind>) are rejected. Returns matched=false when the line
+// does not conform to the format. See TheoryOfBlockFormat.
+func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int, final bool) (result blockParseResult, matched bool) {
 	boundary := extractHanBoundary(openingLine)
 	if boundary == "" {
 		return
@@ -232,7 +215,7 @@ func tryParseOldFormat(content []byte, openingLine string, lineEnd, blockStart i
 	result.block.Boundary = boundary
 	result.block.Attributes = attrs
 	bodyStart := lineEnd + 1
-	bodyEnd, blockEnd, found := findOldFormatClosingMarker(content, bodyStart, boundary, kind)
+	bodyEnd, blockEnd, found := findClosingMarker(content, bodyStart, boundary, kind)
 	if found {
 		result.block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
 		result.start = blockStart
@@ -251,79 +234,11 @@ func tryParseOldFormat(content []byte, openingLine string, lineEnd, blockStart i
 	return
 }
 
-// tryParseNewFormat attempts to parse a new format opening line where a
-// non-Han kind word precedes the boundary (e.g., "change 徕珑"). For change
-// blocks, a self-closing XML tag on the next line carries the operation
-// attributes. The closing marker is :::end <boundary>. Returns matched=false
-// when the line does not conform to the new format or when the kind is "end"
-// (a closing marker, not an opening marker). See TheoryOfDualBlockFormats.
-func tryParseNewFormat(content []byte, openingLine string, lineEnd, blockStart int, final bool) (result blockParseResult, matched bool) {
-	kind, boundary, ok := extractKindAndBoundary(openingLine)
-	if !ok || kind == "end" {
-		return
-	}
-	matched = true
-	result.block.Kind = kind
-	result.block.Boundary = boundary
-	bodyStart := lineEnd + 1
-	// For change blocks, a self-closing XML tag on the next line carries
-	// the operation attributes. See TheoryOfDualBlockFormats.
-	if kind == "change" {
-		bodyStart = parseNewFormatMetadata(content, bodyStart, &result.block, kind)
-	}
-	bodyEnd, blockEnd, found := findNewFormatClosingMarker(content, bodyStart, boundary)
-	if found {
-		result.block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
-		result.start = blockStart
-		result.end = blockEnd
-		result.ok = true
-		return
-	}
-	if final {
-		result.block.Body = strings.TrimSpace(string(content[bodyStart:]))
-		result.start = blockStart
-		result.end = len(content)
-		result.ok = true
-		return
-	}
-	result.err = &BlockParseError{BlockKind: kind, Boundary: boundary}
-	return
-}
-
-// extractKindAndBoundary extracts a non-Han kind word and a Han boundary from
-// a new format opening line (e.g., "change 徕珑" -> kind="change",
-// boundary="徕珑"). The kind is the leading non-Han, non-whitespace word; the
-// boundary is the leading Han ideographs after the kind. Returns ok=false if
-// either part is missing. See TheoryOfDualBlockFormats.
-func extractKindAndBoundary(s string) (kind, boundary string, ok bool) {
-	s = strings.TrimSpace(s)
-	var kindBuf []rune
-	for _, r := range s {
-		if unicode.Is(unicode.Han, r) {
-			break
-		}
-		if r == ' ' || r == '\t' {
-			break
-		}
-		kindBuf = append(kindBuf, r)
-	}
-	if len(kindBuf) == 0 {
-		return "", "", false
-	}
-	kind = string(kindBuf)
-	rest := strings.TrimSpace(s[len(kind):])
-	boundary = extractHanBoundary(rest)
-	if boundary == "" {
-		return "", "", false
-	}
-	return kind, boundary, true
-}
-
-// findOldFormatClosingMarker searches for :::<boundary> ... </kind> at line
+// findClosingMarker searches for :::<boundary> ... </kind> at line
 // start, where ... is optional trailing content between the boundary and the
 // closing tag. A line-start :::<boundary> with a different boundary is treated
-// as body content. See TheoryOfDualBlockFormats and TheoryOfBoundaryUniqueness.
-func findOldFormatClosingMarker(content []byte, bodyStart int, boundary, kind string) (bodyEnd, blockEnd int, found bool) {
+// as body content. See TheoryOfBoundaryUniqueness.
+func findClosingMarker(content []byte, bodyStart int, boundary, kind string) (bodyEnd, blockEnd int, found bool) {
 	searchFrom := bodyStart
 	for {
 		offset := bytes.Index(content[searchFrom:], []byte(":::"))
@@ -376,88 +291,6 @@ func findOldFormatClosingMarker(content []byte, bodyStart int, boundary, kind st
 		}
 		searchFrom = lineStart + lineEnd + 1
 	}
-}
-
-// findNewFormatClosingMarker searches for :::end <boundary> at line start.
-// A line-start :::end with a different boundary is treated as body content.
-// The boundary is extracted as leading Han ideographs from the text after
-// "end", so trailing content after the boundary is ignored. See
-// TheoryOfDualBlockFormats and TheoryOfBoundaryUniqueness.
-func findNewFormatClosingMarker(content []byte, bodyStart int, boundary string) (bodyEnd, blockEnd int, found bool) {
-	searchFrom := bodyStart
-	for {
-		offset := bytes.Index(content[searchFrom:], []byte(":::"))
-		if offset == -1 {
-			return 0, 0, false
-		}
-		candidate := searchFrom + offset
-		if candidate > 0 && content[candidate-1] != '\n' {
-			searchFrom = candidate + 3
-			continue
-		}
-		lineStart := candidate + 3
-		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
-		var line string
-		if lineEnd == -1 {
-			line = string(content[lineStart:])
-		} else {
-			line = string(content[lineStart : lineStart+lineEnd])
-		}
-		trimmedLine := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmedLine, "end") {
-			if lineEnd == -1 {
-				return 0, 0, false
-			}
-			searchFrom = lineStart + lineEnd + 1
-			continue
-		}
-		rest := strings.TrimSpace(trimmedLine[3:])
-		lineBoundary := extractHanBoundary(rest)
-		if lineBoundary != boundary {
-			if lineEnd == -1 {
-				return 0, 0, false
-			}
-			searchFrom = lineStart + lineEnd + 1
-			continue
-		}
-		bodyEnd = candidate
-		if lineEnd == -1 {
-			blockEnd = len(content)
-		} else {
-			blockEnd = lineStart + lineEnd + 1
-		}
-		return bodyEnd, blockEnd, true
-	}
-}
-
-// parseNewFormatMetadata checks if the line after the opening marker contains
-// a self-closing XML tag with the same kind. If so, it parses the attributes
-// into block.Attributes and returns the body start after the metadata line.
-// Otherwise, it returns bodyStart unchanged. See TheoryOfDualBlockFormats.
-func parseNewFormatMetadata(content []byte, bodyStart int, block *Block, kind string) int {
-	if bodyStart >= len(content) {
-		return bodyStart
-	}
-	nextLineEnd := bytes.IndexByte(content[bodyStart:], '\n')
-	var nextLine string
-	if nextLineEnd == -1 {
-		nextLine = string(content[bodyStart:])
-	} else {
-		nextLine = string(content[bodyStart : bodyStart+nextLineEnd])
-	}
-	nextLineTrimmed := strings.TrimSpace(nextLine)
-	if !strings.HasPrefix(nextLineTrimmed, "<") || strings.HasPrefix(nextLineTrimmed, "</") {
-		return bodyStart
-	}
-	metaKind, metaAttrs, metaValid := parseXMLOpeningTag(nextLineTrimmed)
-	if !metaValid || metaKind != kind {
-		return bodyStart
-	}
-	block.Attributes = metaAttrs
-	if nextLineEnd == -1 {
-		return len(content)
-	}
-	return bodyStart + nextLineEnd + 1
 }
 
 // extractHanBoundary extracts the leading Han (Chinese) ideographs from s.
