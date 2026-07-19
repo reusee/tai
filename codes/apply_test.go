@@ -96,6 +96,87 @@ func TestApplyHunkRename(t *testing.T) {
 	}
 }
 
+func TestApplyHunkDeleteFile(t *testing.T) {
+	t.Run("GoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := codetypes.Hunk{
+			Op:       "DELETE",
+			Target:   "<file>",
+			FilePath: "test.go",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		_, err = root.Stat("test.go")
+		if err == nil {
+			t.Fatal("file should not exist after deletion")
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("expected IsNotExist, got %v", err)
+		}
+	})
+
+	t.Run("NonGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		if err := root.WriteFile("readme.md", []byte("# Title\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := codetypes.Hunk{
+			Op:       "DELETE",
+			Target:   "<file>",
+			FilePath: "readme.md",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk failed: %v", err)
+		}
+
+		_, err = root.Stat("readme.md")
+		if err == nil {
+			t.Fatal("file should not exist after deletion")
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("expected IsNotExist, got %v", err)
+		}
+	})
+
+	t.Run("NonExistentFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		h := codetypes.Hunk{
+			Op:       "DELETE",
+			Target:   "<file>",
+			FilePath: "nonexistent.go",
+		}
+		if err := applyHunk(root, h); err != nil {
+			t.Fatalf("applyHunk should be no-op for non-existent file, got: %v", err)
+		}
+	})
+}
+
 func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
