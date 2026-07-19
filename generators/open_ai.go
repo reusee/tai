@@ -345,7 +345,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if choice.FinishReason == "error" {
-					return ret, errors.Join(errors.New(string(choice.FinishReason)), ErrRetryable)
+					return ret, errors.New(string(choice.FinishReason))
 				}
 			}
 		}
@@ -439,7 +439,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if reason == "error" {
-					return ret, errors.Join(errors.New(string(reason)), ErrRetryable)
+					return ret, errors.New(string(reason))
 				}
 			}
 

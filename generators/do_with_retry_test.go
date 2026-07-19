@@ -15,7 +15,7 @@ func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
 	calls := 0
 	fn := func() (int, error) {
 		calls++
-		return 0, errors.Join(errors.New("no output"), ErrRetryable)
+		return 0, errors.Join(errors.New("transient api failure"), ErrRetryable)
 	}
 
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}

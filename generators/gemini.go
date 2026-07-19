@@ -362,7 +362,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				return ret, fmt.Errorf("terminal finish reason: %s", terminalReason)
 			}
 			// no output
-			return ret, errors.Join(fmt.Errorf("no output"), ErrRetryable)
+			return ret, fmt.Errorf("no output")
 		}
 
 		return newState, nil
@@ -379,12 +379,12 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 }
 
 const TheoryOfRetry = `
-Retry with exponential backoff handles transient API failures (rate limits,
-server errors, and empty outputs) by waiting progressively longer between
-attempts. After exhausting all retries, ErrRetryable is stripped from the
-returned error to break outer retry loops that would otherwise re-trigger
-indefinitely. The initial backoff duration is parameterized so tests can run
-without real-time delays while production callers use a meaningful delay.
+Retry with exponential backoff handles transient API failures (rate limits
+and server errors) by waiting progressively longer between attempts. After
+exhausting all retries, ErrRetryable is stripped from the returned error to
+break outer retry loops that would otherwise re-trigger indefinitely. The
+initial backoff duration is parameterized so tests can run without real-time
+delays while production callers use a meaningful delay.
 `
 
 func doWithRetry[T any](
@@ -421,11 +421,7 @@ func doWithRetry[T any](
 
 	// All retries exhausted. Strip ErrRetryable from the returned error to
 	// prevent outer retry loops (e.g., BuildGenerate's for-loop in
-	// phases/generate.go) from re-triggering indefinitely. Without this,
-	// a persistent "no output" condition would cause the model to appear
-	// stuck in an infinite output loop, as BuildGenerate would keep calling
-	// Generate, which would keep calling doWithRetry, which would keep
-	// exhausting and returning ErrRetryable.
+	// phases/generate.go) from re-triggering indefinitely.
 	// See TheoryOfGenerateRetry in phases/generate.go.
 	if errors.Is(err, ErrRetryable) {
 		err = fmt.Errorf("retry exhausted after %d attempts: %v", maxRetries, err)
