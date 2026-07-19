@@ -24,6 +24,8 @@ import (
 
 const maxRequestContextRounds = 5
 
+const maxRetriesForMissingSummary = 3
+
 type Generate func(ctx context.Context, output io.Writer) error
 
 const TheoryOfTokenBudgetStability = `
@@ -132,6 +134,73 @@ func reconcileParserState(state generators.State, currentParserState *blocks.Par
 		return rc.WithUpstream(reconciled)
 	}
 	return reconciled
+}
+
+const TheoryOfSummaryCompletionRetry = `
+The summary block serves as a completion signal for each generation round. When
+a round ends without a summary block, the model's output was likely truncated
+mid-stream — the generation limit was reached before the model could emit its
+closing summary. In that case, the round is retried from the original
+pre-generation State. State immutability (see TheoryOfStateImmutability) is the
+foundation for this retry: the pre-generation State is unaffected by the failed
+attempt, so retrying starts from a clean snapshot rather than corrupted partial
+state. The retry count is bounded to prevent infinite loops when a model
+consistently truncates. Change blocks from a truncated attempt are NOT applied:
+the retry discards the partial output entirely and regenerates from scratch,
+avoiding incomplete or malformed hunks. This is distinct from the generator-
+level retry (see TheoryOfRetry and TheoryOfGenerateRetry) which handles
+transient API errors; this retry handles successful-but-incomplete output.
+`
+
+// runPhaseWithRetry executes a phase and retries if no summary block is
+// produced (indicating truncated output), up to maxRetriesForMissingSummary
+// times. It returns the final phase result, extracted summaries, and the
+// currentParserState with summary blocks consumed.
+// See TheoryOfSummaryCompletionRetry.
+func runPhaseWithRetry(
+	ctx context.Context,
+	phase phases.Phase,
+	stateBeforePhase generators.State,
+	fallbackParserState *blocks.ParserState,
+	logger logs.Logger,
+) (
+	newPhase phases.Phase,
+	newState generators.State,
+	phaseErr error,
+	summaries []string,
+	currentParserState *blocks.ParserState,
+) {
+	for retryCount := 0; ; retryCount++ {
+		newPhase, newState, phaseErr = phase(ctx, stateBeforePhase)
+		if phaseErr != nil {
+			return
+		}
+
+		// Extract the current *ParserState from the state chain.
+		// With immutable ParserState, the original parserState pointer
+		// is not updated by AppendContent; the current *ParserState is
+		// the one inside the state returned by the phase chain.
+		// See TheoryOfParserState.
+		ps, ok := generators.As[*blocks.ParserState](newState)
+		if !ok {
+			ps = fallbackParserState
+		}
+
+		// Collect summary blocks from model output.
+		// See TheoryOfSummaryBlocks.
+		summaries, currentParserState = blocks.ProcessSummaryBlocks(ps)
+
+		if len(summaries) > 0 {
+			return
+		}
+		if retryCount >= maxRetriesForMissingSummary {
+			logger.Info("proceeding without summary block after max retries",
+				"retries", retryCount+1)
+			return
+		}
+		logger.Info("retrying generation round: no summary block detected (likely truncated output)",
+			"retry", retryCount+1, "max", maxRetriesForMissingSummary)
+	}
 }
 
 func (Module) Generate(
@@ -319,8 +388,16 @@ func (Module) Generate(
 		}()
 
 		for phase != nil {
-			prevContentCount := countContents(state)
-			newPhase, newState, phaseErr := phase(ctx, state)
+			stateBeforePhase := state
+			prevContentCount := countContents(stateBeforePhase)
+
+			// Execute the phase with retry on missing summary block.
+			// If the model's output lacks a summary block, it was likely
+			// truncated; retry from the original state (safe because State
+			// is immutable). See TheoryOfSummaryCompletionRetry.
+			newPhase, newState, phaseErr, summaries, currentParserState := runPhaseWithRetry(
+				ctx, phase, stateBeforePhase, parserState, logger,
+			)
 
 			if phaseErr != nil {
 				// append error part
@@ -379,20 +456,8 @@ func (Module) Generate(
 					contentIndex++
 				}
 
-				// Extract the current *ParserState from the state chain.
-				// With immutable ParserState, the original parserState pointer
-				// is not updated by AppendContent; the current *ParserState is
-				// the one inside the state returned by the phase chain.
-				// See TheoryOfParserState.
-				currentParserState, ok := generators.As[*blocks.ParserState](state)
-				if !ok {
-					currentParserState = parserState
-				}
-
-				// Collect summary blocks from model output and attach to
-				// the last round statistic created in this round.
-				// See TheoryOfSummaryBlocks.
-				summaries, currentParserState := blocks.ProcessSummaryBlocks(currentParserState)
+				// summaries and currentParserState are already computed by
+				// runPhaseWithRetry. See TheoryOfSummaryCompletionRetry.
 				if len(summaries) > 0 {
 					summaryText := strings.Join(summaries, "\n")
 					if len(roundStats) > 0 {
