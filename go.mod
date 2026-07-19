@@ -14,8 +14,8 @@ require (
 	github.com/systemd/slog-journal v0.1.2
 	github.com/tiktoken-go/tokenizer v0.8.1
 	go.starlark.net v0.0.0-20260708150628-5395d018f003
-	golang.org/x/net v0.56.0
-	golang.org/x/term v0.44.0
+	golang.org/x/net v0.57.0
+	golang.org/x/term v0.45.0
 	golang.org/x/tools v0.47.0
 	google.golang.org/genai v1.64.0
 )
@@ -55,11 +55,11 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/api v0.278.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
