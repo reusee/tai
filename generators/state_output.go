@@ -10,6 +10,17 @@ import (
 	"golang.org/x/term"
 )
 
+const TheoryOfThoughtTags = `
+Thought tags bracket reasoning content in terminal output. The Output state
+layer tracks whether a thought block is open via lastOutputIsThought, opening
+a tag when a Thought part arrives and closing it when a non-Thought part
+follows. Flush must close any open thought tag and reset the tracking state
+at turn boundaries. Without this, an unclosed tag carries over to the next
+turn, causing the closing tag to appear at the start of the next turn's
+output and breaking downstream parsers that rely on properly matched tag
+pairs.
+`
+
 type Output struct {
 	upstream            State
 	w                   io.Writer
@@ -216,6 +227,18 @@ func (s Output) SystemPrompt() string {
 
 func (s Output) Flush() (State, error) {
 	ret := s // copy
+	// Close any open thought tag before flushing. If a turn ends with
+	// an open thought tag (the last printed part was a Thought), the
+	// closing tag must be emitted here. Without this, the unclosed tag
+	// carries over to the next turn, causing the closing tag to appear
+	// at the start of the next turn's output and breaking downstream
+	// block parsers that rely on properly matched tag pairs.
+	if s.lastOutputIsThought {
+		if _, err := fmt.Fprint(s.w, "\n</thinking>\n"); err != nil {
+			return nil, err
+		}
+		ret.lastOutputIsThought = false
+	}
 	if _, err := io.WriteString(s.w, "\n\n"); err != nil {
 		return nil, err
 	}

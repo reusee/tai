@@ -380,3 +380,51 @@ func TestOutputThoughtColor(t *testing.T) {
 		t.Fatal("ColorThought must be distinct from ColorLog")
 	}
 }
+
+func TestOutputFlushClosesThoughtTag(t *testing.T) {
+	buf := new(bytes.Buffer)
+	output := NewOutput(NewPrompts("", nil), buf, true)
+	state := State(output)
+
+	var err error
+	// Append a thought — opens the tag
+	state, err = state.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Thought("deep thinking")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Flush should close the thought tag
+	state, err = state.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The closing tag must be present after flush
+	flushedOutput := buf.String()
+	if !strings.Contains(flushedOutput, "</thinking>") {
+		t.Fatalf("expected </thinking> in output after flush, got: %q", flushedOutput)
+	}
+
+	// Simulate the next turn: append text as user message.
+	// The text should NOT be preceded by </thinking>, which would
+	// indicate the thought tag was still open from the previous turn.
+	buf.Reset()
+	state, err = state.AppendContent(&Content{
+		Role:  RoleUser,
+		Parts: []Part{Text("next turn")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nextOutput := buf.String()
+	if strings.Contains(nextOutput, "</thinking>") {
+		t.Fatalf("thought tag should not carry over to next turn, got: %q", nextOutput)
+	}
+	if !strings.Contains(nextOutput, "next turn") {
+		t.Fatalf("expected 'next turn' in output, got: %q", nextOutput)
+	}
+}
