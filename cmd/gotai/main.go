@@ -9,7 +9,6 @@ import (
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/taiconfigs"
 )
 
 const inContainerEnv = "CAI_IN_CONTAINER"
@@ -25,11 +24,6 @@ func main() {
 	).Fork(
 		dscope.Provide(codes.CodeProviderName("go")),
 	)
-
-	scope, err := taiconfigs.TaigoFork(scope)
-	if err != nil {
-		panic(err)
-	}
 
 	scope.Call(func(
 		generate codes.Generate,

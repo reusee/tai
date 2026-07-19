@@ -10,7 +10,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/tai/taiconfigs"
 )
 
 func main() {
@@ -20,9 +19,6 @@ func main() {
 		new(Module),
 		modes.ForProduction(),
 	)
-
-	scope, err := taiconfigs.TaigoFork(scope)
-	ce(err)
 
 	scope.Call(func(
 		generator Generator,

@@ -17,7 +17,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/tai/taiconfigs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/term"
 )
@@ -79,9 +78,6 @@ func main() {
 		new(generators.FallbackModelName("gemini3")),
 		new(apps.Name("cmd_ai")),
 	)
-
-	scope, err := taiconfigs.TaigoFork(scope)
-	ce(err)
 
 	scope.Call(func(
 		logger logs.Logger,
