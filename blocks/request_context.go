@@ -211,18 +211,23 @@ func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTT
 
 // ProcessRequestContextBlocks checks ParserState for request-context blocks,
 // fetches the requested content, and appends it as user content to the state.
-// Only request-context blocks are consumed; blocks of other kinds (e.g., change)
-// are preserved in ParserState for subsequent processing. Returns the updated
-// state, whether any request-context blocks were found, and any error from
-// appending content.
+// Only request-context blocks are consumed; blocks of other kinds are preserved
+// in the returned *ParserState for subsequent processing. The original
+// parserState is not modified. Callers must thread the returned *ParserState
+// through subsequent block processing and reconcile it with the outer state
+// before the next generation round.
+// See TheoryOfRequestContext and TheoryOfParserState.
 func ProcessRequestContextBlocks(
 	parserState *ParserState,
 	ctx context.Context,
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	state generators.State,
-) (generators.State, bool, error) {
-	blocks := parserState.PopBlocksByKind("request-context")
+) (generators.State, *ParserState, bool, error) {
+	if parserState == nil {
+		return state, nil, false, nil
+	}
+	blocks, newParserState := parserState.PopBlocksByKind("request-context")
 	hasRequestContext := false
 	for _, block := range blocks {
 		hasRequestContext = true
@@ -236,7 +241,7 @@ func ProcessRequestContextBlocks(
 				},
 			})
 			if appendErr != nil {
-				return state, hasRequestContext, appendErr
+				return state, newParserState, hasRequestContext, appendErr
 			}
 			continue
 		}
@@ -248,11 +253,11 @@ func ProcessRequestContextBlocks(
 				Parts: parts,
 			})
 			if appendErr != nil {
-				return state, hasRequestContext, appendErr
+				return state, newParserState, hasRequestContext, appendErr
 			}
 		}
 	}
-	return state, hasRequestContext, nil
+	return state, newParserState, hasRequestContext, nil
 }
 
 // pathEscapesDir reports whether a cleaned relative path escapes the current

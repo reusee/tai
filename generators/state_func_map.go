@@ -49,11 +49,18 @@ var _ State = FuncMap{}
 func (f FuncMap) AppendContent(content *Content) (State, error) {
 	ret := f // copy
 
+	// Clone parts to avoid mutating the input content. The input content
+	// may be referenced by a previous state snapshot; mutating its Parts
+	// slice in place would corrupt that snapshot. Immutability requires
+	// that all modifications produce new data rather than mutating in place.
+	parts := make([]Part, len(content.Parts))
+	copy(parts, content.Parts)
+
 	// Process function calls in this layer BEFORE passing to upstream.
 	// This ensures outer layers take precedence over inner layers and
 	// prevents double execution when multiple FuncMap layers are stacked.
 	var results []Part
-	for i, part := range content.Parts {
+	for i, part := range parts {
 		call, ok := part.(FuncCall)
 		if !ok {
 			continue
@@ -83,12 +90,16 @@ func (f FuncMap) AppendContent(content *Content) (State, error) {
 
 		// Mark the call as handled so inner layers skip it.
 		call.Handled = true
-		content.Parts[i] = call
+		parts[i] = call
 	}
 
-	// Pass the (possibly modified) content to upstream.
+	// Pass the cloned content (with updated Handled flags) to upstream.
+	clonedContent := &Content{
+		Role:  content.Role,
+		Parts: parts,
+	}
 	var err error
-	ret.upstream, err = f.upstream.AppendContent(content)
+	ret.upstream, err = f.upstream.AppendContent(clonedContent)
 	if err != nil {
 		return ret, err
 	}

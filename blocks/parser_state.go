@@ -2,7 +2,7 @@ package blocks
 
 import (
 	"iter"
-	"sync"
+	"slices"
 
 	"github.com/reusee/tai/generators"
 )
@@ -14,12 +14,21 @@ intercepting text parts appended by the model to extract structured blocks (e.g.
 and finish blocks) without losing non-block prose. Parsed blocks are buffered and can be
 read or drained for downstream processing while generation continues.
 
+ParserState is an immutable data structure: AppendContent and Flush return a new
+*ParserState rather than mutating in place. This preserves snapshot integrity for
+rollback and retry (e.g., RedoCheckpoint.state0 is not corrupted by generation).
+PopBlocks and PopBlocksByKind also return a new *ParserState alongside the popped
+blocks, so consuming blocks does not mutate the original state. Callers that pop
+blocks must thread the returned *ParserState through subsequent operations and
+reconcile it with the outer state (via WithUpstream) before the next generation
+round, so that consumed blocks are not reprocessed.
+
 Only Text parts are collected into the parse buffer; Thought parts (model reasoning) are
 explicitly excluded because they may contain illustrative block markers that are not actual
 block output, and parsing them would produce spurious blocks.
 
-The parser is incremental: each AppendContent call appends new text to an internal buffer
-and re-attempts to parse complete blocks. A block is only complete when a matching
+The parser is incremental: each AppendContent call appends new text to the buffer and
+re-attempts to parse complete blocks. A block is only complete when a matching
 :::<boundary> </kind> marker is found at line start. A line-start :::<boundary> with a different
 boundary is treated as body content and does not close the block. If no matching closing
 marker is found, the block is unclosed (incomplete) and left in the buffer for the next
@@ -35,7 +44,8 @@ content within the same block. Boundary strings are parsed as leading Han (Chine
 ideographs only; a non-Han character terminates the boundary so trailing model-added
 content does not corrupt block matching.
 
-Parsed blocks can be consumed selectively by kind via PopBlocksByKind, so processing
+Parsed blocks can be consumed selectively by kind via PopBlocksByKind, which returns
+the matched blocks alongside a new *ParserState with those blocks removed, so processing
 one kind of block (e.g., request-context) does not discard blocks of other kinds (e.g.,
 change) that must remain available for subsequent processing.
 `
@@ -44,12 +54,13 @@ change) that must remain available for subsequent processing.
 // blocks from streamed model output. As the model appends text parts, the
 // accumulated text is scanned for complete blocks using ParseFirstBlock. Parsed
 // blocks are buffered and can be read or drained for downstream processing.
+//
+// ParserState is immutable: AppendContent, Flush, PopBlocks, and PopBlocksByKind
+// all return a new *ParserState rather than mutating in place. See TheoryOfParserState.
 type ParserState struct {
 	upstream generators.State
-
-	mu     sync.Mutex
-	buf    []byte
-	blocks []Block
+	buf      []byte
+	blocks   []Block
 }
 
 // NewParserState creates a ParserState that wraps the given upstream State.
@@ -66,33 +77,33 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 	if err != nil {
 		return nil, err
 	}
-	s.upstream = newUpstream
 
 	// Only parse blocks from model-generated content, not from user or system input.
-	if content.Role == generators.RoleAssistant || content.Role == generators.RoleModel {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		for _, part := range content.Parts {
-			// Thoughts are model reasoning, not block output. They may
-			// contain illustrative block markers that must not be parsed
-			// as real blocks. See TheoryOfParserState.
-			if _, ok := part.(generators.Thought); ok {
-				continue
-			}
-			if text, ok := part.(generators.Text); ok {
-				s.buf = append(s.buf, string(text)...)
-			}
+	if content.Role != generators.RoleAssistant && content.Role != generators.RoleModel {
+		return &ParserState{
+			upstream: newUpstream,
+			buf:      s.buf,
+			blocks:   s.blocks,
+		}, nil
+	}
+
+	newBuf := slices.Clone(s.buf)
+	for _, part := range content.Parts {
+		// Thoughts are model reasoning, not block output. They may
+		// contain illustrative block markers that must not be parsed
+		// as real blocks. See TheoryOfParserState.
+		if _, ok := part.(generators.Thought); ok {
+			continue
 		}
-		if err := s.parseBlocks(false); err != nil {
-			return s, err
+		if text, ok := part.(generators.Text); ok {
+			newBuf = append(newBuf, string(text)...)
 		}
 	}
-	return s, nil
-}
 
-func (s *ParserState) parseBlocks(final bool) error {
+	blocks := slices.Clone(s.blocks)
+	buf := newBuf
 	for {
-		block, _, end, ok, err := parseFirstBlock(s.buf, final)
+		block, _, end, ok, err := parseFirstBlock(buf, false)
 		if err != nil {
 			// Unclosed block: incomplete, wait for more output.
 			break
@@ -100,10 +111,15 @@ func (s *ParserState) parseBlocks(final bool) error {
 		if !ok {
 			break
 		}
-		s.blocks = append(s.blocks, block)
-		s.buf = s.buf[end:]
+		blocks = append(blocks, block)
+		buf = buf[end:]
 	}
-	return nil
+
+	return &ParserState{
+		upstream: newUpstream,
+		buf:      buf,
+		blocks:   blocks,
+	}, nil
 }
 
 func (s *ParserState) Contents() iter.Seq[*generators.Content] {
@@ -123,26 +139,48 @@ func (s *ParserState) Flush() (generators.State, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.upstream = newUpstream
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.parseBlocks(true); err != nil {
-		return s, err
+
+	blocks := slices.Clone(s.blocks)
+	buf := slices.Clone(s.buf)
+	for {
+		block, _, end, ok, err := parseFirstBlock(buf, true)
+		if err != nil {
+			break
+		}
+		if !ok {
+			break
+		}
+		blocks = append(blocks, block)
+		buf = buf[end:]
 	}
+
 	// Discard any remaining unparseable fragments so post-flush content
 	// does not combine with pre-flush fragments. See TheoryOfParserState.
-	s.buf = s.buf[:0]
-	return s, nil
+	return &ParserState{
+		upstream: newUpstream,
+		buf:      nil,
+		blocks:   blocks,
+	}, nil
 }
 
 func (s *ParserState) Unwrap() generators.State {
 	return s.upstream
 }
 
+// WithUpstream returns a new ParserState with the same blocks and buffer
+// but a different upstream state. Used to reconcile block processing
+// (which removes blocks) with content appending (which updates the upstream)
+// before the next generation round. See TheoryOfParserState.
+func (s *ParserState) WithUpstream(upstream generators.State) *ParserState {
+	return &ParserState{
+		upstream: upstream,
+		buf:      s.buf,
+		blocks:   s.blocks,
+	}
+}
+
 func (s *ParserState) Blocks() iter.Seq[Block] {
 	return func(yield func(Block) bool) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		for _, b := range s.blocks {
 			if !yield(b) {
 				return
@@ -151,17 +189,21 @@ func (s *ParserState) Blocks() iter.Seq[Block] {
 	}
 }
 
-func (s *ParserState) PopBlocks() []Block {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// PopBlocks returns all buffered blocks and a new *ParserState with no blocks.
+// The original state is not modified. See TheoryOfParserState.
+func (s *ParserState) PopBlocks() ([]Block, *ParserState) {
 	blocks := s.blocks
-	s.blocks = nil
-	return blocks
+	return blocks, &ParserState{
+		upstream: s.upstream,
+		buf:      s.buf,
+		blocks:   nil,
+	}
 }
 
-func (s *ParserState) PopBlocksByKind(kind string) []Block {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// PopBlocksByKind returns blocks matching the given kind and a new *ParserState
+// with those blocks removed. The original state is not modified.
+// See TheoryOfParserState.
+func (s *ParserState) PopBlocksByKind(kind string) ([]Block, *ParserState) {
 	var matched []Block
 	var remaining []Block
 	for _, b := range s.blocks {
@@ -171,12 +213,13 @@ func (s *ParserState) PopBlocksByKind(kind string) []Block {
 			remaining = append(remaining, b)
 		}
 	}
-	s.blocks = remaining
-	return matched
+	return matched, &ParserState{
+		upstream: s.upstream,
+		buf:      s.buf,
+		blocks:   remaining,
+	}
 }
 
 func (s *ParserState) PendingText() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return string(s.buf)
 }

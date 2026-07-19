@@ -13,15 +13,16 @@ func TestProcessShellBlocks(t *testing.T) {
 
 	// Append a shell block with echo command
 	text := ":::徕珑 <shell>\necho hello world\n:::徕珑 </shell>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
-	parts, err := ProcessShellBlocks(parserState)
+	parts, newParserState, err := ProcessShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestProcessShellBlocks(t *testing.T) {
 	}
 
 	// Shell blocks should have been consumed
-	if remaining := parserState.PopBlocksByKind("shell"); len(remaining) != 0 {
+	if remaining, _ := newParserState.PopBlocksByKind("shell"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining shell blocks, got %d", len(remaining))
 	}
 }
@@ -47,15 +48,16 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	parserState := NewParserState(state)
 
 	text := ":::徕珑 <shell>\nexit 1\n:::徕珑 </shell>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
-	parts, err := ProcessShellBlocks(parserState)
+	parts, _, err := ProcessShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestProcessShellBlocksEmpty(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	parts, err := ProcessShellBlocks(parserState)
+	parts, _, err := ProcessShellBlocks(parserState)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}

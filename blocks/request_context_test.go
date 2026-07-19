@@ -570,19 +570,21 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 
 func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	state := NewParserState(upstream)
+	ps := NewParserState(upstream)
 
 	// Append a change block with no request-context blocks.
 	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-	if _, err := state.AppendContent(&generators.Content{
+	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	ps = newState.(*ParserState)
 
 	// ProcessRequestContextBlocks must not discard non-request-context blocks.
-	_, hasRC, err := ProcessRequestContextBlocks(state, context.Background(), nil, nets.HTTPClient{}, state)
+	_, newPs, hasRC, err := ProcessRequestContextBlocks(ps, context.Background(), nil, nets.HTTPClient{}, ps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,7 +593,7 @@ func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	}
 
 	// The change block must still be available after processing.
-	blocks := state.PopBlocks()
+	blocks, _ := newPs.PopBlocks()
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 change block to be preserved, got %d", len(blocks))
 	}

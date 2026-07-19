@@ -13,15 +13,16 @@ func TestProcessSummaryBlocks(t *testing.T) {
 
 	// Append a summary block
 	text := ":::徕珑 <summary>\nAnalyzed the code and fixed the Foo function.\n:::徕珑 </summary>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
-	summaries := ProcessSummaryBlocks(parserState)
+	summaries, newParserState := ProcessSummaryBlocks(parserState)
 	if len(summaries) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(summaries))
 	}
@@ -30,7 +31,7 @@ func TestProcessSummaryBlocks(t *testing.T) {
 	}
 
 	// Verify that summary blocks were consumed
-	if remaining := parserState.PopBlocksByKind("summary"); len(remaining) != 0 {
+	if remaining, _ := newParserState.PopBlocksByKind("summary"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining summary blocks, got %d", len(remaining))
 	}
 }
@@ -40,15 +41,16 @@ func TestProcessSummaryBlocksMultiple(t *testing.T) {
 	parserState := NewParserState(state)
 
 	text := ":::徕珑 <summary>\nRound 1 summary.\n:::徕珑 </summary>\n:::栢彣 <summary>\nRound 2 summary.\n:::栢彣 </summary>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
-	summaries := ProcessSummaryBlocks(parserState)
+	summaries, _ := ProcessSummaryBlocks(parserState)
 	if len(summaries) != 2 {
 		t.Fatalf("expected 2 summaries, got %d", len(summaries))
 	}
@@ -64,14 +66,14 @@ func TestProcessSummaryBlocksNoBlock(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	summaries := ProcessSummaryBlocks(parserState)
+	summaries, _ := ProcessSummaryBlocks(parserState)
 	if len(summaries) != 0 {
 		t.Fatalf("expected 0 summaries, got %d", len(summaries))
 	}
 }
 
 func TestProcessSummaryBlocksNilState(t *testing.T) {
-	summaries := ProcessSummaryBlocks(nil)
+	summaries, _ := ProcessSummaryBlocks(nil)
 	if len(summaries) != 0 {
 		t.Fatalf("expected 0 summaries for nil state, got %d", len(summaries))
 	}
@@ -82,16 +84,17 @@ func TestProcessSummaryBlocksPreservesChangeBlocks(t *testing.T) {
 	parserState := NewParserState(state)
 
 	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <summary>\nFixed the Foo function.\n:::栢彣 </summary>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
 	// Process summary blocks — must not discard change blocks.
-	summaries := ProcessSummaryBlocks(parserState)
+	summaries, newParserState := ProcessSummaryBlocks(parserState)
 	if len(summaries) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(summaries))
 	}
@@ -100,7 +103,7 @@ func TestProcessSummaryBlocksPreservesChangeBlocks(t *testing.T) {
 	}
 
 	// Change blocks must still be available after processing summaries.
-	blocks := parserState.PopBlocks()
+	blocks, _ := newParserState.PopBlocks()
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 change block to be preserved, got %d", len(blocks))
 	}

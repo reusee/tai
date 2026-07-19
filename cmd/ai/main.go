@@ -172,26 +172,32 @@ func main() {
 				ce(err)
 			}
 
-			// Determine the final ParserState after the phase chain.
-			// The phase chain may return a nil state; we fall back to the
-			// original parserState which is mutated in-place by AppendContent.
-			finalParserState := parserState
-			if state != nil {
-				if ps, ok := state.(*blocks.ParserState); ok {
-					finalParserState = ps
-				}
+			// Extract the current ParserState from the state chain.
+			// With immutable ParserState, the original parserState pointer
+			// is not updated by AppendContent; the current *ParserState is
+			// the one inside the state returned by the phase chain.
+			// See TheoryOfParserState in blocks/parser_state.go.
+			finalParserState, ok := generators.As[*blocks.ParserState](state)
+			if !ok {
+				finalParserState = parserState
 			}
 
 			// Flush to finalize any unclosed blocks in ParserState.
-			_, err = finalParserState.Flush()
+			// Flush returns a new *ParserState; use it for subsequent
+			// block processing and for extracting the unwrapped base state.
+			flushedState, err := finalParserState.Flush()
 			ce(err)
+			if ps, ok := generators.As[*blocks.ParserState](flushedState); ok {
+				finalParserState = ps
+			}
 
 			// Update baseState for potential next cycle.
 			baseState = finalParserState.Unwrap()
 
 			// Process shell blocks if enabled.
 			if *shellEnabled {
-				shellParts, shellErr := blocks.ProcessShellBlocks(finalParserState)
+				var shellParts []generators.Part
+				shellParts, _, shellErr := blocks.ProcessShellBlocks(finalParserState)
 				if shellErr != nil {
 					logger.ErrorContext(ctx, "shell block", "err", shellErr)
 				}
@@ -206,7 +212,8 @@ func main() {
 			}
 
 			// Process continue blocks.
-			continueParts := blocks.ProcessContinueBlocks(finalParserState)
+			var continueParts []generators.Part
+			continueParts, finalParserState = blocks.ProcessContinueBlocks(finalParserState)
 			if len(continueParts) > 0 {
 				baseState, err = baseState.AppendContent(&generators.Content{
 					Role:  "user",

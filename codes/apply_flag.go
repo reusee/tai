@@ -42,18 +42,20 @@ func (Module) Apply() Apply {
 }
 
 // applyChangeBlocks pops all complete change blocks from parserState and
-// applies them to the working tree via applyHunk. It returns an error if any
-// block is unparseable or if applyHunk fails, so the caller can abort
-// generation. See TheoryOfImmediateApply.
-func applyChangeBlocks(parserState *blocks.ParserState, root *os.Root) error {
-	for _, block := range parserState.PopBlocksByKind("change") {
+// applies them to the working tree via applyHunk. It returns a new
+// *ParserState with the change blocks removed and an error if any block is
+// unparseable or if applyHunk fails. The original parserState is not modified.
+// See TheoryOfImmediateApply and TheoryOfParserState.
+func applyChangeBlocks(parserState *blocks.ParserState, root *os.Root) (*blocks.ParserState, error) {
+	changeBlocks, newParserState := parserState.PopBlocksByKind("change")
+	for _, block := range changeBlocks {
 		h, parsedOk := blocks.ParseChangeBlock(block)
 		if !parsedOk {
-			return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+			return newParserState, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 		}
 		if err := applyHunk(root, h); err != nil {
-			return fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
+			return newParserState, fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
 		}
 	}
-	return nil
+	return newParserState, nil
 }

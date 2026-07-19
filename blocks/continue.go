@@ -46,20 +46,22 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 `
 
 // ProcessContinueBlocks pops all continue blocks from parserState and returns
-// their body texts as generator parts for appending as user content.
-// It does not append to the state directly; callers are responsible for
-// building the user content and appending it.
-func ProcessContinueBlocks(parserState *ParserState) []generators.Part {
+// their body texts as generator parts alongside a new *ParserState with those
+// blocks removed. The original parserState is not modified. Callers must
+// thread the returned *ParserState through subsequent block processing and
+// reconcile it with the outer state before the next generation round.
+// See TheoryOfParserState.
+func ProcessContinueBlocks(parserState *ParserState) ([]generators.Part, *ParserState) {
 	if parserState == nil {
-		return nil
+		return nil, nil
 	}
-	blocks := parserState.PopBlocksByKind("continue")
+	blocks, newParserState := parserState.PopBlocksByKind("continue")
 	if len(blocks) == 0 {
-		return nil
+		return nil, newParserState
 	}
 	var parts []generators.Part
 	for _, block := range blocks {
 		parts = append(parts, generators.Text(block.Body))
 	}
-	return parts
+	return parts, newParserState
 }

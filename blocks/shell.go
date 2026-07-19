@@ -66,15 +66,18 @@ func executeShellCommand(cmdStr string) string {
 }
 
 // ProcessShellBlocks executes all shell blocks in the parser state and returns
-// the outputs as generator parts to be appended as user content.
-// It pops all shell blocks from the block state.
-func ProcessShellBlocks(parserState *ParserState) ([]generators.Part, error) {
+// the outputs as generator parts alongside a new *ParserState with those blocks
+// removed. The original parserState is not modified. Callers must thread the
+// returned *ParserState through subsequent block processing and reconcile it
+// with the outer state before the next generation round.
+// See TheoryOfParserState.
+func ProcessShellBlocks(parserState *ParserState) ([]generators.Part, *ParserState, error) {
 	if parserState == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	shellBlocks := parserState.PopBlocksByKind("shell")
+	shellBlocks, newParserState := parserState.PopBlocksByKind("shell")
 	if len(shellBlocks) == 0 {
-		return nil, nil
+		return nil, newParserState, nil
 	}
 
 	var parts []generators.Part
@@ -85,5 +88,5 @@ func ProcessShellBlocks(parserState *ParserState) ([]generators.Part, error) {
 			fmt.Sprintf("Shell command: %s\n\n%s", cmdStr, output),
 		))
 	}
-	return parts, nil
+	return parts, newParserState, nil
 }

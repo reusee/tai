@@ -53,3 +53,15 @@ func (r RedoCheckpoint) SystemPrompt() string {
 func (r RedoCheckpoint) Unwrap() generators.State {
 	return r.upstream
 }
+
+// WithUpstream returns a new RedoCheckpoint with the same state0 and generator
+// but a different upstream state. Used to reconcile block processing (which
+// updates the *ParserState inside upstream) with content appending (which
+// also updates the upstream) before the next generation round.
+func (r RedoCheckpoint) WithUpstream(upstream generators.State) RedoCheckpoint {
+	return RedoCheckpoint{
+		upstream:  upstream,
+		state0:    r.state0,
+		generator: r.generator,
+	}
+}

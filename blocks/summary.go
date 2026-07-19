@@ -31,19 +31,21 @@ The "summary" kind provides a brief description of the current generation round'
 `
 
 // ProcessSummaryBlocks pops all summary blocks from parserState and returns
-// their body texts. Summaries are collected for terminal display after
-// generation ends, not appended to the state. See TheoryOfSummaryBlocks.
-func ProcessSummaryBlocks(parserState *ParserState) []string {
+// their body texts alongside a new *ParserState with those blocks removed.
+// The original parserState is not modified. Summaries are collected for
+// terminal display after generation ends, not appended to the state.
+// See TheoryOfSummaryBlocks and TheoryOfParserState.
+func ProcessSummaryBlocks(parserState *ParserState) ([]string, *ParserState) {
 	if parserState == nil {
-		return nil
+		return nil, nil
 	}
-	blocks := parserState.PopBlocksByKind("summary")
+	blocks, newParserState := parserState.PopBlocksByKind("summary")
 	if len(blocks) == 0 {
-		return nil
+		return nil, newParserState
 	}
 	var summaries []string
 	for _, block := range blocks {
 		summaries = append(summaries, block.Body)
 	}
-	return summaries
+	return summaries, newParserState
 }

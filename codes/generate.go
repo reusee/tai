@@ -114,6 +114,26 @@ func countContents(state generators.State) int {
 	return count
 }
 
+// reconcileParserState updates the *ParserState inside state with the
+// currentParserState (which has consumed blocks removed) while preserving
+// the upstream from state (which may have new content appended during block
+// processing). This ensures consumed blocks are not reprocessed in the next
+// generation round. See TheoryOfParserState.
+func reconcileParserState(state generators.State, currentParserState *blocks.ParserState) generators.State {
+	if currentParserState == nil {
+		return state
+	}
+	statePs, ok := generators.As[*blocks.ParserState](state)
+	if !ok {
+		return state
+	}
+	reconciled := currentParserState.WithUpstream(statePs.Unwrap())
+	if rc, ok := state.(phases.RedoCheckpoint); ok {
+		return rc.WithUpstream(reconciled)
+	}
+	return reconciled
+}
+
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
@@ -359,10 +379,20 @@ func (Module) Generate(
 					contentIndex++
 				}
 
+				// Extract the current *ParserState from the state chain.
+				// With immutable ParserState, the original parserState pointer
+				// is not updated by AppendContent; the current *ParserState is
+				// the one inside the state returned by the phase chain.
+				// See TheoryOfParserState.
+				currentParserState, ok := generators.As[*blocks.ParserState](state)
+				if !ok {
+					currentParserState = parserState
+				}
+
 				// Collect summary blocks from model output and attach to
 				// the last round statistic created in this round.
 				// See TheoryOfSummaryBlocks.
-				summaries := blocks.ProcessSummaryBlocks(parserState)
+				summaries, currentParserState := blocks.ProcessSummaryBlocks(currentParserState)
 				if len(summaries) > 0 {
 					summaryText := strings.Join(summaries, "\n")
 					if len(roundStats) > 0 {
@@ -379,7 +409,8 @@ func (Module) Generate(
 				// model output. An apply error aborts generation.
 				// See TheoryOfImmediateApply.
 				if bool(apply) {
-					if err := applyChangeBlocks(parserState, root); err != nil {
+					currentParserState, err = applyChangeBlocks(currentParserState, root)
+					if err != nil {
 						return err
 					}
 				}
@@ -390,7 +421,7 @@ func (Module) Generate(
 				// See TheoryOfRequestContext and TheoryOfDynamicContext.
 				if bool(dynamicContext) {
 					var hasRequestContext bool
-					state, hasRequestContext, err = blocks.ProcessRequestContextBlocks(parserState, ctx, root, httpClient, state)
+					state, currentParserState, hasRequestContext, err = blocks.ProcessRequestContextBlocks(currentParserState, ctx, root, httpClient, state)
 					if err != nil {
 						return err
 					}
@@ -399,6 +430,9 @@ func (Module) Generate(
 						if requestContextRounds > maxRequestContextRounds {
 							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
 						}
+						// Reconcile state with currentParserState so consumed
+						// blocks are not reprocessed in the next round.
+						state = reconcileParserState(state, currentParserState)
 						phase = buildGenerate(generator, nil)(nil)
 						continue
 					}
@@ -411,15 +445,20 @@ func (Module) Generate(
 				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
 				var nextUserParts []generators.Part
 				if bool(shell) {
-					parts, err := blocks.ProcessShellBlocks(parserState)
+					var shellParts []generators.Part
+					shellParts, currentParserState, err = blocks.ProcessShellBlocks(currentParserState)
 					if err != nil {
 						return err
 					}
-					nextUserParts = append(nextUserParts, parts...)
+					nextUserParts = append(nextUserParts, shellParts...)
 				}
-				nextUserParts = append(nextUserParts, blocks.ProcessContinueBlocks(parserState)...)
+				var continueParts []generators.Part
+				continueParts, currentParserState = blocks.ProcessContinueBlocks(currentParserState)
+				nextUserParts = append(nextUserParts, continueParts...)
 				if len(nextUserParts) > 0 {
-					var err error
+					// Reconcile state with currentParserState so consumed
+					// blocks are not reprocessed in the next round.
+					state = reconcileParserState(state, currentParserState)
 					state, err = state.AppendContent(&generators.Content{
 						Role:  "user",
 						Parts: nextUserParts,
@@ -430,6 +469,11 @@ func (Module) Generate(
 					phase = buildGenerate(generator, nil)(nil)
 					continue
 				}
+
+				// No shell or continue blocks: reconcile to remove consumed
+				// blocks (e.g., summary, change) before the next iteration
+				// so they are not reprocessed. See TheoryOfParserState.
+				state = reconcileParserState(state, currentParserState)
 			}
 		}
 

@@ -25,14 +25,17 @@ func TestApplyChangeBlocks(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
 	text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-	if _, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*blocks.ParserState)
 
-	if err := applyChangeBlocks(parserState, root); err != nil {
+	newParserState, err := applyChangeBlocks(parserState, root)
+	if err != nil {
 		t.Fatalf("applyChangeBlocks failed: %v", err)
 	}
 
@@ -49,7 +52,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 	}
 
 	// Change blocks should have been consumed by applyChangeBlocks.
-	if remaining := parserState.PopBlocksByKind("change"); len(remaining) != 0 {
+	if remaining, _ := newParserState.PopBlocksByKind("change"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining change blocks, got %d", len(remaining))
 	}
 }
@@ -66,14 +69,16 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 	parserState := blocks.NewParserState(state)
 	// A change block missing the required "op" attribute is unparseable.
 	text := ":::徕珑 <change target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-	if _, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*blocks.ParserState)
 
-	err = applyChangeBlocks(parserState, root)
+	_, err = applyChangeBlocks(parserState, root)
 	if err == nil {
 		t.Fatal("expected error for unparseable change block")
 	}
@@ -93,14 +98,16 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
 	text := ":::徕珑 <change op=\"WRITE\" file-path=\"../../../etc/passwd\">\ncontent\n:::徕珑 </change>\n"
-	if _, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*blocks.ParserState)
 
-	err = applyChangeBlocks(parserState, root)
+	_, err = applyChangeBlocks(parserState, root)
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}

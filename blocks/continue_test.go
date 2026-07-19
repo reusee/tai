@@ -13,15 +13,16 @@ func TestProcessContinueBlocks(t *testing.T) {
 
 	// Append a continue block
 	text := ":::徕珑 <continue>\nPlease continue the task.\n:::徕珑 </continue>\n"
-	_, err := parserState.AppendContent(&generators.Content{
+	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	parserState = newState.(*ParserState)
 
-	parts := ProcessContinueBlocks(parserState)
+	parts, newParserState := ProcessContinueBlocks(parserState)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -34,7 +35,7 @@ func TestProcessContinueBlocks(t *testing.T) {
 	}
 
 	// Verify that continue blocks were consumed
-	if remaining := parserState.PopBlocksByKind("continue"); len(remaining) != 0 {
+	if remaining, _ := newParserState.PopBlocksByKind("continue"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining continue blocks, got %d", len(remaining))
 	}
 }
@@ -43,7 +44,7 @@ func TestProcessContinueBlocksNoBlock(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	parts := ProcessContinueBlocks(parserState)
+	parts, _ := ProcessContinueBlocks(parserState)
 	if len(parts) != 0 {
 		t.Fatalf("expected 0 parts, got %d", len(parts))
 	}
