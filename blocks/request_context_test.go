@@ -573,7 +573,7 @@ func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	state := NewParserState(upstream)
 
 	// Append a change block with no request-context blocks.
-	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -582,8 +582,6 @@ func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
 	}
 
 	// ProcessRequestContextBlocks must not discard non-request-context blocks.
-	// Before the fix, PopBlocks() removed all blocks including the change block,
-	// causing it to be silently lost.
 	_, hasRC, err := ProcessRequestContextBlocks(state, context.Background(), nil, nets.HTTPClient{}, state)
 	if err != nil {
 		t.Fatal(err)

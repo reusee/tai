@@ -62,7 +62,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 2: opening marker and partial body (no end marker yet)
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 3: end marker completes the block
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::end 徕珑\n")},
+		Parts: []generators.Part{generators.Text(":::徕珑 </change>\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	state := NewParserState(upstream)
 
-	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n:::change 栢彣\n<change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\" />\n:::end 栢彣\n:::finish 桀骥\nDone.\n:::end 桀骥\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n:::栢彣 </change>\n:::桀骥 <finish>\nDone.\n:::桀骥 </finish>\n"
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -140,7 +140,7 @@ func TestParserStateIgnoresUserRole(t *testing.T) {
 	// User role content should not be parsed for blocks
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleUser,
-		Parts: []generators.Part{generators.Text(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n")},
+		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"),
+			generators.Thought(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"),
 		},
 	}
 	if _, err := state.AppendContent(content); err != nil {
@@ -177,8 +177,8 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content2 := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought(":::change 栢彣\nbody\n:::end 栢彣\n"),
-			generators.Text(":::change 瑱魃\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\" />\n\nfunc Bar() {}\n:::end 瑱魃\n"),
+			generators.Thought(":::栢彣 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n:::栢彣 </change>\n"),
+			generators.Text(":::瑱魃 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n:::瑱魃 </change>\n"),
 		},
 	}
 	if _, err := state.AppendContent(content2); err != nil {
@@ -200,7 +200,7 @@ func TestParserStatePendingText(t *testing.T) {
 	// Append incomplete block
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("prose before\n:::change 徕珑\nbody")},
+		Parts: []generators.Part{generators.Text("prose before\n:::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestParserStatePendingText(t *testing.T) {
 	if pending == "" {
 		t.Fatal("PendingText should not be empty for incomplete block")
 	}
-	if !contains(pending, ":::change 徕珑") {
+	if !contains(pending, ":::徕珑") {
 		t.Fatalf("PendingText should contain the opening marker: %q", pending)
 	}
 }
@@ -232,14 +232,14 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	state := NewParserState(upstream)
 
 	// The model opens a block with boundary 徕珑. The body contains a
-	// line-start :::end with a different boundary (栢彣). This should be
+	// line-start :::栢彣 </change> with a different boundary. This should be
 	// treated as body content, not a closing marker. Since no matching
-	// :::end 徕珑 exists, the block is unclosed (incomplete) and no
+	// :::徕珑 </change> exists, the block is unclosed (incomplete) and no
 	// error should be surfaced during streaming.
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(
-			":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 栢彣\n",
+			":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::栢彣 </change>\n",
 		)},
 	}
 	_, err := state.AppendContent(content)
@@ -252,7 +252,7 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	}
 	// The content should remain in the buffer as pending text.
 	pending := state.PendingText()
-	if !contains(pending, ":::change 徕珑") {
+	if !contains(pending, ":::徕珑") {
 		t.Fatalf("pending text should contain the opening marker: %q", pending)
 	}
 }
@@ -261,11 +261,11 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	state := NewParserState(upstream)
 
-	// A body containing a line-start :::end with a different boundary
-	// is treated as body content. When the matching :::end 徕珑
+	// A body containing a line-start :::栢彣 </change> with a different boundary
+	// is treated as body content. When the matching :::徕珑 </change>
 	// arrives, the block is parsed correctly with the non-matching
-	// :::end 栢彣 preserved in the body.
-	text := ":::change 徕珑\nbody line 1\n:::end 栢彣\nbody line 2\n:::end 徕珑\n"
+	// :::栢彣 </change> preserved in the body.
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n:::栢彣 </change>\nbody line 2\n:::徕珑 </change>\n"
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -280,8 +280,8 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
 	}
-	if !contains(blocks[0].Body, ":::end 栢彣") {
-		t.Fatalf("body should contain non-matching :::end as content: %q", blocks[0].Body)
+	if !contains(blocks[0].Body, ":::栢彣 </change>") {
+		t.Fatalf("body should contain non-matching closing marker as content: %q", blocks[0].Body)
 	}
 	if !contains(blocks[0].Body, "body line 1") || !contains(blocks[0].Body, "body line 2") {
 		t.Fatalf("body should contain both body lines: %q", blocks[0].Body)
@@ -295,7 +295,7 @@ func TestParserStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 	// Append an unclosed block (no end marker yet).
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -324,10 +324,10 @@ func TestParserStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 	}
 
 	// Post-flush content must not combine with pre-flush content.
-	// The orphan :::end marker produces no block.
+	// The orphan closing marker produces no block.
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::end 徕珑\n")},
+		Parts: []generators.Part{generators.Text(":::徕珑 </change>\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 
 	// The end marker is at the very end without a trailing newline.
 	// The block should be parsed correctly during streaming.
-	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>"
 	if _, err := state.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -360,7 +360,7 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	if !contains(blocks[0].Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", blocks[0].Body)
 	}
-	if contains(blocks[0].Body, ":::end") {
+	if contains(blocks[0].Body, ":::徕珑") {
 		t.Fatalf("body should not contain the end marker: %q", blocks[0].Body)
 	}
 

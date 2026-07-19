@@ -51,9 +51,9 @@ The "request-context" kind allows you to request additional context needed to co
 
 **Request-Context Block Format:**
 
-:::request-context <boundary>
+:::<boundary> <request-context>
 <one or more XML tags describing context requests>
-:::end <boundary>
+:::<boundary> </request-context>
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
@@ -69,27 +69,27 @@ The "request-context" kind allows you to request additional context needed to co
 **Example:**
 
 I need to see the content of a file to proceed...
-:::request-context 徕珑
+:::徕珑 <request-context>
 <file path="src/main.go" />
-:::end 徕珑
+:::徕珑 </request-context>
 
 I need to fetch a web page that requires a custom user-agent and cookie...
-:::request-context 栢彣
+:::栢彣 <request-context>
 <fetch addr="https://example.com/api" user-agent="MyBot/1.0" cookie="session=abc123" />
-:::end 栢彣
+:::栢彣 </request-context>
 
 I need to discover files matching a pattern...
-:::request-context 骐骎
+:::骐骎 <request-context>
 <glob pattern="src/**/*.go" />
-:::end 骐骎
+:::骐骎 </request-context>
 `
 
 const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources, file listings), emit a request-context block:
-:::request-context <random_boundary>
+:::<boundary> <request-context>
 <file path="..." />
 <fetch addr="..." user-agent="..." referer="..." cookie="..." />
 <glob pattern="..." />
-:::end <random_boundary>
+:::<boundary> </request-context>
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.

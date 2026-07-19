@@ -33,9 +33,9 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 
 **Continue Block Format:**
 
-:::continue <boundary>
+:::<boundary> <continue>
 <next user message content>
-:::end <boundary>
+:::<boundary> </continue>
 
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.

@@ -49,12 +49,12 @@ func (Module) GetSystemPrompt(
 2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或深化现有用户画像的新信息。
 3. 如果发现了新信息，请生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的格式为：
 
-:::memory <boundary>
+:::<boundary> <memory>
 <memory>
   <memory-item>用户画像项1</memory-item>
   <memory-item>用户画像项2</memory-item>
 </memory>
-:::end <boundary>
+:::<boundary> </memory>
 
 其中 <boundary> 是一个随机字符串，确保不会与内容冲突。你只需要提供你认为是当前最准确和相关的用户画像项。系统会自动将你的输入与现有记录合并，不会意外删除任何旧信息。
 

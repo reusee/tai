@@ -12,7 +12,7 @@ func TestProcessSummaryBlocks(t *testing.T) {
 	parserState := NewParserState(state)
 
 	// Append a summary block
-	text := ":::summary 徕珑\nAnalyzed the code and fixed the Foo function.\n:::end 徕珑\n"
+	text := ":::徕珑 <summary>\nAnalyzed the code and fixed the Foo function.\n:::徕珑 </summary>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -39,7 +39,7 @@ func TestProcessSummaryBlocksMultiple(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	text := ":::summary 徕珑\nRound 1 summary.\n:::end 徕珑\n:::summary 栢彣\nRound 2 summary.\n:::end 栢彣\n"
+	text := ":::徕珑 <summary>\nRound 1 summary.\n:::徕珑 </summary>\n:::栢彣 <summary>\nRound 2 summary.\n:::栢彣 </summary>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -81,7 +81,7 @@ func TestProcessSummaryBlocksPreservesChangeBlocks(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n:::summary 栢彣\nFixed the Foo function.\n:::end 栢彣\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <summary>\nFixed the Foo function.\n:::栢彣 </summary>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

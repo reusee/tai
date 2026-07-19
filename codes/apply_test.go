@@ -299,7 +299,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 	}
 	defer root.Close()
 
-	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\nfunc Foo() {}\n"
+	content := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
 	diffPath := filepath.Join(dir, "diff.txt")
 	if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestApplyFinishBlock(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n\n:::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n"
+		content := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n\n:::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n"
 		diffPath := filepath.Join(dir, "diff.txt")
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -380,7 +380,7 @@ func TestApplyFinishBlock(t *testing.T) {
 		}
 
 		// finish block before change block — should be skipped and change still applied
-		content := ":::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n\n:::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n"
+		content := ":::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n\n:::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
 		diffPath := filepath.Join(dir, "diff.txt")
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -468,8 +468,8 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 		}
 	}
 
-	changeBlock := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n"
-	finishBlock := ":::finish 栢彣\nRenamed Old to New.\n:::end 栢彣\n"
+	changeBlock := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
+	finishBlock := ":::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n"
 
 	t.Run("ChangeThenFinish", func(t *testing.T) {
 		run(t, changeBlock+"\n"+finishBlock)

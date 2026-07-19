@@ -7,7 +7,7 @@ import (
 
 func TestBoundaryBlockLineStart(t *testing.T) {
 	// ::: not at beginning of line should not be recognized as a block start
-	content1 := []byte("some text :::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
+	content1 := []byte("some text :::瑱魃 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n:::瑱魃 </change>\n")
 	_, _, _, ok, err := ParseFirstBlock(content1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -16,9 +16,9 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 		t.Fatal("expected no block for mid-line start marker")
 	}
 
-	// :::end not at beginning of line: opening marker is valid but no
-	// line-start end marker exists, so this is an unclosed block error.
-	content2 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody text:::end 瑱魃\n")
+	// closing marker not at beginning of line: opening marker is valid but no
+	// line-start closing marker exists, so this is an unclosed block error.
+	content2 := []byte(":::瑱魃 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody text:::瑱魃 </change>\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with mid-line end marker")
@@ -28,7 +28,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 	}
 
 	// Properly placed markers (start and end at beginning of lines) should succeed
-	content3 := []byte(":::change 瑱魃\nop: MODIFY\ntarget: x\nfile-path: /x.go\n\nbody\n:::end 瑱魃\n")
+	content3 := []byte(":::瑱魃 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n:::瑱魃 </change>\n")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -40,7 +40,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
-	content := []byte("some text :::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\ninvalid body\n:::end 徕珑\n\n:::change 栢彣\n<change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\" />\n\nfunc Bar() {}\n:::end 栢彣\n")
+	content := []byte("some text :::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\ninvalid body\n:::徕珑 </change>\n\n:::栢彣 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\">\nfunc Bar() {}\n:::栢彣 </change>\n")
 	block, start, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -53,9 +53,6 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	}
 	if block.Boundary != "栢彣" {
 		t.Fatalf("expected boundary 栢彣, got %s", block.Boundary)
-	}
-	if !strings.Contains(block.Body, "target=\"Bar\"") {
-		t.Fatalf("expected body to contain 'target=\"Bar\"': %s", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Bar() {}") {
 		t.Fatalf("expected body to contain 'func Bar() {}': %s", block.Body)
@@ -70,7 +67,7 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 
 func TestParseFirstBlockUnclosed(t *testing.T) {
 	// Opening marker at line start with no end marker at all
-	content := []byte(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\" />\n\nfunc Foo() {}\n")
+	content := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with no end marker")
@@ -87,9 +84,9 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	}
 
 	// Opening marker found but end marker has a different boundary.
-	// The non-matching :::end 栢彣 is treated as body content. Since no
-	// matching :::end 徕珑 exists, the block is unclosed.
-	content2 := []byte(":::change 徕珑\nbody\n:::end 栢彣\n")
+	// The non-matching :::栢彣 </change> is treated as body content. Since no
+	// matching :::徕珑 </change> exists, the block is unclosed.
+	content2 := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nbody\n:::栢彣 </change>\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker")
@@ -107,11 +104,11 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 }
 
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
-	// A body containing a line-start :::end with a different boundary
+	// A body containing a line-start :::<boundary> with a different boundary
 	// is treated as body content. The block closes at the matching
-	// :::end 徕珑 marker, and the non-matching :::end 栢彣 line is
+	// :::徕珑 </change> marker, and the non-matching :::栢彣 </change> line is
 	// preserved in the body.
-	content := []byte(":::change 徕珑\nbody line 1\n:::end 栢彣\nbody line 2\n:::end 徕珑\n")
+	content := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n:::栢彣 </change>\nbody line 2\n:::徕珑 </change>\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -122,8 +119,8 @@ func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	if block.Kind != "change" || block.Boundary != "徕珑" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", block.Kind, block.Boundary)
 	}
-	if !strings.Contains(block.Body, ":::end 栢彣") {
-		t.Fatalf("body should contain non-matching :::end as content: %q", block.Body)
+	if !strings.Contains(block.Body, ":::栢彣 </change>") {
+		t.Fatalf("body should contain non-matching closing marker as content: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "body line 1") || !strings.Contains(block.Body, "body line 2") {
 		t.Fatalf("body should contain both body lines: %q", block.Body)
@@ -161,7 +158,7 @@ func TestExtractHanBoundary(t *testing.T) {
 func TestParseFirstBlockTrailingBoundaryContent(t *testing.T) {
 	// Trailing non-Han content after the boundary is ignored on both the
 	// opening and closing markers; the boundary is the leading Han chars.
-	content := []byte(":::change 徕珑 extra stuff\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑 also extra\n")
+	content := []byte(":::徕珑 extra <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 extra </change>\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -183,9 +180,7 @@ func TestParseFirstBlockTrailingBoundaryContent(t *testing.T) {
 func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	// End marker at the very end of content without a trailing newline.
 	// The block should be correctly parsed during streaming (non-final).
-	// Before the fix, this returned a BlockParseError because the parser
-	// could not locate the end of the closing marker line without a newline.
-	content := []byte(":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑")
+	content := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>")
 	block, _, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -202,7 +197,7 @@ func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
-	if strings.Contains(block.Body, ":::end") {
+	if strings.Contains(block.Body, ":::徕珑") {
 		t.Fatalf("body should not contain the end marker: %q", block.Body)
 	}
 	if end != len(content) {
@@ -212,7 +207,7 @@ func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	// Two blocks, the second ending without a trailing newline.
-	content := []byte(":::change 徕珑\nfunc Foo() {}\n:::end 徕珑\n:::change 栢彣\nfunc Bar() {}\n:::end 栢彣")
+	content := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n:::栢彣 </change>")
 
 	// First block
 	block, _, end, ok, err := ParseFirstBlock(content)
@@ -244,7 +239,7 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	if !strings.Contains(block2.Body, "func Bar() {}") {
 		t.Fatalf("second body should contain code: %q", block2.Body)
 	}
-	if strings.Contains(block2.Body, ":::end") {
+	if strings.Contains(block2.Body, ":::栢彣") {
 		t.Fatalf("second body should not contain end marker: %q", block2.Body)
 	}
 	if end2 != len(remaining) {
@@ -254,8 +249,8 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 
 func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	// A non-matching end marker at the end without a trailing newline.
-	// The block should remain unclosed because no matching :::end exists.
-	content := []byte(":::change 徕珑\nbody\n:::end 栢彣")
+	// The block should remain unclosed because no matching closing marker exists.
+	content := []byte(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n:::栢彣 </change>")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker at EOF")
@@ -269,5 +264,52 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	}
 	if e.BlockKind != "change" || e.Boundary != "徕珑" {
 		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+}
+
+func TestParseFirstBlockNewFormatNonChange(t *testing.T) {
+	// New format with a non-change kind: body starts right after the opening line.
+	content := []byte(":::summary 徕珑\nThis is a summary.\n:::end 徕珑\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "summary" {
+		t.Fatalf("expected kind summary, got %s", block.Kind)
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "This is a summary.") {
+		t.Fatalf("body should contain the summary text: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNewFormatNoTrailingNewline(t *testing.T) {
+	content := []byte(":::change 徕珑\n<change op=\"WRITE\" file-path=\"/test.go\" />\npackage x\n:::end 徕珑")
+	block, _, end, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %s", block.Kind)
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", block.Boundary)
+	}
+	if block.Attributes["op"] != "WRITE" {
+		t.Fatalf("expected op WRITE, got %s", block.Attributes["op"])
+	}
+	if !strings.Contains(block.Body, "package x") {
+		t.Fatalf("body should contain package declaration: %q", block.Body)
+	}
+	if end != len(content) {
+		t.Fatalf("expected end %d, got %d", len(content), end)
 	}
 }

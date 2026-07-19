@@ -47,7 +47,7 @@ func (Module) Apply() Apply {
 // generation. See TheoryOfImmediateApply.
 func applyChangeBlocks(parserState *blocks.ParserState, root *os.Root) error {
 	for _, block := range parserState.PopBlocksByKind("change") {
-		h, parsedOk := blocks.ParseChangeXMLBody(block.Body)
+		h, parsedOk := blocks.ParseChangeBlock(block)
 		if !parsedOk {
 			return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 		}

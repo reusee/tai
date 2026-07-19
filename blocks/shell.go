@@ -31,9 +31,9 @@ The "shell" kind allows the model to execute shell commands and receive the outp
 
 **Shell Block Format:**
 
-:::shell <boundary>
+:::<boundary> <shell>
 <shell command>
-:::end <boundary>
+:::<boundary> </shell>
 
 **Rules:**
 - Use shell blocks to run tests, check build status, explore the codebase, or verify changes.

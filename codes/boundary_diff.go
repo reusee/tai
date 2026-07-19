@@ -90,7 +90,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				cursor = end
 				continue
 			}
-			h, parsedOk := blocks.ParseChangeXMLBody(block.Body)
+			h, parsedOk := blocks.ParseChangeBlock(block)
 			if !parsedOk {
 				// Unparseable change blocks are not applied and therefore
 				// preserved rather than deleted from the diff file.

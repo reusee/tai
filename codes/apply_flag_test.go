@@ -24,7 +24,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
-	text := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\" />\n\nfunc New() {}\n:::end 徕珑\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
 	if _, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -64,7 +64,8 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
-	text := ":::change 徕珑\nthis is not valid XML metadata\n:::end 徕珑\n"
+	// A change block missing the required "op" attribute is unparseable.
+	text := ":::徕珑 <change target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
 	if _, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -91,7 +92,7 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
-	text := ":::change 徕珑\n<change op=\"WRITE\" file-path=\"../../../etc/passwd\" />\n\ncontent\n:::end 徕珑\n"
+	text := ":::徕珑 <change op=\"WRITE\" file-path=\"../../../etc/passwd\">\ncontent\n:::徕珑 </change>\n"
 	if _, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

@@ -18,9 +18,9 @@ The "summary" kind provides a brief description of the current generation round'
 
 **Summary Block Format:**
 
-:::summary <boundary>
+:::<boundary> <summary>
 <brief description of this round's content and reasoning>
-:::end <boundary>
+:::<boundary> </summary>
 
 **Rules:**
 - Emit exactly one summary block per generation round.

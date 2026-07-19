@@ -6,8 +6,8 @@ import (
 )
 
 func TestParseFirstBoundaryHunk(t *testing.T) {
-	// Valid with XML metadata and blank line
-	content := ":::change 测试\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nfunc myFunc() {}\n\n:::end 测试\n"
+	// Valid with XML attributes on opening tag and code body
+	content := ":::测试 <change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\">\nfunc myFunc() {}\n:::测试 </change>\n"
 	h, start, end, ok, err := ParseFirstBoundaryHunk([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -33,8 +33,8 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	}
 	_ = start
 
-	// Body content with header-like lines is preserved after the XML tag
-	content2 := ":::change 边界\n<change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\" />\n\nop: MODIFY // comment in body\nfunc myFunc() {}\n\n:::end 边界\n"
+	// Body content with header-like lines is preserved in the body
+	content2 := ":::边界 <change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\">\nop: MODIFY // comment in body\nfunc myFunc() {}\n:::边界 </change>\n"
 	h2, _, _, ok2, err2 := ParseFirstBoundaryHunk([]byte(content2))
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
@@ -51,7 +51,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 
 	// RENAME operation with empty body
 	t.Run("RENAME", func(t *testing.T) {
-		content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n\n:::end 徕珑\n"
+		content := ":::徕珑 <change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\">\n:::徕珑 </change>\n"
 		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -70,21 +70,23 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 		}
 	})
 
-	// Header-based (key-value) format is no longer supported
+	// Old header-based (key-value) format is no longer supported
 	t.Run("HeaderFormatRejected", func(t *testing.T) {
-		content := ":::change 格式\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n\n:::end 格式\n"
+		content := ":::格式 <change>\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n:::格式 </change>\n"
 		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		// The block is parsed but ParseChangeBlock returns false because op is missing
+		// (the body is not parsed for metadata in the new format)
 		if ok {
-			t.Fatal("header-based format should be rejected")
+			t.Fatal("header-based format should be rejected (no op attribute on opening tag)")
 		}
 	})
 }
 
 func TestParseFirstBoundaryHunkXML(t *testing.T) {
-	content := ":::change 徕珑\n<change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\" />\n\nfunc Foo() {}\n:::end 徕珑\n"
+	content := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
 	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -107,7 +109,7 @@ func TestParseFirstBoundaryHunkXML(t *testing.T) {
 }
 
 func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
-	content := ":::change 徕珑\n<change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\" />\n:::end 徕珑\n"
+	content := ":::徕珑 <change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\">\n:::徕珑 </change>\n"
 	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -124,7 +126,7 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 }
 
 func TestParseFirstBoundaryHunkWrite(t *testing.T) {
-	content := ":::change 徕珑\n<change op=\"WRITE\" file-path=\"/test.go\" />\n\npackage x\n\nfunc New() {}\n:::end 徕珑\n"
+	content := ":::徕珑 <change op=\"WRITE\" file-path=\"/test.go\">\npackage x\n\nfunc New() {}\n:::徕珑 </change>\n"
 	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

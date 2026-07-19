@@ -12,7 +12,7 @@ func TestProcessShellBlocks(t *testing.T) {
 	parserState := NewParserState(state)
 
 	// Append a shell block with echo command
-	text := ":::shell 徕珑\necho hello world\n:::end 徕珑\n"
+	text := ":::徕珑 <shell>\necho hello world\n:::徕珑 </shell>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -46,7 +46,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	text := ":::shell 徕珑\nexit 1\n:::end 徕珑\n"
+	text := ":::徕珑 <shell>\nexit 1\n:::徕珑 </shell>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

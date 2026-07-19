@@ -20,8 +20,8 @@ block output, and parsing them would produce spurious blocks.
 
 The parser is incremental: each AppendContent call appends new text to an internal buffer
 and re-attempts to parse complete blocks. A block is only complete when a matching
-:::end <boundary> marker is found at line start. A line-start :::end with a different
-boundary is treated as body content and does not close the block. If no matching end
+:::<boundary> </kind> marker is found at line start. A line-start :::<boundary> with a different
+boundary is treated as body content and does not close the block. If no matching closing
 marker is found, the block is unclosed (incomplete) and left in the buffer for the next
 AppendContent call, because streaming output may arrive in fragments. Text preceding the
 first block marker is prose and is discarded once a block is found, because ParserState's

@@ -17,9 +17,9 @@ The "finish" kind signals the end of all code modifications and provides a one-s
 
 **Finish Block Format:**
 
-:::finish <boundary>
+:::<boundary> <finish>
 <one-sentence summary of all changes>
-:::end <boundary>
+:::<boundary> </finish>
 
 **Rules:**
 - The finish block MUST be the last block in the response, after all change blocks.
@@ -28,9 +28,9 @@ The "finish" kind signals the end of all code modifications and provides a one-s
 `
 
 const FinishBlockRestatePrompt = `- After all change blocks, generate a finish block with a one-sentence summary of all changes made:
-:::finish <random_boundary>
+:::<boundary> <finish>
 <one-sentence summary>
-:::end <random_boundary>
+:::<boundary> </finish>
 - The finish block MUST be the last block in the response.
 - If no changes were made, generate a finish block with "No changes were needed." as the summary.
 `

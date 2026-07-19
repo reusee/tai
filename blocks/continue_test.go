@@ -12,7 +12,7 @@ func TestProcessContinueBlocks(t *testing.T) {
 	parserState := NewParserState(state)
 
 	// Append a continue block
-	text := ":::continue 徕珑\nPlease continue the task.\n:::end 徕珑\n"
+	text := ":::徕珑 <continue>\nPlease continue the task.\n:::徕珑 </continue>\n"
 	_, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
