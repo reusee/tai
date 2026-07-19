@@ -24,7 +24,7 @@ producing invalid code inside the parentheses. The inserted body must remain a c
 self-contained declaration so the resulting source is valid Go.
 WRITE bypasses declaration-level parsing and replaces the entire file content. Go files
 are still processed through goimports to keep imports synchronized after full replacement.
-DELETE with target <file> removes the entire file from the working tree, bypassing
+DELETE with target * removes the entire file from the working tree, bypassing
 declaration-level parsing. This works for both Go and non-Go files. If the file does not
 exist, the operation is a no-op, consistent with the DELETE declaration behavior that
 returns nil when the target is not found.
@@ -246,12 +246,12 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 		return root.WriteFile(path, finalizeContent(content), 0644)
 	}
 
-	// Handle DELETE with target <file>: delete the entire file, bypassing
+	// Handle DELETE with target *: delete the entire file, bypassing
 	// declaration-level parsing. Works for both Go and non-Go files. If the
 	// file does not exist, the operation is a no-op, consistent with the
 	// DELETE declaration behavior that returns nil when the target is not
 	// found. See HunkApplicationTheory.
-	if h.Op == "DELETE" && h.Target == "<file>" {
+	if h.Op == "DELETE" && h.Target == "*" {
 		if err := root.Remove(path); err != nil {
 			if os.IsNotExist(err) {
 				return nil

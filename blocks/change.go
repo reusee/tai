@@ -58,10 +58,10 @@ The "change" kind defines code modifications using the boundary block format. Th
     - MODIFY: Replace an existing top-level declaration.
     - ADD_BEFORE: Add new code before an existing declaration.
     - ADD_AFTER: Add new code after an existing declaration.
-    - DELETE: Remove an existing declaration, or remove an entire file when target is <file>.
+    - DELETE: Remove an existing declaration, or remove an entire file when target is *.
     - RENAME: Rename a file. ` + "`target`" + ` is the new file path, ` + "`file-path`" + ` is the current file path. The code body is ignored and may be empty.
     - WRITE: Replace the entire content of the file specified by ` + "`file-path`" + `. The ` + "`target`" + ` attribute is ignored and may be omitted. The code body is the complete new file content. For Go files, the body must include the package declaration.
-  - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. For DELETE, target can also be <file> to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE operation, ` + "`target`" + ` is ignored.
+  - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. For DELETE, target can also be * to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE operation, ` + "`target`" + ` is ignored.
   - ` + "`file-path`" + `: The absolute path to the file being modified.
 - The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
@@ -79,7 +79,7 @@ The Bar function is now unused and should be removed...
 :::栢彣 <change op="DELETE" target="Bar" file-path="/home/user/foo.go">
 :::栢彣 </change>
 The unused.go file should be removed entirely...
-:::骐骎 <change op="DELETE" target="<file>" file-path="/home/user/unused.go">
+:::骐骎 <change op="DELETE" target="*" file-path="/home/user/unused.go">
 :::骐骎 </change>
 The config file needs to be completely rewritten...
 :::瑱魃 <change op="WRITE" file-path="/home/user/config.go">
@@ -103,7 +103,7 @@ const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use 
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.
-- For DELETE with target <file>, the entire file is removed; the code body is ignored.
+- For DELETE with target *, the entire file is removed; the code body is ignored.
 - For WRITE, ` + "`target`" + ` is ignored; the code body is the complete new file content.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.

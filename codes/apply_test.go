@@ -112,7 +112,7 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 
 		h := codetypes.Hunk{
 			Op:       "DELETE",
-			Target:   "<file>",
+			Target:   "*",
 			FilePath: "test.go",
 		}
 		if err := applyHunk(root, h); err != nil {
@@ -142,7 +142,7 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 
 		h := codetypes.Hunk{
 			Op:       "DELETE",
-			Target:   "<file>",
+			Target:   "*",
 			FilePath: "readme.md",
 		}
 		if err := applyHunk(root, h); err != nil {
@@ -168,7 +168,7 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 
 		h := codetypes.Hunk{
 			Op:       "DELETE",
-			Target:   "<file>",
+			Target:   "*",
 			FilePath: "nonexistent.go",
 		}
 		if err := applyHunk(root, h); err != nil {
