@@ -219,7 +219,7 @@ func (Module) Generate(
 	httpClient nets.HTTPClient,
 	dynamicContext DynamicContext,
 	apply Apply,
-	shell Shell,
+	flagShell flags.Shell,
 	flagChats flags.Chats,
 ) Generate {
 
@@ -509,7 +509,7 @@ func (Module) Generate(
 				// same response, the combined output is fed as a single user
 				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
 				var nextUserParts []generators.Part
-				if bool(shell) {
+				if flagShell {
 					var shellParts []generators.Part
 					shellParts, currentParserState, err = blocks.ProcessShellBlocks(currentParserState)
 					if err != nil {

@@ -5,6 +5,7 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfReadOnlyFiles = `
@@ -286,7 +287,7 @@ func (Module) SystemPrompt(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
 	dynamicContext DynamicContext,
-	shell Shell,
+	flagShell flags.Shell,
 	plan Plan,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
@@ -303,7 +304,7 @@ func (Module) SystemPrompt(
 	if bool(dynamicContext) {
 		prompt += blocks.RequestContextSystemPrompt + "\n"
 	}
-	if bool(shell) {
+	if flagShell {
 		prompt += blocks.ShellBlockSystemPrompt + "\n"
 	}
 	prompt += string(extra)

@@ -6,18 +6,18 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/memories"
 )
 
 var noMemory = cmds.Switch("-no-memory")
-
-var shellEnabled = cmds.Switch("-shell")
 
 type AISystemPrompt func() (string, error)
 
 func (Module) AISystemPrompt(
 	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
+	flagShell flags.Shell,
 ) AISystemPrompt {
 	return func() (ret string, err error) {
 
@@ -67,7 +67,7 @@ func (Module) AISystemPrompt(
 ` + text
 		}
 
-		if *shellEnabled {
+		if flagShell {
 			ret += blocks.ShellBlockSystemPrompt
 		}
 

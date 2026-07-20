@@ -66,6 +66,7 @@ func init() {
 			generator generators.Generator,
 			flagFiles flags.Files,
 			flagChats flags.Chats,
+			flagShell flags.Shell,
 		) {
 			ctx := context.Background()
 
@@ -173,7 +174,7 @@ func init() {
 				baseState = finalParserState.Unwrap()
 
 				// Process shell blocks if enabled.
-				if *shellEnabled {
+				if flagShell {
 					var shellParts []generators.Part
 					shellParts, _, shellErr := blocks.ProcessShellBlocks(finalParserState)
 					if shellErr != nil {
