@@ -6,32 +6,19 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/memories"
 )
-
-type ExtraSystemPrompt string
-
-var _ExtraSystemPromptConfigurable configs.Configurable = ExtraSystemPrompt("")
-
-func (e ExtraSystemPrompt) TaigoConfigurable() {}
-
-func (Module) ExtraSystemPrompt(
-	loader configs.Loader,
-) ExtraSystemPrompt {
-	return configs.First[ExtraSystemPrompt](loader, "extra_system_prompt")
-}
 
 var noMemory = cmds.Switch("-no-memory")
 
 var shellEnabled = cmds.Switch("-shell")
 
-type GetSystemPrompt func() (string, error)
+type AISystemPrompt func() (string, error)
 
-func (Module) GetSystemPrompt(
+func (Module) AISystemPrompt(
 	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
-) GetSystemPrompt {
+) AISystemPrompt {
 	return func() (ret string, err error) {
 
 		ret = `
