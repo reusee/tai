@@ -201,18 +201,27 @@ type memoryRoot struct {
 }
 
 func parseMemoryItems(text string) ([]string, error) {
-	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(text))
-	if err != nil {
-		return nil, err
+	content := []byte(text)
+	for {
+		block, _, end, ok, err := blocks.ParseFirstBlock(content)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, nil
+		}
+		if block.Kind == "memory" {
+			var mem memoryRoot
+			if err := xml.Unmarshal([]byte(block.Body), &mem); err != nil {
+				return nil, err
+			}
+			return mem.Items, nil
+		}
+		// Skip non-memory blocks (e.g., continue, shell, summary) and
+		// continue scanning for a memory block. Without this, a memory
+		// block preceded by any other block would be silently missed.
+		content = content[end:]
 	}
-	if !ok || block.Kind != "memory" {
-		return nil, nil
-	}
-	var mem memoryRoot
-	if err := xml.Unmarshal([]byte(block.Body), &mem); err != nil {
-		return nil, err
-	}
-	return mem.Items, nil
 }
 
 func updateMemoryFromBlock(
@@ -225,9 +234,26 @@ func updateMemoryFromBlock(
 	if err != nil {
 		return err
 	}
+
+	// Pseudo-call recovery: detect textual update_user_profile(...) calls
+	// that the model emits instead of using the memory block format.
+	// See Theory in main.go.
+	items = append(items, parsePseudoCallItems(assistantText)...)
+
 	if len(items) == 0 {
 		return nil
 	}
+
+	// Deduplicate items from memory blocks and pseudo-calls.
+	seen := make(map[string]bool)
+	var uniqueItems []string
+	for _, item := range items {
+		if !seen[item] {
+			seen[item] = true
+			uniqueItems = append(uniqueItems, item)
+		}
+	}
+	items = uniqueItems
 
 	current, err := currentMemory()
 	if err != nil {
@@ -257,6 +283,36 @@ func updateMemoryFromBlock(
 }
 
 var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
+
+var quotedItemRegex = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
+
+// parsePseudoCallItems scans text for textual update_user_profile(...)
+// pseudo-calls and extracts the quoted items from the array argument.
+// This is a fallback for when the model fails to use the memory block
+// format and instead writes the call as plain text. The extraction
+// handles both double-quoted and single-quoted strings, matching the
+// robustness requirements described in the Theory.
+// See Theory in main.go.
+func parsePseudoCallItems(text string) []string {
+	matches := pseudoCallRegex.FindAllStringSubmatch(text, -1)
+	var items []string
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		quotedMatches := quotedItemRegex.FindAllStringSubmatch(match[1], -1)
+		for _, qm := range quotedMatches {
+			if len(qm) >= 3 {
+				if qm[1] != "" {
+					items = append(items, qm[1])
+				} else if qm[2] != "" {
+					items = append(items, qm[2])
+				}
+			}
+		}
+	}
+	return items
+}
 
 func getModelID(spec generators.Spec) string {
 	if spec.Family != "" {

@@ -32,13 +32,19 @@ To ensure reliability:
 1. Tool calls are strictly separated from user-facing responses in the prompt.
 2. While the AI is forbidden from 'simulating' tool calls in text, a fallback mechanism 
    detects and recovers textual pseudo-calls (e.g., update_user_profile(...)) to ensure 
-   memory updates even when the model fails to use the structural tool calling mechanism.
-   This mechanism is robust against common hallucination patterns, including use of 
-   assignment operators (=) instead of colon separators and single quotes in JSON-like lists.
+   memory updates even when the model fails to use the memory block format or the 
+   structural tool calling mechanism. Memory block parsing scans all blocks in the 
+   output, not just the first, so memory blocks are correctly found even when other 
+   blocks (continue, shell, summary) precede them. The pseudo-call fallback is robust 
+   against common hallucination patterns, including use of assignment operators (=) 
+   instead of colon separators and single quotes in JSON-like lists.
 3. Tool visibility is enabled in the output to provide feedback on memory operations, 
    helping to distinguish between a successful structural call and a textual hallucination.
-4. Pseudo-call recovery is implemented as a state wrapper that scans assistant text 
-   for specific patterns and injects corresponding function call parts into the stream.
+4. Pseudo-call recovery is implemented as a post-generation fallback in the memory 
+   update function (updateMemoryFromBlock), not as a state wrapper. After generation 
+   completes, the function scans assistant text for update_user_profile(...) patterns 
+   and extracts the quoted items from the array argument. This is simpler and 
+   sufficient because memory updates are already processed post-generation.
 5. Fact-based Profiling: To maintain the integrity of long-term memory, the system 
    enforces a "fact-only" policy. The AI is explicitly instructed to avoid 
    speculation, intuition, or unfounded inference, recording only information 
