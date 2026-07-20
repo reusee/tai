@@ -190,9 +190,10 @@ func init() {
 					}
 				}
 
-				// Process continue blocks.
-				var continueParts []generators.Part
-				continueParts, finalParserState = blocks.ProcessContinueBlocks(finalParserState)
+				// Process continue blocks. The returned ParserState is not reused:
+				// the loop either continues (creating a fresh ParserState at the
+				// top) or breaks, so the second return value is discarded.
+				continueParts, _ := blocks.ProcessContinueBlocks(finalParserState)
 				if len(continueParts) > 0 {
 					baseState, err = baseState.AppendContent(&generators.Content{
 						Role:  "user",
