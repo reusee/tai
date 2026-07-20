@@ -8,14 +8,23 @@ import (
 	"github.com/reusee/tai/cmds"
 )
 
+var defs []any
 var mainFunc any
 
 func init() {
+
 	cmds.Define("hello", cmds.Func(func() {
-		mainFunc = func() {
-			fmt.Printf("hello, world!\n")
+		type Greetings string
+		defs = []any{
+			new(Greetings("hello, world!")),
+		}
+		mainFunc = func(
+			greetings Greetings,
+		) {
+			fmt.Printf("%s\n", greetings)
 		}
 	}))
+
 }
 
 func main() {
@@ -23,6 +32,6 @@ func main() {
 
 	scope := dscope.New(dscope.Methods(new(Module))...)
 	if mainFunc != nil {
-		scope.Call(mainFunc)
+		scope.Fork(defs...).Call(mainFunc)
 	}
 }
