@@ -23,7 +23,7 @@ func TestSystemPrompt(t *testing.T) {
 			return "pro"
 		},
 	).Call(func(
-		generator Generator,
+		generator generators.Generator,
 		systemPrompt SystemPrompt,
 	) {
 

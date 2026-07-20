@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -20,4 +21,5 @@ type Module struct {
 	Memories   memories.Module
 	Modes      modes.ModuleForProduction
 	Codes      codes.Module
+	AnyTexts   anytexts.Module
 }

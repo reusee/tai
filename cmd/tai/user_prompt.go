@@ -14,7 +14,7 @@ type UserPrompt []generators.Part
 
 func (Module) UserPrompt(
 	codeProvider anytexts.CodeProvider,
-	generator Generator,
+	generator generators.Generator,
 	systemPrompt SystemPrompt,
 	maxTokens taiconfigs.MaxTokens,
 	flagFiles flags.Files,
