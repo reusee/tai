@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/vars"
@@ -23,36 +24,14 @@ import (
 
 const Theory = `
 Memory and Tool Usage:
-The AI's memory is implemented as a persistent user profile (ai-memory.json).
-This profile is fed into the system prompt to provide long-term context.
-Updates are handled via the 'update_user_profile' tool, which the AI is instructed
-to call whenever it learns something new about the user.
-
-To ensure reliability:
-1. Tool calls are strictly separated from user-facing responses in the prompt.
-2. While the AI is forbidden from 'simulating' tool calls in text, a fallback mechanism 
-   detects and recovers textual pseudo-calls (e.g., update_user_profile(...)) to ensure 
-   memory updates even when the model fails to use the memory block format or the 
-   structural tool calling mechanism. Memory block parsing scans all blocks in the 
-   output, not just the first, so memory blocks are correctly found even when other 
-   blocks (continue, shell, summary) precede them. The pseudo-call fallback is robust 
-   against common hallucination patterns, including use of assignment operators (=) 
-   instead of colon separators and single quotes in JSON-like lists.
-3. Tool visibility is enabled in the output to provide feedback on memory operations, 
-   helping to distinguish between a successful structural call and a textual hallucination.
-4. Pseudo-call recovery is implemented as a post-generation fallback in the memory 
-   update function (updateMemoryFromBlock), not as a state wrapper. After generation 
-   completes, the function scans assistant text for update_user_profile(...) patterns 
-   and extracts the quoted items from the array argument. This is simpler and 
-   sufficient because memory updates are already processed post-generation.
-5. Fact-based Profiling: To maintain the integrity of long-term memory, the system 
-   enforces a "fact-only" policy. The AI is explicitly instructed to avoid 
-   speculation, intuition, or unfounded inference, recording only information 
-   explicitly expressed by the user or confirmed by objective facts. Crucially, 
-   it must distinguish between a user's topical interest (e.g., asking about a 
-   medical procedure) and their personal status (e.g., undergoing that procedure). 
-   This prevents the user profile from being polluted with hallucinations or 
-   unverified assumptions.
+The AI's memory is a persistent per-model user profile (ai-memory.json) that is
+fed into the system prompt for long-term context. The full memory
+implementation — profile storage with advisory locking and atomic writes,
+memory block parsing, the textual pseudo-call fallback, and the fact-only
+profiling policy — lives in the memories package (see memories.TheoryOfMemory).
+This command wires memories into the dscope graph, feeds the current profile
+into the system prompt, and invokes memories.UpdateMemoryFromBlock after each
+generation round to merge newly learned items into the profile.
 
 Shell and Continue Blocks:
 Shell blocks allow the model to execute shell commands and receive the output
@@ -88,8 +67,8 @@ func main() {
 	scope.Call(func(
 		logger logs.Logger,
 		getSystemPrompt GetSystemPrompt,
-		currentMemory CurrentMemory,
-		appendMemory AppendMemory,
+		currentMemory memories.CurrentMemory,
+		appendMemory memories.AppendMemory,
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
 		generator generators.Generator,
@@ -234,10 +213,10 @@ func main() {
 
 		// update memory from block
 		if !*noMemory {
-			if err := updateMemoryFromBlock(
+			if err := memories.UpdateMemoryFromBlock(
 				currentMemory,
 				appendMemory,
-				getModelID(generator.Spec()),
+				memories.GetModelID(generator.Spec()),
 				buf.String(),
 			); err != nil {
 				logger.ErrorContext(ctx, "update memory", "err", err)

@@ -7,6 +7,7 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/memories"
 )
 
 type ExtraSystemPrompt string
@@ -28,7 +29,7 @@ var shellEnabled = cmds.Switch("-shell")
 type GetSystemPrompt func() (string, error)
 
 func (Module) GetSystemPrompt(
-	currentMemory CurrentMemory,
+	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
 ) GetSystemPrompt {
 	return func() (ret string, err error) {

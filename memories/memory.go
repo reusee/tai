@@ -1,4 +1,4 @@
-package main
+package memories
 
 import (
 	"bytes"
@@ -18,6 +18,43 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 )
+
+const TheoryOfMemory = `
+Memory persistence is implemented as a per-model user profile stored in
+ai-memory.json under the user config directory. Each profile entry records
+the time, the model that produced it, and the learned items. The profile is
+read into the system prompt so the model receives long-term context about the
+user, and is updated after each generation round from memory blocks (or a
+textual pseudo-call fallback) emitted by the model.
+
+Block parsing scans every block in the output, not just the first, because a
+memory block may be preceded by continue, shell, or summary blocks. Only the
+memory kind is consumed; other blocks are skipped and the scan advances past
+them. The pseudo-call fallback extracts textual update_user_profile(...) calls
+when the model fails to use the memory block format, tolerating both colon and
+assignment separators and both single- and double-quoted strings, matching
+common hallucination patterns.
+
+Memory updates are merged additively rather than replaced: new items are
+appended to the existing item list, and a deduplication step prevents the same
+item from being recorded twice when it appears in both a memory block and a
+textual pseudo-call. The merge never prunes items, so once a fact is recorded
+it survives future rounds. This conservative policy protects long-term
+continuity of the user profile.
+
+File access is guarded by an advisory lock file with PID-based stale detection
+and exponential backoff, so concurrent invocations do not corrupt the shared
+profile. Writes are atomic: content is written to a temporary file and renamed
+over the target, so a crash mid-write cannot leave a truncated profile. The
+profile path may be a symlink, in which case the symlink target is resolved so
+updates follow the link rather than replacing it.
+
+A fact-only policy governs what is recorded: only information the user
+explicitly expresses or that is confirmed by objective facts. The model must
+distinguish a user's topical interest (asking about a subject) from their
+personal status (undergoing that subject), preventing the profile from being
+polluted with unverified assumptions.
+`
 
 type Memory struct {
 	Entries []*MemoryEntry
@@ -160,7 +197,7 @@ func (Module) Memory(
 		if len(m.Entries) == 0 {
 			return nil, nil
 		}
-		model := getModelID(generator.Spec())
+		model := GetModelID(generator.Spec())
 		for _, entry := range slices.Backward(m.Entries) {
 			if entry.Model == model {
 				return entry, nil
@@ -224,7 +261,10 @@ func parseMemoryItems(text string) ([]string, error) {
 	}
 }
 
-func updateMemoryFromBlock(
+// UpdateMemoryFromBlock extracts memory items from memory blocks and textual
+// pseudo-calls in the assistant output, then merges them with the current
+// profile and persists the result. See TheoryOfMemory.
+func UpdateMemoryFromBlock(
 	currentMemory CurrentMemory,
 	appendMemory AppendMemory,
 	model string,
@@ -237,7 +277,7 @@ func updateMemoryFromBlock(
 
 	// Pseudo-call recovery: detect textual update_user_profile(...) calls
 	// that the model emits instead of using the memory block format.
-	// See Theory in main.go.
+	// See TheoryOfMemory.
 	items = append(items, parsePseudoCallItems(assistantText)...)
 
 	if len(items) == 0 {
@@ -291,8 +331,7 @@ var quotedItemRegex = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
 // This is a fallback for when the model fails to use the memory block
 // format and instead writes the call as plain text. The extraction
 // handles both double-quoted and single-quoted strings, matching the
-// robustness requirements described in the Theory.
-// See Theory in main.go.
+// robustness requirements described in TheoryOfMemory.
 func parsePseudoCallItems(text string) []string {
 	matches := pseudoCallRegex.FindAllStringSubmatch(text, -1)
 	var items []string
@@ -314,7 +353,9 @@ func parsePseudoCallItems(text string) []string {
 	return items
 }
 
-func getModelID(spec generators.Spec) string {
+// GetModelID derives a stable model identifier from a generator spec,
+// preferring the family name and falling back to the model name.
+func GetModelID(spec generators.Spec) string {
 	if spec.Family != "" {
 		return filepath.Base(spec.Family)
 	}
