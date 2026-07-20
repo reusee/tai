@@ -44,6 +44,11 @@ func main() {
 
 	cmds.Execute(os.Args[1:])
 
+	// If no subcommand was provided and the current directory is in a Go
+	// module, default to the "go" subcommand.
+	// See TheoryOfGoCommand in go.go.
+	defaultToGoCommand()
+
 	scope := dscope.New(dscope.Methods(new(Module))...)
 	if mainFunc != nil {
 		scope.Fork(defs...).Call(mainFunc)

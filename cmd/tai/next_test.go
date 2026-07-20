@@ -14,8 +14,8 @@ import (
 func TestSystemPrompt(t *testing.T) {
 	dscope.New(
 		new(Module),
-		modes.ForTest(t),
 	).Fork(
+		modes.ForTest(t),
 		func() nets.ProxyAddr {
 			return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 		},
