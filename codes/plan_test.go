@@ -15,11 +15,15 @@ func TestSystemPromptPlan(t *testing.T) {
 	module := Module{}
 
 	t.Run("Disabled", func(t *testing.T) {
-		prompt := module.SystemPrompt(
-			mockCodeProvider{},
+		bindings := module.BlockBindings(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
+			Apply(true),
 			Shell(false),
+		)
+		prompt := module.SystemPrompt(
+			bindings,
+			mockCodeProvider{},
 			Plan(false),
 			ExtraSystemPrompt(""),
 		)
@@ -29,11 +33,15 @@ func TestSystemPromptPlan(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		prompt := module.SystemPrompt(
-			mockCodeProvider{},
+		bindings := module.BlockBindings(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
+			Apply(true),
 			Shell(false),
+		)
+		prompt := module.SystemPrompt(
+			bindings,
+			mockCodeProvider{},
 			Plan(true),
 			ExtraSystemPrompt(""),
 		)

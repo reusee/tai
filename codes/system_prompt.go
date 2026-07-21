@@ -2,10 +2,8 @@ package codes
 
 import (
 	"github.com/reusee/prompts"
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfReadOnlyFiles = `
@@ -284,28 +282,17 @@ func (Module) ExtraSystemPrompt(
 type SystemPrompt string
 
 func (Module) SystemPrompt(
+	bindings CodesBlockBindings,
 	codeProvider codetypes.CodeProvider,
-	diffHandler codetypes.DiffHandler,
-	dynamicContext DynamicContext,
-	flagShell flags.Shell,
 	plan Plan,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
 	prompt := prompts.Codes + "\n" +
 		codeProvider.SystemPrompt() + "\n" +
-		diffHandler.SystemPrompt() + "\n" +
-		blocks.FinishBlockSystemPrompt + "\n" +
-		ReadOnlyFilesSystemPrompt + "\n" +
-		blocks.ContinueBlockSystemPrompt + "\n"
+		bindings.PromptSections() +
+		ReadOnlyFilesSystemPrompt + "\n"
 	if bool(plan) {
 		prompt += MandatoryPlanningSystemPrompt + "\n"
-	}
-	prompt += blocks.SummaryBlockSystemPrompt + "\n"
-	if bool(dynamicContext) {
-		prompt += blocks.RequestContextSystemPrompt + "\n"
-	}
-	if flagShell {
-		prompt += blocks.ShellBlockSystemPrompt + "\n"
 	}
 	prompt += string(extra)
 	return SystemPrompt(prompt)

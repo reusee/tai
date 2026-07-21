@@ -48,11 +48,13 @@ continue block, extracts its body as the next user message, and automatically
 starts a new generation round. This enables the model to produce arbitrarily
 long outputs by chaining multiple rounds.
 
-Both block kinds require ParserState in the state chain to intercept and parse
-model output incrementally. After each generation cycle, the parser is flushed
-and checked for shell and continue blocks. Shell blocks are processed first;
-if none are found, continue blocks are processed. If either kind is found, the
-results are appended as user content and a new generation cycle begins.
+Both block kinds are wired through the BlockBindings mechanism (see
+TheoryOfAIBlockBindings), which couples each block kind's system prompt with its
+processing function. The bindings list is shared between AISystemPrompt (prompt
+assembly) and this generation loop (output processing), ensuring that any block
+kind introduced in the prompt always has a matching processor. The loop
+processes all bindings in registration order, accumulating Parts from shell and
+continue blocks into a single user message for the next round.
 `
 
 func init() {
@@ -64,6 +66,7 @@ func init() {
 		mainFunc = func(
 			logger logs.Logger,
 			getSystemPrompt AISystemPrompt,
+			bindings AIBlockBindings,
 			currentMemory memories.CurrentMemory,
 			appendMemory memories.AppendMemory,
 			buildGenerate phases.BuildGenerate,
@@ -71,7 +74,6 @@ func init() {
 			generator generators.Generator,
 			flagFiles flags.Files,
 			flagChats flags.Chats,
-			flagShell flags.Shell,
 		) {
 			ctx := context.Background()
 
@@ -143,10 +145,10 @@ func init() {
 			// See TheoryOfAiCommand.
 			baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
-			// Generation loop with shell and continue block processing.
-			// ParserState intercepts model output to extract structured blocks.
-			// Shell blocks execute commands and feed results back as user content.
-			// Continue blocks feed the block body back as the next user message.
+			// Generation loop with block processing via bindings.
+			// The bindings list couples each block kind's prompt with its
+			// processing function, ensuring prompt-processing parity.
+			// See TheoryOfAIBlockBindings and TheoryOfBlockBindings.
 			for {
 				parserState := blocks.NewParserState(baseState)
 				state := generators.State(parserState)
@@ -183,33 +185,42 @@ func init() {
 				// Update baseState for potential next cycle.
 				baseState = finalParserState.Unwrap()
 
-				// Process shell blocks if enabled.
-				if flagShell {
-					var shellParts []generators.Part
-					shellParts, _, shellErr := blocks.ProcessShellBlocks(finalParserState)
-					if shellErr != nil {
-						logger.ErrorContext(ctx, "shell block", "err", shellErr)
+				// Process blocks via bindings. Each binding with a Process
+				// function is called in registration order. Bindings that
+				// return Parts (e.g., shell, continue) accumulate parts that
+				// are appended together after all bindings are processed.
+				// Bindings that return Continue=true trigger a new round
+				// immediately. See TheoryOfBlockBindings.
+				var combinedParts []generators.Part
+				continueRound := false
+				currentPs := finalParserState
+				for _, binding := range bindings.Processable() {
+					result := binding.Process(ctx, &blocks.ProcessContext{
+						ParserState: currentPs,
+						State:       baseState,
+					})
+					if result.Err != nil {
+						logger.ErrorContext(ctx, "block processing",
+							"kind", binding.Kind, "err", result.Err)
 					}
-					if len(shellParts) > 0 {
-						baseState, err = baseState.AppendContent(&generators.Content{
-							Role:  "user",
-							Parts: shellParts,
-						})
-						ce(err)
-						continue
+					if result.ParserState != nil {
+						currentPs = result.ParserState
+					}
+					combinedParts = append(combinedParts, result.Parts...)
+					if result.Continue {
+						continueRound = true
+						break
 					}
 				}
 
-				// Process continue blocks. The returned ParserState is not reused:
-				// the loop either continues (creating a fresh ParserState at the
-				// top) or breaks, so the second return value is discarded.
-				continueParts, _ := blocks.ProcessContinueBlocks(finalParserState)
-				if len(continueParts) > 0 {
-					baseState, err = baseState.AppendContent(&generators.Content{
-						Role:  "user",
-						Parts: continueParts,
-					})
-					ce(err)
+				if continueRound || len(combinedParts) > 0 {
+					if len(combinedParts) > 0 {
+						baseState, err = baseState.AppendContent(&generators.Content{
+							Role:  "user",
+							Parts: combinedParts,
+						})
+						ce(err)
+					}
 					continue
 				}
 

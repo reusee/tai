@@ -206,6 +206,7 @@ func runPhaseWithRetry(
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
+	bindings CodesBlockBindings,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
@@ -217,9 +218,6 @@ func (Module) Generate(
 	flagThoughts flags.Thoughts,
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
-	dynamicContext DynamicContext,
-	apply Apply,
-	flagShell flags.Shell,
 	flagChats flags.Chats,
 ) Generate {
 
@@ -360,7 +358,9 @@ func (Module) Generate(
 		state = parserState
 
 		// run
-		requestContextRounds := 0
+		// roundCounts tracks consecutive rounds triggered by each binding
+		// kind, enforcing MaxRounds limits to prevent infinite loops.
+		roundCounts := make(map[string]int)
 
 		// Set up initial phase: if an action argument is present, append it
 		// as user content and start generation; otherwise there is nothing
@@ -470,72 +470,60 @@ func (Module) Generate(
 					}
 				}
 
-				// Apply change blocks immediately as they are parsed from
-				// model output. An apply error aborts generation.
-				// See TheoryOfImmediateApply.
-				if bool(apply) {
-					currentParserState, err = applyChangeBlocks(currentParserState, root)
-					if err != nil {
-						return err
-					}
-				}
-
-				// Check for request-context blocks from model output.
-				// If found, fetch the requested context, append it as user
-				// content, and create a new generate phase.
-				// See TheoryOfRequestContext and TheoryOfDynamicContext.
-				if bool(dynamicContext) {
-					var hasRequestContext bool
-					state, currentParserState, hasRequestContext, err = blocks.ProcessRequestContextBlocks(currentParserState, ctx, root, httpClient, state)
-					if err != nil {
-						return err
-					}
-					if hasRequestContext {
-						requestContextRounds++
-						if requestContextRounds > maxRequestContextRounds {
-							return fmt.Errorf("max request-context rounds (%d) exceeded", maxRequestContextRounds)
-						}
-						// Reconcile state with currentParserState so consumed
-						// blocks are not reprocessed in the next round.
-						state = reconcileParserState(state, currentParserState)
-						phase = buildGenerate(generator, nil)(nil)
-						continue
-					}
-				}
-
-				// Collect next-round user parts from shell and continue blocks.
-				// Both produce user content that triggers a new generation round.
-				// They are processed together so that if both are present in the
-				// same response, the combined output is fed as a single user
-				// message. See TheoryOfShellBlocks and TheoryOfContinueBlocks.
-				var nextUserParts []generators.Part
-				if flagShell {
-					var shellParts []generators.Part
-					shellParts, currentParserState, err = blocks.ProcessShellBlocks(currentParserState)
-					if err != nil {
-						return err
-					}
-					nextUserParts = append(nextUserParts, shellParts...)
-				}
-				var continueParts []generators.Part
-				continueParts, currentParserState = blocks.ProcessContinueBlocks(currentParserState)
-				nextUserParts = append(nextUserParts, continueParts...)
-				if len(nextUserParts) > 0 {
-					// Reconcile state with currentParserState so consumed
-					// blocks are not reprocessed in the next round.
-					state = reconcileParserState(state, currentParserState)
-					state, err = state.AppendContent(&generators.Content{
-						Role:  "user",
-						Parts: nextUserParts,
+				// Process blocks via bindings. Each binding with a Process
+				// function is called in registration order. Bindings that
+				// return Continue=true (e.g., request-context) trigger a new
+				// generation round immediately. Bindings that return Parts
+				// (e.g., shell, continue) accumulate parts that are appended
+				// together after all bindings are processed.
+				// See TheoryOfBlockBindings in blocks/handler.go.
+				var combinedParts []generators.Part
+				continueRound := false
+				for _, binding := range bindings.Processable() {
+					result := binding.Process(ctx, &blocks.ProcessContext{
+						ParserState: currentParserState,
+						State:       state,
+						Root:        root,
+						HttpClient:  httpClient,
 					})
-					if err != nil {
-						return err
+					if result.Err != nil {
+						return result.Err
+					}
+					if result.ParserState != nil {
+						currentParserState = result.ParserState
+					}
+					if result.State != nil {
+						state = result.State
+					}
+					combinedParts = append(combinedParts, result.Parts...)
+					if result.Continue {
+						if binding.MaxRounds > 0 {
+							roundCounts[binding.Kind]++
+							if roundCounts[binding.Kind] > binding.MaxRounds {
+								return fmt.Errorf("max %s rounds (%d) exceeded", binding.Kind, binding.MaxRounds)
+							}
+						}
+						continueRound = true
+						break
+					}
+				}
+
+				if continueRound || len(combinedParts) > 0 {
+					state = reconcileParserState(state, currentParserState)
+					if len(combinedParts) > 0 {
+						state, err = state.AppendContent(&generators.Content{
+							Role:  "user",
+							Parts: combinedParts,
+						})
+						if err != nil {
+							return err
+						}
 					}
 					phase = buildGenerate(generator, nil)(nil)
 					continue
 				}
 
-				// No shell or continue blocks: reconcile to remove consumed
+				// No blocks produced content: reconcile to remove consumed
 				// blocks (e.g., summary, change) before the next iteration
 				// so they are not reprocessed. See TheoryOfParserState.
 				state = reconcileParserState(state, currentParserState)

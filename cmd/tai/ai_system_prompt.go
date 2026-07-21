@@ -6,7 +6,6 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
-	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/memories"
 )
 
@@ -15,9 +14,9 @@ var noMemory = cmds.Switch("-no-memory")
 type AISystemPrompt func() (string, error)
 
 func (Module) AISystemPrompt(
+	bindings AIBlockBindings,
 	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
-	flagShell flags.Shell,
 ) AISystemPrompt {
 	return func() (ret string, err error) {
 
@@ -67,11 +66,11 @@ func (Module) AISystemPrompt(
 ` + text
 		}
 
-		if flagShell {
-			ret += blocks.ShellBlockSystemPrompt
-		}
-
-		ret += blocks.ContinueBlockSystemPrompt
+		// Block kind prompts (shell, continue) come from the shared bindings.
+		// This ensures prompt-processing parity: any block kind taught to the
+		// model via the prompt has a matching processor in the generation loop.
+		// See TheoryOfAIBlockBindings.
+		ret += bindings.PromptSections()
 
 		if string(extra) != "" {
 			ret += "\n" + string(extra) + "\n"

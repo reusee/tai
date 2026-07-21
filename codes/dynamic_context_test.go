@@ -28,11 +28,15 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	module := Module{}
 
 	t.Run("Disabled", func(t *testing.T) {
-		prompt := module.SystemPrompt(
-			mockCodeProvider{},
+		bindings := module.BlockBindings(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
+			Apply(true),
 			Shell(false),
+		)
+		prompt := module.SystemPrompt(
+			bindings,
+			mockCodeProvider{},
 			Plan(false),
 			ExtraSystemPrompt(""),
 		)
@@ -42,11 +46,15 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		prompt := module.SystemPrompt(
-			mockCodeProvider{},
+		bindings := module.BlockBindings(
 			BoundaryDiffHandler{},
 			DynamicContext(true),
+			Apply(true),
 			Shell(false),
+		)
+		prompt := module.SystemPrompt(
+			bindings,
+			mockCodeProvider{},
 			Plan(false),
 			ExtraSystemPrompt(""),
 		)
@@ -58,11 +66,15 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 
 func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	module := Module{}
-	prompt := module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(false),
 		ExtraSystemPrompt(""),
 	)
@@ -76,11 +88,15 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 
 func TestSystemPromptContinueBlock(t *testing.T) {
 	module := Module{}
-	prompt := module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(true),
 		ExtraSystemPrompt(""),
 	)
@@ -100,11 +116,15 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 
 func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	module := Module{}
-	prompt := string(module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := string(module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(true),
 		ExtraSystemPrompt(""),
 	))
@@ -124,11 +144,15 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 
 func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	module := Module{}
-	prompt := string(module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := string(module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(true),
 		ExtraSystemPrompt(""),
 	))
@@ -145,11 +169,15 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 
 func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
-	prompt := string(module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := string(module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(true),
 		ExtraSystemPrompt(""),
 	))
@@ -191,11 +219,15 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 
 func TestSystemPromptSummaryBlock(t *testing.T) {
 	module := Module{}
-	prompt := module.SystemPrompt(
-		mockCodeProvider{},
+	bindings := module.BlockBindings(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
+		Apply(true),
 		Shell(false),
+	)
+	prompt := module.SystemPrompt(
+		bindings,
+		mockCodeProvider{},
 		Plan(false),
 		ExtraSystemPrompt(""),
 	)
