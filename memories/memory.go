@@ -30,10 +30,12 @@ textual pseudo-call fallback) emitted by the model.
 Block parsing scans every block in the output, not just the first, because a
 memory block may be preceded by continue, shell, or summary blocks. Only the
 memory kind is consumed; other blocks are skipped and the scan advances past
-them. The pseudo-call fallback extracts textual update_user_profile(...) calls
-when the model fails to use the memory block format, tolerating both colon and
-assignment separators and both single- and double-quoted strings, matching
-common hallucination patterns.
+them. Unclosed blocks (opening marker with no matching end marker) are also
+skipped during scanning, so a memory block preceded by an unclosed block of
+another kind is still found. The pseudo-call fallback extracts textual
+update_user_profile(...) calls when the model fails to use the memory block
+format, tolerating both colon and assignment separators and both single- and
+double-quoted strings, matching common hallucination patterns.
 
 Memory updates are merged additively rather than replaced: new items are
 appended to the existing item list, and a deduplication step prevents the same
@@ -242,6 +244,12 @@ func parseMemoryItems(text string) ([]string, error) {
 	for {
 		block, _, end, ok, err := blocks.ParseFirstBlock(content)
 		if err != nil {
+			// Unclosed block: skip past the opening marker and continue
+			// scanning for a memory block. See TheoryOfMemory.
+			if end > 0 && end <= len(content) {
+				content = content[end:]
+				continue
+			}
 			return nil, err
 		}
 		if !ok {

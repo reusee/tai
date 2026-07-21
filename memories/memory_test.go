@@ -24,6 +24,27 @@ func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
 	}
 }
 
+func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
+	// Reproduction: when an unclosed block (e.g., a finish block missing
+	// its end marker) precedes a memory block, parseMemoryItems must skip
+	// past the unclosed block to find the memory block. Before the fix,
+	// ParseFirstBlock returned an error for the unclosed block and
+	// parseMemoryItems propagated the error, never reaching the memory
+	// block.
+	text := ":::徕珑 <finish>\nSome summary.\n:::栢彣 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n:::栢彣 </memory>\n"
+
+	items, err := parseMemoryItems(text)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 memory item, got %d: %v", len(items), items)
+	}
+	if items[0] != "user likes Go" {
+		t.Fatalf("expected 'user likes Go', got %q", items[0])
+	}
+}
+
 func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
 	text := ":::徕珑 <continue>\ncontinue content\n:::徕珑 </continue>\n"
 

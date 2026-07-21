@@ -230,6 +230,11 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int, 
 		result.ok = true
 		return
 	}
+	// Set start and end even in the error path so callers (e.g.,
+	// parseMemoryItems) can skip past the unclosed block's opening
+	// marker and continue scanning for subsequent blocks.
+	result.start = blockStart
+	result.end = lineEnd + 1
 	result.err = &BlockParseError{BlockKind: kind, Boundary: boundary}
 	return
 }

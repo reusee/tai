@@ -103,6 +103,34 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockUnclosedReturnsPositions(t *testing.T) {
+	// Verify that start and end are set even for unclosed blocks, so
+	// callers can skip past the opening marker and continue scanning.
+	content := []byte("prose\n:::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
+	_, start, end, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed block")
+	}
+	if start == 0 {
+		t.Fatal("expected non-zero start for unclosed block")
+	}
+	if end == 0 {
+		t.Fatal("expected non-zero end for unclosed block")
+	}
+	if end <= start {
+		t.Fatalf("expected end > start, got start=%d end=%d", start, end)
+	}
+	// Verify that skipping past the unclosed block allows finding
+	// subsequent content.
+	remaining := content[end:]
+	if !strings.Contains(string(remaining), "func Foo() {}") {
+		t.Fatalf("remaining content after skip should contain body text, got %q", remaining)
+	}
+}
+
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	// A body containing a line-start :::<boundary> with a different boundary
 	// is treated as body content. The block closes at the matching

@@ -30,6 +30,12 @@ This command wires memories into the dscope graph, feeds the current profile
 into the system prompt, and invokes memories.UpdateMemoryFromBlock after each
 generation round to merge newly learned items into the profile.
 
+The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
+is excluded from the buffer used for memory block parsing. Thoughts may contain
+illustrative block markers that would interfere with memory block extraction.
+The terminal Output (os.Stdout) retains showThoughts=true so the user still
+sees reasoning content on screen.
+
 Shell and Continue Blocks:
 Shell blocks allow the model to execute shell commands and receive the output
 as part of the next generation round. This enables autonomous testing, build
@@ -130,7 +136,12 @@ func init() {
 			)
 			buf := new(strings.Builder)
 			baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
-			baseState = generators.NewOutput(baseState, buf, true).WithTools(false)
+			// buf captures assistant text for memory block parsing.
+			// showThoughts=false excludes Thought parts so model reasoning
+			// (which may contain illustrative block markers) does not
+			// interfere with memory block extraction.
+			// See TheoryOfAiCommand.
+			baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
 			// Generation loop with shell and continue block processing.
 			// ParserState intercepts model output to extract structured blocks.
