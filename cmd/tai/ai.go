@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -130,8 +129,8 @@ func init() {
 				},
 			)
 			buf := new(strings.Builder)
-			w := io.MultiWriter(os.Stdout, buf)
-			baseState = generators.NewOutput(baseState, w, true).WithTools(false)
+			baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
+			baseState = generators.NewOutput(baseState, buf, true).WithTools(false)
 
 			// Generation loop with shell and continue block processing.
 			// ParserState intercepts model output to extract structured blocks.
