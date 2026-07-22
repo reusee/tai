@@ -25,6 +25,8 @@ import (
 
 const maxRequestContextRounds = 5
 
+const maxGoTestRounds = 10
+
 const maxRetriesForMissingSummary = 3
 
 type Generate func(ctx context.Context, output io.Writer) error

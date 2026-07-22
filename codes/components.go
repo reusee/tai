@@ -16,10 +16,16 @@ the ai command's AIComponents). Without a separate type, the codes module and
 any other module providing components.ComponentSet would conflict in the dscope scope.
 
 The codes module reuses components.CommonComponents for the shell and continue
-component kinds, prepending its codes-specific components (change, finish,
-request-context) and appending read-only files (prompt-only), mandatory planning
-(prompt-only, conditional), and summary. This eliminates duplicate shell and
-continue component construction across modules.
+component kinds, prepending its codes-specific components (change, go-test,
+finish, request-context) and appending read-only files (prompt-only), mandatory
+planning (prompt-only, conditional), and summary. This eliminates duplicate
+shell and continue component construction across modules.
+
+The go-test component runs Go tests after change blocks are applied and feeds
+the output back to the model. If tests fail, Continue is set to trigger a new
+round for debugging, with MaxRounds bounding the test-fix loop. The go-test
+component is placed after change so tests run against the updated source, and
+before finish so test failures preempt the completion signal.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
@@ -27,13 +33,14 @@ blocks. This demonstrates the Component concept's unification of prompt-only
 mechanisms with block processing mechanisms under a single framework.
 
 ExtraSystemPrompt is also a prompt-only Component, unifying the config-derived
-extra prompt into the same assembly mechanism. Change, finish, and
+extra prompt into the same assembly mechanism. Change, go-test, finish, and
 request-context components carry RestatePrompt fields — short critical reminders
 that reinforce block format rules, assembled via ComponentSet.RestatePrompts()
 separately from the main PromptSections. This brings the previously orphaned
-restate prompt constants (ChangeBlockRestatePrompt, FinishBlockRestatePrompt,
-RequestContextRestatePrompt) and the DiffHandler.RestatePrompt() method under
-the Component framework, making them functional for the first time.
+restate prompt constants (ChangeBlockRestatePrompt, GoTestBlockRestatePrompt,
+FinishBlockRestatePrompt, RequestContextRestatePrompt) and the
+DiffHandler.RestatePrompt() method under the Component framework, making them
+functional for the first time.
 `
 
 // CodesComponents is the component set type for the codes module. It embeds
@@ -82,6 +89,28 @@ func (Module) CodesComponents(
 			ProcessingPath: "applyChangeBlocks (disabled by -no-apply)",
 		})
 	}
+
+	// Go-test component: run Go tests after change blocks are applied and
+	// feed the output back to the model. If tests fail, Continue is set
+	// to trigger a new round for debugging. MaxRounds bounds the test-fix
+	// loop. Placed after change so tests run against updated source, and
+	// before finish so test failures preempt the completion signal.
+	// See TheoryOfCodesComponents.
+	comps = append(comps, components.Component{
+		Kind:          "go-test",
+		PromptSection: blocks.GoTestBlockSystemPrompt,
+		RestatePrompt: blocks.GoTestBlockRestatePrompt,
+		MaxRounds:     maxGoTestRounds,
+		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+			parts, newPs, failed, err := blocks.ProcessGoTestBlocks(pctx.ParserState, ctx)
+			return components.ProcessResult{
+				ParserState: newPs,
+				Parts:       parts,
+				Continue:    failed,
+				Err:         err,
+			}
+		},
+	})
 
 	// Finish component: informational, not processed.
 	// RestatePrompt carries the finish block restate prompt.
