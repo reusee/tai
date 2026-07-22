@@ -28,8 +28,9 @@ implementation — profile storage with advisory locking and atomic writes,
 memory block parsing, the textual pseudo-call fallback, and the fact-only
 profiling policy — lives in the memories package (see memories.TheoryOfMemory).
 This command wires memories into the dscope graph, feeds the current profile
-into the system prompt, and invokes memories.UpdateMemoryFromBlock after each
-generation round to merge newly learned items into the profile.
+into the memory Component's prompt section (assembled into the system prompt
+via comps.PromptSections), and invokes memories.UpdateMemoryFromBlock after
+each generation round to merge newly learned items into the profile.
 
 The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
 is excluded from the buffer used for memory block parsing. Thoughts may contain
@@ -49,13 +50,14 @@ continue block, extracts its body as the next user message, and automatically
 starts a new generation round. This enables the model to produce arbitrarily
 long outputs by chaining multiple rounds.
 
-Both block kinds are wired through the Component mechanism (see
+All block kinds are wired through the Component mechanism (see
 TheoryOfAIComponents), which couples each block kind's system prompt with its
-processing function. The component list is shared between AISystemPrompt (prompt
-assembly) and this generation loop (output processing), ensuring that any block
-kind introduced in the prompt always has a matching processor. The loop
-processes all components in registration order, accumulating Parts from shell
-and continue blocks into a single user message for the next round.
+processing function or ProcessingPath. The component list is shared between
+AISystemPrompt (prompt assembly) and this generation loop (output processing),
+ensuring that any block kind introduced in the prompt always has a matching
+processor. Shell and continue blocks are processed in the loop, accumulating
+Parts into a single user message for the next round; memory blocks are
+processed after the loop by memories.UpdateMemoryFromBlock.
 `
 
 func init() {
