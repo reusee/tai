@@ -9,16 +9,16 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 	module := Module{}
 
 	t.Run("Disabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Apply(true),
+			Plan(false),
 			Shell(false),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Shell Block Kind") {
@@ -27,16 +27,16 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Apply(true),
+			Plan(false),
 			Shell(true),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Shell Block Kind") {

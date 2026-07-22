@@ -28,16 +28,16 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	module := Module{}
 
 	t.Run("Disabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Apply(true),
+			Plan(false),
 			Shell(false),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -46,16 +46,16 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(true),
 			Apply(true),
+			Plan(false),
 			Shell(false),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Request-Context Block Kind") {
@@ -66,16 +66,16 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 
 func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(false),
 		Shell(false),
 	)
 	prompt := module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Read-Only Files") {
@@ -88,16 +88,16 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 
 func TestSystemPromptContinueBlock(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(true),
 		Shell(false),
 	)
 	prompt := module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(true),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Continue Block Kind") {
@@ -116,16 +116,16 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 
 func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(true),
 		Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "Mandatory Planning") {
@@ -144,16 +144,16 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 
 func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(true),
 		Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "precede any action") {
@@ -169,16 +169,16 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 
 func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(true),
 		Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(true),
 		ExtraSystemPrompt(""),
 	))
 
@@ -219,16 +219,16 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 
 func TestSystemPromptSummaryBlock(t *testing.T) {
 	module := Module{}
-	bindings := module.BlockBindings(
+	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
 		DynamicContext(false),
 		Apply(true),
+		Plan(false),
 		Shell(false),
 	)
 	prompt := module.SystemPrompt(
-		bindings,
+		comps,
 		mockCodeProvider{},
-		Plan(false),
 		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Summary Block Kind") {

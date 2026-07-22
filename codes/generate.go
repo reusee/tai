@@ -12,6 +12,7 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
@@ -206,7 +207,7 @@ func runPhaseWithRetry(
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	diffHandler codetypes.DiffHandler,
-	bindings CodesBlockBindings,
+	comps CodesComponents,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
@@ -358,7 +359,7 @@ func (Module) Generate(
 		state = parserState
 
 		// run
-		// roundCounts tracks consecutive rounds triggered by each binding
+		// roundCounts tracks consecutive rounds triggered by each component
 		// kind, enforcing MaxRounds limits to prevent infinite loops.
 		roundCounts := make(map[string]int)
 
@@ -470,17 +471,17 @@ func (Module) Generate(
 					}
 				}
 
-				// Process blocks via bindings. Each binding with a Process
-				// function is called in registration order. Bindings that
+				// Process blocks via components. Each component with a Process
+				// function is called in registration order. Components that
 				// return Continue=true (e.g., request-context) trigger a new
-				// generation round immediately. Bindings that return Parts
+				// generation round immediately. Components that return Parts
 				// (e.g., shell, continue) accumulate parts that are appended
-				// together after all bindings are processed.
-				// See TheoryOfBlockBindings in blocks/handler.go.
+				// together after all components are processed.
+				// See components.TheoryOfComponents.
 				var combinedParts []generators.Part
 				continueRound := false
-				for _, binding := range bindings.Processable() {
-					result := binding.Process(ctx, &blocks.ProcessContext{
+				for _, comp := range comps.Processable() {
+					result := comp.Process(ctx, &components.ProcessContext{
 						ParserState: currentParserState,
 						State:       state,
 						Root:        root,
@@ -497,10 +498,10 @@ func (Module) Generate(
 					}
 					combinedParts = append(combinedParts, result.Parts...)
 					if result.Continue {
-						if binding.MaxRounds > 0 {
-							roundCounts[binding.Kind]++
-							if roundCounts[binding.Kind] > binding.MaxRounds {
-								return fmt.Errorf("max %s rounds (%d) exceeded", binding.Kind, binding.MaxRounds)
+						if comp.MaxRounds > 0 {
+							roundCounts[comp.Kind]++
+							if roundCounts[comp.Kind] > comp.MaxRounds {
+								return fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
 							}
 						}
 						continueRound = true

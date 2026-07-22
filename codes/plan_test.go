@@ -15,16 +15,16 @@ func TestSystemPromptPlan(t *testing.T) {
 	module := Module{}
 
 	t.Run("Disabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Apply(true),
+			Plan(false),
 			Shell(false),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(false),
 			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Mandatory Planning") {
@@ -33,16 +33,16 @@ func TestSystemPromptPlan(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		bindings := module.BlockBindings(
+		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
 			DynamicContext(false),
 			Apply(true),
+			Plan(true),
 			Shell(false),
 		)
 		prompt := module.SystemPrompt(
-			bindings,
+			comps,
 			mockCodeProvider{},
-			Plan(true),
 			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Mandatory Planning") {

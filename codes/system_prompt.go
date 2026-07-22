@@ -282,18 +282,18 @@ func (Module) ExtraSystemPrompt(
 type SystemPrompt string
 
 func (Module) SystemPrompt(
-	bindings CodesBlockBindings,
+	comps CodesComponents,
 	codeProvider codetypes.CodeProvider,
-	plan Plan,
 	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
+	// ReadOnlyFilesSystemPrompt and MandatoryPlanningSystemPrompt are now
+	// prompt-only Components in CodesComponents, assembled via
+	// comps.PromptSections() instead of direct concatenation. This unifies
+	// all system prompt contributions under the Component framework.
+	// See TheoryOfCodesComponents and components.TheoryOfComponents.
 	prompt := prompts.Codes + "\n" +
 		codeProvider.SystemPrompt() + "\n" +
-		bindings.PromptSections() +
-		ReadOnlyFilesSystemPrompt + "\n"
-	if bool(plan) {
-		prompt += MandatoryPlanningSystemPrompt + "\n"
-	}
-	prompt += string(extra)
+		comps.PromptSections() +
+		string(extra)
 	return SystemPrompt(prompt)
 }

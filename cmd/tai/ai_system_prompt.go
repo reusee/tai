@@ -14,7 +14,7 @@ var noMemory = cmds.Switch("-no-memory")
 type AISystemPrompt func() (string, error)
 
 func (Module) AISystemPrompt(
-	bindings AIBlockBindings,
+	comps AIComponents,
 	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
 ) AISystemPrompt {
@@ -66,11 +66,11 @@ func (Module) AISystemPrompt(
 ` + text
 		}
 
-		// Block kind prompts (shell, continue) come from the shared bindings.
+		// Block kind prompts (shell, continue) come from the shared components.
 		// This ensures prompt-processing parity: any block kind taught to the
 		// model via the prompt has a matching processor in the generation loop.
-		// See TheoryOfAIBlockBindings.
-		ret += bindings.PromptSections()
+		// See TheoryOfAIComponents.
+		ret += comps.PromptSections()
 
 		if string(extra) != "" {
 			ret += "\n" + string(extra) + "\n"

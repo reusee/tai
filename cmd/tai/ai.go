@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -48,13 +49,13 @@ continue block, extracts its body as the next user message, and automatically
 starts a new generation round. This enables the model to produce arbitrarily
 long outputs by chaining multiple rounds.
 
-Both block kinds are wired through the BlockBindings mechanism (see
-TheoryOfAIBlockBindings), which couples each block kind's system prompt with its
-processing function. The bindings list is shared between AISystemPrompt (prompt
+Both block kinds are wired through the Component mechanism (see
+TheoryOfAIComponents), which couples each block kind's system prompt with its
+processing function. The component list is shared between AISystemPrompt (prompt
 assembly) and this generation loop (output processing), ensuring that any block
 kind introduced in the prompt always has a matching processor. The loop
-processes all bindings in registration order, accumulating Parts from shell and
-continue blocks into a single user message for the next round.
+processes all components in registration order, accumulating Parts from shell
+and continue blocks into a single user message for the next round.
 `
 
 func init() {
@@ -66,7 +67,7 @@ func init() {
 		mainFunc = func(
 			logger logs.Logger,
 			getSystemPrompt AISystemPrompt,
-			bindings AIBlockBindings,
+			comps AIComponents,
 			currentMemory memories.CurrentMemory,
 			appendMemory memories.AppendMemory,
 			buildGenerate phases.BuildGenerate,
@@ -145,10 +146,10 @@ func init() {
 			// See TheoryOfAiCommand.
 			baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
-			// Generation loop with block processing via bindings.
-			// The bindings list couples each block kind's prompt with its
+			// Generation loop with block processing via components.
+			// The component list couples each block kind's prompt with its
 			// processing function, ensuring prompt-processing parity.
-			// See TheoryOfAIBlockBindings and TheoryOfBlockBindings.
+			// See TheoryOfAIComponents and components.TheoryOfComponents.
 			for {
 				parserState := blocks.NewParserState(baseState)
 				state := generators.State(parserState)
@@ -185,23 +186,23 @@ func init() {
 				// Update baseState for potential next cycle.
 				baseState = finalParserState.Unwrap()
 
-				// Process blocks via bindings. Each binding with a Process
-				// function is called in registration order. Bindings that
+				// Process blocks via components. Each component with a Process
+				// function is called in registration order. Components that
 				// return Parts (e.g., shell, continue) accumulate parts that
-				// are appended together after all bindings are processed.
-				// Bindings that return Continue=true trigger a new round
-				// immediately. See TheoryOfBlockBindings.
+				// are appended together after all components are processed.
+				// Components that return Continue=true trigger a new round
+				// immediately. See components.TheoryOfComponents.
 				var combinedParts []generators.Part
 				continueRound := false
 				currentPs := finalParserState
-				for _, binding := range bindings.Processable() {
-					result := binding.Process(ctx, &blocks.ProcessContext{
+				for _, comp := range comps.Processable() {
+					result := comp.Process(ctx, &components.ProcessContext{
 						ParserState: currentPs,
 						State:       baseState,
 					})
 					if result.Err != nil {
 						logger.ErrorContext(ctx, "block processing",
-							"kind", binding.Kind, "err", result.Err)
+							"kind", comp.Kind, "err", result.Err)
 					}
 					if result.ParserState != nil {
 						currentPs = result.ParserState
