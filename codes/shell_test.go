@@ -3,6 +3,8 @@ package codes
 import (
 	"strings"
 	"testing"
+
+	"github.com/reusee/tai/flags"
 )
 
 func TestShellBlockSystemPrompt(t *testing.T) {
@@ -16,7 +18,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
-			Shell(false),
+			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -35,7 +37,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
-			Shell(true),
+			flags.Shell(true),
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -45,10 +47,4 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			t.Fatal("system prompt must include shell section when shell is enabled")
 		}
 	})
-}
-
-func TestShellFlagDefault(t *testing.T) {
-	if bool(shellFlag) {
-		t.Fatal("shellFlag should default to false (disabled by default)")
-	}
 }

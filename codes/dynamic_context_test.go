@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
 
@@ -35,7 +36,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
-			Shell(false),
+			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -54,7 +55,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			DynamicContext(true),
 			Apply(true),
 			Plan(false),
-			Shell(false),
+			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -75,7 +76,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(false),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
 		comps,
@@ -98,7 +99,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
 		comps,
@@ -127,7 +128,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
 		comps,
@@ -156,7 +157,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
 		comps,
@@ -182,7 +183,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
 		comps,
@@ -233,7 +234,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		DynamicContext(false),
 		Apply(true),
 		Plan(false),
-		Shell(false),
+		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
 		comps,

@@ -3,6 +3,8 @@ package codes
 import (
 	"strings"
 	"testing"
+
+	"github.com/reusee/tai/flags"
 )
 
 func TestPlanFlagDefault(t *testing.T) {
@@ -22,7 +24,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
-			Shell(false),
+			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -41,7 +43,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			DynamicContext(false),
 			Apply(true),
 			Plan(true),
-			Shell(false),
+			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
 			comps,
