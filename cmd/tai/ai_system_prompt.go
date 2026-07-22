@@ -12,25 +12,14 @@ type AISystemPrompt func() (string, error)
 
 func (Module) AISystemPrompt(
 	comps AIComponents,
-	extra ExtraSystemPrompt,
 ) AISystemPrompt {
 	return func() (ret string, err error) {
-
-		ret = `
-你是一个很有用的AI助手。
-在与用户交流时，输出易于阅读的文本，避免使用markdown格式，不要加入任何表示格式的符号，避免生成表格。
-`
-
-		// Block format, memory, shell, and continue prompts come from the
-		// shared components. This ensures prompt-processing parity: any
-		// block kind taught to the model via the prompt has a matching
-		// processor (or ProcessingPath for post-loop processing).
+		// All system prompt contributions — base text, block format, memory,
+		// shell, continue, and extra prompt — are now unified as Components
+		// in AIComponents. Only the dynamic current time remains here
+		// because it must be computed at call time.
 		// See TheoryOfAIComponents.
-		ret += comps.PromptSections()
-
-		if string(extra) != "" {
-			ret += "\n" + string(extra) + "\n"
-		}
+		ret = comps.PromptSections() + comps.RestatePrompts()
 
 		location, err := time.LoadLocation("Asia/Hong_Kong")
 		if err != nil {

@@ -284,16 +284,15 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	comps CodesComponents,
 	codeProvider codetypes.CodeProvider,
-	extra ExtraSystemPrompt,
 ) (ret SystemPrompt) {
-	// ReadOnlyFilesSystemPrompt and MandatoryPlanningSystemPrompt are now
-	// prompt-only Components in CodesComponents, assembled via
-	// comps.PromptSections() instead of direct concatenation. This unifies
-	// all system prompt contributions under the Component framework.
-	// See TheoryOfCodesComponents and components.TheoryOfComponents.
-	prompt := prompts.Codes + "\n" +
+	// Base prompt (prompts.Codes) and code provider prompt are prepended
+	// directly. All block-format, component, and extra prompts come from
+	// comps.PromptSections(). Restate prompts (critical reminders) are
+	// appended via comps.RestatePrompts(). ExtraSystemPrompt is now a
+	// prompt-only Component in CodesComponents, so it is no longer a
+	// separate parameter. See TheoryOfCodesComponents.
+	return SystemPrompt(prompts.Codes + "\n" +
 		codeProvider.SystemPrompt() + "\n" +
 		comps.PromptSections() +
-		string(extra)
-	return SystemPrompt(prompt)
+		comps.RestatePrompts())
 }

@@ -23,6 +23,19 @@ func TestComponentSetPromptSections(t *testing.T) {
 	}
 }
 
+func TestComponentSetRestatePrompts(t *testing.T) {
+	comps := ComponentSet{
+		{Kind: "a", PromptSection: "prompt-a", RestatePrompt: "restate-a"},
+		{Kind: "b", PromptSection: "prompt-b"},
+		{Kind: "", PromptSection: "prompt-only", RestatePrompt: "restate-only"},
+		{Kind: "c", RestatePrompt: "restate-c"},
+	}
+	got := comps.RestatePrompts()
+	if got != "restate-a\nrestate-only\nrestate-c\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestComponentSetProcessable(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},

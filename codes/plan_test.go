@@ -17,6 +17,8 @@ func TestSystemPromptPlan(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
+			mockCodeProvider{},
+			ExtraSystemPrompt(""),
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
@@ -25,7 +27,6 @@ func TestSystemPromptPlan(t *testing.T) {
 		prompt := module.SystemPrompt(
 			comps,
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Mandatory Planning") {
 			t.Fatal("system prompt must not include mandatory planning section when plan is disabled")
@@ -35,6 +36,8 @@ func TestSystemPromptPlan(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
+			mockCodeProvider{},
+			ExtraSystemPrompt(""),
 			DynamicContext(false),
 			Apply(true),
 			Plan(true),
@@ -43,7 +46,6 @@ func TestSystemPromptPlan(t *testing.T) {
 		prompt := module.SystemPrompt(
 			comps,
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Mandatory Planning") {
 			t.Fatal("system prompt must include mandatory planning section when plan is enabled")

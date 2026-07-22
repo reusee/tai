@@ -20,6 +20,11 @@ prior inline approach because the profile is read once before generation
 starts. BlockFormatSystemPrompt is a prompt-only Component that teaches the
 model the boundary-delimited format used by memory blocks.
 
+The base AI assistant prompt text and the config-derived ExtraSystemPrompt are
+also prompt-only Components, unifying all system prompt contributions under the
+Component framework. AISystemPrompt assembles only the dynamic current time,
+which must be computed at call time and cannot be a static Component.
+
 Shell and continue components are reused from components.CommonComponents, the
 shared component set constructed in the components package. The codes module
 also reuses CommonComponents, prepending its codes-specific components (change,
@@ -35,6 +40,12 @@ embedding components.ComponentSet, ensuring each module's components are
 resolved independently in the dscope scope without type conflicts.
 `
 
+// baseAISystemPrompt is the base AI assistant prompt text, now a prompt-only
+// Component in AIComponents rather than a direct concatenation in
+// AISystemPrompt. See TheoryOfAIComponents.
+const baseAISystemPrompt = `你是一个很有用的AI助手。
+在与用户交流时，输出易于阅读的文本，避免使用markdown格式，不要加入任何表示格式的符号，避免生成表格。`
+
 // AIComponents is the component set type for the ai command. It embeds
 // components.ComponentSet as an anonymous struct field so that dscope can
 // resolve it independently from the codes module's CodesComponents, avoiding
@@ -48,8 +59,16 @@ type AIComponents struct {
 func (Module) AIComponents(
 	flagShell flags.Shell,
 	currentMemory memories.CurrentMemory,
+	extra ExtraSystemPrompt,
 ) (ret AIComponents) {
 	var comps components.ComponentSet
+
+	// Base AI assistant prompt: prompt-only Component for unified prompt
+	// assembly. Previously prepended directly in AISystemPrompt.
+	// See TheoryOfAIComponents.
+	comps = append(comps, components.Component{
+		PromptSection: baseAISystemPrompt,
+	})
 
 	// BlockFormatSystemPrompt is a prompt-only Component that teaches the
 	// model the boundary-delimited block format used by memory blocks.
@@ -78,6 +97,15 @@ func (Module) AIComponents(
 	// configuration is shared across all generation commands.
 	// See TheoryOfCommonComponents in components/common_components.go.
 	comps = append(comps, components.CommonComponents(bool(flagShell))...)
+
+	// Extra system prompt from configuration: prompt-only Component.
+	// Previously appended directly in AISystemPrompt. Now unified under
+	// the Component framework. See TheoryOfAIComponents.
+	if string(extra) != "" {
+		comps = append(comps, components.Component{
+			PromptSection: string(extra),
+		})
+	}
 
 	ret.ComponentSet = comps
 	return

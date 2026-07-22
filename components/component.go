@@ -14,18 +14,21 @@ import (
 const TheoryOfComponents = `
 Component is the unified extension mechanism for the generation pipeline. It
 generalizes beyond block processing: a Component can contribute a system prompt
-section, define a block kind for parsing, process blocks of that kind, or any
-combination thereof. This unification eliminates the need for a separate
-concept for prompt-only mechanisms (e.g., read-only file rules, mandatory
-planning) that do not produce or consume blocks but still need to be assembled
-into the system prompt and managed as reusable, composable units.
+section, a restate/reminder prompt, define a block kind for parsing, process
+blocks of that kind, or any combination thereof. This unification eliminates the
+need for a separate concept for prompt-only mechanisms (e.g., read-only file
+rules, mandatory planning) that do not produce or consume blocks but still need
+to be assembled into the system prompt and managed as reusable, composable units.
 
 A Component with a Process function is processed in the main generation loop;
 a Component without one (prompt-only or informational) contributes its
 PromptSection to the system prompt but is not invoked during output processing.
 ComponentSet is an ordered collection of Components that provides PromptSections
-(concatenating all prompt contributions) and Processable (returning the subset
-with Process functions for the generation loop). Validate ensures every
+(concatenating all prompt contributions), RestatePrompts (concatenating all
+restate/reminder prompt contributions), and Processable (returning the subset
+with Process functions for the generation loop). RestatePrompts are assembled
+separately from PromptSections to keep critical format reminders grouped as a
+distinct section at the end of the system prompt. Validate ensures every
 Component with a Kind either has a Process function or declares a
 ProcessingPath, preventing silent gaps where a block kind is taught to the
 model but no code processes its output. Prompt-only Components (empty Kind)
@@ -34,10 +37,11 @@ no block output to process.
 
 The mechanism is the integrity guarantee: it makes the coupling between prompt
 and processing explicit and machine-checkable rather than implicit and
-human-maintained. By extending the same mechanism to prompt-only contributions,
-the system prompt assembly and the output processing loop share a single
-ComponentSet, ensuring that every prompt contribution is registered and every
-block kind has a matching processor.
+human-maintained. By extending the same mechanism to prompt-only contributions
+and restate reminders, the system prompt assembly and the output processing loop
+share a single ComponentSet, ensuring that every prompt contribution is
+registered, every block kind has a matching processor, and every restate
+reminder is assembled through the same unified mechanism.
 `
 
 // ComponentProcessFunc processes blocks of a specific kind from the parser
@@ -69,10 +73,10 @@ type ProcessResult struct {
 }
 
 // Component is the unified extension mechanism for the generation pipeline.
-// A Component can contribute a system prompt section, define a block kind,
-// process blocks, or any combination. A Component with an empty Kind is a
-// prompt-only component that contributes its PromptSection to the system
-// prompt but does not process blocks.
+// A Component can contribute a system prompt section, a restate/reminder prompt,
+// define a block kind, process blocks, or any combination. A Component with an
+// empty Kind is a prompt-only component that contributes its PromptSection to
+// the system prompt but does not process blocks.
 // See TheoryOfComponents.
 type Component struct {
 	// Kind is the block kind name (e.g., "change", "shell", "continue").
@@ -82,6 +86,13 @@ type Component struct {
 	// PromptSection is the system prompt text that teaches the model how
 	// to use this component. Empty if no prompt is needed.
 	PromptSection string
+	// RestatePrompt is a short critical reminder that reinforces the block
+	// format rules for this component. Unlike PromptSection which provides
+	// initial instructions, RestatePrompt is assembled separately via
+	// ComponentSet.RestatePrompts() to keep reminders grouped as a distinct
+	// section at the end of the system prompt. Empty if no restate prompt
+	// is needed.
+	RestatePrompt string
 	// Process extracts and handles blocks of this kind from the parser
 	// state in the main generation loop. If nil and Kind is non-empty,
 	// ProcessingPath must describe where the block is processed instead.
@@ -109,6 +120,22 @@ func (c ComponentSet) PromptSections() string {
 	for _, comp := range c {
 		if comp.PromptSection != "" {
 			sb.WriteString(comp.PromptSection)
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+// RestatePrompts returns the concatenated restate/reminder prompt sections
+// from all components that have a non-empty RestatePrompt, in registration
+// order. These are short critical reminders that reinforce block format
+// rules, assembled separately from PromptSections to keep them grouped as
+// a distinct reminder section at the end of the system prompt.
+func (c ComponentSet) RestatePrompts() string {
+	var sb strings.Builder
+	for _, comp := range c {
+		if comp.RestatePrompt != "" {
+			sb.WriteString(comp.RestatePrompt)
 			sb.WriteString("\n")
 		}
 	}

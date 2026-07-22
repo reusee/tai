@@ -30,6 +30,8 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
+			mockCodeProvider{},
+			ExtraSystemPrompt(""),
 			DynamicContext(false),
 			Apply(true),
 			Plan(false),
@@ -38,7 +40,6 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 		prompt := module.SystemPrompt(
 			comps,
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
 		)
 		if strings.Contains(string(prompt), "Request-Context Block Kind") {
 			t.Fatal("system prompt must not include request-context section when dynamic context is disabled")
@@ -48,6 +49,8 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			BoundaryDiffHandler{},
+			mockCodeProvider{},
+			ExtraSystemPrompt(""),
 			DynamicContext(true),
 			Apply(true),
 			Plan(false),
@@ -56,7 +59,6 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 		prompt := module.SystemPrompt(
 			comps,
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
 		)
 		if !strings.Contains(string(prompt), "Request-Context Block Kind") {
 			t.Fatal("system prompt must include request-context section when dynamic context is enabled")
@@ -68,6 +70,8 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(false),
@@ -76,7 +80,6 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	prompt := module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Read-Only Files") {
 		t.Fatal("system prompt must include the read-only files section")
@@ -90,6 +93,8 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
@@ -98,7 +103,6 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 	prompt := module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Continue Block Kind") {
 		t.Fatal("system prompt must include continue block section")
@@ -118,6 +122,8 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
@@ -126,7 +132,6 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	prompt := string(module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "Mandatory Planning") {
 		t.Fatal("system prompt must include the mandatory planning section")
@@ -146,6 +151,8 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
@@ -154,7 +161,6 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	prompt := string(module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	))
 	if !strings.Contains(prompt, "precede any action") {
 		t.Fatal("system prompt must state that decomposition must precede any action including analysis")
@@ -171,6 +177,8 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(true),
@@ -179,7 +187,6 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	prompt := string(module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	))
 
 	categories := []string{
@@ -221,6 +228,8 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		BoundaryDiffHandler{},
+		mockCodeProvider{},
+		ExtraSystemPrompt(""),
 		DynamicContext(false),
 		Apply(true),
 		Plan(false),
@@ -229,7 +238,6 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 	prompt := module.SystemPrompt(
 		comps,
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
 	)
 	if !strings.Contains(string(prompt), "Summary Block Kind") {
 		t.Fatal("system prompt must include summary block section")
