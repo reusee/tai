@@ -30,6 +30,15 @@ The block body contains optional arguments passed to go test. If the body is
 empty, all tests in the current directory tree (./...) are run. The body is
 passed to sh -c as "go test <body>" to handle quoted arguments and shell
 expansion correctly.
+
+The go-test block is not a completion signal. The summary block is the
+completion signal for each round (see TheoryOfSummaryCompletionRetry in
+codes/generate.go). When the model emits a go-test block, it must still emit
+a summary block in the same round to describe what was done, including the
+test verification. Without a summary block, the system assumes the output was
+truncated and retries the round unnecessarily. This applies to every round,
+including debug rounds where tests fail and the go-test component triggers a
+new round via Continue.
 `
 
 const GoTestBlockSystemPrompt = `
@@ -50,6 +59,8 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 - If tests fail, the error output is fed back to you so you can debug and fix the issues in subsequent rounds.
 - Prefer running tests after applying change blocks to verify correctness.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
+- The go-test block is NOT a completion signal. You MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
+- The go-test block should appear before the summary block in the response.
 `
 
 const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block to verify:
@@ -58,6 +69,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 :::<boundary> </go-test>
 - If tests fail, the output is fed back for debugging. Fix the issues and try again.
 - Only use go-test blocks in Go projects.
+- A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
 `
 
 const goTestTimeout = 120 * time.Second
