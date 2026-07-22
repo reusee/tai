@@ -31,16 +31,17 @@ empty, all tests in the current directory tree (./...) are run. The body is
 passed to sh -c as "go test <body>" to handle quoted arguments and shell
 expansion correctly.
 
-The go-test block is not a completion signal. The summary block is the
-completion signal for each round (see TheoryOfSummaryCompletionRetry in
+The go-test block is not a completion signal. The summary and finish blocks
+are completion signals for each round (see TheoryOfSummaryCompletionRetry in
 codes/generate.go). When the model emits a go-test block, it must still emit
 a summary block in the same round to describe what was done, including the
-test verification. Without a summary block, the system assumes the output was
-truncated and retries the round unnecessarily. This applies to every round,
-including debug rounds where tests fail and the go-test component triggers a
-new round via Continue. When tests pass, the go-test component does not
-trigger a new round; the test output is not fed back to the model, and other
-mechanisms (e.g., continue blocks) determine whether another round follows.
+test verification. Without a summary or finish block, the system assumes the
+output was truncated and retries the round unnecessarily. This applies to
+every round, including debug rounds where tests fail and the go-test
+component triggers a new round via Continue. When tests pass, the go-test
+component does not trigger a new round; the test output is not fed back to
+the model, and other mechanisms (e.g., continue blocks) determine whether
+another round follows.
 `
 
 const GoTestBlockSystemPrompt = `

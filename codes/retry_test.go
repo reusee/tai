@@ -179,3 +179,34 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 	})
 }
+
+func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
+	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	baseState := generators.NewPrompts("", nil)
+	initialParserState := blocks.NewParserState(baseState)
+
+	finishBlock := ":::徕珑 <finish>\nDone.\n:::徕珑 </finish>\n"
+	var callCount int
+	phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		callCount++
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(finishBlock)},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+
+	_, _, phaseErr, _, _ := runPhaseWithRetry(
+		context.Background(), phase, initialParserState, initialParserState, logger,
+	)
+	if phaseErr != nil {
+		t.Fatalf("unexpected error: %v", phaseErr)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call (no retry when finish block present), got %d", callCount)
+	}
+}

@@ -403,3 +403,63 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 		t.Fatalf("expected empty pending text, got %q", pending)
 	}
 }
+
+func TestParserStateHasCompletionBlock(t *testing.T) {
+	t.Run("SummaryBlock", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		ps := NewParserState(upstream)
+		text := ":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if !ps.HasCompletionBlock() {
+			t.Fatal("expected HasCompletionBlock to return true for summary block")
+		}
+	})
+
+	t.Run("FinishBlock", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		ps := NewParserState(upstream)
+		text := ":::徕珑 <finish>\nDone.\n:::徕珑 </finish>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if !ps.HasCompletionBlock() {
+			t.Fatal("expected HasCompletionBlock to return true for finish block")
+		}
+	})
+
+	t.Run("ChangeBlockOnly", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		ps := NewParserState(upstream)
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if ps.HasCompletionBlock() {
+			t.Fatal("expected HasCompletionBlock to return false for change block only")
+		}
+	})
+
+	t.Run("NilState", func(t *testing.T) {
+		var ps *ParserState
+		if ps.HasCompletionBlock() {
+			t.Fatal("expected HasCompletionBlock to return false for nil state")
+		}
+	})
+}

@@ -140,25 +140,26 @@ func reconcileParserState(state generators.State, currentParserState *blocks.Par
 }
 
 const TheoryOfSummaryCompletionRetry = `
-The summary block serves as a completion signal for each generation round. When
-a round ends without a summary block, the model's output was likely truncated
-mid-stream — the generation limit was reached before the model could emit its
-closing summary. In that case, the round is retried from the original
-pre-generation State. State immutability (see TheoryOfStateImmutability) is the
-foundation for this retry: the pre-generation State is unaffected by the failed
-attempt, so retrying starts from a clean snapshot rather than corrupted partial
-state. The retry count is bounded to prevent infinite loops when a model
-consistently truncates. Change blocks from a truncated attempt are NOT applied:
-the retry discards the partial output entirely and regenerates from scratch,
-avoiding incomplete or malformed hunks. This is distinct from the generator-
-level retry (see TheoryOfRetry and TheoryOfGenerateRetry) which handles
-transient API errors; this retry handles successful-but-incomplete output.
+The summary and finish blocks serve as completion signals for each generation
+round. When a round ends without either block, the model's output was likely
+truncated mid-stream — the generation limit was reached before the model could
+emit its closing summary or finish block. In that case, the round is retried
+from the original pre-generation State. State immutability (see
+TheoryOfStateImmutability) is the foundation for this retry: the pre-generation
+State is unaffected by the failed attempt, so retrying starts from a clean
+snapshot rather than corrupted partial state. The retry count is bounded to
+prevent infinite loops when a model consistently truncates. Change blocks from
+a truncated attempt are NOT applied: the retry discards the partial output
+entirely and regenerates from scratch, avoiding incomplete or malformed hunks.
+This is distinct from the generator-level retry (see TheoryOfRetry and
+TheoryOfGenerateRetry) which handles transient API errors; this retry handles
+successful-but-incomplete output.
 `
 
-// runPhaseWithRetry executes a phase and retries if no summary block is
-// produced (indicating truncated output), up to maxRetriesForMissingSummary
-// times. It returns the final phase result, extracted summaries, and the
-// currentParserState with summary blocks consumed.
+// runPhaseWithRetry executes a phase and retries if no completion-signal block
+// (summary or finish) is produced (indicating truncated output), up to
+// maxRetriesForMissingSummary times. It returns the final phase result,
+// extracted summaries, and the currentParserState with summary blocks consumed.
 // See TheoryOfSummaryCompletionRetry.
 func runPhaseWithRetry(
 	ctx context.Context,
@@ -189,19 +190,25 @@ func runPhaseWithRetry(
 			ps = fallbackParserState
 		}
 
+		// Check for completion-signal blocks (summary or finish). Both
+		// indicate the model intentionally ended the round, as opposed
+		// to truncated output where no completion block is present.
+		// See TheoryOfSummaryCompletionRetry.
+		hasCompletion := ps.HasCompletionBlock()
+
 		// Collect summary blocks from model output.
 		// See TheoryOfSummaryBlocks.
 		summaries, currentParserState = blocks.ProcessSummaryBlocks(ps)
 
-		if len(summaries) > 0 {
+		if hasCompletion {
 			return
 		}
 		if retryCount >= maxRetriesForMissingSummary {
-			logger.Info("proceeding without summary block after max retries",
+			logger.Info("proceeding without completion block after max retries",
 				"retries", retryCount+1)
 			return
 		}
-		logger.Info("retrying generation round: no summary block detected (likely truncated output)",
+		logger.Info("retrying generation round: no completion block detected (likely truncated output)",
 			"retry", retryCount+1, "max", maxRetriesForMissingSummary)
 	}
 }

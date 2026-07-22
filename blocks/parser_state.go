@@ -189,6 +189,23 @@ func (s *ParserState) Blocks() iter.Seq[Block] {
 	}
 }
 
+// HasCompletionBlock reports whether the parser state contains any block
+// that signals normal round completion (summary or finish). Both block
+// kinds indicate the model intentionally ended the round, as opposed to
+// truncated output where no completion block is present.
+// See TheoryOfSummaryCompletionRetry in codes/generate.go.
+func (s *ParserState) HasCompletionBlock() bool {
+	if s == nil {
+		return false
+	}
+	for block := range s.Blocks() {
+		if block.Kind == "summary" || block.Kind == "finish" {
+			return true
+		}
+	}
+	return false
+}
+
 // PopBlocks returns all buffered blocks and a new *ParserState with no blocks.
 // The original state is not modified. See TheoryOfParserState.
 func (s *ParserState) PopBlocks() ([]Block, *ParserState) {
