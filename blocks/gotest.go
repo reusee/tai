@@ -38,7 +38,9 @@ a summary block in the same round to describe what was done, including the
 test verification. Without a summary block, the system assumes the output was
 truncated and retries the round unnecessarily. This applies to every round,
 including debug rounds where tests fail and the go-test component triggers a
-new round via Continue.
+new round via Continue. When tests pass, the go-test component does not
+trigger a new round; the test output is not fed back to the model, and other
+mechanisms (e.g., continue blocks) determine whether another round follows.
 `
 
 const GoTestBlockSystemPrompt = `
