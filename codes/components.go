@@ -17,9 +17,10 @@ any other module providing components.ComponentSet would conflict in the dscope 
 
 The codes module reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-finish, request-context) and appending read-only files (prompt-only), mandatory
-planning (prompt-only, conditional), and summary. This eliminates duplicate
-shell and continue component construction across modules.
+finish, request-context) and appending summary, read-only files (prompt-only),
+mandatory planning (prompt-only, conditional), and extra system prompt
+(prompt-only). This eliminates duplicate shell and continue component
+construction across modules.
 
 The go-test component runs Go tests after change blocks are applied. Test
 output is fed back to the model only when tests fail, triggering a new round

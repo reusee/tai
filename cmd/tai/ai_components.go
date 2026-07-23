@@ -28,10 +28,10 @@ which must be computed at call time and cannot be a static Component.
 Shell and continue components are reused from components.CommonComponents, the
 shared component set constructed in the components package. The codes module
 also reuses CommonComponents, prepending its codes-specific components (change,
-finish, request-context, read-only files, mandatory planning) and appending
-summary. This eliminates the duplicate component construction that previously
-existed when the ai command and codes module each defined their own shell and
-continue components independently.
+go-test, finish, request-context) and appending summary, read-only files,
+mandatory planning, and extra system prompt. This eliminates the duplicate
+component construction that previously existed when the ai command and codes
+module each defined their own shell and continue components independently.
 
 AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the codes module's CodesComponents
