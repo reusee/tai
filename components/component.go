@@ -14,34 +14,40 @@ import (
 const TheoryOfComponents = `
 Component is the unified extension mechanism for the generation pipeline. It
 generalizes beyond block processing: a Component can contribute a system prompt
-section, a restate/reminder prompt, define a block kind for parsing, process
-blocks of that kind, or any combination thereof. This unification eliminates the
-need for a separate concept for prompt-only mechanisms (e.g., read-only file
-rules, mandatory planning) that do not produce or consume blocks but still need
-to be assembled into the system prompt and managed as reusable, composable units.
+section, a restate/reminder prompt, user prompt parts, define a block kind for
+parsing, process blocks of that kind, or any combination thereof. This
+unification eliminates the need for a separate concept for prompt-only
+mechanisms (e.g., read-only file rules, mandatory planning) that do not produce
+or consume blocks but still need to be assembled into the system prompt and
+managed as reusable, composable units.
 
 A Component with a Process function is processed in the main generation loop;
 a Component without one (prompt-only or informational) contributes its
 PromptSection to the system prompt but is not invoked during output processing.
-ComponentSet is an ordered collection of Components that provides PromptSections
-(concatenating all prompt contributions), RestatePrompts (concatenating all
-restate/reminder prompt contributions), and Processable (returning the subset
-with Process functions for the generation loop). RestatePrompts are assembled
-separately from PromptSections to keep critical format reminders grouped as a
-distinct section at the end of the system prompt. Validate ensures every
-Component with a Kind either has a Process function or declares a
-ProcessingPath, preventing silent gaps where a block kind is taught to the
-model but no code processes its output. Prompt-only Components (empty Kind)
-are exempt from this check because they contribute only prompt text and have
-no block output to process.
+A Component can also contribute UserPromptParts, which are prepended to the
+user's input similar to how CodeProvider.Parts provides context. This unifies
+user prompt contributions under the same Component framework as system prompt
+sections and restate reminders. ComponentSet is an ordered collection of
+Components that provides PromptSections (concatenating all system prompt
+contributions), RestatePrompts (concatenating all restate/reminder prompt
+contributions), UserPromptParts (concatenating all user prompt parts), and
+Processable (returning the subset with Process functions for the generation
+loop). RestatePrompts are assembled separately from PromptSections to keep
+critical format reminders grouped as a distinct section at the end of the
+system prompt. Validate ensures every Component with a Kind either has a
+Process function or declares a ProcessingPath, preventing silent gaps where a
+block kind is taught to the model but no code processes its output. Prompt-only
+Components (empty Kind) are exempt from this check because they contribute only
+prompt text and have no block output to process.
 
 The mechanism is the integrity guarantee: it makes the coupling between prompt
 and processing explicit and machine-checkable rather than implicit and
-human-maintained. By extending the same mechanism to prompt-only contributions
-and restate reminders, the system prompt assembly and the output processing loop
-share a single ComponentSet, ensuring that every prompt contribution is
-registered, every block kind has a matching processor, and every restate
-reminder is assembled through the same unified mechanism.
+human-maintained. By extending the same mechanism to prompt-only contributions,
+restate reminders, and user prompt parts, the system prompt assembly, user
+prompt assembly, and output processing loop share a single ComponentSet,
+ensuring that every prompt contribution is registered, every block kind has a
+matching processor, and every restate reminder and user prompt part is
+assembled through the same unified mechanism.
 `
 
 // ComponentProcessFunc processes blocks of a specific kind from the parser
@@ -74,9 +80,9 @@ type ProcessResult struct {
 
 // Component is the unified extension mechanism for the generation pipeline.
 // A Component can contribute a system prompt section, a restate/reminder prompt,
-// define a block kind, process blocks, or any combination. A Component with an
-// empty Kind is a prompt-only component that contributes its PromptSection to
-// the system prompt but does not process blocks.
+// user prompt parts, define a block kind, process blocks, or any combination.
+// A Component with an empty Kind is a prompt-only component that contributes
+// its PromptSection to the system prompt but does not process blocks.
 // See TheoryOfComponents.
 type Component struct {
 	// Kind is the block kind name (e.g., "change", "shell", "continue").
@@ -93,6 +99,12 @@ type Component struct {
 	// section at the end of the system prompt. Empty if no restate prompt
 	// is needed.
 	RestatePrompt string
+	// UserPromptParts are user prompt parts contributed by this component.
+	// These are prepended to the user's input, similar to how
+	// CodeProvider.Parts provides context. Unlike PromptSection which goes
+	// into the system prompt, UserPromptParts goes into the user content.
+	// Empty for components that contribute only to the system prompt.
+	UserPromptParts []generators.Part
 	// Process extracts and handles blocks of this kind from the parser
 	// state in the main generation loop. If nil and Kind is non-empty,
 	// ProcessingPath must describe where the block is processed instead.
@@ -140,6 +152,20 @@ func (c ComponentSet) RestatePrompts() string {
 		}
 	}
 	return sb.String()
+}
+
+// UserPromptParts returns the concatenated user prompt parts from all
+// components, in registration order. These are prepended to the user's
+// input, similar to how CodeProvider.Parts provides context. Unlike
+// PromptSections which goes into the system prompt, UserPromptParts goes
+// into the user content. Components without UserPromptParts contribute
+// nothing. See TheoryOfComponents.
+func (c ComponentSet) UserPromptParts() []generators.Part {
+	var parts []generators.Part
+	for _, comp := range c {
+		parts = append(parts, comp.UserPromptParts...)
+	}
+	return parts
 }
 
 // Processable returns the subset of components that have a Process function,

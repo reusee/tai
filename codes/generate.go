@@ -312,6 +312,11 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
+
+		// Component user prompt parts are appended after code provider parts.
+		// See TheoryOfCodesComponents and components.TheoryOfComponents.
+		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
+
 		// A new repository may have no code to provide as context. Allow the
 		// code provider to return no parts; the user's action argument
 		// (appended below before the generation loop) is sufficient to drive

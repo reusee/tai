@@ -36,6 +36,27 @@ func TestComponentSetRestatePrompts(t *testing.T) {
 	}
 }
 
+func TestComponentSetUserPromptParts(t *testing.T) {
+	comps := ComponentSet{
+		{Kind: "a", UserPromptParts: []generators.Part{generators.Text("part-a")}},
+		{Kind: "b", UserPromptParts: []generators.Part{generators.Text("part-b1"), generators.Text("part-b2")}},
+		{Kind: "c"}, // no user prompt parts
+	}
+	parts := comps.UserPromptParts()
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 parts, got %d", len(parts))
+	}
+	if text, ok := parts[0].(generators.Text); !ok || text != "part-a" {
+		t.Fatalf("expected part-a, got %v", parts[0])
+	}
+	if text, ok := parts[1].(generators.Text); !ok || text != "part-b1" {
+		t.Fatalf("expected part-b1, got %v", parts[1])
+	}
+	if text, ok := parts[2].(generators.Text); !ok || text != "part-b2" {
+		t.Fatalf("expected part-b2, got %v", parts[2])
+	}
+}
+
 func TestComponentSetProcessable(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},

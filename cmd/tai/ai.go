@@ -122,6 +122,11 @@ func init() {
 				)
 			}
 
+			// Component user prompt parts are appended after file context,
+			// before the user's input. See TheoryOfAIComponents and
+			// components.TheoryOfComponents.
+			parts = append(parts, comps.UserPromptParts()...)
+
 			// User input is wrapped with markers so the model can distinguish
 			// between reference file context and the task request.
 			// See TheoryOfContextStructure in files.go.
