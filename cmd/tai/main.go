@@ -1,11 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfContainerIsolation = `
@@ -20,37 +19,17 @@ runs directly.
 
 const inContainerEnv = "CAI_IN_CONTAINER"
 
-var defs []any
-var mainFunc any
-
-func init() {
-
-	cmds.Define("hello", cmds.Func(func() {
-		type Greetings string
-		defs = []any{
-			new(Greetings("hello, world!")),
-		}
-		mainFunc = func(
-			greetings Greetings,
-		) {
-			fmt.Printf("%s\n", greetings)
-		}
-	}))
-
-}
-
 func main() {
 	maybeRunInContainer()
 
-	cmds.Execute(os.Args[1:])
-
-	// If no subcommand was provided and the current directory is in a Go
-	// module, default to the "go" subcommand.
-	// See TheoryOfGoCommand in go.go.
-	defaultToGoCommand()
-
 	scope := dscope.New(dscope.Methods(new(Module))...)
-	if mainFunc != nil {
-		scope.Fork(defs...).Call(mainFunc)
+
+	scope, err := flags.Parse(scope, os.Args[1:])
+	ce(err)
+
+	command := dscope.Get[Command](scope)
+	if command.Main != nil {
+		scope.Fork(command.Defs...).Call(command.Main)
 	}
+
 }

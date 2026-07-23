@@ -33,13 +33,15 @@ func isTerminalFinishReason(reason genai.FinishReason) bool {
 }
 
 type Gemini struct {
-	spec      Spec
-	GetClient dscope.Inject[GetGeminiClient]
-	APIKey    dscope.Inject[GoogleAPIKey]
-	Counter   dscope.Inject[GeminiTokenCounter]
-	Logger    dscope.Inject[logs.Logger]
-	Loader    dscope.Inject[configs.Loader]
-	Effort    dscope.Inject[EffortFlag]
+	spec            Spec
+	GetClient       dscope.Inject[GetGeminiClient]
+	APIKey          dscope.Inject[GoogleAPIKey]
+	Counter         dscope.Inject[GeminiTokenCounter]
+	Logger          dscope.Inject[logs.Logger]
+	Loader          dscope.Inject[configs.Loader]
+	Effort          dscope.Inject[EffortFlag]
+	TemperatureFlag dscope.Inject[TemperatureFlag]
+	Debug           dscope.Inject[DebugGemini]
 }
 
 var _ Generator = Gemini{}
@@ -223,8 +225,8 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	if g.spec.Temperature != nil {
 		temperature = float32(*g.spec.Temperature)
 	}
-	if *temperatureFlag != 0 {
-		temperature = float32(*temperatureFlag)
+	if flag := g.TemperatureFlag(); flag.Value != nil {
+		temperature = *flag.Value
 	}
 
 	serviceTier := genai.ServiceTier(g.spec.ServiceTier)
@@ -271,7 +273,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		var terminalReason string
 
 		handleResponse := func(resp *genai.GenerateContentResponse) error {
-			if *debugGemini {
+			if g.Debug() {
 				g.Logger().InfoContext(ctx, "gemini response",
 					"details", resp,
 				)

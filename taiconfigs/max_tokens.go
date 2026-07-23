@@ -1,10 +1,12 @@
 package taiconfigs
 
 import (
+	"fmt"
 	"math"
+	"strconv"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/vars"
 )
 
@@ -14,16 +16,15 @@ var _ configs.Configurable = MaxTokens(0)
 
 func (m MaxTokens) TaigoConfigurable() {}
 
-var maxTokensFlag = cmds.Var[int]("-max-tokens")
-
 func (Module) MaxTokens(
 	loader configs.Loader,
+	maxTokensFlag MaxTokensFlag,
 ) MaxTokens {
 	maxTokens := math.MaxInt
 
 	// flag
-	if *maxTokensFlag != 0 {
-		maxTokens = min(maxTokens, *maxTokensFlag)
+	if maxTokensFlag.Value != nil {
+		maxTokens = min(maxTokens, *maxTokensFlag.Value)
 	}
 
 	// config
@@ -35,4 +36,33 @@ func (Module) MaxTokens(
 	}
 
 	return MaxTokens(maxTokens)
+}
+
+type MaxTokensFlag struct {
+	Value *int
+}
+
+func (Module) MaxTokensFlag() (ret MaxTokensFlag) {
+	return
+}
+
+var _ flags.Flag = MaxTokensFlag{}
+
+func (m MaxTokensFlag) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting int, got empty")
+	}
+	n, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return nil, nil, err
+	}
+	newValue = MaxTokensFlag{
+		Value: new(int(n)),
+	}
+	remainArgs = args[1:]
+	return
+}
+
+func (m MaxTokensFlag) Keys() []string {
+	return []string{"-max-tokens"}
 }

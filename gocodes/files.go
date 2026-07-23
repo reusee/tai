@@ -18,21 +18,12 @@ import (
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
-
-var includeStdLib = cmds.Switch("-include-std")
-
-type IncludeStdLib bool
-
-func (Module) IncludeStdLib() IncludeStdLib {
-	return IncludeStdLib(*includeStdLib)
-}
 
 const FileOrderingTheory = `
 Files are sorted so that stable context files (dependencies, non-root packages) appear
@@ -109,6 +100,7 @@ func (Module) Files(
 	logger logs.Logger,
 	maxDistance MaxPackageDistanceFromRoot,
 	includeStdLib IncludeStdLib,
+	debug Debug,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -184,7 +176,7 @@ func (Module) Files(
 			if pkg.Module != nil {
 				rootModulePaths[pkg.Module.Path] = true
 			}
-			if *debug {
+			if debug {
 				logger.Info("loaded package", "path", pkg.PkgPath)
 			}
 		}

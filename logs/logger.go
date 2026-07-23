@@ -8,27 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reusee/tai/cmds"
 	slogmulti "github.com/samber/slog-multi"
 	slogjournal "github.com/systemd/slog-journal"
 )
-
-var level = new(slog.LevelVar)
-
-func init() {
-	cmds.Define("-log-debug", cmds.Func(func() {
-		level.Set(slog.LevelDebug)
-	}).Desc("set log level to debug"))
-	cmds.Define("-log-info", cmds.Func(func() {
-		level.Set(slog.LevelInfo)
-	}).Desc("set log level to info"))
-	cmds.Define("-log-warn", cmds.Func(func() {
-		level.Set(slog.LevelWarn)
-	}).Desc("set log level to warn"))
-	cmds.Define("-log-error", cmds.Func(func() {
-		level.Set(slog.LevelError)
-	}).Desc("set log level to error"))
-}
 
 type Logger struct {
 	*slog.Logger
@@ -36,6 +18,7 @@ type Logger struct {
 
 func (Module) Logger(
 	writer Writer,
+	level Level,
 ) Logger {
 	var handlers []slog.Handler
 
@@ -54,7 +37,7 @@ func (Module) Logger(
 		terminalHandler = slog.NewTextHandler(
 			writer,
 			&slog.HandlerOptions{
-				Level: level,
+				Level: level.Level,
 			},
 		)
 		handlers = append(handlers, terminalHandler)

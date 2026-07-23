@@ -14,12 +14,13 @@ import (
 )
 
 type CodeProvider struct {
-	GetFiles      dscope.Inject[GetFiles]
-	GetFileSet    dscope.Inject[GetFileSet]
-	SimplifyFiles dscope.Inject[SimplifyFiles]
-	Logger        dscope.Inject[logs.Logger]
-	AnyTexts      dscope.Inject[anytexts.CodeProvider]
-	LoadDir       dscope.Inject[LoadDir]
+	GetFiles        dscope.Inject[GetFiles]
+	GetFileSet      dscope.Inject[GetFileSet]
+	SimplifyFiles   dscope.Inject[SimplifyFiles]
+	Logger          dscope.Inject[logs.Logger]
+	AnyTexts        dscope.Inject[anytexts.CodeProvider]
+	LoadDir         dscope.Inject[LoadDir]
+	ShowTokenCounts dscope.Inject[ShowTokenCounts]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
@@ -243,7 +244,7 @@ func (c CodeProvider) Parts(
 		if len(file.Confirmed.Content) == 0 {
 			panic(fmt.Errorf("empty file: %+v", file))
 		}
-		if *showTokenCounts {
+		if c.ShowTokenCounts() {
 			c.Logger().Info("final file", "path", file.Path, "tokens", file.Confirmed.NumTokens)
 		}
 		totalTokens += file.Confirmed.NumTokens
@@ -266,14 +267,14 @@ func (c CodeProvider) Parts(
 		if pp.tokens > 0 && totalTokens+pp.tokens > maxTokens && maxTokens > 0 {
 			break
 		}
-		if *showTokenCounts && pp.tokens > 0 {
+		if c.ShowTokenCounts() && pp.tokens > 0 {
 			c.Logger().Info("extra context file", "path", pp.path, "tokens", pp.tokens)
 		}
 		totalTokens += pp.tokens
 		parts = append(parts, pp.part)
 	}
 
-	if *showTokenCounts {
+	if c.ShowTokenCounts() {
 		c.Logger().Info("total tokens", "tokens", totalTokens)
 	}
 

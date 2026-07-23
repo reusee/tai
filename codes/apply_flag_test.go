@@ -115,11 +115,3 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 		t.Fatalf("expected apply hunk error, got: %v", err)
 	}
 }
-
-func TestApplyDefaultEnabled(t *testing.T) {
-	// By default, immediate apply is enabled. The -no-apply flag
-	// disables it by setting applyFlag to false.
-	if !bool(applyFlag) {
-		t.Fatal("applyFlag should default to true (immediate apply enabled by default)")
-	}
-}

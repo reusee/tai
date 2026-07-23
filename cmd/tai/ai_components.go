@@ -60,6 +60,7 @@ func (Module) AIComponents(
 	flagShell flags.Shell,
 	currentMemory memories.CurrentMemory,
 	extra ExtraSystemPrompt,
+	noMemory NoMemory,
 ) (ret AIComponents) {
 	var comps components.ComponentSet
 
@@ -80,7 +81,7 @@ func (Module) AIComponents(
 	// read at construction time (provider resolution). Processing is done
 	// post-loop in ai.go via memories.UpdateMemoryFromBlock, not in the
 	// generation loop. See TheoryOfAIComponents.
-	if !*noMemory {
+	if !noMemory {
 		var profileText string
 		if entry, err := currentMemory(); err == nil && entry != nil {
 			profileText = strings.Join(entry.Items, "\n")

@@ -407,12 +407,6 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 }
 
 func TestBinaryFileTokenBudget(t *testing.T) {
-	// Enable PNG inclusion for this test.
-	includeNonTextMimeTypes["image/png"] = true
-	defer func() {
-		delete(includeNonTextMimeTypes, "image/png")
-	}()
-
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -438,6 +432,10 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 		new(Module),
 		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
+	).Fork(
+		new(IncludeMimeTypes{
+			"image/png": true,
+		}),
 	).Call(func(
 		provider CodeProvider,
 	) {

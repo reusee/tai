@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfImmediateApply = `
@@ -29,16 +29,24 @@ blocks are not applied to the working tree during generation.
 // An apply error aborts generation. See TheoryOfImmediateApply.
 type Apply bool
 
-var applyFlag Apply = true
-
-func init() {
-	cmds.Define("-no-apply", cmds.Func(func() {
-		applyFlag = false
-	}).Desc("disable immediate apply of change blocks"))
+func (Module) Apply() Apply {
+	return true
 }
 
-func (Module) Apply() Apply {
-	return applyFlag
+var _ flags.Flag = Apply(true)
+
+func (a Apply) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	switch key {
+	case "-apply":
+		return Apply(true), args, nil
+	case "-no-apply":
+		return Apply(false), args, nil
+	}
+	panic("key not handle: " + key)
+}
+
+func (a Apply) Keys() []string {
+	return []string{"-apply", "-no-apply"}
 }
 
 // applyChangeBlocks pops all complete change blocks from parserState and

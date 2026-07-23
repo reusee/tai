@@ -1,6 +1,6 @@
 package codes
 
-import "github.com/reusee/tai/cmds"
+import "github.com/reusee/tai/flags"
 
 const TheoryOfDynamicContext = `
 Dynamic context allows the model to request additional files or network resources
@@ -26,14 +26,19 @@ incoherent.
 // When false, all three are omitted. See TheoryOfDynamicContext.
 type DynamicContext bool
 
-var dynamicContextFlag DynamicContext
-
-func init() {
-	cmds.Define("-dynamic-context", cmds.Func(func() {
-		dynamicContextFlag = true
-	}).Alias("-dyn"))
+func (Module) DynamicContext() DynamicContext {
+	return false
 }
 
-func (Module) DynamicContext() DynamicContext {
-	return dynamicContextFlag
+var _ flags.Flag = DynamicContext(true)
+
+func (d DynamicContext) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	return DynamicContext(true), args, nil
+}
+
+func (d DynamicContext) Keys() []string {
+	return []string{
+		"-dynamic-context",
+		"-dyn",
+	}
 }

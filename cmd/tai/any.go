@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/modes"
 )
@@ -19,18 +18,16 @@ codes.Module into the dscope scope. This makes "tai any" the general-purpose
 entry point for non-Go code generation, complementing the Go-oriented default.
 `
 
-func init() {
-	cmds.Define("any", cmds.Func(func() {
-		defs = []any{
-			modes.ForProduction(),
-			dscope.Provide(codes.CodeProviderName("any")),
+var AnyCommand = Command{
+	Defs: []any{
+		modes.ForProduction(),
+		dscope.Provide(codes.CodeProviderName("any")),
+	},
+	Main: func(
+		generate codes.Generate,
+	) {
+		if err := generate(context.Background(), os.Stdout); err != nil {
+			panic(err)
 		}
-		mainFunc = func(
-			generate codes.Generate,
-		) {
-			if err := generate(context.Background(), os.Stdout); err != nil {
-				panic(err)
-			}
-		}
-	}))
+	},
 }

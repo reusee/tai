@@ -32,6 +32,9 @@ type OpenAI struct {
 	Tap                  dscope.Inject[debugs.Tap]
 	Loader               dscope.Inject[configs.Loader]
 	Effort               dscope.Inject[EffortFlag]
+	TemperatureFlag      dscope.Inject[TemperatureFlag]
+	Debug                dscope.Inject[DebugOpenAI]
+	TapFlag              dscope.Inject[TapOpenAI]
 }
 
 var _ Generator = new(OpenAI)
@@ -86,12 +89,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		t := *o.spec.Temperature
 		temperature = &t
 	}
-	if *temperatureFlag != 0 {
-		t := float32(*temperatureFlag)
-		temperature = &t
+	if flag := o.TemperatureFlag(); flag.Value != nil {
+		temperature = flag.Value
 	}
 
-	if *debugOpenAI {
+	if o.Debug() {
 		jsonText, err := json.Marshal(messages)
 		if err != nil {
 			return nil, err
@@ -101,7 +103,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		)
 	}
 
-	if *tapOpenAI {
+	if o.TapFlag() {
 		o.Tap()(ctx, "before CreateChatCompletionStream", map[string]any{
 			"messages": messages,
 			"spec":     o.spec,
@@ -284,7 +286,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		if err != nil {
 			return ret, err
 		}
-		if *debugOpenAI {
+		if o.Debug() {
 			o.Logger().InfoContext(ctx, "OpenAI response",
 				"body", string(body),
 			)
@@ -357,7 +359,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				return err
 			} else {
 				for _, content := range contents {
-					if *debugOpenAI {
+					if o.Debug() {
 						o.Logger().InfoContext(ctx, "OpenAI content",
 							"details", content,
 						)
@@ -392,7 +394,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				return ret, fmt.Errorf("error unmarshalling stream response: %w", err)
 			}
 
-			if *debugOpenAI {
+			if o.Debug() {
 				o.Logger().InfoContext(ctx, "OpenAI response",
 					"details", streamResp,
 				)
@@ -412,7 +414,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			}
 
 			for _, content := range newContents {
-				if *debugOpenAI {
+				if o.Debug() {
 					o.Logger().InfoContext(ctx, "OpenAI content",
 						"details", content,
 					)

@@ -9,7 +9,6 @@ import (
 
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -60,193 +59,192 @@ Parts into a single user message for the next round; memory blocks are
 processed after the loop by memories.UpdateMemoryFromBlock.
 `
 
-func init() {
-	cmds.Define("ai", cmds.Func(func() {
-		defs = []any{
-			modes.ForProduction(),
-			new(apps.Name("cmd_ai")),
+var AICommand = Command{
+	Defs: []any{
+		modes.ForProduction(),
+		new(apps.Name("cmd_ai")),
+	},
+	Main: func(
+		logger logs.Logger,
+		getSystemPrompt AISystemPrompt,
+		comps AIComponents,
+		currentMemory memories.CurrentMemory,
+		appendMemory memories.AppendMemory,
+		buildGenerate phases.BuildGenerate,
+		buildChat phases.BuildChat,
+		generator generators.Generator,
+		flagFiles flags.Files,
+		flagChats flags.Chats,
+		noMemory NoMemory,
+	) {
+		ctx := context.Background()
+
+		input := strings.Join(flagChats, "\n")
+
+		stdin := getStdinContent()
+		if len(stdin) > 0 {
+			input = input + "\n" + string(stdin)
 		}
-		mainFunc = func(
-			logger logs.Logger,
-			getSystemPrompt AISystemPrompt,
-			comps AIComponents,
-			currentMemory memories.CurrentMemory,
-			appendMemory memories.AppendMemory,
-			buildGenerate phases.BuildGenerate,
-			buildChat phases.BuildChat,
-			generator generators.Generator,
-			flagFiles flags.Files,
-			flagChats flags.Chats,
-		) {
-			ctx := context.Background()
+		logger.InfoContext(ctx, "input", "len", len(input))
 
-			input := strings.Join(flagChats, "\n")
+		systemPrompt, err := getSystemPrompt()
+		ce(err)
 
-			stdin := getStdinContent()
-			if len(stdin) > 0 {
-				input = input + "\n" + string(stdin)
-			}
-			logger.InfoContext(ctx, "input", "len", len(input))
-
-			systemPrompt, err := getSystemPrompt()
-			ce(err)
-
-			var files []string
-			for pattern := range flagFiles {
-				paths, err := filepath.Glob(pattern)
-				if err != nil {
-					files = append(files, pattern)
-				} else {
-					for _, path := range paths {
-						info, err := os.Stat(path)
-						if err != nil {
-							continue
-						}
-						if info.IsDir() {
-							continue
-						}
-						files = append(files, path)
+		var files []string
+		for pattern := range flagFiles {
+			paths, err := filepath.Glob(pattern)
+			if err != nil {
+				files = append(files, pattern)
+			} else {
+				for _, path := range paths {
+					info, err := os.Stat(path)
+					if err != nil {
+						continue
 					}
+					if info.IsDir() {
+						continue
+					}
+					files = append(files, path)
 				}
 			}
-			sort.Strings(files)
+		}
+		sort.Strings(files)
 
-			var parts []generators.Part
+		var parts []generators.Part
 
-			for _, filePath := range files {
-				fileParts, err := filePathToParts(filePath)
+		for _, filePath := range files {
+			fileParts, err := filePathToParts(filePath)
+			ce(err)
+			parts = append(parts, fileParts...)
+			logger.Info("file",
+				"path", filePath,
+			)
+		}
+
+		// Component user prompt parts are appended after file context,
+		// before the user's input. See TheoryOfAIComponents and
+		// components.TheoryOfComponents.
+		parts = append(parts, comps.UserPromptParts()...)
+
+		// User input is wrapped with markers so the model can distinguish
+		// between reference file context and the task request.
+		// See TheoryOfContextStructure in files.go.
+		parts = append(parts, generators.Text(
+			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
+		))
+
+		var baseState generators.State
+		baseState = generators.NewPrompts(
+			systemPrompt,
+			[]*generators.Content{
+				{
+					Role:  "user",
+					Parts: parts,
+				},
+			},
+		)
+		buf := new(strings.Builder)
+		baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
+		// buf captures assistant text for memory block parsing.
+		// showThoughts=false excludes Thought parts so model reasoning
+		// (which may contain illustrative block markers) does not
+		// interfere with memory block extraction.
+		// See TheoryOfAiCommand.
+		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
+
+		// Generation loop with block processing via components.
+		// The component list couples each block kind's prompt with its
+		// processing function, ensuring prompt-processing parity.
+		// See TheoryOfAIComponents and components.TheoryOfComponents.
+		for {
+			parserState := blocks.NewParserState(baseState)
+			state := generators.State(parserState)
+
+			phase := buildGenerate(generator, nil)(
+				buildChat(generator, nil)(
+					nil,
+				),
+			)
+			for phase != nil {
+				phase, state, err = phase(ctx, state)
 				ce(err)
-				parts = append(parts, fileParts...)
-				logger.Info("file",
-					"path", filePath,
-				)
 			}
 
-			// Component user prompt parts are appended after file context,
-			// before the user's input. See TheoryOfAIComponents and
-			// components.TheoryOfComponents.
-			parts = append(parts, comps.UserPromptParts()...)
+			// Extract the current ParserState from the state chain.
+			// With immutable ParserState, the original parserState pointer
+			// is not updated by AppendContent; the current *ParserState is
+			// the one inside the state returned by the phase chain.
+			// See TheoryOfParserState in blocks/parser_state.go.
+			finalParserState, ok := generators.As[*blocks.ParserState](state)
+			if !ok {
+				finalParserState = parserState
+			}
 
-			// User input is wrapped with markers so the model can distinguish
-			// between reference file context and the task request.
-			// See TheoryOfContextStructure in files.go.
-			parts = append(parts, generators.Text(
-				"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
-			))
+			// Flush to finalize any unclosed blocks in ParserState.
+			// Flush returns a new *ParserState; use it for subsequent
+			// block processing and for extracting the unwrapped base state.
+			flushedState, err := finalParserState.Flush()
+			ce(err)
+			if ps, ok := generators.As[*blocks.ParserState](flushedState); ok {
+				finalParserState = ps
+			}
 
-			var baseState generators.State
-			baseState = generators.NewPrompts(
-				systemPrompt,
-				[]*generators.Content{
-					{
+			// Update baseState for potential next cycle.
+			baseState = finalParserState.Unwrap()
+
+			// Process blocks via components. Each component with a Process
+			// function is called in registration order. Components that
+			// return Parts (e.g., shell, continue) accumulate parts that
+			// are appended together after all components are processed.
+			// Components that return Continue=true trigger a new round
+			// immediately. See components.TheoryOfComponents.
+			var combinedParts []generators.Part
+			continueRound := false
+			currentPs := finalParserState
+			for _, comp := range comps.Processable() {
+				result := comp.Process(ctx, &components.ProcessContext{
+					ParserState: currentPs,
+					State:       baseState,
+				})
+				if result.Err != nil {
+					logger.ErrorContext(ctx, "block processing",
+						"kind", comp.Kind, "err", result.Err)
+				}
+				if result.ParserState != nil {
+					currentPs = result.ParserState
+				}
+				combinedParts = append(combinedParts, result.Parts...)
+				if result.Continue {
+					continueRound = true
+					break
+				}
+			}
+
+			if continueRound || len(combinedParts) > 0 {
+				if len(combinedParts) > 0 {
+					baseState, err = baseState.AppendContent(&generators.Content{
 						Role:  "user",
-						Parts: parts,
-					},
-				},
-			)
-			buf := new(strings.Builder)
-			baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
-			// buf captures assistant text for memory block parsing.
-			// showThoughts=false excludes Thought parts so model reasoning
-			// (which may contain illustrative block markers) does not
-			// interfere with memory block extraction.
-			// See TheoryOfAiCommand.
-			baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
-
-			// Generation loop with block processing via components.
-			// The component list couples each block kind's prompt with its
-			// processing function, ensuring prompt-processing parity.
-			// See TheoryOfAIComponents and components.TheoryOfComponents.
-			for {
-				parserState := blocks.NewParserState(baseState)
-				state := generators.State(parserState)
-
-				phase := buildGenerate(generator, nil)(
-					buildChat(generator, nil)(
-						nil,
-					),
-				)
-				for phase != nil {
-					phase, state, err = phase(ctx, state)
+						Parts: combinedParts,
+					})
 					ce(err)
 				}
-
-				// Extract the current ParserState from the state chain.
-				// With immutable ParserState, the original parserState pointer
-				// is not updated by AppendContent; the current *ParserState is
-				// the one inside the state returned by the phase chain.
-				// See TheoryOfParserState in blocks/parser_state.go.
-				finalParserState, ok := generators.As[*blocks.ParserState](state)
-				if !ok {
-					finalParserState = parserState
-				}
-
-				// Flush to finalize any unclosed blocks in ParserState.
-				// Flush returns a new *ParserState; use it for subsequent
-				// block processing and for extracting the unwrapped base state.
-				flushedState, err := finalParserState.Flush()
-				ce(err)
-				if ps, ok := generators.As[*blocks.ParserState](flushedState); ok {
-					finalParserState = ps
-				}
-
-				// Update baseState for potential next cycle.
-				baseState = finalParserState.Unwrap()
-
-				// Process blocks via components. Each component with a Process
-				// function is called in registration order. Components that
-				// return Parts (e.g., shell, continue) accumulate parts that
-				// are appended together after all components are processed.
-				// Components that return Continue=true trigger a new round
-				// immediately. See components.TheoryOfComponents.
-				var combinedParts []generators.Part
-				continueRound := false
-				currentPs := finalParserState
-				for _, comp := range comps.Processable() {
-					result := comp.Process(ctx, &components.ProcessContext{
-						ParserState: currentPs,
-						State:       baseState,
-					})
-					if result.Err != nil {
-						logger.ErrorContext(ctx, "block processing",
-							"kind", comp.Kind, "err", result.Err)
-					}
-					if result.ParserState != nil {
-						currentPs = result.ParserState
-					}
-					combinedParts = append(combinedParts, result.Parts...)
-					if result.Continue {
-						continueRound = true
-						break
-					}
-				}
-
-				if continueRound || len(combinedParts) > 0 {
-					if len(combinedParts) > 0 {
-						baseState, err = baseState.AppendContent(&generators.Content{
-							Role:  "user",
-							Parts: combinedParts,
-						})
-						ce(err)
-					}
-					continue
-				}
-
-				break
+				continue
 			}
 
-			// update memory from block
-			if !*noMemory {
-				if err := memories.UpdateMemoryFromBlock(
-					currentMemory,
-					appendMemory,
-					memories.GetModelID(generator.Spec()),
-					buf.String(),
-				); err != nil {
-					logger.ErrorContext(ctx, "update memory", "err", err)
-				}
-			}
-
+			break
 		}
-	}))
+
+		// update memory from block
+		if !noMemory {
+			if err := memories.UpdateMemoryFromBlock(
+				currentMemory,
+				appendMemory,
+				memories.GetModelID(generator.Spec()),
+				buf.String(),
+			); err != nil {
+				logger.ErrorContext(ctx, "update memory", "err", err)
+			}
+		}
+
+	},
 }

@@ -62,9 +62,11 @@ included consecutively.
 `
 
 type CodeProvider struct {
-	FileNameOK dscope.Inject[FileNameOK]
-	NameMatch  dscope.Inject[NameMatch]
-	Logger     dscope.Inject[logs.Logger]
+	FileNameOK       dscope.Inject[FileNameOK]
+	NameMatch        dscope.Inject[NameMatch]
+	Logger           dscope.Inject[logs.Logger]
+	Debug            dscope.Inject[Debug]
+	IncludeMimeTypes dscope.Inject[IncludeMimeTypes]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
@@ -249,7 +251,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 					isText = true
 					break
 				}
-				for m := range includeNonTextMimeTypes {
+				for m := range c.IncludeMimeTypes() {
 					if t.Is(m) {
 						ok = true
 						break loop
@@ -429,7 +431,7 @@ func (c CodeProvider) Parts(
 
 			parts = append(parts, generators.Text(text))
 
-			if *debug {
+			if c.Debug() {
 				c.Logger().Info("text file",
 					"path", info.Path,
 					"tokens", numTokens,
@@ -474,7 +476,7 @@ func (c CodeProvider) Parts(
 			})
 			parts = append(parts, generators.Text(endMarker))
 
-			if *debug {
+			if c.Debug() {
 				c.Logger().Info("binary file",
 					"path", info.Path,
 					"mime type", info.MimeType,

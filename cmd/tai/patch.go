@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 )
 
@@ -20,24 +19,21 @@ directly, reusing the same hunk-streaming apply logic embedded in
 codes.Generate without wiring the full generation pipeline.
 `
 
-func init() {
-	cmds.Define("patch", cmds.Func(func() {
-		defs = nil
-		mainFunc = func() {
-			target := ".AI"
-			root, err := os.OpenRoot(".")
+var PatchCommand = Command{
+	Main: func() {
+		target := ".AI"
+		root, err := os.OpenRoot(".")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		var handler codes.BoundaryDiffHandler
+		for hunk, err := range handler.Apply(root, target) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			var handler codes.BoundaryDiffHandler
-			for hunk, err := range handler.Apply(root, target) {
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				fmt.Printf("Applied %s %s\n", hunk.Op, hunk.Target)
-			}
+			fmt.Printf("Applied %s %s\n", hunk.Op, hunk.Target)
 		}
-	}))
+	},
 }

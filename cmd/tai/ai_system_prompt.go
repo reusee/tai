@@ -3,10 +3,24 @@ package main
 import (
 	"time"
 
-	"github.com/reusee/tai/cmds"
+	"github.com/reusee/tai/flags"
 )
 
-var noMemory = cmds.Switch("-no-memory")
+type NoMemory bool
+
+func (Module) NoMemory() NoMemory {
+	return false
+}
+
+var _ flags.Flag = NoMemory(true)
+
+func (n NoMemory) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	return NoMemory(true), args, nil
+}
+
+func (n NoMemory) Keys() []string {
+	return []string{"-no-memory", "-no-mem"}
+}
 
 type AISystemPrompt func() (string, error)
 

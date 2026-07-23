@@ -9,7 +9,6 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -80,46 +79,44 @@ func (Module) SystemPrompt(
 	return ret
 }
 
-func init() {
-	cmds.Define("next", cmds.Func(func() {
-		defs = []any{
-			modes.ForProduction(),
-		}
-		mainFunc = func(
-			generator generators.Generator,
-			systemPrompt SystemPrompt,
-			userPrompt UserPrompt,
-			logger logs.Logger,
-			buildGenerate phases.BuildGenerate,
-			buildChat phases.BuildChat,
-		) {
-			ctx := context.Background()
+var NextCommand = Command{
+	Defs: []any{
+		modes.ForProduction(),
+	},
+	Main: func(
+		generator generators.Generator,
+		systemPrompt SystemPrompt,
+		userPrompt UserPrompt,
+		logger logs.Logger,
+		buildGenerate phases.BuildGenerate,
+		buildChat phases.BuildChat,
+	) {
+		ctx := context.Background()
 
-			// generate
-			logger.Info("generate", "model", generator.Spec().Model)
-			var state generators.State
-			state = generators.NewPrompts(
-				string(systemPrompt),
-				[]*generators.Content{
-					{
-						Role:  "user",
-						Parts: userPrompt,
-					},
+		// generate
+		logger.Info("generate", "model", generator.Spec().Model)
+		var state generators.State
+		state = generators.NewPrompts(
+			string(systemPrompt),
+			[]*generators.Content{
+				{
+					Role:  "user",
+					Parts: userPrompt,
 				},
-			)
-			state = generators.NewOutput(state, os.Stdout, true)
+			},
+		)
+		state = generators.NewOutput(state, os.Stdout, true)
 
-			phase := buildGenerate(generator, nil)(
-				buildChat(generator, nil)(
-					nil,
-				),
-			)
-			var err error
-			for phase != nil {
-				phase, state, err = phase(ctx, state)
-				ce(err)
-			}
-
+		phase := buildGenerate(generator, nil)(
+			buildChat(generator, nil)(
+				nil,
+			),
+		)
+		var err error
+		for phase != nil {
+			phase, state, err = phase(ctx, state)
+			ce(err)
 		}
-	}))
+
+	},
 }

@@ -1,6 +1,6 @@
 package codes
 
-import "github.com/reusee/tai/cmds"
+import "github.com/reusee/tai/flags"
 
 const TheoryOfPlan = `
 The plan mechanism is opt-in via the -plan flag. When enabled, the system prompt
@@ -23,14 +23,16 @@ disabling it allows faster turnaround for simple tasks.
 // See TheoryOfPlan.
 type Plan bool
 
-var planFlag Plan
-
-func init() {
-	cmds.Define("-plan", cmds.Func(func() {
-		planFlag = true
-	}).Desc("enable mandatory planning and multi-round generation"))
+func (Module) Plan() Plan {
+	return false
 }
 
-func (Module) Plan() Plan {
-	return planFlag
+var _ flags.Flag = Plan(true)
+
+func (p Plan) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	return Plan(true), args, nil
+}
+
+func (p Plan) Keys() []string {
+	return []string{"-plan"}
 }

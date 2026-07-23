@@ -1,10 +1,11 @@
 package gocodes
 
 import (
+	"fmt"
 	"os"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/vars"
 )
 
@@ -14,14 +15,24 @@ var _ configs.Configurable = LoadDir("")
 
 func (l LoadDir) TaigoConfigurable() {}
 
-var loadDirFlag = cmds.Var[string]("-load-dir")
+var _ flags.Flag = LoadDir("")
+
+func (l LoadDir) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expected load dir, got empty")
+	}
+	return LoadDir(args[0]), args[1:], nil
+}
+
+func (l LoadDir) Keys() []string {
+	return []string{"-load-dir"}
+}
 
 func (Module) LoadDir(
 	loader configs.Loader,
 ) LoadDir {
 	currentDir, _ := os.Getwd() // ignore errors
 	return vars.FirstNonZero(
-		LoadDir(*loadDirFlag),
 		configs.First[LoadDir](loader, "go.load_dir"),
 		configs.First[LoadDir](loader, "go.dir"),
 		LoadDir(currentDir),

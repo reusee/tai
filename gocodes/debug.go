@@ -1,5 +1,19 @@
 package gocodes
 
-import "github.com/reusee/tai/cmds"
+import "github.com/reusee/tai/flags"
 
-var debug = cmds.Switch("-debug-gocodes")
+type Debug bool
+
+func (Module) Debug() Debug {
+	return false
+}
+
+var _ flags.Flag = Debug(false)
+
+func (d Debug) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	return Debug(true), args, nil
+}
+
+func (d Debug) Keys() []string {
+	return []string{"-debug-gocodes"}
+}

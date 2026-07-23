@@ -229,6 +229,7 @@ func (Module) Generate(
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
+	debug Debug,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -336,7 +337,7 @@ func (Module) Generate(
 			"parts", len(userPromptParts),
 		)
 
-		if *debug {
+		if debug {
 			fmt.Printf("system prompt: %s\n", systemPrompt)
 			fmt.Printf("user prompt: %s\n", userPromptParts)
 		}
@@ -357,8 +358,8 @@ func (Module) Generate(
 			initialContents,
 		)
 		showThoughts := true
-		if flagThoughts != nil {
-			showThoughts = *flagThoughts
+		if flagThoughts.Value != nil {
+			showThoughts = *flagThoughts.Value
 		}
 		state = generators.NewOutput(state, output, showThoughts)
 		if args.DisableTools != nil && !*args.DisableTools {

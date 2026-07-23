@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/modes"
@@ -27,30 +27,48 @@ is automatically selected as the default. This makes "tai" convenient to invoke
 in Go projects without explicitly specifying the subcommand each time.
 `
 
-var doRepl = cmds.Switch("repl")
-
-// setupGoCommand configures the "go" subcommand's dscope definitions and
-// mainFunc. It is called both from the "go" subcommand's init and from the
-// default-subcommand path in main (see defaultToGoCommand).
-func setupGoCommand() {
-	defs = []any{
+var GoCommand = Command{
+	Defs: []any{
 		modes.ForProduction(),
 		dscope.Provide(codes.CodeProviderName("go")),
-	}
-	mainFunc = func(
+	},
+	Main: func(
 		generate codes.Generate,
 		tap debugs.Tap,
+		repl Repl,
 	) {
-		if *doRepl {
+		if repl {
 			tap(context.Background(), "repl", map[string]any{})
 			return
 		}
 		if err := generate(context.Background(), os.Stdout); err != nil {
 			panic(err)
 		}
-	}
+	},
 }
 
-func init() {
-	cmds.Define("go", cmds.Func(setupGoCommand))
+type InGoModule bool
+
+func (Module) InGoModule() InGoModule {
+	dir, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	return InGoModule(dirHasGoModule(dir))
+}
+
+// dirHasGoModule walks up the directory tree from dir looking for a go.mod
+// file. It returns true if one is found, false if the filesystem root is
+// reached without finding one.
+func dirHasGoModule(dir string) bool {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }

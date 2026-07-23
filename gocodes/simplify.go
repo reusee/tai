@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/reusee/tai/cmds"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"golang.org/x/tools/go/ast/astutil"
@@ -36,8 +35,6 @@ whenever focus files are edited, defeating prefix caching for the entire prompt.
 	maximumContextTokenBudget = 32 << 10
 )
 
-var showTokenCounts = cmds.Switch("-show-token-counts")
-
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
 // calculateMaxContextTokens returns the fixed token budget for context (non-root) files.
@@ -52,6 +49,7 @@ func calculateMaxContextTokens() int {
 func (Module) SimplifyFiles(
 	getFileSet GetFileSet,
 	logger logs.Logger,
+	debug Debug,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		fset, err := getFileSet()
@@ -118,7 +116,7 @@ func (Module) SimplifyFiles(
 				file.transformCond.Wait()
 			}
 			if file.Pending != nil {
-				if *debug {
+				if debug {
 					logger.InfoContext(ctx, "file operation confirmed",
 						"path", file.Path,
 						"what", file.Pending.What,
@@ -242,7 +240,7 @@ func (Module) SimplifyFiles(
 							contextTokens -= file.Confirmed.NumTokens
 						}
 					}
-					if *debug {
+					if debug {
 						logger.InfoContext(ctx, "file operation confirmed",
 							"path", file.Path,
 							"what", file.Pending.What,
@@ -314,7 +312,7 @@ func (Module) SimplifyFiles(
 				continue
 			}
 			retFiles = append(retFiles, file)
-			if *debug {
+			if debug {
 				logger.Info("use file", "path", file.Path)
 			}
 		}

@@ -7,12 +7,6 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
-func TestPlanFlagDefault(t *testing.T) {
-	if bool(planFlag) {
-		t.Fatal("planFlag should default to false (planning disabled by default)")
-	}
-}
-
 func TestSystemPromptPlan(t *testing.T) {
 	module := Module{}
 
