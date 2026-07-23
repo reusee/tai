@@ -849,14 +849,6 @@ func getHunkBodyNameFromInfo(info *BodyInfo) string {
 	return ""
 }
 
-func getHunkBodyName(body string) string {
-	info, err := getBodyInfo(body)
-	if err != nil || info == nil {
-		return ""
-	}
-	return getHunkBodyNameFromInfo(info)
-}
-
 func getIdentifiers(info *BodyInfo) []string {
 	var ids []string
 	if info == nil {
