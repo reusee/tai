@@ -42,6 +42,13 @@ component triggers a new round via Continue. When tests pass, the go-test
 component does not trigger a new round; the test output is not fed back to
 the model, and other mechanisms (e.g., continue blocks) determine whether
 another round follows.
+
+ProcessGoTestBlocks enforces the pass/fail asymmetry at the implementation
+level: it only collects output parts when a test run fails, so the model
+receives stdout and stderr exclusively when there are failures to debug and
+fix. When all tests pass, no parts are returned, the caller has nothing to
+append to the state, and no new round is triggered by the go-test component
+alone.
 `
 
 const GoTestBlockSystemPrompt = `
@@ -58,8 +65,7 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
 - The body contains optional arguments passed to go test (e.g., -run TestFoo, -v, ./pkg/...). If empty, all tests in the current directory tree (./...) are run.
-- Both stdout and stderr are captured and returned as user content in the next round.
-- If tests fail, the error output is fed back to you so you can debug and fix the issues in subsequent rounds.
+- Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 - The go-test block is NOT a completion signal. You MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
@@ -70,7 +76,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 :::<boundary> <go-test>
 <optional go test arguments>
 :::<boundary> </go-test>
-- If tests fail, the output is fed back for debugging. Fix the issues and try again.
+- If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
 `
@@ -104,13 +110,16 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 
 // ProcessGoTestBlocks pops all go-test blocks from parserState, runs the
 // tests, and returns the outputs as generator parts alongside a new
-// *ParserState with those blocks removed. The failed flag indicates
-// whether any test run failed, so callers can set Continue to feed
-// the error back to the model for debugging.
+// *ParserState with those blocks removed. Output parts are only collected
+// when a test run fails, so the model receives stdout and stderr
+// exclusively when there are failures to debug and fix. When all tests
+// pass, no parts are returned and the caller has nothing to feed back.
+// The failed flag indicates whether any test run failed, so callers can
+// set Continue to trigger a new round for debugging.
 // The original parserState is not modified. Callers must thread the
 // returned *ParserState through subsequent block processing and
 // reconcile it with the outer state before the next generation round.
-// See TheoryOfParserState.
+// See TheoryOfParserState and TheoryOfGoTestBlocks.
 func ProcessGoTestBlocks(parserState *ParserState, ctx context.Context) ([]generators.Part, *ParserState, bool, error) {
 	if parserState == nil {
 		return nil, nil, false, nil
@@ -127,8 +136,14 @@ func ProcessGoTestBlocks(parserState *ParserState, ctx context.Context) ([]gener
 		output, failed := executeGoTest(ctx, args)
 		if failed {
 			anyFailed = true
+			// Only feed test output back to the model when tests fail,
+			// so the model can read stdout and stderr to debug and fix
+			// the issues. When tests pass, the output is not returned;
+			// the caller has nothing to append, and no new round is
+			// triggered by the go-test component.
+			// See TheoryOfGoTestBlocks.
+			parts = append(parts, generators.Text(output))
 		}
-		parts = append(parts, generators.Text(output))
 	}
 	return parts, newParserState, anyFailed, nil
 }

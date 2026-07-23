@@ -9,40 +9,74 @@ import (
 )
 
 func TestProcessGoTestBlocks(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
+	t.Run("TestsFail", func(t *testing.T) {
+		state := generators.NewPrompts("", nil)
+		parserState := NewParserState(state)
 
-	// Append a go-test block with a pattern that matches no tests
-	text := ":::徕珑 <go-test>\n-run ___nonexistent___\n:::徕珑 </go-test>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
+		// -run 'Test[' is an invalid regex, causing go test to fail
+		// with a regexp parsing error. This verifies that stdout and
+		// stderr are fed back to the model when tests fail.
+		text := ":::徕珑 <go-test>\n-run 'Test['\n:::徕珑 </go-test>\n"
+		newState, err := parserState.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parserState = newState.(*ParserState)
+
+		parts, newParserState, failed, err := ProcessGoTestBlocks(parserState, context.Background())
+		if err != nil {
+			t.Fatalf("ProcessGoTestBlocks failed: %v", err)
+		}
+		if !failed {
+			t.Fatal("expected failed=true for failing tests")
+		}
+		if len(parts) != 1 {
+			t.Fatalf("expected 1 part for failing tests, got %d", len(parts))
+		}
+		output := string(parts[0].(generators.Text))
+		if !strings.Contains(output, "Go test command:") {
+			t.Fatalf("expected output to contain 'Go test command:', got: %s", output)
+		}
+		if !strings.Contains(output, "Command failed") {
+			t.Fatalf("expected output to contain 'Command failed', got: %s", output)
+		}
+
+		// go-test blocks should have been consumed
+		if remaining, _ := newParserState.PopBlocksByKind("go-test"); len(remaining) != 0 {
+			t.Fatalf("expected 0 remaining go-test blocks, got %d", len(remaining))
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	parserState = newState.(*ParserState)
 
-	parts, newParserState, failed, err := ProcessGoTestBlocks(parserState, context.Background())
-	if err != nil {
-		t.Fatalf("ProcessGoTestBlocks failed: %v", err)
-	}
-	if len(parts) != 1 {
-		t.Fatalf("expected 1 part, got %d", len(parts))
-	}
-	output := string(parts[0].(generators.Text))
-	if !strings.Contains(output, "Go test command:") {
-		t.Fatalf("expected output to contain 'Go test command:', got: %s", output)
-	}
-	// -run ___nonexistent___ matches no tests, so go test should succeed
-	if failed {
-		t.Fatal("expected tests to pass (no matching tests), but failed=true")
-	}
+	t.Run("TestsPass", func(t *testing.T) {
+		state := generators.NewPrompts("", nil)
+		parserState := NewParserState(state)
 
-	// go-test blocks should have been consumed
-	if remaining, _ := newParserState.PopBlocksByKind("go-test"); len(remaining) != 0 {
-		t.Fatalf("expected 0 remaining go-test blocks, got %d", len(remaining))
-	}
+		// -run ___nonexistent___ matches no tests, so go test succeeds.
+		// When tests pass, no output parts should be returned.
+		text := ":::徕珑 <go-test>\n-run ___nonexistent___\n:::徕珑 </go-test>\n"
+		newState, err := parserState.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parserState = newState.(*ParserState)
+
+		parts, _, failed, err := ProcessGoTestBlocks(parserState, context.Background())
+		if err != nil {
+			t.Fatalf("ProcessGoTestBlocks failed: %v", err)
+		}
+		if failed {
+			t.Fatal("expected failed=false for passing tests")
+		}
+		if len(parts) != 0 {
+			t.Fatalf("expected 0 parts for passing tests, got %d", len(parts))
+		}
+	})
 }
 
 func TestProcessGoTestBlocksEmpty(t *testing.T) {
@@ -78,7 +112,9 @@ func TestProcessGoTestBlocksPreservesChangeBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <go-test>\n-run ___nonexistent___\n:::栢彣 </go-test>\n"
+	// Use -run 'Test[' (invalid regex) to make go test fail, so output
+	// parts are returned and we can verify change blocks are preserved.
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <go-test>\n-run 'Test['\n:::栢彣 </go-test>\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
