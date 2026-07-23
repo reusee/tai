@@ -1,17 +1,24 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
+import "fmt"
 
 type Focus []string
 
-var focus Focus
-
-func init() {
-	cmds.Define("-focus", cmds.Func(func(what string) {
-		focus = append(focus, what)
-	}))
+func (Module) Focus() (ret Focus) {
+	return
 }
 
-func (Module) Focus() Focus {
-	return focus
+var _ Flag = Focus(nil)
+
+func (f Focus) Keys() []string {
+	return []string{"-focus"}
+}
+
+func (f Focus) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
+	newValue = append(f, args[0])
+	remainArgs = args[1:]
+	return
 }

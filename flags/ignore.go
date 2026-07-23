@@ -1,17 +1,30 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
+import "maps"
+
+import "fmt"
 
 type Ignore map[string]bool
 
-var ignore Ignore = make(Ignore)
-
-func init() {
-	cmds.Define("-ignore", cmds.Func(func(what string) {
-		ignore[what] = true
-	}).Alias("-skip", "-exclude"))
+func (Module) Ignore() (ret Ignore) {
+	return
 }
 
-func (Module) Ignore() Ignore {
-	return ignore
+var _ Flag = Ignore(nil)
+
+func (i Ignore) Keys() []string {
+	return []string{"-ignore", "-skip", "-exclude"}
+}
+
+func (i Ignore) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
+	// Copy the existing map to preserve scope immutability.
+	ret := make(Ignore, len(i)+1)
+	maps.Copy(ret, i)
+	ret[args[0]] = true
+	newValue = ret
+	remainArgs = args[1:]
+	return
 }

@@ -1,20 +1,21 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
-
 type Shell bool
 
-var shell Shell
-
-func init() {
-	cmds.Define("-shell", cmds.Func(func() {
-		shell = true
-	}))
-	cmds.Define("-no-shell", cmds.Func(func() {
-		shell = false
-	}))
+func (Module) Shell() (ret Shell) {
+	return
 }
 
-func (Module) Shell() Shell {
-	return shell
+var _ Flag = Shell(false)
+
+func (s Shell) Keys() []string {
+	return []string{"-shell", "-no-shell"}
+}
+
+func (s Shell) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	// The matched key determines the boolean value; "shell" sets true,
+	// "no-shell" sets false. No arguments are consumed.
+	newValue = Shell(key == "-shell")
+	remainArgs = args
+	return
 }

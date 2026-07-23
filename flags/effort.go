@@ -1,17 +1,24 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
+import "fmt"
 
 type Effort string
 
-var effort Effort
-
-func init() {
-	cmds.Define("-effort", cmds.Func(func(level Effort) {
-		effort = level
-	}))
+func (Module) Effort() (ret Effort) {
+	return
 }
 
-func (Module) Effort() Effort {
-	return effort
+var _ Flag = Effort("")
+
+func (e Effort) Keys() []string {
+	return []string{"-effort"}
+}
+
+func (e Effort) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
+	newValue = Effort(args[0])
+	remainArgs = args[1:]
+	return
 }

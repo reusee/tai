@@ -11,17 +11,19 @@ var flagType = reflect.TypeFor[Flag]()
 
 // TheoryOfFlagParsing documents the design rationale for the flag parser.
 // The parser resolves flags from the current scope state on each iteration,
-// enabling accumulating flags (e.g. repeated -chat) to observe values produced
+// enabling accumulating flags (e.g. repeated chat) to observe values produced
 // by earlier iterations within the same parse pass.
 const TheoryOfFlagParsing = `
 flags parsing theory:
-- Flag types are discovered from the initial scope and keyed by their Flag.Key
-  identifier for argument matching.
+- Flag types are discovered from the initial scope and keyed by their Flag.Keys
+  identifiers for argument matching.
 - Each iteration resolves the current flag value from the live scope, enabling
   accumulating flags to observe values produced by earlier iterations within
   the same parse pass.
-- A flag's Handle method transforms remaining args into a new value that is
-  forked into the scope, preserving scope immutability.
+- A flag's Handle method receives the matched key so flags with multiple keys
+  (e.g. shell/no-shell) can distinguish invocations, and transforms remaining
+  args into a new value that is forked into the scope, preserving scope
+  immutability.
 `
 
 func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
@@ -35,8 +37,9 @@ func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
 			return dscope.Scope{}, fmt.Errorf("flag type not found in scope: %v", t)
 		}
 		flag := flagValue.Interface().(Flag)
-		key := flag.Key()
-		flagTypes[key] = t
+		for _, key := range flag.Keys() {
+			flagTypes[key] = t
+		}
 	}
 
 	for len(args) > 0 {
@@ -50,7 +53,7 @@ func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
 			return dscope.Scope{}, fmt.Errorf("flag type not found in scope: %v", t)
 		}
 		flag := flagValue.Interface().(Flag)
-		newValue, remainArgs, err := flag.Handle(args[1:])
+		newValue, remainArgs, err := flag.Handle(key, args[1:])
 		if err != nil {
 			return dscope.Scope{}, err
 		}

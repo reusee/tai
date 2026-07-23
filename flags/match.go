@@ -1,17 +1,30 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
+import "maps"
+
+import "fmt"
 
 type Match map[string]bool
 
-var match Match = make(Match)
-
-func init() {
-	cmds.Define("-match", cmds.Func(func(what string) {
-		match[what] = true
-	}).Alias("-include"))
+func (Module) Match() (ret Match) {
+	return
 }
 
-func (Module) Match() Match {
-	return match
+var _ Flag = Match(nil)
+
+func (m Match) Keys() []string {
+	return []string{"-match", "-include"}
+}
+
+func (m Match) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
+	// Copy the existing map to preserve scope immutability.
+	ret := make(Match, len(m)+1)
+	maps.Copy(ret, m)
+	ret[args[0]] = true
+	newValue = ret
+	remainArgs = args[1:]
+	return
 }

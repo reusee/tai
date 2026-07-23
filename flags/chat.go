@@ -1,32 +1,20 @@
 package flags
 
-import (
-	"fmt"
-
-	"github.com/reusee/tai/cmds"
-)
+import "fmt"
 
 type Chats []string
 
-var chats Chats
-
-func init() {
-	cmds.Define("chat", cmds.Func(func(content string) {
-		chats = append(chats, content)
-	}))
-}
-
-func (Module) Chats() Chats {
-	return chats
+func (Module) Chats() (ret Chats) {
+	return
 }
 
 var _ Flag = Chats(nil)
 
-func (c Chats) Key() string {
-	return "chat"
+func (c Chats) Keys() []string {
+	return []string{"chat"}
 }
 
-func (c Chats) Handle(args []string) (newValue any, remainArgs []string, err error) {
+func (c Chats) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}

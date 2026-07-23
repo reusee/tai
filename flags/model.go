@@ -1,17 +1,24 @@
 package flags
 
-import "github.com/reusee/tai/cmds"
+import "fmt"
 
 type ModelName string
 
-var modelName ModelName
-
-func init() {
-	cmds.Define("-model", cmds.Func(func(name ModelName) {
-		modelName = name
-	}))
+func (Module) ModelName() (ret ModelName) {
+	return
 }
 
-func (Module) ModelName() ModelName {
-	return modelName
+var _ Flag = ModelName("")
+
+func (m ModelName) Keys() []string {
+	return []string{"-model"}
+}
+
+func (m ModelName) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	}
+	newValue = ModelName(args[0])
+	remainArgs = args[1:]
+	return
 }
