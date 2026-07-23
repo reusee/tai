@@ -1,6 +1,9 @@
 package flags
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type Chats []string
 
@@ -18,7 +21,7 @@ func (c Chats) Handle(key string, args []string) (newValue any, remainArgs []str
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	newValue = append(c, args[0])
+	newValue = append(slices.Clone(c), args[0])
 	remainArgs = args[1:]
 	return
 }

@@ -2,6 +2,7 @@ package gocodes
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
@@ -15,7 +16,7 @@ func (l LoadPatterns) Handle(key string, args []string) (newValue any, remainArg
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected pattern, got empty")
 	}
-	return append(l, args[0]), args[1:], nil
+	return append(slices.Clone(l), args[0]), args[1:], nil
 }
 
 func (l LoadPatterns) Keys() []string {
@@ -30,7 +31,7 @@ func (c ContextPatterns) Handle(key string, args []string) (newValue any, remain
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected pattern, got empty")
 	}
-	return append(c, args[0]), args[1:], nil
+	return append(slices.Clone(c), args[0]), args[1:], nil
 }
 
 func (c ContextPatterns) Keys() []string {

@@ -1,6 +1,9 @@
 package flags
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type Focus []string
 
@@ -18,7 +21,7 @@ func (f Focus) Handle(key string, args []string) (newValue any, remainArgs []str
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	newValue = append(f, args[0])
+	newValue = append(slices.Clone(f), args[0])
 	remainArgs = args[1:]
 	return
 }

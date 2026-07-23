@@ -1,6 +1,7 @@
 package blocks
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -274,13 +275,13 @@ func TestTokenizeXMLTagStreaming(t *testing.T) {
 		` file-path="/test.go"`,
 		`>`,
 	}
-	var accumulated string
+	var accumulated strings.Builder
 	for i, part := range parts {
-		accumulated += part
-		_, _, ok := TokenizeXMLTag(accumulated)
+		accumulated.WriteString(part)
+		_, _, ok := TokenizeXMLTag(accumulated.String())
 		if i < len(parts)-1 {
 			if ok {
-				t.Fatalf("expected incomplete at part %d (accumulated=%q)", i, accumulated)
+				t.Fatalf("expected incomplete at part %d (accumulated=%q)", i, accumulated.String())
 			}
 		} else {
 			if !ok {
