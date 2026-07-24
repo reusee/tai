@@ -594,14 +594,14 @@ func (Module) Generate(
 				}
 
 				// Process blocks via components. Each component with a Process
-				// function is called in registration order. Components that
-				// return Continue=true (e.g., request-context) trigger a new
-				// generation round immediately. Components that return Parts
-				// (e.g., shell, continue) accumulate parts that are appended
-				// together after all components are processed.
+				// function is called in registration order. A new generation
+				// round is triggered when any component produces Parts (e.g.,
+				// shell, continue, go-test on failure) or modifies State
+				// (e.g., request-context appends fetched content). MaxRounds
+				// bounds per-component round counts to prevent infinite loops.
 				// See components.TheoryOfComponents.
 				var combinedParts []generators.Part
-				continueRound := false
+				stateModified := false
 				for _, comp := range comps.Processable() {
 					result := comp.Process(ctx, &components.ProcessContext{
 						ParserState: currentParserState,
@@ -615,23 +615,27 @@ func (Module) Generate(
 					if result.ParserState != nil {
 						currentParserState = result.ParserState
 					}
+
+					componentTriggered := false
 					if result.State != nil {
 						state = result.State
+						stateModified = true
+						componentTriggered = true
 					}
-					combinedParts = append(combinedParts, result.Parts...)
-					if result.Continue {
-						if comp.MaxRounds > 0 {
-							roundCounts[comp.Kind]++
-							if roundCounts[comp.Kind] > comp.MaxRounds {
-								return fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
-							}
+					if len(result.Parts) > 0 {
+						combinedParts = append(combinedParts, result.Parts...)
+						componentTriggered = true
+					}
+
+					if componentTriggered && comp.MaxRounds > 0 {
+						roundCounts[comp.Kind]++
+						if roundCounts[comp.Kind] > comp.MaxRounds {
+							return fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
 						}
-						continueRound = true
-						break
 					}
 				}
 
-				if continueRound || len(combinedParts) > 0 {
+				if stateModified || len(combinedParts) > 0 {
 					state = reconcileParserState(state, currentParserState)
 					if len(combinedParts) > 0 {
 						state, err = state.AppendContent(&generators.Content{

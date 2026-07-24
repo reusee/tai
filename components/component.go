@@ -66,14 +66,12 @@ type ProcessContext struct {
 type ProcessResult struct {
 	// ParserState is the new parser state with consumed blocks removed.
 	ParserState *blocks.ParserState
-	// State is the updated generators state (if the handler appended content
-	// directly, e.g., request-context appends fetched resources to state).
+	// State is the updated generators state. When non-nil, the component
+	// modified the state (e.g., request-context appends fetched resources),
+	// and a new generation round is triggered.
 	State generators.State
 	// Parts are user parts to append to the state, triggering a new round.
 	Parts []generators.Part
-	// Continue indicates whether a new generation round should be triggered
-	// immediately, stopping further component processing in the current round.
-	Continue bool
 	// Err is the error encountered during processing, if any.
 	Err error
 }
@@ -117,8 +115,9 @@ type Component struct {
 	// with a nil Process is valid for prompt-only components (Kind == "").
 	ProcessingPath string
 	// MaxRounds limits the number of consecutive rounds this component can
-	// trigger via Continue=true. 0 means no limit. Used to prevent infinite
-	// loops (e.g., request-context components that keep requesting more context).
+	// trigger by producing Parts or modifying State. 0 means no limit. Used
+	// to prevent infinite loops (e.g., request-context components that keep
+	// requesting more context).
 	MaxRounds int
 }
 

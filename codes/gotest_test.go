@@ -55,7 +55,7 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 
 	// Create a ParserState with a go-test block that matches no tests.
 	// go test -run ___nonexistent___ succeeds (exit code 0) because no
-	// tests match, so failed=false.
+	// tests match, so no Parts are returned.
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
 	text := ":::徕珑 <go-test>\n-run ___nonexistent___\n:::徕珑 </go-test>\n"
@@ -77,9 +77,6 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 		})
 		if result.Err != nil {
 			t.Fatalf("unexpected error: %v", result.Err)
-		}
-		if result.Continue {
-			t.Fatal("Continue should be false when tests pass; go-test must not trigger a new round")
 		}
 		if len(result.Parts) != 0 {
 			t.Fatalf("expected no parts when tests pass, got %d parts", len(result.Parts))
@@ -103,7 +100,7 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 
 	// Create a ParserState with a go-test block using an invalid flag.
 	// go test -bogusflag fails immediately with a flag parsing error,
-	// so failed=true.
+	// so Parts are produced to trigger a new round.
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
 	text := ":::徕珑 <go-test>\n-bogusflag\n:::徕珑 </go-test>\n"
@@ -126,11 +123,8 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		if result.Err != nil {
 			t.Fatalf("unexpected error: %v", result.Err)
 		}
-		if !result.Continue {
-			t.Fatal("Continue should be true when tests fail")
-		}
 		if len(result.Parts) == 0 {
-			t.Fatal("expected parts when tests fail")
+			t.Fatal("expected parts when tests fail; go-test must produce Parts to trigger a new round")
 		}
 		return
 	}

@@ -193,13 +193,14 @@ var AICommand = Command{
 			baseState = finalParserState.Unwrap()
 
 			// Process blocks via components. Each component with a Process
-			// function is called in registration order. Components that
-			// return Parts (e.g., shell, continue) accumulate parts that
-			// are appended together after all components are processed.
-			// Components that return Continue=true trigger a new round
-			// immediately. See components.TheoryOfComponents.
+			// function is called in registration order. A new generation
+			// round is triggered when any component produces Parts (e.g.,
+			// shell, continue) or modifies State. All processable
+			// components are called; their parts are accumulated and
+			// appended together as a single user message.
+			// See components.TheoryOfComponents.
 			var combinedParts []generators.Part
-			continueRound := false
+			stateModified := false
 			currentPs := finalParserState
 			for _, comp := range comps.Processable() {
 				result := comp.Process(ctx, &components.ProcessContext{
@@ -213,14 +214,14 @@ var AICommand = Command{
 				if result.ParserState != nil {
 					currentPs = result.ParserState
 				}
-				combinedParts = append(combinedParts, result.Parts...)
-				if result.Continue {
-					continueRound = true
-					break
+				if result.State != nil {
+					baseState = result.State
+					stateModified = true
 				}
+				combinedParts = append(combinedParts, result.Parts...)
 			}
 
-			if continueRound || len(combinedParts) > 0 {
+			if stateModified || len(combinedParts) > 0 {
 				if len(combinedParts) > 0 {
 					baseState, err = baseState.AppendContent(&generators.Content{
 						Role:  "user",

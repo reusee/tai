@@ -148,7 +148,6 @@ func TestComponentSetProcessingCycle(t *testing.T) {
 	}
 
 	var combinedParts []generators.Part
-	continueRound := false
 	currentPs := ps
 	for _, comp := range comps.Processable() {
 		result := comp.Process(context.Background(), &ProcessContext{
@@ -161,15 +160,8 @@ func TestComponentSetProcessingCycle(t *testing.T) {
 			currentPs = result.ParserState
 		}
 		combinedParts = append(combinedParts, result.Parts...)
-		if result.Continue {
-			continueRound = true
-			break
-		}
 	}
 
-	if continueRound {
-		t.Fatal("expected no continue round")
-	}
 	if len(combinedParts) != 2 {
 		t.Fatalf("expected 2 combined parts, got %d", len(combinedParts))
 	}
@@ -183,42 +175,39 @@ func TestComponentSetProcessingCycle(t *testing.T) {
 	}
 }
 
-func TestComponentSetContinueStopsProcessing(t *testing.T) {
+func TestComponentSetAllProcessableCalled(t *testing.T) {
 	called := make(map[string]bool)
 	comps := ComponentSet{
 		{
 			Kind: "first",
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 				called["first"] = true
-				return ProcessResult{Continue: true, State: pctx.State}
+				return ProcessResult{Parts: []generators.Part{generators.Text("first")}}
 			},
 		},
 		{
 			Kind: "second",
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 				called["second"] = true
-				return ProcessResult{}
+				return ProcessResult{Parts: []generators.Part{generators.Text("second")}}
 			},
 		},
 	}
 
-	continueRound := false
+	var combinedParts []generators.Part
 	for _, comp := range comps.Processable() {
 		result := comp.Process(context.Background(), &ProcessContext{})
-		if result.Continue {
-			continueRound = true
-			break
-		}
+		combinedParts = append(combinedParts, result.Parts...)
 	}
 
-	if !continueRound {
-		t.Fatal("expected continue round")
-	}
 	if !called["first"] {
 		t.Fatal("first component should have been called")
 	}
-	if called["second"] {
-		t.Fatal("second component should NOT have been called after continue")
+	if !called["second"] {
+		t.Fatal("second component should have been called")
+	}
+	if len(combinedParts) != 2 {
+		t.Fatalf("expected 2 combined parts, got %d", len(combinedParts))
 	}
 }
 

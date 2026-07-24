@@ -23,12 +23,12 @@ mandatory planning (prompt-only, conditional), and extra system prompt
 construction across modules.
 
 The go-test component runs Go tests after change blocks are applied. Test
-output is fed back to the model only when tests fail, triggering a new round
-for debugging with MaxRounds bounding the test-fix loop. When tests pass, no
-output is returned and no round is triggered by go-test, so other mechanisms
-(e.g., continue blocks) are unaffected. The go-test component is placed after
-change so tests run against the updated source, and before finish so test
-failures preempt the completion signal.
+output is fed back to the model only when tests fail, producing Parts that
+trigger a new round for debugging with MaxRounds bounding the test-fix loop.
+When tests pass, no Parts are returned and no round is triggered by go-test,
+so other mechanisms (e.g., continue blocks) are unaffected. The go-test
+component is placed after change so tests run against the updated source, and
+before finish so test output is available for the next round.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
@@ -95,12 +95,12 @@ func (Module) CodesComponents(
 
 	// Go-test component: run Go tests after change blocks are applied.
 	// Test output is fed back to the model only when tests fail,
-	// triggering a new round for debugging. When tests pass, no output
-	// is returned and no round is triggered, so other mechanisms (e.g.,
-	// continue blocks) are unaffected. MaxRounds bounds the test-fix
-	// loop. Placed after change so tests run against updated source,
-	// and before finish so test failures preempt the completion signal.
-	// See TheoryOfCodesComponents.
+	// producing Parts that trigger a new round for debugging. When tests
+	// pass, no Parts are returned and no round is triggered, so other
+	// mechanisms (e.g., continue blocks) are unaffected. MaxRounds bounds
+	// the test-fix loop. Placed after change so tests run against updated
+	// source, and before finish so test output is available for the next
+	// round. See TheoryOfCodesComponents.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
 		PromptSection: blocks.GoTestBlockSystemPrompt,
@@ -114,12 +114,11 @@ func (Module) CodesComponents(
 			}
 			// Only feed test output to the next round when tests fail,
 			// so the model can debug the failures. When tests pass, no
-			// output is returned and no round is triggered by go-test,
+			// Parts are returned and no round is triggered by go-test,
 			// allowing other mechanisms (e.g., continue blocks) to
 			// function independently. See TheoryOfCodesComponents.
 			if failed {
 				result.Parts = parts
-				result.Continue = true
 			}
 			return result
 		},
@@ -148,12 +147,18 @@ func (Module) CodesComponents(
 				state, newPs, hasRC, err := blocks.ProcessRequestContextBlocks(
 					pctx.ParserState, ctx, pctx.Root, pctx.HttpClient, pctx.State,
 				)
-				return components.ProcessResult{
+				result := components.ProcessResult{
 					ParserState: newPs,
-					State:       state,
-					Continue:    hasRC,
 					Err:         err,
 				}
+				// Only set State when request-context blocks were
+				// found and fetched content was appended, so that
+				// result.State != nil reliably signals a state
+				// modification that triggers a new round.
+				if hasRC {
+					result.State = state
+				}
+				return result
 			},
 		})
 	}
