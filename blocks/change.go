@@ -1,8 +1,57 @@
 package blocks
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/reusee/tai/codes/codetypes"
 )
+
+const TheoryOfNonGoFileChanges = `
+Non-Go files cannot be structurally parsed to identify top-level declarations.
+Therefore, change block operations that require structural identification
+(MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target)
+are only valid for Go files. For non-Go files, only file-level operations are
+permitted: WRITE replaces the entire file content, RENAME renames the file,
+and DELETE with target=* removes the entire file. This restriction ensures the
+system never attempts to locate a declaration within a file format it cannot
+parse, which would silently fail or produce incorrect results.
+`
+
+// isGoFile reports whether the given file path has a .go extension.
+func isGoFile(path string) bool {
+	return strings.HasSuffix(path, ".go")
+}
+
+// isFileLevelOperation reports whether the operation does not require
+// structural identification of declarations within the file. WRITE replaces
+// the entire file content, RENAME renames a file, and DELETE with target=*
+// removes an entire file; none of these require parsing the file's structure.
+// All other operations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a
+// specific declaration target) require structural identification and are
+// only valid for Go files. See TheoryOfNonGoFileChanges.
+func isFileLevelOperation(op, target string) bool {
+	switch op {
+	case "WRITE":
+		return true
+	case "RENAME":
+		return true
+	case "DELETE":
+		return target == "*"
+	default:
+		return false
+	}
+}
+
+// ValidateChangeBlockHunk validates that the hunk's operation is valid for
+// the target file type. Non-Go files only support file-level operations
+// (WRITE, RENAME, DELETE with target=*). See TheoryOfNonGoFileChanges.
+func ValidateChangeBlockHunk(h codetypes.Hunk) error {
+	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) {
+		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, or DELETE with target=*; got op=%q", h.FilePath, h.Op)
+	}
+	return nil
+}
 
 // ParseChangeBlock extracts a Hunk from a change block's attributes and body.
 // In the boundary-delimited format, the change block's metadata (op, target,
@@ -39,6 +88,12 @@ func ParseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end in
 		return h, 0, 0, false, nil
 	}
 
+	// Non-Go files cannot be structurally parsed to identify declarations,
+	// so only file-level operations are permitted. See TheoryOfNonGoFileChanges.
+	if err := ValidateChangeBlockHunk(h); err != nil {
+		return h, 0, 0, false, err
+	}
+
 	return h, start, end, true, nil
 }
 
@@ -65,6 +120,7 @@ The "change" kind defines code modifications using the boundary block format. Th
   - ` + "`file-path`" + `: The absolute path to the file being modified.
 - The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
+- **Non-Go file restriction**: For non-Go files (files not ending in .go), only file-level operations are supported: WRITE (replace entire file content), RENAME (rename the file), and DELETE with target=* (delete the entire file). Operations that require structural identification of declarations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target) are not valid for non-Go files because the system cannot parse their structure to locate declarations. To update a non-Go file, use WRITE to replace the entire file content.
 
 **Example:**
 
@@ -105,6 +161,7 @@ const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use 
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.
 - For DELETE with target *, the entire file is removed; the code body is ignored.
 - For WRITE, ` + "`target`" + ` is ignored; the code body is the complete new file content.
+- **Non-Go files**: For files not ending in .go, only WRITE, RENAME, and DELETE (target=*) are allowed. MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target require structural identification and are not supported for non-Go files. Use WRITE to replace the entire file content.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
 - Even when no change blocks are emitted, a finish block is still required. Generate a finish block with "No changes were needed." as the summary.
