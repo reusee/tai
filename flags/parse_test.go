@@ -231,6 +231,26 @@ func TestParseModelNameNoArg(t *testing.T) {
 	}
 }
 
+func TestParseFastModelName(t *testing.T) {
+	scope := dscope.New(Module{})
+	result, err := Parse(scope, []string{"-fast-model", "gpt-4o-mini"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := dscope.Get[FastModelName](result)
+	if got != "gpt-4o-mini" {
+		t.Fatalf("expected gpt-4o-mini, got %v", got)
+	}
+}
+
+func TestParseFastModelNameNoArg(t *testing.T) {
+	scope := dscope.New(Module{})
+	_, err := Parse(scope, []string{"-fast-model"})
+	if err == nil {
+		t.Fatal("expected error for fast-model with no argument, got nil")
+	}
+}
+
 func TestParseShellTrue(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-shell"})
