@@ -2,6 +2,10 @@
 cmd_ai?: {
   model_name?: string
   model?: string
+  // fast_model_name specifies the fast model for summarization and lightweight tasks.
+  fast_model_name?: string
+  // fast_model is an alias for fast_model_name.
+  fast_model?: string
 }
 
 // action specifies the default action to perform.
@@ -15,6 +19,8 @@ chats?: {[string]: string}
 
 model_name?: string
 model?: string
+fast_model_name?: string
+fast_model?: string
 
 // plan_model specifies the model to use for the planning phase in the "do" action.
 plan_model?: string
@@ -97,6 +103,8 @@ _gen: {
 	context_tokens?: int
 	// max_generate_tokens is the maximum number of tokens to generate.
 	max_generate_tokens?: int
+	// max_thinking_tokens is the maximum number of tokens for reasoning/thinking.
+	max_thinking_tokens?: int
 	// temperature controls the randomness of the output.
 	temperature?: float
 	// disable_search, if true, disables search capabilities for the model.
@@ -119,6 +127,8 @@ _gen: {
 	redirect?: string
 	// no_proxy, if true, bypasses the proxy for this generator.
 	no_proxy?: bool
+	// preserved_thinking, if true, sends reasoning thoughts back to the model in subsequent requests.
+	preserved_thinking?: bool
 	// extra_arguments allows for provider-specific parameters.
 	extra_arguments?: {[string]: _}
 	// variants defines nested generator configurations that inherit parent fields.
