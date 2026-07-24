@@ -15,13 +15,15 @@ quickly assess whether the model's thinking direction is correct and interrupt
 early if it diverges. When the interval elapses, only complete paragraphs are
 summarized; any incomplete trailing text is retained for the next cycle to avoid
 sending truncated sentences to the summarizer. A separate, typically cheaper and
-faster generator is used for summarization to minimize latency and cost. On Flush,
-any remaining accumulated thoughts are summarized before propagating the flush
-upstream. The summarization system prompt is designed to extract the key points
-and direction of reasoning, not to reproduce the full thought content. The
-summary is formatted as a bullet list of all key points, each item being a single
-concise sentence, so the user can scan the reasoning trajectory quickly without
-reading a dense paragraph.
+faster generator is used for summarization to minimize latency and cost. The
+GetDefaultSummarizer provider wires the default fast model (obtained via
+GetDefaultFastModel) into a Summarizer, so production code can obtain a summarizer
+without manually selecting a model. On Flush, any remaining accumulated thoughts
+are summarized before propagating the flush upstream. The summarization system
+prompt is designed to extract the key points and direction of reasoning, not to
+reproduce the full thought content. The summary is formatted as a bullet list of
+all key points, each item being a single concise sentence, so the user can scan
+the reasoning trajectory quickly without reading a dense paragraph.
 `
 
 const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into a concise bullet list that helps the user quickly assess whether the model's thinking is on the right track.
@@ -43,6 +45,20 @@ type Summarizer struct {
 
 func NewSummarizer(generator Generator) *Summarizer {
 	return &Summarizer{generator: generator}
+}
+
+type GetDefaultSummarizer func() (*Summarizer, error)
+
+func (Module) GetDefaultSummarizer(
+	getDefaultFastModel GetDefaultFastModel,
+) GetDefaultSummarizer {
+	return func() (*Summarizer, error) {
+		gen, err := getDefaultFastModel()
+		if err != nil {
+			return nil, err
+		}
+		return NewSummarizer(gen), nil
+	}
 }
 
 // Summarize sends the accumulated thoughts to the underlying generator with

@@ -51,3 +51,47 @@ type FallbackModelName string
 func (Module) FallbackModelName() FallbackModelName {
 	return "gemini-flash"
 }
+
+type GetDefaultFastModel func() (Generator, error)
+
+func (Module) GetDefaultFastModel(
+	name DefaultFastModelName,
+	get GetGenerator,
+) GetDefaultFastModel {
+	return func() (Generator, error) {
+		return get(string(name))
+	}
+}
+
+type DefaultFastModelName string
+
+var _ configs.Configurable = DefaultFastModelName("")
+
+func (d DefaultFastModelName) TaigoConfigurable() {
+}
+
+func (Module) DefaultFastModelName(
+	loader configs.Loader,
+	fallback FallbackFastModelName,
+	logger logs.Logger,
+	appName apps.Name,
+	flagFastModelName flags.FastModelName,
+) (ret DefaultFastModelName) {
+	defer func() {
+		logger.Info("default fast model", "name", ret)
+	}()
+	return vars.FirstNonZero(
+		DefaultFastModelName(flagFastModelName),
+		configs.First[DefaultFastModelName](loader, string(appName)+".fast_model_name"),
+		configs.First[DefaultFastModelName](loader, string(appName)+".fast_model"),
+		configs.First[DefaultFastModelName](loader, "fast_model_name"),
+		configs.First[DefaultFastModelName](loader, "fast_model"),
+		DefaultFastModelName(fallback),
+	)
+}
+
+type FallbackFastModelName string
+
+func (Module) FallbackFastModelName() FallbackFastModelName {
+	return "gemini-flash"
+}
