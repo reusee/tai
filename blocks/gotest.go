@@ -43,6 +43,15 @@ directory. After the first test run, the working directory is available in
 the output and the model should switch to absolute paths for specific
 package tests.
 
+Test commands should target the specific test functions the model modified or
+added, rather than running an entire package. Precise -run patterns (e.g.,
+-run TestFoo or -run TestBar/subcase) produce faster, more focused feedback
+and avoid noise from unrelated test failures. The model should only fall back
+to package-level or ./... runs when it needs a broad sanity check or does not
+yet know which tests are relevant. After modifying or adding a test function,
+the go-test block should name that function in the -run argument so the
+verification is directly tied to the change.
+
 The go-test block is not a completion signal. The summary and finish blocks
 are completion signals for each round (see TheoryOfSummaryCompletionRetry in
 codes/generate.go). When the model emits a go-test block, it must still emit
@@ -78,6 +87,7 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
 - The body contains optional arguments passed to go test (e.g., -run TestFoo, -v, /absolute/path/to/pkg/...). If empty, all tests in the current directory tree (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
+- **Target specific tests**: When you modify or add a test function, name it in the -run argument (e.g., -run TestFoo /absolute/path/to/pkg/...) so the verification is directly tied to your change. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
@@ -90,6 +100,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 <optional go test arguments>
 :::<boundary> </go-test>
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
+- **Target specific tests**: When you modify or add a test function, name it in the -run argument (e.g., -run TestFoo /absolute/path/to/pkg/...) so the verification is directly tied to your change. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
