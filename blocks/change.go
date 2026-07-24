@@ -107,4 +107,5 @@ const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use 
 - For WRITE, ` + "`target`" + ` is ignored; the code body is the complete new file content.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
+- Even when no change blocks are emitted, a finish block is still required. Generate a finish block with "No changes were needed." as the summary.
 `
