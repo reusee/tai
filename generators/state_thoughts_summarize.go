@@ -68,7 +68,7 @@ func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 		if err != nil {
 			return ret, err
 		}
-		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]: %s\n\n", summary); err != nil {
+		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
 			return ret, err
 		}
 		ret.accumulated = ""
@@ -109,7 +109,7 @@ func (s ThoughtsSummarize) Flush() (State, error) {
 		if err != nil {
 			return ret, err
 		}
-		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]: %s\n\n", summary); err != nil {
+		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
 			return ret, err
 		}
 		ret.accumulated = ""

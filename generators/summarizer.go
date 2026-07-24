@@ -16,17 +16,20 @@ early if it diverges. A separate, typically cheaper and faster generator is used
 for summarization to minimize latency and cost. On Flush, any remaining
 accumulated thoughts are summarized before propagating the flush upstream.
 The summarization system prompt is designed to extract the key points and
-direction of reasoning, not to reproduce the full thought content.
+direction of reasoning, not to reproduce the full thought content. The summary
+is formatted as a bullet list of all key points, each item being a single concise
+sentence, so the user can scan the reasoning trajectory quickly without reading
+a dense paragraph.
 `
 
-const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into a brief, actionable summary that helps the user quickly assess whether the model's thinking is on the right track.
+const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into a concise bullet list that helps the user quickly assess whether the model's thinking is on the right track.
 
-Focus on:
-1. What problem the model is currently working on
-2. Key intermediate conclusions or decisions
-3. The overall direction and approach of the reasoning
+Output a bullet list of ALL key points. Each list item must be a single, short sentence capturing one key point:
+- What problem the model is currently working on
+- Key intermediate conclusions or decisions
+- The overall direction and approach of the reasoning
 
-Keep the summary to 2-3 sentences. Be concise and direct. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.`
+Be concise and direct. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.`
 
 // Summarizer is a separate generator type dedicated to summarizing thoughts.
 // It wraps an underlying Generator (typically a fast, cheap model) and
