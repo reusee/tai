@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"strings"
 	"time"
 )
 
@@ -62,17 +63,23 @@ func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 
 	// Periodically summarize accumulated thoughts. The interval check
 	// ensures summarization happens at most once per interval, preventing
-	// excessive API calls during fast streaming.
+	// excessive API calls during fast streaming. Only complete paragraphs
+	// are summarized to avoid sending truncated sentences to the
+	// summarizer; any incomplete trailing text is retained for the next
+	// cycle.
 	if len(ret.accumulated) > 0 && time.Since(ret.lastSummarize) >= ret.interval {
-		summary, err := ret.summarizer.Summarize(ret.ctx, ret.accumulated)
-		if err != nil {
-			return ret, err
+		complete, remaining := splitAtLastCompleteParagraph(ret.accumulated)
+		if complete != "" {
+			summary, err := ret.summarizer.Summarize(ret.ctx, complete)
+			if err != nil {
+				return ret, err
+			}
+			if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
+				return ret, err
+			}
+			ret.accumulated = remaining
+			ret.lastSummarize = time.Now()
 		}
-		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
-			return ret, err
-		}
-		ret.accumulated = ""
-		ret.lastSummarize = time.Now()
 	}
 
 	// Propagate content to upstream. Thoughts are still passed through so
@@ -103,7 +110,9 @@ func (s ThoughtsSummarize) Flush() (State, error) {
 
 	// Summarize any remaining accumulated thoughts before flushing.
 	// This ensures no thoughts are lost when a turn ends between
-	// summarization intervals.
+	// summarization intervals. On flush, all remaining text is
+	// summarized regardless of paragraph boundaries since the turn
+	// is ending.
 	if len(ret.accumulated) > 0 {
 		summary, err := ret.summarizer.Summarize(ret.ctx, ret.accumulated)
 		if err != nil {
@@ -126,4 +135,24 @@ func (s ThoughtsSummarize) Flush() (State, error) {
 
 func (s ThoughtsSummarize) Unwrap() State {
 	return s.upstream
+}
+
+// splitAtLastCompleteParagraph splits accumulated text at the last
+// complete paragraph boundary. It returns the complete portion (safe
+// to summarize) and the remaining incomplete portion (to keep for the
+// next cycle). Paragraph boundaries are double newlines; single newlines
+// are used as a secondary boundary. If no boundary is found, complete is
+// empty and remaining is the full text, indicating summarization should
+// be deferred until more content arrives.
+func splitAtLastCompleteParagraph(text string) (complete, remaining string) {
+	// Try paragraph boundary (double newline) first
+	if idx := strings.LastIndex(text, "\n\n"); idx >= 0 {
+		return text[:idx+2], text[idx+2:]
+	}
+	// Try single newline as a secondary boundary
+	if idx := strings.LastIndex(text, "\n"); idx >= 0 {
+		return text[:idx+1], text[idx+1:]
+	}
+	// No suitable boundary found; defer summarization
+	return "", text
 }

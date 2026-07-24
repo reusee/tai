@@ -12,14 +12,16 @@ As models produce increasingly long reasoning traces, users struggle to extract
 key information from raw thought streams. ThoughtsSummarize addresses this by
 summarizing at a configurable interval (default 3 seconds), enabling users to
 quickly assess whether the model's thinking direction is correct and interrupt
-early if it diverges. A separate, typically cheaper and faster generator is used
-for summarization to minimize latency and cost. On Flush, any remaining
-accumulated thoughts are summarized before propagating the flush upstream.
-The summarization system prompt is designed to extract the key points and
-direction of reasoning, not to reproduce the full thought content. The summary
-is formatted as a bullet list of all key points, each item being a single concise
-sentence, so the user can scan the reasoning trajectory quickly without reading
-a dense paragraph.
+early if it diverges. When the interval elapses, only complete paragraphs are
+summarized; any incomplete trailing text is retained for the next cycle to avoid
+sending truncated sentences to the summarizer. A separate, typically cheaper and
+faster generator is used for summarization to minimize latency and cost. On Flush,
+any remaining accumulated thoughts are summarized before propagating the flush
+upstream. The summarization system prompt is designed to extract the key points
+and direction of reasoning, not to reproduce the full thought content. The
+summary is formatted as a bullet list of all key points, each item being a single
+concise sentence, so the user can scan the reasoning trajectory quickly without
+reading a dense paragraph.
 `
 
 const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into a concise bullet list that helps the user quickly assess whether the model's thinking is on the right track.
