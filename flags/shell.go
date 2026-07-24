@@ -8,8 +8,11 @@ func (Module) Shell() (ret Shell) {
 
 var _ Flag = Shell(false)
 
-func (s Shell) Keys() []string {
-	return []string{"-shell", "-no-shell"}
+func (s Shell) Keys() map[string]string {
+	return map[string]string{
+		"-shell":    "Enable shell block execution",
+		"-no-shell": "Disable shell block execution",
+	}
 }
 
 func (s Shell) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

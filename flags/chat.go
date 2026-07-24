@@ -13,8 +13,10 @@ func (Module) Chats() (ret Chats) {
 
 var _ Flag = Chats(nil)
 
-func (c Chats) Keys() []string {
-	return []string{"chat"}
+func (c Chats) Keys() map[string]string {
+	return map[string]string{
+		"chat": "Add a chat message to the conversation",
+	}
 }
 
 func (c Chats) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

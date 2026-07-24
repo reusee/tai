@@ -12,8 +12,11 @@ func (Module) Thoughts() (ret Thoughts) {
 
 var _ Flag = Thoughts{}
 
-func (t Thoughts) Keys() []string {
-	return []string{"-thoughts", "-no-thoughts"}
+func (t Thoughts) Keys() map[string]string {
+	return map[string]string{
+		"-thoughts":    "Show model reasoning thoughts in output",
+		"-no-thoughts": "Hide model reasoning thoughts from output",
+	}
 }
 
 func (t Thoughts) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

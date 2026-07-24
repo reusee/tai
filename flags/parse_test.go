@@ -17,8 +17,8 @@ type NilFlag string
 
 var _ Flag = NilFlag("")
 
-func (NilFlag) Keys() []string {
-	return []string{"nilflag"}
+func (NilFlag) Keys() map[string]string {
+	return map[string]string{"nilflag": "test flag that returns nil"}
 }
 
 func (NilFlag) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

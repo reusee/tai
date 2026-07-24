@@ -46,11 +46,11 @@ func (l Level) Handle(key string, args []string) (newValue any, remainArgs []str
 	panic("key not handle: " + key)
 }
 
-func (l Level) Keys() []string {
-	return []string{
-		"-log-debug",
-		"-log-info",
-		"-log-warn",
-		"-log-error",
+func (l Level) Keys() map[string]string {
+	return map[string]string{
+		"-log-debug": "Set log level to debug",
+		"-log-info":  "Set log level to info",
+		"-log-warn":  "Set log level to warn",
+		"-log-error": "Set log level to error",
 	}
 }

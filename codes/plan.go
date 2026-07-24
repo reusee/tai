@@ -33,6 +33,8 @@ func (p Plan) Handle(key string, args []string) (newValue any, remainArgs []stri
 	return Plan(true), args, nil
 }
 
-func (p Plan) Keys() []string {
-	return []string{"-plan"}
+func (p Plan) Keys() map[string]string {
+	return map[string]string{
+		"-plan": "Enable mandatory planning and multi-round generation",
+	}
 }

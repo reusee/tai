@@ -45,8 +45,11 @@ func (a Apply) Handle(key string, args []string) (newValue any, remainArgs []str
 	panic("key not handle: " + key)
 }
 
-func (a Apply) Keys() []string {
-	return []string{"-apply", "-no-apply"}
+func (a Apply) Keys() map[string]string {
+	return map[string]string{
+		"-apply":    "Apply change blocks to the working tree during generation",
+		"-no-apply": "Do not apply change blocks during generation",
+	}
 }
 
 // applyChangeBlocks pops all complete change blocks from parserState and

@@ -24,8 +24,10 @@ func (l LoadDir) Handle(key string, args []string) (newValue any, remainArgs []s
 	return LoadDir(args[0]), args[1:], nil
 }
 
-func (l LoadDir) Keys() []string {
-	return []string{"-load-dir"}
+func (l LoadDir) Keys() map[string]string {
+	return map[string]string{
+		"-load-dir": "Set the root directory for loading Go packages",
+	}
 }
 
 func (Module) LoadDir(

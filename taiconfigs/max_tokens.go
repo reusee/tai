@@ -63,6 +63,8 @@ func (m MaxTokensFlag) Handle(key string, args []string) (newValue any, remainAr
 	return
 }
 
-func (m MaxTokensFlag) Keys() []string {
-	return []string{"-max-tokens"}
+func (m MaxTokensFlag) Keys() map[string]string {
+	return map[string]string{
+		"-max-tokens": "Set the maximum token budget for context",
+	}
 }

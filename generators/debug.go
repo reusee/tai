@@ -16,8 +16,10 @@ func (d DebugGemini) Handle(key string, args []string) (newValue any, remainArgs
 	return DebugGemini(true), args, nil
 }
 
-func (d DebugGemini) Keys() []string {
-	return []string{"-debug-gemini"}
+func (d DebugGemini) Keys() map[string]string {
+	return map[string]string{
+		"-debug-gemini": "Enable debug logging for the Gemini generator",
+	}
 }
 
 type DebugOpenAI bool
@@ -32,8 +34,10 @@ func (d DebugOpenAI) Handle(key string, args []string) (newValue any, remainArgs
 	return DebugOpenAI(true), args, nil
 }
 
-func (d DebugOpenAI) Keys() []string {
-	return []string{"-debug-openai"}
+func (d DebugOpenAI) Keys() map[string]string {
+	return map[string]string{
+		"-debug-openai": "Enable debug logging for the OpenAI generator",
+	}
 }
 
 type TapOpenAI bool
@@ -48,6 +52,8 @@ func (d TapOpenAI) Handle(key string, args []string) (newValue any, remainArgs [
 	return TapOpenAI(true), args, nil
 }
 
-func (d TapOpenAI) Keys() []string {
-	return []string{"-tap-openai"}
+func (d TapOpenAI) Keys() map[string]string {
+	return map[string]string{
+		"-tap-openai": "Enable Starlark REPL tap for the OpenAI generator",
+	}
 }

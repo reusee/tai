@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/reusee/dscope"
@@ -25,7 +27,14 @@ func main() {
 	scope := dscope.New(dscope.Methods(new(Module))...)
 
 	scope, err := flags.Parse(scope, os.Args[1:])
-	ce(err)
+	if err != nil {
+		var helpErr *flags.HelpError
+		if errors.As(err, &helpErr) {
+			fmt.Print(helpErr.Usage)
+			return
+		}
+		ce(err)
+	}
 
 	command := dscope.Get[Command](scope)
 	if command.Main != nil {

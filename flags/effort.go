@@ -10,8 +10,10 @@ func (Module) Effort() (ret Effort) {
 
 var _ Flag = Effort("")
 
-func (e Effort) Keys() []string {
-	return []string{"-effort"}
+func (e Effort) Keys() map[string]string {
+	return map[string]string{
+		"-effort": "Set the reasoning effort level (e.g. low, medium, high)",
+	}
 }
 
 func (e Effort) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

@@ -90,6 +90,7 @@ var NextCommand = Command{
 		logger logs.Logger,
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
+		flagThoughts flags.Thoughts,
 	) {
 		ctx := context.Background()
 
@@ -105,7 +106,11 @@ var NextCommand = Command{
 				},
 			},
 		)
-		state = generators.NewOutput(state, os.Stdout, true)
+		showThoughts := true
+		if flagThoughts.Value != nil {
+			showThoughts = *flagThoughts.Value
+		}
+		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
 		phase := buildGenerate(generator, nil)(
 			buildChat(generator, nil)(

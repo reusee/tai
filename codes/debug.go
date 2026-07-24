@@ -14,6 +14,8 @@ func (d Debug) Handle(key string, args []string) (newValue any, remainArgs []str
 	return Debug(true), args, nil
 }
 
-func (d Debug) Keys() []string {
-	return []string{"-debug-codes"}
+func (d Debug) Keys() map[string]string {
+	return map[string]string{
+		"-debug-codes": "Enable debug logging for the codes module",
+	}
 }

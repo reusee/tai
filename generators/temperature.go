@@ -32,6 +32,8 @@ func (t TemperatureFlag) Handle(key string, args []string) (newValue any, remain
 	return
 }
 
-func (t TemperatureFlag) Keys() []string {
-	return []string{"-temperature"}
+func (t TemperatureFlag) Keys() map[string]string {
+	return map[string]string{
+		"-temperature": "Set the generation temperature (0.0-2.0)",
+	}
 }

@@ -17,8 +17,10 @@ func (n NoTests) Handle(key string, args []string) (newValue any, remainArgs []s
 	return NoTests(true), args, nil
 }
 
-func (n NoTests) Keys() []string {
-	return []string{"-no-tests"}
+func (n NoTests) Keys() map[string]string {
+	return map[string]string{
+		"-no-tests": "Exclude test files from the context",
+	}
 }
 
 func (Module) NoTests(

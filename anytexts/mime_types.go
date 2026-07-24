@@ -23,8 +23,8 @@ func (i IncludeMimeTypes) Handle(key string, args []string) (newValue any, remai
 	return m, args, nil
 }
 
-func (i IncludeMimeTypes) Keys() []string {
-	return []string{
-		"-pdf",
+func (i IncludeMimeTypes) Keys() map[string]string {
+	return map[string]string{
+		"-pdf": "Include PDF files in the context",
 	}
 }

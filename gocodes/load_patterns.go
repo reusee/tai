@@ -19,8 +19,11 @@ func (l LoadPatterns) Handle(key string, args []string) (newValue any, remainArg
 	return append(slices.Clone(l), args[0]), args[1:], nil
 }
 
-func (l LoadPatterns) Keys() []string {
-	return []string{"-pkg", "-load"}
+func (l LoadPatterns) Keys() map[string]string {
+	return map[string]string{
+		"-pkg":  "Add a Go package loading pattern",
+		"-load": "Alias for -pkg: add a Go package loading pattern",
+	}
 }
 
 type ContextPatterns []string
@@ -34,8 +37,11 @@ func (c ContextPatterns) Handle(key string, args []string) (newValue any, remain
 	return append(slices.Clone(c), args[0]), args[1:], nil
 }
 
-func (c ContextPatterns) Keys() []string {
-	return []string{"-ctx", "-dep"}
+func (c ContextPatterns) Keys() map[string]string {
+	return map[string]string{
+		"-ctx": "Add a context package pattern for dependency analysis",
+		"-dep": "Alias for -ctx: add a context package pattern",
+	}
 }
 
 func (Module) LoadArgs(

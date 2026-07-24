@@ -10,8 +10,10 @@ func (Module) ModelName() (ret ModelName) {
 
 var _ Flag = ModelName("")
 
-func (m ModelName) Keys() []string {
-	return []string{"-model"}
+func (m ModelName) Keys() map[string]string {
+	return map[string]string{
+		"-model": "Set the model name to use for generation",
+	}
 }
 
 func (m ModelName) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

@@ -1,8 +1,9 @@
 package flags
 
-import "maps"
-
-import "fmt"
+import (
+	"fmt"
+	"maps"
+)
 
 type Match map[string]bool
 
@@ -12,8 +13,11 @@ func (Module) Match() (ret Match) {
 
 var _ Flag = Match(nil)
 
-func (m Match) Keys() []string {
-	return []string{"-match", "-include"}
+func (m Match) Keys() map[string]string {
+	return map[string]string{
+		"-match":   "Match files by regex pattern for inclusion",
+		"-include": "Alias for -match: match files by regex pattern for inclusion",
+	}
 }
 
 func (m Match) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

@@ -14,6 +14,8 @@ func (r Repl) Handle(key string, args []string) (newValue any, remainArgs []stri
 	return Repl(true), args, nil
 }
 
-func (r Repl) Keys() []string {
-	return []string{"-repl"}
+func (r Repl) Keys() map[string]string {
+	return map[string]string{
+		"-repl": "Start a Starlark REPL for interactive debugging",
+	}
 }

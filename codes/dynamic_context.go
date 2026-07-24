@@ -36,9 +36,9 @@ func (d DynamicContext) Handle(key string, args []string) (newValue any, remainA
 	return DynamicContext(true), args, nil
 }
 
-func (d DynamicContext) Keys() []string {
-	return []string{
-		"-dynamic-context",
-		"-dyn",
+func (d DynamicContext) Keys() map[string]string {
+	return map[string]string{
+		"-dynamic-context": "Enable dynamic context fetching via request-context blocks",
+		"-dyn":             "Alias for -dynamic-context: enable dynamic context fetching",
 	}
 }

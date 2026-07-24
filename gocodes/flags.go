@@ -14,8 +14,10 @@ func (i IncludeStdLib) Handle(key string, args []string) (newValue any, remainAr
 	return IncludeStdLib(true), args, nil
 }
 
-func (i IncludeStdLib) Keys() []string {
-	return []string{"-include-std"}
+func (i IncludeStdLib) Keys() map[string]string {
+	return map[string]string{
+		"-include-std": "Include standard library packages in the context",
+	}
 }
 
 type ShowTokenCounts bool
@@ -30,6 +32,8 @@ func (s ShowTokenCounts) Handle(key string, args []string) (newValue any, remain
 	return ShowTokenCounts(true), args, nil
 }
 
-func (s ShowTokenCounts) Keys() []string {
-	return []string{"-show-token-counts"}
+func (s ShowTokenCounts) Keys() map[string]string {
+	return map[string]string{
+		"-show-token-counts": "Display token counts for each included file",
+	}
 }

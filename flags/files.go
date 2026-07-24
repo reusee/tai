@@ -1,8 +1,9 @@
 package flags
 
-import "maps"
-
-import "fmt"
+import (
+	"fmt"
+	"maps"
+)
 
 type Files map[string]bool
 
@@ -12,8 +13,10 @@ func (Module) Files() (ret Files) {
 
 var _ Flag = Files(nil)
 
-func (f Files) Keys() []string {
-	return []string{"-file"}
+func (f Files) Keys() map[string]string {
+	return map[string]string{
+		"-file": "Add a file to the context by path or glob pattern",
+	}
 }
 
 func (f Files) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

@@ -18,8 +18,11 @@ func (n NoMemory) Handle(key string, args []string) (newValue any, remainArgs []
 	return NoMemory(true), args, nil
 }
 
-func (n NoMemory) Keys() []string {
-	return []string{"-no-memory", "-no-mem"}
+func (n NoMemory) Keys() map[string]string {
+	return map[string]string{
+		"-no-memory": "Disable user profile memory persistence",
+		"-no-mem":    "Alias for -no-memory: disable user profile memory persistence",
+	}
 }
 
 type AISystemPrompt func() (string, error)

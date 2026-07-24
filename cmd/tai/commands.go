@@ -22,13 +22,13 @@ func (Module) Command(
 
 var _ flags.Flag = Command{}
 
-func (c Command) Keys() []string {
-	return []string{
-		"next",
-		"ai",
-		"patch",
-		"go",
-		"any",
+func (c Command) Keys() map[string]string {
+	return map[string]string{
+		"next":  "Identify and execute the most valuable next step",
+		"ai":    "Start an interactive AI chat session with memory",
+		"patch": "Apply a boundary-delimited diff file to the working tree",
+		"go":    "Generate code for Go files (default in Go modules)",
+		"any":   "Generate code for arbitrary text files",
 	}
 }
 

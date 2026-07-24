@@ -13,8 +13,10 @@ func (Module) Focus() (ret Focus) {
 
 var _ Flag = Focus(nil)
 
-func (f Focus) Keys() []string {
-	return []string{"-focus"}
+func (f Focus) Keys() map[string]string {
+	return map[string]string{
+		"-focus": "Focus on a specific aspect of the task",
+	}
 }
 
 func (f Focus) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

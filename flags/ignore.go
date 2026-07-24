@@ -1,8 +1,9 @@
 package flags
 
-import "maps"
-
-import "fmt"
+import (
+	"fmt"
+	"maps"
+)
 
 type Ignore map[string]bool
 
@@ -12,8 +13,12 @@ func (Module) Ignore() (ret Ignore) {
 
 var _ Flag = Ignore(nil)
 
-func (i Ignore) Keys() []string {
-	return []string{"-ignore", "-skip", "-exclude"}
+func (i Ignore) Keys() map[string]string {
+	return map[string]string{
+		"-ignore":  "Exclude a file or pattern from the context",
+		"-skip":    "Alias for -ignore: exclude a file or pattern from the context",
+		"-exclude": "Alias for -ignore: exclude a file or pattern from the context",
+	}
 }
 
 func (i Ignore) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
