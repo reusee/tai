@@ -14,6 +14,7 @@ var schema string
 
 func (Module) ConfigsLoader(
 	logger logs.Logger,
+	configGlobals ConfigGlobals,
 ) configs.Loader {
 
 	var paths []string
@@ -62,5 +63,8 @@ func (Module) ConfigsLoader(
 		}
 	}
 
-	return configs.NewLoader(paths, configs.LoaderConfig{Schema: schema})
+	return configs.NewLoader(paths, configs.LoaderConfig{
+		Schema:  schema,
+		Globals: configGlobals,
+	})
 }
