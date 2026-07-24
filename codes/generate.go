@@ -326,6 +326,7 @@ func (Module) Generate(
 	tap debugs.Tap,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
+	fullThoughts FullThoughts,
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
@@ -461,7 +462,19 @@ func (Module) Generate(
 		if flagThoughts.Value != nil {
 			showThoughts = *flagThoughts.Value
 		}
-		state = generators.NewOutput(state, output, showThoughts)
+
+		// When thoughts are shown, use ThoughtsSummarize by default to
+		// condense reasoning traces into periodic summaries. The
+		// -full-thoughts flag opts into raw thought display, bypassing
+		// summarization. See TheoryOfFullThoughts.
+		if showThoughts && !bool(fullThoughts) {
+			summarizer := generators.NewSummarizer(generator)
+			state = generators.NewOutput(state, output, false)
+			state = generators.NewThoughtsSummarize(ctx, state, summarizer, output)
+		} else {
+			state = generators.NewOutput(state, output, showThoughts)
+		}
+
 		if args.DisableTools != nil && !*args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 			state = generators.NewFuncMap(state, diffHandler.Functions()...)
