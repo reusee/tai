@@ -1,6 +1,7 @@
 package codes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,66 @@ func countContents(state generators.State) int {
 	return count
 }
 
+// extractIncompleteOutput collects Text and Thought parts from contents
+// appended after prevCount, returning them as a single string for
+// summarization. See TheoryOfIncompleteOutputSummarization.
+func extractIncompleteOutput(state generators.State, prevCount int) string {
+	var parts []string
+	i := 0
+	for c := range state.Contents() {
+		if i < prevCount {
+			i++
+			continue
+		}
+		for _, p := range c.Parts {
+			switch p := p.(type) {
+			case generators.Text:
+				parts = append(parts, string(p))
+			case generators.Thought:
+				parts = append(parts, string(p))
+			}
+		}
+		i++
+	}
+	return strings.Join(parts, "\n")
+}
+
+func summarizeIncompleteOutput(
+	ctx context.Context,
+	generator generators.Generator,
+	incompleteText string,
+) (string, error) {
+	if incompleteText == "" {
+		return "", nil
+	}
+	systemPrompt := "You are a summarization assistant. Summarize the following incomplete model output concisely. Output ONLY a summary block with your summary. Do not include any other text."
+	var state generators.State
+	state = generators.NewPrompts(systemPrompt, []*generators.Content{
+		{
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.Text(incompleteText),
+			},
+		},
+	})
+	var buf bytes.Buffer
+	state = generators.NewOutput(state, &buf, false)
+	options := &generators.GenerateOptions{
+		NonStreaming: true,
+	}
+	_, err := generator.Generate(ctx, state, options)
+	if err != nil {
+		return "", fmt.Errorf("summarization call failed: %w", err)
+	}
+	outputText := buf.String()
+	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(outputText))
+	if err != nil || !ok || block.Kind != "summary" {
+		// Fallback: use the entire output as summary
+		return outputText, nil
+	}
+	return block.Body, nil
+}
+
 // reconcileParserState updates the *ParserState inside state with the
 // currentParserState (which has consumed blocks removed) while preserving
 // the upstream from state (which may have new content appended during block
@@ -156,17 +217,31 @@ TheoryOfGenerateRetry) which handles transient API errors; this retry handles
 successful-but-incomplete output.
 `
 
-// runPhaseWithRetry executes a phase and retries if no completion-signal block
-// (summary or finish) is produced (indicating truncated output), up to
-// maxRetriesForMissingSummary times. It returns the final phase result,
-// extracted summaries, and the currentParserState with summary blocks consumed.
-// See TheoryOfSummaryCompletionRetry.
+const TheoryOfIncompleteOutputSummarization = `
+When a generation round produces incomplete output (no summary or finish block),
+the partial output is summarized via a separate model call before retrying.
+The summary provides context about what was partially generated, and more
+importantly, changes the input to the model so that the retry attempt produces
+a different output rather than repeating the same truncation. Without input
+change, the model may produce identical truncated output on retry, leading to
+an infinite loop. The summary is requested via a summary block in the
+summarization prompt, and the parsed summary text is appended as a user message
+to the original state before retrying. This keeps the main conversation history
+clean while injecting the condensed context.
+The summary is prefixed with an explanatory note informing the model that the
+previous output was truncated and that this is a retry, so the model can
+distinguish a retry from a fresh request and adjust its behavior accordingly.
+`
+
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
+
 func runPhaseWithRetry(
 	ctx context.Context,
 	phase phases.Phase,
 	stateBeforePhase generators.State,
 	fallbackParserState *blocks.ParserState,
 	logger logs.Logger,
+	summarize func(incompleteText string) (string, error),
 ) (
 	newPhase phases.Phase,
 	newState generators.State,
@@ -174,8 +249,9 @@ func runPhaseWithRetry(
 	summaries []string,
 	currentParserState *blocks.ParserState,
 ) {
+	currentState := stateBeforePhase
 	for retryCount := 0; ; retryCount++ {
-		newPhase, newState, phaseErr = phase(ctx, stateBeforePhase)
+		newPhase, newState, phaseErr = phase(ctx, currentState)
 		if phaseErr != nil {
 			return
 		}
@@ -208,6 +284,30 @@ func runPhaseWithRetry(
 				"retries", retryCount+1)
 			return
 		}
+
+		// Summarize incomplete output before retrying to change the input
+		// and provide context. See TheoryOfIncompleteOutputSummarization.
+		if summarize != nil {
+			incompleteText := extractIncompleteOutput(newState, countContents(currentState))
+			if incompleteText != "" {
+				summaryText, err := summarize(incompleteText)
+				if err != nil {
+					logger.Info("summarization failed, retrying without summary", "error", err)
+				} else if summaryText != "" {
+					var appendErr error
+					currentState, appendErr = currentState.AppendContent(&generators.Content{
+						Role: generators.RoleUser,
+						Parts: []generators.Part{
+							generators.Text(incompleteOutputSummaryPrefix + summaryText),
+						},
+					})
+					if appendErr != nil {
+						logger.Info("failed to append summary to state, retrying without", "error", appendErr)
+					}
+				}
+			}
+		}
+
 		logger.Info("retrying generation round: no completion block detected (likely truncated output)",
 			"retry", retryCount+1, "max", maxRetriesForMissingSummary)
 	}
@@ -403,6 +503,13 @@ func (Module) Generate(
 			printRoundStats(os.Stdout, roundStats)
 		}()
 
+		// summarize is a closure that captures the generator for use by
+		// runPhaseWithRetry when incomplete output needs condensation.
+		// See TheoryOfIncompleteOutputSummarization.
+		summarize := func(incompleteText string) (string, error) {
+			return summarizeIncompleteOutput(ctx, generator, incompleteText)
+		}
+
 		for phase != nil {
 			stateBeforePhase := state
 			prevContentCount := countContents(stateBeforePhase)
@@ -412,7 +519,7 @@ func (Module) Generate(
 			// truncated; retry from the original state (safe because State
 			// is immutable). See TheoryOfSummaryCompletionRetry.
 			newPhase, newState, phaseErr, summaries, currentParserState := runPhaseWithRetry(
-				ctx, phase, stateBeforePhase, parserState, logger,
+				ctx, phase, stateBeforePhase, parserState, logger, summarize,
 			)
 
 			if phaseErr != nil {

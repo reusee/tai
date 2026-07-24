@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/reusee/tai/blocks"
@@ -36,7 +37,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -73,7 +74,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -112,7 +113,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, _, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil,
 		)
 		if len(statesSeen) != 2 {
 			t.Fatalf("expected 2 state observations, got %d", len(statesSeen))
@@ -144,7 +145,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -169,7 +170,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil,
 		)
 		if phaseErr != expectedErr {
 			t.Fatalf("expected error %v, got %v", expectedErr, phaseErr)
@@ -201,7 +202,7 @@ func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
 	}
 
 	_, _, phaseErr, _, _ := runPhaseWithRetry(
-		context.Background(), phase, initialParserState, initialParserState, logger,
+		context.Background(), phase, initialParserState, initialParserState, logger, nil,
 	)
 	if phaseErr != nil {
 		t.Fatalf("unexpected error: %v", phaseErr)
@@ -209,4 +210,179 @@ func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
 	if callCount != 1 {
 		t.Fatalf("expected 1 call (no retry when finish block present), got %d", callCount)
 	}
+}
+
+func TestRunPhaseWithRetrySummarization(t *testing.T) {
+	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	t.Run("SummarizeAndRetry", func(t *testing.T) {
+		baseState := generators.NewPrompts("", nil)
+		initialParserState := blocks.NewParserState(baseState)
+
+		var summarizeCalls []string
+		summarize := func(incompleteText string) (string, error) {
+			summarizeCalls = append(summarizeCalls, incompleteText)
+			return "summary of incomplete output", nil
+		}
+
+		var phaseCalls int
+		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			phaseCalls++
+			// First call: return incomplete output (no summary block)
+			if phaseCalls == 1 {
+				newState, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleAssistant,
+					Parts: []generators.Part{
+						generators.Text("partial output without summary"),
+					},
+				})
+				if err != nil {
+					return nil, state, err
+				}
+				return nil, newState, nil
+			}
+			// Second call: return a summary block to signal completion
+			newState, err := state.AppendContent(&generators.Content{
+				Role: generators.RoleAssistant,
+				Parts: []generators.Part{
+					generators.Text(":::徕珑 <summary>\nDone after retry.\n:::徕珑 </summary>\n"),
+				},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			return nil, newState, nil
+		}
+
+		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+		)
+		if phaseErr != nil {
+			t.Fatalf("unexpected error: %v", phaseErr)
+		}
+		if phaseCalls != 2 {
+			t.Fatalf("expected 2 phase calls, got %d", phaseCalls)
+		}
+		if len(summarizeCalls) != 1 {
+			t.Fatalf("expected 1 summarize call, got %d", len(summarizeCalls))
+		}
+		if len(summaries) != 1 {
+			t.Fatalf("expected 1 summary, got %d", len(summaries))
+		}
+	})
+
+	t.Run("SummarizeAddsToState", func(t *testing.T) {
+		baseState := generators.NewPrompts("", nil)
+		initialParserState := blocks.NewParserState(baseState)
+
+		var stateReceivedOnRetry generators.State
+		summarize := func(incompleteText string) (string, error) {
+			return "the summary", nil
+		}
+
+		var phaseCalls int
+		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			phaseCalls++
+			if phaseCalls == 1 {
+				newState, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleAssistant,
+					Parts: []generators.Part{
+						generators.Text("incomplete"),
+					},
+				})
+				if err != nil {
+					return nil, state, err
+				}
+				return nil, newState, nil
+			}
+			stateReceivedOnRetry = state
+			newState, err := state.AppendContent(&generators.Content{
+				Role: generators.RoleAssistant,
+				Parts: []generators.Part{
+					generators.Text(":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"),
+				},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			return nil, newState, nil
+		}
+
+		_, _, phaseErr, _, _ := runPhaseWithRetry(
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+		)
+		if phaseErr != nil {
+			t.Fatalf("unexpected error: %v", phaseErr)
+		}
+		if phaseCalls != 2 {
+			t.Fatalf("expected 2 phase calls, got %d", phaseCalls)
+		}
+		// The state on retry should contain the summary prefix and the summary text.
+		foundPrefix := false
+		foundSummary := false
+		for c := range stateReceivedOnRetry.Contents() {
+			for _, p := range c.Parts {
+				if t, ok := p.(generators.Text); ok {
+					if strings.Contains(string(t), incompleteOutputSummaryPrefix) {
+						foundPrefix = true
+					}
+					if strings.Contains(string(t), "the summary") {
+						foundSummary = true
+					}
+				}
+			}
+		}
+		if !foundPrefix {
+			t.Fatal("state on retry should contain the summary prefix")
+		}
+		if !foundSummary {
+			t.Fatal("state on retry should contain the summary text")
+		}
+	})
+
+	t.Run("SummarizeErrorFallsBack", func(t *testing.T) {
+		baseState := generators.NewPrompts("", nil)
+		initialParserState := blocks.NewParserState(baseState)
+
+		summarize := func(incompleteText string) (string, error) {
+			return "", fmt.Errorf("summarization failed")
+		}
+
+		var phaseCalls int
+		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			phaseCalls++
+			if phaseCalls == 1 {
+				newState, err := state.AppendContent(&generators.Content{
+					Role: generators.RoleAssistant,
+					Parts: []generators.Part{
+						generators.Text("incomplete"),
+					},
+				})
+				if err != nil {
+					return nil, state, err
+				}
+				return nil, newState, nil
+			}
+			newState, err := state.AppendContent(&generators.Content{
+				Role: generators.RoleAssistant,
+				Parts: []generators.Part{
+					generators.Text(":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"),
+				},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			return nil, newState, nil
+		}
+
+		_, _, phaseErr, _, _ := runPhaseWithRetry(
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+		)
+		if phaseErr != nil {
+			t.Fatalf("unexpected error: %v", phaseErr)
+		}
+		if phaseCalls != 2 {
+			t.Fatalf("expected 2 phase calls (retry without summary), got %d", phaseCalls)
+		}
+	})
 }
