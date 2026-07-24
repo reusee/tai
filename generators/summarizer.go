@@ -47,8 +47,6 @@ func NewSummarizer(generator Generator) *Summarizer {
 
 // Summarize sends the accumulated thoughts to the underlying generator with
 // the summarization system prompt and returns the condensed summary text.
-// Non-streaming mode is used because summaries are short and the complete
-// result is needed before writing to the output writer.
 func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, error) {
 	state := NewPrompts(SummarizeSystemPrompt, []*Content{
 		{
@@ -59,9 +57,7 @@ func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, er
 		},
 	})
 
-	result, err := s.generator.Generate(ctx, state, &GenerateOptions{
-		NonStreaming: true,
-	})
+	result, err := s.generator.Generate(ctx, state, &GenerateOptions{})
 	if err != nil {
 		return "", err
 	}
