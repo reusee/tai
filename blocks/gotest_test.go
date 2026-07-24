@@ -37,6 +37,9 @@ func TestProcessGoTestBlocks(t *testing.T) {
 			t.Fatalf("expected 1 part for failing tests, got %d", len(parts))
 		}
 		output := string(parts[0].(generators.Text))
+		if !strings.Contains(output, "Working directory:") {
+			t.Fatalf("expected output to contain 'Working directory:', got: %s", output)
+		}
 		if !strings.Contains(output, "Go test command:") {
 			t.Fatalf("expected output to contain 'Go test command:', got: %s", output)
 		}

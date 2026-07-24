@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -30,6 +31,17 @@ The block body contains optional arguments passed to go test. If the body is
 empty, all tests in the current directory tree (./...) are run. The body is
 passed to sh -c as "go test <body>" to handle quoted arguments and shell
 expansion correctly.
+
+The model does not know the current working directory, so relative path
+arguments (e.g., ./pkg/...) are error-prone: the model may guess the wrong
+relative path and test the wrong package or no package at all. The test
+output includes the working directory so the model can construct correct
+absolute paths (e.g., /home/user/project/pkg/...) for subsequent runs.
+When the model does not yet know the working directory, it should use an
+empty body to run all tests (./...), which does not require knowing the
+directory. After the first test run, the working directory is available in
+the output and the model should switch to absolute paths for specific
+package tests.
 
 The go-test block is not a completion signal. The summary and finish blocks
 are completion signals for each round (see TheoryOfSummaryCompletionRetry in
@@ -64,7 +76,8 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
-- The body contains optional arguments passed to go test (e.g., -run TestFoo, -v, ./pkg/...). If empty, all tests in the current directory tree (./...) are run.
+- The body contains optional arguments passed to go test (e.g., -run TestFoo, -v, /absolute/path/to/pkg/...). If empty, all tests in the current directory tree (./...) are run.
+- **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
 - Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
@@ -76,6 +89,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 :::<boundary> <go-test>
 <optional go test arguments>
 :::<boundary> </go-test>
+- **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
@@ -84,7 +98,9 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 const goTestTimeout = 120 * time.Second
 
 // executeGoTest runs `go test` with the given arguments and returns the
-// output and whether the tests failed.
+// output and whether the tests failed. The working directory is determined
+// via os.Getwd and included in the output so the model can construct
+// absolute paths for subsequent test runs. See TheoryOfGoTestBlocks.
 func executeGoTest(ctx context.Context, args string) (string, bool) {
 	cmdCtx, cancel := context.WithTimeout(ctx, goTestTimeout)
 	defer cancel()
@@ -94,18 +110,31 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 		cmdStr = "go test " + args
 	}
 
+	// Determine the working directory so it can be included in the output.
+	// The model does not know the current directory, so relative paths in
+	// test commands are error-prone. Including the working directory lets
+	// the model construct absolute paths for subsequent test runs.
+	// See TheoryOfGoTestBlocks.
+	workDir, dirErr := os.Getwd()
+	if dirErr != nil {
+		workDir = "(unknown)"
+	}
+
 	cmd := exec.CommandContext(cmdCtx, "sh", "-c", cmdStr)
+	if dirErr == nil {
+		cmd.Dir = workDir
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
-		return fmt.Sprintf("Go test command: %s\n\nCommand failed with error: %v\nStdout:\n%s\nStderr:\n%s",
-			cmdStr, err, stdout.String(), stderr.String()), true
+		return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand failed with error: %v\nStdout:\n%s\nStderr:\n%s",
+			workDir, cmdStr, err, stdout.String(), stderr.String()), true
 	}
-	return fmt.Sprintf("Go test command: %s\n\nCommand succeeded.\nStdout:\n%s\nStderr:\n%s",
-		cmdStr, stdout.String(), stderr.String()), false
+	return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand succeeded.\nStdout:\n%s\nStderr:\n%s",
+		workDir, cmdStr, stdout.String(), stderr.String()), false
 }
 
 // ProcessGoTestBlocks pops all go-test blocks from parserState, runs the
