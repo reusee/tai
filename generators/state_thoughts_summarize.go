@@ -53,12 +53,33 @@ var _ State = ThoughtsSummarize{}
 func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 	ret := s // copy
 
-	// Accumulate Thought parts from incoming content. Non-thought parts
-	// pass through unchanged to upstream.
+	// Check if the incoming content contains any Thought parts, and
+	// accumulate Thought parts. Non-thought parts pass through unchanged
+	// to upstream.
+	hasThought := false
 	for _, part := range content.Parts {
 		if thought, ok := part.(Thought); ok {
+			hasThought = true
 			ret.accumulated += string(thought)
 		}
+	}
+
+	// When the incoming content does not contain thoughts and there are
+	// accumulated thoughts from previous content, flush the accumulated
+	// thoughts immediately. This ensures the thought summary appears
+	// before the main text output, not after it. All accumulated text is
+	// summarized (not just complete paragraphs) because the thought
+	// stream has ended.
+	if !hasThought && len(ret.accumulated) > 0 {
+		summary, err := ret.summarizer.Summarize(ret.ctx, ret.accumulated)
+		if err != nil {
+			return ret, err
+		}
+		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
+			return ret, err
+		}
+		ret.accumulated = ""
+		ret.lastSummarize = time.Now()
 	}
 
 	// Periodically summarize accumulated thoughts. The interval check

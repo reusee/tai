@@ -298,8 +298,8 @@ func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 	}
 
 	// Wait for interval, then trigger summarization with a non-thought
-	// content. The periodic check summarizes "first thought" (accumulated
-	// from before) and resets accumulated to empty.
+	// content. The flush-on-non-thought summarizes "first thought"
+	// (accumulated from before) and resets accumulated to empty.
 	time.Sleep(5 * time.Millisecond)
 	state, err = state.AppendContent(&Content{
 		Role:  RoleUser,
@@ -323,7 +323,7 @@ func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 	}
 
 	// Flush should summarize only "second thought" (the new thought
-	// accumulated after the periodic summarization reset).
+	// accumulated after the flush-on-non-thought reset).
 	state, err = state.Flush()
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,9 @@ func TestThoughtsSummarizeSplitsAtParagraphBoundary(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	// Trigger summarization with a non-thought content
+	// Non-thought content triggers a full flush of all accumulated
+	// thoughts, regardless of paragraph boundaries, because the thought
+	// stream has ended.
 	state, err = state.AppendContent(&Content{
 		Role:  RoleUser,
 		Parts: []Part{Text("trigger")},
@@ -363,21 +365,18 @@ func TestThoughtsSummarizeSplitsAtParagraphBoundary(t *testing.T) {
 	if gen.calls != 1 {
 		t.Fatalf("expected 1 call, got %d", gen.calls)
 	}
-	// Only the complete paragraph should have been summarized
-	if gen.lastInput != "complete paragraph\n\n" {
-		t.Fatalf("expected only complete paragraph, got %q", gen.lastInput)
+	// All accumulated text is summarized when non-thought content arrives
+	if gen.lastInput != "complete paragraph\n\nincomplete sent" {
+		t.Fatalf("expected all accumulated text, got %q", gen.lastInput)
 	}
 
-	// The remaining "incomplete sent" should be summarized on flush
+	// Flush with no remaining thoughts should not summarize again
 	state, err = state.Flush()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gen.calls != 2 {
-		t.Fatalf("expected 2 calls after flush, got %d", gen.calls)
-	}
-	if gen.lastInput != "incomplete sent" {
-		t.Fatalf("expected remaining text on flush, got %q", gen.lastInput)
+	if gen.calls != 1 {
+		t.Fatalf("expected 1 call after flush (no remaining), got %d", gen.calls)
 	}
 }
 
@@ -400,7 +399,9 @@ func TestThoughtsSummarizeDefersWithoutParagraphBoundary(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	// Trigger summarization attempt with a non-thought content
+	// Non-thought content triggers a full flush of accumulated thoughts,
+	// regardless of paragraph boundaries, because the thought stream
+	// has ended.
 	state, err = state.AppendContent(&Content{
 		Role:  RoleUser,
 		Parts: []Part{Text("trigger")},
@@ -408,18 +409,17 @@ func TestThoughtsSummarizeDefersWithoutParagraphBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Summarization should be deferred because there's no paragraph boundary
-	if gen.calls != 0 {
-		t.Fatalf("expected 0 calls (deferred), got %d", gen.calls)
+	if gen.calls != 1 {
+		t.Fatalf("expected 1 call (flushed on non-thought), got %d", gen.calls)
 	}
 
-	// Flush should summarize all remaining text regardless of boundaries
+	// Flush with no remaining thoughts should not summarize again
 	state, err = state.Flush()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gen.calls != 1 {
-		t.Fatalf("expected 1 call on flush, got %d", gen.calls)
+		t.Fatalf("expected 1 call after flush (no remaining), got %d", gen.calls)
 	}
 }
 
@@ -499,5 +499,55 @@ func TestThoughtsSummarizeFunctionsDelegate(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "test" {
 		t.Fatalf("expected function 'test', got %v", names)
+	}
+}
+
+func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
+	gen := &mockSummarizerGenerator{summary: "flushed summary"}
+	summarizer := NewSummarizer(gen)
+	buf := new(bytes.Buffer)
+
+	upstream := NewPrompts("", nil)
+	// Long interval so periodic summarization doesn't trigger
+	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+
+	// Accumulate thoughts
+	state, err := state.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Thought("some thinking")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 0 {
+		t.Fatalf("expected 0 calls before non-thought content, got %d", gen.calls)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected empty buffer, got %q", buf.String())
+	}
+
+	// Non-thought content triggers immediate flush of accumulated thoughts,
+	// ensuring the summary appears before the main text output.
+	state, err = state.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Text("the answer")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 1 {
+		t.Fatalf("expected 1 call after non-thought content, got %d", gen.calls)
+	}
+	if !strings.Contains(buf.String(), "flushed summary") {
+		t.Fatalf("expected flushed summary in buffer, got %q", buf.String())
+	}
+
+	// Flush should not summarize again (accumulated was cleared)
+	state, err = state.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 1 {
+		t.Fatalf("expected 1 call after flush, got %d", gen.calls)
 	}
 }

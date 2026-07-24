@@ -14,9 +14,12 @@ summarizing at a configurable interval (default 3 seconds), enabling users to
 quickly assess whether the model's thinking direction is correct and interrupt
 early if it diverges. When the interval elapses, only complete paragraphs are
 summarized; any incomplete trailing text is retained for the next cycle to avoid
-sending truncated sentences to the summarizer. A separate, typically cheaper and
-faster generator is used for summarization to minimize latency and cost. The
-GetDefaultSummarizer provider wires the default fast model (obtained via
+sending truncated sentences to the summarizer. When non-thought content (e.g.,
+the model's final answer) arrives, all accumulated thoughts are flushed
+immediately regardless of interval or paragraph boundaries, ensuring the summary
+appears before the main text output rather than after it. A separate, typically
+cheaper and faster generator is used for summarization to minimize latency and
+cost. The GetDefaultSummarizer provider wires the default fast model (obtained via
 GetDefaultFastModel) into a Summarizer, so production code can obtain a summarizer
 without manually selecting a model. On Flush, any remaining accumulated thoughts
 are summarized before propagating the flush upstream. The summarization system
