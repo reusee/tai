@@ -6,12 +6,15 @@ const TheoryOfFullThoughts = `
 When thoughts are displayed, the default behavior uses ThoughtsSummarize to
 condense reasoning traces into periodic summaries, enabling users to quickly
 assess the model's thinking direction without being overwhelmed by raw
-thought streams. The -full-thoughts flag opts into raw thought display,
-bypassing summarization for users who need the complete reasoning trace.
-This flag only has effect when thoughts are already enabled; when thoughts
-are disabled, -full-thoughts has no effect. The two flags are orthogonal:
--thoughts controls whether thoughts are shown at all, while -full-thoughts
-controls the presentation format (summarized vs raw) when they are shown.
+thought streams. The summarizer uses the fast model (configured via
+fast_model or fast_model_name in tai.cue) via GetDefaultSummarizer, not the
+main generation model, to minimize latency and cost. The -full-thoughts flag
+opts into raw thought display, bypassing summarization for users who need the
+complete reasoning trace. This flag only has effect when thoughts are already
+enabled; when thoughts are disabled, -full-thoughts has no effect. The two
+flags are orthogonal: -thoughts controls whether thoughts are shown at all,
+while -full-thoughts controls the presentation format (summarized vs raw)
+when they are shown.
 `
 
 // FullThoughts controls whether raw reasoning thoughts are displayed

@@ -220,14 +220,17 @@ successful-but-incomplete output.
 const TheoryOfIncompleteOutputSummarization = `
 When a generation round produces incomplete output (no summary or finish block),
 the partial output is summarized via a separate model call before retrying.
-The summary provides context about what was partially generated, and more
-importantly, changes the input to the model so that the retry attempt produces
-a different output rather than repeating the same truncation. Without input
-change, the model may produce identical truncated output on retry, leading to
-an infinite loop. The summary is requested via a summary block in the
-summarization prompt, and the parsed summary text is appended as a user message
-to the original state before retrying. This keeps the main conversation history
-clean while injecting the condensed context.
+The fast model (configured via fast_model or fast_model_name in tai.cue) is
+used for this summarization via GetDefaultFastModel, not the main generation
+model, to minimize latency and cost. The summary provides context about what
+was partially generated, and more importantly, changes the input to the model
+so that the retry attempt produces a different output rather than repeating
+the same truncation. Without input change, the model may produce identical
+truncated output on retry, leading to an infinite loop. The summary is
+requested via a summary block in the summarization prompt, and the parsed
+summary text is appended as a user message to the original state before
+retrying. This keeps the main conversation history clean while injecting the
+condensed context.
 The summary is prefixed with an explanatory note informing the model that the
 previous output was truncated and that this is a retry, so the model can
 distinguish a retry from a fresh request and adjust its behavior accordingly.
@@ -320,6 +323,8 @@ func (Module) Generate(
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
+	getDefaultSummarizer generators.GetDefaultSummarizer,
+	getDefaultFastModel generators.GetDefaultFastModel,
 	buildGenerate phases.BuildGenerate,
 	maxTokens taiconfigs.MaxTokens,
 	buildChat phases.BuildChat,
@@ -466,9 +471,15 @@ func (Module) Generate(
 		// When thoughts are shown, use ThoughtsSummarize by default to
 		// condense reasoning traces into periodic summaries. The
 		// -full-thoughts flag opts into raw thought display, bypassing
-		// summarization. See TheoryOfFullThoughts.
+		// summarization. The summarizer uses the fast model (configured
+		// via fast_model in tai.cue) via GetDefaultSummarizer to minimize
+		// latency and cost. See TheoryOfFullThoughts and
+		// generators.TheoryOfThoughtsSummarize.
 		if showThoughts && !bool(fullThoughts) {
-			summarizer := generators.NewSummarizer(generator)
+			summarizer, err := getDefaultSummarizer()
+			if err != nil {
+				return err
+			}
 			state = generators.NewOutput(state, output, false)
 			state = generators.NewThoughtsSummarize(ctx, state, summarizer, output)
 		} else {
@@ -516,11 +527,20 @@ func (Module) Generate(
 			printRoundStats(os.Stdout, roundStats)
 		}()
 
-		// summarize is a closure that captures the generator for use by
+		// Get the fast model for summarization tasks. The fast model
+		// (configured via fast_model or fast_model_name in tai.cue) is used
+		// for incomplete output summarization to minimize latency and cost.
+		// See TheoryOfIncompleteOutputSummarization.
+		fastModel, err := getDefaultFastModel()
+		if err != nil {
+			return err
+		}
+
+		// summarize is a closure that captures the fast model for use by
 		// runPhaseWithRetry when incomplete output needs condensation.
 		// See TheoryOfIncompleteOutputSummarization.
 		summarize := func(incompleteText string) (string, error) {
-			return summarizeIncompleteOutput(ctx, generator, incompleteText)
+			return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 		}
 
 		for phase != nil {
