@@ -331,7 +331,7 @@ func (Module) Generate(
 	tap debugs.Tap,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
-	fullThoughts FullThoughts,
+	summarizeThoughts generators.SummarizeThoughts,
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
@@ -468,14 +468,14 @@ func (Module) Generate(
 			showThoughts = *flagThoughts.Value
 		}
 
-		// When thoughts are shown, use ThoughtsSummarize by default to
-		// condense reasoning traces into periodic summaries. The
-		// -full-thoughts flag opts into raw thought display, bypassing
-		// summarization. The summarizer uses the fast model (configured
-		// via fast_model in tai.cue) via GetDefaultSummarizer to minimize
-		// latency and cost. See TheoryOfFullThoughts and
-		// generators.TheoryOfThoughtsSummarize.
-		if showThoughts && !bool(fullThoughts) {
+		// By default, raw thoughts are displayed to the user. The
+		// -summarize-thoughts flag enables periodic summarization of
+		// reasoning traces via ThoughtsSummarize, using the fast model
+		// (configured via fast_model in tai.cue) via GetDefaultSummarizer
+		// to minimize latency and cost. The -thoughts flag controls
+		// whether thoughts are shown at all.
+		// See generators.TheoryOfThoughtsSummarize.
+		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
 				return err
