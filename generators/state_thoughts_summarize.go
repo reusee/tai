@@ -51,6 +51,16 @@ func NewThoughtsSummarize(
 var _ State = ThoughtsSummarize{}
 
 func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
+	if s.summarizer == nil {
+		ret := s
+		var err error
+		ret.upstream, err = s.upstream.AppendContent(content)
+		if err != nil {
+			return ret, err
+		}
+		return ret, nil
+	}
+
 	ret := s // copy
 
 	// Check if the incoming content contains any Thought parts, and
@@ -127,6 +137,16 @@ func (s ThoughtsSummarize) SystemPrompt() string {
 }
 
 func (s ThoughtsSummarize) Flush() (State, error) {
+	if s.summarizer == nil {
+		ret := s
+		var err error
+		ret.upstream, err = s.upstream.Flush()
+		if err != nil {
+			return ret, err
+		}
+		return ret, nil
+	}
+
 	ret := s // copy
 
 	// Summarize any remaining accumulated thoughts before flushing.

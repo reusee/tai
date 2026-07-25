@@ -54,8 +54,12 @@ type GetDefaultSummarizer func() (*Summarizer, error)
 
 func (Module) GetDefaultSummarizer(
 	getDefaultFastModel GetDefaultFastModel,
+	enable SummarizeThoughts,
 ) GetDefaultSummarizer {
 	return func() (*Summarizer, error) {
+		if !enable {
+			return nil, nil
+		}
 		gen, err := getDefaultFastModel()
 		if err != nil {
 			return nil, err

@@ -551,3 +551,35 @@ func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
 		t.Fatalf("expected 1 call after flush, got %d", gen.calls)
 	}
 }
+
+func TestThoughtsSummarizeNilSummarizer(t *testing.T) {
+	buf := new(bytes.Buffer)
+	upstream := NewPrompts("", nil)
+	// Create with nil summarizer
+	var state State = NewThoughtsSummarize(context.Background(), upstream, nil, buf)
+
+	// Append content should pass through without error
+	var err error
+	state, err = state.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Thought("thinking"), Text("answer")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Flush should pass through
+	state, err = state.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Contents should be accessible
+	var contents []*Content
+	for c := range state.Contents() {
+		contents = append(contents, c)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("expected 1 content, got %d", len(contents))
+	}
+}

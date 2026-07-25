@@ -44,8 +44,31 @@ func TestGetDefaultSummarizer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if summarizer != nil {
+			t.Fatal("expected nil summarizer by default")
+		}
+	})
+}
+
+func TestGetDefaultSummarizerEnabled(t *testing.T) {
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() SummarizeThoughts {
+			return true
+		},
+	).Call(func(
+		getDefaultSummarizer GetDefaultSummarizer,
+	) {
+		summarizer, err := getDefaultSummarizer()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if summarizer == nil {
-			t.Fatal("expected non-nil summarizer")
+			t.Fatal("expected non-nil summarizer when enabled")
 		}
 	})
 }
