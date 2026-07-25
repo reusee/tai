@@ -12,10 +12,6 @@ import (
 
 type MaxTokens int
 
-var _ configs.Configurable = MaxTokens(0)
-
-func (m MaxTokens) TaigoConfigurable() {}
-
 func (Module) MaxTokens(
 	loader configs.Loader,
 	maxTokensFlag MaxTokensFlag,

@@ -7,10 +7,6 @@ import (
 
 type NoTests bool
 
-var _ configs.Configurable = NoTests(true)
-
-func (n NoTests) TaigoConfigurable() {}
-
 var _ flags.Flag = NoTests(true)
 
 func (n NoTests) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

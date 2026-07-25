@@ -8,11 +8,6 @@ import (
 
 type Envs []string
 
-var _ configs.Configurable = Envs(nil)
-
-func (e Envs) TaigoConfigurable() {
-}
-
 func (Module) Envs(
 	loader configs.Loader,
 ) (ret Envs) {

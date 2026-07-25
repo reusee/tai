@@ -77,11 +77,6 @@ type Transformed struct {
 
 type MaxPackageDistanceFromRoot int
 
-var _ configs.Configurable = MaxPackageDistanceFromRoot(0)
-
-func (m MaxPackageDistanceFromRoot) TaigoConfigurable() {
-}
-
 func (Module) MaxPackageDistanceFromRoot(
 	loader configs.Loader,
 ) MaxPackageDistanceFromRoot {

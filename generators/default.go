@@ -21,11 +21,6 @@ func (Module) GetDefaultGenerator(
 
 type DefaultModelName string
 
-var _ configs.Configurable = DefaultModelName("")
-
-func (d DefaultModelName) TaigoConfigurable() {
-}
-
 func (Module) DefaultModelName(
 	loader configs.Loader,
 	fallback FallbackModelName,
@@ -64,11 +59,6 @@ func (Module) GetDefaultFastModel(
 }
 
 type DefaultFastModelName string
-
-var _ configs.Configurable = DefaultFastModelName("")
-
-func (d DefaultFastModelName) TaigoConfigurable() {
-}
 
 func (Module) DefaultFastModelName(
 	loader configs.Loader,

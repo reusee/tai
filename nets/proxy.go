@@ -15,10 +15,6 @@ import (
 
 type ProxyAddr string
 
-var _ configs.Configurable = ProxyAddr("")
-
-func (p ProxyAddr) TaigoConfigurable() {}
-
 func (Module) ProxyAddr(
 	mode modes.Mode,
 	loader configs.Loader,

@@ -55,10 +55,6 @@ Pick only the most essential points. Do not be exhaustive. The user reads this t
 // -thoughts-summarize-language command-line flag.
 type ThoughtsSummarizeLanguage string
 
-var _ configs.Configurable = ThoughtsSummarizeLanguage("")
-
-func (l ThoughtsSummarizeLanguage) TaigoConfigurable() {}
-
 var _ flags.Flag = ThoughtsSummarizeLanguage("")
 
 func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {

@@ -36,10 +36,6 @@ func (Module) NameMatch(
 
 type Match string
 
-var _ configs.Configurable = Match("")
-
-func (m Match) TaigoConfigurable() {}
-
 func (Module) Match(
 	loader configs.Loader,
 	flagMatch flags.Match,

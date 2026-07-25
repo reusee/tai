@@ -22,55 +22,6 @@ type (
 	BedrockAPIKey    string
 )
 
-func (v VercelAPIKey) TaigoConfigurable() {
-}
-
-func (z ZhipuAPIKey) TaigoConfigurable() {
-}
-
-func (a AliyunAPIKey) TaigoConfigurable() {
-}
-
-func (t TencentAPIKey) TaigoConfigurable() {
-}
-
-func (o OpenRouterAPIKey) TaigoConfigurable() {
-}
-
-func (d DeepseekAPIKey) TaigoConfigurable() {
-}
-
-func (b BaiduAPIKey) TaigoConfigurable() {
-}
-
-func (h HuoshanAPIKey) TaigoConfigurable() {
-}
-
-func (g GoogleAPIKey) TaigoConfigurable() {
-}
-
-func (NvidiaAPIKey) TaigoConfigurable() {
-}
-
-func (AzureAPIKey) TaigoConfigurable() {
-}
-
-func (BedrockAPIKey) TaigoConfigurable() {
-}
-
-var (
-	_ configs.Configurable = GoogleAPIKey("")
-	_ configs.Configurable = HuoshanAPIKey("")
-	_ configs.Configurable = BaiduAPIKey("")
-	_ configs.Configurable = DeepseekAPIKey("")
-	_ configs.Configurable = OpenRouterAPIKey("")
-	_ configs.Configurable = TencentAPIKey("")
-	_ configs.Configurable = AliyunAPIKey("")
-	_ configs.Configurable = ZhipuAPIKey("")
-	_ configs.Configurable = VercelAPIKey("")
-	_ configs.Configurable = NvidiaAPIKey("")
-)
-
 func (Module) GoogleAPIKey(
 	loader configs.Loader,
 ) GoogleAPIKey {
@@ -182,11 +133,6 @@ func (Module) BedrockAPIKey(
 }
 
 type OpenCodeGoAPIKey string
-
-var _ configs.Configurable = OpenCodeGoAPIKey("")
-
-func (OpenCodeGoAPIKey) TaigoConfigurable() {
-}
 
 func (Module) OpenCodeGoAPIKey(
 	loader configs.Loader,

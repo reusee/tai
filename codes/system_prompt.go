@@ -269,10 +269,6 @@ The task list should clearly distinguish:
 
 type ExtraSystemPrompt string
 
-var _ configs.Configurable = ExtraSystemPrompt("")
-
-func (e ExtraSystemPrompt) TaigoConfigurable() {}
-
 func (Module) ExtraSystemPrompt(
 	loader configs.Loader,
 ) ExtraSystemPrompt {

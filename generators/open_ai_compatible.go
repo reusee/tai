@@ -15,11 +15,6 @@ func (Module) AzureEndpoint(
 
 type AzureAPIVersion string
 
-var _ configs.Configurable = AzureAPIVersion("")
-
-func (a AzureAPIVersion) TaigoConfigurable() {
-}
-
 func (Module) AzureAPIVersion(
 	loader configs.Loader,
 ) AzureAPIVersion {
@@ -29,13 +24,7 @@ func (Module) AzureAPIVersion(
 	return "2024-05-01-preview"
 }
 
-func (o OpenRouterEndpoint) TaigoConfigurable() {
-}
-
 type AzureEndpoint string
-
-func (a AzureEndpoint) TaigoConfigurable() {
-}
 
 func (Module) OpenRouterEndpoint(
 	loader configs.Loader,

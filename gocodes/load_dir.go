@@ -11,10 +11,6 @@ import (
 
 type LoadDir string
 
-var _ configs.Configurable = LoadDir("")
-
-func (l LoadDir) TaigoConfigurable() {}
-
 var _ flags.Flag = LoadDir("")
 
 func (l LoadDir) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
