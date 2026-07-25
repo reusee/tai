@@ -62,14 +62,6 @@ func TestLoaderIterCueValues(t *testing.T) {
 		t.Fatalf("got %q", str)
 	}
 
-	strs = strs[:0]
-	for str := range All[string](loader, "str") {
-		strs = append(strs, str)
-	}
-	if str := fmt.Sprintf("%v", strs); str != "[bar foo]" {
-		t.Fatalf("got %q", str)
-	}
-
 }
 
 func TestUnknownField(t *testing.T) {

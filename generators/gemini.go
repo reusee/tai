@@ -42,6 +42,7 @@ type Gemini struct {
 	Effort          dscope.Inject[EffortFlag]
 	TemperatureFlag dscope.Inject[TemperatureFlag]
 	Debug           dscope.Inject[DebugGemini]
+	FuncDecls       dscope.Inject[FuncDecls]
 }
 
 var _ Generator = Gemini{}
@@ -135,9 +136,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		for fn := range ret.Functions() {
 			allFuncs = append(allFuncs, fn.Decl)
 		}
-		for set := range configs.All[[]FuncDecl](g.Loader(), "functions") {
-			allFuncs = append(allFuncs, set...)
-		}
+		allFuncs = append(allFuncs, g.FuncDecls()...)
 		sort.SliceStable(allFuncs, func(i, j int) bool {
 			return allFuncs[i].Name < allFuncs[j].Name
 		})

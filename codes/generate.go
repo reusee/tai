@@ -335,6 +335,7 @@ func (Module) Generate(
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
 	debug Debug,
+	funcDecls generators.FuncDecls,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -390,9 +391,7 @@ func (Module) Generate(
 			for _, fn := range diffHandler.Functions() {
 				allFuncDecls = append(allFuncDecls, fn.Decl)
 			}
-			for set := range configs.All[[]generators.FuncDecl](loader, "functions") {
-				allFuncDecls = append(allFuncDecls, set...)
-			}
+			allFuncDecls = append(allFuncDecls, funcDecls...)
 			sort.SliceStable(allFuncDecls, func(i, j int) bool {
 				return allFuncDecls[i].Name < allFuncDecls[j].Name
 			})

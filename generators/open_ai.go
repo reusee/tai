@@ -35,6 +35,7 @@ type OpenAI struct {
 	TemperatureFlag      dscope.Inject[TemperatureFlag]
 	Debug                dscope.Inject[DebugOpenAI]
 	TapFlag              dscope.Inject[TapOpenAI]
+	FuncDecls            dscope.Inject[FuncDecls]
 }
 
 var _ Generator = new(OpenAI)
@@ -71,9 +72,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		for fn := range ret.Functions() {
 			allFuncs = append(allFuncs, fn.Decl)
 		}
-		for set := range configs.All[[]FuncDecl](o.Loader(), "functions") {
-			allFuncs = append(allFuncs, set...)
-		}
+		allFuncs = append(allFuncs, o.FuncDecls()...)
 		sort.SliceStable(allFuncs, func(i, j int) bool {
 			return allFuncs[i].Name < allFuncs[j].Name
 		})
