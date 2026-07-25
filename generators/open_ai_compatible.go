@@ -7,33 +7,27 @@ import (
 
 type OpenRouterEndpoint string
 
-func (Module) AzureEndpoint(
-	loader configs.Loader,
-) AzureEndpoint {
-	return configs.First[AzureEndpoint](loader, "azure_endpoint")
+func (Module) AzureEndpoint() AzureEndpoint {
+	return AzureEndpoint("")
 }
 
 type AzureAPIVersion string
 
-func (Module) AzureAPIVersion(
-	loader configs.Loader,
-) AzureAPIVersion {
-	if version := configs.First[AzureAPIVersion](loader, "azure_api_version"); version != "" {
-		return version
-	}
+func (Module) AzureAPIVersion() AzureAPIVersion {
 	return "2024-05-01-preview"
 }
 
 type AzureEndpoint string
 
-func (Module) OpenRouterEndpoint(
-	loader configs.Loader,
-) OpenRouterEndpoint {
-	if endpoint := configs.First[OpenRouterEndpoint](loader, "openrouter_endpoint"); endpoint != "" {
-		return endpoint
-	}
+func (Module) OpenRouterEndpoint() OpenRouterEndpoint {
 	return "https://openrouter.ai/api/v1"
 }
+
+var (
+	_ configs.Config = AzureEndpoint("")
+	_ configs.Config = AzureAPIVersion("")
+	_ configs.Config = OpenRouterEndpoint("")
+)
 
 type NewOpenRouter func(sepc Spec) *OpenAI
 

@@ -2,22 +2,34 @@ package gocodes
 
 import (
 	"os"
+	"slices"
 
+	"cuelang.org/go/cue"
 	"github.com/reusee/tai/configs"
 )
 
 type Envs []string
 
-func (Module) Envs(
-	loader configs.Loader,
-) (ret Envs) {
+var _ configs.Config = Envs(nil)
+
+func (e Envs) ConfigPaths() []string {
+	return []string{"go_envs", "go.envs"}
+}
+
+func (e Envs) HandleConfig(path string, values []*cue.Value) (any, error) {
+	ret := slices.Clone(e)
+	for _, v := range values {
+		var envs []string
+		if err := v.Decode(&envs); err != nil {
+			return nil, err
+		}
+		ret = append(ret, envs...)
+	}
+	return Envs(withModModEnv(ret)), nil
+}
+
+func (Module) Envs() (ret Envs) {
 	ret = os.Environ()
-	for envs := range configs.All[Envs](loader, "go_envs") {
-		ret = append(ret, envs...)
-	}
-	for envs := range configs.All[Envs](loader, "go.envs") {
-		ret = append(ret, envs...)
-	}
 	// Ensure GOFLAGS includes -mod=mod so go list can resolve packages without
 	// requiring go.mod to be perfectly tidy. The -mod=mod flag allows go to
 	// update go.mod automatically instead of erroring.

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfThoughtsSummarize = `
@@ -55,7 +54,7 @@ Pick only the most essential points. Do not be exhaustive. The user reads this t
 // -thoughts-summarize-language command-line flag.
 type ThoughtsSummarizeLanguage string
 
-var _ flags.Flag = ThoughtsSummarizeLanguage("")
+var _ configs.Config = ThoughtsSummarizeLanguage("")
 
 func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
 	if len(args) == 0 {
@@ -70,10 +69,8 @@ func (l ThoughtsSummarizeLanguage) Keys() map[string]string {
 	}
 }
 
-func (Module) ThoughtsSummarizeLanguage(
-	loader configs.Loader,
-) ThoughtsSummarizeLanguage {
-	return configs.First[ThoughtsSummarizeLanguage](loader, "thoughts_summarize_language")
+func (Module) ThoughtsSummarizeLanguage() ThoughtsSummarizeLanguage {
+	return ThoughtsSummarizeLanguage("")
 }
 
 // Summarizer is a separate generator type dedicated to summarizing thoughts.

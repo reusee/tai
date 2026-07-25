@@ -269,11 +269,11 @@ The task list should clearly distinguish:
 
 type ExtraSystemPrompt string
 
-func (Module) ExtraSystemPrompt(
-	loader configs.Loader,
-) ExtraSystemPrompt {
-	return configs.First[ExtraSystemPrompt](loader, "extra_system_prompt")
+func (Module) ExtraSystemPrompt() ExtraSystemPrompt {
+	return ExtraSystemPrompt("")
 }
+
+var _ configs.Config = ExtraSystemPrompt("")
 
 type SystemPrompt string
 

@@ -20,7 +20,6 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/vars"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
@@ -77,14 +76,11 @@ type Transformed struct {
 
 type MaxPackageDistanceFromRoot int
 
-func (Module) MaxPackageDistanceFromRoot(
-	loader configs.Loader,
-) MaxPackageDistanceFromRoot {
-	return vars.FirstNonZero(
-		configs.First[MaxPackageDistanceFromRoot](loader, "go.max_distance"),
-		2, // default
-	)
+func (Module) MaxPackageDistanceFromRoot() MaxPackageDistanceFromRoot {
+	return 2
 }
+
+var _ configs.Config = MaxPackageDistanceFromRoot(0)
 
 type GetFiles func() ([]*File, error)
 
