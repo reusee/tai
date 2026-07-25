@@ -245,6 +245,27 @@ func TestAzureConfiguration(t *testing.T) {
 	})
 }
 
+// setTestOpenAIInjects initializes all dscope.Inject fields on an OpenAI
+// struct with safe defaults for unit tests. Tests that manually construct
+// OpenAI without going through NewOpenAI (which uses dscope.InjectStruct)
+// must call this to avoid nil pointer panics from uninitialized injects.
+func setTestOpenAIInjects(o *OpenAI) {
+	o.Logger = func() logs.Logger {
+		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	}
+	o.Tap = func() debugs.Tap {
+		return func(context.Context, string, map[string]any) {}
+	}
+	o.Count = func() BPETokenCounter {
+		return func(text string) (int, error) { return len(text), nil }
+	}
+	o.Effort = func() EffortFlag { return "" }
+	o.TemperatureFlag = func() TemperatureFlag { return TemperatureFlag{} }
+	o.Debug = func() DebugOpenAI { return false }
+	o.TapFlag = func() TapOpenAI { return false }
+	o.FuncDecls = func() FuncDecls { return nil }
+}
+
 func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 	// Text longer than 64 chars triggers the parser to flush a content
 	// chunk, causing AppendContent to be called during streaming.
@@ -293,12 +314,7 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 			server.Client(),
 		},
 	}
-	openai.Logger = func() logs.Logger {
-		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	}
-	openai.Tap = func() debugs.Tap {
-		return func(context.Context, string, map[string]any) {}
-	}
+	setTestOpenAIInjects(openai)
 
 	ret, err := openai.Generate(context.Background(), failingState, nil)
 	if err == nil {
@@ -331,12 +347,7 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 			server.Client(),
 		},
 	}
-	openai.Logger = func() logs.Logger {
-		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	}
-	openai.Tap = func() debugs.Tap {
-		return func(context.Context, string, map[string]any) {}
-	}
+	setTestOpenAIInjects(openai)
 
 	state := NewPrompts("", []*Content{
 		{Role: RoleUser, Parts: []Part{Text("hi")}},

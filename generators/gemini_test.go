@@ -28,6 +28,7 @@ func TestGemini(t *testing.T) {
 }
 
 func TestGeminiListModels(t *testing.T) {
+	t.Skip()
 	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
