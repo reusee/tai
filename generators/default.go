@@ -23,7 +23,6 @@ type DefaultModelName string
 
 func (Module) DefaultModelName(
 	loader configs.Loader,
-	fallback FallbackModelName,
 	logger logs.Logger,
 	appName apps.Name,
 	flagModelName flags.ModelName,
@@ -37,14 +36,7 @@ func (Module) DefaultModelName(
 		configs.First[DefaultModelName](loader, string(appName)+".model"),
 		configs.First[DefaultModelName](loader, "model_name"),
 		configs.First[DefaultModelName](loader, "model"),
-		DefaultModelName(fallback),
 	)
-}
-
-type FallbackModelName string
-
-func (Module) FallbackModelName() FallbackModelName {
-	return "gemini-flash"
 }
 
 type GetDefaultFastModel func() (Generator, error)
