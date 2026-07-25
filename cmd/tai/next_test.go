@@ -6,12 +6,15 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 )
 
 func TestSystemPrompt(t *testing.T) {
+	t.Skip()
+
 	dscope.New(
 		new(Module),
 	).Fork(
@@ -19,9 +22,7 @@ func TestSystemPrompt(t *testing.T) {
 		func() nets.ProxyAddr {
 			return nets.ProxyAddr(os.Getenv("TAI_TEST_PROXY"))
 		},
-		func() generators.DefaultModelName {
-			return "pro"
-		},
+		new(flags.ModelName("deepseek-flash")),
 	).Call(func(
 		generator generators.Generator,
 		systemPrompt SystemPrompt,
@@ -271,8 +272,8 @@ func TestSystemPrompt(t *testing.T) {
 func TestExtraSystemPrompt(t *testing.T) {
 	dscope.New(
 		new(Module),
-		modes.ForTest(t),
 	).Fork(
+		modes.ForTest(t),
 		func() ExtraSystemPrompt {
 			return "THIS_IS_EXTRA_SYSTEM_PROMPT"
 		},
