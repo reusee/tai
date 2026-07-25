@@ -1,5 +1,15 @@
 package flags
 
+import (
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
+)
+
+// Shell configs.Config implementation. See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Shell(false)
+
 type Shell bool
 
 func (Module) Shell() (ret Shell) {
@@ -21,4 +31,16 @@ func (s Shell) Handle(key string, args []string) (newValue any, remainArgs []str
 	newValue = Shell(key == "-shell")
 	remainArgs = args
 	return
+}
+
+func (s Shell) ConfigPaths() []string {
+	return []string{"shell"}
+}
+
+func (s Shell) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var b bool
+	if err := values[0].Decode(&b); err != nil {
+		return nil, err
+	}
+	return Shell(b), nil
 }

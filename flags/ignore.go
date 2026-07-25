@@ -3,7 +3,17 @@ package flags
 import (
 	"fmt"
 	"maps"
+
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
 )
+
+// Ignore configs.Config implementation. Config values are a list of
+// patterns; multiple config files are merged additively.
+// See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Ignore(nil)
 
 type Ignore map[string]bool
 
@@ -32,4 +42,23 @@ func (i Ignore) Handle(key string, args []string) (newValue any, remainArgs []st
 	newValue = ret
 	remainArgs = args[1:]
 	return
+}
+
+func (i Ignore) ConfigPaths() []string {
+	return []string{"ignore"}
+}
+
+func (i Ignore) HandleConfig(path string, values []*cue.Value) (any, error) {
+	ret := make(Ignore, len(i))
+	maps.Copy(ret, i)
+	for _, v := range values {
+		var patterns []string
+		if err := v.Decode(&patterns); err != nil {
+			return nil, err
+		}
+		for _, p := range patterns {
+			ret[p] = true
+		}
+	}
+	return ret, nil
 }

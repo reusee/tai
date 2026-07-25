@@ -1,6 +1,11 @@
 package codes
 
-import "github.com/reusee/tai/flags"
+import (
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
+)
 
 const TheoryOfPlan = `
 The plan mechanism is opt-in via the -plan flag. When enabled, the system prompt
@@ -27,6 +32,11 @@ func (Module) Plan() Plan {
 	return false
 }
 
+// Plan configs.Config implementation.
+// See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Plan(false)
+
 var _ flags.Flag = Plan(true)
 
 func (p Plan) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
@@ -37,4 +47,16 @@ func (p Plan) Keys() map[string]string {
 	return map[string]string{
 		"-plan": "Enable mandatory planning and multi-round generation",
 	}
+}
+
+func (p Plan) ConfigPaths() []string {
+	return []string{"plan"}
+}
+
+func (p Plan) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var b bool
+	if err := values[0].Decode(&b); err != nil {
+		return nil, err
+	}
+	return Plan(b), nil
 }

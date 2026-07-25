@@ -3,7 +3,18 @@ package flags
 import (
 	"fmt"
 	"maps"
+
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
 )
+
+// Match configs.Config implementation. The "match_patterns" path
+// provides a list of regex patterns; the legacy "match" path provides
+// a single regex string. Both are merged additively with the existing
+// flag-accumulated value. See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Match(nil)
 
 type Match map[string]bool
 
@@ -31,4 +42,31 @@ func (m Match) Handle(key string, args []string) (newValue any, remainArgs []str
 	newValue = ret
 	remainArgs = args[1:]
 	return
+}
+
+func (m Match) ConfigPaths() []string {
+	return []string{"match_patterns", "match"}
+}
+
+func (m Match) HandleConfig(path string, values []*cue.Value) (any, error) {
+	ret := make(Match, len(m))
+	maps.Copy(ret, m)
+	for _, v := range values {
+		if path == "match" {
+			var s string
+			if err := v.Decode(&s); err != nil {
+				return nil, err
+			}
+			ret[s] = true
+		} else {
+			var patterns []string
+			if err := v.Decode(&patterns); err != nil {
+				return nil, err
+			}
+			for _, p := range patterns {
+				ret[p] = true
+			}
+		}
+	}
+	return ret, nil
 }

@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"cuelang.org/go/cue"
+
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 )
 
@@ -33,6 +36,10 @@ func (Module) Apply() Apply {
 	return true
 }
 
+// Apply configs.Config implementation. See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Apply(true)
+
 var _ flags.Flag = Apply(true)
 
 func (a Apply) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
@@ -50,6 +57,18 @@ func (a Apply) Keys() map[string]string {
 		"-apply":    "Apply change blocks to the working tree during generation",
 		"-no-apply": "Do not apply change blocks during generation",
 	}
+}
+
+func (a Apply) ConfigPaths() []string {
+	return []string{"apply"}
+}
+
+func (a Apply) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var b bool
+	if err := values[0].Decode(&b); err != nil {
+		return nil, err
+	}
+	return Apply(b), nil
 }
 
 // applyChangeBlocks pops all complete change blocks from parserState and

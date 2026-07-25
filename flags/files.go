@@ -3,7 +3,17 @@ package flags
 import (
 	"fmt"
 	"maps"
+
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
 )
+
+// Files configs.Config implementation. Config values are a list of
+// patterns; multiple config files are merged additively.
+// See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Files(nil)
 
 type Files map[string]bool
 
@@ -32,4 +42,23 @@ func (f Files) Handle(key string, args []string) (newValue any, remainArgs []str
 	newValue = ret
 	remainArgs = args[1:]
 	return
+}
+
+func (f Files) ConfigPaths() []string {
+	return []string{"files"}
+}
+
+func (f Files) HandleConfig(path string, values []*cue.Value) (any, error) {
+	ret := make(Files, len(f))
+	maps.Copy(ret, f)
+	for _, v := range values {
+		var patterns []string
+		if err := v.Decode(&patterns); err != nil {
+			return nil, err
+		}
+		for _, p := range patterns {
+			ret[p] = true
+		}
+	}
+	return ret, nil
 }

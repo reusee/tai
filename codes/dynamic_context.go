@@ -1,6 +1,11 @@
 package codes
 
-import "github.com/reusee/tai/flags"
+import (
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
+)
 
 const TheoryOfDynamicContext = `
 Dynamic context allows the model to request additional files or network resources
@@ -30,6 +35,11 @@ func (Module) DynamicContext() DynamicContext {
 	return false
 }
 
+// DynamicContext configs.Config implementation.
+// See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = DynamicContext(false)
+
 var _ flags.Flag = DynamicContext(true)
 
 func (d DynamicContext) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
@@ -41,4 +51,16 @@ func (d DynamicContext) Keys() map[string]string {
 		"-dynamic-context": "Enable dynamic context fetching via request-context blocks",
 		"-dyn":             "Alias for -dynamic-context: enable dynamic context fetching",
 	}
+}
+
+func (d DynamicContext) ConfigPaths() []string {
+	return []string{"dynamic_context"}
+}
+
+func (d DynamicContext) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var b bool
+	if err := values[0].Decode(&b); err != nil {
+		return nil, err
+	}
+	return DynamicContext(b), nil
 }

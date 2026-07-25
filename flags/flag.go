@@ -1,5 +1,23 @@
 package flags
 
+// TheoryOfConfigFlagParity documents the design principle that configuration
+// options should be accessible through both command-line flags and CUE
+// configuration files. configs.Load runs before flags.Parse in main.go, so
+// flag values always override config values. For composite types (maps,
+// lists), flags accumulate through repeated invocation while config files
+// specify structured lists. API keys are exempt: they are config-only to
+// avoid exposing secrets in process command-line listings.
+const TheoryOfConfigFlagParity = `
+Configuration options should be accessible through both command-line flags and
+configuration files (CUE). Flags provide per-invocation overrides, while config
+files provide persistent defaults. The configs.Load function runs before
+flags.Parse, so flag values always override config values. For composite types
+(maps, lists), flags accumulate values through repeated invocation, while config
+files specify values as structured lists. API keys are exempt from this parity
+principle: they are config-only and environment-variable-only to avoid exposing
+secrets in process command-line listings.
+`
+
 // Flag is the interface for command-line flag types. Each Flag type
 // registers its keys and descriptions via Keys, and handles argument
 // consumption via Handle.

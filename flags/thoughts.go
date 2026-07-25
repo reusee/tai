@@ -1,5 +1,15 @@
 package flags
 
+import (
+	"cuelang.org/go/cue"
+
+	"github.com/reusee/tai/configs"
+)
+
+// Thoughts configs.Config implementation. See flags.TheoryOfConfigFlagParity.
+
+var _ configs.Config = Thoughts{}
+
 // Thoughts wraps an optional boolean. A nil Value means the flag was never
 // set; a non-nil Value points to the resolved true/false state.
 type Thoughts struct {
@@ -27,4 +37,16 @@ func (t Thoughts) Handle(key string, args []string) (newValue any, remainArgs []
 	newValue = Thoughts{Value: &value}
 	remainArgs = args
 	return
+}
+
+func (t Thoughts) ConfigPaths() []string {
+	return []string{"thoughts"}
+}
+
+func (t Thoughts) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var b bool
+	if err := values[0].Decode(&b); err != nil {
+		return nil, err
+	}
+	return Thoughts{Value: &b}, nil
 }
