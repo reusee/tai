@@ -180,6 +180,12 @@ functions?: [...{
   returns: [..._var]
 }]
 
+// thoughts_summarize_language sets the output language for thought summaries.
+// When empty (the default), no language hint is given to the summarizer.
+// When set (e.g., "zh", "en"), the summarizer is instructed to output
+// summaries in that language.
+thoughts_summarize_language?: string
+
 // log_level sets the logging verbosity.
 // Can be "debug", "info", "warn", or "error".
 log_level?: "debug" | "info" | "warn" | "error"
