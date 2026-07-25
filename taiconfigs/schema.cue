@@ -8,26 +8,10 @@ cmd_ai?: {
   fast_model?: string
 }
 
-// action specifies the default action to perform.
-// Can be "chat" or "do".
-action?: string
-
-// action_argument provides the input or goal for the action.
-action_argument?: string
-// chats defines pre-defined prompts or goals mapped to shortcuts.
-chats?: {[string]: string}
-
 model_name?: string
 model?: string
 fast_model_name?: string
 fast_model?: string
-
-// plan_model specifies the model to use for the planning phase in the "do" action.
-plan_model?: string
-
-// code_model specifies the model to use for the code generation phase in the "do" action.
-code_model?: string
-
 
 // max_tokens limits the total context tokens (input + output).
 // Deprecated in favor of max_context_tokens.
@@ -41,14 +25,6 @@ extra_system_prompt?: string
 
 // match provides a regex to filter files by path.
 match?: string
-
-// diff specifies the diff handler to use. e.g., "unified".
-diff?: string
-// thoughts, if true, shows the AI's internal reasoning/thoughts.
-thoughts?: bool
-
-// debug, if true, enables verbose debug logging.
-debug?: bool
 
 // go contains settings for Go language project analysis.
 go?: {
@@ -185,7 +161,3 @@ functions?: [...{
 // When set (e.g., "zh", "en"), the summarizer is instructed to output
 // summaries in that language.
 thoughts_summarize_language?: string
-
-// log_level sets the logging verbosity.
-// Can be "debug", "info", "warn", or "error".
-log_level?: "debug" | "info" | "warn" | "error"
