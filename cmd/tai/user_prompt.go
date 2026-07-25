@@ -7,7 +7,6 @@ import (
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/taiconfigs"
 )
 
 type UserPrompt []generators.Part
@@ -16,7 +15,7 @@ func (Module) UserPrompt(
 	codeProvider anytexts.CodeProvider,
 	generator generators.Generator,
 	systemPrompt SystemPrompt,
-	maxTokens taiconfigs.MaxTokens,
+	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
 ) UserPrompt {
 

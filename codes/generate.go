@@ -21,7 +21,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/tai/taiconfigs"
 )
 
 const maxRequestContextRounds = 5
@@ -326,7 +325,7 @@ func (Module) Generate(
 	getDefaultSummarizer generators.GetDefaultSummarizer,
 	getDefaultFastModel generators.GetDefaultFastModel,
 	buildGenerate phases.BuildGenerate,
-	maxTokens taiconfigs.MaxTokens,
+	maxTokens flags.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
 	patterns Patterns,

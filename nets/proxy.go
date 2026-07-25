@@ -6,8 +6,9 @@ import (
 	"os"
 	"sync"
 
+	"cuelang.org/go/cue"
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/vars"
 	"golang.org/x/net/proxy"
@@ -15,24 +16,46 @@ import (
 
 type ProxyAddr string
 
+var _ flags.Flag = ProxyAddr("")
+
+func (p ProxyAddr) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	return ProxyAddr(args[0]), args[1:], nil
+}
+
+func (p ProxyAddr) Keys() map[string]string {
+	return map[string]string{
+		"-proxy": "set proxy address",
+	}
+}
+
+var _ configs.Config = ProxyAddr("")
+
+func (p ProxyAddr) ConfigPaths() []string {
+	return []string{
+		"proxy",
+		"proxy_addr",
+		"proxy_address",
+		"http_proxy",
+		"socks_proxy",
+	}
+}
+
+func (p ProxyAddr) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var ret ProxyAddr
+	if err := values[0].Decode(&ret); err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
 func (Module) ProxyAddr(
 	mode modes.Mode,
-	loader configs.Loader,
-	logger logs.Logger,
 ) (ret ProxyAddr) {
-	defer func() {
-		logger.Info("proxy", "addr", ret)
-	}()
-
 	if mode == modes.ModeDevelopment {
 		return ""
 	}
 
 	return vars.FirstNonZero(
-		configs.First[ProxyAddr](loader, "proxy_addr"),
-		configs.First[ProxyAddr](loader, "proxy_address"),
-		configs.First[ProxyAddr](loader, "http_proxy"),
-		configs.First[ProxyAddr](loader, "socks_proxy"),
 		ProxyAddr(os.Getenv("ALL_PROXY")),
 		ProxyAddr(os.Getenv("all_proxy")),
 		ProxyAddr(os.Getenv("HTTP_PROXY")),

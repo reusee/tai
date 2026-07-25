@@ -1,12 +1,8 @@
 package anytexts
 
 import (
-	"maps"
 	"regexp"
-	"slices"
-	"strings"
 
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 )
 
@@ -21,37 +17,23 @@ func (Module) FileNameOK() FileNameOK {
 type NameMatch func(string) bool
 
 func (Module) NameMatch(
-	match Match,
+	match flags.Match,
 ) NameMatch {
-	if match == "" {
+	if len(match) == 0 {
 		return func(string) bool {
 			return true
 		}
 	}
-	re := regexp.MustCompile(string(match))
+	var patterns []*regexp.Regexp
+	for pattern := range match {
+		patterns = append(patterns, regexp.MustCompile(pattern))
+	}
 	return func(path string) bool {
-		return re.MatchString(path)
-	}
-}
-
-type Match string
-
-func (Module) Match(
-	loader configs.Loader,
-	flagMatch flags.Match,
-) Match {
-
-	patterns := slices.Collect(maps.Keys(flagMatch))
-	if len(patterns) > 0 {
-		for i := range patterns {
-			patterns[i] = "(" + patterns[i] + ")"
+		for _, pattern := range patterns {
+			if pattern.MatchString(path) {
+				return true
+			}
 		}
-		return Match(strings.Join(patterns, "|"))
+		return false
 	}
-
-	if pattern := configs.First[Match](loader, "match"); pattern != "" {
-		return pattern
-	}
-
-	return ""
 }
