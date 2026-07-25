@@ -2,7 +2,11 @@ package generators
 
 import (
 	"context"
+	"fmt"
 	"strings"
+
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfThoughtsSummarize = `
@@ -38,12 +42,46 @@ Output at most 2 bullet points. Each list item must be a single, short sentence 
 
 Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.`
 
+// ThoughtsSummarizeLanguage controls the output language for thought
+// summaries. When empty (the default), no language hint is given to the
+// summarizer. When set (e.g., "zh", "en"), the summarizer is instructed
+// to output summaries in that language. It can be configured via the
+// thoughts_summarize_language field in tai.cue or the
+// -thoughts-summarize-language command-line flag.
+type ThoughtsSummarizeLanguage string
+
+var _ configs.Configurable = ThoughtsSummarizeLanguage("")
+
+func (l ThoughtsSummarizeLanguage) TaigoConfigurable() {}
+
+var _ flags.Flag = ThoughtsSummarizeLanguage("")
+
+func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("expecting language string, got empty")
+	}
+	return ThoughtsSummarizeLanguage(args[0]), args[1:], nil
+}
+
+func (l ThoughtsSummarizeLanguage) Keys() map[string]string {
+	return map[string]string{
+		"-thoughts-summarize-language": "Set the language for thought summaries (e.g., zh, en)",
+	}
+}
+
+func (Module) ThoughtsSummarizeLanguage(
+	loader configs.Loader,
+) ThoughtsSummarizeLanguage {
+	return configs.First[ThoughtsSummarizeLanguage](loader, "thoughts_summarize_language")
+}
+
 // Summarizer is a separate generator type dedicated to summarizing thoughts.
 // It wraps an underlying Generator (typically a fast, cheap model) and
 // provides a Summarize method that sends accumulated thoughts to the model
 // with a purpose-built system prompt.
 type Summarizer struct {
 	generator Generator
+	language  ThoughtsSummarizeLanguage
 }
 
 func NewSummarizer(generator Generator) *Summarizer {
@@ -55,6 +93,7 @@ type GetDefaultSummarizer func() (*Summarizer, error)
 func (Module) GetDefaultSummarizer(
 	getDefaultFastModel GetDefaultFastModel,
 	enable SummarizeThoughts,
+	language ThoughtsSummarizeLanguage,
 ) GetDefaultSummarizer {
 	return func() (*Summarizer, error) {
 		if !enable {
@@ -64,14 +103,21 @@ func (Module) GetDefaultSummarizer(
 		if err != nil {
 			return nil, err
 		}
-		return NewSummarizer(gen), nil
+		return &Summarizer{
+			generator: gen,
+			language:  language,
+		}, nil
 	}
 }
 
 // Summarize sends the accumulated thoughts to the underlying generator with
 // the summarization system prompt and returns the condensed summary text.
 func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, error) {
-	state := NewPrompts(SummarizeSystemPrompt, []*Content{
+	systemPrompt := SummarizeSystemPrompt
+	if s.language != "" {
+		systemPrompt += "\n\nYou MUST output the summary in " + string(s.language) + "."
+	}
+	state := NewPrompts(systemPrompt, []*Content{
 		{
 			Role: RoleUser,
 			Parts: []Part{
