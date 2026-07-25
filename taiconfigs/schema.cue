@@ -26,6 +26,48 @@ extra_system_prompt?: string
 // match provides a regex to filter files by path.
 match?: string
 
+// match_patterns provides a list of regex patterns to filter files by path.
+match_patterns?: [...string]
+
+// effort specifies the reasoning effort level (e.g., low, medium, high).
+effort?: string
+
+// shell enables shell block execution during generation.
+shell?: bool
+
+// thoughts controls whether model reasoning thoughts are shown in output.
+thoughts?: bool
+
+// summarize_thoughts enables periodic summarization of model reasoning thoughts.
+summarize_thoughts?: bool
+
+// temperature controls the randomness of the output.
+temperature?: float
+
+// apply controls whether change blocks are applied to the working tree during generation.
+apply?: bool
+
+// dynamic_context enables dynamic context fetching via request-context blocks.
+dynamic_context?: bool
+
+// plan enables mandatory planning and multi-round generation.
+plan?: bool
+
+// log_level sets the log level (debug, info, warn, error).
+log_level?: string
+
+// no_memory disables user profile memory persistence.
+no_memory?: bool
+
+// ignore excludes files or patterns from the context.
+ignore?: [...string]
+
+// files specifies files to include in the context by path or glob pattern.
+files?: [...string]
+
+// focus specifies aspects to focus on for the task.
+focus?: [...string]
+
 // go contains settings for Go language project analysis.
 go?: {
 	// load_dir specifies the root directory for loading Go packages.
@@ -52,6 +94,12 @@ go?: {
 	// no_tests, if true, excludes test files from the context.
 	no_tests?: bool
 
+	// include_std, if true, includes standard library packages in the context.
+	include_std?: bool
+
+	// show_token_counts, if true, displays token counts for each included file.
+	show_token_counts?: bool
+
 	// envs provides additional environment variables for the 'go list' command.
 	envs?: [...string]
 }
@@ -59,6 +107,14 @@ go?: {
 // go_envs is a top-level alias for go.envs, providing additional
 // environment variables for the 'go list' command.
 go_envs?: [...string]
+
+// debug flags for individual modules.
+debug_gemini?: bool
+debug_openai?: bool
+tap_openai?: bool
+debug_codes?: bool
+debug_gocodes?: bool
+debug_anytexts?: bool
 
 // _gen defines the structure of a generator (AI model configuration).
 // It supports recursive variants for hierarchical spec organization.
