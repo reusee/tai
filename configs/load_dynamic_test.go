@@ -70,3 +70,42 @@ func TestLoadDynamicPathsConfig(t *testing.T) {
 		t.Fatalf("expected %q, got %q", "bar", got.Value)
 	}
 }
+
+func TestLoadDynamicPathsConfigReevaluates(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "test.cue")
+	if err := os.WriteFile(configPath, []byte(`str: "bar"
+secondary: "baz"`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewLoader([]string{configPath}, LoaderConfig{
+		Schema: "str?: string\nsecondary?: string",
+	})
+
+	scope := dscope.New(
+		func() dynConfig { return dynConfig{} },
+		func() dynPathPrefix { return dynPathPrefix{Prefix: "str"} },
+	)
+
+	scope, err := Load(loader, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := dscope.Get[dynConfig](scope)
+	if got.Value != "bar" {
+		t.Fatalf("expected %q, got %q", "bar", got.Value)
+	}
+
+	// Fork with a different dependency value; the provider should
+	// re-evaluate and pick up the new path's config value.
+	scope = scope.Fork(func() dynPathPrefix {
+		return dynPathPrefix{Prefix: "secondary"}
+	})
+
+	got = dscope.Get[dynConfig](scope)
+	if got.Value != "baz" {
+		t.Fatalf("expected %q after fork, got %q", "baz", got.Value)
+	}
+}

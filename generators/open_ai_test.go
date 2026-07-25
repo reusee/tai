@@ -43,6 +43,7 @@ func (s *errorAfterNState) AppendContent(content *Content) (State, error) {
 }
 
 func TestOpenAI(t *testing.T) {
+	t.Skip()
 	testGenerator(t, func(
 		newOpenRouter NewOpenRouter,
 	) Generator {

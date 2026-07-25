@@ -5,6 +5,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/modes"
 )
 
@@ -14,6 +15,8 @@ func TestGetDefaultFastModel(t *testing.T) {
 		modes.ForTest(t),
 		&loader,
 		new(Module),
+	).Fork(
+		new(flags.FastModelName("gemini-flash")),
 	).Call(func(
 		getDefaultFastModel GetDefaultFastModel,
 	) {
@@ -57,9 +60,8 @@ func TestGetDefaultSummarizerEnabled(t *testing.T) {
 		&loader,
 		new(Module),
 	).Fork(
-		func() SummarizeThoughts {
-			return true
-		},
+		new(SummarizeThoughts(true)),
+		new(flags.FastModelName("gemini-flash")),
 	).Call(func(
 		getDefaultSummarizer GetDefaultSummarizer,
 	) {

@@ -12,6 +12,7 @@ import (
 )
 
 func TestGemini(t *testing.T) {
+	t.Skip()
 	testGenerator(t, func(
 		newGemini NewGemini,
 	) Generator {

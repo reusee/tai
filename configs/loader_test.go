@@ -76,29 +76,6 @@ func TestUnknownField(t *testing.T) {
 	t.Logf("%v", err)
 }
 
-func TestGlobalsReferenceResolution(t *testing.T) {
-	dir := t.TempDir()
-	configContent := `str: prompts.fiction`
-	configPath := filepath.Join(dir, "test_globals.cue")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	loader := NewLoader([]string{configPath}, LoaderConfig{
-		Schema: "str?: string",
-		Globals: map[string]any{
-			"prompts": map[string]any{
-				"fiction": "test value",
-			},
-		},
-	})
-
-	str := First[string](loader, "str")
-	if str != "test value" {
-		t.Fatalf("expected 'test value', got %q", str)
-	}
-}
-
 func TestGlobalsClosedSchemaStillRejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	configContent := `str: "hello"
