@@ -552,6 +552,74 @@ func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
 	}
 }
 
+func TestThoughtsSummarizeFlushOnMixedContent(t *testing.T) {
+	// Reproduction: when a single Content contains both Thought and Text
+	// parts (e.g., a streaming chunk where the model transitions from
+	// reasoning to answering), the summary must be flushed BEFORE the
+	// text is propagated to upstream and printed. The previous
+	// implementation checked !hasThought, which was false for mixed
+	// content (hasThought=true), so the text was printed first and the
+	// summary appeared later — out of order.
+	gen := &mockSummarizerGenerator{summary: "mixed summary"}
+	summarizer := NewSummarizer(gen)
+	buf := new(bytes.Buffer)
+
+	// Use NewOutput as upstream so text is also written to buf,
+	// allowing us to verify the ordering of summary and text.
+	upstream := NewOutput(NewPrompts("", nil), buf, false)
+	// Long interval so periodic summarization doesn't interfere.
+	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+
+	// Accumulate some thoughts first.
+	state, err := state.AppendContent(&Content{
+		Role:  RoleModel,
+		Parts: []Part{Thought("prior thinking")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 0 {
+		t.Fatalf("expected 0 calls before mixed content, got %d", gen.calls)
+	}
+
+	// Mixed content: Thought + Text in the same Content.
+	state, err = state.AppendContent(&Content{
+		Role: RoleModel,
+		Parts: []Part{
+			Thought("final thought"),
+			Text("the answer"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The summary should have been flushed before the text was propagated.
+	if gen.calls != 1 {
+		t.Fatalf("expected 1 call for mixed content flush, got %d", gen.calls)
+	}
+
+	// The summary input should include both the prior thinking and the
+	// final thought from the mixed content.
+	if gen.lastInput != "prior thinkingfinal thought" {
+		t.Fatalf("expected 'prior thinkingfinal thought', got %q", gen.lastInput)
+	}
+
+	// The summary should appear in the buffer before the text.
+	output := buf.String()
+	summaryIdx := strings.Index(output, "mixed summary")
+	answerIdx := strings.Index(output, "the answer")
+	if summaryIdx == -1 {
+		t.Fatal("summary not found in output")
+	}
+	if answerIdx == -1 {
+		t.Fatal("answer not found in output")
+	}
+	if summaryIdx > answerIdx {
+		t.Fatalf("summary should appear before answer, got summary at %d, answer at %d", summaryIdx, answerIdx)
+	}
+}
+
 func TestThoughtsSummarizeNilSummarizer(t *testing.T) {
 	buf := new(bytes.Buffer)
 	upstream := NewPrompts("", nil)

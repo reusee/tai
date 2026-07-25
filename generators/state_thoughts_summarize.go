@@ -63,24 +63,37 @@ func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 
 	ret := s // copy
 
-	// Check if the incoming content contains any Thought parts, and
-	// accumulate Thought parts. Non-thought parts pass through unchanged
-	// to upstream.
-	hasThought := false
+	// Accumulate Thought parts and detect non-thought parts. When
+	// non-thought parts are present, accumulated thoughts (including any
+	// from this content) are flushed before propagation to upstream,
+	// ensuring the summary appears before the main text output.
+	hasNonThought := false
 	for _, part := range content.Parts {
 		if thought, ok := part.(Thought); ok {
-			hasThought = true
 			ret.accumulated += string(thought)
+		} else {
+			hasNonThought = true
 		}
 	}
 
-	// When the incoming content does not contain thoughts and there are
-	// accumulated thoughts from previous content, flush the accumulated
-	// thoughts immediately. This ensures the thought summary appears
-	// before the main text output, not after it. All accumulated text is
-	// summarized (not just complete paragraphs) because the thought
-	// stream has ended.
-	if !hasThought && len(ret.accumulated) > 0 {
+	// When the incoming content contains non-thought parts and there are
+	// accumulated thoughts (including any from this content), flush
+	// immediately BEFORE propagating to upstream. This ensures the
+	// thought summary appears before the main text output, not after it.
+	// All accumulated text is summarized (not just complete paragraphs)
+	// because the thought stream has ended or been interrupted by
+	// non-thought output.
+	//
+	// The condition checks hasNonThought (presence of non-thought parts)
+	// rather than !hasThought (absence of thought parts) so that a
+	// streaming chunk containing both Thought and Text parts — which is
+	// common when the model transitions from reasoning to answering
+	// within a single response — correctly flushes before the text is
+	// printed. The previous !hasThought check would skip the flush for
+	// mixed content, causing the text to appear first and the summary
+	// to appear later (after the next pure-text chunk), producing
+	// out-of-order output.
+	if hasNonThought && len(ret.accumulated) > 0 {
 		summary, err := ret.summarizer.Summarize(ret.ctx, ret.accumulated)
 		if err != nil {
 			return ret, err
