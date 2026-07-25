@@ -36,9 +36,18 @@ func Load(loader Loader, scope dscope.Scope) (dscope.Scope, error) {
 			continue
 		}
 		zero := reflect.Zero(t).Interface().(Config)
+
+		var paths []string
+		if dyn, ok := zero.(DynamicPathsConfig); ok {
+			fn := dyn.ConfigPathsFunc()
+			scope.Call(fn).Assign(&paths)
+		} else {
+			paths = zero.ConfigPaths()
+		}
+
 		entries = append(entries, configEntry{
 			typ:   t,
-			paths: zero.ConfigPaths(),
+			paths: paths,
 		})
 	}
 

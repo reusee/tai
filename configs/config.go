@@ -34,3 +34,8 @@ type Config interface {
 	// checking whether the receiver is already non-zero.
 	HandleConfig(path string, values []*cue.Value) (any, error)
 }
+
+type DynamicPathsConfig interface {
+	Config
+	ConfigPathsFunc() any
+}
