@@ -22,6 +22,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/states"
 )
 
 const TheoryOfStreamingApply = `
@@ -357,7 +358,7 @@ func (Module) Generate(
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
-	getDefaultSummarizer generators.GetDefaultSummarizer,
+	getDefaultSummarizer states.GetDefaultSummarizer,
 	getDefaultFastModel generators.GetDefaultFastModel,
 	buildGenerate phases.BuildGenerate,
 	maxTokens flags.MaxTokens,
@@ -365,7 +366,7 @@ func (Module) Generate(
 	tap debugs.Tap,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
-	summarizeThoughts generators.SummarizeThoughts,
+	summarizeThoughts states.SummarizeThoughts,
 	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
@@ -515,14 +516,14 @@ func (Module) Generate(
 		// (configured via fast_model in tai.cue) via GetDefaultSummarizer
 		// to minimize latency and cost. The -thoughts flag controls
 		// whether thoughts are shown at all.
-		// See generators.TheoryOfThoughtsSummarize.
+		// See states.TheoryOfThoughtsSummarize.
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
 				return err
 			}
 			state = generators.NewOutput(state, output, false)
-			state = generators.NewThoughtsSummarize(ctx, state, summarizer, output)
+			state = states.NewThoughtsSummarize(ctx, state, summarizer, output)
 		} else {
 			state = generators.NewOutput(state, output, showThoughts)
 		}

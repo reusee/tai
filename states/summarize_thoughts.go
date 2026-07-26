@@ -1,4 +1,4 @@
-package generators
+package states
 
 import "github.com/reusee/tai/flags"
 

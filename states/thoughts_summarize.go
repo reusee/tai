@@ -1,4 +1,4 @@
-package generators
+package states
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"iter"
 	"strings"
 	"time"
+
+	"github.com/reusee/tai/generators"
 )
 
 // ThoughtsSummarize is a State layer that periodically summarizes accumulated
@@ -14,7 +16,7 @@ import (
 // track the model's reasoning direction without reading every raw thought.
 // See TheoryOfThoughtsSummarize for design rationale.
 type ThoughtsSummarize struct {
-	upstream      State
+	upstream      generators.State
 	summarizer    *Summarizer
 	writer        io.Writer
 	interval      time.Duration
@@ -29,7 +31,7 @@ type ThoughtsSummarize struct {
 // since AppendContent does not receive a context.
 func NewThoughtsSummarize(
 	ctx context.Context,
-	upstream State,
+	upstream generators.State,
 	summarizer *Summarizer,
 	writer io.Writer,
 	interval ...time.Duration,
@@ -48,9 +50,9 @@ func NewThoughtsSummarize(
 	}
 }
 
-var _ State = ThoughtsSummarize{}
+var _ generators.State = ThoughtsSummarize{}
 
-func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
+func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generators.State, error) {
 	if s.summarizer == nil {
 		ret := s
 		var err error
@@ -69,7 +71,7 @@ func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 	// ensuring the summary appears before the main text output.
 	hasNonThought := false
 	for _, part := range content.Parts {
-		if thought, ok := part.(Thought); ok {
+		if thought, ok := part.(generators.Thought); ok {
 			ret.accumulated += string(thought)
 		} else {
 			hasNonThought = true
@@ -137,11 +139,11 @@ func (s ThoughtsSummarize) AppendContent(content *Content) (State, error) {
 	return ret, nil
 }
 
-func (s ThoughtsSummarize) Contents() iter.Seq[*Content] {
+func (s ThoughtsSummarize) Contents() iter.Seq[*generators.Content] {
 	return s.upstream.Contents()
 }
 
-func (s ThoughtsSummarize) Functions() iter.Seq[*Function] {
+func (s ThoughtsSummarize) Functions() iter.Seq[*generators.Function] {
 	return s.upstream.Functions()
 }
 
@@ -149,7 +151,7 @@ func (s ThoughtsSummarize) SystemPrompt() string {
 	return s.upstream.SystemPrompt()
 }
 
-func (s ThoughtsSummarize) Flush() (State, error) {
+func (s ThoughtsSummarize) Flush() (generators.State, error) {
 	if s.summarizer == nil {
 		ret := s
 		var err error
@@ -187,7 +189,7 @@ func (s ThoughtsSummarize) Flush() (State, error) {
 	return ret, nil
 }
 
-func (s ThoughtsSummarize) Unwrap() State {
+func (s ThoughtsSummarize) Unwrap() generators.State {
 	return s.upstream
 }
 

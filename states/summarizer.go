@@ -1,10 +1,11 @@
-package generators
+package states
 
 import (
 	"context"
 	"strings"
 
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/generators"
 )
 
 const TheoryOfThoughtsSummarize = `
@@ -53,18 +54,18 @@ type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage
 // provides a Summarize method that sends accumulated thoughts to the model
 // with a purpose-built system prompt.
 type Summarizer struct {
-	generator Generator
+	generator generators.Generator
 	language  ThoughtsSummarizeLanguage
 }
 
-func NewSummarizer(generator Generator) *Summarizer {
+func NewSummarizer(generator generators.Generator) *Summarizer {
 	return &Summarizer{generator: generator}
 }
 
 type GetDefaultSummarizer func() (*Summarizer, error)
 
 func (Module) GetDefaultSummarizer(
-	getDefaultFastModel GetDefaultFastModel,
+	getDefaultFastModel generators.GetDefaultFastModel,
 	enable SummarizeThoughts,
 	language ThoughtsSummarizeLanguage,
 ) GetDefaultSummarizer {
@@ -90,27 +91,27 @@ func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, er
 	if s.language != "" {
 		systemPrompt += "\n\nYou MUST output the summary in " + string(s.language) + "."
 	}
-	state := NewPrompts(systemPrompt, []*Content{
+	state := generators.NewPrompts(systemPrompt, []*generators.Content{
 		{
-			Role: RoleUser,
-			Parts: []Part{
-				Text(thoughts),
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.Text(thoughts),
 			},
 		},
 	})
 
-	result, err := s.generator.Generate(ctx, state, &GenerateOptions{})
+	result, err := s.generator.Generate(ctx, state, &generators.GenerateOptions{})
 	if err != nil {
 		return "", err
 	}
 
 	var sb strings.Builder
 	for content := range result.Contents() {
-		if content.Role != RoleModel && content.Role != RoleAssistant {
+		if content.Role != generators.RoleModel && content.Role != generators.RoleAssistant {
 			continue
 		}
 		for _, part := range content.Parts {
-			if text, ok := part.(Text); ok {
+			if text, ok := part.(generators.Text); ok {
 				sb.WriteString(string(text))
 			}
 		}

@@ -1,4 +1,4 @@
-package generators
+package states
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/reusee/tai/generators"
 )
 
 type mockSummarizerGenerator struct {
@@ -16,15 +18,15 @@ type mockSummarizerGenerator struct {
 	lastInput string
 }
 
-func (m *mockSummarizerGenerator) Spec() Spec {
-	return Spec{}
+func (m *mockSummarizerGenerator) Spec() generators.Spec {
+	return generators.Spec{}
 }
 
 func (m *mockSummarizerGenerator) CountTokens(text string) (int, error) {
 	return len(text), nil
 }
 
-func (m *mockSummarizerGenerator) Generate(ctx context.Context, state State, options *GenerateOptions) (State, error) {
+func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
 	m.calls++
 	if m.err != nil {
 		return state, m.err
@@ -32,18 +34,18 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state State, opt
 	// Capture the input text from user content for test assertions
 	m.lastInput = ""
 	for content := range state.Contents() {
-		if content.Role == RoleUser {
+		if content.Role == generators.RoleUser {
 			for _, part := range content.Parts {
-				if text, ok := part.(Text); ok {
+				if text, ok := part.(generators.Text); ok {
 					m.lastInput += string(text)
 				}
 			}
 		}
 	}
-	return state.AppendContent(&Content{
-		Role: RoleModel,
-		Parts: []Part{
-			Text(m.summary),
+	return state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text(m.summary),
 		},
 	})
 }
@@ -53,13 +55,13 @@ func TestThoughtsSummarizePeriodicSummarization(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 50*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 50*time.Millisecond)
 
 	// Append a thought — no summarization yet because interval hasn't elapsed
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thinking about something\n\n")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thinking about something\n\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,9 +77,9 @@ func TestThoughtsSummarizePeriodicSummarization(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Append another thought, which should trigger summarization
-	state, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("more thinking")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("more thinking")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -95,13 +97,13 @@ func TestThoughtsSummarizeFlushRemaining(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
+	upstream := generators.NewPrompts("", nil)
 	// Long interval so summarization only happens on flush
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
 
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thought 1"), Thought("thought 2")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thought 1"), generators.Thought("thought 2")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,25 +129,25 @@ func TestThoughtsSummarizeNonThoughtPassThrough(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
 
-	state, err := state.AppendContent(&Content{
-		Role:  RoleUser,
-		Parts: []Part{Text("hello")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleUser,
+		Parts: []generators.Part{generators.Text("hello")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var contents []*Content
+	var contents []*generators.Content
 	for c := range state.Contents() {
 		contents = append(contents, c)
 	}
 	if len(contents) != 1 {
 		t.Fatalf("expected 1 content in upstream, got %d", len(contents))
 	}
-	if text, ok := contents[0].Parts[0].(Text); !ok || text != "hello" {
+	if text, ok := contents[0].Parts[0].(generators.Text); !ok || text != "hello" {
 		t.Fatalf("unexpected content: %v", contents[0].Parts)
 	}
 	if gen.calls != 0 {
@@ -158,15 +160,15 @@ func TestThoughtsSummarizeNoSummarizeWhenEmpty(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
 
 	time.Sleep(5 * time.Millisecond)
 
 	// Append non-thought content after interval — should not summarize
-	state, err := state.AppendContent(&Content{
-		Role:  RoleUser,
-		Parts: []Part{Text("just text")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleUser,
+		Parts: []generators.Part{generators.Text("just text")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +192,7 @@ func TestThoughtsSummarizeDefaultInterval(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
+	upstream := generators.NewPrompts("", nil)
 	state := NewThoughtsSummarize(context.Background(), upstream, summarizer, buf)
 
 	if state.interval != 3*time.Second {
@@ -203,19 +205,19 @@ func TestThoughtsSummarizeAccumulatesAcrossContents(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
 
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thought A")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thought A")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thought B")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thought B")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,12 +240,12 @@ func TestThoughtsSummarizeSummarizeError(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
 
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thinking\n\n")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thinking\n\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -252,9 +254,9 @@ func TestThoughtsSummarizeSummarizeError(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	// Next append should trigger summarization and return error
-	_, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("more thinking")},
+	_, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("more thinking")},
 	})
 	if err == nil {
 		t.Fatal("expected error from summarization")
@@ -285,13 +287,13 @@ func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
 
 	// First thought
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("first thought\n\n")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("first thought\n\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -301,9 +303,9 @@ func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 	// content. The flush-on-non-thought summarizes "first thought"
 	// (accumulated from before) and resets accumulated to empty.
 	time.Sleep(5 * time.Millisecond)
-	state, err = state.AppendContent(&Content{
-		Role:  RoleUser,
-		Parts: []Part{Text("trigger")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleUser,
+		Parts: []generators.Part{generators.Text("trigger")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -314,9 +316,9 @@ func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 
 	// Append a new thought after the reset. This thought was not included
 	// in the first summarization because accumulated was cleared.
-	state, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("second thought")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("second thought")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -338,13 +340,13 @@ func TestThoughtsSummarizeSplitsAtParagraphBoundary(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
 
 	// Append a complete paragraph followed by an incomplete sentence
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("complete paragraph\n\nincomplete sent")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("complete paragraph\n\nincomplete sent")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -355,9 +357,9 @@ func TestThoughtsSummarizeSplitsAtParagraphBoundary(t *testing.T) {
 	// Non-thought content triggers a full flush of all accumulated
 	// thoughts, regardless of paragraph boundaries, because the thought
 	// stream has ended.
-	state, err = state.AppendContent(&Content{
-		Role:  RoleUser,
-		Parts: []Part{Text("trigger")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleUser,
+		Parts: []generators.Part{generators.Text("trigger")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -385,13 +387,13 @@ func TestThoughtsSummarizeDefersWithoutParagraphBoundary(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
+	upstream := generators.NewPrompts("", nil)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 1*time.Millisecond)
 
 	// Append a thought without any paragraph boundary
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("no paragraph boundary here")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("no paragraph boundary here")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -402,9 +404,9 @@ func TestThoughtsSummarizeDefersWithoutParagraphBoundary(t *testing.T) {
 	// Non-thought content triggers a full flush of accumulated thoughts,
 	// regardless of paragraph boundaries, because the thought stream
 	// has ended.
-	state, err = state.AppendContent(&Content{
-		Role:  RoleUser,
-		Parts: []Part{Text("trigger")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleUser,
+		Parts: []generators.Part{generators.Text("trigger")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -459,14 +461,14 @@ func TestThoughtsSummarizeUnwrap(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("system", nil)
+	upstream := generators.NewPrompts("system", nil)
 	state := NewThoughtsSummarize(context.Background(), upstream, summarizer, buf)
 
 	u := state.Unwrap()
 	if u == nil {
 		t.Fatal("Unwrap returned nil")
 	}
-	if _, ok := u.(Prompts); !ok {
+	if _, ok := u.(generators.Prompts); !ok {
 		t.Fatalf("expected Unwrap to return Prompts, got %T", u)
 	}
 }
@@ -476,7 +478,7 @@ func TestThoughtsSummarizeSystemPromptDelegates(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("my system prompt", nil)
+	upstream := generators.NewPrompts("my system prompt", nil)
 	state := NewThoughtsSummarize(context.Background(), upstream, summarizer, buf)
 
 	if state.SystemPrompt() != "my system prompt" {
@@ -489,8 +491,8 @@ func TestThoughtsSummarizeFunctionsDelegate(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	fn := &Function{Decl: FuncDecl{Name: "test"}}
-	upstream := WithFunctions(NewPrompts("", nil), fn)
+	fn := &generators.Function{Decl: generators.FuncDecl{Name: "test"}}
+	upstream := generators.WithFunctions(generators.NewPrompts("", nil), fn)
 	state := NewThoughtsSummarize(context.Background(), upstream, summarizer, buf)
 
 	var names []string
@@ -507,14 +509,14 @@ func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)
 
-	upstream := NewPrompts("", nil)
+	upstream := generators.NewPrompts("", nil)
 	// Long interval so periodic summarization doesn't trigger
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
 
 	// Accumulate thoughts
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("some thinking")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("some thinking")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -528,9 +530,9 @@ func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
 
 	// Non-thought content triggers immediate flush of accumulated thoughts,
 	// ensuring the summary appears before the main text output.
-	state, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Text("the answer")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("the answer")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -566,14 +568,14 @@ func TestThoughtsSummarizeFlushOnMixedContent(t *testing.T) {
 
 	// Use NewOutput as upstream so text is also written to buf,
 	// allowing us to verify the ordering of summary and text.
-	upstream := NewOutput(NewPrompts("", nil), buf, false)
+	upstream := generators.NewOutput(generators.NewPrompts("", nil), buf, false)
 	// Long interval so periodic summarization doesn't interfere.
-	var state State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, summarizer, buf, 10*time.Second)
 
 	// Accumulate some thoughts first.
-	state, err := state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("prior thinking")},
+	state, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("prior thinking")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -583,11 +585,11 @@ func TestThoughtsSummarizeFlushOnMixedContent(t *testing.T) {
 	}
 
 	// Mixed content: Thought + Text in the same Content.
-	state, err = state.AppendContent(&Content{
-		Role: RoleModel,
-		Parts: []Part{
-			Thought("final thought"),
-			Text("the answer"),
+	state, err = state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Thought("final thought"),
+			generators.Text("the answer"),
 		},
 	})
 	if err != nil {
@@ -622,15 +624,15 @@ func TestThoughtsSummarizeFlushOnMixedContent(t *testing.T) {
 
 func TestThoughtsSummarizeNilSummarizer(t *testing.T) {
 	buf := new(bytes.Buffer)
-	upstream := NewPrompts("", nil)
+	upstream := generators.NewPrompts("", nil)
 	// Create with nil summarizer
-	var state State = NewThoughtsSummarize(context.Background(), upstream, nil, buf)
+	var state generators.State = NewThoughtsSummarize(context.Background(), upstream, nil, buf)
 
 	// Append content should pass through without error
 	var err error
-	state, err = state.AppendContent(&Content{
-		Role:  RoleModel,
-		Parts: []Part{Thought("thinking"), Text("answer")},
+	state, err = state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("thinking"), generators.Text("answer")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -643,7 +645,7 @@ func TestThoughtsSummarizeNilSummarizer(t *testing.T) {
 	}
 
 	// Contents should be accessible
-	var contents []*Content
+	var contents []*generators.Content
 	for c := range state.Contents() {
 		contents = append(contents, c)
 	}
