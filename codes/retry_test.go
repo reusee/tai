@@ -37,7 +37,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -74,7 +74,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -113,7 +113,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, _, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 		)
 		if len(statesSeen) != 2 {
 			t.Fatalf("expected 2 state observations, got %d", len(statesSeen))
@@ -145,7 +145,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -170,7 +170,7 @@ func TestRunPhaseWithRetry(t *testing.T) {
 		}
 
 		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil,
+			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 		)
 		if phaseErr != expectedErr {
 			t.Fatalf("expected error %v, got %v", expectedErr, phaseErr)
@@ -202,7 +202,7 @@ func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
 	}
 
 	_, _, phaseErr, _, _ := runPhaseWithRetry(
-		context.Background(), phase, initialParserState, initialParserState, logger, nil,
+		context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
 	)
 	if phaseErr != nil {
 		t.Fatalf("unexpected error: %v", phaseErr)
@@ -255,7 +255,7 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 		}
 
 		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -309,7 +309,7 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 		}
 
 		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -376,7 +376,7 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 		}
 
 		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize,
+			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)

@@ -25,22 +25,29 @@ import (
 )
 
 const TheoryOfStreamingApply = `
-Change blocks are applied to the working tree immediately as they are parsed
-from streamed model output, rather than waiting for the full generation phase
-to complete. This enables early error detection: if a change block fails to
-apply (e.g., invalid target, malformed code), generation stops immediately
-instead of continuing to produce tokens that would be wasted on a broken
-foundation. The streaming apply is implemented via a BlockHandler callback on
-ParserState: when a complete change block is parsed during AppendContent,
-the handler applies it via changes.ApplyChangeBlock. During Flush, the handler
+Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
+from streamed model output, rather than directly to disk. This enables early
+error detection: if a change block fails to apply (e.g., invalid target,
+malformed code), generation stops immediately instead of continuing to produce
+tokens that would be wasted on a broken foundation. The in-memory store also
+ensures filesystem consistency on retry: when a round is retried (no completion
+block), the MemoryStore is reset, discarding all changes without touching the
+disk. Only after a round succeeds are the in-memory changes flushed to disk in
+a single batch, so the disk is never left in a partially modified state by an
+interrupted round. Subsequent change blocks targeting the same file within a
+round use the in-memory content as the base, not the disk content, so
+multi-block edits to the same file are applied correctly within the round.
+The streaming apply is implemented via a BlockHandler callback on ParserState:
+when a complete change block is parsed during AppendContent, the handler applies
+it via changes.ApplyChangeBlockStore to the MemoryStore. During Flush, the handler
 is not called for unclosed blocks, because they are incomplete (e.g., from
 truncated output) and applying them would cause errors; they are retained
 without applying so the summary-completion retry mechanism can handle the
-truncation. Successfully applied change blocks are
-consumed (not retained in the blocks list), so the post-phase component loop's
-applyChangeBlocks finds no change blocks to re-apply. When the apply flag is
-disabled, no handler is set and change blocks are stored as before, preserving
-the no-apply behavior.
+truncation. Successfully applied change blocks are consumed (not retained
+in the blocks list), so the post-phase component loop's applyChangeBlocks
+finds no change blocks to re-apply. When the apply flag is disabled, no
+handler is set and change blocks are stored as before, preserving the
+no-apply behavior.
 `
 
 const maxRequestContextRounds = 5
@@ -264,6 +271,7 @@ func runPhaseWithRetry(
 	fallbackParserState *blocks.ParserState,
 	logger logs.Logger,
 	summarize func(incompleteText string) (string, error),
+	onPhaseStart func(),
 ) (
 	newPhase phases.Phase,
 	newState generators.State,
@@ -273,6 +281,14 @@ func runPhaseWithRetry(
 ) {
 	currentState := stateBeforePhase
 	for retryCount := 0; ; retryCount++ {
+		// onPhaseStart is called before each phase attempt to reset
+		// per-attempt state (e.g., MemoryStore.Reset for in-memory apply).
+		// This ensures retried attempts start with a clean store, so
+		// changes from a failed attempt are discarded without touching disk.
+		// See TheoryOfStreamingApply and TheoryOfInMemoryApply.
+		if onPhaseStart != nil {
+			onPhaseStart()
+		}
 		newPhase, newState, phaseErr = phase(ctx, currentState)
 		if phaseErr != nil {
 			return
@@ -367,6 +383,16 @@ func (Module) Generate(
 			return err
 		}
 		defer root.Close()
+
+		// MemoryStore buffers change block modifications in memory during
+		// streaming, deferring disk writes until the round succeeds. This
+		// ensures early error detection (change blocks that fail to apply
+		// stop generation immediately) while preserving filesystem
+		// consistency on retry (the MemoryStore is reset before each
+		// attempt, so retried attempts start with a clean store and the
+		// disk is never partially modified by an interrupted round).
+		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
+		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
 
 		// generator
 		generator, err := getDefaultGenerator()
@@ -509,8 +535,12 @@ func (Module) Generate(
 		// output. ParserState is always activated to support continue blocks,
 		// change blocks, and request-context blocks.
 		// When apply is enabled, a BlockHandler applies change blocks
-		// immediately as they are parsed during streaming, enabling early
-		// error detection. See TheoryOfStreamingApply.
+		// immediately to the MemoryStore as they are parsed during streaming,
+		// enabling early error detection without touching disk. The
+		// MemoryStore is flushed to disk only after the round succeeds, and
+		// reset before each phase attempt (including retries) so the disk
+		// remains untouched by failed or truncated attempts.
+		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
 		var parserHandler blocks.BlockHandler
 		if bool(apply) {
 			parserHandler = func(block blocks.Block) (bool, error) {
@@ -521,7 +551,7 @@ func (Module) Generate(
 				if !parsedOk {
 					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 				}
-				if err := changes.ApplyChangeBlock(root, h); err != nil {
+				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
 					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
 				}
 				return true, nil
@@ -581,11 +611,13 @@ func (Module) Generate(
 			prevContentCount := countContents(stateBeforePhase)
 
 			// Execute the phase with retry on missing summary block.
-			// If the model's output lacks a summary block, it was likely
-			// truncated; retry from the original state (safe because State
-			// is immutable). See TheoryOfSummaryCompletionRetry.
+			// onPhaseStart resets the MemoryStore before each phase attempt
+			// (including retries), so changes from a failed attempt are
+			// discarded without touching disk. See TheoryOfStreamingApply
+			// and changes.TheoryOfInMemoryApply.
 			newPhase, newState, phaseErr, summaries, currentParserState := runPhaseWithRetry(
 				ctx, phase, stateBeforePhase, parserState, logger, summarize,
+				func() { memStore.Reset() },
 			)
 
 			if phaseErr != nil {
@@ -621,6 +653,16 @@ func (Module) Generate(
 				return phaseErr
 
 			} else {
+				// Flush in-memory changes to disk before the component loop
+				// runs. This ensures go-test and other components see the
+				// updated files on disk. The flush happens only after the
+				// round succeeds, so failed or retried attempts never
+				// partially modify the disk. See TheoryOfStreamingApply
+				// and changes.TheoryOfInMemoryApply.
+				if err := memStore.Flush(); err != nil {
+					return err
+				}
+
 				// ok
 				phase = newPhase
 				state = newState

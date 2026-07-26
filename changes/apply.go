@@ -176,7 +176,19 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
+// ApplyChangeBlock applies a change block to the given root.
+// It is a convenience wrapper that creates a rootStore from the given
+// *os.Root and delegates to ApplyChangeBlockStore. See TheoryOfInMemoryApply.
 func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
+	return ApplyChangeBlockStore(NewRootStore(root), h)
+}
+
+// ApplyChangeBlockStore applies a change block to the given FileStore.
+// When the store is a MemoryStore, changes are buffered in memory and
+// only written to disk on Flush. This enables early error detection
+// during streaming while preserving filesystem consistency on retry.
+// See TheoryOfInMemoryApply.
+func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
 		cwd, err := os.Getwd()
@@ -210,23 +222,13 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 		if pathutil.EscapesDir(filepath.Clean(newPath)) {
 			return fmt.Errorf("new path escapes current directory: %s", newPath)
 		}
-		if dir := filepath.Dir(newPath); dir != "." {
-			if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
-				return err
-			}
-		}
-		return root.Rename(path, newPath)
+		return store.Rename(path, newPath)
 	}
 
 	// Handle WRITE: replace the entire file content, bypassing declaration-level parsing.
 	// The target field is ignored; file-path determines the destination.
 	// Go files are processed through goimports to keep imports synchronized.
 	if h.Op == "WRITE" {
-		if dir := filepath.Dir(path); dir != "." {
-			if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
-				return err
-			}
-		}
 		content := []byte(h.Body)
 		if strings.HasSuffix(path, ".go") {
 			formatted, err := imports.Process(path, content, nil)
@@ -235,7 +237,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 			}
 			content = formatted
 		}
-		return root.WriteFile(path, finalizeContent(content), 0644)
+		return store.WriteFile(path, finalizeContent(content), 0644)
 	}
 
 	// Handle DELETE with target *: delete the entire file, bypassing
@@ -244,7 +246,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 	// DELETE declaration behavior that returns nil when the target is not
 	// found. See ChangeBlockApplicationTheory.
 	if h.Op == "DELETE" && h.Target == "*" {
-		if err := root.Remove(path); err != nil {
+		if err := store.Remove(path); err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
@@ -253,7 +255,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 		return nil
 	}
 
-	src, err := root.ReadFile(path) // Use os.Root for safe reading
+	src, err := store.ReadFile(path) // Use FileStore for safe reading
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -263,12 +265,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 		if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
 			// Allow creating new non-Go file
 			body := h.Body
-			if dir := filepath.Dir(path); dir != "." {
-				if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
-					return err
-				}
-			}
-			return root.WriteFile(path, []byte(body), 0644)
+			return store.WriteFile(path, []byte(body), 0644)
 		}
 		return fmt.Errorf("only .go files are supported for modification: %s", path)
 	}
@@ -294,7 +291,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 		if f == nil {
 			return fmt.Errorf("target %q: file %s could not be parsed", h.Target, path)
 		}
-		return applySpecialTargetModify(root, path, src, f, fset, prefixLen, h)
+		return applySpecialTargetModify(store, path, src, f, fset, prefixLen, h)
 	}
 
 	bodyInfo, _ := getBodyInfo(h.Body)
@@ -436,12 +433,7 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 		formatted = formatted[outputPrefixLen:]
 	}
 
-	if dir := filepath.Dir(path); dir != "." {
-		if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
-			return err
-		}
-	}
-	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
+	return store.WriteFile(path, finalizeContent(formatted), 0644) // Use FileStore for safe writing
 }
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
@@ -721,7 +713,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 // targets "package" and "import". These replace the package clause or import
 // block without rewriting the entire file, saving tokens compared to WRITE.
 // See TheoryOfSpecialGoTargets in parse.go.
-func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h ChangeBlock) error {
+func applySpecialTargetModify(store FileStore, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h ChangeBlock) error {
 	var newSrc []byte
 
 	switch h.Target {
@@ -820,12 +812,7 @@ func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.Fil
 		return fmt.Errorf("goimports: %w", err)
 	}
 
-	if dir := filepath.Dir(path); dir != "." {
-		if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
-			return err
-		}
-	}
-	return root.WriteFile(path, finalizeContent(formatted), 0644)
+	return store.WriteFile(path, finalizeContent(formatted), 0644)
 }
 
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {
