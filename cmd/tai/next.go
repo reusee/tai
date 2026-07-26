@@ -20,7 +20,7 @@ import (
 const TheoryOfNextCommand = `
 The "next" subcommand identifies and executes the most valuable next step to
 advance the user's goal. It uses the prompts.NextStep system prompt as its
-base, augmented with the boundary diff handler prompt when Go files are
+base, augmented with the change block prompt when Go files are
 detected in the input, plus optional extra, focus, and ignore directives.
 Unlike the "ai" subcommand which supports multi-turn conversation with
 memory, shell, and continue blocks, "next" performs a single generation
@@ -54,7 +54,7 @@ func (Module) SystemPrompt(
 	}
 	if hasGoFiles {
 		logger.Info("has go file")
-		ret += "\n\n" + SystemPrompt((changes.BoundaryDiffHandler{}).SystemPrompt()) + "\n\n"
+		ret += "\n\n" + SystemPrompt(changes.ChangeBlockSystemPrompt()) + "\n\n"
 	}
 
 	if extra != "" {

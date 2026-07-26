@@ -15,7 +15,7 @@ This reuses the ParserState decorator (shared with dynamic context) to intercept
 change blocks from model output. ParserState is activated when either dynamic
 context or immediate apply is enabled, because both features parse structured
 blocks from streamed output. An apply error aborts generation immediately so the
-user can inspect the partial state and the failing hunk rather than continuing
+user can inspect the partial state and the failing change block rather than continuing
 to produce changes that build on a broken foundation. The streaming apply
 mechanism is implemented via a BlockHandler callback on ParserState; see
 TheoryOfStreamingApply in generate.go for details.
@@ -26,7 +26,7 @@ blocks are not applied to the working tree during generation.
 // Apply controls whether change blocks are applied to the working tree
 // immediately as they are parsed from model output during generation.
 // When true, ParserState is activated to intercept change blocks, and each
-// complete change block is applied via changes.ApplyHunk after a generation
+// complete change block is applied via changes.ApplyChangeBlock after a generation
 // phase. An apply error aborts generation. See TheoryOfImmediateApply.
 type Apply bool
 

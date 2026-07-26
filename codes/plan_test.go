@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 )
 
@@ -13,7 +12,6 @@ func TestSystemPromptPlan(t *testing.T) {
 
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
@@ -32,7 +30,6 @@ func TestSystemPromptPlan(t *testing.T) {
 
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),

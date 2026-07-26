@@ -16,8 +16,8 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-const HunkApplicationTheory = `
-Hunk application translates parsed change blocks into byte-level edits on source files.
+const ChangeBlockApplicationTheory = `
+Change block application translates parsed change blocks into byte-level edits on source files.
 When an ADD operation targets a spec nested inside a multi-spec declaration block (e.g.,
 const or var groups), the insertion point redirects to the parent block boundary to avoid
 producing invalid code inside the parentheses. The inserted body must remain a complete,
@@ -176,7 +176,7 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
-func ApplyHunk(root *os.Root, h Hunk) error {
+func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
 		cwd, err := os.Getwd()
@@ -242,7 +242,7 @@ func ApplyHunk(root *os.Root, h Hunk) error {
 	// declaration-level parsing. Works for both Go and non-Go files. If the
 	// file does not exist, the operation is a no-op, consistent with the
 	// DELETE declaration behavior that returns nil when the target is not
-	// found. See HunkApplicationTheory.
+	// found. See ChangeBlockApplicationTheory.
 	if h.Op == "DELETE" && h.Target == "*" {
 		if err := root.Remove(path); err != nil {
 			if os.IsNotExist(err) {
@@ -301,14 +301,14 @@ func ApplyHunk(root *os.Root, h Hunk) error {
 	if bodyInfo != nil {
 		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
 	}
-	bodyName := getHunkBodyNameFromInfo(bodyInfo)
+	bodyName := getChangeBlockBodyNameFromInfo(bodyInfo)
 
 	var start, end int
 	var finalBody string = h.Body
 
 	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
 	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
-		if s, e, fb, err := findTargetRange(fset, f, Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
+		if s, e, fb, err := findTargetRange(fset, f, ChangeBlock{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
 			h.Op = "MODIFY"
 			h.Target = bodyName
 			start, end, finalBody = s, e, fb
@@ -337,8 +337,8 @@ func ApplyHunk(root *os.Root, h Hunk) error {
 	var items []rangeItem
 	items = append(items, rangeItem{start: start, end: end, body: finalBody, isPrimary: true})
 
-	// Detect and remove other occurrences of entities present in the hunk body
-	// to prevent duplication when a hunk contains multiple declarations (e.g. Type + Methods).
+	// Detect and remove other occurrences of entities present in the change block body
+	// to prevent duplication when a change block contains multiple declarations (e.g. Type + Methods).
 	if bodyInfo != nil && bodyInfo.entityCount() > 1 && f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		ids := getIdentifiers(bodyInfo)
 		// Build a delete-range index in a single pass over declarations,
@@ -444,7 +444,7 @@ func ApplyHunk(root *os.Root, h Hunk) error {
 	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
+func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
 		if h.Op == "MODIFY" {
 			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target BEGIN; use ADD_BEFORE")
@@ -565,7 +565,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 
 			// Heuristic: if MODIFY and body doesn't seem to contain the target declaration,
 			// try to reconstruct it as a raw value replacement for const/var.
-			if h.Op == "MODIFY" && (bodyInfo == nil || bodyInfo.entityCount() == 0 || getHunkBodyNameFromInfo(bodyInfo) != h.Target) {
+			if h.Op == "MODIFY" && (bodyInfo == nil || bodyInfo.entityCount() == 0 || getChangeBlockBodyNameFromInfo(bodyInfo) != h.Target) {
 				isString := false
 				if vs, ok := node.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
 					if bl, ok := vs.Values[0].(*ast.BasicLit); ok && bl.Kind == token.STRING {
@@ -721,7 +721,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInf
 // targets "package" and "import". These replace the package clause or import
 // block without rewriting the entire file, saving tokens compared to WRITE.
 // See TheoryOfSpecialGoTargets in parse.go.
-func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h Hunk) error {
+func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h ChangeBlock) error {
 	var newSrc []byte
 
 	switch h.Target {
@@ -875,7 +875,7 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 
 // buildDeleteRanges builds a map from declaration name to the byte range
 // that would be removed by a DELETE operation. This allows the duplicate
-// detection in ApplyHunk to look up ranges in O(1) per identifier instead
+// detection in ApplyChangeBlock to look up ranges in O(1) per identifier instead
 // of calling findTargetRange (O(D) per identifier) for each one.
 // The range logic mirrors findTargetRange's DELETE path: for a spec in a
 // multi-spec GenDecl, only the spec range is returned; for a single-spec
@@ -955,11 +955,11 @@ func buildDeleteRanges(fset *token.FileSet, f *ast.File, prefixLen int) map[stri
 	return ranges
 }
 
-// getHunkBodyNameFromInfo extracts the primary entity name from a parsed
+// getChangeBlockBodyNameFromInfo extracts the primary entity name from a parsed
 // BodyInfo without re-parsing the body. Callers that already hold a BodyInfo
-// (e.g., ApplyHunk, findTargetRange) should use this instead of
-// getHunkBodyName to avoid redundant AST parsing.
-func getHunkBodyNameFromInfo(info *BodyInfo) string {
+// (e.g., ApplyChangeBlock, findTargetRange) should use this instead of
+// getChangeBlockBodyName to avoid redundant AST parsing.
+func getChangeBlockBodyNameFromInfo(info *BodyInfo) string {
 	if info == nil || info.entityCount() == 0 {
 		return ""
 	}

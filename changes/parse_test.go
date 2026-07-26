@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestParseFirstBoundaryHunk(t *testing.T) {
+func TestParseFirstBoundaryChangeBlock(t *testing.T) {
 	// Valid with XML attributes on opening tag and code body
 	content := ":::测试 <change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\">\nfunc myFunc() {}\n:::测试 </change>\n"
-	h, start, end, ok, err := ParseFirstBoundaryHunk([]byte(content))
+	h, start, end, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 
 	// Body content with header-like lines is preserved in the body
 	content2 := ":::边界 <change op=\"MODIFY\" target=\"myFunc\" file-path=\"/file.go\">\nop: MODIFY // comment in body\nfunc myFunc() {}\n:::边界 </change>\n"
-	h2, _, _, ok2, err2 := ParseFirstBoundaryHunk([]byte(content2))
+	h2, _, _, ok2, err2 := ParseFirstBoundaryChangeBlock([]byte(content2))
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
 	}
@@ -52,7 +52,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	// RENAME operation with empty body
 	t.Run("RENAME", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\">\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -73,7 +73,7 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	// Old header-based (key-value) format is no longer supported
 	t.Run("HeaderFormatRejected", func(t *testing.T) {
 		content := ":::格式 <change>\nop: MODIFY\ntarget: myFunc\nfile-path: /file.go\n\nfunc myFunc() {}\n:::格式 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -85,9 +85,9 @@ func TestParseFirstBoundaryHunk(t *testing.T) {
 	})
 }
 
-func TestParseFirstBoundaryHunkXML(t *testing.T) {
+func TestParseFirstBoundaryChangeBlockXML(t *testing.T) {
 	content := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,9 +108,9 @@ func TestParseFirstBoundaryHunkXML(t *testing.T) {
 	}
 }
 
-func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
+func TestParseFirstBoundaryChangeBlockXMLRename(t *testing.T) {
 	content := ":::徕珑 <change op=\"RENAME\" target=\"new.go\" file-path=\"old.go\">\n:::徕珑 </change>\n"
-	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,16 +118,16 @@ func TestParseFirstBoundaryHunkXMLRename(t *testing.T) {
 		t.Fatal("expected ok")
 	}
 	if h.Op != "RENAME" || h.Target != "new.go" || h.FilePath != "old.go" {
-		t.Fatalf("unexpected hunk: %+v", h)
+		t.Fatalf("unexpected change block: %+v", h)
 	}
 	if h.Body != "" {
 		t.Fatalf("body should be empty, got %q", h.Body)
 	}
 }
 
-func TestParseFirstBoundaryHunkWrite(t *testing.T) {
+func TestParseFirstBoundaryChangeBlockWrite(t *testing.T) {
 	content := ":::徕珑 <change op=\"WRITE\" file-path=\"/test.go\">\npackage x\n\nfunc New() {}\n:::徕珑 </change>\n"
-	h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+	h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,11 +148,11 @@ func TestParseFirstBoundaryHunkWrite(t *testing.T) {
 	}
 }
 
-func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
+func TestParseFirstBoundaryChangeBlockNonGoFileRestriction(t *testing.T) {
 	// WRITE on non-Go file should succeed
 	t.Run("WriteSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"WRITE\" file-path=\"/test.md\">\n# Markdown\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// MODIFY on non-Go file should fail
 	t.Run("ModifyFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"someHeading\" file-path=\"/test.md\">\n# Modified\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY on non-Go file")
 		}
@@ -179,7 +179,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// ADD_BEFORE on non-Go file should fail
 	t.Run("AddBeforeFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"ADD_BEFORE\" target=\"someHeading\" file-path=\"/test.md\">\nnew content\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_BEFORE on non-Go file")
 		}
@@ -191,7 +191,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// ADD_AFTER on non-Go file should fail
 	t.Run("AddAfterFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"ADD_AFTER\" target=\"someHeading\" file-path=\"/test.md\">\nnew content\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_AFTER on non-Go file")
 		}
@@ -203,7 +203,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// DELETE with target=* on non-Go file should succeed
 	t.Run("DeleteAllSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"DELETE\" target=\"*\" file-path=\"/test.md\">\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -211,14 +211,14 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 			t.Fatal("expected ok for DELETE * on non-Go file")
 		}
 		if h.Op != "DELETE" || h.Target != "*" {
-			t.Fatalf("unexpected hunk: %+v", h)
+			t.Fatalf("unexpected change block: %+v", h)
 		}
 	})
 
 	// DELETE with specific target on non-Go file should fail
 	t.Run("DeleteSpecificFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"DELETE\" target=\"someHeading\" file-path=\"/test.md\">\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for DELETE with specific target on non-Go file")
 		}
@@ -230,7 +230,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// RENAME on non-Go file should succeed
 	t.Run("RenameSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"RENAME\" target=\"/new.md\" file-path=\"/old.md\">\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -245,7 +245,7 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	// MODIFY on Go file should still succeed (regression check)
 	t.Run("ModifyGoFileSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -258,11 +258,11 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 	})
 }
 
-func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
+func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 	// MODIFY package on Go file should succeed
 	t.Run("ModifyPackageSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"package\" file-path=\"/test.go\">\npackage newpkg\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -270,14 +270,14 @@ func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
 			t.Fatal("expected ok for MODIFY package on Go file")
 		}
 		if h.Op != "MODIFY" || h.Target != "package" {
-			t.Fatalf("unexpected hunk: %+v", h)
+			t.Fatalf("unexpected change block: %+v", h)
 		}
 	})
 
 	// MODIFY import on Go file should succeed
 	t.Run("ModifyImportSucceeds", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"import\" file-path=\"/test.go\">\nimport \"fmt\"\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -285,14 +285,14 @@ func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
 			t.Fatal("expected ok for MODIFY import on Go file")
 		}
 		if h.Op != "MODIFY" || h.Target != "import" {
-			t.Fatalf("unexpected hunk: %+v", h)
+			t.Fatalf("unexpected change block: %+v", h)
 		}
 	})
 
 	// Non-MODIFY package should fail
 	t.Run("DeletePackageFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"DELETE\" target=\"package\" file-path=\"/test.go\">\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for non-MODIFY op on package target")
 		}
@@ -304,7 +304,7 @@ func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
 	// Non-MODIFY import should fail
 	t.Run("AddBeforeImportFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"ADD_BEFORE\" target=\"import\" file-path=\"/test.go\">\nsome text\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for ADD_BEFORE on import target")
 		}
@@ -316,7 +316,7 @@ func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
 	// MODIFY package on non-Go file should fail
 	t.Run("ModifyPackageOnNonGoFileFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"package\" file-path=\"/test.md\">\n# Title\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY package on non-Go file")
 		}
@@ -328,7 +328,7 @@ func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
 	// MODIFY import on non-Go file should fail
 	t.Run("ModifyImportOnNonGoFileFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"MODIFY\" target=\"import\" file-path=\"/test.md\">\n# Title\n:::徕珑 </change>\n"
-		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
 		if err == nil {
 			t.Fatal("expected error for MODIFY import on non-Go file")
 		}

@@ -32,7 +32,7 @@ apply (e.g., invalid target, malformed code), generation stops immediately
 instead of continuing to produce tokens that would be wasted on a broken
 foundation. The streaming apply is implemented via a BlockHandler callback on
 ParserState: when a complete change block is parsed during AppendContent or
-Flush, the handler applies it via changes.ApplyHunk. Successfully applied blocks are
+Flush, the handler applies it via changes.ApplyChangeBlock. Successfully applied change blocks are
 consumed (not retained in the blocks list), so the post-phase component loop's
 applyChangeBlocks finds no change blocks to re-apply. When the apply flag is
 disabled, no handler is set and change blocks are stored as before, preserving
@@ -226,7 +226,7 @@ State is unaffected by the failed attempt, so retrying starts from a clean
 snapshot rather than corrupted partial state. The retry count is bounded to
 prevent infinite loops when a model consistently truncates. Change blocks from
 a truncated attempt are NOT applied: the retry discards the partial output
-entirely and regenerates from scratch, avoiding incomplete or malformed hunks.
+entirely and regenerates from scratch, avoiding incomplete or malformed change blocks.
 This is distinct from the generator-level retry (see TheoryOfRetry and
 TheoryOfGenerateRetry) which handles transient API errors; this retry handles
 successful-but-incomplete output.
@@ -333,7 +333,6 @@ func runPhaseWithRetry(
 
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
-	diffHandler changes.DiffHandler,
 	comps CodesComponents,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
@@ -403,9 +402,6 @@ func (Module) Generate(
 		var allFuncDecls []generators.FuncDecl
 		if args.DisableTools != nil && !*args.DisableTools {
 			for _, fn := range codeProvider.Functions() {
-				allFuncDecls = append(allFuncDecls, fn.Decl)
-			}
-			for _, fn := range diffHandler.Functions() {
 				allFuncDecls = append(allFuncDecls, fn.Decl)
 			}
 			allFuncDecls = append(allFuncDecls, funcDecls...)
@@ -503,7 +499,6 @@ func (Module) Generate(
 
 		if args.DisableTools != nil && !*args.DisableTools {
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
-			state = generators.NewFuncMap(state, diffHandler.Functions()...)
 		}
 
 		// Wrap state with ParserState to parse structured blocks from model
@@ -522,8 +517,8 @@ func (Module) Generate(
 				if !parsedOk {
 					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 				}
-				if err := changes.ApplyHunk(root, h); err != nil {
-					return false, fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
+				if err := changes.ApplyChangeBlock(root, h); err != nil {
+					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
 				}
 				return true, nil
 			}

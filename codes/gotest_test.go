@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -15,7 +14,6 @@ import (
 func TestSystemPromptGoTestBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -45,7 +43,6 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -90,7 +87,6 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 func TestGoTestComponentFailTriggersRound(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),

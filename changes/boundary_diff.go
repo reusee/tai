@@ -7,39 +7,39 @@ import (
 	"os"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/generators"
 )
 
 const TheoryOfBatchDiffWrite = `
 The diff file is mutated in memory as change blocks are applied and persisted only once
-at the end of processing (or on early exit), rather than after every hunk. This reduces
-I/O from O(N*S) to O(S) for N hunks in a file of size S, without changing the on-disk
-result: applied change blocks are removed and non-change blocks (e.g., finish summaries)
-are preserved exactly as before.
+at the end of processing (or on early exit), rather than after every change block. This
+reduces I/O from O(N*S) to O(S) for N change blocks in a file of size S, without changing
+the on-disk result: applied change blocks are removed and non-change blocks (e.g.,
+finish summaries) are preserved exactly as before.
 `
 
-// BoundaryDiffHandler implements the DiffHandler interface using a boundary-delimited format.
-// Changes are wrapped in :::change <boundary> / :::end <boundary> blocks, where the boundary
-// is a random string chosen by the AI to prevent parsing conflicts with code content.
-// This format eliminates escape requirements (unlike XML) while maintaining structural parseability.
-type BoundaryDiffHandler struct{}
-
-var _ DiffHandler = BoundaryDiffHandler{}
-
-func (b BoundaryDiffHandler) Functions() []*generators.Function {
-	return nil
+// ChangeBlockSystemPrompt returns the system prompt describing the change
+// block format, composed of the shared block format prompt and the
+// change-specific prompt. It is used by the change block component and the
+// "next" subcommand to teach the model how to emit change blocks.
+func ChangeBlockSystemPrompt() string {
+	return blocks.BlockFormatSystemPrompt + "\n" + ChangeBlockPrompt
 }
 
-func (b BoundaryDiffHandler) SystemPrompt() string {
-	return blocks.BlockFormatSystemPrompt + "\n" + ChangeBlockSystemPrompt
+// ChangeBlockRestatePrompt returns the short critical reminder that reinforces
+// the change block format rules. It is used by the change block component as
+// its RestatePrompt field.
+func ChangeBlockRestatePrompt() string {
+	return ChangeBlockRestatePromptText
 }
 
-func (b BoundaryDiffHandler) RestatePrompt() string {
-	return ChangeBlockRestatePrompt
-}
-
-func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2[Hunk, error] {
-	return func(yield func(Hunk, error) bool) {
+// ApplyDiffFile streams change blocks from a boundary-delimited diff file,
+// applies each one to the working tree rooted at root, and removes
+// successfully applied change blocks from the diff file (persisted once at
+// the end of processing). Non-change blocks (e.g., finish summaries) are
+// preserved. It yields each applied ChangeBlock, or an error that aborts
+// processing. See TheoryOfBatchDiffWrite.
+func ApplyDiffFile(root *os.Root, diffFilePath string) iter.Seq2[ChangeBlock, error] {
+	return func(yield func(ChangeBlock, error) bool) {
 		content, err := root.ReadFile(diffFilePath)
 		if err != nil {
 			// Absolute paths (e.g., /tmp/...) are rejected by os.Root
@@ -48,15 +48,15 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			// accessible. See test cases using t.TempDir().
 			content, err = os.ReadFile(diffFilePath)
 			if err != nil {
-				yield(Hunk{}, err)
+				yield(ChangeBlock{}, err)
 				return
 			}
 		}
 
-		// writeDiff persists the current in-memory content to the diff file.
-		// Called once at the end of processing instead of after every hunk,
-		// reducing I/O from O(N*S) to O(S) for N hunks in a file of size S.
-		// See TheoryOfBatchDiffWrite.
+		// writeDiff persists the current in-memory content to the diff
+		// file. Called once at the end of processing instead of after
+		// every change block, reducing I/O from O(N*S) to O(S) for N
+		// change blocks in a file of size S. See TheoryOfBatchDiffWrite.
 		writeDiff := func() error {
 			trimmed := bytes.TrimSpace(content)
 			if err := root.WriteFile(diffFilePath, trimmed, 0644); err != nil {
@@ -73,7 +73,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				if modified {
 					writeDiff()
 				}
-				yield(Hunk{}, err)
+				yield(ChangeBlock{}, err)
 				return
 			}
 			if !ok {
@@ -91,20 +91,21 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			}
 			h, parsedOk := ParseChangeBlock(block)
 			if !parsedOk {
-				// Unparseable change blocks are not applied and therefore
-				// preserved rather than deleted from the diff file.
+				// Unparseable change blocks are not applied and
+				// therefore preserved rather than deleted from the
+				// diff file.
 				cursor = end
 				continue
 			}
-			if err := ApplyHunk(root, h); err != nil {
+			if err := ApplyChangeBlock(root, h); err != nil {
 				if modified {
 					writeDiff()
 				}
-				yield(h, fmt.Errorf("hunk %s %s: %w", h.Op, h.Target, err))
+				yield(h, fmt.Errorf("change block %s %s: %w", h.Op, h.Target, err))
 				return
 			}
-			// Remove the applied change block from in-memory content; the
-			// disk write is deferred to the end of processing.
+			// Remove the applied change block from in-memory content;
+			// the disk write is deferred to the end of processing.
 			content = append(content[:start], content[end:]...)
 			modified = true
 			cursor = min(start, len(content))
@@ -115,7 +116,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 		}
 		if modified {
 			if err := writeDiff(); err != nil {
-				yield(Hunk{}, err)
+				yield(ChangeBlock{}, err)
 				return
 			}
 		}

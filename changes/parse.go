@@ -29,7 +29,7 @@ The "package" target replaces the file's package clause (the "package xxx"
 line). The body must be the new package clause (e.g., "package newpkg"). If
 the body contains extra declarations, only the package clause is extracted.
 This target is Go-only; applying it to a non-Go file is rejected by
-ValidateChangeBlockHunk because MODIFY is not a file-level operation.
+ValidateChangeBlock because MODIFY is not a file-level operation.
 
 The "import" target replaces ALL import declarations in the file as a group.
 The body must be the new import block(s) (e.g., "import (\n\t\"fmt\"\n)") or
@@ -69,12 +69,12 @@ func isFileLevelOperation(op, target string) bool {
 	}
 }
 
-// ValidateChangeBlockHunk validates that the hunk's operation is valid for
-// the target file type. Non-Go files only support file-level operations
+// ValidateChangeBlock validates that the change block's operation is valid
+// for the target file type. Non-Go files only support file-level operations
 // (WRITE, RENAME, DELETE with target=*). See TheoryOfNonGoFileChanges.
 // "package" and "import" are special Go-only targets that support only MODIFY.
 // See TheoryOfSpecialGoTargets.
-func ValidateChangeBlockHunk(h Hunk) error {
+func ValidateChangeBlock(h ChangeBlock) error {
 	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) {
 		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, or DELETE with target=*; got op=%q", h.FilePath, h.Op)
 	}
@@ -86,11 +86,11 @@ func ValidateChangeBlockHunk(h Hunk) error {
 	return nil
 }
 
-// ParseChangeBlock extracts a Hunk from a change block's attributes and body.
-// In the boundary-delimited format, the change block's metadata (op, target,
-// file-path) is specified as XML attributes on the opening tag, and the body
-// contains only the complete declaration code.
-func ParseChangeBlock(block blocks.Block) (h Hunk, ok bool) {
+// ParseChangeBlock extracts a ChangeBlock from a change block's attributes
+// and body. In the boundary-delimited format, the change block's metadata
+// (op, target, file-path) is specified as XML attributes on the opening tag,
+// and the body contains only the complete declaration code.
+func ParseChangeBlock(block blocks.Block) (h ChangeBlock, ok bool) {
 	if block.Kind != "change" {
 		return h, false
 	}
@@ -105,9 +105,9 @@ func ParseChangeBlock(block blocks.Block) (h Hunk, ok bool) {
 	return h, true
 }
 
-// ParseFirstBoundaryHunk scans content for the first boundary-delimited change block,
-// parses its attributes, and returns the resulting Hunk.
-func ParseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool, err error) {
+// ParseFirstBoundaryChangeBlock scans content for the first boundary-delimited
+// change block, parses its attributes, and returns the resulting ChangeBlock.
+func ParseFirstBoundaryChangeBlock(content []byte) (h ChangeBlock, start int, end int, ok bool, err error) {
 	block, start, end, ok, err := blocks.ParseFirstBlock(content)
 	if err != nil {
 		return h, 0, 0, false, err
@@ -123,14 +123,14 @@ func ParseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool
 
 	// Non-Go files cannot be structurally parsed to identify declarations,
 	// so only file-level operations are permitted. See TheoryOfNonGoFileChanges.
-	if err := ValidateChangeBlockHunk(h); err != nil {
+	if err := ValidateChangeBlock(h); err != nil {
 		return h, 0, 0, false, err
 	}
 
 	return h, start, end, true, nil
 }
 
-const ChangeBlockSystemPrompt = `**Change Block Kind:**
+const ChangeBlockPrompt = `**Change Block Kind:**
 
 The "change" kind defines code modifications using the boundary block format. The opening tag's XML attributes specify the operation, target, and file path. The body is the complete declaration code.
 
@@ -195,7 +195,7 @@ Fixed the Foo function, removed the unused Bar function, deleted the unused.go f
 :::桀骥 </finish>
 `
 
-const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with XML attributes on the opening tag:
+const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with XML attributes on the opening tag:
 :::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE>" target="<identifier_or_new_file_path>" file-path="<absolute_path>">
 <complete code>
 :::<boundary> </change>

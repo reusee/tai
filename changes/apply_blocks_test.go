@@ -111,7 +111,7 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}
-	if !strings.Contains(err.Error(), "apply hunk") {
-		t.Fatalf("expected apply hunk error, got: %v", err)
+	if !strings.Contains(err.Error(), "apply change block") {
+		t.Fatalf("expected apply change block error, got: %v", err)
 	}
 }

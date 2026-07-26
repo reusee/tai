@@ -41,10 +41,9 @@ extra prompt into the same assembly mechanism. Change, go-test, finish, and
 request-context components carry RestatePrompt fields — short critical reminders
 that reinforce block format rules, assembled via ComponentSet.RestatePrompts()
 separately from the main PromptSections. This brings the previously orphaned
-restate prompt constants (ChangeBlockRestatePrompt, GoTestBlockRestatePrompt,
-FinishBlockRestatePrompt, RequestContextRestatePrompt) and the
-DiffHandler.RestatePrompt() method under the Component framework, making them
-functional for the first time.
+restate prompt constants (ChangeBlockRestatePromptText, GoTestBlockRestatePrompt,
+FinishBlockRestatePrompt, RequestContextRestatePrompt) under the Component
+framework, making them functional for the first time.
 `
 
 // CodesComponents is the component set type for the codes module. It embeds
@@ -56,7 +55,6 @@ type CodesComponents struct {
 }
 
 func (Module) CodesComponents(
-	diffHandler changes.DiffHandler,
 	codeProvider codetypes.CodeProvider,
 	extra ExtraSystemPrompt,
 	dynamicContext DynamicContext,
@@ -66,17 +64,17 @@ func (Module) CodesComponents(
 ) CodesComponents {
 	var comps components.ComponentSet
 
-	// Change component: prompt always included (from diff handler, which
-	// includes BlockFormatSystemPrompt and ChangeBlockSystemPrompt).
-	// Processing is conditional on the apply flag.
-	// RestatePrompt carries the change block restate prompt from the diff
-	// handler, making the previously orphaned RestatePrompt() method
-	// functional. See TheoryOfCodesComponents.
+	// Change component: prompt always included (from the change block
+	// system prompt, which includes BlockFormatSystemPrompt and
+	// ChangeBlockPrompt). Processing is conditional on the apply flag.
+	// RestatePrompt carries the change block restate prompt, making the
+	// previously orphaned restate prompt functional. See
+	// TheoryOfCodesComponents.
 	if bool(apply) {
 		comps = append(comps, components.Component{
 			Kind:          "change",
-			PromptSection: diffHandler.SystemPrompt(),
-			RestatePrompt: diffHandler.RestatePrompt(),
+			PromptSection: changes.ChangeBlockSystemPrompt(),
+			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 				newPs, err := changes.ApplyChangeBlocks(pctx.ParserState, pctx.Root)
 				return components.ProcessResult{
@@ -88,8 +86,8 @@ func (Module) CodesComponents(
 	} else {
 		comps = append(comps, components.Component{
 			Kind:           "change",
-			PromptSection:  diffHandler.SystemPrompt(),
-			RestatePrompt:  diffHandler.RestatePrompt(),
+			PromptSection:  changes.ChangeBlockSystemPrompt(),
+			RestatePrompt:  changes.ChangeBlockRestatePrompt(),
 			ProcessingPath: "ApplyChangeBlocks (disabled by -no-apply)",
 		})
 	}

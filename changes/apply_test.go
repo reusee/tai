@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
+func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -20,14 +20,14 @@ func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "ADD_BEFORE",
 		Target:   "ccc",
 		FilePath: "test.go",
 		Body:     "const aaa = 42",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -49,7 +49,7 @@ func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 	}
 }
 
-func TestApplyHunkRename(t *testing.T) {
+func TestApplyChangeBlockRename(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -62,13 +62,13 @@ func TestApplyHunkRename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "RENAME",
 		Target:   "newname.go",
 		FilePath: "test.go",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	// Old file must be gone
@@ -94,7 +94,7 @@ func TestApplyHunkRename(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyPackage(t *testing.T) {
+func TestApplyChangeBlockModifyPackage(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -107,14 +107,14 @@ func TestApplyHunkModifyPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "package newpkg",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -130,7 +130,7 @@ func TestApplyHunkModifyPackage(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyImportReplace(t *testing.T) {
+func TestApplyChangeBlockModifyImportReplace(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -143,14 +143,14 @@ func TestApplyHunkModifyImportReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "import (\n\t\"fmt\"\n\t\"os\"\n)",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -166,7 +166,7 @@ func TestApplyHunkModifyImportReplace(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyImportAddToFileWithoutImports(t *testing.T) {
+func TestApplyChangeBlockModifyImportAddToFileWithoutImports(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -179,14 +179,14 @@ func TestApplyHunkModifyImportAddToFileWithoutImports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "import \"fmt\"",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -199,7 +199,7 @@ func TestApplyHunkModifyImportAddToFileWithoutImports(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyImportRemoveAll(t *testing.T) {
+func TestApplyChangeBlockModifyImportRemoveAll(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -214,14 +214,14 @@ func TestApplyHunkModifyImportRemoveAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -235,7 +235,7 @@ func TestApplyHunkModifyImportRemoveAll(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
+func TestApplyChangeBlockModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -249,14 +249,14 @@ func TestApplyHunkModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 	}
 
 	// Body without "package " prefix — the implementation extracts the name.
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "newpkg",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -272,7 +272,7 @@ func TestApplyHunkModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyPackageNonModifyRejected(t *testing.T) {
+func TestApplyChangeBlockModifyPackageNonModifyRejected(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -285,13 +285,13 @@ func TestApplyHunkModifyPackageNonModifyRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "ADD_BEFORE",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "some text",
 	}
-	err = ApplyHunk(root, h)
+	err = ApplyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on package target")
 	}
@@ -300,7 +300,7 @@ func TestApplyHunkModifyPackageNonModifyRejected(t *testing.T) {
 	}
 }
 
-func TestApplyHunkModifyImportNonModifyRejected(t *testing.T) {
+func TestApplyChangeBlockModifyImportNonModifyRejected(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -313,13 +313,13 @@ func TestApplyHunkModifyImportNonModifyRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "DELETE",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "",
 	}
-	err = ApplyHunk(root, h)
+	err = ApplyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on import target")
 	}
@@ -328,7 +328,7 @@ func TestApplyHunkModifyImportNonModifyRejected(t *testing.T) {
 	}
 }
 
-func TestApplyHunkDeleteFile(t *testing.T) {
+func TestApplyChangeBlockDeleteFile(t *testing.T) {
 	t.Run("GoFile", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -342,13 +342,13 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "test.go",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		_, err = root.Stat("test.go")
@@ -372,13 +372,13 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "readme.md",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		_, err = root.Stat("readme.md")
@@ -398,18 +398,18 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "nonexistent.go",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk should be no-op for non-existent file, got: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock should be no-op for non-existent file, got: %v", err)
 		}
 	})
 }
 
-func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
+func TestApplyChangeBlockNoBlankLinesInBody(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -422,14 +422,14 @@ func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "Old",
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -445,7 +445,7 @@ func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
 	}
 }
 
-func TestApplyHunkWrite(t *testing.T) {
+func TestApplyChangeBlockWrite(t *testing.T) {
 	t.Run("ReplaceGoFile", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -459,13 +459,13 @@ func TestApplyHunkWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "test.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		result, err := root.ReadFile("test.go")
@@ -489,13 +489,13 @@ func TestApplyHunkWrite(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "new.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		_, err = root.Stat("new.go")
@@ -517,13 +517,13 @@ func TestApplyHunkWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "readme.md",
 			Body:     "# New Title\n\nNew content\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		result, err := root.ReadFile("readme.md")
@@ -547,13 +547,13 @@ func TestApplyHunkWrite(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "sub/dir/notes.md",
 			Body:     "# Notes\n\nSome content\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		_, err = root.Stat("sub/dir/notes.md")
@@ -563,7 +563,7 @@ func TestApplyHunkWrite(t *testing.T) {
 	})
 }
 
-func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
+func TestApplyChangeBlockPathWithDoubleDotPrefix(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -572,7 +572,7 @@ func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
 	defer root.Close()
 
 	// A file whose name starts with ".." but is not a parent-directory
-	// traversal (e.g., "..notescape.go") must be accepted by ApplyHunk.
+	// traversal (e.g., "..notescape.go") must be accepted by ApplyChangeBlock.
 	// Before the fix, strings.HasPrefix(filepath.Clean(path), "..")
 	// incorrectly rejected any path starting with two dots.
 	filename := "..notescape.go"
@@ -581,14 +581,14 @@ func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "Old",
 		FilePath: filename,
 		Body:     "func New() {}",
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed for path starting with double dots: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed for path starting with double dots: %v", err)
 	}
 
 	result, err := root.ReadFile(filename)
@@ -618,11 +618,10 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := BoundaryDiffHandler{}
 	sawError := false
-	for _, err := range handler.Apply(root, diffPath) {
+	for _, err := range ApplyDiffFile(root, diffPath) {
 		if err == nil {
-			t.Fatal("expected error, got a hunk")
+			t.Fatal("expected error, got a change block")
 		}
 		sawError = true
 		if !strings.Contains(err.Error(), "unclosed") {
@@ -630,7 +629,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		}
 	}
 	if !sawError {
-		t.Fatal("expected an error from Apply")
+		t.Fatal("expected an error from ApplyChangeBlock")
 	}
 }
 
@@ -654,16 +653,15 @@ func TestApplyFinishBlock(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		handler := BoundaryDiffHandler{}
 		count := 0
-		for _, err := range handler.Apply(root, diffPath) {
+		for _, err := range ApplyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			count++
 		}
 		if count != 1 {
-			t.Fatalf("expected 1 hunk, got %d", count)
+			t.Fatalf("expected 1 change block, got %d", count)
 		}
 
 		result, err := root.ReadFile("test.go")
@@ -699,16 +697,15 @@ func TestApplyFinishBlock(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		handler := BoundaryDiffHandler{}
 		count := 0
-		for _, err := range handler.Apply(root, diffPath) {
+		for _, err := range ApplyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			count++
 		}
 		if count != 1 {
-			t.Fatalf("expected 1 hunk, got %d", count)
+			t.Fatalf("expected 1 change block, got %d", count)
 		}
 
 		result, err := root.ReadFile("test.go")
@@ -744,16 +741,15 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		handler := BoundaryDiffHandler{}
 		count := 0
-		for _, err := range handler.Apply(root, diffPath) {
+		for _, err := range ApplyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			count++
 		}
 		if count != 1 {
-			t.Fatalf("expected 1 hunk, got %d", count)
+			t.Fatalf("expected 1 change block, got %d", count)
 		}
 
 		remaining, err := os.ReadFile(diffPath)
@@ -792,7 +788,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 	})
 }
 
-func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
+func TestApplyChangeBlockMultiEntityRemovesDuplicates(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -811,14 +807,14 @@ func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
 	body := "type Foo struct {\n\tBar int\n\tBaz int\n}\n\n" +
 		"func (f *Foo) GetBar() int {\n\treturn f.Bar\n}\n\n" +
 		"func (f *Foo) SetBar(b int) {\n\tf.Bar = b\n}\n"
-	h := Hunk{
+	h := ChangeBlock{
 		Op:       "MODIFY",
 		Target:   "Foo",
 		FilePath: "test.go",
 		Body:     body,
 	}
-	if err := ApplyHunk(root, h); err != nil {
-		t.Fatalf("ApplyHunk failed: %v", err)
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -841,7 +837,7 @@ func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
 	}
 }
 
-func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
+func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -868,14 +864,14 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "MODIFY",
 			Target:   "Old",
 			FilePath: "modify.go",
 			Body:     "func New() {}",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		result, err := root.ReadFile("modify.go")
@@ -886,13 +882,13 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	})
 
 	t.Run("WriteGo", func(t *testing.T) {
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "write.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		result, err := root.ReadFile("write.go")
@@ -903,13 +899,13 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	})
 
 	t.Run("WriteNonGo", func(t *testing.T) {
-		h := Hunk{
+		h := ChangeBlock{
 			Op:       "WRITE",
 			FilePath: "readme.md",
 			Body:     "# Title\n\nContent\n",
 		}
-		if err := ApplyHunk(root, h); err != nil {
-			t.Fatalf("ApplyHunk failed: %v", err)
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
 		result, err := root.ReadFile("readme.md")

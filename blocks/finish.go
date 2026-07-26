@@ -10,7 +10,7 @@ metadata rather than file modifications. Only successfully applied change blocks
 are removed from the diff file; non-change blocks and unparseable change blocks
 are preserved so the summary and any unprocessed content remain available after
 processing. This provides a clear completion marker and a human-readable summary
-without interfering with hunk processing.
+without interfering with change block processing.
 
 The finish block is mandatory in every response, even when no change blocks are
 emitted. The generation loop uses the presence of a completion block (summary or
