@@ -36,18 +36,17 @@ AppendContent call, because streaming output may arrive in fragments. Text prece
 first block marker is prose and is discarded once a block is found, because ParserState's
 purpose is block extraction, not prose preservation.
 
-At Flush, the parser switches to final mode: an unclosed block is treated as ended rather
-than left pending, so its body is finalized as all remaining buffered content and the buffer
-is fully consumed. The BlockHandler is not called for blocks finalized during Flush, because
-these blocks are incomplete (e.g., from truncated output) and applying them would cause
-errors. Complete blocks are already parsed and handled during AppendContent; only unclosed
-blocks remain in the buffer at Flush. Retaining unclosed blocks without applying allows the
-summary-completion retry mechanism to detect truncation and retry from the pre-generation
-state, rather than aborting on an apply error from an incomplete change block. Any remaining
-unparseable fragments are discarded so content appended after Flush (e.g., from a subsequent
-generation cycle) is never combined with pre-Flush content within the same block. Boundary
-strings are parsed as leading Han (Chinese) ideographs only; a non-Han character terminates
-the boundary so trailing model-added content does not corrupt block matching.
+At Flush, an unclosed block (opening marker with no matching end marker) is treated as an
+error rather than being finalized, because an unclosed block indicates incomplete or
+truncated output and finalizing it would produce a malformed block with an incomplete body.
+Complete blocks are already parsed and handled during AppendContent; only unclosed blocks
+remain in the buffer at Flush. Returning an error for unclosed blocks at Flush lets the
+caller detect truncation and handle it appropriately (e.g., retry from the pre-generation
+state). Any remaining unparseable fragments are discarded so content appended after Flush
+(e.g., from a subsequent generation cycle) is never combined with pre-Flush content within
+the same block. Boundary strings are parsed as leading Han (Chinese) ideographs only; a
+non-Han character terminates the boundary so trailing model-added content does not corrupt
+block matching.
 
 Parsed blocks can be consumed selectively by kind via PopBlocksByKind, which returns
 the matched blocks alongside a new *ParserState with those blocks removed, so processing
@@ -139,7 +138,7 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 	blocks := slices.Clone(s.blocks)
 	buf := newBuf
 	for {
-		block, _, end, ok, err := parseFirstBlock(buf, false)
+		block, _, end, ok, err := parseFirstBlock(buf)
 		if err != nil {
 			// Unclosed block: incomplete, wait for more output.
 			break
@@ -201,20 +200,19 @@ func (s *ParserState) Flush() (generators.State, error) {
 
 	blocks := slices.Clone(s.blocks)
 	buf := slices.Clone(s.buf)
-	// During Flush, finalize any remaining unclosed blocks without calling
-	// the BlockHandler. Complete blocks were already parsed and handled
-	// during AppendContent; only unclosed blocks remain in the buffer.
-	// Unclosed blocks are incomplete (e.g., from truncated output) and
-	// applying them via the handler would cause errors. Retaining them
-	// without applying allows the summary-completion retry mechanism
-	// (see TheoryOfSummaryCompletionRetry in codes/generate.go) to detect
-	// truncation and retry from the pre-generation state, rather than
-	// aborting on an apply error from an incomplete change block.
+	// During Flush, an unclosed block (opening marker with no matching
+	// end marker) is an error, not a finalized block. An unclosed block
+	// indicates incomplete or truncated output; finalizing it would
+	// produce a malformed block with an incomplete body. Complete blocks
+	// were already parsed and handled during AppendContent; only unclosed
+	// blocks remain in the buffer at Flush. Returning an error lets the
+	// caller detect truncation and handle it appropriately (e.g., retry
+	// from the pre-generation state).
 	// See TheoryOfParserState.
 	for {
-		block, _, end, ok, err := parseFirstBlock(buf, true)
+		block, _, end, ok, err := parseFirstBlock(buf)
 		if err != nil {
-			break
+			return nil, err
 		}
 		if !ok {
 			break

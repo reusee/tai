@@ -142,13 +142,12 @@ type Block struct {
 // ParseFirstBlock parses the first complete boundary block from content.
 // An unclosed block (opening marker with no matching end marker at line
 // start) returns a BlockParseError. During streaming, this indicates
-// incomplete output that may be completed by subsequent chunks. Use
-// parseFirstBlock with final=true to finalize unclosed blocks at Flush.
+// incomplete output that may be completed by subsequent chunks.
 func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
-	return parseFirstBlock(content, false)
+	return parseFirstBlock(content)
 }
 
-func parseFirstBlock(content []byte, final bool) (block Block, start int, end int, ok bool, err error) {
+func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
 		idx := bytes.Index(content[searchFrom:], []byte(":::"))
@@ -177,7 +176,7 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 		// Parse the block in the boundary-delimited format:
 		// :::<boundary> <kind ...> ... :::<boundary> </kind>
 		// See TheoryOfBlockFormat.
-		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart, final); matched {
+		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart); matched {
 			return r.block, r.start, r.end, r.ok, r.err
 		}
 
@@ -190,8 +189,11 @@ func parseFirstBlock(content []byte, final bool) (block Block, start int, end in
 // between the boundary and the XML tag (e.g., "extra") is skipped by searching
 // for the first '<' in the rest of the line. Closing markers
 // (:::<boundary> </kind>) are rejected. Returns matched=false when the line
-// does not conform to the format. See TheoryOfBlockFormat.
-func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int, final bool) (result blockParseResult, matched bool) {
+// does not conform to the format. An unclosed block (no matching end marker)
+// always returns a BlockParseError; the block is never finalized, because an
+// unclosed block is incomplete regardless of whether Flush has been called.
+// See TheoryOfBlockFormat.
+func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) (result blockParseResult, matched bool) {
 	boundary := extractHanBoundary(openingLine)
 	if boundary == "" {
 		return
@@ -223,16 +225,9 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int, 
 		result.ok = true
 		return
 	}
-	if final {
-		result.block.Body = strings.TrimSpace(string(content[bodyStart:]))
-		result.start = blockStart
-		result.end = len(content)
-		result.ok = true
-		return
-	}
-	// Set start and end even in the error path so callers (e.g.,
-	// parseMemoryItems) can skip past the unclosed block's opening
-	// marker and continue scanning for subsequent blocks.
+	// Unclosed block: no matching end marker found. Always return an
+	// error, never finalize. An unclosed block is incomplete regardless
+	// of whether Flush has been called. See TheoryOfBlockFormat.
 	result.start = blockStart
 	result.end = lineEnd + 1
 	result.err = &BlockParseError{BlockKind: kind, Boundary: boundary}

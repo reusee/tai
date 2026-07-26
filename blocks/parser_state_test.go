@@ -312,7 +312,7 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	}
 }
 
-func TestParserStateFlushTreatsUnclosedAsEnded(t *testing.T) {
+func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
@@ -331,40 +331,56 @@ func TestParserStateFlushTreatsUnclosedAsEnded(t *testing.T) {
 		t.Fatalf("expected 0 blocks before flush, got %d", len(blocks))
 	}
 
-	// Flush finalizes the unclosed block as ended.
-	flushedState, err := ps.Flush()
-	if err != nil {
-		t.Fatal(err)
+	// Flush should return an error for the unclosed block, because an
+	// unclosed block is incomplete and must not be finalized.
+	_, err = ps.Flush()
+	if err == nil {
+		t.Fatal("expected error for unclosed block at flush")
 	}
-	ps = flushedState.(*ParserState)
-	blocks, ps = ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block after flush, got %d", len(blocks))
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
-		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
-	if !contains(blocks[0].Body, "func Foo() {}") {
-		t.Fatalf("body should contain the code: %q", blocks[0].Body)
-	}
-	// The buffer is fully consumed at Flush.
-	if pending := ps.PendingText(); pending != "" {
-		t.Fatalf("expected empty pending text after flush, got %q", pending)
-	}
+}
 
-	// Post-flush content must not combine with pre-flush content.
-	// The orphan closing marker produces no block.
-	newState, err = ps.AppendContent(&generators.Content{
+func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	ps := NewParserState(upstream)
+
+	// Append a complete block (with end marker).
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::徕珑 </change>\n")},
+		Parts: []generators.Part{generators.Text(text)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
+
+	// The complete block should already be parsed during AppendContent.
+	blocks, ps := ps.PopBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block before flush, got %d", len(blocks))
+	}
+
+	// Flush should succeed because there are no unclosed blocks.
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush should succeed with no unclosed blocks, got: %v", err)
+	}
+	ps = flushedState.(*ParserState)
+
+	// No blocks should remain after flush.
 	blocks, _ = ps.PopBlocks()
 	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for orphan end marker after flush, got %d", len(blocks))
+		t.Fatalf("expected 0 blocks after flush, got %d", len(blocks))
+	}
+	if pending := ps.PendingText(); pending != "" {
+		t.Fatalf("expected empty pending text after flush, got %q", pending)
 	}
 }
 
@@ -615,32 +631,22 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 0 handled blocks before flush, got %d", len(handledBlocks))
 		}
 
-		flushedState, err := ps.Flush()
-		if err != nil {
-			t.Fatal(err)
+		// Flush returns an error for the unclosed block. The handler
+		// is not called because the block is incomplete.
+		_, err = ps.Flush()
+		if err == nil {
+			t.Fatal("expected error for unclosed block at flush")
 		}
-		ps = flushedState.(*ParserState)
 
 		// Handler should NOT be called for unclosed blocks during Flush,
 		// because unclosed blocks are incomplete (e.g., from truncated
-		// output) and applying them would cause errors. The block is
-		// retained without being applied so the summary-completion retry
-		// mechanism can handle the truncation.
+		// output) and must not be finalized or applied.
 		if len(handledBlocks) != 0 {
 			t.Fatalf("expected 0 handled blocks after flush (unclosed block not applied), got %d", len(handledBlocks))
 		}
-
-		// The unclosed block should be retained in the blocks list.
-		blocks, _ := ps.PopBlocks()
-		if len(blocks) != 1 {
-			t.Fatalf("expected 1 retained block, got %d", len(blocks))
-		}
-		if blocks[0].Kind != "change" {
-			t.Fatalf("expected change block, got %s", blocks[0].Kind)
-		}
 	})
 
-	t.Run("UnclosedBlockDoesNotCauseFlushError", func(t *testing.T) {
+	t.Run("UnclosedBlockCausesFlushError", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		// Handler that returns an error for change blocks, simulating
 		// an apply failure on an incomplete block.
@@ -664,24 +670,19 @@ func TestParserStateBlockHandler(t *testing.T) {
 		}
 		ps = newState.(*ParserState)
 
-		// Flush should NOT return an error, because the handler is not
-		// called for unclosed blocks during Flush. Before the fix, the
-		// handler would be called and return an error, which would
-		// propagate from Flush and prevent the summary-completion retry
-		// mechanism from handling the truncation.
-		flushedState, flushErr := ps.Flush()
-		if flushErr != nil {
-			t.Fatalf("Flush should not error for unclosed block, got: %v", flushErr)
+		// Flush should return an error for the unclosed block, because
+		// an unclosed block indicates incomplete or truncated output and
+		// must not be finalized.
+		_, flushErr := ps.Flush()
+		if flushErr == nil {
+			t.Fatal("expected error for unclosed block at flush")
 		}
-		ps = flushedState.(*ParserState)
-
-		// The unclosed block should be retained in the blocks list.
-		blocks, _ := ps.PopBlocks()
-		if len(blocks) != 1 {
-			t.Fatalf("expected 1 retained block, got %d", len(blocks))
+		e, isParseErr := flushErr.(*BlockParseError)
+		if !isParseErr {
+			t.Fatalf("expected BlockParseError, got %T: %v", flushErr, flushErr)
 		}
-		if blocks[0].Kind != "change" {
-			t.Fatalf("expected change block, got %s", blocks[0].Kind)
+		if e.BlockKind != "change" || e.Boundary != "徕珑" {
+			t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 		}
 	})
 
