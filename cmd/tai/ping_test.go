@@ -15,9 +15,12 @@ func TestPingCommandRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle ping failed: %v", err)
 	}
-	pingCmd, ok := newValue.(Command)
+	// Handle returns *Command (a pointer), matching the flags.Flag convention
+	// where Handle returns a pointer to a typed value for scope.Fork.
+	// See flags.Flag.Handle documentation.
+	pingCmd, ok := newValue.(*Command)
 	if !ok {
-		t.Fatal("Handle ping did not return a Command")
+		t.Fatal("Handle ping did not return a *Command")
 	}
 	if pingCmd.Main == nil {
 		t.Fatal("PingCommand has no Main")
