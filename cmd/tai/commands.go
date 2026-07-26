@@ -29,6 +29,7 @@ func (c Command) Keys() map[string]string {
 		"patch": "Apply a boundary-delimited diff file to the working tree",
 		"go":    "Generate code for Go files (default in Go modules)",
 		"any":   "Generate code for arbitrary text files",
+		"ping":  "Test whether a model is reachable by sending a hello message",
 	}
 }
 
@@ -49,6 +50,9 @@ func (c Command) Handle(key string, args []string) (newValue any, remainArgs []s
 
 	case "any":
 		return AnyCommand, args, nil
+
+	case "ping":
+		return PingCommand, args, nil
 
 	}
 
