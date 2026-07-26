@@ -1,10 +1,9 @@
-package codes
+package flags
 
 import (
 	"cuelang.org/go/cue"
 
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfImmediateApply = `
@@ -38,7 +37,7 @@ func (Module) Apply() Apply {
 
 var _ configs.Config = Apply(true)
 
-var _ flags.Flag = Apply(true)
+var _ Flag = Apply(true)
 
 func (a Apply) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
 	switch key {
