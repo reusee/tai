@@ -351,7 +351,7 @@ func (Module) Generate(
 	flagChats flags.Chats,
 	debug Debug,
 	funcDecls generators.FuncDecls,
-	apply flags.Apply,
+	apply Apply,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {

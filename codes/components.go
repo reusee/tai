@@ -58,7 +58,7 @@ func (Module) CodesComponents(
 	codeProvider codetypes.CodeProvider,
 	extra ExtraSystemPrompt,
 	dynamicContext DynamicContext,
-	apply flags.Apply,
+	apply Apply,
 	plan Plan,
 	flagShell flags.Shell,
 ) CodesComponents {
