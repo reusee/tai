@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -30,7 +31,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			BoundaryDiffHandler{},
+			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
@@ -49,7 +50,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			BoundaryDiffHandler{},
+			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(true),
@@ -70,7 +71,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -93,7 +94,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 func TestSystemPromptContinueBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -122,7 +123,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -151,7 +152,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -177,7 +178,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
@@ -228,7 +229,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 func TestSystemPromptSummaryBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
-		BoundaryDiffHandler{},
+		changes.BoundaryDiffHandler{},
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),

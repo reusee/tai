@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 )
 
@@ -12,7 +13,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			BoundaryDiffHandler{},
+			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
@@ -31,7 +32,7 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
-			BoundaryDiffHandler{},
+			changes.BoundaryDiffHandler{},
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),

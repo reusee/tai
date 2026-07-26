@@ -1,4 +1,4 @@
-package codes
+package changes
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
 )
 
@@ -25,22 +24,22 @@ are preserved exactly as before.
 // This format eliminates escape requirements (unlike XML) while maintaining structural parseability.
 type BoundaryDiffHandler struct{}
 
-var _ codetypes.DiffHandler = BoundaryDiffHandler{}
+var _ DiffHandler = BoundaryDiffHandler{}
 
 func (b BoundaryDiffHandler) Functions() []*generators.Function {
 	return nil
 }
 
 func (b BoundaryDiffHandler) SystemPrompt() string {
-	return blocks.BlockFormatSystemPrompt + "\n" + blocks.ChangeBlockSystemPrompt
+	return blocks.BlockFormatSystemPrompt + "\n" + ChangeBlockSystemPrompt
 }
 
 func (b BoundaryDiffHandler) RestatePrompt() string {
-	return blocks.ChangeBlockRestatePrompt
+	return ChangeBlockRestatePrompt
 }
 
-func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2[codetypes.Hunk, error] {
-	return func(yield func(codetypes.Hunk, error) bool) {
+func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2[Hunk, error] {
+	return func(yield func(Hunk, error) bool) {
 		content, err := root.ReadFile(diffFilePath)
 		if err != nil {
 			// Absolute paths (e.g., /tmp/...) are rejected by os.Root
@@ -49,7 +48,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 			// accessible. See test cases using t.TempDir().
 			content, err = os.ReadFile(diffFilePath)
 			if err != nil {
-				yield(codetypes.Hunk{}, err)
+				yield(Hunk{}, err)
 				return
 			}
 		}
@@ -74,7 +73,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				if modified {
 					writeDiff()
 				}
-				yield(codetypes.Hunk{}, err)
+				yield(Hunk{}, err)
 				return
 			}
 			if !ok {
@@ -90,14 +89,14 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 				cursor = end
 				continue
 			}
-			h, parsedOk := blocks.ParseChangeBlock(block)
+			h, parsedOk := ParseChangeBlock(block)
 			if !parsedOk {
 				// Unparseable change blocks are not applied and therefore
 				// preserved rather than deleted from the diff file.
 				cursor = end
 				continue
 			}
-			if err := applyHunk(root, h); err != nil {
+			if err := ApplyHunk(root, h); err != nil {
 				if modified {
 					writeDiff()
 				}
@@ -116,7 +115,7 @@ func (b BoundaryDiffHandler) Apply(root *os.Root, diffFilePath string) iter.Seq2
 		}
 		if modified {
 			if err := writeDiff(); err != nil {
-				yield(codetypes.Hunk{}, err)
+				yield(Hunk{}, err)
 				return
 			}
 		}

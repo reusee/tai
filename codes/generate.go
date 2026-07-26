@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/configs"
@@ -31,7 +32,7 @@ apply (e.g., invalid target, malformed code), generation stops immediately
 instead of continuing to produce tokens that would be wasted on a broken
 foundation. The streaming apply is implemented via a BlockHandler callback on
 ParserState: when a complete change block is parsed during AppendContent or
-Flush, the handler applies it via applyHunk. Successfully applied blocks are
+Flush, the handler applies it via changes.ApplyHunk. Successfully applied blocks are
 consumed (not retained in the blocks list), so the post-phase component loop's
 applyChangeBlocks finds no change blocks to re-apply. When the apply flag is
 disabled, no handler is set and change blocks are stored as before, preserving
@@ -332,7 +333,7 @@ func runPhaseWithRetry(
 
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
-	diffHandler codetypes.DiffHandler,
+	diffHandler changes.DiffHandler,
 	comps CodesComponents,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
@@ -517,11 +518,11 @@ func (Module) Generate(
 				if block.Kind != "change" {
 					return false, nil
 				}
-				h, parsedOk := blocks.ParseChangeBlock(block)
+				h, parsedOk := changes.ParseChangeBlock(block)
 				if !parsedOk {
 					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 				}
-				if err := applyHunk(root, h); err != nil {
+				if err := changes.ApplyHunk(root, h); err != nil {
 					return false, fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
 				}
 				return true, nil

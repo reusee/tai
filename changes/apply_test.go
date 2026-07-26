@@ -1,12 +1,10 @@
-package codes
+package changes
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/reusee/tai/codes/codetypes"
 )
 
 func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
@@ -22,14 +20,14 @@ func TestApplyHunkAddBeforeConstSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "ADD_BEFORE",
 		Target:   "ccc",
 		FilePath: "test.go",
 		Body:     "const aaa = 42",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -64,13 +62,13 @@ func TestApplyHunkRename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "RENAME",
 		Target:   "newname.go",
 		FilePath: "test.go",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	// Old file must be gone
@@ -109,14 +107,14 @@ func TestApplyHunkModifyPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "package newpkg",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -145,14 +143,14 @@ func TestApplyHunkModifyImportReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "import (\n\t\"fmt\"\n\t\"os\"\n)",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -181,14 +179,14 @@ func TestApplyHunkModifyImportAddToFileWithoutImports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "import \"fmt\"",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -216,14 +214,14 @@ func TestApplyHunkModifyImportRemoveAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -251,14 +249,14 @@ func TestApplyHunkModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 	}
 
 	// Body without "package " prefix — the implementation extracts the name.
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "newpkg",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -287,13 +285,13 @@ func TestApplyHunkModifyPackageNonModifyRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "ADD_BEFORE",
 		Target:   "package",
 		FilePath: "test.go",
 		Body:     "some text",
 	}
-	err = applyHunk(root, h)
+	err = ApplyHunk(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on package target")
 	}
@@ -315,13 +313,13 @@ func TestApplyHunkModifyImportNonModifyRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "DELETE",
 		Target:   "import",
 		FilePath: "test.go",
 		Body:     "",
 	}
-	err = applyHunk(root, h)
+	err = ApplyHunk(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on import target")
 	}
@@ -344,13 +342,13 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "test.go",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		_, err = root.Stat("test.go")
@@ -374,13 +372,13 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "readme.md",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		_, err = root.Stat("readme.md")
@@ -400,13 +398,13 @@ func TestApplyHunkDeleteFile(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "DELETE",
 			Target:   "*",
 			FilePath: "nonexistent.go",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk should be no-op for non-existent file, got: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk should be no-op for non-existent file, got: %v", err)
 		}
 	})
 }
@@ -424,14 +422,14 @@ func TestApplyHunkNoBlankLinesInBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "Old",
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -461,13 +459,13 @@ func TestApplyHunkWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "test.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		result, err := root.ReadFile("test.go")
@@ -491,13 +489,13 @@ func TestApplyHunkWrite(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "new.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		_, err = root.Stat("new.go")
@@ -519,13 +517,13 @@ func TestApplyHunkWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "readme.md",
 			Body:     "# New Title\n\nNew content\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		result, err := root.ReadFile("readme.md")
@@ -549,13 +547,13 @@ func TestApplyHunkWrite(t *testing.T) {
 		}
 		defer root.Close()
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "sub/dir/notes.md",
 			Body:     "# Notes\n\nSome content\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		_, err = root.Stat("sub/dir/notes.md")
@@ -574,7 +572,7 @@ func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
 	defer root.Close()
 
 	// A file whose name starts with ".." but is not a parent-directory
-	// traversal (e.g., "..notescape.go") must be accepted by applyHunk.
+	// traversal (e.g., "..notescape.go") must be accepted by ApplyHunk.
 	// Before the fix, strings.HasPrefix(filepath.Clean(path), "..")
 	// incorrectly rejected any path starting with two dots.
 	filename := "..notescape.go"
@@ -583,14 +581,14 @@ func TestApplyHunkPathWithDoubleDotPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "Old",
 		FilePath: filename,
 		Body:     "func New() {}",
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed for path starting with double dots: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed for path starting with double dots: %v", err)
 	}
 
 	result, err := root.ReadFile(filename)
@@ -813,14 +811,14 @@ func TestApplyHunkMultiEntityRemovesDuplicates(t *testing.T) {
 	body := "type Foo struct {\n\tBar int\n\tBaz int\n}\n\n" +
 		"func (f *Foo) GetBar() int {\n\treturn f.Bar\n}\n\n" +
 		"func (f *Foo) SetBar(b int) {\n\tf.Bar = b\n}\n"
-	h := codetypes.Hunk{
+	h := Hunk{
 		Op:       "MODIFY",
 		Target:   "Foo",
 		FilePath: "test.go",
 		Body:     body,
 	}
-	if err := applyHunk(root, h); err != nil {
-		t.Fatalf("applyHunk failed: %v", err)
+	if err := ApplyHunk(root, h); err != nil {
+		t.Fatalf("ApplyHunk failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -870,14 +868,14 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "MODIFY",
 			Target:   "Old",
 			FilePath: "modify.go",
 			Body:     "func New() {}",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		result, err := root.ReadFile("modify.go")
@@ -888,13 +886,13 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	})
 
 	t.Run("WriteGo", func(t *testing.T) {
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "write.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		result, err := root.ReadFile("write.go")
@@ -905,13 +903,13 @@ func TestApplyHunkTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	})
 
 	t.Run("WriteNonGo", func(t *testing.T) {
-		h := codetypes.Hunk{
+		h := Hunk{
 			Op:       "WRITE",
 			FilePath: "readme.md",
 			Body:     "# Title\n\nContent\n",
 		}
-		if err := applyHunk(root, h); err != nil {
-			t.Fatalf("applyHunk failed: %v", err)
+		if err := ApplyHunk(root, h); err != nil {
+			t.Fatalf("ApplyHunk failed: %v", err)
 		}
 
 		result, err := root.ReadFile("readme.md")

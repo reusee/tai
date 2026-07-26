@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
@@ -55,7 +56,7 @@ type CodesComponents struct {
 }
 
 func (Module) CodesComponents(
-	diffHandler codetypes.DiffHandler,
+	diffHandler changes.DiffHandler,
 	codeProvider codetypes.CodeProvider,
 	extra ExtraSystemPrompt,
 	dynamicContext DynamicContext,
@@ -77,7 +78,7 @@ func (Module) CodesComponents(
 			PromptSection: diffHandler.SystemPrompt(),
 			RestatePrompt: diffHandler.RestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-				newPs, err := applyChangeBlocks(pctx.ParserState, pctx.Root)
+				newPs, err := changes.ApplyChangeBlocks(pctx.ParserState, pctx.Root)
 				return components.ProcessResult{
 					ParserState: newPs,
 					Err:         err,
@@ -89,7 +90,7 @@ func (Module) CodesComponents(
 			Kind:           "change",
 			PromptSection:  diffHandler.SystemPrompt(),
 			RestatePrompt:  diffHandler.RestatePrompt(),
-			ProcessingPath: "applyChangeBlocks (disabled by -no-apply)",
+			ProcessingPath: "ApplyChangeBlocks (disabled by -no-apply)",
 		})
 	}
 

@@ -1,4 +1,4 @@
-package codes
+package changes
 
 import (
 	"bytes"
@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/pathutil"
 	"golang.org/x/tools/imports"
 )
@@ -177,7 +176,7 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
-func applyHunk(root *os.Root, h codetypes.Hunk) error {
+func ApplyHunk(root *os.Root, h Hunk) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
 		cwd, err := os.Getwd()
@@ -287,7 +286,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	// Handle special Go-only targets: package and import.
 	// These replace the package clause or import block without rewriting
 	// the entire file, saving tokens. See TheoryOfSpecialGoTargets in
-	// blocks/change.go.
+	// parse.go.
 	if h.Target == "package" || h.Target == "import" {
 		if h.Op != "MODIFY" {
 			return fmt.Errorf("target %q only supports MODIFY, got op=%q", h.Target, h.Op)
@@ -309,7 +308,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 
 	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
 	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
-		if s, e, fb, err := findTargetRange(fset, f, codetypes.Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
+		if s, e, fb, err := findTargetRange(fset, f, Hunk{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
 			h.Op = "MODIFY"
 			h.Target = bodyName
 			start, end, finalBody = s, e, fb
@@ -445,7 +444,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
 }
 
-func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
+func findTargetRange(fset *token.FileSet, f *ast.File, h Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
 	if h.Target == "BEGIN" {
 		if h.Op == "MODIFY" {
 			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target BEGIN; use ADD_BEFORE")
@@ -464,7 +463,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 		return fileSize, fileSize, h.Body, nil
 	}
 	// Special Go-only targets: package and import.
-	// See TheoryOfSpecialGoTargets in blocks/change.go.
+	// See TheoryOfSpecialGoTargets in parse.go.
 	if h.Target == "package" {
 		if h.Op != "MODIFY" {
 			return 0, 0, h.Body, fmt.Errorf("target package only supports MODIFY, got %s", h.Op)
@@ -721,8 +720,8 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 // applySpecialTargetModify handles MODIFY operations for the special Go-only
 // targets "package" and "import". These replace the package clause or import
 // block without rewriting the entire file, saving tokens compared to WRITE.
-// See TheoryOfSpecialGoTargets in blocks/change.go.
-func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h codetypes.Hunk) error {
+// See TheoryOfSpecialGoTargets in parse.go.
+func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h Hunk) error {
 	var newSrc []byte
 
 	switch h.Target {
@@ -876,7 +875,7 @@ func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast
 
 // buildDeleteRanges builds a map from declaration name to the byte range
 // that would be removed by a DELETE operation. This allows the duplicate
-// detection in applyHunk to look up ranges in O(1) per identifier instead
+// detection in ApplyHunk to look up ranges in O(1) per identifier instead
 // of calling findTargetRange (O(D) per identifier) for each one.
 // The range logic mirrors findTargetRange's DELETE path: for a spec in a
 // multi-spec GenDecl, only the spec range is returned; for a single-spec
@@ -958,7 +957,7 @@ func buildDeleteRanges(fset *token.FileSet, f *ast.File, prefixLen int) map[stri
 
 // getHunkBodyNameFromInfo extracts the primary entity name from a parsed
 // BodyInfo without re-parsing the body. Callers that already hold a BodyInfo
-// (e.g., applyHunk, findTargetRange) should use this instead of
+// (e.g., ApplyHunk, findTargetRange) should use this instead of
 // getHunkBodyName to avoid redundant AST parsing.
 func getHunkBodyNameFromInfo(info *BodyInfo) string {
 	if info == nil || info.entityCount() == 0 {

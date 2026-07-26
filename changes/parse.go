@@ -1,10 +1,10 @@
-package blocks
+package changes
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/blocks"
 )
 
 const TheoryOfNonGoFileChanges = `
@@ -74,7 +74,7 @@ func isFileLevelOperation(op, target string) bool {
 // (WRITE, RENAME, DELETE with target=*). See TheoryOfNonGoFileChanges.
 // "package" and "import" are special Go-only targets that support only MODIFY.
 // See TheoryOfSpecialGoTargets.
-func ValidateChangeBlockHunk(h codetypes.Hunk) error {
+func ValidateChangeBlockHunk(h Hunk) error {
 	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) {
 		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, or DELETE with target=*; got op=%q", h.FilePath, h.Op)
 	}
@@ -90,7 +90,7 @@ func ValidateChangeBlockHunk(h codetypes.Hunk) error {
 // In the boundary-delimited format, the change block's metadata (op, target,
 // file-path) is specified as XML attributes on the opening tag, and the body
 // contains only the complete declaration code.
-func ParseChangeBlock(block Block) (h codetypes.Hunk, ok bool) {
+func ParseChangeBlock(block blocks.Block) (h Hunk, ok bool) {
 	if block.Kind != "change" {
 		return h, false
 	}
@@ -107,8 +107,8 @@ func ParseChangeBlock(block Block) (h codetypes.Hunk, ok bool) {
 
 // ParseFirstBoundaryHunk scans content for the first boundary-delimited change block,
 // parses its attributes, and returns the resulting Hunk.
-func ParseFirstBoundaryHunk(content []byte) (h codetypes.Hunk, start int, end int, ok bool, err error) {
-	block, start, end, ok, err := ParseFirstBlock(content)
+func ParseFirstBoundaryHunk(content []byte) (h Hunk, start int, end int, ok bool, err error) {
+	block, start, end, ok, err := blocks.ParseFirstBlock(content)
 	if err != nil {
 		return h, 0, 0, false, err
 	}

@@ -1,4 +1,4 @@
-package codes
+package changes
 
 import (
 	"os"
@@ -34,9 +34,9 @@ func TestApplyChangeBlocks(t *testing.T) {
 	}
 	parserState = newState.(*blocks.ParserState)
 
-	newParserState, err := applyChangeBlocks(parserState, root)
+	newParserState, err := ApplyChangeBlocks(parserState, root)
 	if err != nil {
-		t.Fatalf("applyChangeBlocks failed: %v", err)
+		t.Fatalf("ApplyChangeBlocks failed: %v", err)
 	}
 
 	result, err := root.ReadFile("test.go")
@@ -51,7 +51,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 		t.Fatalf("result should contain New:\n%s", resultStr)
 	}
 
-	// Change blocks should have been consumed by applyChangeBlocks.
+	// Change blocks should have been consumed by ApplyChangeBlocks.
 	if remaining, _ := newParserState.PopBlocksByKind("change"); len(remaining) != 0 {
 		t.Fatalf("expected 0 remaining change blocks, got %d", len(remaining))
 	}
@@ -78,7 +78,7 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 	}
 	parserState = newState.(*blocks.ParserState)
 
-	_, err = applyChangeBlocks(parserState, root)
+	_, err = ApplyChangeBlocks(parserState, root)
 	if err == nil {
 		t.Fatal("expected error for unparseable change block")
 	}
@@ -107,7 +107,7 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 	}
 	parserState = newState.(*blocks.ParserState)
 
-	_, err = applyChangeBlocks(parserState, root)
+	_, err = ApplyChangeBlocks(parserState, root)
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}

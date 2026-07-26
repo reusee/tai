@@ -9,7 +9,7 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -54,7 +54,7 @@ func (Module) SystemPrompt(
 	}
 	if hasGoFiles {
 		logger.Info("has go file")
-		ret += "\n\n" + SystemPrompt((codes.BoundaryDiffHandler{}).SystemPrompt()) + "\n\n"
+		ret += "\n\n" + SystemPrompt((changes.BoundaryDiffHandler{}).SystemPrompt()) + "\n\n"
 	}
 
 	if extra != "" {

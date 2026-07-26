@@ -1,12 +1,8 @@
 package codes
 
 import (
-	"fmt"
-	"os"
-
 	"cuelang.org/go/cue"
 
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 )
@@ -30,8 +26,8 @@ blocks are not applied to the working tree during generation.
 // Apply controls whether change blocks are applied to the working tree
 // immediately as they are parsed from model output during generation.
 // When true, ParserState is activated to intercept change blocks, and each
-// complete change block is applied via applyHunk after a generation phase.
-// An apply error aborts generation. See TheoryOfImmediateApply.
+// complete change block is applied via changes.ApplyHunk after a generation
+// phase. An apply error aborts generation. See TheoryOfImmediateApply.
 type Apply bool
 
 func (Module) Apply() Apply {
@@ -71,23 +67,4 @@ func (a Apply) HandleConfig(path string, values []*cue.Value) (any, error) {
 		return nil, err
 	}
 	return Apply(b), nil
-}
-
-// applyChangeBlocks pops all complete change blocks from parserState and
-// applies them to the working tree via applyHunk. It returns a new
-// *ParserState with the change blocks removed and an error if any block is
-// unparseable or if applyHunk fails. The original parserState is not modified.
-// See TheoryOfImmediateApply and TheoryOfParserState.
-func applyChangeBlocks(parserState *blocks.ParserState, root *os.Root) (*blocks.ParserState, error) {
-	changeBlocks, newParserState := parserState.PopBlocksByKind("change")
-	for _, block := range changeBlocks {
-		h, parsedOk := blocks.ParseChangeBlock(block)
-		if !parsedOk {
-			return newParserState, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
-		}
-		if err := applyHunk(root, h); err != nil {
-			return newParserState, fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
-		}
-	}
-	return newParserState, nil
 }
