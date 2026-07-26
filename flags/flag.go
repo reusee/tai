@@ -27,5 +27,10 @@ type Flag interface {
 	// key must be unique across all Flag types in the scope; Parse
 	// returns an error on duplicate key registrations.
 	Keys() map[string]string
-	Handle(key string, args []string) (newValue any, remainArgs []string, err error)
+	// Handle consumes arguments and returns a def that is passed directly
+	// to scope.Fork. The def may be a pointer to a typed value (e.g., &ret)
+	// or a function that provides the value with injected dependencies.
+	// Returning nil signals an error. remainArgs is the unconsumed argument
+	// tail.
+	Handle(key string, args []string) (newDef any, remainArgs []string, err error)
 }

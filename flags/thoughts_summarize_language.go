@@ -21,11 +21,12 @@ func (Module) ThoughtsSummarizeLanguage() ThoughtsSummarizeLanguage {
 
 var _ Flag = ThoughtsSummarizeLanguage("")
 
-func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting language string, got empty")
 	}
-	return ThoughtsSummarizeLanguage(args[0]), args[1:], nil
+	ret := ThoughtsSummarizeLanguage(args[0])
+	return &ret, args[1:], nil
 }
 
 func (l ThoughtsSummarizeLanguage) Keys() map[string]string {

@@ -21,7 +21,7 @@ func (NilFlag) Keys() map[string]string {
 	return map[string]string{"nilflag": "test flag that returns nil"}
 }
 
-func (NilFlag) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (NilFlag) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	return nil, args, nil
 }
 

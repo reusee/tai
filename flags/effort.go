@@ -26,13 +26,12 @@ func (e Effort) Keys() map[string]string {
 	}
 }
 
-func (e Effort) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (e Effort) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	newValue = Effort(args[0])
-	remainArgs = args[1:]
-	return
+	ret := Effort(args[0])
+	return &ret, args[1:], nil
 }
 
 func (e Effort) ConfigPaths() []string {

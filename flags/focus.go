@@ -30,13 +30,12 @@ func (f Focus) Keys() map[string]string {
 	}
 }
 
-func (f Focus) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (f Focus) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	newValue = append(slices.Clone(f), args[0])
-	remainArgs = args[1:]
-	return
+	ret := append(slices.Clone(f), args[0])
+	return &ret, args[1:], nil
 }
 
 func (f Focus) ConfigPaths() []string {

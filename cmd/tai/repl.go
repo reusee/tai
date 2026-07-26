@@ -10,8 +10,9 @@ func (Module) Repl() Repl {
 
 var _ flags.Flag = Repl(true)
 
-func (r Repl) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return Repl(true), args, nil
+func (r Repl) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := Repl(true)
+	return &ret, args, nil
 }
 
 func (r Repl) Keys() map[string]string {

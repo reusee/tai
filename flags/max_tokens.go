@@ -31,7 +31,7 @@ func (m MaxTokens) HandleConfig(path string, values []*cue.Value) (any, error) {
 
 var _ Flag = MaxTokens(0)
 
-func (m MaxTokens) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (m MaxTokens) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting int, got empty")
 	}
@@ -39,9 +39,8 @@ func (m MaxTokens) Handle(key string, args []string) (newValue any, remainArgs [
 	if err != nil {
 		return nil, nil, err
 	}
-	newValue = MaxTokens(n)
-	remainArgs = args[1:]
-	return
+	ret := MaxTokens(n)
+	return &ret, args[1:], nil
 }
 
 func (m MaxTokens) Keys() map[string]string {

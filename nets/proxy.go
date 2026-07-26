@@ -18,8 +18,9 @@ type ProxyAddr string
 
 var _ flags.Flag = ProxyAddr("")
 
-func (p ProxyAddr) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return ProxyAddr(args[0]), args[1:], nil
+func (p ProxyAddr) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := ProxyAddr(args[0])
+	return &ret, args[1:], nil
 }
 
 func (p ProxyAddr) Keys() map[string]string {

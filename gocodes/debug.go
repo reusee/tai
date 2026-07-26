@@ -71,7 +71,7 @@ func (m MaxPackageDistanceFromRoot) Keys() map[string]string {
 	}
 }
 
-func (m MaxPackageDistanceFromRoot) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (m MaxPackageDistanceFromRoot) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting int, got empty")
 	}
@@ -79,5 +79,6 @@ func (m MaxPackageDistanceFromRoot) Handle(key string, args []string) (newValue 
 	if err != nil {
 		return nil, nil, err
 	}
-	return MaxPackageDistanceFromRoot(n), args[1:], nil
+	ret := MaxPackageDistanceFromRoot(n)
+	return &ret, args[1:], nil
 }

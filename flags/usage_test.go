@@ -72,8 +72,9 @@ func (DupFlag) Keys() map[string]string {
 	return map[string]string{"chat": "duplicate chat flag"}
 }
 
-func (DupFlag) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return DupFlag("dup"), args, nil
+func (DupFlag) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := DupFlag("dup")
+	return &ret, args, nil
 }
 
 func (dupKeyModule) DupFlag() DupFlag {

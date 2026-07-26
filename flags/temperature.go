@@ -22,7 +22,7 @@ func (Module) TemperatureFlag() (ret TemperatureFlag) {
 
 var _ Flag = TemperatureFlag{}
 
-func (t TemperatureFlag) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (t TemperatureFlag) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting float, got empty")
 	}
@@ -30,11 +30,11 @@ func (t TemperatureFlag) Handle(key string, args []string) (newValue any, remain
 	if err != nil {
 		return nil, nil, err
 	}
-	newValue = TemperatureFlag{
-		Value: new(float32(num)),
+	f := float32(num)
+	ret := TemperatureFlag{
+		Value: &f,
 	}
-	remainArgs = args[1:]
-	return
+	return &ret, args[1:], nil
 }
 
 func (t TemperatureFlag) Keys() map[string]string {

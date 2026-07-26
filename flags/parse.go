@@ -12,10 +12,6 @@ import (
 
 var flagType = reflect.TypeFor[Flag]()
 
-// TheoryOfFlagParsing documents the design rationale for the flag parser.
-// The parser resolves flags from the current scope state on each iteration,
-// enabling accumulating flags (e.g. repeated chat) to observe values produced
-// by earlier iterations within the same parse pass.
 const TheoryOfFlagParsing = `
 flags parsing theory:
 - Flag types are discovered from the initial scope and keyed by their Flag.Keys
@@ -29,8 +25,10 @@ flags parsing theory:
   the same parse pass.
 - A flag's Handle method receives the matched key so flags with multiple keys
   (e.g. shell/no-shell) can distinguish invocations, and transforms remaining
-  args into a new value that is forked into the scope, preserving scope
-  immutability.
+  args into a new def that is passed directly to scope.Fork. The def may be a
+  pointer to a typed value (e.g., &ret) or a function that provides the value
+  with injected dependencies, enabling flags to express richer scope
+  modifications than a simple value override.
 - Help keys (-help, --help, -h) are checked before the main parse loop. When
   detected, Parse returns a HelpError carrying the formatted usage string so
   the caller can display it without re-scanning the scope.
@@ -112,18 +110,14 @@ func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
 			return dscope.Scope{}, fmt.Errorf("flag type not found in scope: %v", t)
 		}
 		flag := flagValue.Interface().(Flag)
-		newValue, remainArgs, err := flag.Handle(key, args[1:])
+		newDef, remainArgs, err := flag.Handle(key, args[1:])
 		if err != nil {
 			return dscope.Scope{}, err
 		}
-		if newValue == nil {
-			return dscope.Scope{}, fmt.Errorf("flag %s returned nil value", key)
+		if newDef == nil {
+			return dscope.Scope{}, fmt.Errorf("flag %s returned nil def", key)
 		}
-		ptr := reflect.New(t)
-		ptr.Elem().Set(reflect.ValueOf(newValue))
-		scope = scope.Fork(
-			ptr.Interface(),
-		)
+		scope = scope.Fork(newDef)
 		args = remainArgs
 	}
 

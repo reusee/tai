@@ -17,8 +17,9 @@ func (Module) SummarizeThoughts() SummarizeThoughts {
 
 var _ Flag = SummarizeThoughts(false)
 
-func (s SummarizeThoughts) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return SummarizeThoughts(true), args, nil
+func (s SummarizeThoughts) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := SummarizeThoughts(true)
+	return &ret, args, nil
 }
 
 func (s SummarizeThoughts) Keys() map[string]string {

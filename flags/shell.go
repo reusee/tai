@@ -25,12 +25,11 @@ func (s Shell) Keys() map[string]string {
 	}
 }
 
-func (s Shell) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (s Shell) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	// The matched key determines the boolean value; "shell" sets true,
 	// "no-shell" sets false. No arguments are consumed.
-	newValue = Shell(key == "-shell")
-	remainArgs = args
-	return
+	ret := Shell(key == "-shell")
+	return &ret, args, nil
 }
 
 func (s Shell) ConfigPaths() []string {

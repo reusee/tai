@@ -27,11 +27,12 @@ func (l LoadPatterns) HandleConfig(path string, values []*cue.Value) (any, error
 	return LoadPatterns(patterns), nil
 }
 
-func (l LoadPatterns) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (l LoadPatterns) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected pattern, got empty")
 	}
-	return append(slices.Clone(l), args[0]), args[1:], nil
+	ret := append(slices.Clone(l), args[0])
+	return &ret, args[1:], nil
 }
 
 func (l LoadPatterns) Keys() map[string]string {
@@ -59,11 +60,12 @@ func (c ContextPatterns) HandleConfig(path string, values []*cue.Value) (any, er
 	return ContextPatterns(patterns), nil
 }
 
-func (c ContextPatterns) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (c ContextPatterns) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected pattern, got empty")
 	}
-	return append(slices.Clone(c), args[0]), args[1:], nil
+	ret := append(slices.Clone(c), args[0])
+	return &ret, args[1:], nil
 }
 
 func (c ContextPatterns) Keys() map[string]string {

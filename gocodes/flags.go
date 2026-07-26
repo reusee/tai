@@ -20,8 +20,9 @@ func (Module) IncludeStdLib() IncludeStdLib {
 
 var _ flags.Flag = IncludeStdLib(false)
 
-func (i IncludeStdLib) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return IncludeStdLib(true), args, nil
+func (i IncludeStdLib) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := IncludeStdLib(true)
+	return &ret, args, nil
 }
 
 func (i IncludeStdLib) Keys() map[string]string {
@@ -55,8 +56,9 @@ func (Module) ShowTokenCounts() ShowTokenCounts {
 
 var _ flags.Flag = ShowTokenCounts(true)
 
-func (s ShowTokenCounts) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return ShowTokenCounts(true), args, nil
+func (s ShowTokenCounts) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := ShowTokenCounts(true)
+	return &ret, args, nil
 }
 
 func (s ShowTokenCounts) Keys() map[string]string {

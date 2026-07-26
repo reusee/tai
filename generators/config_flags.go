@@ -68,11 +68,12 @@ func (e AzureEndpoint) Keys() map[string]string {
 	}
 }
 
-func (e AzureEndpoint) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (e AzureEndpoint) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	return AzureEndpoint(args[0]), args[1:], nil
+	ret := AzureEndpoint(args[0])
+	return &ret, args[1:], nil
 }
 
 // AzureAPIVersion flags.Flag implementation.
@@ -85,11 +86,12 @@ func (a AzureAPIVersion) Keys() map[string]string {
 	}
 }
 
-func (a AzureAPIVersion) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (a AzureAPIVersion) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	return AzureAPIVersion(args[0]), args[1:], nil
+	ret := AzureAPIVersion(args[0])
+	return &ret, args[1:], nil
 }
 
 // OpenRouterEndpoint flags.Flag implementation.
@@ -102,9 +104,10 @@ func (e OpenRouterEndpoint) Keys() map[string]string {
 	}
 }
 
-func (e OpenRouterEndpoint) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (e OpenRouterEndpoint) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	return OpenRouterEndpoint(args[0]), args[1:], nil
+	ret := OpenRouterEndpoint(args[0])
+	return &ret, args[1:], nil
 }

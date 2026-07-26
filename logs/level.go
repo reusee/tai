@@ -26,28 +26,32 @@ func (Module) Level() Level {
 
 var _ flags.Flag = Level{}
 
-func (l Level) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (l Level) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	switch key {
 
 	case "-log-debug":
-		return Level{
+		ret := Level{
 			Level: slog.LevelDebug,
-		}, args, nil
+		}
+		return &ret, args, nil
 
 	case "-log-info":
-		return Level{
+		ret := Level{
 			Level: slog.LevelInfo,
-		}, args, nil
+		}
+		return &ret, args, nil
 
 	case "-log-warn":
-		return Level{
+		ret := Level{
 			Level: slog.LevelWarn,
-		}, args, nil
+		}
+		return &ret, args, nil
 
 	case "-log-error":
-		return Level{
+		ret := Level{
 			Level: slog.LevelError,
-		}, args, nil
+		}
+		return &ret, args, nil
 
 	}
 

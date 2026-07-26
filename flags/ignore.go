@@ -31,7 +31,7 @@ func (i Ignore) Keys() map[string]string {
 	}
 }
 
-func (i Ignore) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (i Ignore) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
@@ -39,9 +39,7 @@ func (i Ignore) Handle(key string, args []string) (newValue any, remainArgs []st
 	ret := make(Ignore, len(i)+1)
 	maps.Copy(ret, i)
 	ret[args[0]] = true
-	newValue = ret
-	remainArgs = args[1:]
-	return
+	return &ret, args[1:], nil
 }
 
 func (i Ignore) ConfigPaths() []string {

@@ -38,8 +38,9 @@ var _ configs.Config = Plan(false)
 
 var _ Flag = Plan(true)
 
-func (p Plan) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return Plan(true), args, nil
+func (p Plan) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := Plan(true)
+	return &ret, args, nil
 }
 
 func (p Plan) Keys() map[string]string {

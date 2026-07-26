@@ -24,8 +24,9 @@ func (n NoTests) HandleConfig(path string, values []*cue.Value) (any, error) {
 	return NoTests(b), nil
 }
 
-func (n NoTests) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return NoTests(true), args, nil
+func (n NoTests) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := NoTests(true)
+	return &ret, args, nil
 }
 
 func (n NoTests) Keys() map[string]string {

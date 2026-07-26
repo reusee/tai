@@ -27,11 +27,12 @@ func (l LoadDir) HandleConfig(path string, values []*cue.Value) (any, error) {
 	return LoadDir(s), nil
 }
 
-func (l LoadDir) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (l LoadDir) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected load dir, got empty")
 	}
-	return LoadDir(args[0]), args[1:], nil
+	ret := LoadDir(args[0])
+	return &ret, args[1:], nil
 }
 
 func (l LoadDir) Keys() map[string]string {

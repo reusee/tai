@@ -20,8 +20,9 @@ func (Module) Debug() Debug {
 
 var _ flags.Flag = Debug(false)
 
-func (d Debug) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return Debug(true), args, nil
+func (d Debug) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := Debug(true)
+	return &ret, args, nil
 }
 
 func (d Debug) Keys() map[string]string {

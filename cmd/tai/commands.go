@@ -33,26 +33,32 @@ func (c Command) Keys() map[string]string {
 	}
 }
 
-func (c Command) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (c Command) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	switch key {
 
 	case "next":
-		return NextCommand, args, nil
+		ret := NextCommand
+		return &ret, args, nil
 
 	case "ai":
-		return AICommand, args, nil
+		ret := AICommand
+		return &ret, args, nil
 
 	case "patch":
-		return PatchCommand, args, nil
+		ret := PatchCommand
+		return &ret, args, nil
 
 	case "go":
-		return GoCommand, args, nil
+		ret := GoCommand
+		return &ret, args, nil
 
 	case "any":
-		return AnyCommand, args, nil
+		ret := AnyCommand
+		return &ret, args, nil
 
 	case "ping":
-		return PingCommand, args, nil
+		ret := PingCommand
+		return &ret, args, nil
 
 	}
 

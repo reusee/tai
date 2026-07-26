@@ -14,8 +14,9 @@ func (Module) NoMemory() NoMemory {
 
 var _ flags.Flag = NoMemory(true)
 
-func (n NoMemory) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return NoMemory(true), args, nil
+func (n NoMemory) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := NoMemory(true)
+	return &ret, args, nil
 }
 
 func (n NoMemory) Keys() map[string]string {

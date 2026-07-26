@@ -22,13 +22,12 @@ func (m FastModelName) Keys() map[string]string {
 	}
 }
 
-func (m FastModelName) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (m FastModelName) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	newValue = FastModelName(args[0])
-	remainArgs = args[1:]
-	return
+	ret := FastModelName(args[0])
+	return &ret, args[1:], nil
 }
 
 var _ configs.DynamicPathsConfig = FastModelName("")

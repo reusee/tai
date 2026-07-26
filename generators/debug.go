@@ -14,8 +14,9 @@ func (Module) DebugGemini() DebugGemini {
 
 var _ flags.Flag = DebugGemini(false)
 
-func (d DebugGemini) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return DebugGemini(true), args, nil
+func (d DebugGemini) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := DebugGemini(true)
+	return &ret, args, nil
 }
 
 func (d DebugGemini) Keys() map[string]string {
@@ -32,8 +33,9 @@ func (Module) DebugOpenAI() DebugOpenAI {
 
 var _ flags.Flag = DebugOpenAI(false)
 
-func (d DebugOpenAI) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return DebugOpenAI(true), args, nil
+func (d DebugOpenAI) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := DebugOpenAI(true)
+	return &ret, args, nil
 }
 
 func (d DebugOpenAI) Keys() map[string]string {
@@ -50,8 +52,9 @@ func (Module) TapOpenAI() TapOpenAI {
 
 var _ flags.Flag = TapOpenAI(false)
 
-func (d TapOpenAI) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return TapOpenAI(true), args, nil
+func (d TapOpenAI) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+	ret := TapOpenAI(true)
+	return &ret, args, nil
 }
 
 func (d TapOpenAI) Keys() map[string]string {

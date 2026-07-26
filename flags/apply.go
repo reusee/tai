@@ -37,12 +37,14 @@ var _ configs.Config = Apply(true)
 
 var _ Flag = Apply(true)
 
-func (a Apply) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
+func (a Apply) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	switch key {
 	case "-apply":
-		return Apply(true), args, nil
+		ret := Apply(true)
+		return &ret, args, nil
 	case "-no-apply":
-		return Apply(false), args, nil
+		ret := Apply(false)
+		return &ret, args, nil
 	}
 	panic("key not handle: " + key)
 }
