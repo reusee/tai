@@ -33,7 +33,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
-			Apply(true),
+			flags.Apply(true),
 			Plan(false),
 			flags.Shell(false),
 		)
@@ -51,7 +51,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(true),
-			Apply(true),
+			flags.Apply(true),
 			Plan(false),
 			flags.Shell(false),
 		)
@@ -71,7 +71,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(false),
 		flags.Shell(false),
 	)
@@ -93,7 +93,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(true),
 		flags.Shell(false),
 	)
@@ -121,7 +121,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(true),
 		flags.Shell(false),
 	)
@@ -149,7 +149,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(true),
 		flags.Shell(false),
 	)
@@ -174,7 +174,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(true),
 		flags.Shell(false),
 	)
@@ -224,7 +224,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(false),
 		flags.Shell(false),
 	)

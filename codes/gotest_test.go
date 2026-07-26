@@ -17,7 +17,7 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(false),
 		flags.Shell(false),
 	)
@@ -46,7 +46,7 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(false),
 		flags.Shell(false),
 	)
@@ -90,7 +90,7 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		mockCodeProvider{},
 		ExtraSystemPrompt(""),
 		DynamicContext(false),
-		Apply(true),
+		flags.Apply(true),
 		Plan(false),
 		flags.Shell(false),
 	)

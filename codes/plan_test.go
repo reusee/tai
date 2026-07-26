@@ -15,7 +15,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
-			Apply(true),
+			flags.Apply(true),
 			Plan(false),
 			flags.Shell(false),
 		)
@@ -33,7 +33,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			mockCodeProvider{},
 			ExtraSystemPrompt(""),
 			DynamicContext(false),
-			Apply(true),
+			flags.Apply(true),
 			Plan(true),
 			flags.Shell(false),
 		)
