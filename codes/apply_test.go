@@ -96,6 +96,240 @@ func TestApplyHunkRename(t *testing.T) {
 	}
 }
 
+func TestApplyHunkModifyPackage(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package oldpkg\n\nimport \"fmt\"\n\nfunc Foo() { fmt.Println(\"hello\") }\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "package",
+		FilePath: "test.go",
+		Body:     "package newpkg",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if strings.Contains(resultStr, "oldpkg") {
+		t.Fatalf("result should not contain oldpkg:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "package newpkg") {
+		t.Fatalf("result should contain 'package newpkg':\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkModifyImportReplace(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nimport (\n\t\"fmt\"\n)\n\nfunc Foo() { fmt.Println(\"hello\"); os.Exit(0) }\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "import",
+		FilePath: "test.go",
+		Body:     "import (\n\t\"fmt\"\n\t\"os\"\n)",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if !strings.Contains(resultStr, "\"os\"") {
+		t.Fatalf("result should contain 'os' import:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "\"fmt\"") {
+		t.Fatalf("result should still contain 'fmt' import:\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkModifyImportAddToFileWithoutImports(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nfunc Foo() { fmt.Println(\"hello\") }\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "import",
+		FilePath: "test.go",
+		Body:     "import \"fmt\"",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if !strings.Contains(resultStr, "\"fmt\"") {
+		t.Fatalf("result should contain 'fmt' import:\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkModifyImportRemoveAll(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	// Use fmt in the function so goimports would normally add it back.
+	// The test verifies that goimports re-adds the needed import after removal.
+	original := "package x\n\nimport \"fmt\"\n\nfunc Foo() { fmt.Println(\"hello\") }\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "import",
+		FilePath: "test.go",
+		Body:     "",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	// goimports should re-add fmt since Foo uses it.
+	if !strings.Contains(resultStr, "\"fmt\"") {
+		t.Fatalf("result should contain 'fmt' import (re-added by goimports since Foo uses it):\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package oldpkg\n\nfunc Foo() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Body without "package " prefix — the implementation extracts the name.
+	h := codetypes.Hunk{
+		Op:       "MODIFY",
+		Target:   "package",
+		FilePath: "test.go",
+		Body:     "newpkg",
+	}
+	if err := applyHunk(root, h); err != nil {
+		t.Fatalf("applyHunk failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if strings.Contains(resultStr, "oldpkg") {
+		t.Fatalf("result should not contain oldpkg:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "package newpkg") {
+		t.Fatalf("result should contain 'package newpkg':\n%s", resultStr)
+	}
+}
+
+func TestApplyHunkModifyPackageNonModifyRejected(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nfunc Foo() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "ADD_BEFORE",
+		Target:   "package",
+		FilePath: "test.go",
+		Body:     "some text",
+	}
+	err = applyHunk(root, h)
+	if err == nil {
+		t.Fatal("expected error for non-MODIFY op on package target")
+	}
+	if !strings.Contains(err.Error(), "only supports MODIFY") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyHunkModifyImportNonModifyRejected(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nimport \"fmt\"\n\nfunc Foo() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := codetypes.Hunk{
+		Op:       "DELETE",
+		Target:   "import",
+		FilePath: "test.go",
+		Body:     "",
+	}
+	err = applyHunk(root, h)
+	if err == nil {
+		t.Fatal("expected error for non-MODIFY op on import target")
+	}
+	if !strings.Contains(err.Error(), "only supports MODIFY") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestApplyHunkDeleteFile(t *testing.T) {
 	t.Run("GoFile", func(t *testing.T) {
 		dir := t.TempDir()

@@ -257,3 +257,83 @@ func TestParseFirstBoundaryHunkNonGoFileRestriction(t *testing.T) {
 		}
 	})
 }
+
+func TestParseFirstBoundaryHunkPackageImportTargets(t *testing.T) {
+	// MODIFY package on Go file should succeed
+	t.Run("ModifyPackageSucceeds", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"MODIFY\" target=\"package\" file-path=\"/test.go\">\npackage newpkg\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for MODIFY package on Go file")
+		}
+		if h.Op != "MODIFY" || h.Target != "package" {
+			t.Fatalf("unexpected hunk: %+v", h)
+		}
+	})
+
+	// MODIFY import on Go file should succeed
+	t.Run("ModifyImportSucceeds", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"MODIFY\" target=\"import\" file-path=\"/test.go\">\nimport \"fmt\"\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for MODIFY import on Go file")
+		}
+		if h.Op != "MODIFY" || h.Target != "import" {
+			t.Fatalf("unexpected hunk: %+v", h)
+		}
+	})
+
+	// Non-MODIFY package should fail
+	t.Run("DeletePackageFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"DELETE\" target=\"package\" file-path=\"/test.go\">\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for non-MODIFY op on package target")
+		}
+		if ok {
+			t.Fatal("expected ok=false for non-MODIFY on package")
+		}
+	})
+
+	// Non-MODIFY import should fail
+	t.Run("AddBeforeImportFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"ADD_BEFORE\" target=\"import\" file-path=\"/test.go\">\nsome text\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for ADD_BEFORE on import target")
+		}
+		if ok {
+			t.Fatal("expected ok=false for non-MODIFY on import")
+		}
+	})
+
+	// MODIFY package on non-Go file should fail
+	t.Run("ModifyPackageOnNonGoFileFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"MODIFY\" target=\"package\" file-path=\"/test.md\">\n# Title\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for MODIFY package on non-Go file")
+		}
+		if ok {
+			t.Fatal("expected ok=false for package target on non-Go file")
+		}
+	})
+
+	// MODIFY import on non-Go file should fail
+	t.Run("ModifyImportOnNonGoFileFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"MODIFY\" target=\"import\" file-path=\"/test.md\">\n# Title\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryHunk([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for MODIFY import on non-Go file")
+		}
+		if ok {
+			t.Fatal("expected ok=false for import target on non-Go file")
+		}
+	})
+}

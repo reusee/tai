@@ -18,6 +18,32 @@ system never attempts to locate a declaration within a file format it cannot
 parse, which would silently fail or produce incorrect results.
 `
 
+const TheoryOfSpecialGoTargets = `
+The "package" and "import" targets are special Go-only targets that support
+only the MODIFY operation. They enable token-efficient modification of the
+package clause and import block without requiring WRITE to replace the entire
+file — essential when moving a file to a different package, renaming a
+package, or updating imports across dependent files.
+
+The "package" target replaces the file's package clause (the "package xxx"
+line). The body must be the new package clause (e.g., "package newpkg"). If
+the body contains extra declarations, only the package clause is extracted.
+This target is Go-only; applying it to a non-Go file is rejected by
+ValidateChangeBlockHunk because MODIFY is not a file-level operation.
+
+The "import" target replaces ALL import declarations in the file as a group.
+The body must be the new import block(s) (e.g., "import (\n\t\"fmt\"\n)") or
+individual import declarations. If the file has no existing imports, the new
+imports are inserted after the package clause. An empty body removes all
+imports; goimports adds back any imports still needed by the remaining code.
+This target unifies replacement and insertion into a single "set imports"
+operation. It is Go-only for the same reason as "package".
+
+Both targets run goimports after replacement to ensure valid formatting and
+import synchronization. If the file does not exist or has no real package
+clause, MODIFY is a no-op (consistent with existing MODIFY behavior).
+`
+
 // isGoFile reports whether the given file path has a .go extension.
 func isGoFile(path string) bool {
 	return strings.HasSuffix(path, ".go")
@@ -46,9 +72,16 @@ func isFileLevelOperation(op, target string) bool {
 // ValidateChangeBlockHunk validates that the hunk's operation is valid for
 // the target file type. Non-Go files only support file-level operations
 // (WRITE, RENAME, DELETE with target=*). See TheoryOfNonGoFileChanges.
+// "package" and "import" are special Go-only targets that support only MODIFY.
+// See TheoryOfSpecialGoTargets.
 func ValidateChangeBlockHunk(h codetypes.Hunk) error {
 	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) {
 		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, or DELETE with target=*; got op=%q", h.FilePath, h.Op)
+	}
+	// "package" and "import" are special Go-only targets that support
+	// only the MODIFY operation. See TheoryOfSpecialGoTargets.
+	if (h.Target == "package" || h.Target == "import") && h.Op != "MODIFY" {
+		return fmt.Errorf("target %q only supports MODIFY, got op=%q", h.Target, h.Op)
 	}
 	return nil
 }
@@ -110,17 +143,24 @@ The "change" kind defines code modifications using the boundary block format. Th
 **Rules:**
 - The opening tag attributes:
   - ` + "`op`" + `: The operation to perform:
-    - MODIFY: Replace an existing top-level declaration.
+    - MODIFY: Replace an existing top-level declaration. Also supports the special Go-only targets ` + "`package`" + ` and ` + "`import`" + ` to replace the package clause or all import declarations as a group (see below).
     - ADD_BEFORE: Add new code before an existing declaration.
     - ADD_AFTER: Add new code after an existing declaration.
     - DELETE: Remove an existing declaration, or remove an entire file when target is *.
     - RENAME: Rename a file. ` + "`target`" + ` is the new file path, ` + "`file-path`" + ` is the current file path. The code body is ignored and may be empty.
     - WRITE: Replace the entire content of the file specified by ` + "`file-path`" + `. The ` + "`target`" + ` attribute is ignored and may be omitted. The code body is the complete new file content. For Go files, the body must include the package declaration.
   - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. For DELETE, target can also be * to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE operation, ` + "`target`" + ` is ignored.
-  - ` + "`file-path`" + `: The absolute path to the file being modified.
 - The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
 - **Non-Go file restriction**: For non-Go files (files not ending in .go), only file-level operations are supported: WRITE (replace entire file content), RENAME (rename the file), and DELETE with target=* (delete the entire file). Operations that require structural identification of declarations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target) are not valid for non-Go files because the system cannot parse their structure to locate declarations. To update a non-Go file, use WRITE to replace the entire file content.
+
+**Special Go-Only Targets (MODIFY):**
+
+The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targets that support only the MODIFY operation. They enable token-efficient modification of the package clause and import block without requiring WRITE to replace the entire file — essential when moving a file to a different package, renaming a package, or updating imports across dependent files.
+
+- **package**: Replaces the file's package clause (the ` + "`package xxx`" + ` line). The body must be the new package clause (e.g., ` + "`package newpkg`" + `). If the body contains extra declarations, only the package clause is extracted.
+- **import**: Replaces ALL import declarations in the file as a group. The body must be the new import block(s) (e.g., ` + "`import (\n\t\"fmt\"\n)`" + `) or individual import declarations. If the file has no existing imports, the new imports are inserted after the package clause. An empty body removes all imports; goimports adds back any imports still needed by the remaining code.
+- Both targets run goimports after replacement to ensure valid formatting and import synchronization.
 
 **Example:**
 
@@ -145,6 +185,10 @@ func New() *Config {
 	return &Config{}
 }
 :::瑱魃 </change>
+Moving this file to a new package, just update the package clause...
+:::羿聕 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
+package newpkg
+:::羿聕 </change>
 These changes should resolve the issue.
 :::桀骥 <finish>
 Fixed the Foo function, removed the unused Bar function, deleted the unused.go file, and rewrote the config file.
@@ -156,12 +200,13 @@ const ChangeBlockRestatePrompt = `**CRITICAL**: All code modifications MUST use 
 <complete code>
 :::<boundary> </change>
 
-- **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level declaration and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
+- **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.
 - For DELETE with target *, the entire file is removed; the code body is ignored.
 - For WRITE, ` + "`target`" + ` is ignored; the code body is the complete new file content.
 - **Non-Go files**: For files not ending in .go, only WRITE, RENAME, and DELETE (target=*) are allowed. MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target require structural identification and are not supported for non-Go files. Use WRITE to replace the entire file content.
+- **Special Go-only MODIFY targets**: Use ` + "`target=\"package\"`" + ` to replace the file's package clause, and ` + "`target=\"import\"`" + ` to replace all import declarations as a group. Both run goimports after replacement to ensure valid formatting and import synchronization.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.
 - Even when no change blocks are emitted, a finish block is still required. Generate a finish block with "No changes were needed." as the summary.

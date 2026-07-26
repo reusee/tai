@@ -284,6 +284,20 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 		}
 	}
 
+	// Handle special Go-only targets: package and import.
+	// These replace the package clause or import block without rewriting
+	// the entire file, saving tokens. See TheoryOfSpecialGoTargets in
+	// blocks/change.go.
+	if h.Target == "package" || h.Target == "import" {
+		if h.Op != "MODIFY" {
+			return fmt.Errorf("target %q only supports MODIFY, got op=%q", h.Target, h.Op)
+		}
+		if f == nil {
+			return fmt.Errorf("target %q: file %s could not be parsed", h.Target, path)
+		}
+		return applySpecialTargetModify(root, path, src, f, fset, prefixLen, h)
+	}
+
 	bodyInfo, _ := getBodyInfo(h.Body)
 	if bodyInfo != nil {
 		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
@@ -363,6 +377,8 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	// Only strip package prefix if the body might contain one. If bodyInfo
 	// prepended a "package p\n" prefix (PrefixLen > 0), the body was already
 	// stripped of any package declaration during parsing.
+	// Special targets (package, import) are handled before this point and
+	// never reach here, so no exclusion is needed.
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		needStripPackage := bodyInfo == nil || bodyInfo.PrefixLen == 0
 		for i := range items {
@@ -446,6 +462,52 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 			return 0, 0, h.Body, fmt.Errorf("cannot MODIFY with target END; use ADD_AFTER")
 		}
 		return fileSize, fileSize, h.Body, nil
+	}
+	// Special Go-only targets: package and import.
+	// See TheoryOfSpecialGoTargets in blocks/change.go.
+	if h.Target == "package" {
+		if h.Op != "MODIFY" {
+			return 0, 0, h.Body, fmt.Errorf("target package only supports MODIFY, got %s", h.Op)
+		}
+		if f == nil {
+			return 0, 0, h.Body, fmt.Errorf("file has no package clause to modify")
+		}
+		// The package clause spans from the file start ("package" keyword)
+		// through the end of the package name.
+		start := fset.Position(f.Pos()).Offset - prefixLen
+		end := fset.Position(f.Name.End()).Offset - prefixLen
+		return start, end, h.Body, nil
+	}
+	if h.Target == "import" {
+		if h.Op != "MODIFY" {
+			return 0, 0, h.Body, fmt.Errorf("target import only supports MODIFY, got %s", h.Op)
+		}
+		if f == nil {
+			return 0, 0, h.Body, fmt.Errorf("file could not be parsed for import modification")
+		}
+		// Find all import declarations and determine their combined range.
+		var start, end int
+		found := false
+		for _, decl := range f.Decls {
+			if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
+				s := fset.Position(genDecl.Pos()).Offset - prefixLen
+				e := fset.Position(genDecl.End()).Offset - prefixLen
+				if !found || s < start {
+					start = s
+				}
+				if !found || e > end {
+					end = e
+				}
+				found = true
+			}
+		}
+		if !found {
+			// No existing imports; insert after package clause.
+			pkgEnd := fset.Position(f.Name.End()).Offset - prefixLen
+			start = pkgEnd
+			end = pkgEnd
+		}
+		return start, end, h.Body, nil
 	}
 	if f == nil {
 		return 0, 0, h.Body, fmt.Errorf("target %s not found", h.Target)
@@ -654,6 +716,117 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInf
 		return candidateStart, candidateEnd, candidateBody, nil
 	}
 	return 0, 0, h.Body, fmt.Errorf("target %s not found", h.Target)
+}
+
+// applySpecialTargetModify handles MODIFY operations for the special Go-only
+// targets "package" and "import". These replace the package clause or import
+// block without rewriting the entire file, saving tokens compared to WRITE.
+// See TheoryOfSpecialGoTargets in blocks/change.go.
+func applySpecialTargetModify(root *os.Root, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h codetypes.Hunk) error {
+	var newSrc []byte
+
+	switch h.Target {
+	case "package":
+		// Normalize the body: parse out the package name and rebuild the clause.
+		newPkgName := strings.TrimSpace(h.Body)
+		// If the body is a full package clause like "package foo", extract just the name.
+		// parser.PackageClauseOnly parses only the package clause without needing a valid body.
+		fset2 := token.NewFileSet()
+		if f2, err := parser.ParseFile(fset2, "", newPkgName, parser.PackageClauseOnly); err == nil && f2 != nil {
+			newPkgName = f2.Name.Name
+		} else if after, found := strings.CutPrefix(newPkgName, "package "); found {
+			newPkgName = strings.TrimSpace(after)
+		}
+		if newPkgName == "" {
+			return fmt.Errorf("empty package name in MODIFY package body")
+		}
+
+		start := fset.Position(f.Pos()).Offset - prefixLen
+		end := fset.Position(f.Name.End()).Offset - prefixLen
+		newSrc = make([]byte, 0, len(src)+len("package ")+len(newPkgName))
+		newSrc = append(newSrc, src[:start]...)
+		newSrc = append(newSrc, []byte("package "+newPkgName)...)
+		newSrc = append(newSrc, src[end:]...)
+
+	case "import":
+		body := strings.TrimSpace(h.Body)
+
+		// Find existing import declarations and their combined range.
+		var start, end int
+		found := false
+		for _, decl := range f.Decls {
+			if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
+				s := fset.Position(genDecl.Pos()).Offset - prefixLen
+				e := fset.Position(genDecl.End()).Offset - prefixLen
+				if !found || s < start {
+					start = s
+				}
+				if !found || e > end {
+					end = e
+				}
+				found = true
+			}
+		}
+		if !found {
+			// No existing imports; insert after the package clause.
+			pkgEnd := fset.Position(f.Name.End()).Offset - prefixLen
+			start = pkgEnd
+			end = pkgEnd
+		}
+
+		// Normalize the body into valid import syntax.
+		if body == "" {
+			// Remove all imports; goimports will add back any still needed.
+			newSrc = make([]byte, 0, len(src))
+			newSrc = append(newSrc, src[:start]...)
+			newSrc = append(newSrc, src[end:]...)
+		} else {
+			// Validate that the body contains parseable import declarations.
+			// Use the parsed AST only for validation; the body text is used
+			// directly to preserve the model's formatting intent.
+			// Goimports will fix any formatting issues afterward.
+			_, parseErr := parser.ParseFile(token.NewFileSet(), "", "package p\n"+body, parser.ImportsOnly)
+			if parseErr != nil {
+				return fmt.Errorf("import body is not valid Go import syntax: %w", parseErr)
+			}
+
+			// Ensure the body uses proper import syntax. If it looks like raw
+			// import paths (no "import" keyword), wrap them in an import block.
+			if !strings.HasPrefix(body, "import ") && !strings.HasPrefix(body, "import(") {
+				body = "import (\n" + body + "\n)"
+			}
+
+			// For existing imports: replace the import range with the body,
+			// respecting surrounding whitespace.
+			// For new imports: insert after the package clause with a newline
+			// separator so the package clause and imports don't merge.
+			newSrc = make([]byte, 0, len(src)+len(body)+4)
+			newSrc = append(newSrc, src[:start]...)
+			if !found {
+				// Insert after package clause; add newline separator.
+				newSrc = append(newSrc, '\n')
+			}
+			newSrc = append(newSrc, []byte(body)...)
+			newSrc = append(newSrc, '\n')
+			newSrc = append(newSrc, src[end:]...)
+		}
+
+	default:
+		return fmt.Errorf("unknown special target: %q", h.Target)
+	}
+
+	// Run goimports to fix formatting and import synchronization.
+	formatted, err := imports.Process(path, newSrc, nil)
+	if err != nil {
+		return fmt.Errorf("goimports: %w", err)
+	}
+
+	if dir := filepath.Dir(path); dir != "." {
+		if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(path, finalizeContent(formatted), 0644)
 }
 
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {
