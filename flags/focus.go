@@ -52,5 +52,5 @@ func (f Focus) HandleConfig(path string, values []*cue.Value) (any, error) {
 		}
 		ret = append(ret, items...)
 	}
-	return ret, nil
+	return &ret, nil
 }

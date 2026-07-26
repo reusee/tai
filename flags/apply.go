@@ -65,5 +65,6 @@ func (a Apply) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return Apply(b), nil
+	ret := Apply(b)
+	return &ret, nil
 }

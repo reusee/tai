@@ -41,5 +41,6 @@ func (s SummarizeThoughts) HandleConfig(path string, values []*cue.Value) (any, 
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return SummarizeThoughts(b), nil
+	ret := SummarizeThoughts(b)
+	return &ret, nil
 }

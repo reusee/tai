@@ -58,5 +58,5 @@ func (i Ignore) HandleConfig(path string, values []*cue.Value) (any, error) {
 			ret[p] = true
 		}
 	}
-	return ret, nil
+	return &ret, nil
 }

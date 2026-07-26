@@ -28,5 +28,5 @@ func (f FuncDecls) HandleConfig(path string, values []*cue.Value) (any, error) {
 		}
 		ret = append(ret, decls...)
 	}
-	return ret, nil
+	return &ret, nil
 }

@@ -58,5 +58,6 @@ func (p Plan) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return Plan(b), nil
+	ret := Plan(b)
+	return &ret, nil
 }

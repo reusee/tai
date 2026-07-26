@@ -24,7 +24,8 @@ func (overrideConfig) HandleConfig(path string, values []*cue.Value) (any, error
 		if err := v.Decode(&s); err != nil {
 			continue
 		}
-		return overrideConfig{Value: s}, nil
+		ret := overrideConfig{Value: s}
+		return &ret, nil
 	}
 	return nil, nil
 }

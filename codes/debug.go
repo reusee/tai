@@ -39,5 +39,6 @@ func (d Debug) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return Debug(b), nil
+	ret := Debug(b)
+	return &ret, nil
 }

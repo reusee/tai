@@ -24,7 +24,8 @@ func (l LoadPatterns) HandleConfig(path string, values []*cue.Value) (any, error
 	if err := values[0].Decode(&patterns); err != nil {
 		return nil, err
 	}
-	return LoadPatterns(patterns), nil
+	ret := LoadPatterns(patterns)
+	return &ret, nil
 }
 
 func (l LoadPatterns) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
@@ -57,7 +58,8 @@ func (c ContextPatterns) HandleConfig(path string, values []*cue.Value) (any, er
 	if err := values[0].Decode(&patterns); err != nil {
 		return nil, err
 	}
-	return ContextPatterns(patterns), nil
+	ret := ContextPatterns(patterns)
+	return &ret, nil
 }
 
 func (c ContextPatterns) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {

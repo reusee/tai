@@ -40,7 +40,8 @@ func (i IncludeStdLib) HandleConfig(path string, values []*cue.Value) (any, erro
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return IncludeStdLib(b), nil
+	ret := IncludeStdLib(b)
+	return &ret, nil
 }
 
 // ShowTokenCounts configs.Config implementation.
@@ -76,5 +77,6 @@ func (s ShowTokenCounts) HandleConfig(path string, values []*cue.Value) (any, er
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return ShowTokenCounts(b), nil
+	ret := ShowTokenCounts(b)
+	return &ret, nil
 }

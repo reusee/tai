@@ -59,5 +59,5 @@ func (m FastModelName) HandleConfig(path string, values []*cue.Value) (any, erro
 	if err := values[0].Decode(&m); err != nil {
 		return nil, err
 	}
-	return m, nil
+	return &m, nil
 }

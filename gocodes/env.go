@@ -25,7 +25,8 @@ func (e Envs) HandleConfig(path string, values []*cue.Value) (any, error) {
 		}
 		ret = append(ret, envs...)
 	}
-	return Envs(withModModEnv(ret)), nil
+	ret = Envs(withModModEnv(ret))
+	return &ret, nil
 }
 
 func (Module) Envs() (ret Envs) {

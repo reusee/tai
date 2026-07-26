@@ -62,5 +62,6 @@ func (d DynamicContext) HandleConfig(path string, values []*cue.Value) (any, err
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return DynamicContext(b), nil
+	ret := DynamicContext(b)
+	return &ret, nil
 }

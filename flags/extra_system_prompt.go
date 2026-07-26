@@ -26,5 +26,6 @@ func (e ExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, 
 	if err != nil {
 		return nil, err
 	}
-	return ExtraSystemPrompt(s), nil
+	ret := ExtraSystemPrompt(s)
+	return &ret, nil
 }

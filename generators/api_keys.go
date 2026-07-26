@@ -34,7 +34,8 @@ func (g GoogleAPIKey) HandleConfig(path string, values []*cue.Value) (any, error
 	if err != nil {
 		return nil, err
 	}
-	return GoogleAPIKey(s), nil
+	ret := GoogleAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) GoogleAPIKey() GoogleAPIKey {
@@ -52,7 +53,8 @@ func (h HuoshanAPIKey) HandleConfig(path string, values []*cue.Value) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	return HuoshanAPIKey(s), nil
+	ret := HuoshanAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) HuoshanAPIKey() HuoshanAPIKey {
@@ -70,7 +72,8 @@ func (b BaiduAPIKey) HandleConfig(path string, values []*cue.Value) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	return BaiduAPIKey(s), nil
+	ret := BaiduAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) BaiduAPIKey() BaiduAPIKey {
@@ -88,7 +91,8 @@ func (d DeepseekAPIKey) HandleConfig(path string, values []*cue.Value) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return DeepseekAPIKey(s), nil
+	ret := DeepseekAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) DeepseekAPIKey() DeepseekAPIKey {
@@ -106,7 +110,8 @@ func (o OpenRouterAPIKey) HandleConfig(path string, values []*cue.Value) (any, e
 	if err != nil {
 		return nil, err
 	}
-	return OpenRouterAPIKey(s), nil
+	ret := OpenRouterAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) OpenRouterAPIKey() OpenRouterAPIKey {
@@ -127,7 +132,8 @@ func (t TencentAPIKey) HandleConfig(path string, values []*cue.Value) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	return TencentAPIKey(s), nil
+	ret := TencentAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) TencentAPIKey() TencentAPIKey {
@@ -145,7 +151,8 @@ func (a AliyunAPIKey) HandleConfig(path string, values []*cue.Value) (any, error
 	if err != nil {
 		return nil, err
 	}
-	return AliyunAPIKey(s), nil
+	ret := AliyunAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) AliyunAPIKey() AliyunAPIKey {
@@ -163,7 +170,8 @@ func (z ZhipuAPIKey) HandleConfig(path string, values []*cue.Value) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	return ZhipuAPIKey(s), nil
+	ret := ZhipuAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) ZhipuAPIKey() ZhipuAPIKey {
@@ -181,7 +189,8 @@ func (v VercelAPIKey) HandleConfig(path string, values []*cue.Value) (any, error
 	if err != nil {
 		return nil, err
 	}
-	return VercelAPIKey(s), nil
+	ret := VercelAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) VercelKey() VercelAPIKey {
@@ -199,7 +208,8 @@ func (n NvidiaAPIKey) HandleConfig(path string, values []*cue.Value) (any, error
 	if err != nil {
 		return nil, err
 	}
-	return NvidiaAPIKey(s), nil
+	ret := NvidiaAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) NvidiaAPIKey() NvidiaAPIKey {
@@ -217,7 +227,8 @@ func (a AzureAPIKey) HandleConfig(path string, values []*cue.Value) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	return AzureAPIKey(s), nil
+	ret := AzureAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) AzureAPIKey() AzureAPIKey {
@@ -235,7 +246,8 @@ func (b BedrockAPIKey) HandleConfig(path string, values []*cue.Value) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	return BedrockAPIKey(s), nil
+	ret := BedrockAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) BedrockAPIKey() BedrockAPIKey {
@@ -255,7 +267,8 @@ func (o OpenCodeGoAPIKey) HandleConfig(path string, values []*cue.Value) (any, e
 	if err != nil {
 		return nil, err
 	}
-	return OpenCodeGoAPIKey(s), nil
+	ret := OpenCodeGoAPIKey(s)
+	return &ret, nil
 }
 
 func (Module) OpenCodeGoAPIKey() OpenCodeGoAPIKey {

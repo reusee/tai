@@ -22,7 +22,8 @@ func (d DebugGemini) HandleConfig(path string, values []*cue.Value) (any, error)
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return DebugGemini(b), nil
+	ret := DebugGemini(b)
+	return &ret, nil
 }
 
 // DebugOpenAI configs.Config implementation.
@@ -38,7 +39,8 @@ func (d DebugOpenAI) HandleConfig(path string, values []*cue.Value) (any, error)
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return DebugOpenAI(b), nil
+	ret := DebugOpenAI(b)
+	return &ret, nil
 }
 
 // TapOpenAI configs.Config implementation.
@@ -54,7 +56,8 @@ func (d TapOpenAI) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return TapOpenAI(b), nil
+	ret := TapOpenAI(b)
+	return &ret, nil
 }
 
 // AzureEndpoint flags.Flag implementation. The configs.Config

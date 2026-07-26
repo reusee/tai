@@ -42,7 +42,8 @@ func (d Debug) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return Debug(b), nil
+	ret := Debug(b)
+	return &ret, nil
 }
 
 // MaxPackageDistanceFromRoot configs.Config and flags.Flag implementation.
@@ -60,7 +61,8 @@ func (m MaxPackageDistanceFromRoot) HandleConfig(path string, values []*cue.Valu
 	if err := values[0].Decode(&n); err != nil {
 		return nil, err
 	}
-	return MaxPackageDistanceFromRoot(n), nil
+	ret := MaxPackageDistanceFromRoot(n)
+	return &ret, nil
 }
 
 var _ flags.Flag = MaxPackageDistanceFromRoot(0)

@@ -28,13 +28,16 @@ type Config interface {
 	ConfigPaths() []string
 
 	// HandleConfig receives the CUE path and the cue.Values from all
-	// config file roots that contain that path. It returns the new
-	// value for the type, or nil to indicate no change. The receiver
-	// is the original value of the type in the scope (before any path
-	// processing), not the value from a previous path. This ensures
-	// that later paths can override earlier ones: HandleConfig should
-	// return the value from the current path's cue.Values if they
-	// contain a meaningful value, regardless of the receiver.
+	// config file roots that contain that path. It returns a newDef —
+	// a pointer to a typed value (e.g., &ret) or a function provider —
+	// that is passed directly to scope.Fork, exactly like
+	// flags.Flag.Handle's newDef. Returning nil indicates no change
+	// for this path. The receiver is the original value of the type in
+	// the scope (before any path processing), not the value from a
+	// previous path. This ensures that later paths can override earlier
+	// ones: HandleConfig should return a def derived from the current
+	// path's cue.Values if they contain a meaningful value, regardless
+	// of the receiver.
 	HandleConfig(path string, values []*cue.Value) (any, error)
 }
 

@@ -36,7 +36,8 @@ func (dynConfig) HandleConfig(path string, values []*cue.Value) (any, error) {
 		if err := v.Decode(&s); err != nil {
 			continue
 		}
-		return dynConfig{Value: s}, nil
+		ret := dynConfig{Value: s}
+		return &ret, nil
 	}
 	return nil, nil
 }

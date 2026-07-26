@@ -17,8 +17,11 @@ Config path precedence theory:
   HandleConfig receiver for every path, preventing HandleConfig from
   detecting whether a previous path already set a value. This guarantees
   that later paths can always override earlier ones.
-- HandleConfig should return the value from the current path's cue.Values
-  if they contain a meaningful value, regardless of the receiver state.
+- HandleConfig returns a newDef — a pointer to a typed value or a function
+  provider — that is passed directly to scope.Fork, exactly like
+  flags.Flag.Handle. It should return a def derived from the current
+  path's cue.Values if they contain a meaningful value, regardless of the
+  receiver state.
 - DynamicPathsConfig types are forked as provider functions (constructed
   via reflect.MakeFunc) rather than static values. The provider's
   parameters mirror the ConfigPathsFunc function's parameters, so dscope
@@ -165,8 +168,20 @@ func makeDynamicConfigProvider(
 		if result == nil {
 			return []reflect.Value{originalValue}
 		}
+
+		// HandleConfig returns a newDef — a pointer to a typed value —
+		// per the updated Config interface contract. Dereference the
+		// pointer to obtain the value of type typ for the provider
+		// function's return value. This mirrors how forkStaticConfigValues
+		// passes the def directly to scope.Fork; here, inside the
+		// provider function, we resolve the pointer to the value.
+		val := reflect.ValueOf(result)
+		if val.Kind() == reflect.Pointer {
+			return []reflect.Value{val.Elem()}
+		}
+		// Non-pointer result: construct a value of type typ.
 		ptr := reflect.New(typ)
-		ptr.Elem().Set(reflect.ValueOf(result))
+		ptr.Elem().Set(val)
 		return []reflect.Value{ptr.Elem()}
 	})
 
@@ -175,8 +190,9 @@ func makeDynamicConfigProvider(
 
 // forkStaticConfigValues processes static ConfigPaths for a regular
 // Config type. For each path, it collects cue.Values from all loader
-// roots and calls HandleConfig. Non-nil results are forked into the
-// scope as static values, with later paths overriding earlier ones.
+// roots and calls HandleConfig. Non-nil results (defs: pointers or func
+// providers) are passed directly to scope.Fork, with later paths
+// overriding earlier ones.
 // See TheoryOfConfigPathPrecedence.
 func forkStaticConfigValues(
 	loader Loader,
@@ -198,18 +214,16 @@ func forkStaticConfigValues(
 			continue
 		}
 
-		newValue, err := config.HandleConfig(path, values)
+		newDef, err := config.HandleConfig(path, values)
 		if err != nil {
 			return scope, err
 		}
-		if newValue == nil {
+		if newDef == nil {
 			continue
 		}
 
-		// Fork the scope with the new value, mirroring flags.Parse.
-		ptr := reflect.New(typ)
-		ptr.Elem().Set(reflect.ValueOf(newValue))
-		scope = scope.Fork(ptr.Interface())
+		// Fork the scope with the def directly, mirroring flags.Parse.
+		scope = scope.Fork(newDef)
 	}
 	return scope, nil
 }

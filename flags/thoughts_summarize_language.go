@@ -48,5 +48,6 @@ func (l ThoughtsSummarizeLanguage) HandleConfig(path string, values []*cue.Value
 	if err != nil {
 		return nil, err
 	}
-	return ThoughtsSummarizeLanguage(s), nil
+	ret := ThoughtsSummarizeLanguage(s)
+	return &ret, nil
 }

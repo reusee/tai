@@ -56,5 +56,6 @@ func (t TemperatureFlag) HandleConfig(path string, values []*cue.Value) (any, er
 	if err := values[0].Decode(&f); err != nil {
 		return nil, err
 	}
-	return TemperatureFlag{Value: &f}, nil
+	ret := TemperatureFlag{Value: &f}
+	return &ret, nil
 }

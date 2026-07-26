@@ -76,7 +76,8 @@ func (l Level) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&s); err != nil {
 		return nil, err
 	}
-	return Level{Level: parseLogLevelFromString(s)}, nil
+	ret := Level{Level: parseLogLevelFromString(s)}
+	return &ret, nil
 }
 
 // parseLogLevelFromString converts a log level string to a slog.Leveler.

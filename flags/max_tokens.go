@@ -26,7 +26,7 @@ func (m MaxTokens) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&n); err != nil {
 		return nil, err
 	}
-	return n, nil
+	return &n, nil
 }
 
 var _ Flag = MaxTokens(0)

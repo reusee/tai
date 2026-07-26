@@ -66,5 +66,5 @@ func (m Match) HandleConfig(path string, values []*cue.Value) (any, error) {
 			}
 		}
 	}
-	return ret, nil
+	return &ret, nil
 }

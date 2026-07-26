@@ -24,7 +24,8 @@ func (l LoadDir) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return LoadDir(s), nil
+	ret := LoadDir(s)
+	return &ret, nil
 }
 
 func (l LoadDir) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {

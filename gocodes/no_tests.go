@@ -21,7 +21,8 @@ func (n NoTests) HandleConfig(path string, values []*cue.Value) (any, error) {
 	if err := values[0].Decode(&b); err != nil {
 		return nil, err
 	}
-	return NoTests(b), nil
+	ret := NoTests(b)
+	return &ret, nil
 }
 
 func (n NoTests) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
