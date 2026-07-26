@@ -1,10 +1,9 @@
-package codes
+package flags
 
 import (
 	"cuelang.org/go/cue"
 
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfPlan = `
@@ -37,7 +36,7 @@ func (Module) Plan() Plan {
 
 var _ configs.Config = Plan(false)
 
-var _ flags.Flag = Plan(true)
+var _ Flag = Plan(true)
 
 func (p Plan) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
 	return Plan(true), args, nil

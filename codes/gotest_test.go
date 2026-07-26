@@ -18,7 +18,7 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(false),
+		flags.Plan(false),
 		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
@@ -47,7 +47,7 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(false),
+		flags.Plan(false),
 		flags.Shell(false),
 	)
 
@@ -91,7 +91,7 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(false),
+		flags.Plan(false),
 		flags.Shell(false),
 	)
 

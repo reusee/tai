@@ -59,7 +59,7 @@ func (Module) CodesComponents(
 	extra flags.ExtraSystemPrompt,
 	dynamicContext DynamicContext,
 	apply flags.Apply,
-	plan Plan,
+	plan flags.Plan,
 	flagShell flags.Shell,
 ) CodesComponents {
 	var comps components.ComponentSet

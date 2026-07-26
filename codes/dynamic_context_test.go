@@ -34,7 +34,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
-			Plan(false),
+			flags.Plan(false),
 			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
@@ -52,7 +52,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 			flags.ExtraSystemPrompt(""),
 			DynamicContext(true),
 			flags.Apply(true),
-			Plan(false),
+			flags.Plan(false),
 			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
@@ -72,7 +72,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(false),
+		flags.Plan(false),
 		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
@@ -94,7 +94,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(true),
+		flags.Plan(true),
 		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(
@@ -122,7 +122,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(true),
+		flags.Plan(true),
 		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
@@ -150,7 +150,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(true),
+		flags.Plan(true),
 		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
@@ -175,7 +175,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(true),
+		flags.Plan(true),
 		flags.Shell(false),
 	)
 	prompt := string(module.SystemPrompt(
@@ -225,7 +225,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
-		Plan(false),
+		flags.Plan(false),
 		flags.Shell(false),
 	)
 	prompt := module.SystemPrompt(

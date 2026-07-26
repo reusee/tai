@@ -16,7 +16,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
-			Plan(false),
+			flags.Plan(false),
 			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
@@ -34,7 +34,7 @@ func TestSystemPromptPlan(t *testing.T) {
 			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
-			Plan(true),
+			flags.Plan(true),
 			flags.Shell(false),
 		)
 		prompt := module.SystemPrompt(
