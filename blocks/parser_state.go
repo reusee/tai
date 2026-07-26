@@ -38,11 +38,16 @@ purpose is block extraction, not prose preservation.
 
 At Flush, the parser switches to final mode: an unclosed block is treated as ended rather
 than left pending, so its body is finalized as all remaining buffered content and the buffer
-is fully consumed. Any remaining unparseable fragments are discarded so content appended
-after Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush
-content within the same block. Boundary strings are parsed as leading Han (Chinese)
-ideographs only; a non-Han character terminates the boundary so trailing model-added
-content does not corrupt block matching.
+is fully consumed. The BlockHandler is not called for blocks finalized during Flush, because
+these blocks are incomplete (e.g., from truncated output) and applying them would cause
+errors. Complete blocks are already parsed and handled during AppendContent; only unclosed
+blocks remain in the buffer at Flush. Retaining unclosed blocks without applying allows the
+summary-completion retry mechanism to detect truncation and retry from the pre-generation
+state, rather than aborting on an apply error from an incomplete change block. Any remaining
+unparseable fragments are discarded so content appended after Flush (e.g., from a subsequent
+generation cycle) is never combined with pre-Flush content within the same block. Boundary
+strings are parsed as leading Han (Chinese) ideographs only; a non-Han character terminates
+the boundary so trailing model-added content does not corrupt block matching.
 
 Parsed blocks can be consumed selectively by kind via PopBlocksByKind, which returns
 the matched blocks alongside a new *ParserState with those blocks removed, so processing
@@ -53,13 +58,15 @@ A BlockHandler callback may be set at construction time to intercept blocks as t
 parsed during streaming. When the handler returns consumed=true, the block is not retained
 in the blocks list (it has been fully handled by the callback); when it returns
 consumed=false, the block is retained for later processing as usual. When the handler
-returns an error, the block is retained and AppendContent/Flush returns the error
-immediately, stopping streaming. This enables early side-effect execution (e.g., applying
-change blocks to the working tree) and early error detection: a failing block is surfaced
-as soon as it is parsed, rather than after the full generation phase completes, avoiding
-wasted tokens on a broken foundation. The handler is propagated to all new ParserState
-instances created by AppendContent, Flush, PopBlocks, PopBlocksByKind, and WithUpstream,
-so it remains active across the entire generation session.
+returns an error, the block is retained and AppendContent returns the error immediately,
+stopping streaming. The handler is called during AppendContent for complete blocks; it is
+not called during Flush because only unclosed (incomplete) blocks remain at that point.
+This enables early side-effect execution (e.g., applying change blocks to the working tree)
+and early error detection: a failing block is surfaced as soon as it is parsed, rather than
+after the full generation phase completes, avoiding wasted tokens on a broken foundation.
+The handler is propagated to all new ParserState instances created by AppendContent, Flush,
+PopBlocks, PopBlocksByKind, and WithUpstream, so it remains active across the entire
+generation session.
 `
 
 // BlockHandler is called when a new block is parsed during AppendContent or
@@ -194,6 +201,16 @@ func (s *ParserState) Flush() (generators.State, error) {
 
 	blocks := slices.Clone(s.blocks)
 	buf := slices.Clone(s.buf)
+	// During Flush, finalize any remaining unclosed blocks without calling
+	// the BlockHandler. Complete blocks were already parsed and handled
+	// during AppendContent; only unclosed blocks remain in the buffer.
+	// Unclosed blocks are incomplete (e.g., from truncated output) and
+	// applying them via the handler would cause errors. Retaining them
+	// without applying allows the summary-completion retry mechanism
+	// (see TheoryOfSummaryCompletionRetry in codes/generate.go) to detect
+	// truncation and retry from the pre-generation state, rather than
+	// aborting on an apply error from an incomplete change block.
+	// See TheoryOfParserState.
 	for {
 		block, _, end, ok, err := parseFirstBlock(buf, true)
 		if err != nil {
@@ -201,26 +218,6 @@ func (s *ParserState) Flush() (generators.State, error) {
 		}
 		if !ok {
 			break
-		}
-
-		if s.handler != nil {
-			consumed, handlerErr := s.handler(block)
-			if handlerErr != nil {
-				// Handler error during flush: retain the block and
-				// return the error to stop streaming immediately.
-				// See TheoryOfParserState.
-				blocks = append(blocks, block)
-				return &ParserState{
-					upstream: newUpstream,
-					buf:      nil,
-					blocks:   blocks,
-					handler:  s.handler,
-				}, handlerErr
-			}
-			if consumed {
-				buf = buf[end:]
-				continue
-			}
 		}
 
 		blocks = append(blocks, block)

@@ -31,8 +31,12 @@ to complete. This enables early error detection: if a change block fails to
 apply (e.g., invalid target, malformed code), generation stops immediately
 instead of continuing to produce tokens that would be wasted on a broken
 foundation. The streaming apply is implemented via a BlockHandler callback on
-ParserState: when a complete change block is parsed during AppendContent or
-Flush, the handler applies it via changes.ApplyChangeBlock. Successfully applied change blocks are
+ParserState: when a complete change block is parsed during AppendContent,
+the handler applies it via changes.ApplyChangeBlock. During Flush, the handler
+is not called for unclosed blocks, because they are incomplete (e.g., from
+truncated output) and applying them would cause errors; they are retained
+without applying so the summary-completion retry mechanism can handle the
+truncation. Successfully applied change blocks are
 consumed (not retained in the blocks list), so the post-phase component loop's
 applyChangeBlocks finds no change blocks to re-apply. When the apply flag is
 disabled, no handler is set and change blocks are stored as before, preserving

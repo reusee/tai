@@ -593,7 +593,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("HandlerCalledDuringFlush", func(t *testing.T) {
+	t.Run("HandlerNotCalledForUnclosedDuringFlush", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		var handledBlocks []Block
 		ps := NewParserState(upstream, func(block Block) (bool, error) {
@@ -621,11 +621,67 @@ func TestParserStateBlockHandler(t *testing.T) {
 		}
 		ps = flushedState.(*ParserState)
 
-		if len(handledBlocks) != 1 {
-			t.Fatalf("expected 1 handled block after flush, got %d", len(handledBlocks))
+		// Handler should NOT be called for unclosed blocks during Flush,
+		// because unclosed blocks are incomplete (e.g., from truncated
+		// output) and applying them would cause errors. The block is
+		// retained without being applied so the summary-completion retry
+		// mechanism can handle the truncation.
+		if len(handledBlocks) != 0 {
+			t.Fatalf("expected 0 handled blocks after flush (unclosed block not applied), got %d", len(handledBlocks))
 		}
-		if handledBlocks[0].Kind != "change" {
-			t.Fatalf("expected change block, got %s", handledBlocks[0].Kind)
+
+		// The unclosed block should be retained in the blocks list.
+		blocks, _ := ps.PopBlocks()
+		if len(blocks) != 1 {
+			t.Fatalf("expected 1 retained block, got %d", len(blocks))
+		}
+		if blocks[0].Kind != "change" {
+			t.Fatalf("expected change block, got %s", blocks[0].Kind)
+		}
+	})
+
+	t.Run("UnclosedBlockDoesNotCauseFlushError", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		// Handler that returns an error for change blocks, simulating
+		// an apply failure on an incomplete block.
+		applyErr := &testHandlerError{msg: "apply failed for incomplete block"}
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			if block.Kind == "change" {
+				return false, applyErr
+			}
+			return false, nil
+		})
+
+		// Unclosed change block (no closing marker) — simulates
+		// truncated output where the model is cut off mid-block.
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {\n\t// truncated"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+
+		// Flush should NOT return an error, because the handler is not
+		// called for unclosed blocks during Flush. Before the fix, the
+		// handler would be called and return an error, which would
+		// propagate from Flush and prevent the summary-completion retry
+		// mechanism from handling the truncation.
+		flushedState, flushErr := ps.Flush()
+		if flushErr != nil {
+			t.Fatalf("Flush should not error for unclosed block, got: %v", flushErr)
+		}
+		ps = flushedState.(*ParserState)
+
+		// The unclosed block should be retained in the blocks list.
+		blocks, _ := ps.PopBlocks()
+		if len(blocks) != 1 {
+			t.Fatalf("expected 1 retained block, got %d", len(blocks))
+		}
+		if blocks[0].Kind != "change" {
+			t.Fatalf("expected change block, got %s", blocks[0].Kind)
 		}
 	})
 
