@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
@@ -35,7 +36,11 @@ summarization system prompt is designed to extract only the most important
 points and direction of reasoning, not to reproduce the full thought content.
 The summary is formatted as a bullet list of at most 2 key points, each item
 being a single concise sentence, so the user can scan the reasoning trajectory
-quickly without reading a dense paragraph.
+quickly without reading a dense paragraph. The Summarize method prompts the
+summarization model to wrap its output in a boundary-delimited summary block
+and parses the block body via blocks.ParseFirstBlock, ensuring the returned
+text contains only the clean bullet-list summary without model preamble or
+trailing prose; if no block is found the raw text is returned as a fallback.
 `
 
 const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.
@@ -44,7 +49,14 @@ Output at most 2 bullet points. Each list item must be a single, short sentence 
 - What problem the model is currently working on
 - The overall direction and approach of the reasoning
 
-Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.`
+Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.
+
+You MUST wrap your output in a summary block using the boundary-delimited block format. Generate a random boundary string of two uncommon Chinese characters. Output ONLY the block, no other text before or after:
+
+:::<boundary> <summary>
+- first key point
+- second key point
+:::<boundary> </summary>`
 
 // ThoughtsSummarizeLanguage is an alias for flags.ThoughtsSummarizeLanguage.
 type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage
@@ -86,6 +98,9 @@ func (Module) GetDefaultSummarizer(
 
 // Summarize sends the accumulated thoughts to the underlying generator with
 // the summarization system prompt and returns the condensed summary text.
+// The system prompt instructs the model to wrap its output in a
+// boundary-delimited summary block; the block body is parsed and returned
+// as the clean summary text.
 func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, error) {
 	systemPrompt := SummarizeSystemPrompt
 	if s.language != "" {
@@ -116,5 +131,15 @@ func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, er
 			}
 		}
 	}
+
+	// Parse the summary block from the model output. The system prompt
+	// instructs the model to wrap its output in a boundary-delimited
+	// summary block; extracting the block body yields the clean
+	// bullet-list summary without model preamble or trailing prose.
+	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(sb.String()))
+	if err == nil && ok {
+		return strings.TrimSpace(block.Body), nil
+	}
+	// Fallback: return raw text if no block was found or on parse error
 	return sb.String(), nil
 }

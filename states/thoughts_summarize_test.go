@@ -42,10 +42,13 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 			}
 		}
 	}
+	// Wrap the summary in a boundary-delimited summary block so that
+	// Summarize can parse it via blocks.ParseFirstBlock.
+	blockOutput := ":::塅垝 <summary>\n" + m.summary + "\n:::塅垝 </summary>"
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
-			generators.Text(m.summary),
+			generators.Text(blockOutput),
 		},
 	})
 }
