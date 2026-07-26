@@ -23,6 +23,21 @@ import (
 	"github.com/reusee/tai/phases"
 )
 
+const TheoryOfStreamingApply = `
+Change blocks are applied to the working tree immediately as they are parsed
+from streamed model output, rather than waiting for the full generation phase
+to complete. This enables early error detection: if a change block fails to
+apply (e.g., invalid target, malformed code), generation stops immediately
+instead of continuing to produce tokens that would be wasted on a broken
+foundation. The streaming apply is implemented via a BlockHandler callback on
+ParserState: when a complete change block is parsed during AppendContent or
+Flush, the handler applies it via applyHunk. Successfully applied blocks are
+consumed (not retained in the blocks list), so the post-phase component loop's
+applyChangeBlocks finds no change blocks to re-apply. When the apply flag is
+disabled, no handler is set and change blocks are stored as before, preserving
+the no-apply behavior.
+`
+
 const maxRequestContextRounds = 5
 
 const maxGoTestRounds = 10
@@ -336,6 +351,7 @@ func (Module) Generate(
 	flagChats flags.Chats,
 	debug Debug,
 	funcDecls generators.FuncDecls,
+	apply Apply,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -492,7 +508,26 @@ func (Module) Generate(
 		// Wrap state with ParserState to parse structured blocks from model
 		// output. ParserState is always activated to support continue blocks,
 		// change blocks, and request-context blocks.
-		parserState := blocks.NewParserState(state)
+		// When apply is enabled, a BlockHandler applies change blocks
+		// immediately as they are parsed during streaming, enabling early
+		// error detection. See TheoryOfStreamingApply.
+		var parserHandler blocks.BlockHandler
+		if bool(apply) {
+			parserHandler = func(block blocks.Block) (bool, error) {
+				if block.Kind != "change" {
+					return false, nil
+				}
+				h, parsedOk := blocks.ParseChangeBlock(block)
+				if !parsedOk {
+					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+				}
+				if err := applyHunk(root, h); err != nil {
+					return false, fmt.Errorf("apply hunk %s %s: %w", h.Op, h.Target, err)
+				}
+				return true, nil
+			}
+		}
+		parserState := blocks.NewParserState(state, parserHandler)
 		state = parserState
 
 		// run

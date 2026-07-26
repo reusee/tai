@@ -463,3 +463,212 @@ func TestParserStateHasCompletionBlock(t *testing.T) {
 		}
 	})
 }
+
+type testHandlerError struct {
+	msg string
+}
+
+func TestParserStateBlockHandler(t *testing.T) {
+	t.Run("ConsumesBlocks", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		var handledBlocks []Block
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			handledBlocks = append(handledBlocks, block)
+			return true, nil
+		})
+
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+
+		if len(handledBlocks) != 1 {
+			t.Fatalf("expected 1 handled block, got %d", len(handledBlocks))
+		}
+		if handledBlocks[0].Kind != "change" {
+			t.Fatalf("expected change block, got %s", handledBlocks[0].Kind)
+		}
+
+		blocks, _ := ps.PopBlocks()
+		if len(blocks) != 0 {
+			t.Fatalf("expected 0 blocks (consumed by handler), got %d", len(blocks))
+		}
+	})
+
+	t.Run("DoesNotConsumeNonChangeBlocks", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		var handledBlocks []Block
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			handledBlocks = append(handledBlocks, block)
+			if block.Kind == "change" {
+				return true, nil
+			}
+			return false, nil
+		})
+
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n" +
+			":::栢彣 <summary>\nDone.\n:::栢彣 </summary>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+
+		if len(handledBlocks) != 2 {
+			t.Fatalf("expected 2 handled blocks, got %d", len(handledBlocks))
+		}
+
+		blocks, _ := ps.PopBlocks()
+		if len(blocks) != 1 {
+			t.Fatalf("expected 1 remaining block (summary), got %d", len(blocks))
+		}
+		if blocks[0].Kind != "summary" {
+			t.Fatalf("expected summary block, got %s", blocks[0].Kind)
+		}
+	})
+
+	t.Run("ErrorStopsStreaming", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		expectedErr := &testHandlerError{msg: "apply failed"}
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			if block.Kind == "change" {
+				return false, expectedErr
+			}
+			return false, nil
+		})
+
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		_, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err == nil {
+			t.Fatal("expected error from handler")
+		}
+		if err != expectedErr {
+			t.Fatalf("expected %v, got %v", expectedErr, err)
+		}
+	})
+
+	t.Run("HandlerPropagatedToNewState", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		var callCount int
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			callCount++
+			return true, nil
+		})
+
+		text1 := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text1)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if callCount != 1 {
+			t.Fatalf("expected 1 handler call, got %d", callCount)
+		}
+
+		text2 := ":::栢彣 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n:::栢彣 </change>\n"
+		newState, err = ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text2)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if callCount != 2 {
+			t.Fatalf("expected 2 handler calls, got %d", callCount)
+		}
+	})
+
+	t.Run("HandlerCalledDuringFlush", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		var handledBlocks []Block
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			handledBlocks = append(handledBlocks, block)
+			return true, nil
+		})
+
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+
+		if len(handledBlocks) != 0 {
+			t.Fatalf("expected 0 handled blocks before flush, got %d", len(handledBlocks))
+		}
+
+		flushedState, err := ps.Flush()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = flushedState.(*ParserState)
+
+		if len(handledBlocks) != 1 {
+			t.Fatalf("expected 1 handled block after flush, got %d", len(handledBlocks))
+		}
+		if handledBlocks[0].Kind != "change" {
+			t.Fatalf("expected change block, got %s", handledBlocks[0].Kind)
+		}
+	})
+
+	t.Run("HandlerPropagatedThroughPopBlocksByKind", func(t *testing.T) {
+		upstream := &mockState{systemPrompt: "system prompt"}
+		var callCount int
+		ps := NewParserState(upstream, func(block Block) (bool, error) {
+			callCount++
+			return false, nil
+		})
+
+		text := ":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*ParserState)
+		if callCount != 1 {
+			t.Fatalf("expected 1 handler call, got %d", callCount)
+		}
+
+		// PopBlocksByKind should propagate the handler to the new state.
+		_, cleanedPs := ps.PopBlocksByKind("summary")
+
+		// Append another block; the handler should still be active.
+		text2 := ":::栢彣 <summary>\nMore.\n:::栢彣 </summary>\n"
+		newState2, err := cleanedPs.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text2)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanedPs = newState2.(*ParserState)
+		if callCount != 2 {
+			t.Fatalf("expected 2 handler calls after PopBlocksByKind, got %d", callCount)
+		}
+	})
+}
+
+func (e *testHandlerError) Error() string {
+	return e.msg
+}

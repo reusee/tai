@@ -48,7 +48,27 @@ Parsed blocks can be consumed selectively by kind via PopBlocksByKind, which ret
 the matched blocks alongside a new *ParserState with those blocks removed, so processing
 one kind of block (e.g., request-context) does not discard blocks of other kinds (e.g.,
 change) that must remain available for subsequent processing.
+
+A BlockHandler callback may be set at construction time to intercept blocks as they are
+parsed during streaming. When the handler returns consumed=true, the block is not retained
+in the blocks list (it has been fully handled by the callback); when it returns
+consumed=false, the block is retained for later processing as usual. When the handler
+returns an error, the block is retained and AppendContent/Flush returns the error
+immediately, stopping streaming. This enables early side-effect execution (e.g., applying
+change blocks to the working tree) and early error detection: a failing block is surfaced
+as soon as it is parsed, rather than after the full generation phase completes, avoiding
+wasted tokens on a broken foundation. The handler is propagated to all new ParserState
+instances created by AppendContent, Flush, PopBlocks, PopBlocksByKind, and WithUpstream,
+so it remains active across the entire generation session.
 `
+
+// BlockHandler is called when a new block is parsed during AppendContent or
+// Flush. If consumed is true, the block is not added to the blocks list (it
+// has been fully handled by the callback). If consumed is false, the block
+// is added to the blocks list for later processing. If err is non-nil, the
+// block is added to the blocks list and AppendContent/Flush returns the
+// error, stopping streaming.
+type BlockHandler func(block Block) (consumed bool, err error)
 
 // ParserState wraps an upstream State and incrementally parses boundary-delimited
 // blocks from streamed model output. As the model appends text parts, the
@@ -61,12 +81,20 @@ type ParserState struct {
 	upstream generators.State
 	buf      []byte
 	blocks   []Block
+	handler  BlockHandler
 }
 
 // NewParserState creates a ParserState that wraps the given upstream State.
-func NewParserState(upstream generators.State) *ParserState {
+// An optional BlockHandler may be provided to intercept blocks as they are
+// parsed during streaming. See TheoryOfParserState.
+func NewParserState(upstream generators.State, handler ...BlockHandler) *ParserState {
+	var h BlockHandler
+	if len(handler) > 0 {
+		h = handler[0]
+	}
 	return &ParserState{
 		upstream: upstream,
+		handler:  h,
 	}
 }
 
@@ -84,6 +112,7 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 			upstream: newUpstream,
 			buf:      s.buf,
 			blocks:   s.blocks,
+			handler:  s.handler,
 		}, nil
 	}
 
@@ -111,6 +140,28 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 		if !ok {
 			break
 		}
+
+		if s.handler != nil {
+			consumed, handlerErr := s.handler(block)
+			if handlerErr != nil {
+				// Handler error: retain the block for debugging and
+				// return the error to stop streaming immediately.
+				// See TheoryOfParserState.
+				blocks = append(blocks, block)
+				buf = buf[end:]
+				return &ParserState{
+					upstream: newUpstream,
+					buf:      buf,
+					blocks:   blocks,
+					handler:  s.handler,
+				}, handlerErr
+			}
+			if consumed {
+				buf = buf[end:]
+				continue
+			}
+		}
+
 		blocks = append(blocks, block)
 		buf = buf[end:]
 	}
@@ -119,6 +170,7 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 		upstream: newUpstream,
 		buf:      buf,
 		blocks:   blocks,
+		handler:  s.handler,
 	}, nil
 }
 
@@ -150,6 +202,27 @@ func (s *ParserState) Flush() (generators.State, error) {
 		if !ok {
 			break
 		}
+
+		if s.handler != nil {
+			consumed, handlerErr := s.handler(block)
+			if handlerErr != nil {
+				// Handler error during flush: retain the block and
+				// return the error to stop streaming immediately.
+				// See TheoryOfParserState.
+				blocks = append(blocks, block)
+				return &ParserState{
+					upstream: newUpstream,
+					buf:      nil,
+					blocks:   blocks,
+					handler:  s.handler,
+				}, handlerErr
+			}
+			if consumed {
+				buf = buf[end:]
+				continue
+			}
+		}
+
 		blocks = append(blocks, block)
 		buf = buf[end:]
 	}
@@ -160,6 +233,7 @@ func (s *ParserState) Flush() (generators.State, error) {
 		upstream: newUpstream,
 		buf:      nil,
 		blocks:   blocks,
+		handler:  s.handler,
 	}, nil
 }
 
@@ -176,6 +250,7 @@ func (s *ParserState) WithUpstream(upstream generators.State) *ParserState {
 		upstream: upstream,
 		buf:      s.buf,
 		blocks:   s.blocks,
+		handler:  s.handler,
 	}
 }
 
@@ -214,6 +289,7 @@ func (s *ParserState) PopBlocks() ([]Block, *ParserState) {
 		upstream: s.upstream,
 		buf:      s.buf,
 		blocks:   nil,
+		handler:  s.handler,
 	}
 }
 
@@ -234,6 +310,7 @@ func (s *ParserState) PopBlocksByKind(kind string) ([]Block, *ParserState) {
 		upstream: s.upstream,
 		buf:      s.buf,
 		blocks:   remaining,
+		handler:  s.handler,
 	}
 }
 
