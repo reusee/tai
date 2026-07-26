@@ -8,40 +8,8 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
-// SummarizeThoughts configs.Config implementation.
-// See flags.TheoryOfConfigFlagParity.
-
-var _ configs.Config = SummarizeThoughts(false)
-
-func (s SummarizeThoughts) ConfigPaths() []string {
-	return []string{"summarize_thoughts"}
-}
-
-func (s SummarizeThoughts) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	return SummarizeThoughts(b), nil
-}
-
-// TemperatureFlag configs.Config implementation.
-
-var _ configs.Config = TemperatureFlag{}
-
-func (t TemperatureFlag) ConfigPaths() []string {
-	return []string{"temperature"}
-}
-
-func (t TemperatureFlag) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var f float32
-	if err := values[0].Decode(&f); err != nil {
-		return nil, err
-	}
-	return TemperatureFlag{Value: &f}, nil
-}
-
 // DebugGemini configs.Config implementation.
+// See flags.TheoryOfConfigFlagParity.
 
 var _ configs.Config = DebugGemini(false)
 

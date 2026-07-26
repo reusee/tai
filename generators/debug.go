@@ -63,20 +63,6 @@ func (d TapOpenAI) Keys() map[string]string {
 // Config implementations for types defined in other generator files.
 // These are placed here because this file imports cuelang.org/go/cue.
 
-var _ configs.Config = ThoughtsSummarizeLanguage("")
-
-func (l ThoughtsSummarizeLanguage) ConfigPaths() []string {
-	return []string{"thoughts_summarize_language"}
-}
-
-func (l ThoughtsSummarizeLanguage) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	return ThoughtsSummarizeLanguage(s), nil
-}
-
 var _ configs.Config = AzureEndpoint("")
 
 func (e AzureEndpoint) ConfigPaths() []string {

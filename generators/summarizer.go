@@ -2,10 +2,9 @@ package generators
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
-	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfThoughtsSummarize = `
@@ -46,32 +45,8 @@ Output at most 2 bullet points. Each list item must be a single, short sentence 
 
 Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.`
 
-// ThoughtsSummarizeLanguage controls the output language for thought
-// summaries. When empty (the default), no language hint is given to the
-// summarizer. When set (e.g., "zh", "en"), the summarizer is instructed
-// to output summaries in that language. It can be configured via the
-// thoughts_summarize_language field in tai.cue or the
-// -thoughts-summarize-language command-line flag.
-type ThoughtsSummarizeLanguage string
-
-var _ configs.Config = ThoughtsSummarizeLanguage("")
-
-func (l ThoughtsSummarizeLanguage) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	if len(args) == 0 {
-		return nil, nil, fmt.Errorf("expecting language string, got empty")
-	}
-	return ThoughtsSummarizeLanguage(args[0]), args[1:], nil
-}
-
-func (l ThoughtsSummarizeLanguage) Keys() map[string]string {
-	return map[string]string{
-		"-thoughts-summarize-language": "Set the language for thought summaries (e.g., zh, en)",
-	}
-}
-
-func (Module) ThoughtsSummarizeLanguage() ThoughtsSummarizeLanguage {
-	return ThoughtsSummarizeLanguage("")
-}
+// ThoughtsSummarizeLanguage is an alias for flags.ThoughtsSummarizeLanguage.
+type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage
 
 // Summarizer is a separate generator type dedicated to summarizing thoughts.
 // It wraps an underlying Generator (typically a fast, cheap model) and
