@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/pathutil"
 	"golang.org/x/tools/imports"
 )
 
@@ -176,14 +177,6 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
-// pathEscapesDir reports whether a cleaned relative path escapes the current
-// directory via parent-directory traversal. It distinguishes ".." (parent
-// directory) and "../"-prefixed paths from names that merely start with two
-// dots (e.g., "..hidden", "..."), which are valid directory or file names.
-func pathEscapesDir(cleaned string) bool {
-	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
-}
-
 func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	path := h.FilePath
 	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
@@ -192,12 +185,12 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			return err
 		}
 		rel, err := filepath.Rel(cwd, path)
-		if err != nil || pathEscapesDir(rel) {
+		if err != nil || pathutil.EscapesDir(rel) {
 			return fmt.Errorf("path outside of current directory: %s", path)
 		}
 		path = rel
 	}
-	if pathEscapesDir(filepath.Clean(path)) { // Proactively block directory escape
+	if pathutil.EscapesDir(filepath.Clean(path)) { // Proactively block directory escape
 		return fmt.Errorf("path escapes current directory: %s", path)
 	}
 
@@ -210,16 +203,16 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 				return err
 			}
 			rel, err := filepath.Rel(cwd, newPath)
-			if err != nil || pathEscapesDir(rel) {
+			if err != nil || pathutil.EscapesDir(rel) {
 				return fmt.Errorf("new path outside of current directory: %s", newPath)
 			}
 			newPath = rel
 		}
-		if pathEscapesDir(filepath.Clean(newPath)) {
+		if pathutil.EscapesDir(filepath.Clean(newPath)) {
 			return fmt.Errorf("new path escapes current directory: %s", newPath)
 		}
 		if dir := filepath.Dir(newPath); dir != "." {
-			if err := rootMkdirAll(root, dir, 0755); err != nil {
+			if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
 				return err
 			}
 		}
@@ -231,7 +224,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	// Go files are processed through goimports to keep imports synchronized.
 	if h.Op == "WRITE" {
 		if dir := filepath.Dir(path); dir != "." {
-			if err := rootMkdirAll(root, dir, 0755); err != nil {
+			if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
 				return err
 			}
 		}
@@ -272,7 +265,7 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 			// Allow creating new non-Go file
 			body := h.Body
 			if dir := filepath.Dir(path); dir != "." {
-				if err := rootMkdirAll(root, dir, 0755); err != nil {
+				if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
 					return err
 				}
 			}
@@ -429,29 +422,11 @@ func applyHunk(root *os.Root, h codetypes.Hunk) error {
 	}
 
 	if dir := filepath.Dir(path); dir != "." {
-		if err := rootMkdirAll(root, dir, 0755); err != nil {
+		if err := pathutil.RootMkdirAll(root, dir, 0755); err != nil {
 			return err
 		}
 	}
 	return root.WriteFile(path, finalizeContent(formatted), 0644) // Use os.Root for safe writing
-}
-
-func rootMkdirAll(root *os.Root, path string, perm os.FileMode) error {
-	path = filepath.Clean(path)
-	if path == "." || path == "/" || path == "" {
-		return nil
-	}
-	err := root.Mkdir(path, perm) // Try creating directly
-	if err == nil || os.IsExist(err) {
-		return nil
-	}
-	parent := filepath.Dir(path)
-	if parent != path {
-		if err := rootMkdirAll(root, parent, perm); err != nil {
-			return err
-		}
-	}
-	return root.Mkdir(path, perm)
 }
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h codetypes.Hunk, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {

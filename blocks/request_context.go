@@ -12,6 +12,7 @@ import (
 
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/nets"
+	"github.com/reusee/tai/pathutil"
 )
 
 const TheoryOfRequestContext = `
@@ -260,15 +261,6 @@ func ProcessRequestContextBlocks(
 	return state, newParserState, hasRequestContext, nil
 }
 
-// pathEscapesDir reports whether a cleaned relative path escapes the current
-// directory via parent-directory traversal. It distinguishes ".." (parent
-// directory) and "../"-prefixed paths from names that merely start with two
-// dots (e.g., "..hidden", "..."), which are valid directory or file names.
-// See TheoryOfRequestContext.
-func pathEscapesDir(cleaned string) bool {
-	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
-}
-
 // readContextFile reads a local file at the given path. Absolute paths are
 // permitted because they represent explicit, intentional references by the
 // model. Relative paths containing parent-directory traversal are rejected as
@@ -281,7 +273,7 @@ func pathEscapesDir(cleaned string) bool {
 func readContextFile(root *os.Root, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
-		if pathEscapesDir(cleaned) {
+		if pathutil.EscapesDir(cleaned) {
 			return "", fmt.Errorf("path escapes current directory: %s", path)
 		}
 	}
@@ -295,7 +287,7 @@ func readContextFile(root *os.Root, path string) (string, error) {
 			return "", err
 		}
 		rel, err := filepath.Rel(rootDir, path)
-		if err == nil && !pathEscapesDir(filepath.Clean(rel)) {
+		if err == nil && !pathutil.EscapesDir(filepath.Clean(rel)) {
 			content, err := root.ReadFile(rel)
 			if err == nil {
 				return string(content), nil
@@ -327,7 +319,7 @@ func readContextFile(root *os.Root, path string) (string, error) {
 func globFiles(root *os.Root, pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
-		if pathEscapesDir(cleaned) {
+		if pathutil.EscapesDir(cleaned) {
 			return nil, fmt.Errorf("pattern escapes current directory: %s", pattern)
 		}
 	}
@@ -359,7 +351,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 		relPath := m
 		if filepath.IsAbs(m) {
 			rel, relErr := filepath.Rel(rootDir, m)
-			if relErr != nil || pathEscapesDir(filepath.Clean(rel)) {
+			if relErr != nil || pathutil.EscapesDir(filepath.Clean(rel)) {
 				continue
 			}
 			relPath = rel
