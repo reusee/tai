@@ -327,20 +327,33 @@ func TestOutputFlushClosesThoughtTag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Flush should close the thought tag
+	// Flush should close the thought tag with the matching </think> tag.
+	// The open tag is "<think>" (see AppendContent), so the close tag
+	// must be "</think>" — not "</thinking>" — for downstream parsers
+	// that rely on properly matched tag pairs.
 	state, err = state.Flush()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The closing tag must be present after flush
+	// The closing tag must be present after flush and must match the
+	// open tag (<think>).
 	flushedOutput := buf.String()
-	if !strings.Contains(flushedOutput, "</thinking>") {
-		t.Fatalf("expected </thinking> in output after flush, got: %q", flushedOutput)
+	if !strings.Contains(flushedOutput, "<think>\n") {
+		t.Fatalf("expected <think> open tag in output, got: %q", flushedOutput)
+	}
+	if !strings.Contains(flushedOutput, "</think>") {
+		t.Fatalf("expected </think> close tag in output after flush, got: %q", flushedOutput)
+	}
+	// The mismatched </thinking> tag must NOT appear. Before the fix,
+	// Flush emitted </thinking> while AppendContent emitted </think>,
+	// breaking tag-pair matching for downstream parsers.
+	if strings.Contains(flushedOutput, "</thinking>") {
+		t.Fatalf("flush should emit </think> not </thinking>, got: %q", flushedOutput)
 	}
 
 	// Simulate the next turn: append text as user message.
-	// The text should NOT be preceded by </thinking>, which would
+	// The text should NOT be preceded by </think>, which would
 	// indicate the thought tag was still open from the previous turn.
 	buf.Reset()
 	state, err = state.AppendContent(&Content{
@@ -352,7 +365,7 @@ func TestOutputFlushClosesThoughtTag(t *testing.T) {
 	}
 
 	nextOutput := buf.String()
-	if strings.Contains(nextOutput, "</thinking>") {
+	if strings.Contains(nextOutput, "</think>") {
 		t.Fatalf("thought tag should not carry over to next turn, got: %q", nextOutput)
 	}
 	if !strings.Contains(nextOutput, "next turn") {

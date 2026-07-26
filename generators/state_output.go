@@ -233,8 +233,12 @@ func (s Output) Flush() (State, error) {
 	// carries over to the next turn, causing the closing tag to appear
 	// at the start of the next turn's output and breaking downstream
 	// block parsers that rely on properly matched tag pairs.
+	//
+	// The closing tag MUST match the opening tag. AppendContent opens
+	// with "<think>" and closes with "</think>"; Flush must also use
+	// "</think>" so the pair is always matched.
 	if s.lastOutputIsThought {
-		if _, err := fmt.Fprint(s.w, "\n</thinking>\n"); err != nil {
+		if _, err := fmt.Fprint(s.w, "\n</think>\n"); err != nil {
 			return nil, err
 		}
 		ret.lastOutputIsThought = false
