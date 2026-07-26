@@ -11,8 +11,8 @@ func TestProcessSummaryBlocks(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	// Append a summary block
-	text := ":::徕珑 <summary>\nAnalyzed the code and fixed the Foo function.\n:::徕珑 </summary>\n"
+	// Append a summary block in markdown list format
+	text := ":::徕珑 <summary>\n- Analyzed the code\n- Fixed the Foo function\n:::徕珑 </summary>\n"
 	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -26,7 +26,7 @@ func TestProcessSummaryBlocks(t *testing.T) {
 	if len(summaries) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(summaries))
 	}
-	if !strings.Contains(summaries[0], "Analyzed the code and fixed the Foo function.") {
+	if !strings.Contains(summaries[0], "Fixed the Foo function") {
 		t.Fatalf("expected summary to contain the description, got %q", summaries[0])
 	}
 
@@ -40,7 +40,7 @@ func TestProcessSummaryBlocksMultiple(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	text := ":::徕珑 <summary>\nRound 1 summary.\n:::徕珑 </summary>\n:::栢彣 <summary>\nRound 2 summary.\n:::栢彣 </summary>\n"
+	text := ":::徕珑 <summary>\n- Round 1 analysis\n- Round 1 fix\n:::徕珑 </summary>\n:::栢彣 <summary>\n- Round 2 verification\n:::栢彣 </summary>\n"
 	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -54,11 +54,11 @@ func TestProcessSummaryBlocksMultiple(t *testing.T) {
 	if len(summaries) != 2 {
 		t.Fatalf("expected 2 summaries, got %d", len(summaries))
 	}
-	if !strings.Contains(summaries[0], "Round 1 summary.") {
-		t.Fatalf("expected first summary to contain 'Round 1 summary.', got %q", summaries[0])
+	if !strings.Contains(summaries[0], "Round 1 analysis") {
+		t.Fatalf("expected first summary to contain 'Round 1 analysis', got %q", summaries[0])
 	}
-	if !strings.Contains(summaries[1], "Round 2 summary.") {
-		t.Fatalf("expected second summary to contain 'Round 2 summary.', got %q", summaries[1])
+	if !strings.Contains(summaries[1], "Round 2 verification") {
+		t.Fatalf("expected second summary to contain 'Round 2 verification', got %q", summaries[1])
 	}
 }
 
@@ -83,7 +83,7 @@ func TestProcessSummaryBlocksPreservesChangeBlocks(t *testing.T) {
 	state := generators.NewPrompts("", nil)
 	parserState := NewParserState(state)
 
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <summary>\nFixed the Foo function.\n:::栢彣 </summary>\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <summary>\n- Fixed the Foo function\n:::栢彣 </summary>\n"
 	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -98,7 +98,7 @@ func TestProcessSummaryBlocksPreservesChangeBlocks(t *testing.T) {
 	if len(summaries) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(summaries))
 	}
-	if !strings.Contains(summaries[0], "Fixed the Foo function.") {
+	if !strings.Contains(summaries[0], "Fixed the Foo function") {
 		t.Fatalf("expected summary to contain description, got %q", summaries[0])
 	}
 
