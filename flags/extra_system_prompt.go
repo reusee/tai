@@ -1,13 +1,21 @@
-package main
+package flags
 
 import (
 	"cuelang.org/go/cue"
+
 	"github.com/reusee/tai/configs"
 )
 
-type ExtraSystemPrompt string
+// ExtraSystemPrompt configs.Config implementation.
+// See flags.TheoryOfConfigFlagParity.
 
 var _ configs.Config = ExtraSystemPrompt("")
+
+type ExtraSystemPrompt string
+
+func (Module) ExtraSystemPrompt() ExtraSystemPrompt {
+	return ExtraSystemPrompt("")
+}
 
 func (e ExtraSystemPrompt) ConfigPaths() []string {
 	return []string{"extra_system_prompt"}
@@ -19,8 +27,4 @@ func (e ExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, 
 		return nil, err
 	}
 	return ExtraSystemPrompt(s), nil
-}
-
-func (Module) ExtraSystemPrompt() ExtraSystemPrompt {
-	return ExtraSystemPrompt("")
 }

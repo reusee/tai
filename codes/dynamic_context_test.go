@@ -31,7 +31,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
+			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
 			Plan(false),
@@ -49,7 +49,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
+			flags.ExtraSystemPrompt(""),
 			DynamicContext(true),
 			flags.Apply(true),
 			Plan(false),
@@ -69,7 +69,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(false),
@@ -91,7 +91,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(true),
@@ -119,7 +119,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(true),
@@ -147,7 +147,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(true),
@@ -172,7 +172,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(true),
@@ -222,7 +222,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 	module := Module{}
 	comps := module.CodesComponents(
 		mockCodeProvider{},
-		ExtraSystemPrompt(""),
+		flags.ExtraSystemPrompt(""),
 		DynamicContext(false),
 		flags.Apply(true),
 		Plan(false),

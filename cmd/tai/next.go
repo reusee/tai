@@ -34,7 +34,7 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
-	extra ExtraSystemPrompt,
+	extra flags.ExtraSystemPrompt,
 	flagFiles flags.Files,
 	flagFocus flags.Focus,
 	flagIgnore flags.Ignore,

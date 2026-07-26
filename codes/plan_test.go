@@ -13,7 +13,7 @@ func TestSystemPromptPlan(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
+			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
 			Plan(false),
@@ -31,7 +31,7 @@ func TestSystemPromptPlan(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		comps := module.CodesComponents(
 			mockCodeProvider{},
-			ExtraSystemPrompt(""),
+			flags.ExtraSystemPrompt(""),
 			DynamicContext(false),
 			flags.Apply(true),
 			Plan(true),

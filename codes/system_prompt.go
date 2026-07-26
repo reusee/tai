@@ -3,7 +3,6 @@ package codes
 import (
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/codes/codetypes"
-	"github.com/reusee/tai/configs"
 )
 
 const TheoryOfReadOnlyFiles = `
@@ -266,14 +265,6 @@ The task list should clearly distinguish:
 - Remaining tasks (e.g., marked with [ ] or unmarked)
 - Tasks being executed in the current round
 `
-
-type ExtraSystemPrompt string
-
-func (Module) ExtraSystemPrompt() ExtraSystemPrompt {
-	return ExtraSystemPrompt("")
-}
-
-var _ configs.Config = ExtraSystemPrompt("")
 
 type SystemPrompt string
 

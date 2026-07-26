@@ -56,7 +56,7 @@ type CodesComponents struct {
 
 func (Module) CodesComponents(
 	codeProvider codetypes.CodeProvider,
-	extra ExtraSystemPrompt,
+	extra flags.ExtraSystemPrompt,
 	dynamicContext DynamicContext,
 	apply flags.Apply,
 	plan Plan,

@@ -59,7 +59,7 @@ type AIComponents struct {
 func (Module) AIComponents(
 	flagShell flags.Shell,
 	currentMemory memories.CurrentMemory,
-	extra ExtraSystemPrompt,
+	extra flags.ExtraSystemPrompt,
 	noMemory NoMemory,
 ) (ret AIComponents) {
 	var comps components.ComponentSet

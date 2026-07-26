@@ -41,21 +41,3 @@ func (d Debug) HandleConfig(path string, values []*cue.Value) (any, error) {
 	}
 	return Debug(b), nil
 }
-
-// ExtraSystemPrompt configs.Config implementation.
-// Defined here because this file imports cuelang.org/go/cue.
-// The type is declared in system_prompt.go.
-
-var _ configs.Config = ExtraSystemPrompt("")
-
-func (e ExtraSystemPrompt) ConfigPaths() []string {
-	return []string{"extra_system_prompt"}
-}
-
-func (e ExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, error) {
-	s, err := values[0].String()
-	if err != nil {
-		return nil, err
-	}
-	return ExtraSystemPrompt(s), nil
-}
