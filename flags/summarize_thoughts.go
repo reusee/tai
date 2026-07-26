@@ -25,6 +25,7 @@ func (s SummarizeThoughts) Handle(key string, args []string) (newDef any, remain
 func (s SummarizeThoughts) Keys() map[string]string {
 	return map[string]string{
 		"-summarize-thoughts": "Enable periodic summarization of model reasoning thoughts",
+		"-st":                 "alias to -summarize-thoughts",
 	}
 }
 
