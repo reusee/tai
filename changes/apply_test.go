@@ -915,3 +915,254 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 		assertSingleTrailingNewline(t, result)
 	})
 }
+
+func TestApplyChangeBlockTextLevelOps(t *testing.T) {
+	t.Run("ReplaceNonGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "# Title\n\nold description\n\nMore content\n"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "REPLACE",
+			Find:     "old description",
+			FilePath: "readme.md",
+			Body:     "new description",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("readme.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "old description") {
+			t.Fatalf("result should not contain 'old description':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "new description") {
+			t.Fatalf("result should contain 'new description':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "More content") {
+			t.Fatalf("result should preserve 'More content':\n%s", resultStr)
+		}
+	})
+
+	t.Run("ReplaceNotFound", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "# Title\n\nContent\n"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "REPLACE",
+			Find:     "nonexistent string",
+			FilePath: "readme.md",
+			Body:     "replacement",
+		}
+		err = ApplyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected error for find string not found")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("expected 'not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("ReplaceNotUnique", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "duplicate\nduplicate\n"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "REPLACE",
+			Find:     "duplicate",
+			FilePath: "readme.md",
+			Body:     "unique",
+		}
+		err = ApplyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected error for non-unique find string")
+		}
+		if !strings.Contains(err.Error(), "must be unique") {
+			t.Fatalf("expected 'must be unique' error, got: %v", err)
+		}
+	})
+
+	t.Run("ReplaceEmptyBodyDeletesText", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "# Title\n\nDELETE ME\n\nMore content\n"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "REPLACE",
+			Find:     "DELETE ME\n\n",
+			FilePath: "readme.md",
+			Body:     "",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("readme.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "DELETE ME") {
+			t.Fatalf("result should not contain 'DELETE ME':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "More content") {
+			t.Fatalf("result should preserve 'More content':\n%s", resultStr)
+		}
+	})
+
+	t.Run("InsertBeforeNonGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "# Title\n\n## Section\n"
+		if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "INSERT_BEFORE",
+			Find:     "## Section",
+			FilePath: "readme.md",
+			Body:     "## New Section\n",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("readme.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		newIdx := strings.Index(resultStr, "## New Section")
+		sectionIdx := strings.Index(resultStr, "## Section")
+		if newIdx == -1 || sectionIdx == -1 {
+			t.Fatalf("both sections should be present:\n%s", resultStr)
+		}
+		if newIdx > sectionIdx {
+			t.Fatalf("New Section should appear before Section:\n%s", resultStr)
+		}
+	})
+
+	t.Run("InsertAfterNonGoFile", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "[dependencies]\n"
+		if err := root.WriteFile("Cargo.toml", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "INSERT_AFTER",
+			Find:     "[dependencies]",
+			FilePath: "Cargo.toml",
+			Body:     "serde = { version = \"1.0\" }\n",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("Cargo.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		depIdx := strings.Index(resultStr, "[dependencies]")
+		serdeIdx := strings.Index(resultStr, "serde")
+		if depIdx == -1 || serdeIdx == -1 {
+			t.Fatalf("both should be present:\n%s", resultStr)
+		}
+		if depIdx > serdeIdx {
+			t.Fatalf("[dependencies] should appear before serde:\n%s", resultStr)
+		}
+	})
+
+	t.Run("ReplaceGoFileWithGoimports", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Replace fmt.Println with os.Exit, which requires changing the import.
+		// goimports should remove the unused fmt import and add the os import.
+		h := ChangeBlock{
+			Op:       "REPLACE",
+			Find:     "fmt.Println(\"hello\")",
+			FilePath: "test.go",
+			Body:     "os.Exit(0)",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if strings.Contains(resultStr, "fmt.Println") {
+			t.Fatalf("result should not contain fmt.Println:\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "os.Exit(0)") {
+			t.Fatalf("result should contain os.Exit(0):\n%s", resultStr)
+		}
+		// goimports should have added the "os" import
+		if !strings.Contains(resultStr, "\"os\"") {
+			t.Fatalf("result should contain os import (added by goimports):\n%s", resultStr)
+		}
+	})
+}

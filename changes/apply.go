@@ -260,6 +260,31 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		return err
 	}
 
+	// Handle text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER):
+	// These work on any text file using string search, bypassing structural
+	// parsing. They must be handled before the non-Go file restriction
+	// because they apply to both Go and non-Go files. For Go files,
+	// goimports is run after the edit to keep imports synchronized.
+	// See TheoryOfTextLevelOperations.
+	if isTextLevelOperation(h.Op) {
+		if err != nil {
+			return err
+		}
+		newContent, editErr := applyTextEdit(src, h)
+		if editErr != nil {
+			return editErr
+		}
+		content := newContent
+		if strings.HasSuffix(path, ".go") {
+			formatted, formatErr := imports.Process(path, content, nil)
+			if formatErr != nil {
+				return fmt.Errorf("goimports: %w", formatErr)
+			}
+			content = formatted
+		}
+		return store.WriteFile(path, finalizeContent(content), 0644)
+	}
+
 	// Handle non-Go files
 	if !strings.HasSuffix(path, ".go") {
 		if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
@@ -813,6 +838,41 @@ func applySpecialTargetModify(store FileStore, path string, src []byte, f *ast.F
 	}
 
 	return store.WriteFile(path, finalizeContent(formatted), 0644)
+}
+
+// applyTextEdit applies a text-level operation (REPLACE, INSERT_BEFORE,
+// INSERT_AFTER) to the file content. It searches for the find string,
+// verifies it is unique (appears exactly once), and applies the edit
+// relative to the found position. See TheoryOfTextLevelOperations.
+func applyTextEdit(src []byte, h ChangeBlock) ([]byte, error) {
+	find := h.Find
+	if find == "" {
+		return nil, fmt.Errorf("op %q requires a non-empty find attribute", h.Op)
+	}
+
+	content := string(src)
+	count := strings.Count(content, find)
+	if count == 0 {
+		return nil, fmt.Errorf("find string not found in file %s", h.FilePath)
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("find string appears %d times in file %s; it must be unique; use WRITE for full file replacement", count, h.FilePath)
+	}
+
+	idx := strings.Index(content, find)
+
+	switch h.Op {
+	case "REPLACE":
+		content = content[:idx] + h.Body + content[idx+len(find):]
+	case "INSERT_BEFORE":
+		content = content[:idx] + h.Body + content[idx:]
+	case "INSERT_AFTER":
+		content = content[:idx+len(find)] + h.Body + content[idx+len(find):]
+	default:
+		return nil, fmt.Errorf("unknown text-level operation: %s", h.Op)
+	}
+
+	return []byte(content), nil
 }
 
 func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {

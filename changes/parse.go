@@ -11,11 +11,42 @@ const TheoryOfNonGoFileChanges = `
 Non-Go files cannot be structurally parsed to identify top-level declarations.
 Therefore, change block operations that require structural identification
 (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target)
-are only valid for Go files. For non-Go files, only file-level operations are
-permitted: WRITE replaces the entire file content, RENAME renames the file,
-and DELETE with target=* removes the entire file. This restriction ensures the
-system never attempts to locate a declaration within a file format it cannot
-parse, which would silently fail or produce incorrect results.
+are only valid for Go files. For non-Go files, file-level operations (WRITE,
+RENAME, DELETE with target=*) and text-level operations (REPLACE,
+INSERT_BEFORE, INSERT_AFTER) are permitted. Text-level operations use a find
+attribute to locate a unique string anchor in the file and apply the edit
+relative to that anchor, enabling partial edits without replacing the entire
+file. The find string must be unique in the file; if it cannot be made unique,
+WRITE must be used to replace the entire file content. See
+TheoryOfTextLevelOperations for the design rationale.
+`
+
+const TheoryOfTextLevelOperations = `
+Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) enable partial
+edits to any text file without structural parsing. They use a find attribute
+to locate a unique string anchor in the file and apply the edit relative to
+that anchor. The find string must appear exactly once in the file; if it
+appears zero or multiple times, the operation fails with an error, and the
+model must either choose a more specific (longer) find string or fall back to
+WRITE for full-file replacement.
+
+REPLACE substitutes the found string with the block body. An empty body
+effectively deletes the found text. INSERT_BEFORE inserts the body before the
+found anchor; INSERT_AFTER inserts it after. These operations are
+particularly useful for non-Go text files (e.g., Markdown, YAML, JSON,
+configuration) that cannot be structurally parsed to identify declarations.
+They also work on Go files, where goimports is run after the edit to keep
+imports synchronized, but structural operations (MODIFY, ADD_BEFORE,
+ADD_AFTER) are preferred for Go files because they are more robust.
+
+The uniqueness requirement is the integrity guarantee: it prevents ambiguous
+edits where the model's find string matches multiple locations, which could
+silently modify the wrong part of the file. When the model cannot construct a
+unique find string (e.g., replacing a common pattern that appears many
+times), it must use WRITE to replace the entire file, ensuring the edit is
+unambiguous. Line-number-based approaches are deliberately avoided because
+models cannot reliably generate accurate line numbers; a unique string anchor
+is more robust because it is content-addressed rather than position-addressed.
 `
 
 const TheoryOfSpecialGoTargets = `
@@ -69,27 +100,49 @@ func isFileLevelOperation(op, target string) bool {
 	}
 }
 
+// isTextLevelOperation reports whether the operation applies a text-based
+// edit using a find string anchor rather than structural parsing or
+// file-level replacement. REPLACE, INSERT_BEFORE, and INSERT_AFTER search
+// for a unique string in the file and apply the edit relative to that
+// anchor. These operations work on any text file, including non-Go files
+// that cannot be structurally parsed. See TheoryOfTextLevelOperations.
+func isTextLevelOperation(op string) bool {
+	switch op {
+	case "REPLACE", "INSERT_BEFORE", "INSERT_AFTER":
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidateChangeBlock validates that the change block's operation is valid
-// for the target file type. Non-Go files only support file-level operations
-// (WRITE, RENAME, DELETE with target=*). See TheoryOfNonGoFileChanges.
+// for the target file type. Non-Go files support file-level operations
+// (WRITE, RENAME, DELETE with target=*) and text-level operations (REPLACE,
+// INSERT_BEFORE, INSERT_AFTER). See TheoryOfNonGoFileChanges and
+// TheoryOfTextLevelOperations.
 // "package" and "import" are special Go-only targets that support only MODIFY.
 // See TheoryOfSpecialGoTargets.
 func ValidateChangeBlock(h ChangeBlock) error {
-	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) {
-		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, or DELETE with target=*; got op=%q", h.FilePath, h.Op)
+	if !isGoFile(h.FilePath) && !isFileLevelOperation(h.Op, h.Target) && !isTextLevelOperation(h.Op) {
+		return fmt.Errorf("non-Go file %q only supports WRITE, RENAME, DELETE with target=*, REPLACE, INSERT_BEFORE, or INSERT_AFTER; got op=%q", h.FilePath, h.Op)
 	}
 	// "package" and "import" are special Go-only targets that support
 	// only the MODIFY operation. See TheoryOfSpecialGoTargets.
 	if (h.Target == "package" || h.Target == "import") && h.Op != "MODIFY" {
 		return fmt.Errorf("target %q only supports MODIFY, got op=%q", h.Target, h.Op)
 	}
+	// Text-level operations require a non-empty find attribute to locate
+	// the unique string anchor in the file. See TheoryOfTextLevelOperations.
+	if isTextLevelOperation(h.Op) && h.Find == "" {
+		return fmt.Errorf("op %q requires a non-empty find attribute", h.Op)
+	}
 	return nil
 }
 
 // ParseChangeBlock extracts a ChangeBlock from a change block's attributes
 // and body. In the boundary-delimited format, the change block's metadata
-// (op, target, file-path) is specified as XML attributes on the opening tag,
-// and the body contains only the complete declaration code.
+// (op, target, file-path, find) is specified as XML attributes on the opening tag,
+// and the body contains only the complete declaration code or replacement text.
 func ParseChangeBlock(block blocks.Block) (h ChangeBlock, ok bool) {
 	if block.Kind != "change" {
 		return h, false
@@ -101,6 +154,7 @@ func ParseChangeBlock(block blocks.Block) (h ChangeBlock, ok bool) {
 	h.Op = op
 	h.Target = block.Attributes["target"]
 	h.FilePath = block.Attributes["file-path"]
+	h.Find = block.Attributes["find"]
 	h.Body = block.Body
 	return h, true
 }
@@ -136,7 +190,7 @@ The "change" kind defines code modifications using the boundary block format. Th
 
 **Change Block Format:**
 
-:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE>" target="<declaration_identifier|BEGIN|END|new_file_path>" file-path="<absolute_path>">
+:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<declaration_identifier|BEGIN|END|new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
 <complete_declaration_code>
 :::<boundary> </change>
 
@@ -149,10 +203,14 @@ The "change" kind defines code modifications using the boundary block format. Th
     - DELETE: Remove an existing declaration, or remove an entire file when target is *.
     - RENAME: Rename a file. ` + "`target`" + ` is the new file path, ` + "`file-path`" + ` is the current file path. The code body is ignored and may be empty.
     - WRITE: Replace the entire content of the file specified by ` + "`file-path`" + `. The ` + "`target`" + ` attribute is ignored and may be omitted. The code body is the complete new file content. For Go files, the body must include the package declaration.
-  - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. For DELETE, target can also be * to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE operation, ` + "`target`" + ` is ignored.
-- The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files.
+    - REPLACE: Find a unique string in the file (specified by the ` + "`find`" + ` attribute) and replace it with the body content. The find string must be unique in the file; if it appears multiple times, use WRITE instead. Works on any text file (Go or non-Go). For Go files, goimports is run after the replacement.
+    - INSERT_BEFORE: Insert the body content before a unique anchor string (specified by the ` + "`find`" + ` attribute) in the file. The find string must be unique. Works on any text file.
+    - INSERT_AFTER: Insert the body content after a unique anchor string (specified by the ` + "`find`" + ` attribute) in the file. The find string must be unique. Works on any text file.
+  - ` + "`target`" + `: For MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE operations, the exact name of **exactly ONE** top-level declaration (function, method, type, const, var) or BEGIN/END for file-level operations. For DELETE, target can also be * to delete the entire file. The target must uniquely identify a single top-level entity. For methods, use TypeName.MethodName or *TypeName.MethodName. For RENAME operation, ` + "`target`" + ` is the new file path (relative or absolute). For WRITE, REPLACE, INSERT_BEFORE, and INSERT_AFTER, ` + "`target`" + ` is ignored.
+  - ` + "`find`" + `: For REPLACE, INSERT_BEFORE, and INSERT_AFTER operations, the exact string to search for in the file. The string must be unique (appear exactly once) in the file. If the string cannot be made unique, use WRITE to replace the entire file instead. For other operations, ` + "`find`" + ` is ignored.
+- The code body directly follows the opening tag on the next line, with no blank line required before or after it. The code body is the COMPLETE definition of the target entity, including its signature, body, and associated comments. The code block MUST contain ONLY the target entity's definition and MUST NOT include any other top-level declarations. Do NOT use ellipsis (...) or placeholders. The code must be complete and properly formatted. For DELETE and RENAME operations, the code section can be empty. For WRITE, the code body is the complete new file content, including the package declaration for Go files. For REPLACE, the body is the replacement text. For INSERT_BEFORE and INSERT_AFTER, the body is the text to insert.
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
-- **Non-Go file restriction**: For non-Go files (files not ending in .go), only file-level operations are supported: WRITE (replace entire file content), RENAME (rename the file), and DELETE with target=* (delete the entire file). Operations that require structural identification of declarations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target) are not valid for non-Go files because the system cannot parse their structure to locate declarations. To update a non-Go file, use WRITE to replace the entire file content.
+- **Non-Go file restriction**: For non-Go files (files not ending in .go), file-level operations (WRITE, RENAME, DELETE with target=*) and text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are supported. Operations that require structural identification of declarations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target) are not valid for non-Go files because the system cannot parse their structure to locate declarations. For partial edits to non-Go files, use REPLACE, INSERT_BEFORE, or INSERT_AFTER with a unique find string. For full-file replacement, use WRITE.
 
 **Special Go-Only Targets (MODIFY):**
 
@@ -189,14 +247,22 @@ Moving this file to a new package, just update the package clause...
 :::羿聕 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
 package newpkg
 :::羿聕 </change>
+Replacing a unique string in a Markdown file...
+:::崓嶆 <change op="REPLACE" find="old description text" file-path="/home/user/readme.md">
+new description text
+:::崓嶆 </change>
+Inserting content after a unique anchor in a config file...
+:::壴惉 <change op="INSERT_AFTER" find="[dependencies]" file-path="/home/user/Cargo.toml">
+serde = { version = "1.0", features = ["derive"] }
+:::壴惉 </change>
 These changes should resolve the issue.
 :::桀骥 <finish>
-Fixed the Foo function, removed the unused Bar function, deleted the unused.go file, and rewrote the config file.
+Fixed the Foo function, removed the unused Bar function, deleted the unused.go file, rewrote the config file, updated the Markdown description, and added a dependency.
 :::桀骥 </finish>
 `
 
 const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with XML attributes on the opening tag:
-:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE>" target="<identifier_or_new_file_path>" file-path="<absolute_path>">
+:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<identifier_or_new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
 <complete code>
 :::<boundary> </change>
 
@@ -205,7 +271,8 @@ const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST 
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.
 - For DELETE with target *, the entire file is removed; the code body is ignored.
 - For WRITE, ` + "`target`" + ` is ignored; the code body is the complete new file content.
-- **Non-Go files**: For files not ending in .go, only WRITE, RENAME, and DELETE (target=*) are allowed. MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target require structural identification and are not supported for non-Go files. Use WRITE to replace the entire file content.
+- For REPLACE, INSERT_BEFORE, and INSERT_AFTER, use the ` + "`find`" + ` attribute to specify a unique string anchor in the file. The find string must appear exactly once. For REPLACE, the body is the replacement text. For INSERT_BEFORE and INSERT_AFTER, the body is the text to insert before or after the anchor.
+- **Non-Go files**: For files not ending in .go, only WRITE, RENAME, DELETE (target=*), REPLACE, INSERT_BEFORE, and INSERT_AFTER are allowed. MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target require structural identification and are not supported for non-Go files. For partial edits, use REPLACE, INSERT_BEFORE, or INSERT_AFTER with a unique find string. For full-file replacement, use WRITE.
 - **Special Go-only MODIFY targets**: Use ` + "`target=\"package\"`" + ` to replace the file's package clause, and ` + "`target=\"import\"`" + ` to replace all import declarations as a group. Both run goimports after replacement to ensure valid formatting and import synchronization.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
 - If no changes are needed, omit all change blocks.

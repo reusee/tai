@@ -337,3 +337,101 @@ func TestParseFirstBoundaryChangeBlockPackageImportTargets(t *testing.T) {
 		}
 	})
 }
+
+func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
+	t.Run("ReplaceOnNonGoFile", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"REPLACE\" find=\"old text\" file-path=\"/test.md\">\nnew text\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for REPLACE on non-Go file")
+		}
+		if h.Op != "REPLACE" {
+			t.Fatalf("expected REPLACE, got %s", h.Op)
+		}
+		if h.Find != "old text" {
+			t.Fatalf("expected find 'old text', got %q", h.Find)
+		}
+		if h.FilePath != "/test.md" {
+			t.Fatalf("expected /test.md, got %s", h.FilePath)
+		}
+		if h.Body != "new text" {
+			t.Fatalf("expected body 'new text', got %q", h.Body)
+		}
+	})
+
+	t.Run("InsertBeforeOnNonGoFile", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"INSERT_BEFORE\" find=\"anchor\" file-path=\"/test.md\">\ninserted text\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for INSERT_BEFORE on non-Go file")
+		}
+		if h.Op != "INSERT_BEFORE" {
+			t.Fatalf("expected INSERT_BEFORE, got %s", h.Op)
+		}
+		if h.Find != "anchor" {
+			t.Fatalf("expected find 'anchor', got %q", h.Find)
+		}
+	})
+
+	t.Run("InsertAfterOnNonGoFile", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"INSERT_AFTER\" find=\"anchor\" file-path=\"/test.md\">\ninserted text\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for INSERT_AFTER on non-Go file")
+		}
+		if h.Op != "INSERT_AFTER" {
+			t.Fatalf("expected INSERT_AFTER, got %s", h.Op)
+		}
+		if h.Find != "anchor" {
+			t.Fatalf("expected find 'anchor', got %q", h.Find)
+		}
+	})
+
+	t.Run("ReplaceWithoutFindFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"REPLACE\" file-path=\"/test.md\">\nnew text\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for REPLACE without find attribute")
+		}
+		if ok {
+			t.Fatal("expected ok=false for REPLACE without find attribute")
+		}
+	})
+
+	t.Run("InsertBeforeWithoutFindFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"INSERT_BEFORE\" file-path=\"/test.md\">\ninserted text\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for INSERT_BEFORE without find attribute")
+		}
+		if ok {
+			t.Fatal("expected ok=false for INSERT_BEFORE without find attribute")
+		}
+	})
+
+	t.Run("ReplaceOnGoFileSucceeds", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"REPLACE\" find=\"old string\" file-path=\"/test.go\">\nnew string\n:::徕珑 </change>\n"
+		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected ok for REPLACE on Go file")
+		}
+		if h.Op != "REPLACE" {
+			t.Fatalf("expected REPLACE, got %s", h.Op)
+		}
+		if h.Find != "old string" {
+			t.Fatalf("expected find 'old string', got %q", h.Find)
+		}
+	})
+}
