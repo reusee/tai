@@ -19,6 +19,7 @@ require (
 	golang.org/x/term v0.45.0
 	golang.org/x/tools v0.47.0
 	google.golang.org/genai v1.64.0
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (

@@ -124,9 +124,64 @@ func TestValidateShellCommand(t *testing.T) {
 		{"pipe with rm", "ls | rm", true},
 		{"and with kill", "echo hi && kill 1234", true},
 
+		// Background execution
+		{"background", "ls &", true},
+
+		// Interpreter inline execution flags
+		{"python -c", "python -c 'print(1)'", true},
+		{"python3 -c", "python3 -c 'print(1)'", true},
+		{"python -m", "python -m http.server", true},
+		{"node -e", "node -e 'console.log(1)'", true},
+		{"node --eval", "node --eval 'console.log(1)'", true},
+		{"node -p", "node -p '1+1'", true},
+		{"node -r", "node -r ./module", true},
+		{"go test -exec", "go test -exec /bin/true ./...", true},
+
+		// Interpreter without dangerous flags (allowed)
+		{"python --version", "python --version", false},
+		{"python3 --version", "python3 --version", false},
+		{"node --version", "node --version", false},
+		{"node -v", "node -v", false},
+
+		// env bypass prevention
+		{"env command", "env rm -rf /", true},
+		{"env no command", "env", false},
+		{"env with var", "env VAR=value", false},
+		{"env with pipe", "env | grep PATH", false},
+
+		// cargo run prevention
+		{"cargo run", "cargo run", true},
+		{"cargo build", "cargo build", false},
+		{"cargo test", "cargo test", false},
+		{"cargo check", "cargo check", false},
+
+		// java restriction
+		{"java -jar", "java -jar file.jar", true},
+		{"java class", "java MyClass", true},
+		{"java --version", "java --version", false},
+		{"java -version", "java -version", false},
+
+		// Heredoc with command substitution
+		{"heredoc cmd subst", "cat <<EOF\n$(rm -rf /)\nEOF", true},
+
+		// Arithmetic expansion with command substitution
+		{"arithm cmd subst", "echo $(( $(rm -rf /) ))", true},
+
+		// Parameter expansion with command substitution
+		{"param exp cmd subst", "echo ${var/$(rm)/x}", true},
+
+		// Brace expansion with command substitution
+		{"brace exp cmd subst", "echo {a,$(rm -rf /)}", true},
+
 		// Command without required subcommand
 		{"git no subcommand", "git", true},
-		{"go no subcommand", "go", true},
+		{"go no subcommand", "go", true}, // AST-based validation: > inside quotes is not a redirection
+		{"gt inside quotes", `echo "a > b"`, false},
+		// AST-based validation: command substitution is recursively validated
+		{"cmd subst allowed", "echo $(whoami)", false},
+		{"cmd subst forbidden", "echo $(rm -rf /)", true},
+		// AST-based validation: process substitution is recursively validated
+		{"proc subst allowed", "diff <(ls) <(ls)", false},
 	}
 
 	for _, tt := range tests {
