@@ -34,11 +34,7 @@ contributions), UserPromptParts (concatenating all user prompt parts), and
 Processable (returning the subset with Process functions for the generation
 loop). RestatePrompts are assembled separately from PromptSections to keep
 critical format reminders grouped as a distinct section at the end of the
-system prompt. Validate ensures every Component with a Kind either has a
-Process function or declares a ProcessingPath, preventing silent gaps where a
-block kind is taught to the model but no code processes its output. Prompt-only
-Components (empty Kind) are exempt from this check because they contribute only
-prompt text and have no block output to process.
+system prompt.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, calling each component's Process function and
@@ -189,20 +185,6 @@ func (c ComponentSet) Processable() []Component {
 		}
 	}
 	return result
-}
-
-// Validate returns an error if any component with a non-empty Kind has neither
-// a Process function nor a ProcessingPath, indicating an unprocessed block kind
-// that would cause emitted blocks to be silently ignored. Prompt-only components
-// (Kind == "") are exempt from this check.
-func (c ComponentSet) Validate() error {
-	for _, comp := range c {
-		if comp.Kind != "" && comp.Process == nil && comp.ProcessingPath == "" {
-			return fmt.Errorf("component with kind %q has no Process function and no ProcessingPath; "+
-				"it would be silently ignored if emitted by the model", comp.Kind)
-		}
-	}
-	return nil
 }
 
 // ProcessComponents iterates over processable components in registration order,

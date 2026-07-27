@@ -74,48 +74,6 @@ func TestComponentSetProcessable(t *testing.T) {
 	}
 }
 
-func TestComponentSetValidate(t *testing.T) {
-	t.Run("valid with process", func(t *testing.T) {
-		comps := ComponentSet{
-			{Kind: "a", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},
-		}
-		if err := comps.Validate(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("valid with processing path", func(t *testing.T) {
-		comps := ComponentSet{
-			{Kind: "a", ProcessingPath: "external"},
-		}
-		if err := comps.Validate(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("invalid with neither", func(t *testing.T) {
-		comps := ComponentSet{
-			{Kind: "a"},
-		}
-		err := comps.Validate()
-		if err == nil {
-			t.Fatal("expected error for component with neither Process nor ProcessingPath")
-		}
-		if !strings.Contains(err.Error(), "a") {
-			t.Fatalf("error should mention kind 'a': %v", err)
-		}
-	})
-
-	t.Run("valid prompt-only component", func(t *testing.T) {
-		comps := ComponentSet{
-			{PromptSection: "some prompt"},
-		}
-		if err := comps.Validate(); err != nil {
-			t.Fatalf("prompt-only component should be valid without Process or ProcessingPath: %v", err)
-		}
-	})
-}
-
 func TestComponentSetProcessingCycle(t *testing.T) {
 	upstream := generators.NewPrompts("system", nil)
 	ps := blocks.NewParserState(upstream)
@@ -251,9 +209,6 @@ func TestCommonComponents(t *testing.T) {
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
 		}
-		if err := comps.Validate(); err != nil {
-			t.Fatalf("Validate failed: %v", err)
-		}
 	})
 
 	t.Run("without shell", func(t *testing.T) {
@@ -271,9 +226,6 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
-		}
-		if err := comps.Validate(); err != nil {
-			t.Fatalf("Validate failed: %v", err)
 		}
 	})
 }
