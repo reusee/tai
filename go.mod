@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	cuelang.org/go v0.17.1
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260713161331-d38456fd1dc6
@@ -24,7 +25,6 @@ require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
