@@ -25,11 +25,17 @@ import (
 )
 
 const FileOrderingTheory = `
-Files are sorted so that stable context files (dependencies, non-root packages) appear
-first and volatile focus files (root package) appear last. This ordering maximizes the
-common prefix between consecutive requests: when only focus files change, all preceding
-context files remain identical, allowing LLM prefix caching to reuse cached key-value
-states for unchanged content.
+Files are sorted in three tiers to maximize LLM prefix cache reuse. The outermost
+tier separates by module: non-root-module files (dependencies, stdlib) appear first,
+forming the stable prefix that changes least frequently across requests. The middle
+tier separates root-module files by package: context files (non-root packages) precede
+focus files (root package), so that editing a focus file does not shift the position
+of any context file. The inner tiers (go vs non-go, distance, package depth, package
+path) further organize files within each group for deterministic ordering.
+
+When only focus files change, all preceding context and dependency files remain
+identical, allowing LLM prefix caching to reuse cached key-value states for unchanged
+content.
 
 Within each priority group, files are ordered by their path as the primary key. This
 ensures a fully deterministic order that is independent of modification times. Using
@@ -417,26 +423,34 @@ func (Module) Files(
 			}
 		}
 
-		// sort
+		// sort — module is the outermost tier so that all non-root-module
+		// files (dependencies, stdlib) form the stable prefix, followed by
+		// root-module context files, then root-module focus files.
+		// See FileOrderingTheory.
 		slices.SortStableFunc(files, func(a, b *File) int {
-			// root package last
-			if !a.PackageIsRoot && b.PackageIsRoot {
-				return -1
-			} else if a.PackageIsRoot && !b.PackageIsRoot {
-				return 1
-			}
-
-			// root module last
+			// root module last — outermost grouping so that all non-root-module
+			// files (dependencies, stdlib) form the stable prefix, maximizing
+			// prefix cache reuse across requests that change only root-module
+			// files.
 			if !a.ModuleIsRoot && b.ModuleIsRoot {
 				return -1
 			} else if a.ModuleIsRoot && !b.ModuleIsRoot {
 				return 1
 			}
 
-			// non-nil module last
+			// non-nil module last (nil modules like stdlib come first within
+			// the non-root-module group)
 			if a.ModuleIsNil && !b.ModuleIsNil {
 				return -1
 			} else if !a.ModuleIsNil && b.ModuleIsNil {
+				return 1
+			}
+
+			// root package last — within each module group, context files
+			// (non-root packages) precede focus files (root package).
+			if !a.PackageIsRoot && b.PackageIsRoot {
+				return -1
+			} else if a.PackageIsRoot && !b.PackageIsRoot {
 				return 1
 			}
 
