@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/phases"
@@ -385,4 +387,158 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 			t.Fatalf("expected 2 phase calls (retry without summary), got %d", phaseCalls)
 		}
 	})
+}
+
+// TestRunPhaseWithRetryCallsOnPhaseStart verifies that onPhaseStart is called
+// before every attempt, including retries. In production, onPhaseStart is
+// func() { memStore.Reset() }, so this test indirectly verifies that the
+// MemoryStore is reset before every generation attempt.
+// See TheoryOfStreamingApply in generate.go and TheoryOfInMemoryApply in
+// changes/file_store.go.
+func TestRunPhaseWithRetryCallsOnPhaseStart(t *testing.T) {
+	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	baseState := generators.NewPrompts("", nil)
+	initialParserState := blocks.NewParserState(baseState)
+
+	var onPhaseStartCalls int
+	onPhaseStart := func() {
+		onPhaseStartCalls++
+	}
+
+	noSummaryText := "some output without any blocks\n"
+	phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(noSummaryText)},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+
+	_, _, _, _, _ = runPhaseWithRetry(
+		context.Background(), phase, initialParserState, initialParserState, logger, nil, onPhaseStart,
+	)
+
+	// onPhaseStart should be called once per attempt: initial + maxRetriesForMissingSummary
+	expectedCalls := maxRetriesForMissingSummary + 1
+	if onPhaseStartCalls != expectedCalls {
+		t.Fatalf("expected %d onPhaseStart calls (one per attempt including retries), got %d", expectedCalls, onPhaseStartCalls)
+	}
+}
+
+// TestRunPhaseWithRetryMemoryStoreConsistency verifies that the MemoryStore is
+// properly reset between retry attempts, maintaining consistency with the
+// immutable State. When a retry uses the pre-generation State (which is
+// unaffected by the failed attempt due to State immutability), the MemoryStore
+// must also be restored to its pre-generation state (via Reset() in
+// onPhaseStart). Without this reset, changes from failed attempts would
+// persist in the MemoryStore, creating an inconsistency: the State would not
+// reflect the changes (because it was rolled back), but the MemoryStore would.
+// See TheoryOfStreamingApply in generate.go and TheoryOfInMemoryApply in
+// changes/file_store.go.
+func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
+	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	// Create initial file on disk
+	original := "package x\n\nfunc Old() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	memStore := changes.NewMemoryStore(changes.NewRootStore(root))
+
+	baseState := generators.NewPrompts("", nil)
+	initialParserState := blocks.NewParserState(baseState)
+
+	// Track which attempt we're on
+	var attempt int
+	phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		attempt++
+
+		// Simulate applying a change block to memStore during generation.
+		// Each attempt creates a DIFFERENT file in memStore. Without
+		// Reset(), files from failed attempts would persist and leak
+		// into the successful attempt's Flush(), writing files to disk
+		// that the State does not reflect.
+		newFile := fmt.Sprintf("package x\n\nfunc New%d() {}\n", attempt)
+		if err := memStore.WriteFile(fmt.Sprintf("file%d.go", attempt), []byte(newFile), 0644); err != nil {
+			return nil, state, err
+		}
+
+		if attempt <= maxRetriesForMissingSummary {
+			// No completion block (truncated output)
+			newState, err := state.AppendContent(&generators.Content{
+				Role:  generators.RoleAssistant,
+				Parts: []generators.Part{generators.Text("incomplete")},
+			})
+			if err != nil {
+				return nil, state, err
+			}
+			return nil, newState, nil
+		}
+
+		// Final attempt: include a completion block
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+
+	onPhaseStart := func() {
+		memStore.Reset()
+	}
+
+	_, _, _, _, _ = runPhaseWithRetry(
+		context.Background(), phase, initialParserState, initialParserState, logger, nil, onPhaseStart,
+	)
+
+	// After all retries, the MemoryStore should ONLY have the file from
+	// the LAST (successful) attempt. Files from failed attempts should
+	// have been cleared by Reset() before each retry.
+	lastAttempt := maxRetriesForMissingSummary + 1
+
+	// The last attempt's file should exist in memStore
+	lastFile := fmt.Sprintf("file%d.go", lastAttempt)
+	lastContent := fmt.Sprintf("package x\n\nfunc New%d() {}\n", lastAttempt)
+	got, err := memStore.ReadFile(lastFile)
+	if err != nil {
+		t.Fatalf("expected last attempt's file %s in memStore: %v", lastFile, err)
+	}
+	if string(got) != lastContent {
+		t.Fatalf("expected last attempt's content %q, got %q", lastContent, string(got))
+	}
+
+	// Files from failed attempts should NOT exist in memStore.
+	// After Reset(), they fall back to disk, which doesn't have them.
+	for i := 1; i < lastAttempt; i++ {
+		failedFile := fmt.Sprintf("file%d.go", i)
+		_, err := memStore.ReadFile(failedFile)
+		if err == nil {
+			t.Fatalf("file %s from failed attempt %d should have been cleared by Reset(), but is still in memStore", failedFile, i)
+		}
+	}
+
+	// Disk should still have only the original file (Flush was not called
+	// by runPhaseWithRetry; it is called by the caller after success).
+	diskContent, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(diskContent) != original {
+		t.Fatalf("disk should have original content (Flush not called), got %q", string(diskContent))
+	}
 }
