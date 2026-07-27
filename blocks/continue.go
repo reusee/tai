@@ -45,23 +45,17 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 
-// ProcessContinueBlocks pops all continue blocks from parserState and returns
-// their body texts as generator parts alongside a new *ParserState with those
-// blocks removed. The original parserState is not modified. Callers must
-// thread the returned *ParserState through subsequent block processing and
-// reconcile it with the outer state before the next generation round.
-// See TheoryOfParserState.
-func ProcessContinueBlocks(parserState *ParserState) ([]generators.Part, *ParserState) {
-	if parserState == nil {
-		return nil, nil
-	}
-	blocks, newParserState := parserState.PopBlocksByKind("continue")
+// ProcessContinueBlocks processes all continue blocks and returns their body
+// texts as generator parts. Each block's body becomes a Text part that will be
+// fed back as the next user message to trigger a new generation round.
+// See TheoryOfContinueBlocks.
+func ProcessContinueBlocks(blocks []Block) []generators.Part {
 	if len(blocks) == 0 {
-		return nil, newParserState
+		return nil
 	}
 	var parts []generators.Part
 	for _, block := range blocks {
 		parts = append(parts, generators.Text(block.Body))
 	}
-	return parts, newParserState
+	return parts
 }

@@ -40,15 +40,14 @@ round use the in-memory content as the base, not the disk content, so
 multi-block edits to the same file are applied correctly within the round.
 The streaming apply is implemented via a BlockHandler callback on ParserState:
 when a complete change block is parsed during AppendContent, the handler applies
-it via changes.ApplyChangeBlockStore to the MemoryStore. During Flush, the handler
-is not called for unclosed blocks, because they are incomplete (e.g., from
-truncated output) and applying them would cause errors; they are retained
-without applying so the summary-completion retry mechanism can handle the
-truncation. Successfully applied change blocks are consumed (not retained
-in the blocks list), so the post-phase component loop's applyChangeBlocks
-finds no change blocks to re-apply. When the apply flag is disabled, no
-handler is set and change blocks are stored as before, preserving the
-no-apply behavior.
+it via changes.ApplyChangeBlockStore to the MemoryStore. Non-change blocks are
+collected by the handler into an external slice for post-phase processing by
+ProcessComponents. During Flush, the handler is not called for unclosed blocks,
+because they are incomplete (e.g., from truncated output) and applying them
+would cause errors. Successfully applied change blocks are consumed by the
+handler (not collected), so ProcessComponents finds no change blocks to
+re-apply. When the apply flag is disabled, no handler is set and all blocks
+are collected, preserving the no-apply behavior.
 `
 
 const maxRequestContextRounds = 5
@@ -207,26 +206,6 @@ func summarizeIncompleteOutput(
 	return block.Body, nil
 }
 
-// reconcileParserState updates the *ParserState inside state with the
-// currentParserState (which has consumed blocks removed) while preserving
-// the upstream from state (which may have new content appended during block
-// processing). This ensures consumed blocks are not reprocessed in the next
-// generation round. See TheoryOfParserState.
-func reconcileParserState(state generators.State, currentParserState *blocks.ParserState) generators.State {
-	if currentParserState == nil {
-		return state
-	}
-	statePs, ok := generators.As[*blocks.ParserState](state)
-	if !ok {
-		return state
-	}
-	reconciled := currentParserState.WithUpstream(statePs.Unwrap())
-	if rc, ok := state.(phases.RedoCheckpoint); ok {
-		return rc.WithUpstream(reconciled)
-	}
-	return reconciled
-}
-
 const TheoryOfSummaryCompletionRetry = `
 The summary and finish blocks serve as completion signals for each generation
 round. When a round ends without either block, the model's output was likely
@@ -242,6 +221,14 @@ entirely and regenerates from scratch, avoiding incomplete or malformed change b
 This is distinct from the generator-level retry (see TheoryOfRetry and
 TheoryOfGenerateRetry) which handles transient API errors; this retry handles
 successful-but-incomplete output.
+
+Completion is detected by checking the externally collected blocks for summary
+or finish kinds. Because blocks are collected by the BlockHandler during
+AppendContent (not stored in ParserState), the check is a simple scan of the
+collected slice. On retry, the collected blocks are reset alongside the
+MemoryStore in the onPhaseStart callback, ensuring both external states are
+consistent with the rolled-back State. See TheoryOfParserState in
+blocks/parser_state.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
@@ -269,24 +256,24 @@ func runPhaseWithRetry(
 	ctx context.Context,
 	phase phases.Phase,
 	stateBeforePhase generators.State,
-	fallbackParserState *blocks.ParserState,
 	logger logs.Logger,
 	summarize func(incompleteText string) (string, error),
 	onPhaseStart func(),
+	collectedBlocks *[]blocks.Block,
 ) (
 	newPhase phases.Phase,
 	newState generators.State,
 	phaseErr error,
 	summaries []string,
-	currentParserState *blocks.ParserState,
 ) {
 	currentState := stateBeforePhase
 	for retryCount := 0; ; retryCount++ {
 		// onPhaseStart is called before each phase attempt to reset
-		// per-attempt state (e.g., MemoryStore.Reset for in-memory apply).
-		// This ensures retried attempts start with a clean store, so
-		// changes from a failed attempt are discarded without touching disk.
-		// See TheoryOfStreamingApply and TheoryOfInMemoryApply.
+		// per-attempt state (e.g., MemoryStore.Reset and collectedBlocks
+		// reset for block consistency). This ensures retried attempts
+		// start with a clean store and empty block collection, so
+		// changes and blocks from a failed attempt are discarded.
+		// See TheoryOfStreamingApply and TheoryOfParserState.
 		if onPhaseStart != nil {
 			onPhaseStart()
 		}
@@ -295,25 +282,33 @@ func runPhaseWithRetry(
 			return
 		}
 
-		// Extract the current *ParserState from the state chain.
-		// With immutable ParserState, the original parserState pointer
-		// is not updated by AppendContent; the current *ParserState is
-		// the one inside the state returned by the phase chain.
-		// See TheoryOfParserState.
-		ps, ok := generators.As[*blocks.ParserState](newState)
-		if !ok {
-			ps = fallbackParserState
-		}
-
 		// Check for completion-signal blocks (summary or finish). Both
 		// indicate the model intentionally ended the round, as opposed
 		// to truncated output where no completion block is present.
-		// See TheoryOfSummaryCompletionRetry.
-		hasCompletion := ps.HasCompletionBlock()
+		// Blocks are collected externally by the BlockHandler during
+		// AppendContent; the check is a simple scan of the collected
+		// slice. See TheoryOfSummaryCompletionRetry.
+		hasCompletion := false
+		for _, block := range *collectedBlocks {
+			if block.Kind == "summary" || block.Kind == "finish" {
+				hasCompletion = true
+				break
+			}
+		}
 
-		// Collect summary blocks from model output.
+		// Extract summary blocks from collected blocks and remove them
+		// so ProcessComponents does not see them.
 		// See TheoryOfSummaryBlocks.
-		summaries, currentParserState = blocks.ProcessSummaryBlocks(ps)
+		summaries = nil
+		var remaining []blocks.Block
+		for _, block := range *collectedBlocks {
+			if block.Kind == "summary" {
+				summaries = append(summaries, block.Body)
+			} else {
+				remaining = append(remaining, block)
+			}
+		}
+		*collectedBlocks = remaining
 
 		if hasCompletion {
 			return
@@ -394,6 +389,13 @@ func (Module) Generate(
 		// disk is never partially modified by an interrupted round).
 		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
 		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
+
+		// collectedBlocks stores non-change blocks parsed during
+		// generation. The BlockHandler appends to this slice; on retry,
+		// onPhaseStart resets it to nil alongside the MemoryStore,
+		// ensuring block state is consistent with the rolled-back State.
+		// See TheoryOfParserState in blocks/parser_state.go.
+		var collectedBlocks []blocks.Block
 
 		// generator
 		generator, err := getDefaultGenerator()
@@ -535,27 +537,36 @@ func (Module) Generate(
 		// Wrap state with ParserState to parse structured blocks from model
 		// output. ParserState is always activated to support continue blocks,
 		// change blocks, and request-context blocks.
-		// When apply is enabled, a BlockHandler applies change blocks
+		// When apply is enabled, the BlockHandler applies change blocks
 		// immediately to the MemoryStore as they are parsed during streaming,
-		// enabling early error detection without touching disk. The
-		// MemoryStore is flushed to disk only after the round succeeds, and
-		// reset before each phase attempt (including retries) so the disk
-		// remains untouched by failed or truncated attempts.
-		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
+		// enabling early error detection without touching disk. Non-change
+		// blocks are collected into collectedBlocks for post-phase processing
+		// by ProcessComponents. The MemoryStore is flushed to disk only after
+		// the round succeeds, and reset before each phase attempt (including
+		// retries) alongside collectedBlocks so the disk remains untouched by
+		// failed or truncated attempts.
+		// See TheoryOfStreamingApply, changes.TheoryOfInMemoryApply, and
+		// blocks.TheoryOfParserState.
 		var parserHandler blocks.BlockHandler
 		if bool(apply) {
-			parserHandler = func(block blocks.Block) (bool, error) {
-				if block.Kind != "change" {
-					return false, nil
+			parserHandler = func(block blocks.Block) error {
+				if block.Kind == "change" {
+					h, parsedOk := changes.ParseChangeBlock(block)
+					if !parsedOk {
+						return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+					}
+					if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
+						return fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+					}
+					return nil
 				}
-				h, parsedOk := changes.ParseChangeBlock(block)
-				if !parsedOk {
-					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
-				}
-				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
-				}
-				return true, nil
+				collectedBlocks = append(collectedBlocks, block)
+				return nil
+			}
+		} else {
+			parserHandler = func(block blocks.Block) error {
+				collectedBlocks = append(collectedBlocks, block)
+				return nil
 			}
 		}
 		parserState := blocks.NewParserState(state, parserHandler)
@@ -612,13 +623,18 @@ func (Module) Generate(
 			prevContentCount := countContents(stateBeforePhase)
 
 			// Execute the phase with retry on missing summary block.
-			// onPhaseStart resets the MemoryStore before each phase attempt
-			// (including retries), so changes from a failed attempt are
-			// discarded without touching disk. See TheoryOfStreamingApply
-			// and changes.TheoryOfInMemoryApply.
-			newPhase, newState, phaseErr, summaries, currentParserState := runPhaseWithRetry(
-				ctx, phase, stateBeforePhase, parserState, logger, summarize,
-				func() { memStore.Reset() },
+			// onPhaseStart resets the MemoryStore and collectedBlocks
+			// before each phase attempt (including retries), so changes
+			// and blocks from a failed attempt are discarded without
+			// touching disk. See TheoryOfStreamingApply,
+			// changes.TheoryOfInMemoryApply, and blocks.TheoryOfParserState.
+			newPhase, newState, phaseErr, summaries := runPhaseWithRetry(
+				ctx, phase, stateBeforePhase, logger, summarize,
+				func() {
+					memStore.Reset()
+					collectedBlocks = nil
+				},
+				&collectedBlocks,
 			)
 
 			if phaseErr != nil {
@@ -688,8 +704,8 @@ func (Module) Generate(
 					contentIndex++
 				}
 
-				// summaries and currentParserState are already computed by
-				// runPhaseWithRetry. See TheoryOfSummaryCompletionRetry.
+				// summaries are already computed by runPhaseWithRetry.
+				// See TheoryOfSummaryCompletionRetry.
 				if len(summaries) > 0 {
 					summaryText := strings.Join(summaries, "\n")
 					if len(roundStats) > 0 {
@@ -708,15 +724,14 @@ func (Module) Generate(
 				// accepts it as the ComponentSet parameter type.
 				var combinedParts []generators.Part
 				var triggered bool
-				currentParserState, state, combinedParts, triggered, err = components.ProcessComponents(
-					ctx, comps.ComponentSet, currentParserState, state, root, httpClient, roundCounts, true,
+				collectedBlocks, state, combinedParts, triggered, err = components.ProcessComponents(
+					ctx, comps.ComponentSet, collectedBlocks, state, root, httpClient, roundCounts, true,
 				)
 				if err != nil {
 					return err
 				}
 
 				if triggered {
-					state = reconcileParserState(state, currentParserState)
 					if len(combinedParts) > 0 {
 						state, err = state.AppendContent(&generators.Content{
 							Role:  "user",
@@ -729,11 +744,6 @@ func (Module) Generate(
 					phase = buildGenerate(generator, nil)(nil)
 					continue
 				}
-
-				// No blocks produced content: reconcile to remove consumed
-				// blocks (e.g., summary, change) before the next iteration
-				// so they are not reprocessed. See TheoryOfParserState.
-				state = reconcileParserState(state, currentParserState)
 			}
 		}
 

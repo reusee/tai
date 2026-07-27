@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/generators"
 )
 
 func TestApplyChangeBlocks(t *testing.T) {
@@ -22,20 +21,16 @@ func TestApplyChangeBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	changeBlocks := []blocks.Block{
+		{
+			Kind:       "change",
+			Boundary:   "徕珑",
+			Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
+			Body:       "func New() {}",
+		},
 	}
-	parserState = newState.(*blocks.ParserState)
 
-	newParserState, err := ApplyChangeBlocks(parserState, root)
-	if err != nil {
+	if err := ApplyChangeBlocks(changeBlocks, root); err != nil {
 		t.Fatalf("ApplyChangeBlocks failed: %v", err)
 	}
 
@@ -50,11 +45,6 @@ func TestApplyChangeBlocks(t *testing.T) {
 	if !strings.Contains(resultStr, "func New() {}") {
 		t.Fatalf("result should contain New:\n%s", resultStr)
 	}
-
-	// Change blocks should have been consumed by ApplyChangeBlocks.
-	if remaining, _ := newParserState.PopBlocksByKind("change"); len(remaining) != 0 {
-		t.Fatalf("expected 0 remaining change blocks, got %d", len(remaining))
-	}
 }
 
 func TestApplyChangeBlocksUnparseable(t *testing.T) {
@@ -65,20 +55,17 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 	}
 	defer root.Close()
 
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
 	// A change block missing the required "op" attribute is unparseable.
-	text := ":::徕珑 <change target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	changeBlocks := []blocks.Block{
+		{
+			Kind:       "change",
+			Boundary:   "徕珑",
+			Attributes: map[string]string{"target": "Foo", "file-path": "test.go"},
+			Body:       "func Foo() {}",
+		},
 	}
-	parserState = newState.(*blocks.ParserState)
 
-	_, err = ApplyChangeBlocks(parserState, root)
+	err = ApplyChangeBlocks(changeBlocks, root)
 	if err == nil {
 		t.Fatal("expected error for unparseable change block")
 	}
@@ -95,19 +82,16 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 	}
 	defer root.Close()
 
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <change op=\"WRITE\" file-path=\"../../../etc/passwd\">\ncontent\n:::徕珑 </change>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	changeBlocks := []blocks.Block{
+		{
+			Kind:       "change",
+			Boundary:   "徕珑",
+			Attributes: map[string]string{"op": "WRITE", "file-path": "../../../etc/passwd"},
+			Body:       "content",
+		},
 	}
-	parserState = newState.(*blocks.ParserState)
 
-	_, err = ApplyChangeBlocks(parserState, root)
+	err = ApplyChangeBlocks(changeBlocks, root)
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}

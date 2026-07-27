@@ -8,7 +8,6 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
-	"github.com/reusee/tai/generators"
 )
 
 func TestSystemPromptGoTestBlock(t *testing.T) {
@@ -51,28 +50,20 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 		flags.Shell(false),
 	)
 
-	// Create a ParserState with a go-test block that matches no tests.
+	// Create a go-test block that matches no tests.
 	// -run and ___nonexistent___ are on separate lines. go test
 	// -run ___nonexistent___ succeeds (exit code 0) because no tests
 	// match, so no Parts are returned.
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <go-test>\n-run\n___nonexistent___\n:::徕珑 </go-test>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	goTestBlocks := []blocks.Block{
+		{Kind: "go-test", Body: "-run\n___nonexistent___"},
 	}
-	parserState = newState.(*blocks.ParserState)
 
 	for _, comp := range comps.Processable() {
 		if comp.Kind != "go-test" {
 			continue
 		}
 		result := comp.Process(context.Background(), &components.ProcessContext{
-			ParserState: parserState,
+			Blocks: goTestBlocks,
 		})
 		if result.Err != nil {
 			t.Fatalf("unexpected error: %v", result.Err)
@@ -96,27 +87,19 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		flags.Shell(false),
 	)
 
-	// Create a ParserState with a go-test block using an invalid flag.
+	// Create a go-test block using an invalid flag.
 	// go test -bogusflag fails immediately with a flag parsing error,
 	// so Parts are produced to trigger a new round.
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <go-test>\n-bogusflag\n:::徕珑 </go-test>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	goTestBlocks := []blocks.Block{
+		{Kind: "go-test", Body: "-bogusflag"},
 	}
-	parserState = newState.(*blocks.ParserState)
 
 	for _, comp := range comps.Processable() {
 		if comp.Kind != "go-test" {
 			continue
 		}
 		result := comp.Process(context.Background(), &components.ProcessContext{
-			ParserState: parserState,
+			Blocks: goTestBlocks,
 		})
 		if result.Err != nil {
 			t.Fatalf("unexpected error: %v", result.Err)

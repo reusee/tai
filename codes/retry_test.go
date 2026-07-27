@@ -23,7 +23,16 @@ func TestRunPhaseWithRetry(t *testing.T) {
 
 	t.Run("SucceedsOnFirstAttempt", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		// Handler collects blocks
+		handler := func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		}
+
+		// Wrap state with ParserState that has the handler
+		ps := blocks.NewParserState(baseState, handler)
 
 		var callCount int
 		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -38,8 +47,10 @@ func TestRunPhaseWithRetry(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+		_, _, phaseErr, summaries := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, nil,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -54,7 +65,14 @@ func TestRunPhaseWithRetry(t *testing.T) {
 
 	t.Run("RetriesOnMissingSummary", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		handler := func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		}
+
+		ps := blocks.NewParserState(baseState, handler)
 
 		var callCount int
 		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -75,8 +93,10 @@ func TestRunPhaseWithRetry(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+		_, _, phaseErr, summaries := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, nil,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -91,7 +111,14 @@ func TestRunPhaseWithRetry(t *testing.T) {
 
 	t.Run("RetriesFromOriginalState", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		handler := func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		}
+
+		ps := blocks.NewParserState(baseState, handler)
 
 		var statesSeen []int
 		var callCount int
@@ -114,8 +141,10 @@ func TestRunPhaseWithRetry(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, _, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+		_, _, _, summaries := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, nil,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if len(statesSeen) != 2 {
 			t.Fatalf("expected 2 state observations, got %d", len(statesSeen))
@@ -131,7 +160,14 @@ func TestRunPhaseWithRetry(t *testing.T) {
 
 	t.Run("GivesUpAfterMaxRetries", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		handler := func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		}
+
+		ps := blocks.NewParserState(baseState, handler)
 
 		var callCount int
 		phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -146,8 +182,10 @@ func TestRunPhaseWithRetry(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+		_, _, phaseErr, summaries := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, nil,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -162,7 +200,12 @@ func TestRunPhaseWithRetry(t *testing.T) {
 
 	t.Run("PropagatesPhaseError", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		})
 
 		expectedErr := fmt.Errorf("phase error")
 		var callCount int
@@ -171,8 +214,10 @@ func TestRunPhaseWithRetry(t *testing.T) {
 			return nil, state, expectedErr
 		}
 
-		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+		_, _, phaseErr, _ := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, nil,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != expectedErr {
 			t.Fatalf("expected error %v, got %v", expectedErr, phaseErr)
@@ -187,9 +232,14 @@ func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
 	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	baseState := generators.NewPrompts("", nil)
-	initialParserState := blocks.NewParserState(baseState)
+	var collectedBlocks []blocks.Block
 
 	finishBlock := ":::徕珑 <finish>\nDone.\n:::徕珑 </finish>\n"
+	ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
 	var callCount int
 	phase := func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
 		callCount++
@@ -203,8 +253,10 @@ func TestRunPhaseWithRetryFinishBlock(t *testing.T) {
 		return nil, newState, nil
 	}
 
-	_, _, phaseErr, _, _ := runPhaseWithRetry(
-		context.Background(), phase, initialParserState, initialParserState, logger, nil, nil,
+	_, _, phaseErr, _ := runPhaseWithRetry(
+		context.Background(), phase, ps, logger, nil,
+		func() { collectedBlocks = nil },
+		&collectedBlocks,
 	)
 	if phaseErr != nil {
 		t.Fatalf("unexpected error: %v", phaseErr)
@@ -219,7 +271,12 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 
 	t.Run("SummarizeAndRetry", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		})
 
 		var summarizeCalls []string
 		summarize := func(incompleteText string) (string, error) {
@@ -256,8 +313,10 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, summaries, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
+		_, _, phaseErr, summaries := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, summarize,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -275,7 +334,12 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 
 	t.Run("SummarizeAddsToState", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		})
 
 		var stateReceivedOnRetry generators.State
 		summarize := func(incompleteText string) (string, error) {
@@ -310,8 +374,10 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
+		_, _, phaseErr, _ := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, summarize,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -344,7 +410,12 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 
 	t.Run("SummarizeErrorFallsBack", func(t *testing.T) {
 		baseState := generators.NewPrompts("", nil)
-		initialParserState := blocks.NewParserState(baseState)
+		var collectedBlocks []blocks.Block
+
+		ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+			collectedBlocks = append(collectedBlocks, block)
+			return nil
+		})
 
 		summarize := func(incompleteText string) (string, error) {
 			return "", fmt.Errorf("summarization failed")
@@ -377,8 +448,10 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 			return nil, newState, nil
 		}
 
-		_, _, phaseErr, _, _ := runPhaseWithRetry(
-			context.Background(), phase, initialParserState, initialParserState, logger, summarize, nil,
+		_, _, phaseErr, _ := runPhaseWithRetry(
+			context.Background(), phase, ps, logger, summarize,
+			func() { collectedBlocks = nil },
+			&collectedBlocks,
 		)
 		if phaseErr != nil {
 			t.Fatalf("unexpected error: %v", phaseErr)
@@ -389,17 +462,16 @@ func TestRunPhaseWithRetrySummarization(t *testing.T) {
 	})
 }
 
-// TestRunPhaseWithRetryCallsOnPhaseStart verifies that onPhaseStart is called
-// before every attempt, including retries. In production, onPhaseStart is
-// func() { memStore.Reset() }, so this test indirectly verifies that the
-// MemoryStore is reset before every generation attempt.
-// See TheoryOfStreamingApply in generate.go and TheoryOfInMemoryApply in
-// changes/file_store.go.
 func TestRunPhaseWithRetryCallsOnPhaseStart(t *testing.T) {
 	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	baseState := generators.NewPrompts("", nil)
-	initialParserState := blocks.NewParserState(baseState)
+	var collectedBlocks []blocks.Block
+
+	ps := blocks.NewParserState(baseState, func(block blocks.Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	var onPhaseStartCalls int
 	onPhaseStart := func() {
@@ -418,8 +490,9 @@ func TestRunPhaseWithRetryCallsOnPhaseStart(t *testing.T) {
 		return nil, newState, nil
 	}
 
-	_, _, _, _, _ = runPhaseWithRetry(
-		context.Background(), phase, initialParserState, initialParserState, logger, nil, onPhaseStart,
+	_, _, _, _ = runPhaseWithRetry(
+		context.Background(), phase, ps, logger, nil, onPhaseStart,
+		&collectedBlocks,
 	)
 
 	// onPhaseStart should be called once per attempt: initial + maxRetriesForMissingSummary
@@ -429,16 +502,6 @@ func TestRunPhaseWithRetryCallsOnPhaseStart(t *testing.T) {
 	}
 }
 
-// TestRunPhaseWithRetryMemoryStoreConsistency verifies that the MemoryStore is
-// properly reset between retry attempts, maintaining consistency with the
-// immutable State. When a retry uses the pre-generation State (which is
-// unaffected by the failed attempt due to State immutability), the MemoryStore
-// must also be restored to its pre-generation state (via Reset() in
-// onPhaseStart). Without this reset, changes from failed attempts would
-// persist in the MemoryStore, creating an inconsistency: the State would not
-// reflect the changes (because it was rolled back), but the MemoryStore would.
-// See TheoryOfStreamingApply in generate.go and TheoryOfInMemoryApply in
-// changes/file_store.go.
 func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
 	logger := logs.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
@@ -456,9 +519,12 @@ func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
 	}
 
 	memStore := changes.NewMemoryStore(changes.NewRootStore(root))
+	var collectedBlocks []blocks.Block
 
-	baseState := generators.NewPrompts("", nil)
-	initialParserState := blocks.NewParserState(baseState)
+	ps := blocks.NewParserState(generators.NewPrompts("", nil), func(block blocks.Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// Track which attempt we're on
 	var attempt int
@@ -466,10 +532,6 @@ func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
 		attempt++
 
 		// Simulate applying a change block to memStore during generation.
-		// Each attempt creates a DIFFERENT file in memStore. Without
-		// Reset(), files from failed attempts would persist and leak
-		// into the successful attempt's Flush(), writing files to disk
-		// that the State does not reflect.
 		newFile := fmt.Sprintf("package x\n\nfunc New%d() {}\n", attempt)
 		if err := memStore.WriteFile(fmt.Sprintf("file%d.go", attempt), []byte(newFile), 0644); err != nil {
 			return nil, state, err
@@ -500,18 +562,18 @@ func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
 
 	onPhaseStart := func() {
 		memStore.Reset()
+		collectedBlocks = nil
 	}
 
-	_, _, _, _, _ = runPhaseWithRetry(
-		context.Background(), phase, initialParserState, initialParserState, logger, nil, onPhaseStart,
+	_, _, _, _ = runPhaseWithRetry(
+		context.Background(), phase, ps, logger, nil, onPhaseStart,
+		&collectedBlocks,
 	)
 
 	// After all retries, the MemoryStore should ONLY have the file from
-	// the LAST (successful) attempt. Files from failed attempts should
-	// have been cleared by Reset() before each retry.
+	// the LAST (successful) attempt.
 	lastAttempt := maxRetriesForMissingSummary + 1
 
-	// The last attempt's file should exist in memStore
 	lastFile := fmt.Sprintf("file%d.go", lastAttempt)
 	lastContent := fmt.Sprintf("package x\n\nfunc New%d() {}\n", lastAttempt)
 	got, err := memStore.ReadFile(lastFile)
@@ -523,7 +585,6 @@ func TestRunPhaseWithRetryMemoryStoreConsistency(t *testing.T) {
 	}
 
 	// Files from failed attempts should NOT exist in memStore.
-	// After Reset(), they fall back to disk, which doesn't have them.
 	for i := 1; i < lastAttempt; i++ {
 		failedFile := fmt.Sprintf("file%d.go", i)
 		_, err := memStore.ReadFile(failedFile)

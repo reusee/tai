@@ -33,8 +33,8 @@ func CommonComponents(shell bool) ComponentSet {
 			Kind:          "shell",
 			PromptSection: blocks.ShellBlockSystemPrompt,
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
-				parts, newPs, err := blocks.ProcessShellBlocks(pctx.ParserState)
-				return ProcessResult{ParserState: newPs, Parts: parts, Err: err}
+				parts, err := blocks.ProcessShellBlocks(pctx.Blocks)
+				return ProcessResult{Parts: parts, Err: err}
 			},
 		})
 	}
@@ -42,8 +42,8 @@ func CommonComponents(shell bool) ComponentSet {
 		Kind:          "continue",
 		PromptSection: blocks.ContinueBlockSystemPrompt,
 		Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
-			parts, newPs := blocks.ProcessContinueBlocks(pctx.ParserState)
-			return ProcessResult{ParserState: newPs, Parts: parts}
+			parts := blocks.ProcessContinueBlocks(pctx.Blocks)
+			return ProcessResult{Parts: parts}
 		},
 	})
 	return comps

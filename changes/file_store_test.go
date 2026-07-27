@@ -583,8 +583,17 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 	}
 	parserState = newState.(*blocks.ParserState)
 
+	changeBlocks := []blocks.Block{
+		{
+			Kind:       "change",
+			Boundary:   "徕珑",
+			Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
+			Body:       "func New() {}",
+		},
+	}
+
 	// ApplyChangeBlocks (the wrapper) should delegate to ApplyChangeBlocksStore
-	_, err = ApplyChangeBlocks(parserState, root)
+	err = ApplyChangeBlocks(changeBlocks, root)
 	if err != nil {
 		t.Fatalf("ApplyChangeBlocks failed: %v", err)
 	}

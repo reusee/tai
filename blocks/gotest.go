@@ -179,30 +179,20 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 		workDir, cmdStr, stdout.String(), stderr.String()), false
 }
 
-// ProcessGoTestBlocks pops all go-test blocks from parserState, runs the
-// tests, and returns the outputs as generator parts alongside a new
-// *ParserState with those blocks removed. Output parts are only collected
-// when a test run fails, so the model receives stdout and stderr
-// exclusively when there are failures to debug and fix. When all tests
-// pass, no parts are returned and the caller has nothing to feed back.
-// The failed flag indicates whether any test run failed, so callers can
-// set Continue to trigger a new round for debugging.
-// The original parserState is not modified. Callers must thread the
-// returned *ParserState through subsequent block processing and
-// reconcile it with the outer state before the next generation round.
-// See TheoryOfParserState and TheoryOfGoTestBlocks.
-func ProcessGoTestBlocks(parserState *ParserState, ctx context.Context) ([]generators.Part, *ParserState, bool, error) {
-	if parserState == nil {
-		return nil, nil, false, nil
+// ProcessGoTestBlocks runs Go tests for all go-test blocks and returns the
+// outputs as generator parts. Output parts are only collected when a test run
+// fails, so the model receives stdout and stderr exclusively when there are
+// failures to debug and fix. When all tests pass, no parts are returned and
+// the caller has nothing to feed back. The failed flag indicates whether any
+// test run failed, so callers can set Continue to trigger a new round for
+// debugging. See TheoryOfGoTestBlocks.
+func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, bool, error) {
+	if len(blocks) == 0 {
+		return nil, false, nil
 	}
-	goTestBlocks, newParserState := parserState.PopBlocksByKind("go-test")
-	if len(goTestBlocks) == 0 {
-		return nil, newParserState, false, nil
-	}
-
 	var parts []generators.Part
 	anyFailed := false
-	for _, block := range goTestBlocks {
+	for _, block := range blocks {
 		args := block.Body
 		output, failed := executeGoTest(ctx, args)
 		if failed {
@@ -216,5 +206,5 @@ func ProcessGoTestBlocks(parserState *ParserState, ctx context.Context) ([]gener
 			parts = append(parts, generators.Text(output))
 		}
 	}
-	return parts, newParserState, anyFailed, nil
+	return parts, anyFailed, nil
 }

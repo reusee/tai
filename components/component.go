@@ -37,16 +37,16 @@ critical format reminders grouped as a distinct section at the end of the
 system prompt.
 
 ProcessComponents is the shared function that iterates over Processable
-components in registration order, calling each component's Process function and
-accumulating results. Both the ai command (cmd/tai/ai.go) and the codes module
-(codes/generate.go) call ProcessComponents, so the component processing loop is
-identical across all generation commands — only the ComponentSet differs. The
-function parameterizes Root and HttpClient (nil for commands whose components
-do not need them, like ai's shell/continue), MaxRounds enforcement (disabled
-for ai, enabled for codes), and roundCounts tracking (nil for ai). This is the
-practical limit of loop unification: the outer loop structure differs because
-ai uses an interactive chat phase (buildChat) while codes is single-shot, but
-the component processing inner loop is fully shared.
+components in registration order, filtering blocks by each component's Kind
+and calling the component's Process function with the matching blocks. Both
+the ai command (cmd/tai/ai.go) and the codes module (codes/generate.go) call
+ProcessComponents with a []Block slice (collected by the BlockHandler during
+generation) and the current state. The function returns remaining blocks (not
+matched by any component), the updated state, combined parts, and whether any
+component triggered a new round. This eliminates the need for ParserState
+reconciliation: blocks are managed externally by the caller, and the state
+chain is modified exclusively through the State interface (AppendContent),
+with no extra methods that bypass the immutable state chain.
 
 The mechanism is the integrity guarantee: it makes the coupling between prompt
 and processing explicit and machine-checkable rather than implicit and
@@ -64,16 +64,20 @@ type ComponentProcessFunc func(ctx context.Context, pctx *ProcessContext) Proces
 
 // ProcessContext bundles all dependencies a ComponentProcessFunc may need.
 type ProcessContext struct {
-	ParserState *blocks.ParserState
-	State       generators.State
-	Root        *os.Root
-	HttpClient  nets.HTTPClient
+	// Blocks are the blocks matching this component's Kind, pre-filtered
+	// by ProcessComponents.
+	Blocks []blocks.Block
+	// State is the current generators state. Components may modify it
+	// (e.g., request-context appends fetched resources).
+	State generators.State
+	// Root is the filesystem root for file operations.
+	Root *os.Root
+	// HttpClient is the HTTP client for network operations.
+	HttpClient nets.HTTPClient
 }
 
 // ProcessResult holds the outcome of processing blocks of a single kind.
 type ProcessResult struct {
-	// ParserState is the new parser state with consumed blocks removed.
-	ParserState *blocks.ParserState
 	// State is the updated generators state. When non-nil, the component
 	// modified the state (e.g., request-context appends fetched resources),
 	// and a new generation round is triggered.
@@ -111,8 +115,8 @@ type Component struct {
 	// into the system prompt, UserPromptParts goes into the user content.
 	// Empty for components that contribute only to the system prompt.
 	UserPromptParts []generators.Part
-	// Process extracts and handles blocks of this kind from the parser
-	// state in the main generation loop. If nil and Kind is non-empty,
+	// Process extracts and handles blocks of this kind from the block list
+	// in the main generation loop. If nil and Kind is non-empty,
 	// ProcessingPath must describe where the block is processed instead.
 	Process ComponentProcessFunc
 	// ProcessingPath documents where blocks of this kind are processed
@@ -188,52 +192,68 @@ func (c ComponentSet) Processable() []Component {
 }
 
 // ProcessComponents iterates over processable components in registration order,
-// calling each component's Process function and accumulating results. It
-// returns the updated ParserState (with consumed blocks removed), the updated
-// State (if any component modified it), combined Parts from all components,
-// whether any component triggered a new round (produced Parts or modified
-// State), and an error if any component failed. When enforceMaxRounds is true
-// and roundCounts is non-nil, per-component MaxRounds limits are enforced,
-// preventing infinite loops from components that keep producing output.
+// filtering blocks by each component's Kind and calling the component's Process
+// function with the matching blocks. It returns the remaining blocks (not
+// matched by any component), the updated State (if any component modified it),
+// combined Parts from all components, whether any component triggered a new
+// round (produced Parts or modified State), and an error if any component
+// failed. When enforceMaxRounds is true and roundCounts is non-nil, per-
+// component MaxRounds limits are enforced, preventing infinite loops from
+// components that keep producing output.
 //
 // Both the ai command and the codes module call this function, so the
 // component processing loop is identical across all generation commands —
-// only the ComponentSet differs. See TheoryOfComponents.
+// only the ComponentSet and block list differ. See TheoryOfComponents.
 func ProcessComponents(
 	ctx context.Context,
 	comps ComponentSet,
-	currentPs *blocks.ParserState,
+	allBlocks []blocks.Block,
 	state generators.State,
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	roundCounts map[string]int,
 	enforceMaxRounds bool,
 ) (
-	newPs *blocks.ParserState,
+	remainingBlocks []blocks.Block,
 	newState generators.State,
 	combinedParts []generators.Part,
 	triggered bool,
 	err error,
 ) {
-	stateModified := false
 	for _, comp := range comps.Processable() {
+		if comp.Kind == "" {
+			continue
+		}
+
+		// Filter blocks by this component's kind.
+		var compBlocks []blocks.Block
+		var otherBlocks []blocks.Block
+		for _, b := range allBlocks {
+			if b.Kind == comp.Kind {
+				compBlocks = append(compBlocks, b)
+			} else {
+				otherBlocks = append(otherBlocks, b)
+			}
+		}
+		allBlocks = otherBlocks
+
+		if len(compBlocks) == 0 {
+			continue
+		}
+
 		result := comp.Process(ctx, &ProcessContext{
-			ParserState: currentPs,
-			State:       state,
-			Root:        root,
-			HttpClient:  httpClient,
+			Blocks:     compBlocks,
+			State:      state,
+			Root:       root,
+			HttpClient: httpClient,
 		})
 		if result.Err != nil {
-			return currentPs, state, combinedParts, triggered, result.Err
-		}
-		if result.ParserState != nil {
-			currentPs = result.ParserState
+			return allBlocks, state, combinedParts, triggered, result.Err
 		}
 
 		componentTriggered := false
 		if result.State != nil {
 			state = result.State
-			stateModified = true
 			componentTriggered = true
 		}
 		if len(result.Parts) > 0 {
@@ -246,11 +266,12 @@ func ProcessComponents(
 			if enforceMaxRounds && comp.MaxRounds > 0 && roundCounts != nil {
 				roundCounts[comp.Kind]++
 				if roundCounts[comp.Kind] > comp.MaxRounds {
-					return currentPs, state, combinedParts, triggered,
+					return allBlocks, state, combinedParts, triggered,
 						fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
 				}
 			}
 		}
 	}
-	return currentPs, state, combinedParts, stateModified || len(combinedParts) > 0, nil
+
+	return allBlocks, state, combinedParts, triggered, nil
 }

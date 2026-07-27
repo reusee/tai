@@ -8,21 +8,10 @@ import (
 )
 
 func TestProcessShellBlocks(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	// Append a shell block with echo command
-	text := ":::徕珑 <shell>\necho hello world\n:::徕珑 </shell>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	blocks := []Block{
+		{Kind: "shell", Body: "echo hello world"},
 	}
-	parserState = newState.(*ParserState)
-
-	parts, newParserState, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(blocks)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -36,32 +25,13 @@ func TestProcessShellBlocks(t *testing.T) {
 	if !strings.Contains(output, "Command succeeded") {
 		t.Fatalf("expected output to contain 'Command succeeded', got: %s", output)
 	}
-
-	// Shell blocks should have been consumed
-	if remaining, _ := newParserState.PopBlocksByKind("shell"); len(remaining) != 0 {
-		t.Fatalf("expected 0 remaining shell blocks, got %d", len(remaining))
-	}
 }
 
 func TestProcessShellBlocksCommandFailure(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	// cat /nonexistent fails with exit code 1 because the file does not
-	// exist. cat is in the allowlist, so the command passes validation
-	// but fails during execution. The previous test used "exit 1" which
-	// is no longer in the allowlist and would be rejected before execution.
-	text := ":::徕珑 <shell>\ncat /nonexistent\n:::徕珑 </shell>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	blocks := []Block{
+		{Kind: "shell", Body: "cat /nonexistent"},
 	}
-	parserState = newState.(*ParserState)
-
-	parts, _, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(blocks)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -75,10 +45,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 }
 
 func TestProcessShellBlocksEmpty(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	parts, _, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(nil)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -176,23 +143,10 @@ func TestValidateShellCommand(t *testing.T) {
 }
 
 func TestProcessShellBlocksRejectsForbiddenCommand(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	// rm is not in the allowlist, so the command should be rejected
-	// without being executed. The rejection message is returned as
-	// user content so the model can adjust and retry.
-	text := ":::徕珑 <shell>\nrm -rf /tmp/test\n:::徕珑 </shell>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	blocks := []Block{
+		{Kind: "shell", Body: "rm -rf /tmp/test"},
 	}
-	parserState = newState.(*ParserState)
-
-	parts, _, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(blocks)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -209,22 +163,10 @@ func TestProcessShellBlocksRejectsForbiddenCommand(t *testing.T) {
 }
 
 func TestProcessShellBlocksRejectsRedirection(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	// echo is in the allowlist, but output redirection is forbidden.
-	// The command should be rejected before execution.
-	text := ":::徕珑 <shell>\necho hello > /tmp/test\n:::徕珑 </shell>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	blocks := []Block{
+		{Kind: "shell", Body: "echo hello > /tmp/test"},
 	}
-	parserState = newState.(*ParserState)
-
-	parts, _, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(blocks)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -241,21 +183,10 @@ func TestProcessShellBlocksRejectsRedirection(t *testing.T) {
 }
 
 func TestProcessShellBlocksAllowsGitStatus(t *testing.T) {
-	state := generators.NewPrompts("", nil)
-	parserState := NewParserState(state)
-
-	// git status is a read-only subcommand in the allowlist.
-	text := ":::徕珑 <shell>\ngit status\n:::徕珑 </shell>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	blocks := []Block{
+		{Kind: "shell", Body: "git status"},
 	}
-	parserState = newState.(*ParserState)
-
-	parts, _, err := ProcessShellBlocks(parserState)
+	parts, err := ProcessShellBlocks(blocks)
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}

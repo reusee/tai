@@ -42,22 +42,16 @@ The "summary" kind provides a brief description of the current generation round'
 :::<boundary> </summary>
 `
 
-// ProcessSummaryBlocks pops all summary blocks from parserState and returns
-// their body texts alongside a new *ParserState with those blocks removed.
-// The original parserState is not modified. Summaries are collected for
-// terminal display after generation ends, not appended to the state.
-// See TheoryOfSummaryBlocks and TheoryOfParserState.
-func ProcessSummaryBlocks(parserState *ParserState) ([]string, *ParserState) {
-	if parserState == nil {
-		return nil, nil
-	}
-	blocks, newParserState := parserState.PopBlocksByKind("summary")
+// ProcessSummaryBlocks processes all summary blocks and returns their body
+// texts. Summaries are collected for terminal display after generation ends,
+// not appended to the state. See TheoryOfSummaryBlocks.
+func ProcessSummaryBlocks(blocks []Block) []string {
 	if len(blocks) == 0 {
-		return nil, newParserState
+		return nil
 	}
 	var summaries []string
 	for _, block := range blocks {
 		summaries = append(summaries, block.Body)
 	}
-	return summaries, newParserState
+	return summaries
 }

@@ -46,7 +46,11 @@ func (m *mockState) Unwrap() generators.State {
 
 func TestParserStateStreamParsing(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// Fragment 1: prose only, no block marker
 	newState, err := ps.AppendContent(&generators.Content{
@@ -57,9 +61,8 @@ func TestParserStateStreamParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks before any block marker, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks before any block marker, got %d", len(collectedBlocks))
 	}
 
 	// Fragment 2: opening marker and partial body (no end marker yet)
@@ -71,9 +74,8 @@ func TestParserStateStreamParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	blocks, ps = ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for incomplete block, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks for incomplete block, got %d", len(collectedBlocks))
 	}
 
 	// Fragment 3: end marker completes the block
@@ -85,26 +87,24 @@ func TestParserStateStreamParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	blocks, ps = ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(blocks))
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
 	}
-	if blocks[0].Kind != "change" {
-		t.Fatalf("expected kind change, got %s", blocks[0].Kind)
+	if collectedBlocks[0].Kind != "change" {
+		t.Fatalf("expected kind change, got %s", collectedBlocks[0].Kind)
 	}
-	if blocks[0].Boundary != "徕珑" {
-		t.Fatalf("expected boundary 徕珑, got %s", blocks[0].Boundary)
-	}
-
-	// PopBlocks should have cleared the blocks
-	if remaining, _ := ps.PopBlocks(); len(remaining) != 0 {
-		t.Fatalf("expected 0 blocks after pop, got %d", len(remaining))
+	if collectedBlocks[0].Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", collectedBlocks[0].Boundary)
 	}
 }
 
 func TestParserStateMultipleBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n:::栢彣 </change>\n:::桀骥 <finish>\nDone.\n:::桀骥 </finish>\n"
 	newState, err := ps.AppendContent(&generators.Content{
@@ -116,18 +116,17 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	blocks, _ := ps.PopBlocks()
-	if len(blocks) != 3 {
-		t.Fatalf("expected 3 blocks, got %d", len(blocks))
+	if len(collectedBlocks) != 3 {
+		t.Fatalf("expected 3 blocks, got %d", len(collectedBlocks))
 	}
-	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
-		t.Fatalf("unexpected first block: %+v", blocks[0])
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected first block: %+v", collectedBlocks[0])
 	}
-	if blocks[1].Kind != "change" || blocks[1].Boundary != "栢彣" {
-		t.Fatalf("unexpected second block: %+v", blocks[1])
+	if collectedBlocks[1].Kind != "change" || collectedBlocks[1].Boundary != "栢彣" {
+		t.Fatalf("unexpected second block: %+v", collectedBlocks[1])
 	}
-	if blocks[2].Kind != "finish" || blocks[2].Boundary != "桀骥" {
-		t.Fatalf("unexpected third block: %+v", blocks[2])
+	if collectedBlocks[2].Kind != "finish" || collectedBlocks[2].Boundary != "桀骥" {
+		t.Fatalf("unexpected third block: %+v", collectedBlocks[2])
 	}
 }
 
@@ -145,7 +144,11 @@ func TestParserStateUnwrapAndPassthrough(t *testing.T) {
 
 func TestParserStateIgnoresUserRole(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// User role content should not be parsed for blocks
 	newState, err := ps.AppendContent(&generators.Content{
@@ -157,15 +160,18 @@ func TestParserStateIgnoresUserRole(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	blocks, _ := ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("user role content should not produce blocks, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("user role content should not produce blocks, got %d", len(collectedBlocks))
 	}
 }
 
 func TestParserStateIgnoresThoughts(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// A Thought part containing complete block markers must not produce
 	// a block, because thoughts are model reasoning, not block output.
@@ -180,9 +186,8 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks from thought part, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks from thought part, got %d", len(collectedBlocks))
 	}
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty buffer, got %q", pending)
@@ -202,18 +207,21 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	blocks, _ = ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block from text part, got %d", len(blocks))
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block from text part, got %d", len(collectedBlocks))
 	}
-	if blocks[0].Kind != "change" || blocks[0].Boundary != "瑱魃" {
-		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "瑱魃" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
 }
 
 func TestParserStatePendingText(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// Append incomplete block
 	newState, err := ps.AppendContent(&generators.Content{
@@ -249,7 +257,11 @@ func containsStr(s, substr string) bool {
 
 func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// The model opens a block with boundary 徕珑. The body contains a
 	// line-start :::栢彣 </change> with a different boundary. This should be
@@ -268,9 +280,8 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 	// No blocks should be produced for the incomplete block.
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for unclosed block, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks for unclosed block, got %d", len(collectedBlocks))
 	}
 	// The content should remain in the buffer as pending text.
 	pending := ps.PendingText()
@@ -281,7 +292,11 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 
 func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// A body containing a line-start :::栢彣 </change> with a different boundary
 	// is treated as body content. When the matching :::徕珑 </change>
@@ -297,24 +312,27 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	blocks, _ := ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(blocks))
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
 	}
-	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
-		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
-	if !contains(blocks[0].Body, ":::栢彣 </change>") {
-		t.Fatalf("body should contain non-matching closing marker as content: %q", blocks[0].Body)
+	if !contains(collectedBlocks[0].Body, ":::栢彣 </change>") {
+		t.Fatalf("body should contain non-matching closing marker as content: %q", collectedBlocks[0].Body)
 	}
-	if !contains(blocks[0].Body, "body line 1") || !contains(blocks[0].Body, "body line 2") {
-		t.Fatalf("body should contain both body lines: %q", blocks[0].Body)
+	if !contains(collectedBlocks[0].Body, "body line 1") || !contains(collectedBlocks[0].Body, "body line 2") {
+		t.Fatalf("body should contain both body lines: %q", collectedBlocks[0].Body)
 	}
 }
 
 func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// Append an unclosed block (no end marker yet).
 	newState, err := ps.AppendContent(&generators.Content{
@@ -326,9 +344,8 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 	// No complete block before Flush.
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks before flush, got %d", len(blocks))
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
 	}
 
 	// Flush should return an error for the unclosed block, because an
@@ -348,7 +365,11 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 
 func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// Append a complete block (with end marker).
 	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
@@ -362,9 +383,8 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	ps = newState.(*ParserState)
 
 	// The complete block should already be parsed during AppendContent.
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block before flush, got %d", len(blocks))
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block before flush, got %d", len(collectedBlocks))
 	}
 
 	// Flush should succeed because there are no unclosed blocks.
@@ -374,11 +394,7 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	}
 	ps = flushedState.(*ParserState)
 
-	// No blocks should remain after flush.
-	blocks, _ = ps.PopBlocks()
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks after flush, got %d", len(blocks))
-	}
+	// No pending text should remain after flush.
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty pending text after flush, got %q", pending)
 	}
@@ -386,7 +402,11 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 
 func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
 
 	// The end marker is at the very end without a trailing newline.
 	// The block should be parsed correctly during streaming.
@@ -400,18 +420,17 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	blocks, ps := ps.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(blocks))
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
 	}
-	if blocks[0].Kind != "change" || blocks[0].Boundary != "徕珑" {
-		t.Fatalf("unexpected block: kind=%s boundary=%s", blocks[0].Kind, blocks[0].Boundary)
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
-	if !contains(blocks[0].Body, "func Foo() {}") {
-		t.Fatalf("body should contain the code: %q", blocks[0].Body)
+	if !contains(collectedBlocks[0].Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", collectedBlocks[0].Body)
 	}
-	if contains(blocks[0].Body, ":::徕珑") {
-		t.Fatalf("body should not contain the end marker: %q", blocks[0].Body)
+	if contains(collectedBlocks[0].Body, ":::徕珑") {
+		t.Fatalf("body should not contain the end marker: %q", collectedBlocks[0].Body)
 	}
 
 	// No pending text should remain after a fully parsed block.
@@ -420,77 +439,17 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	}
 }
 
-func TestParserStateHasCompletionBlock(t *testing.T) {
-	t.Run("SummaryBlock", func(t *testing.T) {
-		upstream := &mockState{systemPrompt: "system prompt"}
-		ps := NewParserState(upstream)
-		text := ":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"
-		newState, err := ps.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ps = newState.(*ParserState)
-		if !ps.HasCompletionBlock() {
-			t.Fatal("expected HasCompletionBlock to return true for summary block")
-		}
-	})
-
-	t.Run("FinishBlock", func(t *testing.T) {
-		upstream := &mockState{systemPrompt: "system prompt"}
-		ps := NewParserState(upstream)
-		text := ":::徕珑 <finish>\nDone.\n:::徕珑 </finish>\n"
-		newState, err := ps.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ps = newState.(*ParserState)
-		if !ps.HasCompletionBlock() {
-			t.Fatal("expected HasCompletionBlock to return true for finish block")
-		}
-	})
-
-	t.Run("ChangeBlockOnly", func(t *testing.T) {
-		upstream := &mockState{systemPrompt: "system prompt"}
-		ps := NewParserState(upstream)
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-		newState, err := ps.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ps = newState.(*ParserState)
-		if ps.HasCompletionBlock() {
-			t.Fatal("expected HasCompletionBlock to return false for change block only")
-		}
-	})
-
-	t.Run("NilState", func(t *testing.T) {
-		var ps *ParserState
-		if ps.HasCompletionBlock() {
-			t.Fatal("expected HasCompletionBlock to return false for nil state")
-		}
-	})
-}
-
 type testHandlerError struct {
 	msg string
 }
 
 func TestParserStateBlockHandler(t *testing.T) {
-	t.Run("ConsumesBlocks", func(t *testing.T) {
+	t.Run("ReceivesBlocks", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		var handledBlocks []Block
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
+		ps := NewParserState(upstream, func(block Block) error {
 			handledBlocks = append(handledBlocks, block)
-			return true, nil
+			return nil
 		})
 
 		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
@@ -509,56 +468,16 @@ func TestParserStateBlockHandler(t *testing.T) {
 		if handledBlocks[0].Kind != "change" {
 			t.Fatalf("expected change block, got %s", handledBlocks[0].Kind)
 		}
-
-		blocks, _ := ps.PopBlocks()
-		if len(blocks) != 0 {
-			t.Fatalf("expected 0 blocks (consumed by handler), got %d", len(blocks))
-		}
-	})
-
-	t.Run("DoesNotConsumeNonChangeBlocks", func(t *testing.T) {
-		upstream := &mockState{systemPrompt: "system prompt"}
-		var handledBlocks []Block
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
-			handledBlocks = append(handledBlocks, block)
-			if block.Kind == "change" {
-				return true, nil
-			}
-			return false, nil
-		})
-
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n" +
-			":::栢彣 <summary>\nDone.\n:::栢彣 </summary>\n"
-		newState, err := ps.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ps = newState.(*ParserState)
-
-		if len(handledBlocks) != 2 {
-			t.Fatalf("expected 2 handled blocks, got %d", len(handledBlocks))
-		}
-
-		blocks, _ := ps.PopBlocks()
-		if len(blocks) != 1 {
-			t.Fatalf("expected 1 remaining block (summary), got %d", len(blocks))
-		}
-		if blocks[0].Kind != "summary" {
-			t.Fatalf("expected summary block, got %s", blocks[0].Kind)
-		}
 	})
 
 	t.Run("ErrorStopsStreaming", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		expectedErr := &testHandlerError{msg: "apply failed"}
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
+		ps := NewParserState(upstream, func(block Block) error {
 			if block.Kind == "change" {
-				return false, expectedErr
+				return expectedErr
 			}
-			return false, nil
+			return nil
 		})
 
 		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
@@ -577,9 +496,9 @@ func TestParserStateBlockHandler(t *testing.T) {
 	t.Run("HandlerPropagatedToNewState", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		var callCount int
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
+		ps := NewParserState(upstream, func(block Block) error {
 			callCount++
-			return true, nil
+			return nil
 		})
 
 		text1 := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
@@ -612,9 +531,9 @@ func TestParserStateBlockHandler(t *testing.T) {
 	t.Run("HandlerNotCalledForUnclosedDuringFlush", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		var handledBlocks []Block
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
+		ps := NewParserState(upstream, func(block Block) error {
 			handledBlocks = append(handledBlocks, block)
-			return true, nil
+			return nil
 		})
 
 		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
@@ -648,14 +567,8 @@ func TestParserStateBlockHandler(t *testing.T) {
 
 	t.Run("UnclosedBlockCausesFlushError", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
-		// Handler that returns an error for change blocks, simulating
-		// an apply failure on an incomplete block.
-		applyErr := &testHandlerError{msg: "apply failed for incomplete block"}
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
-			if block.Kind == "change" {
-				return false, applyErr
-			}
-			return false, nil
+		ps := NewParserState(upstream, func(block Block) error {
+			return nil
 		})
 
 		// Unclosed change block (no closing marker) — simulates
@@ -685,45 +598,29 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 		}
 	})
+}
 
-	t.Run("HandlerPropagatedThroughPopBlocksByKind", func(t *testing.T) {
-		upstream := &mockState{systemPrompt: "system prompt"}
-		var callCount int
-		ps := NewParserState(upstream, func(block Block) (bool, error) {
-			callCount++
-			return false, nil
-		})
+func TestParserStateNoHandler(t *testing.T) {
+	// When no handler is set, blocks are parsed but discarded.
+	// This is used by commands that don't need post-phase block
+	// processing (e.g., next with -no-apply).
+	upstream := &mockState{systemPrompt: "system prompt"}
+	ps := NewParserState(upstream)
 
-		text := ":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n"
-		newState, err := ps.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ps = newState.(*ParserState)
-		if callCount != 1 {
-			t.Fatalf("expected 1 handler call, got %d", callCount)
-		}
-
-		// PopBlocksByKind should propagate the handler to the new state.
-		_, cleanedPs := ps.PopBlocksByKind("summary")
-
-		// Append another block; the handler should still be active.
-		text2 := ":::栢彣 <summary>\nMore.\n:::栢彣 </summary>\n"
-		newState2, err := cleanedPs.AppendContent(&generators.Content{
-			Role:  generators.RoleAssistant,
-			Parts: []generators.Part{generators.Text(text2)},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		cleanedPs = newState2.(*ParserState)
-		if callCount != 2 {
-			t.Fatalf("expected 2 handler calls after PopBlocksByKind, got %d", callCount)
-		}
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	// No error, blocks are simply discarded.
+	if pending := ps.PendingText(); pending != "" {
+		t.Fatalf("expected empty pending text after block parsed without handler, got %q", pending)
+	}
 }
 
 func (e *testHandlerError) Error() string {

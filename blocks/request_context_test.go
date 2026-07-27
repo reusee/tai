@@ -156,10 +156,6 @@ func TestReadContextFile(t *testing.T) {
 }
 
 func TestReadContextFileNotPathEscapeForDoubleDotPrefix(t *testing.T) {
-	// A filename starting with ".." but not representing parent-directory
-	// traversal (e.g., "..notescape.txt") must not be rejected by the path
-	// escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
-	// incorrectly matched any name starting with two dots.
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -226,10 +222,6 @@ func TestGlobFiles(t *testing.T) {
 }
 
 func TestGlobFilesNotPathEscapeForDoubleDotPrefix(t *testing.T) {
-	// A directory name starting with ".." but not representing parent-
-	// directory traversal (e.g., "..notescape") must not be rejected by the
-	// path escape sanity check. Before the fix, strings.HasPrefix(cleaned, "..")
-	// incorrectly matched any name starting with two dots.
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -429,7 +421,6 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// root is not used for fetch, but required by fetchRequestContext.
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -568,36 +559,48 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 	}
 }
 
-func TestProcessRequestContextBlocksPreservesChangeBlocks(t *testing.T) {
-	upstream := &mockState{systemPrompt: "system prompt"}
-	ps := NewParserState(upstream)
-
-	// Append a change block with no request-context blocks.
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
-	newState, err := ps.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
-	})
+func TestProcessRequestContextBlocksPreservesNonRequestContextBlocks(t *testing.T) {
+	// ProcessRequestContextBlocks only processes request-context blocks.
+	// Non-request-context blocks are not passed to it (filtered by
+	// ProcessComponents), so this test verifies that request-context
+	// blocks are processed correctly.
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps = newState.(*ParserState)
+	defer root.Close()
 
-	// ProcessRequestContextBlocks must not discard non-request-context blocks.
-	_, newPs, hasRC, err := ProcessRequestContextBlocks(ps, context.Background(), nil, nets.HTTPClient{}, ps)
+	content := "test content"
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := generators.NewPrompts("", nil)
+	rcBlocks := []Block{
+		{Kind: "request-context", Body: `<file path="test.txt" />`},
+	}
+
+	newState, hasRC, err := ProcessRequestContextBlocks(rcBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasRC {
-		t.Fatal("expected no request-context blocks")
+	if !hasRC {
+		t.Fatal("expected hasRC=true")
 	}
 
-	// The change block must still be available after processing.
-	blocks, _ := newPs.PopBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 change block to be preserved, got %d", len(blocks))
+	// Verify content was appended to state.
+	found := false
+	for c := range newState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok {
+				if strings.Contains(string(text), content) {
+					found = true
+				}
+			}
+		}
 	}
-	if blocks[0].Kind != "change" {
-		t.Fatalf("expected change block, got %s", blocks[0].Kind)
+	if !found {
+		t.Fatal("expected fetched content in state")
 	}
 }

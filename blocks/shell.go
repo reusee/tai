@@ -278,25 +278,16 @@ func validateSubcommand(cmdStr string) error {
 	return nil
 }
 
-// ProcessShellBlocks executes all shell blocks in the parser state and returns
-// the outputs as generator parts alongside a new *ParserState with those blocks
-// removed. Each command is validated against the security allowlist before
-// execution; rejected commands return an error message as user content instead
-// of being executed. The original parserState is not modified. Callers must
-// thread the returned *ParserState through subsequent block processing and
-// reconcile it with the outer state before the next generation round.
-// See TheoryOfParserState and TheoryOfShellSecurity.
-func ProcessShellBlocks(parserState *ParserState) ([]generators.Part, *ParserState, error) {
-	if parserState == nil {
-		return nil, nil, nil
+// ProcessShellBlocks executes all shell blocks and returns the outputs as
+// generator parts. Each command is validated against the security allowlist
+// before execution; rejected commands return an error message as user content
+// instead of being executed. See TheoryOfShellSecurity.
+func ProcessShellBlocks(blocks []Block) ([]generators.Part, error) {
+	if len(blocks) == 0 {
+		return nil, nil
 	}
-	shellBlocks, newParserState := parserState.PopBlocksByKind("shell")
-	if len(shellBlocks) == 0 {
-		return nil, newParserState, nil
-	}
-
 	var parts []generators.Part
-	for _, block := range shellBlocks {
+	for _, block := range blocks {
 		cmdStr := block.Body
 		if err := validateShellCommand(cmdStr); err != nil {
 			parts = append(parts, generators.Text(
@@ -309,5 +300,5 @@ func ProcessShellBlocks(parserState *ParserState) ([]generators.Part, *ParserSta
 			fmt.Sprintf("Shell command: %s\n\n%s", cmdStr, output),
 		))
 	}
-	return parts, newParserState, nil
+	return parts, nil
 }

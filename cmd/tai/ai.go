@@ -52,13 +52,22 @@ long outputs by chaining multiple rounds.
 
 All block kinds are wired through the Component mechanism (see
 TheoryOfAIComponents), which couples each block kind's system prompt with its
-processing function or ProcessingPath. The component list is shared between
-AISystemPrompt (prompt assembly) and this generation loop (output processing),
-ensuring that any block kind introduced in the prompt always has a matching
-processor. Shell and continue blocks are processed in the loop via
-components.ProcessComponents, which accumulates Parts into a single user message
-for the next round; memory blocks are processed after the loop by
-memories.UpdateMemoryFromBlock.
+processing function. The component list is shared between AISystemPrompt (prompt
+assembly) and this generation loop (output processing), ensuring that any block
+kind introduced in the prompt always has a matching processor. Shell and continue
+blocks are processed in the loop via components.ProcessComponents, which
+accumulates Parts into a single user message for the next round; memory blocks
+are processed after the loop by memories.UpdateMemoryFromBlock.
+
+Block Collection:
+Blocks are collected by a BlockHandler callback set on ParserState during
+generation. The handler appends each parsed block to an external collectedBlocks
+slice. After generation, collectedBlocks are passed to ProcessComponents, which
+filters by kind and dispatches to the appropriate component. Remaining blocks
+(not matched by any component) are carried forward to the next cycle. This
+eliminates the need for ParserState to store blocks or for reconciliation
+between the state chain and block storage. See blocks.TheoryOfParserState and
+components.TheoryOfComponents.
 `
 
 var AICommand = Command{
@@ -154,12 +163,24 @@ var AICommand = Command{
 		// See TheoryOfAiCommand.
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
+		// collectedBlocks stores blocks parsed during generation.
+		// The BlockHandler appends to this slice; remaining blocks
+		// after ProcessComponents are carried forward to the next cycle.
+		// See TheoryOfAiCommand.
+		var collectedBlocks []blocks.Block
+
 		// Generation loop with block processing via components.
 		// The component list couples each block kind's prompt with its
 		// processing function, ensuring prompt-processing parity.
 		// See TheoryOfAIComponents and components.TheoryOfComponents.
 		for {
-			parserState := blocks.NewParserState(baseState)
+			// Handler collects all blocks for post-generation processing.
+			handler := func(block blocks.Block) error {
+				collectedBlocks = append(collectedBlocks, block)
+				return nil
+			}
+
+			parserState := blocks.NewParserState(baseState, handler)
 			state := generators.State(parserState)
 
 			phase := buildGenerate(generator, nil)(
@@ -172,34 +193,20 @@ var AICommand = Command{
 				ce(err)
 			}
 
-			// Extract the current ParserState from the state chain.
-			// With immutable ParserState, the original parserState pointer
-			// is not updated by AppendContent; the current *ParserState is
-			// the one inside the state returned by the phase chain.
-			// See TheoryOfParserState in blocks/parser_state.go.
-			finalParserState, ok := generators.As[*blocks.ParserState](state)
-			if !ok {
-				finalParserState = parserState
+			// Unwrap ParserState to get the base state for the next
+			// cycle. The state is already flushed by Generate.
+			if ps, ok := generators.As[*blocks.ParserState](state); ok {
+				baseState = ps.Unwrap()
+			} else {
+				baseState = state
 			}
-
-			// Flush to finalize any unclosed blocks in ParserState.
-			// Flush returns a new *ParserState; use it for subsequent
-			// block processing and for extracting the unwrapped base state.
-			flushedState, err := finalParserState.Flush()
-			ce(err)
-			if ps, ok := generators.As[*blocks.ParserState](flushedState); ok {
-				finalParserState = ps
-			}
-
-			// Update baseState for potential next cycle.
-			baseState = finalParserState.Unwrap()
 
 			// Process blocks via components. See components.TheoryOfComponents
 			// and components.ProcessComponents.
 			var combinedParts []generators.Part
 			var triggered bool
-			_, baseState, combinedParts, triggered, err = components.ProcessComponents(
-				ctx, comps.ComponentSet, finalParserState, baseState, nil, nets.HTTPClient{}, nil, false,
+			collectedBlocks, baseState, combinedParts, triggered, err = components.ProcessComponents(
+				ctx, comps.ComponentSet, collectedBlocks, baseState, nil, nets.HTTPClient{}, nil, false,
 			)
 			ce(err)
 

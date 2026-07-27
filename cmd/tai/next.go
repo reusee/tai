@@ -143,18 +143,18 @@ var NextCommand = Command{
 		// See blocks.TheoryOfParserState and changes.TheoryOfInMemoryApply.
 		var parserHandler blocks.BlockHandler
 		if bool(apply) {
-			parserHandler = func(block blocks.Block) (bool, error) {
+			parserHandler = func(block blocks.Block) error {
 				if block.Kind != "change" {
-					return false, nil
+					return nil
 				}
 				h, parsedOk := changes.ParseChangeBlock(block)
 				if !parsedOk {
-					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+					return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 				}
 				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+					return fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
 				}
-				return true, nil
+				return nil
 			}
 		}
 		state = blocks.NewParserState(state, parserHandler)

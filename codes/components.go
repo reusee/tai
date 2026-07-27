@@ -76,11 +76,8 @@ func (Module) CodesComponents(
 			PromptSection: changes.ChangeBlockSystemPrompt(),
 			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-				newPs, err := changes.ApplyChangeBlocks(pctx.ParserState, pctx.Root)
-				return components.ProcessResult{
-					ParserState: newPs,
-					Err:         err,
-				}
+				err := changes.ApplyChangeBlocks(pctx.Blocks, pctx.Root)
+				return components.ProcessResult{Err: err}
 			},
 		})
 	} else {
@@ -106,10 +103,9 @@ func (Module) CodesComponents(
 		RestatePrompt: blocks.GoTestBlockRestatePrompt,
 		MaxRounds:     maxGoTestRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			parts, newPs, failed, err := blocks.ProcessGoTestBlocks(pctx.ParserState, ctx)
+			parts, failed, err := blocks.ProcessGoTestBlocks(pctx.Blocks, ctx)
 			result := components.ProcessResult{
-				ParserState: newPs,
-				Err:         err,
+				Err: err,
 			}
 			// Only feed test output to the next round when tests fail,
 			// so the model can debug the failures. When tests pass, no
@@ -143,12 +139,11 @@ func (Module) CodesComponents(
 			RestatePrompt: blocks.RequestContextRestatePrompt,
 			MaxRounds:     maxRequestContextRounds,
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-				state, newPs, hasRC, err := blocks.ProcessRequestContextBlocks(
-					pctx.ParserState, ctx, pctx.Root, pctx.HttpClient, pctx.State,
+				state, hasRC, err := blocks.ProcessRequestContextBlocks(
+					pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
 				)
 				result := components.ProcessResult{
-					ParserState: newPs,
-					Err:         err,
+					Err: err,
 				}
 				// Only set State when request-context blocks were
 				// found and fetched content was appended, so that
