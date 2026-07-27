@@ -588,7 +588,7 @@ func (Module) Generate(
 		// See TheoryOfRoundStatistics.
 		var roundStats []roundStat
 		defer func() {
-			printRoundStats(os.Stdout, roundStats)
+			printRoundStats(output, roundStats)
 		}()
 
 		// Get the fast model for summarization tasks. The fast model
