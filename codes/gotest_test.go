@@ -52,11 +52,12 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 	)
 
 	// Create a ParserState with a go-test block that matches no tests.
-	// go test -run ___nonexistent___ succeeds (exit code 0) because no
-	// tests match, so no Parts are returned.
+	// -run and ___nonexistent___ are on separate lines. go test
+	// -run ___nonexistent___ succeeds (exit code 0) because no tests
+	// match, so no Parts are returned.
 	state := generators.NewPrompts("", nil)
 	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <go-test>\n-run ___nonexistent___\n:::徕珑 </go-test>\n"
+	text := ":::徕珑 <go-test>\n-run\n___nonexistent___\n:::徕珑 </go-test>\n"
 	newState, err := parserState.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

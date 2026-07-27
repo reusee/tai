@@ -13,10 +13,11 @@ func TestProcessGoTestBlocks(t *testing.T) {
 		state := generators.NewPrompts("", nil)
 		parserState := NewParserState(state)
 
-		// -run 'Test[' is an invalid regex, causing go test to fail
-		// with a regexp parsing error. This verifies that stdout and
-		// stderr are fed back to the model when tests fail.
-		text := ":::徕珑 <go-test>\n-run 'Test['\n:::徕珑 </go-test>\n"
+		// -run and Test[ on separate lines. Test[ is an invalid
+		// regex, causing go test to fail with a regexp parsing error.
+		// This verifies that stdout and stderr are fed back to the
+		// model when tests fail.
+		text := ":::徕珑 <go-test>\n-run\nTest[\n:::徕珑 </go-test>\n"
 		newState, err := parserState.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -57,9 +58,10 @@ func TestProcessGoTestBlocks(t *testing.T) {
 		state := generators.NewPrompts("", nil)
 		parserState := NewParserState(state)
 
-		// -run ___nonexistent___ matches no tests, so go test succeeds.
+		// -run and ___nonexistent___ on separate lines.
+		// ___nonexistent___ matches no tests, so go test succeeds.
 		// When tests pass, no output parts should be returned.
-		text := ":::徕珑 <go-test>\n-run ___nonexistent___\n:::徕珑 </go-test>\n"
+		text := ":::徕珑 <go-test>\n-run\n___nonexistent___\n:::徕珑 </go-test>\n"
 		newState, err := parserState.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -115,9 +117,9 @@ func TestProcessGoTestBlocksPreservesChangeBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	// Use -run 'Test[' (invalid regex) to make go test fail, so output
+	// Use -run Test[ (invalid regex) to make go test fail, so output
 	// parts are returned and we can verify change blocks are preserved.
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <go-test>\n-run 'Test['\n:::栢彣 </go-test>\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <go-test>\n-run\nTest[\n:::栢彣 </go-test>\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

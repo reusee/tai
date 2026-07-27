@@ -14,8 +14,8 @@ import (
 
 const TheoryOfGoTestBlocks = `
 Go-test blocks allow the model to run Go tests and receive the output as part
-of the next generation round. After making code changes, the model emits a
-go-test block to verify correctness. The system runs go test with the specified
+of a generation cycle. After making code changes, the model emits a go-test
+block to verify correctness. The system runs go test with the specified
 arguments and feeds both stdout and stderr back as user content. If tests
 fail, the error output is returned so the model can debug and fix the issues
 in subsequent rounds. This enables autonomous test-driven development: the
@@ -27,10 +27,12 @@ a go.mod file. The system prompt instructs the model to use go-test blocks
 only when working with Go code. In non-Go projects, the model should rely on
 shell blocks for command execution instead.
 
-The block body contains optional arguments passed to go test. If the body is
-empty, all tests in the current directory tree (./...) are run. The body is
-passed to sh -c as "go test <body>" to handle quoted arguments and shell
-expansion correctly.
+The block body contains optional arguments passed to go test, one argument
+per line. If the body is empty, all tests in the current directory tree
+(./...) are run. Each non-empty line is passed as a separate argument to
+go test via exec.Command, bypassing the shell entirely. This avoids shell
+injection vulnerabilities that could arise from passing model-generated
+content through sh -c.
 
 The model does not know the current working directory, so relative path
 arguments (e.g., ./pkg/...) are error-prone: the model may guess the wrong
@@ -80,27 +82,38 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 **Go-Test Block Format:**
 
 :::<boundary> <go-test>
-<optional go test arguments>
+<optional go test arguments, one per line>
 :::<boundary> </go-test>
 
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
-- The body contains optional arguments passed to go test (e.g., -run TestFoo, -v, /absolute/path/to/pkg/...). If empty, all tests in the current directory tree (./...) are run.
+- The body contains optional arguments passed to go test, one argument per line. Each non-empty line is passed as a separate argument to the go test command via exec.Command, bypassing the shell to avoid injection. If empty, all tests in the current directory tree (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
-- **Target specific tests**: When you modify or add a test function, name it in the -run argument (e.g., -run TestFoo /absolute/path/to/pkg/...) so the verification is directly tied to your change. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
+- **Target specific tests**: When you modify or add a test function, name it in the -run argument so the verification is directly tied to your change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 - The go-test block is NOT a completion signal. You MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
 - The go-test block should appear before the summary block in the response.
+
+**Example:**
+
+After modifying a test function, emit a go-test block with each argument on a separate line:
+:::<boundary> <go-test>
+-run
+TestFoo
+-v
+/absolute/path/to/pkg/...
+:::<boundary> </go-test>
 `
 
 const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block to verify:
 :::<boundary> <go-test>
-<optional go test arguments>
+<optional go test arguments, one per line>
 :::<boundary> </go-test>
+- Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
-- **Target specific tests**: When you modify or add a test function, name it in the -run argument (e.g., -run TestFoo /absolute/path/to/pkg/...) so the verification is directly tied to your change. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
+- **Target specific tests**: When you modify or add a test function, name it in the -run argument so the verification is directly tied to your change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
@@ -112,13 +125,27 @@ const goTestTimeout = 120 * time.Second
 // output and whether the tests failed. The working directory is determined
 // via os.Getwd and included in the output so the model can construct
 // absolute paths for subsequent test runs. See TheoryOfGoTestBlocks.
+//
+// Arguments are parsed from a newline-separated list: each non-empty line
+// becomes a separate argument passed directly to the go binary via
+// exec.Command, bypassing the shell entirely to avoid injection.
 func executeGoTest(ctx context.Context, args string) (string, bool) {
 	cmdCtx, cancel := context.WithTimeout(ctx, goTestTimeout)
 	defer cancel()
 
-	cmdStr := "go test ./..."
-	if strings.TrimSpace(args) != "" {
-		cmdStr = "go test " + args
+	// Parse arguments from a newline-separated list. Each non-empty
+	// line becomes a separate argument passed directly to go test via
+	// exec.Command, bypassing the shell entirely to avoid injection.
+	// See TheoryOfGoTestBlocks.
+	var testArgs []string
+	for _, line := range strings.Split(args, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			testArgs = append(testArgs, line)
+		}
+	}
+	if len(testArgs) == 0 {
+		testArgs = []string{"./..."}
 	}
 
 	// Determine the working directory so it can be included in the output.
@@ -131,7 +158,10 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 		workDir = "(unknown)"
 	}
 
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", cmdStr)
+	fullArgs := make([]string, 0, len(testArgs)+1)
+	fullArgs = append(fullArgs, "test")
+	fullArgs = append(fullArgs, testArgs...)
+	cmd := exec.CommandContext(cmdCtx, "go", fullArgs...)
 	if dirErr == nil {
 		cmd.Dir = workDir
 	}
@@ -140,6 +170,7 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	cmdStr := "go test " + strings.Join(testArgs, " ")
 	if err != nil {
 		return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand failed with error: %v\nStdout:\n%s\nStderr:\n%s",
 			workDir, cmdStr, err, stdout.String(), stderr.String()), true
