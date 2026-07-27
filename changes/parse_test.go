@@ -435,3 +435,17 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 		}
 	})
 }
+
+func TestChangeBlockPromptPrefersPreciseModifications(t *testing.T) {
+	prompt := ChangeBlockSystemPrompt()
+	if !strings.Contains(prompt, "Prefer Precise Modifications") {
+		t.Fatal("ChangeBlockSystemPrompt should contain guidance to prefer precise modifications over WRITE")
+	}
+	if !strings.Contains(prompt, "WRITE should only be used when creating a new file") {
+		t.Fatal("ChangeBlockSystemPrompt should explain when WRITE is appropriate")
+	}
+	restate := ChangeBlockRestatePrompt()
+	if !strings.Contains(restate, "Prefer precise modifications over WRITE") {
+		t.Fatal("ChangeBlockRestatePrompt should contain guidance to prefer precise modifications over WRITE")
+	}
+}

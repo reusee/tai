@@ -75,7 +75,18 @@ import synchronization. If the file does not exist or has no real package
 clause, MODIFY is a no-op (consistent with existing MODIFY behavior).
 `
 
-// isGoFile reports whether the given file path has a .go extension.
+const TheoryOfPreciseModifications = `
+Precise modifications (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE,
+INSERT_BEFORE, INSERT_AFTER) target a specific declaration or text anchor,
+touching only the bytes that need to change. WRITE replaces the entire file
+content, which is token-expensive and has a large review blast radius: every
+byte must be re-verified, and unrelated code may be accidentally altered.
+Therefore WRITE should be reserved for two cases: creating a new file from
+scratch, or replacing the majority of a file's content. For small or
+localized changes, precise modifications must always be preferred. This
+principle minimizes token cost, reduces review burden, and preserves the
+integrity of untouched code.
+` // isGoFile reports whether the given file path has a .go extension.
 func isGoFile(path string) bool {
 	return strings.HasSuffix(path, ".go")
 }
@@ -202,7 +213,7 @@ The "change" kind defines code modifications using the boundary block format. Th
     - ADD_AFTER: Add new code after an existing declaration.
     - DELETE: Remove an existing declaration, or remove an entire file when target is *.
     - RENAME: Rename a file. ` + "`target`" + ` is the new file path, ` + "`file-path`" + ` is the current file path. The code body is ignored and may be empty.
-    - WRITE: Replace the entire content of the file specified by ` + "`file-path`" + `. The ` + "`target`" + ` attribute is ignored and may be omitted. The code body is the complete new file content. For Go files, the body must include the package declaration.
+    - WRITE: Replace the entire content of the file specified by ` + "`file-path`" + `. The ` + "`target`" + ` attribute is ignored and may be omitted. The code body is the complete new file content. For Go files, the body must include the package declaration. WRITE should only be used when creating a new file or when the majority of the file content is changing; for small or localized changes, prefer precise modifications (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE, INSERT_BEFORE, INSERT_AFTER).
     - REPLACE: Find a unique string in the file (specified by the ` + "`find`" + ` attribute) and replace it with the body content. The find string must be unique in the file; if it appears multiple times, use WRITE instead. Works on any text file (Go or non-Go). For Go files, goimports is run after the replacement.
     - INSERT_BEFORE: Insert the body content before a unique anchor string (specified by the ` + "`find`" + ` attribute) in the file. The find string must be unique. Works on any text file.
     - INSERT_AFTER: Insert the body content after a unique anchor string (specified by the ` + "`find`" + ` attribute) in the file. The find string must be unique. Works on any text file.
@@ -212,7 +223,8 @@ The "change" kind defines code modifications using the boundary block format. Th
 - **STRICT ONE-ENTITY RULE**: Each change block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. If you need to modify or add a type together with its methods, you MUST use SEPARATE blocks for each entity. For example: to add a struct with methods, use one block for the type definition, and individual blocks for each method (targeted as TypeName.MethodName). Do NOT group a type definition with its methods in the same block.
 - **Non-Go file restriction**: For non-Go files (files not ending in .go), file-level operations (WRITE, RENAME, DELETE with target=*) and text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are supported. Operations that require structural identification of declarations (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target) are not valid for non-Go files because the system cannot parse their structure to locate declarations. For partial edits to non-Go files, use REPLACE, INSERT_BEFORE, or INSERT_AFTER with a unique find string. For full-file replacement, use WRITE.
 
-**Special Go-Only Targets (MODIFY):**
+**Prefer Precise Modifications:**
+Prefer precise modifications (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE, INSERT_BEFORE, INSERT_AFTER) over WRITE whenever the change is small or localized. WRITE replaces the entire file, which is token-expensive, requires re-reviewing every line, and risks altering unrelated code. Reserve WRITE for creating new files or when the majority of the file content is changing. See TheoryOfPreciseModifications.**Special Go-Only Targets (MODIFY):**
 
 The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targets that support only the MODIFY operation. They enable token-efficient modification of the package clause and import block without requiring WRITE to replace the entire file — essential when moving a file to a different package, renaming a package, or updating imports across dependent files.
 
@@ -274,7 +286,7 @@ const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST 
 - For REPLACE, INSERT_BEFORE, and INSERT_AFTER, use the ` + "`find`" + ` attribute to specify a unique string anchor in the file. The find string must appear exactly once. For REPLACE, the body is the replacement text. For INSERT_BEFORE and INSERT_AFTER, the body is the text to insert before or after the anchor.
 - **Non-Go files**: For files not ending in .go, only WRITE, RENAME, DELETE (target=*), REPLACE, INSERT_BEFORE, and INSERT_AFTER are allowed. MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific target require structural identification and are not supported for non-Go files. For partial edits, use REPLACE, INSERT_BEFORE, or INSERT_AFTER with a unique find string. For full-file replacement, use WRITE.
 - **Special Go-only MODIFY targets**: Use ` + "`target=\"package\"`" + ` to replace the file's package clause, and ` + "`target=\"import\"`" + ` to replace all import declarations as a group. Both run goimports after replacement to ensure valid formatting and import synchronization.
-- Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.
+- Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.- **Prefer precise modifications over WRITE**: Use WRITE only when creating a new file or when the majority of the file content is changing. For small or localized changes, use MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE, INSERT_BEFORE, or INSERT_AFTER to minimize token cost and review blast radius.
 - If no changes are needed, omit all change blocks.
 - Even when no change blocks are emitted, a finish block is still required. Generate a finish block with "No changes were needed." as the summary.
 `
