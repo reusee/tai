@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/components"
@@ -94,7 +94,7 @@ var AICommand = Command{
 
 		var files []string
 		for pattern := range flagFiles {
-			paths, err := filepath.Glob(pattern)
+			paths, err := doublestar.FilepathGlob(pattern)
 			if err != nil {
 				files = append(files, pattern)
 			} else {

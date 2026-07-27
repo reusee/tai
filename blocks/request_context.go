@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/pathutil"
@@ -309,13 +310,13 @@ func readContextFile(root *os.Root, path string) (string, error) {
 // globFiles lists files matching a glob pattern. It applies the same path
 // sanity check as readContextFile: absolute patterns are permitted, while
 // relative patterns containing parent-directory traversal are rejected.
-// Patterns are resolved relative to the root directory (via root.Name) so
-// that filepath.Glob and filepath.Walk search within the root's tree rather
-// than the process's current working directory. See TheoryOfRequestContext.
-//
-// filepath.Glob does not support ** (globstar) patterns, where ** as a
-// complete path segment matches zero or more directories. When the pattern
-// contains **, globWithDoubleStar resolves it via a recursive directory walk.
+// Patterns are resolved relative to the root directory via
+// doublestar.FilepathGlob, which natively handles ** (globstar) patterns for
+// recursive directory traversal. When ** appears as a complete path segment, it
+// matches zero or more directories. This unifies all glob-based file matching
+// across the system on the doublestar library, replacing the prior mix of
+// filepath.Glob and a custom ** walker. See TheoryOfPatternMatching in
+// anytexts/code_provider.go.
 func globFiles(root *os.Root, pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
@@ -324,7 +325,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 		}
 	}
 	// Resolve the pattern relative to the root directory so that
-	// filepath.Glob and filepath.Walk search within the root's tree,
+	// doublestar.FilepathGlob searches within the root's tree,
 	// not the process's current working directory. See TheoryOfRequestContext.
 	rootDir, err := filepath.Abs(root.Name())
 	if err != nil {
@@ -334,12 +335,11 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		searchPattern = filepath.Join(rootDir, pattern)
 	}
-	var matches []string
-	if strings.Contains(pattern, "**") {
-		matches, err = globWithDoubleStar(searchPattern)
-	} else {
-		matches, err = filepath.Glob(searchPattern)
-	}
+	// doublestar.FilepathGlob unifies glob expansion with native ** support.
+	// WithFilesOnly excludes directories, matching the prior globWithDoubleStar
+	// behavior where filepath.Walk skipped directories.
+	// See TheoryOfPatternMatching in anytexts/code_provider.go.
+	matches, err := doublestar.FilepathGlob(searchPattern, doublestar.WithFilesOnly())
 	if err != nil {
 		return nil, err
 	}
@@ -361,109 +361,6 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 		}
 	}
 	return filtered, nil
-}
-
-// globWithDoubleStar resolves glob patterns containing ** (globstar) by
-// walking the base directory (the portion of the pattern before the first **)
-// and matching each file's relative path against the suffix pattern (the
-// portion after **). The base directory may itself contain simple glob
-// characters (e.g., src*/**/*.go), which are resolved with filepath.Glob.
-// Results from filepath.Walk are in lexical order; when multiple base
-// directories are matched, the concatenation is sorted for consistency
-// with filepath.Glob.
-func globWithDoubleStar(pattern string) ([]string, error) {
-	before, after, ok := strings.Cut(pattern, "**")
-	if !ok {
-		return filepath.Glob(pattern)
-	}
-
-	// Base directory: everything before **, trimmed of trailing separator.
-	baseDirPattern := strings.TrimSuffix(before, string(filepath.Separator))
-	if baseDirPattern == "" {
-		baseDirPattern = "."
-	}
-
-	// Suffix pattern: everything after ** and the following separator.
-	suffix := after
-	suffix = strings.TrimPrefix(suffix, string(filepath.Separator))
-
-	// Resolve base directories (may contain simple glob characters).
-	var baseDirs []string
-	if strings.ContainsAny(baseDirPattern, "*?[") {
-		matches, err := filepath.Glob(baseDirPattern)
-		if err != nil {
-			return nil, err
-		}
-		baseDirs = matches
-	} else {
-		baseDirs = []string{baseDirPattern}
-	}
-
-	var matches []string
-	for _, baseDir := range baseDirs {
-		info, err := os.Stat(baseDir)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		err = filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			if info.IsDir() {
-				return nil
-			}
-			rel, relErr := filepath.Rel(baseDir, path)
-			if relErr != nil {
-				return nil
-			}
-			rel = filepath.ToSlash(rel)
-			if suffix == "" || matchGlobPath(suffix, rel) {
-				matches = append(matches, path)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Sort for consistency with filepath.Glob when multiple base
-	// directories produce interleaved results. filepath.Walk already
-	// traverses in lexical order within a single base directory.
-	if len(baseDirs) > 1 {
-		for i := 1; i < len(matches); i++ {
-			for j := i; j > 0 && matches[j-1] > matches[j]; j-- {
-				matches[j-1], matches[j] = matches[j], matches[j-1]
-			}
-		}
-	}
-	return matches, nil
-}
-
-// matchGlobPath checks if a path matches a glob pattern that may contain
-// path separators. The ** globstar (handled by the caller) matches any number
-// of leading directories, so the suffix pattern only needs to match the
-// last len(patternParts) components of the path. Each component is matched
-// using filepath.Match, where * matches non-separator characters.
-// An empty pattern (which occurs when the original glob ends with **) matches
-// any path, because ** with no trailing pattern means "match everything".
-func matchGlobPath(pattern, path string) bool {
-	if pattern == "" {
-		return true
-	}
-	patternParts := strings.Split(pattern, "/")
-	pathParts := strings.Split(path, "/")
-	if len(patternParts) > len(pathParts) {
-		return false
-	}
-	offset := len(pathParts) - len(patternParts)
-	for i, p := range patternParts {
-		matched, err := filepath.Match(p, pathParts[offset+i])
-		if err != nil || !matched {
-			return false
-		}
-	}
-	return true
 }
 
 func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req RequestContextRequest) (string, error) {

@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"golang.org/x/tools/go/ast/astutil"
@@ -611,44 +611,10 @@ func deleteFunctionBody(file *ast.File) *ast.File {
 }
 
 // matchPattern reports whether the relative path matches the glob pattern,
-// using standard filepath.Match semantics with added support for ** matching
-// zero or more directory components.
+// using doublestar.PathMatch for ** (globstar) support. This unifies all
+// pattern matching on the doublestar library.
+// See TheoryOfPatternMatching in anytexts/code_provider.go.
 func matchPattern(name, pattern string) bool {
-	return matchParts(splitPath(name), splitPath(pattern))
-}
-
-func splitPath(p string) []string {
-	if p == "" {
-		return nil
-	}
-	return strings.Split(filepath.Clean(p), string(filepath.Separator))
-}
-
-func matchParts(nameParts, patternParts []string) bool {
-	if len(patternParts) == 0 {
-		return len(nameParts) == 0
-	}
-	if len(nameParts) == 0 {
-		for _, p := range patternParts {
-			if p != "**" {
-				return false
-			}
-		}
-		return true
-	}
-	p := patternParts[0]
-	if p == "**" {
-		// match zero or more directories
-		for i := 0; i <= len(nameParts); i++ {
-			if matchParts(nameParts[i:], patternParts[1:]) {
-				return true
-			}
-		}
-		return false
-	}
-	ok, err := filepath.Match(p, nameParts[0])
-	if err != nil || !ok {
-		return false
-	}
-	return matchParts(nameParts[1:], patternParts[1:])
+	matched, err := doublestar.PathMatch(pattern, name)
+	return err == nil && matched
 }
