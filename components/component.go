@@ -40,6 +40,18 @@ block kind is taught to the model but no code processes its output. Prompt-only
 Components (empty Kind) are exempt from this check because they contribute only
 prompt text and have no block output to process.
 
+ProcessComponents is the shared function that iterates over Processable
+components in registration order, calling each component's Process function and
+accumulating results. Both the ai command (cmd/tai/ai.go) and the codes module
+(codes/generate.go) call ProcessComponents, so the component processing loop is
+identical across all generation commands — only the ComponentSet differs. The
+function parameterizes Root and HttpClient (nil for commands whose components
+do not need them, like ai's shell/continue), MaxRounds enforcement (disabled
+for ai, enabled for codes), and roundCounts tracking (nil for ai). This is the
+practical limit of loop unification: the outer loop structure differs because
+ai uses an interactive chat phase (buildChat) while codes is single-shot, but
+the component processing inner loop is fully shared.
+
 The mechanism is the integrity guarantee: it makes the coupling between prompt
 and processing explicit and machine-checkable rather than implicit and
 human-maintained. By extending the same mechanism to prompt-only contributions,
@@ -191,4 +203,72 @@ func (c ComponentSet) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ProcessComponents iterates over processable components in registration order,
+// calling each component's Process function and accumulating results. It
+// returns the updated ParserState (with consumed blocks removed), the updated
+// State (if any component modified it), combined Parts from all components,
+// whether any component triggered a new round (produced Parts or modified
+// State), and an error if any component failed. When enforceMaxRounds is true
+// and roundCounts is non-nil, per-component MaxRounds limits are enforced,
+// preventing infinite loops from components that keep producing output.
+//
+// Both the ai command and the codes module call this function, so the
+// component processing loop is identical across all generation commands —
+// only the ComponentSet differs. See TheoryOfComponents.
+func ProcessComponents(
+	ctx context.Context,
+	comps ComponentSet,
+	currentPs *blocks.ParserState,
+	state generators.State,
+	root *os.Root,
+	httpClient nets.HTTPClient,
+	roundCounts map[string]int,
+	enforceMaxRounds bool,
+) (
+	newPs *blocks.ParserState,
+	newState generators.State,
+	combinedParts []generators.Part,
+	triggered bool,
+	err error,
+) {
+	stateModified := false
+	for _, comp := range comps.Processable() {
+		result := comp.Process(ctx, &ProcessContext{
+			ParserState: currentPs,
+			State:       state,
+			Root:        root,
+			HttpClient:  httpClient,
+		})
+		if result.Err != nil {
+			return currentPs, state, combinedParts, triggered, result.Err
+		}
+		if result.ParserState != nil {
+			currentPs = result.ParserState
+		}
+
+		componentTriggered := false
+		if result.State != nil {
+			state = result.State
+			stateModified = true
+			componentTriggered = true
+		}
+		if len(result.Parts) > 0 {
+			combinedParts = append(combinedParts, result.Parts...)
+			componentTriggered = true
+		}
+
+		if componentTriggered {
+			triggered = true
+			if enforceMaxRounds && comp.MaxRounds > 0 && roundCounts != nil {
+				roundCounts[comp.Kind]++
+				if roundCounts[comp.Kind] > comp.MaxRounds {
+					return currentPs, state, combinedParts, triggered,
+						fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
+				}
+			}
+		}
+	}
+	return currentPs, state, combinedParts, stateModified || len(combinedParts) > 0, nil
 }

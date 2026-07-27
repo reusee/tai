@@ -8,6 +8,7 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/nets"
 )
 
 func TestComponentSetPromptSections(t *testing.T) {
@@ -273,6 +274,166 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if err := comps.Validate(); err != nil {
 			t.Fatalf("Validate failed: %v", err)
+		}
+	})
+}
+
+func TestProcessComponents(t *testing.T) {
+	t.Run("accumulates parts from multiple components", func(t *testing.T) {
+		upstream := generators.NewPrompts("system", nil)
+		ps := blocks.NewParserState(upstream)
+
+		text := ":::徕珑 <shell>\necho hello\n:::徕珑 </shell>\n" +
+			":::栢彣 <continue>\nnext round\n:::栢彣 </continue>\n"
+		newState, err := ps.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps = newState.(*blocks.ParserState)
+
+		comps := ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					parts, newPs, err := blocks.ProcessShellBlocks(pctx.ParserState)
+					return ProcessResult{ParserState: newPs, Parts: parts, Err: err}
+				},
+			},
+			{
+				Kind: "continue",
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					parts, newPs := blocks.ProcessContinueBlocks(pctx.ParserState)
+					return ProcessResult{ParserState: newPs, Parts: parts}
+				},
+			},
+		}
+
+		newPs, _, combinedParts, triggered, err := ProcessComponents(
+			context.Background(), comps, ps, upstream, nil, nets.HTTPClient{}, nil, false,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !triggered {
+			t.Fatal("expected triggered=true")
+		}
+		if len(combinedParts) != 2 {
+			t.Fatalf("expected 2 parts, got %d", len(combinedParts))
+		}
+		shellOutput := string(combinedParts[0].(generators.Text))
+		if !strings.Contains(shellOutput, "hello") {
+			t.Fatalf("shell output missing 'hello': %s", shellOutput)
+		}
+		continueOutput := string(combinedParts[1].(generators.Text))
+		if !strings.Contains(continueOutput, "next round") {
+			t.Fatalf("continue body missing 'next round': %s", continueOutput)
+		}
+		// Verify blocks were consumed
+		if remaining, _ := newPs.PopBlocksByKind("shell"); len(remaining) != 0 {
+			t.Fatalf("expected 0 remaining shell blocks")
+		}
+	})
+
+	t.Run("returns error from component", func(t *testing.T) {
+		testErr := errors.New("component error")
+		comps := ComponentSet{
+			{
+				Kind: "failing",
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					return ProcessResult{Err: testErr}
+				},
+			},
+		}
+
+		_, _, _, _, err := ProcessComponents(
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, nil, false,
+		)
+		if err != testErr {
+			t.Fatalf("expected testErr, got %v", err)
+		}
+	})
+
+	t.Run("enforces max rounds", func(t *testing.T) {
+		comps := ComponentSet{
+			{
+				Kind:      "repeating",
+				MaxRounds: 2,
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					return ProcessResult{Parts: []generators.Part{generators.Text("part")}}
+				},
+			},
+		}
+
+		roundCounts := make(map[string]int)
+		_, _, _, _, err := ProcessComponents(
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, roundCounts, true,
+		)
+		if err != nil {
+			t.Fatalf("first call should succeed, got: %v", err)
+		}
+		if roundCounts["repeating"] != 1 {
+			t.Fatalf("expected roundCounts 1, got %d", roundCounts["repeating"])
+		}
+
+		// Second call: roundCounts["repeating"] = 2, which is == MaxRounds, so OK
+		_, _, _, _, err = ProcessComponents(
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, roundCounts, true,
+		)
+		if err != nil {
+			t.Fatalf("second call should succeed (count==MaxRounds), got: %v", err)
+		}
+
+		// Third call: roundCounts["repeating"] = 3, which is > MaxRounds, so error
+		_, _, _, _, err = ProcessComponents(
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, roundCounts, true,
+		)
+		if err == nil {
+			t.Fatal("expected max rounds exceeded error on third call")
+		}
+		if !strings.Contains(err.Error(), "max repeating rounds (2) exceeded") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("does not enforce max rounds when disabled", func(t *testing.T) {
+		comps := ComponentSet{
+			{
+				Kind:      "repeating",
+				MaxRounds: 1,
+				Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+					return ProcessResult{Parts: []generators.Part{generators.Text("part")}}
+				},
+			},
+		}
+
+		roundCounts := make(map[string]int)
+		// enforceMaxRounds=false, so no error even when count exceeds MaxRounds
+		for i := range 5 {
+			_, _, _, _, err := ProcessComponents(
+				context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, roundCounts, false,
+			)
+			if err != nil {
+				t.Fatalf("call %d should not error with enforceMaxRounds=false: %v", i, err)
+			}
+		}
+		if roundCounts["repeating"] != 0 {
+			t.Fatalf("roundCounts should not be incremented when enforceMaxRounds=false, got %d", roundCounts["repeating"])
+		}
+	})
+
+	t.Run("empty component set returns not triggered", func(t *testing.T) {
+		comps := ComponentSet{}
+		_, _, _, triggered, err := ProcessComponents(
+			context.Background(), comps, nil, nil, nil, nets.HTTPClient{}, nil, false,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if triggered {
+			t.Fatal("expected triggered=false for empty component set")
 		}
 	})
 }

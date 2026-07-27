@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/vars"
 )
@@ -54,9 +55,10 @@ TheoryOfAIComponents), which couples each block kind's system prompt with its
 processing function or ProcessingPath. The component list is shared between
 AISystemPrompt (prompt assembly) and this generation loop (output processing),
 ensuring that any block kind introduced in the prompt always has a matching
-processor. Shell and continue blocks are processed in the loop, accumulating
-Parts into a single user message for the next round; memory blocks are
-processed after the loop by memories.UpdateMemoryFromBlock.
+processor. Shell and continue blocks are processed in the loop via
+components.ProcessComponents, which accumulates Parts into a single user message
+for the next round; memory blocks are processed after the loop by
+memories.UpdateMemoryFromBlock.
 `
 
 var AICommand = Command{
@@ -192,36 +194,16 @@ var AICommand = Command{
 			// Update baseState for potential next cycle.
 			baseState = finalParserState.Unwrap()
 
-			// Process blocks via components. Each component with a Process
-			// function is called in registration order. A new generation
-			// round is triggered when any component produces Parts (e.g.,
-			// shell, continue) or modifies State. All processable
-			// components are called; their parts are accumulated and
-			// appended together as a single user message.
-			// See components.TheoryOfComponents.
+			// Process blocks via components. See components.TheoryOfComponents
+			// and components.ProcessComponents.
 			var combinedParts []generators.Part
-			stateModified := false
-			currentPs := finalParserState
-			for _, comp := range comps.Processable() {
-				result := comp.Process(ctx, &components.ProcessContext{
-					ParserState: currentPs,
-					State:       baseState,
-				})
-				if result.Err != nil {
-					logger.ErrorContext(ctx, "block processing",
-						"kind", comp.Kind, "err", result.Err)
-				}
-				if result.ParserState != nil {
-					currentPs = result.ParserState
-				}
-				if result.State != nil {
-					baseState = result.State
-					stateModified = true
-				}
-				combinedParts = append(combinedParts, result.Parts...)
-			}
+			var triggered bool
+			_, baseState, combinedParts, triggered, err = components.ProcessComponents(
+				ctx, comps.ComponentSet, finalParserState, baseState, nil, nets.HTTPClient{}, nil, false,
+			)
+			ce(err)
 
-			if stateModified || len(combinedParts) > 0 {
+			if triggered {
 				if len(combinedParts) > 0 {
 					baseState, err = baseState.AppendContent(&generators.Content{
 						Role:  "user",
