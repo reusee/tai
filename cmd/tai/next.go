@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -27,6 +29,15 @@ memory, shell, and continue blocks, "next" performs a single generation
 round: it builds the system prompt and user prompt from file context, runs
 one generate-chat phase chain, and writes the result to stdout. This makes
 it the simplest entry point for autonomous, single-shot task execution.
+
+Change blocks emitted by the model are applied to the working tree via a
+ParserState block handler that writes to an in-memory MemoryStore during
+streaming, then flushes to disk after the generation round succeeds. This
+reuses the same in-memory apply mechanism as the codes module (see
+changes.TheoryOfInMemoryApply), ensuring early error detection — a
+malformed change block stops generation immediately — while preserving
+filesystem consistency on failure. The -no-apply flag disables change block
+application, causing blocks to be parsed but not written to disk.
 `
 
 type SystemPrompt string
@@ -55,6 +66,7 @@ func (Module) SystemPrompt(
 	if hasGoFiles {
 		logger.Info("has go file")
 		ret += "\n\n" + SystemPrompt(changes.ChangeBlockSystemPrompt()) + "\n\n"
+		ret += SystemPrompt(changes.ChangeBlockRestatePrompt()) + "\n"
 	}
 
 	if extra != "" {
@@ -76,7 +88,7 @@ func (Module) SystemPrompt(
 		}
 	}
 
-	return ret
+	return
 }
 
 var NextCommand = Command{
@@ -91,8 +103,20 @@ var NextCommand = Command{
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
 		flagThoughts flags.Thoughts,
+		apply flags.Apply,
 	) {
 		ctx := context.Background()
+
+		// Open a root on the current directory to restrict all file I/O
+		// to the project tree during change block application.
+		root, err := os.OpenRoot(".")
+		ce(err)
+		defer root.Close()
+
+		// MemoryStore buffers change block modifications in memory during
+		// generation, deferring disk writes until the round succeeds.
+		// See changes.TheoryOfInMemoryApply.
+		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
 
 		// generate
 		logger.Info("generate", "model", generator.Spec().Model)
@@ -112,16 +136,44 @@ var NextCommand = Command{
 		}
 		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
+		// Wrap state with ParserState to parse structured blocks from
+		// model output. When apply is enabled, a BlockHandler applies
+		// change blocks immediately to the MemoryStore as they are
+		// parsed during streaming, enabling early error detection.
+		// See blocks.TheoryOfParserState and changes.TheoryOfInMemoryApply.
+		var parserHandler blocks.BlockHandler
+		if bool(apply) {
+			parserHandler = func(block blocks.Block) (bool, error) {
+				if block.Kind != "change" {
+					return false, nil
+				}
+				h, parsedOk := changes.ParseChangeBlock(block)
+				if !parsedOk {
+					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+				}
+				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
+					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+				}
+				return true, nil
+			}
+		}
+		state = blocks.NewParserState(state, parserHandler)
+
 		phase := buildGenerate(generator, nil)(
 			buildChat(generator, nil)(
 				nil,
 			),
 		)
-		var err error
 		for phase != nil {
 			phase, state, err = phase(ctx, state)
 			ce(err)
 		}
 
+		// Flush in-memory changes to disk after the generation round
+		// succeeds. See changes.TheoryOfInMemoryApply.
+		if bool(apply) {
+			err = memStore.Flush()
+			ce(err)
+		}
 	},
 }

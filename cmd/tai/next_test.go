@@ -285,3 +285,34 @@ func TestExtraSystemPrompt(t *testing.T) {
 		}
 	})
 }
+
+func TestSystemPromptIncludesChangeBlockRestatePrompt(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("test.go", []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+	).Call(func(
+		systemPrompt SystemPrompt,
+	) {
+		s := string(systemPrompt)
+		if !strings.Contains(s, "Change Block Kind") {
+			t.Fatal("system prompt must include change block prompt when Go files are present")
+		}
+		if !strings.Contains(s, "a finish block is still required") {
+			t.Fatal("system prompt must include change block restate prompt when Go files are present")
+		}
+	})
+}
