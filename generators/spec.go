@@ -1,6 +1,6 @@
 package generators
 
-const SpecTheory = `
+const TheoryOfSpec = `
 Spec merging uses pointer values for optional booleans (DisableSearch, DisableTools, IsOpenRouter, IsAzure, NoProxy, PreservedThinking)
 to distinguish between "explicitly set to false" and "not provided". This allows a child spec to disable a feature
 that a parent spec enabled.

@@ -16,7 +16,7 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-const ChangeBlockApplicationTheory = `
+const TheoryOfChangeBlockApplication = `
 Change block application translates parsed change blocks into byte-level edits on source files.
 When an ADD operation targets a spec nested inside a multi-spec declaration block (e.g.,
 const or var groups), the insertion point redirects to the parent block boundary to avoid

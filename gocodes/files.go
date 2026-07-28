@@ -23,7 +23,7 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-const FileOrderingTheory = `
+const TheoryOfFileOrdering = `
 Files are sorted in three tiers to maximize LLM prefix cache reuse. The outermost
 tier separates by module: non-root-module files (dependencies, stdlib) appear first,
 forming the stable prefix that changes least frequently across requests. The middle

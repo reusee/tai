@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-const BlockFormatTheory = `
+const TheoryOfBlockFormatGeneral = `
 The boundary block format is a general-purpose structured output format for AI models.
 It uses delimited blocks with a random boundary string to avoid parsing conflicts with content.
 Each block has a kind (XML element name), attributes (XML attributes on the opening tag), and a body.

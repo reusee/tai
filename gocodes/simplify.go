@@ -19,13 +19,13 @@ import (
 )
 
 const (
-	SimplifyTheory = `Simplification keeps operative files primary and dependency context secondary.
+	TheoryOfSimplification = `Simplification keeps operative files primary and dependency context secondary.
 Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
 The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
 Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
 Comment deletion does not affect import usage, so goimports is skipped for comment-only transforms to avoid redundant parsing.
 Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
-File ordering (see FileOrderingTheory in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
+File ordering (see TheoryOfFileOrdering in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
 
 The context token budget is fixed at a constant value (maximumContextTokenBudget) rather than derived from focus file size.
 A fixed budget ensures that context files are simplified consistently across requests regardless of changes to focus files,
