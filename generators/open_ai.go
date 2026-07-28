@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
@@ -30,7 +29,6 @@ type OpenAI struct {
 	TokenCounterOverride TokenCounter
 	Logger               dscope.Inject[logs.Logger]
 	Tap                  dscope.Inject[debugs.Tap]
-	Loader               dscope.Inject[configs.Loader]
 	Effort               dscope.Inject[EffortFlag]
 	TemperatureFlag      dscope.Inject[TemperatureFlag]
 	Debug                dscope.Inject[DebugOpenAI]

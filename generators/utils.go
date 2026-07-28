@@ -7,7 +7,6 @@ import (
 var (
 	K = 1 << 10
 	M = 1 << 20
-	G = 1 << 30
 )
 
 func isTextMIMEType(t string) bool {

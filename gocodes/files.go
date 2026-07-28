@@ -8,7 +8,6 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"io"
 	"os"
 	"path/filepath"
@@ -60,11 +59,7 @@ type File struct {
 	ModuleIsRoot            bool
 	ModuleIsNil             bool
 	IsEmbed                 bool
-	// DefinedObjects is unused under the lightweight loader: NeedTypesInfo is
-	// not loaded, so no object map is populated. Kept nil for APIs that still
-	// read the field.
-	DefinedObjects map[types.Object]bool
-	DoNotSimplify  bool
+	DoNotSimplify           bool
 
 	transformCond *sync.Cond
 	Transform     *Transform
@@ -249,17 +244,6 @@ func (Module) Files(
 			f.Module = pkg.Module
 			f.ModuleIsRoot = pkg.Module != nil && rootModulePaths[pkg.Module.Path]
 			f.ModuleIsNil = pkg.Module == nil
-
-			// DefinedObjects requires NeedTypesInfo, which is no longer loaded
-			// to reduce memory. Skip when TypesInfo is nil.
-			if pkg.TypesInfo != nil {
-				f.DefinedObjects = make(map[types.Object]bool)
-				for ident, obj := range pkg.TypesInfo.Defs {
-					if ident.Pos().IsValid() && fset.File(ident.Pos()) == f.TokenFile {
-						f.DefinedObjects[obj] = true
-					}
-				}
-			}
 
 			files = append(files, f)
 		}

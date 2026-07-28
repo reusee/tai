@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/vars"
@@ -38,7 +37,6 @@ type Gemini struct {
 	APIKey          dscope.Inject[GoogleAPIKey]
 	Counter         dscope.Inject[GeminiTokenCounter]
 	Logger          dscope.Inject[logs.Logger]
-	Loader          dscope.Inject[configs.Loader]
 	Effort          dscope.Inject[EffortFlag]
 	TemperatureFlag dscope.Inject[TemperatureFlag]
 	Debug           dscope.Inject[DebugGemini]
