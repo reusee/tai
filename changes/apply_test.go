@@ -49,6 +49,129 @@ func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
 	}
 }
 
+func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
+	t.Run("SingleSpecConst", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nconst disableContainerEnv = \"CONTAINER\"\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Body without the "const" keyword — getBodyInfo parses it by
+		// prepending "const ", but ApplyChangeBlockStore strips the prefix.
+		// For ADD_BEFORE, the keyword must be re-added to produce valid Go.
+		h := ChangeBlock{
+			Op:       "ADD_BEFORE",
+			Target:   "disableContainerEnv",
+			FilePath: "test.go",
+			Body:     "newFeature = true",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if !strings.Contains(resultStr, "const newFeature = true") {
+			t.Fatalf("result should contain 'const newFeature = true':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "const disableContainerEnv = \"CONTAINER\"") {
+			t.Fatalf("result should contain original const:\n%s", resultStr)
+		}
+		newIdx := strings.Index(resultStr, "const newFeature = true")
+		oldIdx := strings.Index(resultStr, "const disableContainerEnv")
+		if newIdx == -1 || oldIdx == -1 || newIdx > oldIdx {
+			t.Fatalf("new const should appear before original:\n%s", resultStr)
+		}
+	})
+
+	t.Run("MultiSpecConst", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nconst (\n\tbbb = 1\n\tccc = 2\n)\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "ADD_BEFORE",
+			Target:   "ccc",
+			FilePath: "test.go",
+			Body:     "aaa = 42",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if !strings.Contains(resultStr, "const aaa = 42") {
+			t.Fatalf("result should contain 'const aaa = 42':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "ccc = 2") {
+			t.Fatalf("result should preserve original const block:\n%s", resultStr)
+		}
+	})
+
+	t.Run("FuncDecl", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc existing() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "ADD_BEFORE",
+			Target:   "existing",
+			FilePath: "test.go",
+			Body:     "newFunc() {}",
+		}
+		if err := ApplyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
+
+		result, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resultStr := string(result)
+		if !strings.Contains(resultStr, "func newFunc() {}") {
+			t.Fatalf("result should contain 'func newFunc() {}':\n%s", resultStr)
+		}
+		if !strings.Contains(resultStr, "func existing() {}") {
+			t.Fatalf("result should contain original func:\n%s", resultStr)
+		}
+		newIdx := strings.Index(resultStr, "func newFunc() {}")
+		oldIdx := strings.Index(resultStr, "func existing() {}")
+		if newIdx == -1 || oldIdx == -1 || newIdx > oldIdx {
+			t.Fatalf("new func should appear before original:\n%s", resultStr)
+		}
+	})
+}
+
 func TestApplyChangeBlockRename(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)

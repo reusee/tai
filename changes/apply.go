@@ -22,6 +22,12 @@ When an ADD operation targets a spec nested inside a multi-spec declaration bloc
 const or var groups), the insertion point redirects to the parent block boundary to avoid
 producing invalid code inside the parentheses. The inserted body must remain a complete,
 self-contained declaration so the resulting source is valid Go.
+When the body lacks a declaration keyword (e.g., "foo = 1" instead of "const foo = 1"),
+getBodyInfo parses it by prepending the keyword, and ApplyChangeBlockStore strips the full
+prefix. For ADD_BEFORE and ADD_AFTER operations, the keyword must be re-added after
+findTargetRange returns, because the body is inserted as a standalone declaration outside
+the target's syntactic context. MODIFY operations handle the keyword separately inside
+findTargetRange and are unaffected.
 WRITE bypasses declaration-level parsing and replaces the entire file content. Go files
 are still processed through goimports to keep imports synchronized after full replacement.
 DELETE with target * removes the entire file from the working tree, bypassing
@@ -347,6 +353,19 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 			// ADD anchor missing: append to the end of file
 			start, end = len(src), len(src)
 		}
+	}
+
+	// For ADD_BEFORE/ADD_AFTER that weren't converted to MODIFY, ensure the
+	// keyword is present if the body was parsed with a keyword prefix. The
+	// prefix is stripped from h.Body during parsing, so the keyword must be
+	// re-added to produce a complete, valid Go declaration. This covers all
+	// ADD code paths uniformly: target found, target not found (append to
+	// end), BEGIN/END, and both single-spec and multi-spec GenDecls. MODIFY
+	// paths handle the keyword separately inside findTargetRange and are
+	// unaffected because h.Op is no longer ADD after the ADD-as-MODIFY
+	// conversion.
+	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyInfo != nil && bodyInfo.Keyword != "" {
+		finalBody = bodyInfo.Keyword + " " + finalBody
 	}
 
 	type rangeItem struct {
@@ -676,15 +695,13 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 
 			// For ADD operations targeting a spec inside a multi-spec GenDecl,
 			// redirect to the parent GenDecl range to avoid inserting inside the
-			// parentheses. The full body declaration (with keyword) must be used
-			// instead of the extracted spec source, so the inserted code is valid Go.
+			// parentheses. The full body declaration must be used instead of the
+			// extracted spec source, so the inserted code is valid Go. The keyword
+			// is prepended uniformly in ApplyChangeBlockStore for all ADD paths.
 			if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && len(genDecl.Specs) > 1 {
 				if start == nodeStart && end == nodeEnd {
 					start, end = parentStart, parentEnd
 					finalBody = h.Body
-					if bodyInfo != nil && bodyInfo.Keyword != "" {
-						finalBody = bodyInfo.Keyword + " " + finalBody
-					}
 				}
 			}
 		} else {
