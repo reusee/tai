@@ -463,3 +463,168 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 		t.Fatal("OnPhaseError should receive a non-nil state, got nil")
 	}
 }
+
+func TestRunRetryOnApplyError(t *testing.T) {
+	module := Module{}
+	run := module.Run()
+
+	callCount := 0
+	phaseBuilder := func(g generators.Generator) phases.Phase {
+		callCount++
+		if callCount == 1 {
+			// First round: emit a change block that will fail to apply.
+			return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+		}
+		// Second round: success with summary only.
+		return appendPhase(":::徕珑 <summary>\nFixed.\n:::徕珑 </summary>\n")
+	}
+
+	applyAttempts := 0
+	blockHandler := func(block blocks.Block) (bool, error) {
+		if block.Kind == "change" {
+			applyAttempts++
+			if applyAttempts == 1 {
+				return false, &ApplyError{Err: errors.New("invalid target: Foo not found")}
+			}
+			return true, nil
+		}
+		return false, nil
+	}
+
+	onRoundStartCalled := 0
+	onRoundStart := func() {
+		onRoundStartCalled++
+	}
+
+	result, err := run(context.Background(), RunOptions{
+		Generator:         nil,
+		InitialState:      generators.NewPrompts("", nil),
+		Components:        nil,
+		BlockHandler:      blockHandler,
+		PhaseBuilder:      phaseBuilder,
+		OnRoundStart:      onRoundStart,
+		RetryOnApplyError: true,
+		MaxRetries:        3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 phase calls (retry once), got %d", callCount)
+	}
+	if onRoundStartCalled < 2 {
+		t.Fatalf("expected OnRoundStart called at least 2 times, got %d", onRoundStartCalled)
+	}
+
+	// Verify the error message was appended as user content for the model.
+	foundErrorMsg := false
+	for c := range result.FinalState.Contents() {
+		if c.Role == generators.RoleUser {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "change block failed to apply") {
+						foundErrorMsg = true
+					}
+				}
+			}
+		}
+	}
+	if !foundErrorMsg {
+		t.Fatal("expected error message to be appended as user content")
+	}
+}
+
+func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
+	module := Module{}
+	run := module.Run()
+
+	callCount := 0
+	phaseBuilder := func(g generators.Generator) phases.Phase {
+		callCount++
+		return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+	}
+
+	blockHandler := func(block blocks.Block) (bool, error) {
+		if block.Kind == "change" {
+			return false, &ApplyError{Err: errors.New("always fails")}
+		}
+		return false, nil
+	}
+
+	_, err := run(context.Background(), RunOptions{
+		Generator:         nil,
+		InitialState:      generators.NewPrompts("", nil),
+		Components:        nil,
+		BlockHandler:      blockHandler,
+		PhaseBuilder:      phaseBuilder,
+		OnRoundStart:      func() {},
+		RetryOnApplyError: true,
+		MaxRetries:        2,
+	})
+	if err == nil {
+		t.Fatal("expected error after max retries exhausted")
+	}
+	// maxRetries=2 means: initial + 2 retries = 3 calls.
+	if callCount != 3 {
+		t.Fatalf("expected 3 calls (initial + 2 retries), got %d", callCount)
+	}
+}
+
+func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
+	module := Module{}
+	run := module.Run()
+
+	callCount := 0
+	phaseBuilder := func(g generators.Generator) phases.Phase {
+		callCount++
+		return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+	}
+
+	blockHandler := func(block blocks.Block) (bool, error) {
+		if block.Kind == "change" {
+			return false, &ApplyError{Err: errors.New("fails")}
+		}
+		return false, nil
+	}
+
+	_, err := run(context.Background(), RunOptions{
+		Generator:         nil,
+		InitialState:      generators.NewPrompts("", nil),
+		Components:        nil,
+		BlockHandler:      blockHandler,
+		PhaseBuilder:      phaseBuilder,
+		RetryOnApplyError: false,
+	})
+	if err == nil {
+		t.Fatal("expected error when RetryOnApplyError is disabled")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call (no retry), got %d", callCount)
+	}
+}
+
+func TestRunApplyErrorNonApplyErrorNoRetry(t *testing.T) {
+	module := Module{}
+	run := module.Run()
+
+	callCount := 0
+	phaseBuilder := func(g generators.Generator) phases.Phase {
+		callCount++
+		return errorPhase(errors.New("system error"))
+	}
+
+	_, err := run(context.Background(), RunOptions{
+		Generator:         nil,
+		InitialState:      generators.NewPrompts("", nil),
+		Components:        nil,
+		PhaseBuilder:      phaseBuilder,
+		RetryOnApplyError: true,
+		MaxRetries:        3,
+	})
+	if err == nil {
+		t.Fatal("expected error for non-apply error")
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call (non-apply errors should not retry), got %d", callCount)
+	}
+}

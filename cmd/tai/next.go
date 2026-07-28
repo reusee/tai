@@ -36,8 +36,9 @@ ParserState block handler that writes to an in-memory MemoryStore during
 streaming, then flushes to disk after the generation round succeeds. This
 reuses the same in-memory apply mechanism as the codes module (see
 changes.TheoryOfInMemoryApply), ensuring early error detection — a
-malformed change block stops generation immediately — while preserving
-filesystem consistency on failure. The -no-apply flag disables change block
+malformed change block triggers a retry via loops.ApplyError, resetting
+the MemoryStore to discard failed changes — while preserving filesystem
+consistency on failure. The -no-apply flag disables change block
 application, causing blocks to be parsed but not written to disk.
 `
 
@@ -140,9 +141,10 @@ var NextCommand = Command{
 
 		// BlockHandler applies change blocks immediately to the
 		// MemoryStore as they are parsed during streaming, enabling
-		// early error detection. Consumed blocks are not passed to
-		// ProcessComponents (which is not used in single-shot mode).
-		// See changes.TheoryOfInMemoryApply and loops.TheoryOfLoops.
+		// early error detection. Apply errors are returned as
+		// *loops.ApplyError so the loop can retry, resetting the
+		// MemoryStore to discard failed changes. See
+		// changes.TheoryOfInMemoryApply and loops.TheoryOfLoops.
 		var blockHandler loops.BlockHandler
 		if bool(apply) {
 			blockHandler = func(block blocks.Block) (bool, error) {
@@ -151,10 +153,14 @@ var NextCommand = Command{
 				}
 				h, parsedOk := changes.ParseChangeBlock(block)
 				if !parsedOk {
-					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+					return false, &loops.ApplyError{
+						Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
+					}
 				}
 				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+					return false, &loops.ApplyError{
+						Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
+					}
 				}
 				return true, nil
 			}
@@ -162,7 +168,8 @@ var NextCommand = Command{
 
 		// Run the unified generation loop in single-shot mode (no
 		// components). The phase chain (generate -> chat) drives the
-		// interactive session. See loops.TheoryOfLoops.
+		// interactive session. Apply errors trigger a retry with the
+		// error message fed back as user content. See loops.TheoryOfLoops.
 		_, err = loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
@@ -171,6 +178,10 @@ var NextCommand = Command{
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
 			},
+			OnRoundStart: func() {
+				memStore.Reset()
+			},
+			RetryOnApplyError: true,
 		})
 		ce(err)
 

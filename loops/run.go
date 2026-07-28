@@ -2,6 +2,8 @@ package loops
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -38,12 +40,45 @@ and incomplete-output summarization were previously implemented as
 runPhaseWithRetry in codes/generate.go; they are now unified here so all
 commands can opt into retry behavior via RunOptions.
 
+RetryOnApplyError handles model-generated errors that cause change block
+application to fail (e.g., invalid target, malformed code, goimports
+failure). When a BlockHandler returns an *ApplyError, the loop appends the
+error message as user content so the model can correct its output, resets
+per-round state via OnRoundStart (which resets the MemoryStore, discarding
+all changes from the failed attempt), and retries from the updated state.
+This reuses the same MemoryStore consistency guarantee as
+RetryOnMissingCompletion: the disk is never left in a partially modified
+state by a failed attempt, because changes are buffered in memory and only
+flushed on success. ApplyError retry and missing-completion retry share the
+same MaxRetries budget and retry counter, so the total number of retries per
+round is bounded regardless of the error type.
+
 The BlockHandler type uses a consumed flag: when a handler returns
 consumed=true, the block is not passed to ProcessComponents. This lets
 callers apply change blocks during streaming (early error detection) and
 prevent double-application by the change component. When consumed=false,
 the block is collected for component processing.
 `
+
+// ApplyError is returned by BlockHandler when a change block fails to apply
+// due to model-generated errors (e.g., invalid target, malformed code,
+// goimports failure). When RetryOnApplyError is enabled, the loop retries
+// the round, resetting the MemoryStore via OnRoundStart to discard the
+// failed changes. The error message is appended as user content so the
+// model can correct its output in the retry. See TheoryOfLoops.
+type ApplyError struct {
+	Err error
+}
+
+func (e *ApplyError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ApplyError) Unwrap() error {
+	return e.Err
+}
+
+const applyErrorRetryPrefix = "[System note: A change block failed to apply due to an error: %s. Please correct the issue and regenerate the change blocks.]\n\n"
 
 const defaultMaxRetries = 3
 
@@ -103,9 +138,15 @@ type RunOptions struct {
 	// block is found in the collected blocks after a round. This
 	// handles truncated output where the model is cut off mid-stream.
 	RetryOnMissingCompletion bool
+	// RetryOnApplyError enables retry when a BlockHandler returns an
+	// *ApplyError. The loop appends the error message as user content
+	// so the model can correct its output, resets per-round state via
+	// OnRoundStart (which resets the MemoryStore), and retries from
+	// the updated state. See TheoryOfLoops.
+	RetryOnApplyError bool
 	// MaxRetries limits retries per round when RetryOnMissingCompletion
-	// is true. Defaults to 3 when RetryOnMissingCompletion is true and
-	// MaxRetries is 0.
+	// or RetryOnApplyError is true. Defaults to 3 when either is true
+	// and MaxRetries is 0.
 	MaxRetries int
 	// SummarizeIncomplete summarizes incomplete output before retrying.
 	// The summary is appended as user content to provide context for
@@ -127,7 +168,7 @@ func (Module) Run() Run {
 		var remainingBlocks []blocks.Block
 		roundCounts := make(map[string]int)
 		maxRetries := opts.MaxRetries
-		if maxRetries == 0 && opts.RetryOnMissingCompletion {
+		if maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnApplyError) {
 			maxRetries = defaultMaxRetries
 		}
 
@@ -141,7 +182,7 @@ func (Module) Run() Run {
 			phaseState := state
 			var roundErr error
 
-			// Inner retry loop for missing completion blocks.
+			// Inner retry loop for missing completion blocks and apply errors.
 			for retry := 0; ; retry++ {
 				collectedBlocks = nil
 
@@ -189,6 +230,40 @@ func (Module) Run() Run {
 				}
 
 				if roundErr != nil {
+					// Check if it's a retryable apply error. When
+					// RetryOnApplyError is enabled and the error is an
+					// *ApplyError, the loop appends the error message as
+					// user content so the model can correct its output,
+					// resets per-round state via OnRoundStart (which
+					// resets the MemoryStore, discarding failed changes),
+					// and retries from the updated state. See TheoryOfLoops.
+					var applyErr *ApplyError
+					if opts.RetryOnApplyError && errors.As(roundErr, &applyErr) && retry < maxRetries {
+						// Update state to include partial content generated
+						// before the error, so the model sees its prior output
+						// when correcting the issue.
+						state = phaseState
+						var appendErr error
+						state, appendErr = state.AppendContent(&generators.Content{
+							Role: generators.RoleUser,
+							Parts: []generators.Part{
+								generators.Text(fmt.Sprintf(applyErrorRetryPrefix, applyErr.Error())),
+							},
+						})
+						if appendErr != nil {
+							break
+						}
+						roundErr = nil
+						// Reset for retry: OnRoundStart resets the
+						// MemoryStore, discarding all changes from the
+						// failed attempt. This preserves filesystem
+						// consistency — the disk is never left in a
+						// partially modified state by a failed attempt.
+						if opts.OnRoundStart != nil {
+							opts.OnRoundStart()
+						}
+						continue
+					}
 					break
 				}
 

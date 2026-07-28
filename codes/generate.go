@@ -29,25 +29,28 @@ const TheoryOfStreamingApply = `
 Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
 from streamed model output, rather than directly to disk. This enables early
 error detection: if a change block fails to apply (e.g., invalid target,
-malformed code), generation stops immediately instead of continuing to produce
-tokens that would be wasted on a broken foundation. The in-memory store also
-ensures filesystem consistency on retry: when a round is retried (no completion
-block), the MemoryStore is reset, discarding all changes without touching the
-disk. Only after a round succeeds are the in-memory changes flushed to disk in
-a single batch, so the disk is never left in a partially modified state by an
-interrupted round. Subsequent change blocks targeting the same file within a
-round use the in-memory content as the base, not the disk content, so
-multi-block edits to the same file are applied correctly within the round.
-The streaming apply is implemented via a BlockHandler callback on ParserState:
-when a complete change block is parsed during AppendContent, the handler applies
-it via changes.ApplyChangeBlockStore to the MemoryStore. Non-change blocks are
-collected by the handler into an external slice for post-phase processing by
-ProcessComponents. During Flush, the handler is not called for unclosed blocks,
-because they are incomplete (e.g., from truncated output) and applying them
-would cause errors. Successfully applied change blocks are consumed by the
-handler (not collected), so ProcessComponents finds no change blocks to
-re-apply. When the apply flag is disabled, no handler is set and all blocks
-are collected, preserving the no-apply behavior.
+malformed code), the BlockHandler returns an *loops.ApplyError. When
+RetryOnApplyError is enabled, the loop retries the round with the error
+message appended as user content, resetting the MemoryStore to discard the
+failed changes. When disabled or retries are exhausted, generation stops. The
+in-memory store also ensures filesystem consistency on retry: when a round is
+retried (no completion block or an apply error), the MemoryStore is reset,
+discarding all changes without touching the disk. Only after a round succeeds
+are the in-memory changes flushed to disk in a single batch, so the disk is
+never left in a partially modified state by an interrupted round. Subsequent
+change blocks targeting the same file within a round use the in-memory content
+as the base, not the disk content, so multi-block edits to the same file are
+applied correctly within the round. The streaming apply is implemented via a
+BlockHandler callback on ParserState: when a complete change block is parsed
+during AppendContent, the handler applies it via changes.ApplyChangeBlockStore
+to the MemoryStore. Non-change blocks are collected by the handler into an
+external slice for post-phase processing by ProcessComponents. During Flush,
+the handler is not called for unclosed blocks, because they are incomplete
+(e.g., from truncated output) and applying them would cause errors.
+Successfully applied change blocks are consumed by the handler (not collected),
+so ProcessComponents finds no change blocks to re-apply. When the apply flag
+is disabled, no handler is set and all blocks are collected, preserving the
+no-apply behavior.
 `
 
 const maxRequestContextRounds = 5
@@ -430,7 +433,8 @@ func (Module) Generate(
 
 		// Run the unified generation loop. See loops.TheoryOfLoops.
 		// The loop handles ParserState wrapping, phase execution, retry
-		// on missing completion, and component processing between rounds.
+		// on missing completion and apply errors, and component
+		// processing between rounds.
 		_, err = loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
@@ -439,10 +443,14 @@ func (Module) Generate(
 				if bool(apply) && block.Kind == "change" {
 					h, parsedOk := changes.ParseChangeBlock(block)
 					if !parsedOk {
-						return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+						return false, &loops.ApplyError{
+							Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
+						}
 					}
 					if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-						return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+						return false, &loops.ApplyError{
+							Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
+						}
 					}
 					return true, nil
 				}
@@ -533,6 +541,7 @@ func (Module) Generate(
 			},
 
 			RetryOnMissingCompletion: true,
+			RetryOnApplyError:        true,
 			MaxRetries:               maxRetriesForMissingSummary,
 			SummarizeIncomplete: func(incompleteText string) (string, error) {
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
