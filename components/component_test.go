@@ -61,7 +61,7 @@ func TestComponentSetUserPromptParts(t *testing.T) {
 func TestComponentSetProcessable(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},
-		{Kind: "b", ProcessingPath: "external"},
+		{Kind: "b"}, // no Process: not included in Processable()
 		{Kind: "", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},
 		{Kind: "c", Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult { return ProcessResult{} }},
 	}

@@ -116,16 +116,12 @@ type Component struct {
 	// Empty for components that contribute only to the system prompt.
 	UserPromptParts []generators.Part
 	// Process extracts and handles blocks of this kind from the block list
-	// in the main generation loop. If nil and Kind is non-empty,
-	// ProcessingPath must describe where the block is processed instead.
+	// in the main generation loop. If nil, the block kind is either
+	// prompt-only (Kind == "") or handled by specialized logic outside the
+	// component loop (e.g., change blocks applied via BlockHandler during
+	// streaming, summary blocks processed in runPhaseWithRetry, memory
+	// blocks processed post-loop).
 	Process ComponentProcessFunc
-	// ProcessingPath documents where blocks of this kind are processed
-	// when Process is nil (e.g., "applyChangeBlocks", "runPhaseWithRetry",
-	// "informational"). A non-empty ProcessingPath with a nil Process
-	// declares that the block is handled by specialized logic outside the
-	// component loop or is intentionally unprocessed. An empty ProcessingPath
-	// with a nil Process is valid for prompt-only components (Kind == "").
-	ProcessingPath string
 	// MaxRounds limits the number of consecutive rounds this component can
 	// trigger by producing Parts or modifying State. 0 means no limit. Used
 	// to prevent infinite loops (e.g., request-context components that keep

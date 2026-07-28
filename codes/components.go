@@ -81,11 +81,12 @@ func (Module) CodesComponents(
 			},
 		})
 	} else {
+		// Change blocks are not applied when -no-apply is set; the
+		// prompt is still included so the model knows the format.
 		comps = append(comps, components.Component{
-			Kind:           "change",
-			PromptSection:  changes.ChangeBlockSystemPrompt(),
-			RestatePrompt:  changes.ChangeBlockRestatePrompt(),
-			ProcessingPath: "ApplyChangeBlocks (disabled by -no-apply)",
+			Kind:          "change",
+			PromptSection: changes.ChangeBlockSystemPrompt(),
+			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 		})
 	}
 
@@ -119,13 +120,12 @@ func (Module) CodesComponents(
 		},
 	})
 
-	// Finish component: informational, not processed.
+	// Finish component: informational, not processed in the component loop.
 	// RestatePrompt carries the finish block restate prompt.
 	comps = append(comps, components.Component{
-		Kind:           "finish",
-		PromptSection:  blocks.FinishBlockSystemPrompt,
-		RestatePrompt:  blocks.FinishBlockRestatePrompt,
-		ProcessingPath: "informational",
+		Kind:          "finish",
+		PromptSection: blocks.FinishBlockSystemPrompt,
+		RestatePrompt: blocks.FinishBlockRestatePrompt,
 	})
 
 	// Request-context component: conditional on dynamicContext.
@@ -166,9 +166,8 @@ func (Module) CodesComponents(
 	// Summary component: processed in runPhaseWithRetry for completion detection
 	// and round statistics, not in the main component loop.
 	comps = append(comps, components.Component{
-		Kind:           "summary",
-		PromptSection:  blocks.SummaryBlockSystemPrompt,
-		ProcessingPath: "runPhaseWithRetry",
+		Kind:          "summary",
+		PromptSection: blocks.SummaryBlockSystemPrompt,
 	})
 
 	// Read-only files: prompt-only component, no block kind.

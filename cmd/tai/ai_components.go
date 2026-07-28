@@ -87,9 +87,8 @@ func (Module) AIComponents(
 			profileText = strings.Join(entry.Items, "\n")
 		}
 		comps = append(comps, components.Component{
-			Kind:           "memory",
-			PromptSection:  memoryBlockSystemPrompt(profileText),
-			ProcessingPath: "post-loop (ai.go: UpdateMemoryFromBlock)",
+			Kind:          "memory",
+			PromptSection: memoryBlockSystemPrompt(profileText),
 		})
 	}
 
