@@ -6,6 +6,7 @@ import (
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
@@ -22,4 +23,5 @@ type Module struct {
 	Modes      modes.ModuleForProduction
 	Codes      codes.Module
 	AnyTexts   anytexts.Module
+	Loops      loops.Module
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
 )
@@ -104,6 +105,7 @@ var NextCommand = Command{
 		buildChat phases.BuildChat,
 		flagThoughts flags.Thoughts,
 		apply flags.Apply,
+		loopRun loops.Run,
 	) {
 		ctx := context.Background()
 
@@ -136,38 +138,41 @@ var NextCommand = Command{
 		}
 		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
-		// Wrap state with ParserState to parse structured blocks from
-		// model output. When apply is enabled, a BlockHandler applies
-		// change blocks immediately to the MemoryStore as they are
-		// parsed during streaming, enabling early error detection.
-		// See blocks.TheoryOfParserState and changes.TheoryOfInMemoryApply.
-		var parserHandler blocks.BlockHandler
+		// BlockHandler applies change blocks immediately to the
+		// MemoryStore as they are parsed during streaming, enabling
+		// early error detection. Consumed blocks are not passed to
+		// ProcessComponents (which is not used in single-shot mode).
+		// See changes.TheoryOfInMemoryApply and loops.TheoryOfLoops.
+		var blockHandler loops.BlockHandler
 		if bool(apply) {
-			parserHandler = func(block blocks.Block) error {
+			blockHandler = func(block blocks.Block) (bool, error) {
 				if block.Kind != "change" {
-					return nil
+					return false, nil
 				}
 				h, parsedOk := changes.ParseChangeBlock(block)
 				if !parsedOk {
-					return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+					return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 				}
 				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-					return fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+					return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
 				}
-				return nil
+				return true, nil
 			}
 		}
-		state = blocks.NewParserState(state, parserHandler)
 
-		phase := buildGenerate(generator, nil)(
-			buildChat(generator, nil)(
-				nil,
-			),
-		)
-		for phase != nil {
-			phase, state, err = phase(ctx, state)
-			ce(err)
-		}
+		// Run the unified generation loop in single-shot mode (no
+		// components). The phase chain (generate -> chat) drives the
+		// interactive session. See loops.TheoryOfLoops.
+		_, err = loopRun(ctx, loops.RunOptions{
+			Generator:    generator,
+			InitialState: state,
+			Components:   nil,
+			BlockHandler: blockHandler,
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
+			},
+		})
+		ce(err)
 
 		// Flush in-memory changes to disk after the generation round
 		// succeeds. See changes.TheoryOfInMemoryApply.

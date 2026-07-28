@@ -7,6 +7,7 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/states"
 	"github.com/reusee/tai/taiconfigs"
@@ -22,4 +23,5 @@ type Module struct {
 	Flags      flags.Module
 	Changes    changes.Module
 	States     states.Module
+	Loops      loops.Module
 }

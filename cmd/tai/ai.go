@@ -8,11 +8,10 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/apps"
-	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
@@ -86,6 +85,7 @@ var AICommand = Command{
 		flagFiles flags.Files,
 		flagChats flags.Chats,
 		noMemory NoMemory,
+		loopRun loops.Run,
 	) {
 		ctx := context.Background()
 
@@ -131,14 +131,11 @@ var AICommand = Command{
 			)
 		}
 
-		// Component user prompt parts are appended after file context,
-		// before the user's input. See TheoryOfAIComponents and
-		// components.TheoryOfComponents.
+		// Component user prompt parts are appended after file context.
 		parts = append(parts, comps.UserPromptParts()...)
 
 		// User input is wrapped with markers so the model can distinguish
 		// between reference file context and the task request.
-		// See TheoryOfContextStructure in files.go.
 		parts = append(parts, generators.Text(
 			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
 		))
@@ -157,71 +154,22 @@ var AICommand = Command{
 		baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
 		// buf captures assistant text for memory block parsing.
 		// showThoughts=false excludes Thought parts so model reasoning
-		// (which may contain illustrative block markers) does not
-		// interfere with memory block extraction.
-		// See TheoryOfAiCommand.
+		// does not interfere with memory block extraction.
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
-		// collectedBlocks stores blocks parsed during generation.
-		// The BlockHandler appends to this slice; remaining blocks
-		// after ProcessComponents are carried forward to the next cycle.
-		// See TheoryOfAiCommand.
-		var collectedBlocks []blocks.Block
-
-		// Generation loop with block processing via components.
-		// The component list couples each block kind's prompt with its
-		// processing function, ensuring prompt-processing parity.
-		// See TheoryOfAIComponents and components.TheoryOfComponents.
-		for {
-			// Handler collects all blocks for post-generation processing.
-			handler := func(block blocks.Block) error {
-				collectedBlocks = append(collectedBlocks, block)
-				return nil
-			}
-
-			parserState := blocks.NewParserState(baseState, handler)
-			state := generators.State(parserState)
-
-			phase := buildGenerate(generator, nil)(
-				buildChat(generator, nil)(
-					nil,
-				),
-			)
-			for phase != nil {
-				phase, state, err = phase(ctx, state)
-				ce(err)
-			}
-
-			// Unwrap ParserState to get the base state for the next
-			// cycle. The state is already flushed by Generate.
-			if ps, ok := generators.As[*blocks.ParserState](state); ok {
-				baseState = ps.Unwrap()
-			} else {
-				baseState = state
-			}
-
-			// Process blocks via components. See components.TheoryOfComponents
-			// and components.ProcessComponents.
-			var combinedParts []generators.Part
-			var triggered bool
-			collectedBlocks, baseState, combinedParts, triggered, err = components.ProcessComponents(
-				ctx, comps.ComponentSet, collectedBlocks, baseState, nil, nets.HTTPClient{}, nil, false,
-			)
-			ce(err)
-
-			if triggered {
-				if len(combinedParts) > 0 {
-					baseState, err = baseState.AppendContent(&generators.Content{
-						Role:  "user",
-						Parts: combinedParts,
-					})
-					ce(err)
-				}
-				continue
-			}
-
-			break
-		}
+		// Run the unified generation loop. The loop handles ParserState
+		// wrapping, phase execution, and component processing between
+		// rounds. See loops.TheoryOfLoops.
+		_, err = loopRun(ctx, loops.RunOptions{
+			Generator:    generator,
+			InitialState: baseState,
+			Components:   comps.ComponentSet,
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
+			},
+			HTTPClient: nets.HTTPClient{},
+		})
+		ce(err)
 
 		// update memory from block
 		if !noMemory {

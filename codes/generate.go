@@ -14,12 +14,12 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
-	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/states"
@@ -146,30 +146,6 @@ func countContents(state generators.State) int {
 	return count
 }
 
-// extractIncompleteOutput collects Text and Thought parts from contents
-// appended after prevCount, returning them as a single string for
-// summarization. See TheoryOfIncompleteOutputSummarization.
-func extractIncompleteOutput(state generators.State, prevCount int) string {
-	var parts []string
-	i := 0
-	for c := range state.Contents() {
-		if i < prevCount {
-			i++
-			continue
-		}
-		for _, p := range c.Parts {
-			switch p := p.(type) {
-			case generators.Text:
-				parts = append(parts, string(p))
-			case generators.Thought:
-				parts = append(parts, string(p))
-			}
-		}
-		i++
-	}
-	return strings.Join(parts, "\n")
-}
-
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	generator generators.Generator,
@@ -250,103 +226,6 @@ previous output was truncated and that this is a retry, so the model can
 distinguish a retry from a fresh request and adjust its behavior accordingly.
 `
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
-
-func runPhaseWithRetry(
-	ctx context.Context,
-	phase phases.Phase,
-	stateBeforePhase generators.State,
-	logger logs.Logger,
-	summarize func(incompleteText string) (string, error),
-	onPhaseStart func(),
-	collectedBlocks *[]blocks.Block,
-) (
-	newPhase phases.Phase,
-	newState generators.State,
-	phaseErr error,
-	summaries []string,
-) {
-	currentState := stateBeforePhase
-	for retryCount := 0; ; retryCount++ {
-		// onPhaseStart is called before each phase attempt to reset
-		// per-attempt state (e.g., MemoryStore.Reset and collectedBlocks
-		// reset for block consistency). This ensures retried attempts
-		// start with a clean store and empty block collection, so
-		// changes and blocks from a failed attempt are discarded.
-		// See TheoryOfStreamingApply and TheoryOfParserState.
-		if onPhaseStart != nil {
-			onPhaseStart()
-		}
-		newPhase, newState, phaseErr = phase(ctx, currentState)
-		if phaseErr != nil {
-			return
-		}
-
-		// Check for completion-signal blocks (summary or finish). Both
-		// indicate the model intentionally ended the round, as opposed
-		// to truncated output where no completion block is present.
-		// Blocks are collected externally by the BlockHandler during
-		// AppendContent; the check is a simple scan of the collected
-		// slice. See TheoryOfSummaryCompletionRetry.
-		hasCompletion := false
-		for _, block := range *collectedBlocks {
-			if block.Kind == "summary" || block.Kind == "finish" {
-				hasCompletion = true
-				break
-			}
-		}
-
-		// Extract summary blocks from collected blocks and remove them
-		// so ProcessComponents does not see them.
-		// See TheoryOfSummaryBlocks.
-		summaries = nil
-		var remaining []blocks.Block
-		for _, block := range *collectedBlocks {
-			if block.Kind == "summary" {
-				summaries = append(summaries, block.Body)
-			} else {
-				remaining = append(remaining, block)
-			}
-		}
-		*collectedBlocks = remaining
-
-		if hasCompletion {
-			return
-		}
-		if retryCount >= maxRetriesForMissingSummary {
-			logger.Info("proceeding without completion block after max retries",
-				"retries", retryCount+1)
-			return
-		}
-
-		// Summarize incomplete output before retrying to change the input
-		// and provide context. See TheoryOfIncompleteOutputSummarization.
-		if summarize != nil {
-			incompleteText := extractIncompleteOutput(newState, countContents(currentState))
-			if incompleteText != "" {
-				summaryText, err := summarize(incompleteText)
-				if err != nil {
-					logger.Info("summarization failed, retrying without summary", "error", err)
-				} else if summaryText != "" {
-					var appendErr error
-					currentState, appendErr = currentState.AppendContent(&generators.Content{
-						Role: generators.RoleUser,
-						Parts: []generators.Part{
-							generators.Text(incompleteOutputSummaryPrefix + summaryText),
-						},
-					})
-					if appendErr != nil {
-						logger.Info("failed to append summary to state, retrying without", "error", appendErr)
-					}
-				}
-			}
-		}
-
-		logger.Info("retrying generation round: no completion block detected (likely truncated output)",
-			"retry", retryCount+1, "max", maxRetriesForMissingSummary)
-	}
-}
-
 func (Module) Generate(
 	codeProvider codetypes.CodeProvider,
 	comps CodesComponents,
@@ -368,6 +247,7 @@ func (Module) Generate(
 	debug Debug,
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
+	loopRun loops.Run,
 ) Generate {
 
 	return func(ctx context.Context, output io.Writer) error {
@@ -381,21 +261,9 @@ func (Module) Generate(
 		defer root.Close()
 
 		// MemoryStore buffers change block modifications in memory during
-		// streaming, deferring disk writes until the round succeeds. This
-		// ensures early error detection (change blocks that fail to apply
-		// stop generation immediately) while preserving filesystem
-		// consistency on retry (the MemoryStore is reset before each
-		// attempt, so retried attempts start with a clean store and the
-		// disk is never partially modified by an interrupted round).
+		// streaming, deferring disk writes until the round succeeds.
 		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
 		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
-
-		// collectedBlocks stores non-change blocks parsed during
-		// generation. The BlockHandler appends to this slice; on retry,
-		// onPhaseStart resets it to nil alongside the MemoryStore,
-		// ensuring block state is consistent with the rolled-back State.
-		// See TheoryOfParserState in blocks/parser_state.go.
-		var collectedBlocks []blocks.Block
 
 		// generator
 		generator, err := getDefaultGenerator()
@@ -426,12 +294,7 @@ func (Module) Generate(
 		}
 
 		// Collect function declarations from all sources for accurate token
-		// counting. Functions from state providers AND configuration files are
-		// merged and sorted by name to match the order used in API requests.
-		// Without config functions in the count, the user-content budget is
-		// overestimated, which can cause context window overflows that force
-		// file inclusion to change between requests, invalidating the prefix
-		// cache. See TheoryOfTokenBudgetStability for rationale.
+		// counting. See TheoryOfTokenBudgetStability.
 		var allFuncDecls []generators.FuncDecl
 		if args.DisableTools != nil && !*args.DisableTools {
 			for _, fn := range codeProvider.Functions() {
@@ -448,7 +311,7 @@ func (Module) Generate(
 		}
 
 		// Calculate remaining budget for user content
-		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000 // 1000 for overhead
+		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
 			return fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
@@ -465,13 +328,8 @@ func (Module) Generate(
 		}
 
 		// Component user prompt parts are appended after code provider parts.
-		// See TheoryOfCodesComponents and components.TheoryOfComponents.
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
 
-		// A new repository may have no code to provide as context. Allow the
-		// code provider to return no parts; the user's action argument
-		// (appended below before the generation loop) is sufficient to drive
-		// generation in that case.
 		var userPromptText generators.Text
 		for _, part := range userPromptParts {
 			if text, ok := part.(generators.Text); ok {
@@ -513,11 +371,7 @@ func (Module) Generate(
 		}
 
 		// By default, raw thoughts are displayed to the user. The
-		// -summarize-thoughts flag enables periodic summarization of
-		// reasoning traces via ThoughtsSummarize, using the fast model
-		// (configured via fast_model in tai.cue) via GetDefaultSummarizer
-		// to minimize latency and cost. The -thoughts flag controls
-		// whether thoughts are shown at all.
+		// -summarize-thoughts flag enables periodic summarization.
 		// See states.TheoryOfThoughtsSummarize.
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
@@ -534,54 +388,26 @@ func (Module) Generate(
 			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 		}
 
-		// Wrap state with ParserState to parse structured blocks from model
-		// output. ParserState is always activated to support continue blocks,
-		// change blocks, and request-context blocks.
-		// When apply is enabled, the BlockHandler applies change blocks
-		// immediately to the MemoryStore as they are parsed during streaming,
-		// enabling early error detection without touching disk. Non-change
-		// blocks are collected into collectedBlocks for post-phase processing
-		// by ProcessComponents. The MemoryStore is flushed to disk only after
-		// the round succeeds, and reset before each phase attempt (including
-		// retries) alongside collectedBlocks so the disk remains untouched by
-		// failed or truncated attempts.
-		// See TheoryOfStreamingApply, changes.TheoryOfInMemoryApply, and
-		// blocks.TheoryOfParserState.
-		var parserHandler blocks.BlockHandler
-		if bool(apply) {
-			parserHandler = func(block blocks.Block) error {
-				if block.Kind == "change" {
-					h, parsedOk := changes.ParseChangeBlock(block)
-					if !parsedOk {
-						return fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
-					}
-					if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
-						return fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
-					}
-					return nil
-				}
-				collectedBlocks = append(collectedBlocks, block)
-				return nil
-			}
-		} else {
-			parserHandler = func(block blocks.Block) error {
-				collectedBlocks = append(collectedBlocks, block)
-				return nil
-			}
-		}
-		parserState := blocks.NewParserState(state, parserHandler)
-		state = parserState
+		// The state is NOT wrapped with ParserState here; loops.Run wraps
+		// it internally. See loops.TheoryOfLoops.
 
-		// run
-		// roundCounts tracks consecutive rounds triggered by each component
-		// kind, enforcing MaxRounds limits to prevent infinite loops.
-		roundCounts := make(map[string]int)
+		// Track per-round token statistics for end-of-session reporting.
+		// See TheoryOfRoundStatistics.
+		var roundStats []roundStat
+		defer func() {
+			printRoundStats(output, roundStats)
+		}()
+
+		// Get the fast model for summarization tasks.
+		// See TheoryOfIncompleteOutputSummarization.
+		fastModel, err := getDefaultFastModel()
+		if err != nil {
+			return err
+		}
 
 		// Set up initial phase: if an action argument is present, append it
-		// as user content and start generation; otherwise there is nothing
-		// to do. This inlines the former ActionChat.InitialPhase logic.
-		var phase phases.Phase
-
+		// as user content and run generation; otherwise there is nothing to do.
+		var hasChats bool
 		if chats := strings.Join(flagChats, "\n"); chats != "" {
 			state, err = state.AppendContent(&generators.Content{
 				Role: "user",
@@ -592,102 +418,58 @@ func (Module) Generate(
 			if err != nil {
 				return err
 			}
-			phase = buildGenerate(generator, nil)(nil)
+			hasChats = true
 		}
 
-		// Track per-round token statistics for end-of-session reporting.
-		// See TheoryOfRoundStatistics.
-		var roundStats []roundStat
-		defer func() {
-			printRoundStats(output, roundStats)
-		}()
-
-		// Get the fast model for summarization tasks. The fast model
-		// (configured via fast_model or fast_model_name in tai.cue) is used
-		// for incomplete output summarization to minimize latency and cost.
-		// See TheoryOfIncompleteOutputSummarization.
-		fastModel, err := getDefaultFastModel()
-		if err != nil {
-			return err
+		if !hasChats {
+			return nil
 		}
 
-		// summarize is a closure that captures the fast model for use by
-		// runPhaseWithRetry when incomplete output needs condensation.
-		// See TheoryOfIncompleteOutputSummarization.
-		summarize := func(incompleteText string) (string, error) {
-			return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
-		}
+		// Track content count for statistics collection in OnRoundSuccess.
+		prevContentCount := countContents(state)
 
-		for phase != nil {
-			stateBeforePhase := state
-			prevContentCount := countContents(stateBeforePhase)
-
-			// Execute the phase with retry on missing summary block.
-			// onPhaseStart resets the MemoryStore and collectedBlocks
-			// before each phase attempt (including retries), so changes
-			// and blocks from a failed attempt are discarded without
-			// touching disk. See TheoryOfStreamingApply,
-			// changes.TheoryOfInMemoryApply, and blocks.TheoryOfParserState.
-			newPhase, newState, phaseErr, summaries := runPhaseWithRetry(
-				ctx, phase, stateBeforePhase, logger, summarize,
-				func() {
-					memStore.Reset()
-					collectedBlocks = nil
-				},
-				&collectedBlocks,
-			)
-
-			if phaseErr != nil {
-				// append error part
-				var err error
-				state, err = state.AppendContent(&generators.Content{
-					Role: generators.RoleLog,
-					Parts: []generators.Part{
-						generators.Error{
-							Error: phaseErr,
-						},
-					},
-				})
-				if err != nil {
-					return err
+		// Run the unified generation loop. See loops.TheoryOfLoops.
+		// The loop handles ParserState wrapping, phase execution, retry
+		// on missing completion, and component processing between rounds.
+		_, err = loopRun(ctx, loops.RunOptions{
+			Generator:    generator,
+			InitialState: state,
+			Components:   comps.ComponentSet,
+			BlockHandler: func(block blocks.Block) (bool, error) {
+				if bool(apply) && block.Kind == "change" {
+					h, parsedOk := changes.ParseChangeBlock(block)
+					if !parsedOk {
+						return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+					}
+					if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
+						return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+					}
+					return true, nil
 				}
+				return false, nil
+			},
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return buildGenerate(g, nil)(nil)
+			},
+			Root:       root,
+			HTTPClient: httpClient,
 
-				// tap to debug
-				var contents []*generators.Content
-				for c := range state.Contents() {
-					contents = append(contents, c)
-				}
-				globals := map[string]any{
-					"error":          phaseErr.Error(),
-					"contents":       contents,
-					"system_prompts": state.SystemPrompt(),
-				}
-				if openAIError, ok := errors.AsType[generators.OpenAIError](phaseErr); ok {
-					globals["openai"] = openAIError
-				}
-				tap(ctx, "codes generate error", globals)
+			OnRoundStart: func() {
+				memStore.Reset()
+			},
 
-				return phaseErr
-
-			} else {
+			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
 				// Flush in-memory changes to disk before the component loop
 				// runs. This ensures go-test and other components see the
-				// updated files on disk. The flush happens only after the
-				// round succeeds, so failed or retried attempts never
-				// partially modify the disk. See TheoryOfStreamingApply
-				// and changes.TheoryOfInMemoryApply.
+				// updated files on disk. See TheoryOfStreamingApply.
 				if err := memStore.Flush(); err != nil {
 					return err
 				}
 
-				// ok
-				phase = newPhase
-				state = newState
-
 				// Collect round statistics from newly appended contents.
 				// See TheoryOfRoundStatistics.
 				contentIndex := 0
-				for c := range state.Contents() {
+				for c := range roundState.Contents() {
 					if contentIndex >= prevContentCount {
 						for _, part := range c.Parts {
 							if usage, ok := part.(generators.Usage); ok {
@@ -703,9 +485,9 @@ func (Module) Generate(
 					}
 					contentIndex++
 				}
+				prevContentCount = contentIndex
 
-				// summaries are already computed by runPhaseWithRetry.
-				// See TheoryOfSummaryCompletionRetry.
+				// Associate summary blocks with the current round.
 				if len(summaries) > 0 {
 					summaryText := strings.Join(summaries, "\n")
 					if len(roundStats) > 0 {
@@ -717,36 +499,46 @@ func (Module) Generate(
 						})
 					}
 				}
+				return nil
+			},
 
-				// Process blocks via components. See components.TheoryOfComponents
-				// and components.ProcessComponents. CodesComponents is a named
-				// type embedding ComponentSet; pass the embedded field so Go
-				// accepts it as the ComponentSet parameter type.
-				var combinedParts []generators.Part
-				var triggered bool
-				collectedBlocks, state, combinedParts, triggered, err = components.ProcessComponents(
-					ctx, comps.ComponentSet, collectedBlocks, state, root, httpClient, roundCounts, true,
-				)
-				if err != nil {
-					return err
+			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
+				newState, appendErr := errState.AppendContent(&generators.Content{
+					Role: generators.RoleLog,
+					Parts: []generators.Part{
+						generators.Error{
+							Error: phaseErr,
+						},
+					},
+				})
+				if appendErr != nil {
+					return errState
 				}
 
-				if triggered {
-					if len(combinedParts) > 0 {
-						state, err = state.AppendContent(&generators.Content{
-							Role:  "user",
-							Parts: combinedParts,
-						})
-						if err != nil {
-							return err
-						}
-					}
-					phase = buildGenerate(generator, nil)(nil)
-					continue
+				// Tap to debug.
+				var contents []*generators.Content
+				for c := range newState.Contents() {
+					contents = append(contents, c)
 				}
-			}
-		}
+				globals := map[string]any{
+					"error":          phaseErr.Error(),
+					"contents":       contents,
+					"system_prompts": newState.SystemPrompt(),
+				}
+				if openAIError, ok := errors.AsType[generators.OpenAIError](phaseErr); ok {
+					globals["openai"] = openAIError
+				}
+				tap(ctx, "codes generate error", globals)
+				return newState
+			},
 
-		return nil
+			RetryOnMissingCompletion: true,
+			MaxRetries:               maxRetriesForMissingSummary,
+			SummarizeIncomplete: func(incompleteText string) (string, error) {
+				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
+			},
+		})
+
+		return err
 	}
 }
