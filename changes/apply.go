@@ -40,6 +40,11 @@ strings; structural operations must be used instead. See TheoryOfTextLevelOperat
 Final output normalization ensures every written file ends with exactly one trailing
 newline, matching the convention enforced by go fmt. This replaces the prior use of
 bytes.TrimSpace which stripped the trailing newline entirely.
+After building the modified Go source, parseAndFormat parses it immediately to catch
+syntax errors before goimports, which may report formatting-aware errors that obscure
+the root cause. On parse or goimports failure, an XML error log is written to the
+current directory recording the original source, change block, modified content, and
+error. See TheoryOfErrorLogging.
 `
 
 type BodyInfo struct {
@@ -192,6 +197,27 @@ func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
 	return ApplyChangeBlockStore(NewRootStore(root), h)
 }
 
+// parseAndFormat parses the modified Go source immediately to catch syntax
+// errors before goimports, then runs goimports for formatting and import
+// synchronization. On error, an XML error log is written to the current
+// directory with the original source, modified content, and error details.
+// See TheoryOfErrorLogging.
+func parseAndFormat(path string, h ChangeBlock, src []byte, modified []byte, prefixLen int) ([]byte, error) {
+	if _, parseErr := parser.ParseFile(token.NewFileSet(), path, modified, parser.ParseComments); parseErr != nil {
+		_ = writeErrorLog(h, src, modified, parseErr)
+		return nil, fmt.Errorf("parse error after apply: %w", parseErr)
+	}
+	formatted, err := imports.Process(path, modified, nil)
+	if err != nil {
+		_ = writeErrorLog(h, src, modified, err)
+		return nil, fmt.Errorf("goimports: %w", err)
+	}
+	if prefixLen > 0 {
+		formatted = formatted[prefixLen:]
+	}
+	return formatted, nil
+}
+
 // ApplyChangeBlockStore applies a change block to the given FileStore.
 // When the store is a MemoryStore, changes are buffered in memory and
 // only written to disk on Flush. This enables early error detection
@@ -236,13 +262,14 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 
 	// Handle WRITE: replace the entire file content, bypassing declaration-level parsing.
 	// The target field is ignored; file-path determines the destination.
-	// Go files are processed through goimports to keep imports synchronized.
+	// Go files are processed through parseAndFormat (parse check + goimports) to catch
+	// syntax errors early and keep imports synchronized. See TheoryOfErrorLogging.
 	if h.Op == "WRITE" {
 		content := []byte(h.Body)
 		if strings.HasSuffix(path, ".go") {
-			formatted, err := imports.Process(path, content, nil)
+			formatted, err := parseAndFormat(path, h, nil, content, 0)
 			if err != nil {
-				return fmt.Errorf("goimports: %w", err)
+				return err
 			}
 			content = formatted
 		}
@@ -284,6 +311,7 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		}
 		newContent, editErr := applyTextEdit(src, h)
 		if editErr != nil {
+			_ = writeErrorLog(h, src, nil, editErr)
 			return editErr
 		}
 		return store.WriteFile(path, finalizeContent(newContent), 0644)
@@ -305,6 +333,7 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 	if len(src) > 0 {
 		f, prefixLen, err = parseGoSource(fset, path, src)
 		if err != nil {
+			_ = writeErrorLog(h, src, nil, err)
 			return err
 		}
 	}
@@ -467,12 +496,13 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		outputSrc = append([]byte("package p\n"), newSrc...)
 		outputPrefixLen = len("package p\n")
 	}
-	formatted, err := imports.Process(path, outputSrc, nil)
+	// Parse and format: parse immediately to catch syntax errors before
+	// goimports, then run goimports for formatting and import synchronization.
+	// On error, an XML error log is written with the original source, modified
+	// content, and error details. See TheoryOfErrorLogging.
+	formatted, err := parseAndFormat(path, h, src, outputSrc, outputPrefixLen)
 	if err != nil {
-		return fmt.Errorf("goimports: %w", err)
-	}
-	if outputPrefixLen > 0 {
-		formatted = formatted[outputPrefixLen:]
+		return err
 	}
 
 	return store.WriteFile(path, finalizeContent(formatted), 0644) // Use FileStore for safe writing
@@ -846,10 +876,12 @@ func applySpecialTargetModify(store FileStore, path string, src []byte, f *ast.F
 		return fmt.Errorf("unknown special target: %q", h.Target)
 	}
 
-	// Run goimports to fix formatting and import synchronization.
-	formatted, err := imports.Process(path, newSrc, nil)
+	// Parse and format: parse immediately to catch syntax errors before
+	// goimports, then run goimports for formatting and import synchronization.
+	// See TheoryOfErrorLogging.
+	formatted, err := parseAndFormat(path, h, src, newSrc, 0)
 	if err != nil {
-		return fmt.Errorf("goimports: %w", err)
+		return err
 	}
 
 	return store.WriteFile(path, finalizeContent(formatted), 0644)
