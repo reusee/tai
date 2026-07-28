@@ -79,8 +79,7 @@ var AICommand = Command{
 		logger logs.Logger,
 		getSystemPrompt AISystemPrompt,
 		comps AIComponents,
-		currentMemory memories.CurrentMemory,
-		appendMemory memories.AppendMemory,
+		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
 		buildGenerate phases.BuildGenerate,
 		buildChat phases.BuildChat,
 		generator generators.Generator,
@@ -226,9 +225,7 @@ var AICommand = Command{
 
 		// update memory from block
 		if !noMemory {
-			if err := memories.UpdateMemoryFromBlock(
-				currentMemory,
-				appendMemory,
+			if err := updateMemoryFromBlock(
 				memories.GetModelID(generator.Spec()),
 				buf.String(),
 			); err != nil {

@@ -160,7 +160,8 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
-	err := UpdateMemoryFromBlock(currentMemory, appendMemory, "test-model", text)
+	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
+	err := updateFn("test-model", text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,8 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
 		"update_user_profile(items=['duplicate'])"
 
-	err := UpdateMemoryFromBlock(currentMemory, appendMemory, "test-model", text)
+	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
+	err := updateFn("test-model", text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +216,8 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 	// No memory block, only a textual pseudo-call
 	text := `I'll remember that. update_user_profile(items=["user likes Go"])`
 
-	err := UpdateMemoryFromBlock(currentMemory, appendMemory, "test-model", text)
+	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
+	err := updateFn("test-model", text)
 	if err != nil {
 		t.Fatal(err)
 	}

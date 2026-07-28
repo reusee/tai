@@ -269,65 +269,74 @@ func parseMemoryItems(text string) ([]string, error) {
 	}
 }
 
-// UpdateMemoryFromBlock extracts memory items from memory blocks and textual
-// pseudo-calls in the assistant output, then merges them with the current
-// profile and persists the result. See TheoryOfMemory.
-func UpdateMemoryFromBlock(
+// UpdateMemoryFromBlock is a dscope-provided function that extracts memory
+// items from memory blocks and textual pseudo-calls in the assistant output,
+// then merges them with the current profile and persists the result. The
+// dscope-provided dependencies (CurrentMemory, AppendMemory) are injected
+// at provider resolution time; only the runtime values (model, assistantText)
+// are passed as function arguments. See TheoryOfMemory.
+type UpdateMemoryFromBlock func(model string, assistantText string) error
+
+// UpdateMemoryFromBlock provider: the dscope-provided CurrentMemory and
+// AppendMemory dependencies are captured in the returned closure, so callers
+// only need to pass the runtime values (model, assistantText).
+// See TheoryOfMemory.
+func (Module) UpdateMemoryFromBlock(
 	currentMemory CurrentMemory,
 	appendMemory AppendMemory,
-	model string,
-	assistantText string,
-) error {
-	items, err := parseMemoryItems(assistantText)
-	if err != nil {
-		return err
-	}
+) UpdateMemoryFromBlock {
+	return func(model string, assistantText string) error {
+		items, err := parseMemoryItems(assistantText)
+		if err != nil {
+			return err
+		}
 
-	// Pseudo-call recovery: detect textual update_user_profile(...) calls
-	// that the model emits instead of using the memory block format.
-	// See TheoryOfMemory.
-	items = append(items, parsePseudoCallItems(assistantText)...)
+		// Pseudo-call recovery: detect textual update_user_profile(...) calls
+		// that the model emits instead of using the memory block format.
+		// See TheoryOfMemory.
+		items = append(items, parsePseudoCallItems(assistantText)...)
 
-	if len(items) == 0 {
+		if len(items) == 0 {
+			return nil
+		}
+
+		// Deduplicate items from memory blocks and pseudo-calls.
+		seen := make(map[string]bool)
+		var uniqueItems []string
+		for _, item := range items {
+			if !seen[item] {
+				seen[item] = true
+				uniqueItems = append(uniqueItems, item)
+			}
+		}
+		items = uniqueItems
+
+		current, err := currentMemory()
+		if err != nil {
+			return err
+		}
+		var currentItems []string
+		if current != nil {
+			currentItems = current.Items
+		}
+
+		finalItems := slices.Clone(items)
+		for _, currentItem := range currentItems {
+			found := slices.Contains(items, currentItem)
+			if !found {
+				finalItems = append(finalItems, currentItem)
+			}
+		}
+
+		if err := appendMemory(&MemoryEntry{
+			Time:  time.Now(),
+			Model: model,
+			Items: finalItems,
+		}); err != nil {
+			return err
+		}
 		return nil
 	}
-
-	// Deduplicate items from memory blocks and pseudo-calls.
-	seen := make(map[string]bool)
-	var uniqueItems []string
-	for _, item := range items {
-		if !seen[item] {
-			seen[item] = true
-			uniqueItems = append(uniqueItems, item)
-		}
-	}
-	items = uniqueItems
-
-	current, err := currentMemory()
-	if err != nil {
-		return err
-	}
-	var currentItems []string
-	if current != nil {
-		currentItems = current.Items
-	}
-
-	finalItems := slices.Clone(items)
-	for _, currentItem := range currentItems {
-		found := slices.Contains(items, currentItem)
-		if !found {
-			finalItems = append(finalItems, currentItem)
-		}
-	}
-
-	if err := appendMemory(&MemoryEntry{
-		Time:  time.Now(),
-		Model: model,
-		Items: finalItems,
-	}); err != nil {
-		return err
-	}
-	return nil
 }
 
 var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
