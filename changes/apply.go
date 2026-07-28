@@ -28,6 +28,9 @@ DELETE with target * removes the entire file from the working tree, bypassing
 declaration-level parsing. This works for both Go and non-Go files. If the file does not
 exist, the operation is a no-op, consistent with the DELETE declaration behavior that
 returns nil when the target is not found.
+Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are rejected for Go files
+at the application layer because the model cannot reliably reproduce whitespace in find
+strings; structural operations must be used instead. See TheoryOfTextLevelOperations.
 Final output normalization ensures every written file ends with exactly one trailing
 newline, matching the convention enforced by go fmt. This replaces the prior use of
 bytes.TrimSpace which stripped the trailing newline entirely.
@@ -261,12 +264,15 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 	}
 
 	// Handle text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER):
-	// These work on any text file using string search, bypassing structural
-	// parsing. They must be handled before the non-Go file restriction
-	// because they apply to both Go and non-Go files. For Go files,
-	// goimports is run after the edit to keep imports synchronized.
+	// These work on non-Go text files using string search, bypassing
+	// structural parsing. They are rejected for Go files because the model
+	// cannot reliably reproduce whitespace characters in the find string,
+	// causing matching failures; structural operations must be used instead.
 	// See TheoryOfTextLevelOperations.
 	if isTextLevelOperation(h.Op) {
+		if isGoFile(path) {
+			return fmt.Errorf("Go file %q does not support text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER); use structural operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) instead", path)
+		}
 		if err != nil {
 			return err
 		}
@@ -274,15 +280,7 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		if editErr != nil {
 			return editErr
 		}
-		content := newContent
-		if strings.HasSuffix(path, ".go") {
-			formatted, formatErr := imports.Process(path, content, nil)
-			if formatErr != nil {
-				return fmt.Errorf("goimports: %w", formatErr)
-			}
-			content = formatted
-		}
-		return store.WriteFile(path, finalizeContent(content), 0644)
+		return store.WriteFile(path, finalizeContent(newContent), 0644)
 	}
 
 	// Handle non-Go files

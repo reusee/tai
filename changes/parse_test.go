@@ -418,22 +418,84 @@ func TestParseFirstBoundaryChangeBlockTextLevelOps(t *testing.T) {
 		}
 	})
 
-	t.Run("ReplaceOnGoFileSucceeds", func(t *testing.T) {
+	t.Run("ReplaceOnGoFileFails", func(t *testing.T) {
 		content := ":::徕珑 <change op=\"REPLACE\" find=\"old string\" file-path=\"/test.go\">\nnew string\n:::徕珑 </change>\n"
-		h, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for REPLACE on Go file")
 		}
-		if !ok {
-			t.Fatal("expected ok for REPLACE on Go file")
+		if ok {
+			t.Fatal("expected ok=false for REPLACE on Go file")
 		}
-		if h.Op != "REPLACE" {
-			t.Fatalf("expected REPLACE, got %s", h.Op)
-		}
-		if h.Find != "old string" {
-			t.Fatalf("expected find 'old string', got %q", h.Find)
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
 		}
 	})
+
+	t.Run("InsertBeforeOnGoFileFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"INSERT_BEFORE\" find=\"old string\" file-path=\"/test.go\">\nnew string\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for INSERT_BEFORE on Go file")
+		}
+		if ok {
+			t.Fatal("expected ok=false for INSERT_BEFORE on Go file")
+		}
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
+		}
+	})
+
+	t.Run("InsertAfterOnGoFileFails", func(t *testing.T) {
+		content := ":::徕珑 <change op=\"INSERT_AFTER\" find=\"old string\" file-path=\"/test.go\">\nnew string\n:::徕珑 </change>\n"
+		_, _, _, ok, err := ParseFirstBoundaryChangeBlock([]byte(content))
+		if err == nil {
+			t.Fatal("expected error for INSERT_AFTER on Go file")
+		}
+		if ok {
+			t.Fatal("expected ok=false for INSERT_AFTER on Go file")
+		}
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
+		}
+	})
+}
+
+func TestValidateChangeBlockGoFileTextLevelOps(t *testing.T) {
+	for _, op := range []string{"REPLACE", "INSERT_BEFORE", "INSERT_AFTER"} {
+		t.Run(op, func(t *testing.T) {
+			h := ChangeBlock{
+				Op:       op,
+				Find:     "some string",
+				FilePath: "test.go",
+				Body:     "new content",
+			}
+			err := ValidateChangeBlock(h)
+			if err == nil {
+				t.Fatal("expected error for text-level operation on Go file")
+			}
+			if !strings.Contains(err.Error(), "does not support text-level operations") {
+				t.Fatalf("expected text-level operations rejection error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateChangeBlockNonGoFileTextLevelOpsAllowed(t *testing.T) {
+	for _, op := range []string{"REPLACE", "INSERT_BEFORE", "INSERT_AFTER"} {
+		t.Run(op, func(t *testing.T) {
+			h := ChangeBlock{
+				Op:       op,
+				Find:     "some string",
+				FilePath: "test.md",
+				Body:     "new content",
+			}
+			err := ValidateChangeBlock(h)
+			if err != nil {
+				t.Fatalf("text-level operation on non-Go file should be allowed: %v", err)
+			}
+		})
+	}
 }
 
 func TestChangeBlockPromptPrefersPreciseModifications(t *testing.T) {

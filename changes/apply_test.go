@@ -1124,7 +1124,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 		}
 	})
 
-	t.Run("ReplaceGoFileWithGoimports", func(t *testing.T) {
+	t.Run("ReplaceGoFileRejected", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
 		if err != nil {
@@ -1137,32 +1137,77 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Replace fmt.Println with os.Exit, which requires changing the import.
-		// goimports should remove the unused fmt import and add the os import.
+		// REPLACE on Go files is rejected because the model cannot reliably
+		// reproduce whitespace in the find string. Structural operations
+		// (MODIFY, ADD_BEFORE, ADD_AFTER) must be used instead.
 		h := ChangeBlock{
 			Op:       "REPLACE",
 			Find:     "fmt.Println(\"hello\")",
 			FilePath: "test.go",
 			Body:     "os.Exit(0)",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
-			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		err = ApplyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected error for REPLACE on Go file")
 		}
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
+		}
+	})
 
-		result, err := root.ReadFile("test.go")
+	t.Run("InsertBeforeGoFileRejected", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resultStr := string(result)
-		if strings.Contains(resultStr, "fmt.Println") {
-			t.Fatalf("result should not contain fmt.Println:\n%s", resultStr)
+		defer root.Close()
+
+		original := "package x\n\nfunc Foo() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(resultStr, "os.Exit(0)") {
-			t.Fatalf("result should contain os.Exit(0):\n%s", resultStr)
+
+		h := ChangeBlock{
+			Op:       "INSERT_BEFORE",
+			Find:     "func Foo()",
+			FilePath: "test.go",
+			Body:     "// before Foo\n",
 		}
-		// goimports should have added the "os" import
-		if !strings.Contains(resultStr, "\"os\"") {
-			t.Fatalf("result should contain os import (added by goimports):\n%s", resultStr)
+		err = ApplyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected error for INSERT_BEFORE on Go file")
+		}
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
+		}
+	})
+
+	t.Run("InsertAfterGoFileRejected", func(t *testing.T) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Foo() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := ChangeBlock{
+			Op:       "INSERT_AFTER",
+			Find:     "func Foo()",
+			FilePath: "test.go",
+			Body:     "// after Foo\n",
+		}
+		err = ApplyChangeBlock(root, h)
+		if err == nil {
+			t.Fatal("expected error for INSERT_AFTER on Go file")
+		}
+		if !strings.Contains(err.Error(), "does not support text-level operations") {
+			t.Fatalf("expected text-level operations rejection error, got: %v", err)
 		}
 	})
 }
