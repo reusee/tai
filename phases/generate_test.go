@@ -70,3 +70,32 @@ func TestBuildGenerateRetryThenSuccess(t *testing.T) {
 		t.Fatalf("expected 2 generate calls, got %d", calls)
 	}
 }
+
+type nonRetryableErrorGenerator struct{}
+
+func (g *nonRetryableErrorGenerator) Spec() generators.Spec           { return generators.Spec{} }
+func (g *nonRetryableErrorGenerator) CountTokens(string) (int, error) { return 0, nil }
+func (g *nonRetryableErrorGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+	return nil, errors.New("fatal error")
+}
+
+func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
+	// Reproduction: when generator.Generate returns a non-retryable error,
+	// the phase must return the input state (not nil) so that callers
+	// like loops.Run can pass a valid state to OnPhaseError. Before the
+	// fix, the phase returned nil, causing a nil pointer dereference in
+	// OnPhaseError when it called errState.AppendContent.
+	gen := &nonRetryableErrorGenerator{}
+	module := Module{}
+	buildGenerate := module.BuildGenerate()
+	phase := buildGenerate(gen, nil)(nil)
+
+	initialState := generators.NewPrompts("", nil)
+	_, state, err := phase(context.Background(), initialState)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state on non-retryable error, got nil")
+	}
+}

@@ -428,3 +428,38 @@ func TestRunMaxRounds(t *testing.T) {
 		t.Fatalf("expected 3 rounds (MaxRounds), got %d", callCount)
 	}
 }
+
+func TestRunPhaseErrorNilStateFallback(t *testing.T) {
+	// Reproduction: when a phase returns nil state on error,
+	// loops.Run must fall back to the pre-phase state so OnPhaseError
+	// receives a valid (non-nil) state. Before the fix, the nil state
+	// was passed directly to OnPhaseError, causing a nil pointer
+	// dereference when it called errState.AppendContent.
+	module := Module{}
+	run := module.Run()
+
+	var onPhaseErrorState generators.State
+	onPhaseError := func(state generators.State, err error) generators.State {
+		onPhaseErrorState = state
+		return state
+	}
+
+	initialState := generators.NewPrompts("", nil)
+	_, err := run(context.Background(), RunOptions{
+		Generator:    nil,
+		InitialState: initialState,
+		Components:   nil,
+		PhaseBuilder: func(g generators.Generator) phases.Phase {
+			return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+				return nil, nil, errors.New("generate failed")
+			}
+		},
+		OnPhaseError: onPhaseError,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if onPhaseErrorState == nil {
+		t.Fatal("OnPhaseError should receive a non-nil state, got nil")
+	}
+}

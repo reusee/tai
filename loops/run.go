@@ -176,8 +176,13 @@ func (Module) Run() Run {
 					}
 				}
 
-				// Unwrap ParserState to get the base state.
-				if ps, ok := generators.As[*blocks.ParserState](wrappedState); ok {
+				// Unwrap ParserState to get the base state. A phase may
+				// return a nil state on error; fall back to the pre-phase
+				// state so OnPhaseError receives a valid state rather
+				// than a nil pointer that would cause a panic.
+				if wrappedState == nil {
+					phaseState = state
+				} else if ps, ok := generators.As[*blocks.ParserState](wrappedState); ok {
 					phaseState = ps.Unwrap()
 				} else {
 					phaseState = wrappedState
