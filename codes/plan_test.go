@@ -4,49 +4,41 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/modes"
 )
 
 func TestSystemPromptPlan(t *testing.T) {
-	module := Module{}
-
 	t.Run("Disabled", func(t *testing.T) {
-		comps := module.CodesComponents(
-			mockCodeProvider{},
-			flags.ExtraSystemPrompt(""),
-			DynamicContext(false),
-			flags.Apply(true),
-			flags.Plan(false),
-			flags.Shell(false),
-			nil,
-			nil,
-		)
-		prompt := module.SystemPrompt(
-			comps,
-			mockCodeProvider{},
-		)
-		if strings.Contains(string(prompt), "Mandatory Planning") {
-			t.Fatal("system prompt must not include mandatory planning section when plan is disabled")
-		}
+		dscope.New(
+			modes.ForTest(t),
+			new(Module),
+		).Fork(
+			func() codetypes.CodeProvider { return mockCodeProvider{} },
+		).Call(func(
+			prompt SystemPrompt,
+		) {
+			if strings.Contains(string(prompt), "Mandatory Planning") {
+				t.Fatal("system prompt must not include mandatory planning section when plan is disabled")
+			}
+		})
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		comps := module.CodesComponents(
-			mockCodeProvider{},
-			flags.ExtraSystemPrompt(""),
-			DynamicContext(false),
-			flags.Apply(true),
-			flags.Plan(true),
-			flags.Shell(false),
-			nil,
-			nil,
-		)
-		prompt := module.SystemPrompt(
-			comps,
-			mockCodeProvider{},
-		)
-		if !strings.Contains(string(prompt), "Mandatory Planning") {
-			t.Fatal("system prompt must include mandatory planning section when plan is enabled")
-		}
+		dscope.New(
+			modes.ForTest(t),
+			new(Module),
+		).Fork(
+			func() codetypes.CodeProvider { return mockCodeProvider{} },
+			func() flags.Plan { return true },
+		).Call(func(
+			prompt SystemPrompt,
+		) {
+			if !strings.Contains(string(prompt), "Mandatory Planning") {
+				t.Fatal("system prompt must include mandatory planning section when plan is enabled")
+			}
+		})
 	})
 }

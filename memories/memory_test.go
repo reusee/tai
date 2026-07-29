@@ -1,8 +1,26 @@
 package memories
 
 import (
+	"context"
 	"testing"
+
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
 )
+
+// mockGenerator satisfies generators.Generator for tests that need the
+// Memory provider resolved but don't use the generator.
+type mockGenerator struct{}
+
+func (mockGenerator) Spec() generators.Spec { return generators.Spec{} }
+
+func (mockGenerator) CountTokens(string) (int, error) { return 0, nil }
+
+func (mockGenerator) Generate(context.Context, generators.State, *generators.GenerateOptions) (generators.State, error) {
+	return nil, nil
+}
 
 func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
 	// Reproduction: when a continue block precedes a memory block,
@@ -160,20 +178,37 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
-	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
-	err := updateFn("test-model", text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if appended == nil {
-		t.Fatal("expected memory entry to be appended")
-	}
-	if len(appended.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d: %v", len(appended.Items), appended.Items)
-	}
-	if appended.Items[0] != "from block" || appended.Items[1] != "from pseudo-call" {
-		t.Fatalf("unexpected items: %v", appended.Items)
-	}
+	// memories.Module embeds generators.Module, whose Memory provider
+	// requires generators.Generator. The scope must include a mock
+	// generator, configs.Loader (for GetGeneratorSpecs), and modes.Mode
+	// (for nets.ProxyAddr). See the user's instruction to use real
+	// dscope instances with Call rather than direct method calls.
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+		func() generators.Generator { return mockGenerator{} },
+	).Fork(
+		func() CurrentMemory { return currentMemory },
+		func() AppendMemory { return appendMemory },
+	).Call(func(
+		updateFn UpdateMemoryFromBlock,
+	) {
+		err := updateFn("test-model", text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if appended == nil {
+			t.Fatal("expected memory entry to be appended")
+		}
+		if len(appended.Items) != 2 {
+			t.Fatalf("expected 2 items, got %d: %v", len(appended.Items), appended.Items)
+		}
+		if appended.Items[0] != "from block" || appended.Items[1] != "from pseudo-call" {
+			t.Fatalf("unexpected items: %v", appended.Items)
+		}
+	})
 }
 
 func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
@@ -190,17 +225,29 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
 		"update_user_profile(items=['duplicate'])"
 
-	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
-	err := updateFn("test-model", text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if appended == nil {
-		t.Fatal("expected memory entry to be appended")
-	}
-	if len(appended.Items) != 1 {
-		t.Fatalf("expected 1 deduplicated item, got %d: %v", len(appended.Items), appended.Items)
-	}
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+		func() generators.Generator { return mockGenerator{} },
+	).Fork(
+		func() CurrentMemory { return currentMemory },
+		func() AppendMemory { return appendMemory },
+	).Call(func(
+		updateFn UpdateMemoryFromBlock,
+	) {
+		err := updateFn("test-model", text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if appended == nil {
+			t.Fatal("expected memory entry to be appended")
+		}
+		if len(appended.Items) != 1 {
+			t.Fatalf("expected 1 deduplicated item, got %d: %v", len(appended.Items), appended.Items)
+		}
+	})
 }
 
 func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
@@ -216,18 +263,30 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 	// No memory block, only a textual pseudo-call
 	text := `I'll remember that. update_user_profile(items=["user likes Go"])`
 
-	updateFn := Module{}.UpdateMemoryFromBlock(currentMemory, appendMemory)
-	err := updateFn("test-model", text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if appended == nil {
-		t.Fatal("expected memory entry to be appended")
-	}
-	if len(appended.Items) != 1 {
-		t.Fatalf("expected 1 item from pseudo-call, got %d: %v", len(appended.Items), appended.Items)
-	}
-	if appended.Items[0] != "user likes Go" {
-		t.Fatalf("expected 'user likes Go', got %q", appended.Items[0])
-	}
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+		func() generators.Generator { return mockGenerator{} },
+	).Fork(
+		func() CurrentMemory { return currentMemory },
+		func() AppendMemory { return appendMemory },
+	).Call(func(
+		updateFn UpdateMemoryFromBlock,
+	) {
+		err := updateFn("test-model", text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if appended == nil {
+			t.Fatal("expected memory entry to be appended")
+		}
+		if len(appended.Items) != 1 {
+			t.Fatalf("expected 1 item from pseudo-call, got %d: %v", len(appended.Items), appended.Items)
+		}
+		if appended.Items[0] != "user likes Go" {
+			t.Fatalf("expected 'user likes Go', got %q", appended.Items[0])
+		}
+	})
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/generators"
 )
 
@@ -38,37 +40,51 @@ func TestBuildGenerateRetryLimit(t *testing.T) {
 	calls := 0
 	gen := &alwaysRetryableGenerator{calls: &calls}
 
-	module := Module{}
-	buildGenerate := module.BuildGenerate()
-	phase := buildGenerate(gen, nil)(nil)
+	// phases.Module's BuildChatPhase provider requires logs.Logger and
+	// debugs.Tap. Include debugs.Module (which embeds logs.Module) so
+	// both are resolvable. See the user's instruction to use real dscope
+	// instances with Call rather than direct method calls.
+	dscope.New(
+		new(Module),
+		new(debugs.Module),
+	).Call(func(
+		buildGenerate BuildGenerate,
+	) {
+		phase := buildGenerate(gen, nil)(nil)
 
-	_, _, err := phase(context.Background(), generators.NewPrompts("", nil))
-	if err == nil {
-		t.Fatal("expected error after retry limit exhausted")
-	}
-	if calls != 3 {
-		t.Fatalf("expected 3 generate calls (maxRetries), got %d", calls)
-	}
+		_, _, err := phase(context.Background(), generators.NewPrompts("", nil))
+		if err == nil {
+			t.Fatal("expected error after retry limit exhausted")
+		}
+		if calls != 3 {
+			t.Fatalf("expected 3 generate calls (maxRetries), got %d", calls)
+		}
+	})
 }
 
 func TestBuildGenerateRetryThenSuccess(t *testing.T) {
 	calls := 0
 	gen := &retryThenSuccessGenerator{calls: &calls, succeedAt: 2}
 
-	module := Module{}
-	buildGenerate := module.BuildGenerate()
-	phase := buildGenerate(gen, nil)(nil)
+	dscope.New(
+		new(Module),
+		new(debugs.Module),
+	).Call(func(
+		buildGenerate BuildGenerate,
+	) {
+		phase := buildGenerate(gen, nil)(nil)
 
-	nextPhase, _, err := phase(context.Background(), generators.NewPrompts("", nil))
-	if err != nil {
-		t.Fatalf("expected success on second attempt, got: %v", err)
-	}
-	if nextPhase != nil {
-		t.Fatal("expected nil next phase when cont is nil")
-	}
-	if calls != 2 {
-		t.Fatalf("expected 2 generate calls, got %d", calls)
-	}
+		nextPhase, _, err := phase(context.Background(), generators.NewPrompts("", nil))
+		if err != nil {
+			t.Fatalf("expected success on second attempt, got: %v", err)
+		}
+		if nextPhase != nil {
+			t.Fatal("expected nil next phase when cont is nil")
+		}
+		if calls != 2 {
+			t.Fatalf("expected 2 generate calls, got %d", calls)
+		}
+	})
 }
 
 type nonRetryableErrorGenerator struct{}
@@ -86,16 +102,22 @@ func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
 	// fix, the phase returned nil, causing a nil pointer dereference in
 	// OnPhaseError when it called errState.AppendContent.
 	gen := &nonRetryableErrorGenerator{}
-	module := Module{}
-	buildGenerate := module.BuildGenerate()
-	phase := buildGenerate(gen, nil)(nil)
 
-	initialState := generators.NewPrompts("", nil)
-	_, state, err := phase(context.Background(), initialState)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if state == nil {
-		t.Fatal("expected non-nil state on non-retryable error, got nil")
-	}
+	dscope.New(
+		new(Module),
+		new(debugs.Module),
+	).Call(func(
+		buildGenerate BuildGenerate,
+	) {
+		phase := buildGenerate(gen, nil)(nil)
+
+		initialState := generators.NewPrompts("", nil)
+		_, state, err := phase(context.Background(), initialState)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if state == nil {
+			t.Fatal("expected non-nil state on non-retryable error, got nil")
+		}
+	})
 }

@@ -6,12 +6,39 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/components"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 )
+
+// newTestRun constructs a real dscope instance and uses Call to obtain the
+// Run function, following the test pattern established in
+// anytexts.TestContextPrompt. See the user's instruction: "所有测试里，如果
+// 涉及到dscope提供的类型，那就应该构造一个真正的dscope实例，并使用Call方法
+// 来获取依赖，而不是直接调用module方法来构造。"
+//
+// loops.Module embeds blocks.Module → generators.Module → nets.Module, whose
+// ProxyAddr provider requires modes.Mode. generators.Module's
+// GetGeneratorSpecs provider requires configs.Loader. Both must be supplied
+// in the scope so all transitive providers resolve.
+func newTestRun(t *testing.T) Run {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	var run Run
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Call(func(r Run) {
+		run = r
+	})
+	return run
+}
 
 // appendPhase creates a phase that appends text content and returns nil
 // (end of phase chain).
@@ -36,8 +63,7 @@ func errorPhase(err error) phases.Phase {
 }
 
 func TestRunSingleRound(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	result, err := run(context.Background(), RunOptions{
 		Generator:    nil,
@@ -65,8 +91,7 @@ func TestRunSingleRound(t *testing.T) {
 }
 
 func TestRunMultiRoundTriggered(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -125,8 +150,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 }
 
 func TestRunBlockHandlerConsumed(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	var consumedBlocks []blocks.Block
 	blockHandler := func(block blocks.Block) (bool, error) {
@@ -166,8 +190,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 }
 
 func TestRunPhaseError(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	expectedErr := errors.New("phase failed")
 	var onPhaseErrorCalled bool
@@ -200,8 +223,7 @@ func TestRunPhaseError(t *testing.T) {
 }
 
 func TestRunRetryOnMissingCompletion(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -234,8 +256,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 }
 
 func TestRunRetryMaxRetries(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -264,8 +285,7 @@ func TestRunRetryMaxRetries(t *testing.T) {
 }
 
 func TestRunOnRoundStartCalled(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	onRoundStart := func() {
@@ -307,8 +327,7 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 }
 
 func TestRunOnRoundSuccessCalled(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	var successStates []generators.State
 	var successSummaries [][]string
@@ -343,8 +362,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 }
 
 func TestRunOnRoundSuccessError(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	expectedErr := errors.New("flush failed")
 	onRoundSuccess := func(state generators.State, summaries []string) error {
@@ -369,8 +387,7 @@ func TestRunOnRoundSuccessError(t *testing.T) {
 }
 
 func TestRunEmptyComponentsSingleShot(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	phaseCalled := false
 	result, err := run(context.Background(), RunOptions{
@@ -395,8 +412,7 @@ func TestRunEmptyComponentsSingleShot(t *testing.T) {
 }
 
 func TestRunMaxRounds(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	comps := components.ComponentSet{
@@ -435,8 +451,7 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 	// receives a valid (non-nil) state. Before the fix, the nil state
 	// was passed directly to OnPhaseError, causing a nil pointer
 	// dereference when it called errState.AppendContent.
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	var onPhaseErrorState generators.State
 	onPhaseError := func(state generators.State, err error) generators.State {
@@ -465,8 +480,7 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 }
 
 func TestRunRetryOnApplyError(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -535,8 +549,7 @@ func TestRunRetryOnApplyError(t *testing.T) {
 }
 
 func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -571,8 +584,7 @@ func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
 }
 
 func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -604,8 +616,7 @@ func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
 }
 
 func TestRunApplyErrorNonApplyErrorNoRetry(t *testing.T) {
-	module := Module{}
-	run := module.Run()
+	run := newTestRun(t)
 
 	callCount := 0
 	phaseBuilder := func(g generators.Generator) phases.Phase {
