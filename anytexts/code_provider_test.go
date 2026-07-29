@@ -473,3 +473,77 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 		}
 	})
 }
+
+func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a hidden file and a non-hidden file
+	if err := os.WriteFile(".env", []byte("SECRET=abc123"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("config.txt", []byte("config content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+		modes.ForTest(t),
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		// Directly specifying a hidden file via pattern should include it
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{".env"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		foundHidden := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "SECRET=abc123") {
+					foundHidden = true
+				}
+			}
+		}
+		if !foundHidden {
+			t.Fatal("hidden file directly specified via pattern should be included")
+		}
+
+		// Directory traversal should still skip hidden files
+		parts, err = provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "SECRET=abc123") {
+					t.Fatal("hidden file should be skipped during directory traversal")
+				}
+			}
+		}
+
+		// Verify the non-hidden file is found during traversal
+		foundConfig := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "config content") {
+					foundConfig = true
+				}
+			}
+		}
+		if !foundConfig {
+			t.Fatal("non-hidden file should be included during directory traversal")
+		}
+	})
+}

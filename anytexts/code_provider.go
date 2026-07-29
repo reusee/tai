@@ -73,6 +73,14 @@ doublestar path match, so "pkg" excludes both "pkg" itself and everything under
 "pkg/". This unification ensures consistent ** semantics across all file
 matching contexts: IterFiles glob expansion, isExcludedPath pattern matching,
 request-context glob tags, and gocodes exclusion/embed-requested checks.
+
+Hidden files (those whose basename starts with ".") are skipped during
+directory traversal to avoid including unintended dotfiles (e.g., .git,
+.env). However, when a user explicitly specifies a hidden file via a
+pattern (e.g., -file .env), the file is included because explicit user
+intent overrides the default skip behavior. The distinction is tracked by
+marking pattern-matched paths as direct matches, while paths discovered
+during directory traversal are not.
 `
 
 type CodeProvider struct {
@@ -108,16 +116,29 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			readOnly bool
 		}
 		var candidates []candidate
-		var queue []string
+
+		// queueItem tracks whether a path was directly matched via a
+		// user-supplied pattern (directMatch=true) or discovered during
+		// directory traversal (directMatch=false). Directly matched
+		// paths are not subject to hidden-file filtering, so users can
+		// explicitly request hidden files (e.g., .env, .gitignore) via
+		// -file without having them silently skipped.
+		type queueItem struct {
+			path        string
+			directMatch bool
+		}
+		var queue []queueItem
 
 		for _, pattern := range patterns {
 			files, err := doublestar.FilepathGlob(pattern)
 			if err != nil {
 				// use as-is
-				queue = append(queue, pattern)
+				queue = append(queue, queueItem{path: pattern, directMatch: true})
 			} else {
 				slices.SortStableFunc(files, cmp.Compare[string])
-				queue = append(queue, files...)
+				for _, f := range files {
+					queue = append(queue, queueItem{path: f, directMatch: true})
+				}
 			}
 		}
 
@@ -132,12 +153,15 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 		visitedSymlinks := make(map[string]bool)
 
 		for len(queue) > 0 {
-			path := queue[0]
+			item := queue[0]
 			queue = queue[1:]
+			path := item.path
 
 			baseName := filepath.Base(path)
-			// ignore hidden files
-			if baseName != "." && strings.HasPrefix(baseName, ".") {
+			// ignore hidden files, but not when directly matched via
+			// user-supplied patterns. This allows users to explicitly
+			// include hidden files (e.g., .env, .gitignore) via -file.
+			if !item.directMatch && baseName != "." && strings.HasPrefix(baseName, ".") {
 				continue
 			}
 			// ignore _ files
@@ -212,7 +236,10 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 					return cmp.Compare(a.Name(), b.Name())
 				})
 				for _, entry := range entries {
-					queue = append(queue, filepath.Join(path, entry.Name()))
+					queue = append(queue, queueItem{
+						path:        filepath.Join(path, entry.Name()),
+						directMatch: false,
+					})
 				}
 				continue
 			}
