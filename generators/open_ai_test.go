@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,8 +12,6 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/debugs"
-	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 )
@@ -245,27 +241,6 @@ func TestAzureConfiguration(t *testing.T) {
 	})
 }
 
-// setTestOpenAIInjects initializes all dscope.Inject fields on an OpenAI
-// struct with safe defaults for unit tests. Tests that manually construct
-// OpenAI without going through NewOpenAI (which uses dscope.InjectStruct)
-// must call this to avoid nil pointer panics from uninitialized injects.
-func setTestOpenAIInjects(o *OpenAI) {
-	o.Logger = func() logs.Logger {
-		return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	}
-	o.Tap = func() debugs.Tap {
-		return func(context.Context, string, map[string]any) {}
-	}
-	o.Count = func() BPETokenCounter {
-		return func(text string) (int, error) { return len(text), nil }
-	}
-	o.Effort = func() EffortFlag { return "" }
-	o.TemperatureFlag = func() TemperatureFlag { return TemperatureFlag{} }
-	o.Debug = func() DebugOpenAI { return false }
-	o.TapFlag = func() TapOpenAI { return false }
-	o.FuncDecls = func() FuncDecls { return nil }
-}
-
 func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 	// Text longer than 64 chars triggers the parser to flush a content
 	// chunk, causing AppendContent to be called during streaming.
@@ -290,39 +265,50 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	baseState := NewPrompts("", []*Content{
-		{Role: RoleUser, Parts: []Part{Text("hi")}},
-	})
+	// Construct OpenAI via dscope so all dscope.Inject fields are
+	// properly initialized by dscope.InjectStruct, rather than manually
+	// setting them with setTestOpenAIInjects. The nets.HTTPClient is
+	// forked to point at the test server. See anytexts.TestContextPrompt
+	// for the reference dscope test pattern.
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		baseState := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
 
-	// Allow 1 successful AppendContent; the 2nd call (from the second
-	// flushed chunk) will fail. The first chunk's content is already
-	// in ret when the error occurs.
-	failingState := &errorAfterNState{
-		State:    baseState,
-		maxCalls: 1,
-	}
+		// Allow 1 successful AppendContent; the 2nd call (from the second
+		// flushed chunk) will fail. The first chunk's content is already
+		// in ret when the error occurs.
+		failingState := &errorAfterNState{
+			State:    baseState,
+			maxCalls: 1,
+		}
 
-	disableTools := true
-	openai := &OpenAI{
-		spec: Spec{
+		disableTools := true
+		openai := newOpenAI(Spec{
 			BaseURL:      server.URL,
 			Model:        "test-model",
 			DisableTools: &disableTools,
-		},
-		apiKey: "test-key",
-		client: nets.HTTPClient{
-			server.Client(),
-		},
-	}
-	setTestOpenAIInjects(openai)
+		}, "test-key")
 
-	ret, err := openai.Generate(context.Background(), failingState, nil)
-	if err == nil {
-		t.Fatal("expected error from failing AppendContent")
-	}
-	if ret == nil {
-		t.Fatal("expected partial state to be preserved on error, got nil")
-	}
+		ret, err := openai.Generate(context.Background(), failingState, nil)
+		if err == nil {
+			t.Fatal("expected error from failing AppendContent")
+		}
+		if ret == nil {
+			t.Fatal("expected partial state to be preserved on error, got nil")
+		}
+	})
 }
 
 func TestOpenAIErrorNoErrorField(t *testing.T) {
@@ -335,29 +321,39 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 	}))
 	defer server.Close()
 
-	disableTools := true
-	openai := &OpenAI{
-		spec: Spec{
+	// Construct OpenAI via dscope so all dscope.Inject fields are
+	// properly initialized by dscope.InjectStruct. The nets.HTTPClient
+	// is forked to point at the test server. See anytexts.TestContextPrompt
+	// for the reference dscope test pattern.
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		disableTools := true
+		openai := newOpenAI(Spec{
 			BaseURL:      server.URL,
 			Model:        "test-model",
 			DisableTools: &disableTools,
-		},
-		apiKey: "test-key",
-		client: nets.HTTPClient{
-			server.Client(),
-		},
-	}
-	setTestOpenAIInjects(openai)
+		}, "test-key")
 
-	state := NewPrompts("", []*Content{
-		{Role: RoleUser, Parts: []Part{Text("hi")}},
+		state := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
+
+		_, err := openai.Generate(context.Background(), state, nil)
+		// Should return an error, not panic
+		if err == nil {
+			t.Fatal("expected error for non-200 status without error field")
+		}
 	})
-
-	_, err := openai.Generate(context.Background(), state, nil)
-	// Should return an error, not panic
-	if err == nil {
-		t.Fatal("expected error for non-200 status without error field")
-	}
 }
 
 func TestTemperatureAndMaxTokensOmittedWhenNotSet(t *testing.T) {
