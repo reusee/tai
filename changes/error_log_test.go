@@ -24,19 +24,15 @@ type testErrorLogEntry struct {
 }
 
 func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
-	dir := t.TempDir()
+	rootDir := t.TempDir()
 
-	root, err := os.OpenRoot(dir)
+	root, err := os.OpenRoot(rootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
 
-	newTestScope(t).Fork(
-		func() debugs.ErrorLogDir {
-			return debugs.ErrorLogDir(dir)
-		},
-	).Call(func(applyChangeBlock ApplyChangeBlock) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock, errorLogDir debugs.ErrorLogDir) {
 		original := "package x\n\nfunc Foo() {}\n"
 		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
 			t.Fatal(err)
@@ -60,7 +56,7 @@ func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
 			t.Fatalf("expected parse error, got: %v", err)
 		}
 
-		entry := findAndParseErrorLog(t, dir)
+		entry := findAndParseErrorLog(t, string(errorLogDir))
 		if entry.Operation != "MODIFY" {
 			t.Fatalf("expected operation MODIFY, got %q", entry.Operation)
 		}
@@ -80,19 +76,15 @@ func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
 }
 
 func TestApplyChangeBlockWriteParseErrorWritesErrorLog(t *testing.T) {
-	dir := t.TempDir()
+	rootDir := t.TempDir()
 
-	root, err := os.OpenRoot(dir)
+	root, err := os.OpenRoot(rootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
 
-	newTestScope(t).Fork(
-		func() debugs.ErrorLogDir {
-			return debugs.ErrorLogDir(dir)
-		},
-	).Call(func(applyChangeBlock ApplyChangeBlock) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock, errorLogDir debugs.ErrorLogDir) {
 		// WRITE with invalid Go body (missing closing parenthesis).
 		h := ChangeBlock{
 			Op:       "WRITE",
@@ -107,7 +99,7 @@ func TestApplyChangeBlockWriteParseErrorWritesErrorLog(t *testing.T) {
 			t.Fatalf("expected parse error, got: %v", err)
 		}
 
-		entry := findAndParseErrorLog(t, dir)
+		entry := findAndParseErrorLog(t, string(errorLogDir))
 		if entry.Operation != "WRITE" {
 			t.Fatalf("expected operation WRITE, got %q", entry.Operation)
 		}
