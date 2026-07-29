@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package security
 
 import (
 	"fmt"
@@ -12,23 +12,57 @@ import (
 	"syscall"
 )
 
+const TheoryOfContainerIsolation = `
+The tai command runs in a Linux user namespace (CLONE_NEWUSER, CLONE_NEWNS,
+CLONE_NEWPID, CLONE_NEWUTS, and CLONE_NEWIPC) to isolate filesystem access,
+preventing AI-driven code generation from writing outside the intended project
+boundary. Network namespace is deliberately omitted because the AI pipeline
+requires network access to call model APIs. The process re-executes itself in
+the new namespace on first launch; the inContainerEnv environment variable marks
+that the process is already containerized, ensuring re-execution happens only
+once. On non-Linux platforms, container isolation is a no-op and the command
+runs directly.
+
+Filesystem hardening enforces a read-only-everything policy with targeted
+writable exceptions. All mount points are remounted read-only, then the current
+working directory is bind-mounted onto itself read-write, creating a writable
+enclave for project file modifications. Go toolchain directories (GOCACHE,
+GOMODCACHE, GOPATH/pkg) are resolved before namespace creation and individually
+bind-mounted read-write so the Go toolchain can function (build cache, module
+downloads, package objects). A fresh tmpfs is mounted on /tmp for isolated
+temporary file storage, and on /dev/shm for isolated shared memory. /proc is
+remounted to show only namespace-local processes, /sys is made read-only, and
+sensitive /proc paths are masked with bind-mounted /dev/null. The NO_NEW_PRIVS
+prctl flag prevents privilege escalation through exec, complementing the user
+namespace's capability restrictions.
+`
+
 // disableContainerEnv allows bypassing containerization entirely for debugging
 // or pre-isolated environments (e.g., CI runners that already provide sandboxing).
-// See TheoryOfContainerIsolation in main.go.
+// See TheoryOfContainerIsolation.
 const disableContainerEnv = "CAI_DISABLE_CONTAINER"
 
 // goWritableDirsEnv carries the colon-separated list of Go toolchain directories
 // that should be bind-mounted read-write inside the container. These are resolved
 // before entering the namespace because `go env` may not function correctly after
-// mount restrictions are applied. See TheoryOfContainerIsolation in main.go.
+// mount restrictions are applied. See TheoryOfContainerIsolation.
 const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
+
+// inContainerEnv marks that the process is already running inside the
+// container namespace, ensuring re-execution happens only once.
+// See TheoryOfContainerIsolation.
+const inContainerEnv = "CAI_IN_CONTAINER"
 
 // prSetNoNewPrivs is the prctl option number for PR_SET_NO_NEW_PRIVS on Linux.
 // It prevents the process and its descendants from gaining new privileges
-// through exec (e.g., setuid binaries). See TheoryOfContainerIsolation in main.go.
+// through exec (e.g., setuid binaries). See TheoryOfContainerIsolation.
 const prSetNoNewPrivs = 38
 
-func maybeRunInContainer() {
+// MaybeRunInContainer re-executes the current process inside a new user
+// namespace with filesystem isolation, or hardens the filesystem if already
+// containerized. On non-Linux platforms this is a no-op.
+// See TheoryOfContainerIsolation.
+func MaybeRunInContainer() {
 	// Allow disabling containerization for debugging or restricted kernels.
 	if os.Getenv(disableContainerEnv) != "" {
 		return
@@ -108,7 +142,7 @@ func maybeRunInContainer() {
 // and GOPATH/pkg (package objects). These are resolved before entering the
 // container namespace because `go env` may not function correctly after
 // mount restrictions are applied. Directories that don't exist are skipped.
-// See TheoryOfContainerIsolation in main.go.
+// See TheoryOfContainerIsolation.
 func resolveGoWritableDirs() []string {
 	var dirs []string
 	seen := make(map[string]bool)
@@ -189,8 +223,7 @@ func parseMountPoints() ([]string, error) {
 
 // setupContainerFilesystem hardens the mount table inside the container
 // namespace to enforce read-only filesystem access except for the current
-// working directory and Go toolchain directories. See TheoryOfContainerIsolation
-// in main.go.
+// working directory and Go toolchain directories. See TheoryOfContainerIsolation.
 func setupContainerFilesystem() error {
 	// 1. Make all mounts private to this namespace. This is critical:
 	// without it, subsequent mount operations could propagate to the
