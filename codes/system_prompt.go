@@ -279,7 +279,6 @@ func (Module) SystemPrompt(
 	// prompt-only Component in CodesComponents, so it is no longer a
 	// separate parameter. See TheoryOfCodesComponents.
 	return SystemPrompt(prompts.Codes + "\n" +
-		codeProvider.SystemPrompt() + "\n" +
 		comps.PromptSections() +
 		comps.RestatePrompts())
 }

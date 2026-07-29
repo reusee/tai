@@ -301,9 +301,6 @@ func (Module) Generate(
 		// counting. See TheoryOfTokenBudgetStability.
 		var allFuncDecls []generators.FuncDecl
 		if args.DisableTools != nil && !*args.DisableTools {
-			for _, fn := range codeProvider.Functions() {
-				allFuncDecls = append(allFuncDecls, fn.Decl)
-			}
 			allFuncDecls = append(allFuncDecls, funcDecls...)
 			sort.SliceStable(allFuncDecls, func(i, j int) bool {
 				return allFuncDecls[i].Name < allFuncDecls[j].Name
@@ -386,10 +383,6 @@ func (Module) Generate(
 			state = states.NewThoughtsSummarize(ctx, state, summarizer, output)
 		} else {
 			state = generators.NewOutput(state, output, showThoughts)
-		}
-
-		if args.DisableTools != nil && !*args.DisableTools {
-			state = generators.NewFuncMap(state, codeProvider.Functions()...)
 		}
 
 		// The state is NOT wrapped with ParserState here; loops.Run wraps

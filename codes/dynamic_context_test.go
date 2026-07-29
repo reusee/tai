@@ -19,14 +19,6 @@ func (mockCodeProvider) Parts(int, func(string) (int, error), []string) ([]gener
 	return nil, nil
 }
 
-func (mockCodeProvider) Functions() []*generators.Function {
-	return nil
-}
-
-func (mockCodeProvider) SystemPrompt() string {
-	return ""
-}
-
 func TestSystemPromptDynamicContext(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		dscope.New(

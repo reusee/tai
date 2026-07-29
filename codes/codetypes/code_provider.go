@@ -11,8 +11,4 @@ type CodeProvider interface {
 		parts []generators.Part,
 		err error,
 	)
-
-	Functions() []*generators.Function
-
-	SystemPrompt() string
 }

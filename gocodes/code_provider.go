@@ -44,14 +44,6 @@ type pendingExtraPart struct {
 	path   string
 }
 
-func (c CodeProvider) Functions() (ret []*generators.Function) {
-	return
-}
-
-func (c CodeProvider) SystemPrompt() string {
-	return ""
-}
-
 func (c CodeProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),

@@ -537,14 +537,6 @@ func (c CodeProvider) Parts(
 	return
 }
 
-func (c CodeProvider) Functions() []*generators.Function {
-	return nil
-}
-
-func (c CodeProvider) SystemPrompt() string {
-	return ""
-}
-
 func (Module) CodeProvider(
 	inject dscope.InjectStruct,
 ) (ret CodeProvider) {
