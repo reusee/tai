@@ -52,6 +52,43 @@ func TestResolveGoWritableDirsSkipsNonExistent(t *testing.T) {
 	}
 }
 
+func TestResolveConfigDir(t *testing.T) {
+	dir := resolveConfigDir()
+	// resolveConfigDir should return the same path as os.UserConfigDir
+	// when the directory exists, or empty string when it doesn't.
+	expectedDir, err := os.UserConfigDir()
+	if err != nil {
+		if dir != "" {
+			t.Fatalf("expected empty dir when UserConfigDir fails, got %s", dir)
+		}
+		return
+	}
+	expectedDir = filepath.Clean(expectedDir)
+	if dir != expectedDir {
+		t.Fatalf("expected %s, got %s", expectedDir, dir)
+	}
+	if dir != "" {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("config dir does not exist: %s", dir)
+		}
+		if !info.IsDir() {
+			t.Fatalf("config dir is not a directory: %s", dir)
+		}
+	}
+}
+
+func TestResolveConfigDirSkipsNonExistent(t *testing.T) {
+	// When HOME points to a non-existent directory, resolveConfigDir
+	// should return an empty string rather than a stale path.
+	t.Setenv("XDG_CONFIG_HOME", "/nonexistent/config/path")
+	t.Setenv("HOME", "/nonexistent/home/path")
+	dir := resolveConfigDir()
+	if dir != "" {
+		t.Fatalf("expected empty string for non-existent config dir, got %s", dir)
+	}
+}
+
 func TestParseMountPoints(t *testing.T) {
 	mounts, err := parseMountPoints()
 	if err != nil {

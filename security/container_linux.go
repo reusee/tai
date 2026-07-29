@@ -29,12 +29,17 @@ working directory is bind-mounted onto itself read-write, creating a writable
 enclave for project file modifications. Go toolchain directories (GOCACHE,
 GOMODCACHE, GOPATH/pkg) are resolved before namespace creation and individually
 bind-mounted read-write so the Go toolchain can function (build cache, module
-downloads, package objects). A fresh tmpfs is mounted on /tmp for isolated
-temporary file storage, and on /dev/shm for isolated shared memory. /proc is
-remounted to show only namespace-local processes, /sys is made read-only, and
-sensitive /proc paths are masked with bind-mounted /dev/null. The NO_NEW_PRIVS
-prctl flag prevents privilege escalation through exec, complementing the user
-namespace's capability restrictions.
+downloads, package objects). The user config directory is also resolved before
+namespace creation and bind-mounted read-write so the memory system
+(ai-memory.json) and chat history (ai-chat-history.json) can persist data across
+sessions. Without this exception, the read-only filesystem would cause all writes
+to the config directory to fail silently, losing memory updates. A fresh tmpfs
+is mounted on /tmp for isolated temporary file storage, and on /dev/shm for
+isolated shared memory. /proc is remounted to show only namespace-local
+processes, /sys is made read-only, and sensitive /proc paths are masked with
+bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents privilege
+escalation through exec, complementing the user namespace's capability
+restrictions.
 `
 
 // disableContainerEnv allows bypassing containerization entirely for debugging
@@ -47,6 +52,14 @@ const disableContainerEnv = "CAI_DISABLE_CONTAINER"
 // before entering the namespace because `go env` may not function correctly after
 // mount restrictions are applied. See TheoryOfContainerIsolation.
 const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
+
+// configDirEnv carries the user config directory path that should be
+// bind-mounted read-write inside the container. This is resolved before
+// entering the namespace because os.UserConfigDir may not function
+// correctly after mount restrictions are applied. The memory system
+// (ai-memory.json) and chat history (ai-chat-history.json) persist
+// files in this directory. See TheoryOfContainerIsolation.
+const configDirEnv = "CAI_CONFIG_DIR"
 
 // inContainerEnv marks that the process is already running inside the
 // container namespace, ensuring re-execution happens only once.
@@ -82,6 +95,14 @@ func MaybeRunInContainer() {
 		goDirs := resolveGoWritableDirs()
 		if len(goDirs) > 0 {
 			env = append(env, goWritableDirsEnv+"="+strings.Join(goDirs, string(filepath.ListSeparator)))
+		}
+		// Resolve user config directory before entering the namespace,
+		// since os.UserConfigDir may not work correctly after mount
+		// restrictions are applied. The memory system (ai-memory.json)
+		// and chat history (ai-chat-history.json) persist files in this
+		// directory. See TheoryOfContainerIsolation.
+		if configDir := resolveConfigDir(); configDir != "" {
+			env = append(env, configDirEnv+"="+configDir)
 		}
 		cmd.Env = env
 		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -188,6 +209,27 @@ func resolveGoWritableDirs() []string {
 	}
 
 	return dirs
+}
+
+// resolveConfigDir resolves the user config directory where the memory
+// system (ai-memory.json) and chat history (ai-chat-history.json) persist
+// data. This is resolved before entering the container namespace because
+// os.UserConfigDir may not function correctly after mount restrictions
+// are applied. Returns an empty string if the directory does not exist
+// or cannot be determined. See TheoryOfContainerIsolation.
+func resolveConfigDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	dir = filepath.Clean(dir)
+	if dir == "" || dir == "/" || dir == "." {
+		return ""
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
 }
 
 // goEnv runs `go env <key>` and returns the trimmed result. Returns an
@@ -312,7 +354,28 @@ func setupContainerFilesystem() error {
 		}
 	}
 
-	// 7. Mount a fresh tmpfs on /tmp. This isolates temporary files from
+	// 7. Bind-mount the user config directory read-write so the memory
+	// system (ai-memory.json) and chat history (ai-chat-history.json)
+	// can persist files. The directory is resolved before entering the
+	// namespace because os.UserConfigDir may not work correctly after
+	// mount restrictions are applied. Directories already under CWD are
+	// skipped (already writable via the CWD bind mount). Failure is
+	// non-critical (the directory may not exist or may already be
+	// writable). See TheoryOfContainerIsolation.
+	configDir := os.Getenv(configDirEnv)
+	if configDir != "" {
+		configDir = filepath.Clean(configDir)
+		if configDir != "/" && configDir != "" {
+			// Skip if already under CWD (already writable via the CWD bind mount).
+			if configDir != cwd && !strings.HasPrefix(configDir, cwd+string(filepath.Separator)) {
+				if err := syscall.Mount(configDir, configDir, "", syscall.MS_BIND, ""); err == nil {
+					syscall.Mount("", configDir, "", syscall.MS_REMOUNT, "")
+				}
+			}
+		}
+	}
+
+	// 8. Mount a fresh tmpfs on /tmp. This isolates temporary files from
 	// the host and provides a writable /tmp for tools that need it
 	// (e.g., go test creates temporary files). A size limit prevents
 	// disk exhaustion. Best-effort: if mounting fails, /tmp is either
@@ -321,7 +384,7 @@ func setupContainerFilesystem() error {
 	syscall.Mount("tmpfs", "/tmp", "tmpfs",
 		syscall.MS_NOSUID|syscall.MS_NODEV, "size=256m")
 
-	// 8. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
+	// 9. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
 	// This prevents the container from accessing host POSIX shared
 	// memory segments. Best-effort: if /dev/shm doesn't exist or
 	// mounting fails, the existing mount (or none) is used.
@@ -329,7 +392,7 @@ func setupContainerFilesystem() error {
 	syscall.Mount("tmpfs", "/dev/shm", "tmpfs",
 		syscall.MS_NOSUID|syscall.MS_NODEV, "size=64m")
 
-	// 9. Remount /proc to show only processes in this PID namespace.
+	// 10. Remount /proc to show only processes in this PID namespace.
 	// The host /proc exposes all host PIDs; the remount restricts
 	// visibility to the container's process tree. If unmount fails
 	// (e.g., /proc is busy), the remount is skipped and the host /proc
@@ -343,11 +406,11 @@ func setupContainerFilesystem() error {
 		}
 	}
 
-	// 10. Make /sys read-only to prevent sysfs tampering. Failure is
+	// 11. Make /sys read-only to prevent sysfs tampering. Failure is
 	// non-critical: /sys may not be a separate mount point on all systems.
 	syscall.Mount("", "/sys", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
 
-	// 11. Mask sensitive /proc files that could leak kernel memory or
+	// 12. Mask sensitive /proc files that could leak kernel memory or
 	// configuration. Bind-mount /dev/null over each path so reads return
 	// empty content instead of privileged data. Failure for individual
 	// paths is non-critical (the path may not exist on all kernels).
@@ -363,7 +426,7 @@ func setupContainerFilesystem() error {
 		syscall.Mount("/dev/null", p, "", syscall.MS_BIND, "")
 	}
 
-	// 12. Set NO_NEW_PRIVS to prevent privilege escalation through exec.
+	// 13. Set NO_NEW_PRIVS to prevent privilege escalation through exec.
 	// This ensures that even if a setuid binary is somehow executed, it
 	// cannot gain new privileges. Best-effort: failure is silently
 	// ignored since the user namespace already limits capabilities.
