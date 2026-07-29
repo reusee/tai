@@ -4,43 +4,87 @@ import (
 	"google.golang.org/genai"
 )
 
+const TheoryOfPartInterface = `
+The Part interface is a sealed type union for content parts. It uses only a
+marker method (isPart) to prevent external implementations, rather than
+exposing backend-specific conversion methods. Gemini-specific conversion is
+handled by the partToGemini function, which uses a type switch — mirroring the
+OpenAI path (stateToOpenAIMessages) that already uses type switches rather than
+interface methods. This eliminates no-op ToGemini implementations on metadata
+types (Thought, FinishReason, Usage, Error) whose methods always returned nil
+and were never reached at runtime: Thought is skipped by a continue before the
+conversion call, and the other three are carried in RoleLog content that is
+filtered out before the conversion loop.
+`
+
 type Part interface {
 	isPart()
-	ToGemini() (*genai.Part, error)
+}
+
+// partToGemini converts a Part to a *genai.Part for the Gemini API.
+// Returns nil for Part types that have no Gemini representation
+// (Thought, FinishReason, Usage, Error). Thought is handled separately
+// by the caller (PreservedThinking), and the others are internal
+// metadata types carried in RoleLog content that is filtered out before
+// reaching this function. See TheoryOfPartInterface.
+func partToGemini(part Part) (*genai.Part, error) {
+	switch p := part.(type) {
+	case Text:
+		if len(p) == 0 {
+			return nil, nil
+		}
+		return &genai.Part{
+			Text: string(p),
+		}, nil
+	case FileURL:
+		return &genai.Part{
+			FileData: &genai.FileData{
+				FileURI: string(p),
+			},
+		}, nil
+	case FileContent:
+		return &genai.Part{
+			InlineData: &genai.Blob{
+				MIMEType: p.MimeType,
+				Data:     p.Content,
+			},
+		}, nil
+	case FuncCall:
+		if p.Origin != nil {
+			if part, ok := p.Origin.(*genai.Part); ok {
+				return part, nil
+			}
+		}
+		return &genai.Part{
+			FunctionCall: &genai.FunctionCall{
+				ID:   p.ID,
+				Name: p.Name,
+				Args: p.Arguments,
+			},
+		}, nil
+	case CallResult:
+		return &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       p.ID,
+				Name:     p.Name,
+				Response: p.Results,
+			},
+		}, nil
+	}
+	return nil, nil
 }
 
 type Text string
 
 func (Text) isPart() {}
 
-func (t Text) ToGemini() (*genai.Part, error) {
-	if len(t) == 0 {
-		return nil, nil
-	}
-	return &genai.Part{
-		Text: string(t),
-	}, nil
-}
-
 type Thought string
 
 func (Thought) isPart() {}
 
-func (t Thought) ToGemini() (*genai.Part, error) {
-	return nil, nil
-}
-
 type FileURL string
 
 func (FileURL) isPart() {}
-
-func (f FileURL) ToGemini() (*genai.Part, error) {
-	return &genai.Part{
-		FileData: &genai.FileData{
-			FileURI: string(f),
-		},
-	}, nil
-}
 
 type FileContent struct {
 	Content  []byte
@@ -48,15 +92,6 @@ type FileContent struct {
 }
 
 func (FileContent) isPart() {}
-
-func (f FileContent) ToGemini() (*genai.Part, error) {
-	return &genai.Part{
-		InlineData: &genai.Blob{
-			MIMEType: f.MimeType,
-			Data:     f.Content,
-		},
-	}, nil
-}
 
 type FuncCall struct {
 	ID        string
@@ -71,24 +106,6 @@ type FuncCall struct {
 
 func (FuncCall) isPart() {}
 
-func (f FuncCall) ToGemini() (*genai.Part, error) {
-	// If Origin is set, it means this FuncCall came from a Gemini response
-	// and we should reuse the original part.
-	if f.Origin != nil {
-		if part, ok := f.Origin.(*genai.Part); ok {
-			return part, nil
-		}
-	}
-	// Otherwise, construct a new FunctionCall part for Gemini
-	return &genai.Part{
-		FunctionCall: &genai.FunctionCall{
-			ID:   f.ID,
-			Name: f.Name,
-			Args: f.Arguments,
-		},
-	}, nil
-}
-
 type CallResult struct {
 	ID      string
 	Name    string
@@ -97,23 +114,9 @@ type CallResult struct {
 
 func (CallResult) isPart() {}
 
-func (c CallResult) ToGemini() (*genai.Part, error) {
-	return &genai.Part{
-		FunctionResponse: &genai.FunctionResponse{
-			ID:       c.ID,
-			Name:     c.Name,
-			Response: c.Results,
-		},
-	}, nil
-}
-
 type FinishReason string
 
 func (FinishReason) isPart() {}
-
-func (FinishReason) ToGemini() (*genai.Part, error) {
-	return nil, nil
-}
 
 type Usage struct {
 	Prompt struct {
@@ -130,19 +133,11 @@ type Usage struct {
 
 func (Usage) isPart() {}
 
-func (Usage) ToGemini() (*genai.Part, error) {
-	return nil, nil
-}
-
 type Error struct {
 	Error error
 }
 
 func (Error) isPart() {}
-
-func (Error) ToGemini() (*genai.Part, error) {
-	return nil, nil
-}
 
 func PartFromGemini(part *genai.Part) (Part, error) {
 	if part.Text != "" || part.Thought {

@@ -205,7 +205,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				}
 				continue
 			}
-			pbPart, err := part.ToGemini()
+			pbPart, err := partToGemini(part)
 			if err != nil {
 				return ret, err
 			}
