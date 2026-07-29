@@ -2,6 +2,7 @@ package memories
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 )
 
 const TheoryOfMemory = `
@@ -56,6 +58,12 @@ explicitly expresses or that is confirmed by objective facts. The model must
 distinguish a user's topical interest (asking about a subject) from their
 personal status (undergoing that subject), preventing the profile from being
 polluted with unverified assumptions.
+
+UpdateMemoryFromBlock logs the outcome of each persistence operation: on
+success, it logs the model and item count so the user can confirm items were
+saved; on failure, it logs the error with context so write failures (e.g.,
+permission errors in a read-only container filesystem) are surfaced rather
+than silently lost.
 `
 
 type Memory struct {
@@ -277,13 +285,10 @@ func parseMemoryItems(text string) ([]string, error) {
 // are passed as function arguments. See TheoryOfMemory.
 type UpdateMemoryFromBlock func(model string, assistantText string) error
 
-// UpdateMemoryFromBlock provider: the dscope-provided CurrentMemory and
-// AppendMemory dependencies are captured in the returned closure, so callers
-// only need to pass the runtime values (model, assistantText).
-// See TheoryOfMemory.
 func (Module) UpdateMemoryFromBlock(
 	currentMemory CurrentMemory,
 	appendMemory AppendMemory,
+	logger logs.Logger,
 ) UpdateMemoryFromBlock {
 	return func(model string, assistantText string) error {
 		items, err := parseMemoryItems(assistantText)
@@ -313,6 +318,10 @@ func (Module) UpdateMemoryFromBlock(
 
 		current, err := currentMemory()
 		if err != nil {
+			logger.ErrorContext(context.Background(), "memory: read current memory failed",
+				"model", model,
+				"err", err,
+			)
 			return err
 		}
 		var currentItems []string
@@ -333,8 +342,17 @@ func (Module) UpdateMemoryFromBlock(
 			Model: model,
 			Items: finalItems,
 		}); err != nil {
+			logger.ErrorContext(context.Background(), "memory: write failed",
+				"model", model,
+				"items", len(finalItems),
+				"err", err,
+			)
 			return err
 		}
+		logger.InfoContext(context.Background(), "memory updated",
+			"model", model,
+			"items", len(finalItems),
+		)
 		return nil
 	}
 }
