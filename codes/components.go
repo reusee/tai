@@ -7,6 +7,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
+	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 )
 
@@ -61,6 +62,8 @@ func (Module) CodesComponents(
 	apply flags.Apply,
 	plan flags.Plan,
 	flagShell flags.Shell,
+	writeErrorLog debugs.WriteErrorLog,
+	applyChangeBlocks changes.ApplyChangeBlocks,
 ) CodesComponents {
 	var comps components.ComponentSet
 
@@ -76,7 +79,7 @@ func (Module) CodesComponents(
 			PromptSection: changes.ChangeBlockSystemPrompt(),
 			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-				err := changes.ApplyChangeBlocks(pctx.Blocks, pctx.Root)
+				err := applyChangeBlocks(pctx.Blocks, pctx.Root)
 				return components.ProcessResult{Err: err}
 			},
 		})

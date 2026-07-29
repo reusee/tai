@@ -241,6 +241,7 @@ func (Module) Generate(
 	maxTokens flags.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
+	applyChangeBlockStore changes.ApplyChangeBlockStore,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
 	summarizeThoughts states.SummarizeThoughts,
@@ -447,7 +448,7 @@ func (Module) Generate(
 							Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
 						}
 					}
-					if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
+					if err := applyChangeBlockStore(memStore, h); err != nil {
 						return false, &loops.ApplyError{
 							Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
 						}

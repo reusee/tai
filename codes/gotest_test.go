@@ -19,6 +19,8 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		flags.Apply(true),
 		flags.Plan(false),
 		flags.Shell(false),
+		nil,
+		nil,
 	)
 	prompt := module.SystemPrompt(
 		comps,
@@ -48,6 +50,8 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 		flags.Apply(true),
 		flags.Plan(false),
 		flags.Shell(false),
+		nil,
+		nil,
 	)
 
 	// Create a go-test block that matches no tests.
@@ -85,6 +89,8 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		flags.Apply(true),
 		flags.Plan(false),
 		flags.Shell(false),
+		nil,
+		nil,
 	)
 
 	// Create a go-test block using an invalid flag.

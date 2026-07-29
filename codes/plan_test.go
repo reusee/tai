@@ -18,6 +18,8 @@ func TestSystemPromptPlan(t *testing.T) {
 			flags.Apply(true),
 			flags.Plan(false),
 			flags.Shell(false),
+			nil,
+			nil,
 		)
 		prompt := module.SystemPrompt(
 			comps,
@@ -36,6 +38,8 @@ func TestSystemPromptPlan(t *testing.T) {
 			flags.Apply(true),
 			flags.Plan(true),
 			flags.Shell(false),
+			nil,
+			nil,
 		)
 		prompt := module.SystemPrompt(
 			comps,

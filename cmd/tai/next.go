@@ -106,6 +106,7 @@ var NextCommand = Command{
 		buildChat phases.BuildChat,
 		flagThoughts flags.Thoughts,
 		apply flags.Apply,
+		applyChangeBlockStore changes.ApplyChangeBlockStore,
 		loopRun loops.Run,
 	) {
 		ctx := context.Background()
@@ -157,7 +158,7 @@ var NextCommand = Command{
 						Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
 					}
 				}
-				if err := changes.ApplyChangeBlockStore(memStore, h); err != nil {
+				if err := applyChangeBlockStore(memStore, h); err != nil {
 					return false, &loops.ApplyError{
 						Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
 					}
@@ -191,5 +192,6 @@ var NextCommand = Command{
 			err = memStore.Flush()
 			ce(err)
 		}
+
 	},
 }

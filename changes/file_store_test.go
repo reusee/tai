@@ -5,9 +5,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
 )
+
+func newTestApplyChangeBlockStore(t *testing.T) ApplyChangeBlockStore {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	scope := dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	)
+	return dscope.Get[ApplyChangeBlockStore](scope)
+}
 
 func TestMemoryStoreWriteReadFlush(t *testing.T) {
 	dir := t.TempDir()
@@ -213,6 +227,7 @@ func TestMemoryStoreRenameAndRead(t *testing.T) {
 }
 
 func TestMemoryStoreApplyChangeBlockStore(t *testing.T) {
+	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -234,7 +249,7 @@ func TestMemoryStoreApplyChangeBlockStore(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := ApplyChangeBlockStore(store, h); err != nil {
+	if err := applyChangeBlockStore(store, h); err != nil {
 		t.Fatalf("ApplyChangeBlockStore failed: %v", err)
 	}
 
@@ -278,6 +293,7 @@ func TestMemoryStoreApplyChangeBlockStore(t *testing.T) {
 }
 
 func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
+	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -298,7 +314,7 @@ func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "package x\n\nfunc First() {}\n",
 	}
-	if err := ApplyChangeBlockStore(store, h1); err != nil {
+	if err := applyChangeBlockStore(store, h1); err != nil {
 		t.Fatalf("first ApplyChangeBlockStore failed: %v", err)
 	}
 
@@ -309,7 +325,7 @@ func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "func Second() {}",
 	}
-	if err := ApplyChangeBlockStore(store, h2); err != nil {
+	if err := applyChangeBlockStore(store, h2); err != nil {
 		t.Fatalf("second ApplyChangeBlockStore failed: %v", err)
 	}
 
@@ -353,6 +369,7 @@ func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
 }
 
 func TestMemoryStoreCreateNewFile(t *testing.T) {
+	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -368,7 +385,7 @@ func TestMemoryStoreCreateNewFile(t *testing.T) {
 		FilePath: "new.go",
 		Body:     "package x\n\nfunc New() {}\n",
 	}
-	if err := ApplyChangeBlockStore(store, h); err != nil {
+	if err := applyChangeBlockStore(store, h); err != nil {
 		t.Fatalf("ApplyChangeBlockStore failed: %v", err)
 	}
 
@@ -522,6 +539,7 @@ func TestRootStoreRenameCreatesDirectory(t *testing.T) {
 }
 
 func TestApplyChangeBlockWrapperDelegatesToStore(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -541,7 +559,7 @@ func TestApplyChangeBlockWrapperDelegatesToStore(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -559,6 +577,7 @@ func TestApplyChangeBlockWrapperDelegatesToStore(t *testing.T) {
 }
 
 func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
+	applyChangeBlocks := newTestApplyChangeBlocks(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -593,7 +612,7 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 	}
 
 	// ApplyChangeBlocks (the wrapper) should delegate to ApplyChangeBlocksStore
-	err = ApplyChangeBlocks(changeBlocks, root)
+	err = applyChangeBlocks(changeBlocks, root)
 	if err != nil {
 		t.Fatalf("ApplyChangeBlocks failed: %v", err)
 	}

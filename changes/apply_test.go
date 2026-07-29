@@ -5,9 +5,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/modes"
 )
 
+func newTestApplyChangeBlock(t *testing.T) ApplyChangeBlock {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	scope := dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	)
+	return dscope.Get[ApplyChangeBlock](scope)
+}
+
+func newTestApplyDiffFile(t *testing.T) ApplyDiffFile {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	scope := dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	)
+	return dscope.Get[ApplyDiffFile](scope)
+}
+
 func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -26,7 +53,7 @@ func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "const aaa = 42",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -50,6 +77,7 @@ func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
 }
 
 func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	t.Run("SingleSpecConst", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -72,7 +100,7 @@ func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "newFeature = true",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -113,7 +141,7 @@ func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "aaa = 42",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -149,7 +177,7 @@ func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "newFunc() {}",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -173,6 +201,7 @@ func TestApplyChangeBlockAddBeforeBodyWithoutKeyword(t *testing.T) {
 }
 
 func TestApplyChangeBlockRename(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -190,7 +219,7 @@ func TestApplyChangeBlockRename(t *testing.T) {
 		Target:   "newname.go",
 		FilePath: "test.go",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -218,6 +247,7 @@ func TestApplyChangeBlockRename(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyPackage(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -236,7 +266,7 @@ func TestApplyChangeBlockModifyPackage(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "package newpkg",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -254,6 +284,7 @@ func TestApplyChangeBlockModifyPackage(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyImportReplace(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -272,7 +303,7 @@ func TestApplyChangeBlockModifyImportReplace(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "import (\n\t\"fmt\"\n\t\"os\"\n)",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -290,6 +321,7 @@ func TestApplyChangeBlockModifyImportReplace(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyImportAddToFileWithoutImports(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -308,7 +340,7 @@ func TestApplyChangeBlockModifyImportAddToFileWithoutImports(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "import \"fmt\"",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -323,6 +355,7 @@ func TestApplyChangeBlockModifyImportAddToFileWithoutImports(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyImportRemoveAll(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -343,7 +376,7 @@ func TestApplyChangeBlockModifyImportRemoveAll(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -359,6 +392,7 @@ func TestApplyChangeBlockModifyImportRemoveAll(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -378,7 +412,7 @@ func TestApplyChangeBlockModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "newpkg",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -396,6 +430,7 @@ func TestApplyChangeBlockModifyPackageBodyWithoutPackageKeyword(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyPackageNonModifyRejected(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -414,7 +449,7 @@ func TestApplyChangeBlockModifyPackageNonModifyRejected(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "some text",
 	}
-	err = ApplyChangeBlock(root, h)
+	err = applyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on package target")
 	}
@@ -424,6 +459,7 @@ func TestApplyChangeBlockModifyPackageNonModifyRejected(t *testing.T) {
 }
 
 func TestApplyChangeBlockModifyImportNonModifyRejected(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -442,7 +478,7 @@ func TestApplyChangeBlockModifyImportNonModifyRejected(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "",
 	}
-	err = ApplyChangeBlock(root, h)
+	err = applyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for non-MODIFY op on import target")
 	}
@@ -452,6 +488,7 @@ func TestApplyChangeBlockModifyImportNonModifyRejected(t *testing.T) {
 }
 
 func TestApplyChangeBlockDeleteFile(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	t.Run("GoFile", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -470,7 +507,7 @@ func TestApplyChangeBlockDeleteFile(t *testing.T) {
 			Target:   "*",
 			FilePath: "test.go",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -500,7 +537,7 @@ func TestApplyChangeBlockDeleteFile(t *testing.T) {
 			Target:   "*",
 			FilePath: "readme.md",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -526,13 +563,14 @@ func TestApplyChangeBlockDeleteFile(t *testing.T) {
 			Target:   "*",
 			FilePath: "nonexistent.go",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock should be no-op for non-existent file, got: %v", err)
 		}
 	})
 }
 
 func TestApplyChangeBlockNoBlankLinesInBody(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -551,7 +589,7 @@ func TestApplyChangeBlockNoBlankLinesInBody(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -569,6 +607,7 @@ func TestApplyChangeBlockNoBlankLinesInBody(t *testing.T) {
 }
 
 func TestApplyChangeBlockWrite(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	t.Run("ReplaceGoFile", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -587,7 +626,7 @@ func TestApplyChangeBlockWrite(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -617,7 +656,7 @@ func TestApplyChangeBlockWrite(t *testing.T) {
 			FilePath: "new.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -645,7 +684,7 @@ func TestApplyChangeBlockWrite(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "# New Title\n\nNew content\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -675,7 +714,7 @@ func TestApplyChangeBlockWrite(t *testing.T) {
 			FilePath: "sub/dir/notes.md",
 			Body:     "# Notes\n\nSome content\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -687,6 +726,7 @@ func TestApplyChangeBlockWrite(t *testing.T) {
 }
 
 func TestApplyChangeBlockPathWithDoubleDotPrefix(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -710,7 +750,7 @@ func TestApplyChangeBlockPathWithDoubleDotPrefix(t *testing.T) {
 		FilePath: filename,
 		Body:     "func New() {}",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed for path starting with double dots: %v", err)
 	}
 
@@ -728,6 +768,7 @@ func TestApplyChangeBlockPathWithDoubleDotPrefix(t *testing.T) {
 }
 
 func TestApplyUnclosedBlockError(t *testing.T) {
+	applyDiffFile := newTestApplyDiffFile(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -742,7 +783,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 	}
 
 	sawError := false
-	for _, err := range ApplyDiffFile(root, diffPath) {
+	for _, err := range applyDiffFile(root, diffPath) {
 		if err == nil {
 			t.Fatal("expected error, got a change block")
 		}
@@ -757,6 +798,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 }
 
 func TestApplyFinishBlock(t *testing.T) {
+	applyDiffFile := newTestApplyDiffFile(t)
 	t.Run("AtEnd", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -777,7 +819,7 @@ func TestApplyFinishBlock(t *testing.T) {
 		}
 
 		count := 0
-		for _, err := range ApplyDiffFile(root, diffPath) {
+		for _, err := range applyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -821,7 +863,7 @@ func TestApplyFinishBlock(t *testing.T) {
 		}
 
 		count := 0
-		for _, err := range ApplyDiffFile(root, diffPath) {
+		for _, err := range applyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -846,6 +888,7 @@ func TestApplyFinishBlock(t *testing.T) {
 }
 
 func TestApplyPreservesNonChangeBlocks(t *testing.T) {
+	applyDiffFile := newTestApplyDiffFile(t)
 	run := func(t *testing.T, content string) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -865,7 +908,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 		}
 
 		count := 0
-		for _, err := range ApplyDiffFile(root, diffPath) {
+		for _, err := range applyDiffFile(root, diffPath) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -912,6 +955,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 }
 
 func TestApplyChangeBlockMultiEntityRemovesDuplicates(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -936,7 +980,7 @@ func TestApplyChangeBlockMultiEntityRemovesDuplicates(t *testing.T) {
 		FilePath: "test.go",
 		Body:     body,
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -961,6 +1005,7 @@ func TestApplyChangeBlockMultiEntityRemovesDuplicates(t *testing.T) {
 }
 
 func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -993,7 +1038,7 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 			FilePath: "modify.go",
 			Body:     "func New() {}",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1010,7 +1055,7 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 			FilePath: "write.go",
 			Body:     "package x\n\nfunc New() {}\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1027,7 +1072,7 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "# Title\n\nContent\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1040,6 +1085,7 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 }
 
 func TestApplyChangeBlockBuildConstraintBeforePackage(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -1062,7 +1108,7 @@ func TestApplyChangeBlockBuildConstraintBeforePackage(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "func New() {}",
 	}
-	if err := ApplyChangeBlock(root, h); err != nil {
+	if err := applyChangeBlock(root, h); err != nil {
 		t.Fatalf("ApplyChangeBlock failed: %v", err)
 	}
 
@@ -1088,6 +1134,7 @@ func TestApplyChangeBlockBuildConstraintBeforePackage(t *testing.T) {
 }
 
 func TestApplyChangeBlockTextLevelOps(t *testing.T) {
+	applyChangeBlock := newTestApplyChangeBlock(t)
 	t.Run("ReplaceNonGoFile", func(t *testing.T) {
 		dir := t.TempDir()
 		root, err := os.OpenRoot(dir)
@@ -1107,7 +1154,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "new description",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1146,7 +1193,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "replacement",
 		}
-		err = ApplyChangeBlock(root, h)
+		err = applyChangeBlock(root, h)
 		if err == nil {
 			t.Fatal("expected error for find string not found")
 		}
@@ -1174,7 +1221,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "unique",
 		}
-		err = ApplyChangeBlock(root, h)
+		err = applyChangeBlock(root, h)
 		if err == nil {
 			t.Fatal("expected error for non-unique find string")
 		}
@@ -1202,7 +1249,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1238,7 +1285,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "readme.md",
 			Body:     "## New Section\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1276,7 +1323,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "Cargo.toml",
 			Body:     "serde = { version = \"1.0\" }\n",
 		}
-		if err := ApplyChangeBlock(root, h); err != nil {
+		if err := applyChangeBlock(root, h); err != nil {
 			t.Fatalf("ApplyChangeBlock failed: %v", err)
 		}
 
@@ -1317,7 +1364,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "os.Exit(0)",
 		}
-		err = ApplyChangeBlock(root, h)
+		err = applyChangeBlock(root, h)
 		if err == nil {
 			t.Fatal("expected error for REPLACE on Go file")
 		}
@@ -1345,7 +1392,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "// before Foo\n",
 		}
-		err = ApplyChangeBlock(root, h)
+		err = applyChangeBlock(root, h)
 		if err == nil {
 			t.Fatal("expected error for INSERT_BEFORE on Go file")
 		}
@@ -1373,7 +1420,7 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 			FilePath: "test.go",
 			Body:     "// after Foo\n",
 		}
-		err = ApplyChangeBlock(root, h)
+		err = applyChangeBlock(root, h)
 		if err == nil {
 			t.Fatal("expected error for INSERT_AFTER on Go file")
 		}

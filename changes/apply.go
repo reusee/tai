@@ -7,13 +7,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/reusee/tai/pathutil"
-	"golang.org/x/tools/imports"
 )
 
 const TheoryOfChangeBlockApplication = `
@@ -196,230 +191,39 @@ func finalizeContent(content []byte) []byte {
 	return append(trimmed, '\n')
 }
 
-// ApplyChangeBlock applies a change block to the given root.
-// It is a convenience wrapper that creates a rootStore from the given
-// *os.Root and delegates to ApplyChangeBlockStore. See TheoryOfInMemoryApply.
-func ApplyChangeBlock(root *os.Root, h ChangeBlock) error {
-	return ApplyChangeBlockStore(NewRootStore(root), h)
+// rangeItem represents a byte range in the original source to be replaced,
+// deleted, or left as-is during the single-pass source rebuild.
+type rangeItem struct {
+	start, end int
+	body       string
+	isPrimary  bool
 }
 
-// parseAndFormat parses the modified Go source immediately to catch syntax
-// errors before goimports, then runs goimports for formatting and import
-// synchronization. On error, an XML error log is written to the current
-// directory with the original source, modified content, and error details.
-// See TheoryOfErrorLogging.
-func parseAndFormat(path string, h ChangeBlock, src []byte, modified []byte, prefixLen int) ([]byte, error) {
-	if _, parseErr := parser.ParseFile(token.NewFileSet(), path, modified, parser.ParseComments); parseErr != nil {
-		_ = writeErrorLog(h, src, modified, parseErr)
-		return nil, fmt.Errorf("parse error after apply: %w", parseErr)
-	}
-	formatted, err := imports.Process(path, modified, nil)
-	if err != nil {
-		_ = writeErrorLog(h, src, modified, err)
-		return nil, fmt.Errorf("goimports: %w", err)
-	}
-	if prefixLen > 0 {
-		formatted = formatted[prefixLen:]
-	}
-	return formatted, nil
-}
-
-// ApplyChangeBlockStore applies a change block to the given FileStore.
-// When the store is a MemoryStore, changes are buffered in memory and
-// only written to disk on Flush. This enables early error detection
-// during streaming while preserving filesystem consistency on retry.
-// See TheoryOfInMemoryApply.
-func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
-	path := h.FilePath
-	if filepath.IsAbs(path) { // Convert absolute path to relative if it is within CWD
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(cwd, path)
-		if err != nil || pathutil.EscapesDir(rel) {
-			return fmt.Errorf("path outside of current directory: %s", path)
-		}
-		path = rel
-	}
-	if pathutil.EscapesDir(filepath.Clean(path)) { // Proactively block directory escape
-		return fmt.Errorf("path escapes current directory: %s", path)
-	}
-
-	// Handle RENAME before any file content checks
-	if h.Op == "RENAME" {
-		newPath := h.Target
-		if filepath.IsAbs(newPath) {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(cwd, newPath)
-			if err != nil || pathutil.EscapesDir(rel) {
-				return fmt.Errorf("new path outside of current directory: %s", newPath)
-			}
-			newPath = rel
-		}
-		if pathutil.EscapesDir(filepath.Clean(newPath)) {
-			return fmt.Errorf("new path escapes current directory: %s", newPath)
-		}
-		return store.Rename(path, newPath)
-	}
-
-	// Handle WRITE: replace the entire file content, bypassing declaration-level parsing.
-	// The target field is ignored; file-path determines the destination.
-	// Go files are processed through parseAndFormat (parse check + goimports) to catch
-	// syntax errors early and keep imports synchronized. See TheoryOfErrorLogging.
-	if h.Op == "WRITE" {
-		content := []byte(h.Body)
-		if strings.HasSuffix(path, ".go") {
-			formatted, err := parseAndFormat(path, h, nil, content, 0)
-			if err != nil {
-				return err
-			}
-			content = formatted
-		}
-		return store.WriteFile(path, finalizeContent(content), 0644)
-	}
-
-	// Handle DELETE with target *: delete the entire file, bypassing
-	// declaration-level parsing. Works for both Go and non-Go files. If the
-	// file does not exist, the operation is a no-op, consistent with the
-	// DELETE declaration behavior that returns nil when the target is not
-	// found. See ChangeBlockApplicationTheory.
-	if h.Op == "DELETE" && h.Target == "*" {
-		if err := store.Remove(path); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		return nil
-	}
-
-	src, err := store.ReadFile(path) // Use FileStore for safe reading
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	// Handle text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER):
-	// These work on non-Go text files using string search, bypassing
-	// structural parsing. They are rejected for Go files because the model
-	// cannot reliably reproduce whitespace characters in the find string,
-	// causing matching failures; structural operations must be used instead.
-	// See TheoryOfTextLevelOperations.
-	if isTextLevelOperation(h.Op) {
-		if isGoFile(path) {
-			return fmt.Errorf("Go file %q does not support text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER); use structural operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) instead", path)
-		}
-		if err != nil {
-			return err
-		}
-		newContent, editErr := applyTextEdit(src, h)
-		if editErr != nil {
-			_ = writeErrorLog(h, src, nil, editErr)
-			return editErr
-		}
-		return store.WriteFile(path, finalizeContent(newContent), 0644)
-	}
-
-	// Handle non-Go files
-	if !strings.HasSuffix(path, ".go") {
-		if os.IsNotExist(err) && h.Op == "ADD_BEFORE" && h.Target == "BEGIN" {
-			// Allow creating new non-Go file
-			body := h.Body
-			return store.WriteFile(path, []byte(body), 0644)
-		}
-		return fmt.Errorf("only .go files are supported for modification: %s", path)
-	}
-
-	fset := token.NewFileSet()
-	var f *ast.File
-	var prefixLen int
-	if len(src) > 0 {
-		f, prefixLen, err = parseGoSource(fset, path, src)
-		if err != nil {
-			_ = writeErrorLog(h, src, nil, err)
-			return err
-		}
-	}
-
-	// Handle special Go-only targets: package and import.
-	// These replace the package clause or import block without rewriting
-	// the entire file, saving tokens. See TheoryOfSpecialGoTargets in
-	// parse.go.
-	if h.Target == "package" || h.Target == "import" {
-		if h.Op != "MODIFY" {
-			return fmt.Errorf("target %q only supports MODIFY, got op=%q", h.Target, h.Op)
-		}
-		if f == nil {
-			return fmt.Errorf("target %q: file %s could not be parsed", h.Target, path)
-		}
-		return applySpecialTargetModify(store, path, src, f, fset, prefixLen, h)
-	}
-
-	bodyInfo, _ := getBodyInfo(h.Body)
-	if bodyInfo != nil {
-		h.Body = string(bodyInfo.Src[bodyInfo.PrefixLen:])
-	}
-	bodyName := getChangeBlockBodyNameFromInfo(bodyInfo)
-
-	var start, end int
-	var finalBody string = h.Body
-
-	// Implementation of Theory: ADD_BEFORE/AFTER acts as MODIFY if name already exists
-	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyName != "" {
-		if s, e, fb, err := findTargetRange(fset, f, ChangeBlock{Op: "MODIFY", Target: bodyName, Body: h.Body}, bodyInfo, len(src), prefixLen); err == nil {
-			h.Op = "MODIFY"
-			h.Target = bodyName
-			start, end, finalBody = s, e, fb
-		}
-	}
-
-	// Resolve target range
-	if start == 0 && end == 0 {
-		var err error
-		start, end, finalBody, err = findTargetRange(fset, f, h, bodyInfo, len(src), prefixLen)
-		if err != nil {
-			if h.Op == "MODIFY" || h.Op == "DELETE" {
-				// Theory: MODIFY and DELETE have no effect if target is not found
-				return nil
-			}
-			// ADD anchor missing: append to the end of file
-			start, end = len(src), len(src)
-		}
-	}
-
-	// For ADD_BEFORE/ADD_AFTER that weren't converted to MODIFY, ensure the
-	// keyword is present if the body was parsed with a keyword prefix. The
-	// prefix is stripped from h.Body during parsing, so the keyword must be
-	// re-added to produce a complete, valid Go declaration. This covers all
-	// ADD code paths uniformly: target found, target not found (append to
-	// end), BEGIN/END, and both single-spec and multi-spec GenDecls. MODIFY
-	// paths handle the keyword separately inside findTargetRange and are
-	// unaffected because h.Op is no longer ADD after the ADD-as-MODIFY
-	// conversion.
-	if (h.Op == "ADD_BEFORE" || h.Op == "ADD_AFTER") && bodyInfo != nil && bodyInfo.Keyword != "" {
-		finalBody = bodyInfo.Keyword + " " + finalBody
-	}
-
-	type rangeItem struct {
-		start, end int
-		body       string
-		isPrimary  bool
-	}
+// buildRangeItems constructs the ordered list of range items for the modified
+// source, including the primary item and duplicate-removal items for
+// multi-entity change blocks. Items are sorted by start offset and may have
+// package prefixes stripped. This is a pure function with no dscope
+// dependencies.
+func buildRangeItems(
+	src []byte,
+	start, end int,
+	finalBody string,
+	h ChangeBlock,
+	bodyInfo *BodyInfo,
+	f *ast.File,
+	fset *token.FileSet,
+	prefixLen int,
+) []rangeItem {
 	var items []rangeItem
 	items = append(items, rangeItem{start: start, end: end, body: finalBody, isPrimary: true})
 
-	// Detect and remove other occurrences of entities present in the change block body
-	// to prevent duplication when a change block contains multiple declarations (e.g. Type + Methods).
+	// Detect and remove other occurrences of entities present in the
+	// change block body to prevent duplication when a change block contains
+	// multiple declarations (e.g. Type + Methods).
 	if bodyInfo != nil && bodyInfo.entityCount() > 1 && f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		ids := getIdentifiers(bodyInfo)
-		// Build a delete-range index in a single pass over declarations,
-		// instead of calling findTargetRange (O(D)) for each identifier.
 		deleteRanges := buildDeleteRanges(fset, f, prefixLen)
 		for _, id := range ids {
-			// Skip the primary target or anything that matches it
 			if id == h.Target {
 				continue
 			}
@@ -428,7 +232,6 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 				continue
 			}
 			s, e := r[0], r[1]
-			// Check for overlap with existing items
 			overlap := false
 			for _, item := range items {
 				if (s >= item.start && s < item.end) || (e > item.start && e <= item.end) || (item.start >= s && item.start < e) {
@@ -447,11 +250,7 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		return cmp.Compare(a.start, b.start)
 	})
 
-	// Only strip package prefix if the body might contain one. If bodyInfo
-	// prepended a "package p\n" prefix (PrefixLen > 0), the body was already
-	// stripped of any package declaration during parsing.
-	// Special targets (package, import) are handled before this point and
-	// never reach here, so no exclusion is needed.
+	// Only strip package prefix if the body might contain one.
 	if f != nil && h.Target != "BEGIN" && h.Target != "END" {
 		needStripPackage := bodyInfo == nil || bodyInfo.PrefixLen == 0
 		for i := range items {
@@ -461,16 +260,19 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		}
 	}
 
-	// Build the result in a single forward pass over the original source.
-	// Items are non-overlapping (guaranteed by the overlap check above) and
-	// sorted ascending by start, so each edit operates on a distinct range.
-	// This avoids repeated O(n) slice copies that the previous end-to-start
-	// in-place append approach incurred for each item.
+	return items
+}
+
+// buildModifiedSource builds the modified source in a single forward pass
+// over the original source, applying each range item. Non-primary items are
+// deletions (no content added). This is a pure function with no dscope
+// dependencies.
+func buildModifiedSource(src []byte, items []rangeItem, h ChangeBlock) []byte {
 	newSrc := make([]byte, 0, len(src))
 	pos := 0
 	for _, item := range items {
 		if item.start < pos {
-			continue // skip overlapping edits (shouldn't happen due to overlap check)
+			continue // skip overlapping edits
 		}
 		newSrc = append(newSrc, src[pos:item.start]...)
 		if item.isPrimary {
@@ -495,23 +297,7 @@ func ApplyChangeBlockStore(store FileStore, h ChangeBlock) error {
 		pos = item.end
 	}
 	newSrc = append(newSrc, src[pos:]...)
-
-	outputSrc := newSrc
-	outputPrefixLen := 0
-	if !hasPackage(newSrc) {
-		outputSrc = append([]byte("package p\n"), newSrc...)
-		outputPrefixLen = len("package p\n")
-	}
-	// Parse and format: parse immediately to catch syntax errors before
-	// goimports, then run goimports for formatting and import synchronization.
-	// On error, an XML error log is written with the original source, modified
-	// content, and error details. See TheoryOfErrorLogging.
-	formatted, err := parseAndFormat(path, h, src, outputSrc, outputPrefixLen)
-	if err != nil {
-		return err
-	}
-
-	return store.WriteFile(path, finalizeContent(formatted), 0644) // Use FileStore for safe writing
+	return newSrc
 }
 
 func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *BodyInfo, fileSize int, prefixLen int) (int, int, string, error) {
@@ -783,114 +569,6 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 		return candidateStart, candidateEnd, candidateBody, nil
 	}
 	return 0, 0, h.Body, fmt.Errorf("target %s not found", h.Target)
-}
-
-// applySpecialTargetModify handles MODIFY operations for the special Go-only
-// targets "package" and "import". These replace the package clause or import
-// block without rewriting the entire file, saving tokens compared to WRITE.
-// See TheoryOfSpecialGoTargets in parse.go.
-func applySpecialTargetModify(store FileStore, path string, src []byte, f *ast.File, fset *token.FileSet, prefixLen int, h ChangeBlock) error {
-	var newSrc []byte
-
-	switch h.Target {
-	case "package":
-		// Normalize the body: parse out the package name and rebuild the clause.
-		newPkgName := strings.TrimSpace(h.Body)
-		// If the body is a full package clause like "package foo", extract just the name.
-		// parser.PackageClauseOnly parses only the package clause without needing a valid body.
-		fset2 := token.NewFileSet()
-		if f2, err := parser.ParseFile(fset2, "", newPkgName, parser.PackageClauseOnly); err == nil && f2 != nil {
-			newPkgName = f2.Name.Name
-		} else if after, found := strings.CutPrefix(newPkgName, "package "); found {
-			newPkgName = strings.TrimSpace(after)
-		}
-		if newPkgName == "" {
-			return fmt.Errorf("empty package name in MODIFY package body")
-		}
-
-		start := fset.Position(f.Pos()).Offset - prefixLen
-		end := fset.Position(f.Name.End()).Offset - prefixLen
-		newSrc = make([]byte, 0, len(src)+len("package ")+len(newPkgName))
-		newSrc = append(newSrc, src[:start]...)
-		newSrc = append(newSrc, []byte("package "+newPkgName)...)
-		newSrc = append(newSrc, src[end:]...)
-
-	case "import":
-		body := strings.TrimSpace(h.Body)
-
-		// Find existing import declarations and their combined range.
-		var start, end int
-		found := false
-		for _, decl := range f.Decls {
-			if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
-				s := fset.Position(genDecl.Pos()).Offset - prefixLen
-				e := fset.Position(genDecl.End()).Offset - prefixLen
-				if !found || s < start {
-					start = s
-				}
-				if !found || e > end {
-					end = e
-				}
-				found = true
-			}
-		}
-		if !found {
-			// No existing imports; insert after the package clause.
-			pkgEnd := fset.Position(f.Name.End()).Offset - prefixLen
-			start = pkgEnd
-			end = pkgEnd
-		}
-
-		// Normalize the body into valid import syntax.
-		if body == "" {
-			// Remove all imports; goimports will add back any still needed.
-			newSrc = make([]byte, 0, len(src))
-			newSrc = append(newSrc, src[:start]...)
-			newSrc = append(newSrc, src[end:]...)
-		} else {
-			// Validate that the body contains parseable import declarations.
-			// Use the parsed AST only for validation; the body text is used
-			// directly to preserve the model's formatting intent.
-			// Goimports will fix any formatting issues afterward.
-			_, parseErr := parser.ParseFile(token.NewFileSet(), "", "package p\n"+body, parser.ImportsOnly)
-			if parseErr != nil {
-				return fmt.Errorf("import body is not valid Go import syntax: %w", parseErr)
-			}
-
-			// Ensure the body uses proper import syntax. If it looks like raw
-			// import paths (no "import" keyword), wrap them in an import block.
-			if !strings.HasPrefix(body, "import ") && !strings.HasPrefix(body, "import(") {
-				body = "import (\n" + body + "\n)"
-			}
-
-			// For existing imports: replace the import range with the body,
-			// respecting surrounding whitespace.
-			// For new imports: insert after the package clause with a newline
-			// separator so the package clause and imports don't merge.
-			newSrc = make([]byte, 0, len(src)+len(body)+4)
-			newSrc = append(newSrc, src[:start]...)
-			if !found {
-				// Insert after package clause; add newline separator.
-				newSrc = append(newSrc, '\n')
-			}
-			newSrc = append(newSrc, []byte(body)...)
-			newSrc = append(newSrc, '\n')
-			newSrc = append(newSrc, src[end:]...)
-		}
-
-	default:
-		return fmt.Errorf("unknown special target: %q", h.Target)
-	}
-
-	// Parse and format: parse immediately to catch syntax errors before
-	// goimports, then run goimports for formatting and import synchronization.
-	// See TheoryOfErrorLogging.
-	formatted, err := parseAndFormat(path, h, src, newSrc, 0)
-	if err != nil {
-		return err
-	}
-
-	return store.WriteFile(path, finalizeContent(formatted), 0644)
 }
 
 // applyTextEdit applies a text-level operation (REPLACE, INSERT_BEFORE,

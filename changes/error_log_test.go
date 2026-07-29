@@ -6,25 +6,50 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/modes"
 )
+
+func newTestApplyChangeBlockWithLogDir(t *testing.T, dir string) ApplyChangeBlock {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	scope := dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	)
+	scope = scope.Fork(func() debugs.ErrorLogDir {
+		return debugs.ErrorLogDir(dir)
+	})
+	return dscope.Get[ApplyChangeBlock](scope)
+}
+
+type testErrorLogEntry struct {
+	XMLName      xml.Name `xml:"error-log"`
+	Timestamp    string   `xml:"timestamp"`
+	Operation    string   `xml:"operation"`
+	Target       string   `xml:"target"`
+	FilePath     string   `xml:"file-path"`
+	Find         string   `xml:"find,omitempty"`
+	ChangeBlock  string   `xml:"change-block"`
+	SourceFile   string   `xml:"source-file"`
+	ModifiedFile string   `xml:"modified-file"`
+	Error        string   `xml:"error"`
+}
 
 func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
 	dir := t.TempDir()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
 
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
+
+	applyChangeBlock := newTestApplyChangeBlockWithLogDir(t, dir)
 
 	original := "package x\n\nfunc Foo() {}\n"
 	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
@@ -41,7 +66,7 @@ func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
 		FilePath: "test.go",
 		Body:     "Foo() { bar(",
 	}
-	err = ApplyChangeBlock(root, h)
+	err = applyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for invalid Go body")
 	}
@@ -65,21 +90,10 @@ func TestApplyChangeBlockParseErrorWritesErrorLog(t *testing.T) {
 	if entry.Error == "" {
 		t.Fatal("error message should not be empty")
 	}
-	if _, err := time.Parse(time.RFC3339, entry.Timestamp); err != nil {
-		t.Fatalf("invalid timestamp %q: %v", entry.Timestamp, err)
-	}
 }
 
 func TestApplyChangeBlockWriteParseErrorWritesErrorLog(t *testing.T) {
 	dir := t.TempDir()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
 
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -87,13 +101,15 @@ func TestApplyChangeBlockWriteParseErrorWritesErrorLog(t *testing.T) {
 	}
 	defer root.Close()
 
+	applyChangeBlock := newTestApplyChangeBlockWithLogDir(t, dir)
+
 	// WRITE with invalid Go body (missing closing parenthesis).
 	h := ChangeBlock{
 		Op:       "WRITE",
 		FilePath: "test.go",
 		Body:     "package x\n\nfunc Foo() { bar(\n",
 	}
-	err = ApplyChangeBlock(root, h)
+	err = applyChangeBlock(root, h)
 	if err == nil {
 		t.Fatal("expected error for invalid Go WRITE body")
 	}
@@ -113,8 +129,7 @@ func TestApplyChangeBlockWriteParseErrorWritesErrorLog(t *testing.T) {
 	}
 }
 
-// findAndParseErrorLog finds the .error-log.*.xml file in dir and parses it.
-func findAndParseErrorLog(t *testing.T, dir string) errorLogEntry {
+func findAndParseErrorLog(t *testing.T, dir string) testErrorLogEntry {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -134,7 +149,7 @@ func findAndParseErrorLog(t *testing.T, dir string) errorLogEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var entry errorLogEntry
+	var entry testErrorLogEntry
 	if err := xml.Unmarshal(data, &entry); err != nil {
 		t.Fatalf("failed to parse error log XML: %v", err)
 	}

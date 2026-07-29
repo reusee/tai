@@ -5,10 +5,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/modes"
 )
 
+func newTestApplyChangeBlocks(t *testing.T) ApplyChangeBlocks {
+	t.Helper()
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	scope := dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	)
+	return dscope.Get[ApplyChangeBlocks](scope)
+}
+
 func TestApplyChangeBlocks(t *testing.T) {
+	applyChangeBlocks := newTestApplyChangeBlocks(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -30,7 +45,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 		},
 	}
 
-	if err := ApplyChangeBlocks(changeBlocks, root); err != nil {
+	if err := applyChangeBlocks(changeBlocks, root); err != nil {
 		t.Fatalf("ApplyChangeBlocks failed: %v", err)
 	}
 
@@ -48,6 +63,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 }
 
 func TestApplyChangeBlocksUnparseable(t *testing.T) {
+	applyChangeBlocks := newTestApplyChangeBlocks(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -65,7 +81,7 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 		},
 	}
 
-	err = ApplyChangeBlocks(changeBlocks, root)
+	err = applyChangeBlocks(changeBlocks, root)
 	if err == nil {
 		t.Fatal("expected error for unparseable change block")
 	}
@@ -75,6 +91,7 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 }
 
 func TestApplyChangeBlocksApplyError(t *testing.T) {
+	applyChangeBlocks := newTestApplyChangeBlocks(t)
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -91,7 +108,7 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 		},
 	}
 
-	err = ApplyChangeBlocks(changeBlocks, root)
+	err = applyChangeBlocks(changeBlocks, root)
 	if err == nil {
 		t.Fatal("expected error for path escape")
 	}

@@ -20,14 +20,16 @@ wiring the full generation pipeline.
 `
 
 var PatchCommand = Command{
-	Main: func() {
+	Main: func(
+		applyDiffFile changes.ApplyDiffFile,
+	) {
 		target := ".AI"
 		root, err := os.OpenRoot(".")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		for block, err := range changes.ApplyDiffFile(root, target) {
+		for block, err := range applyDiffFile(root, target) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
