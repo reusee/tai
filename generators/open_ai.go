@@ -114,7 +114,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 
 	o.Logger().InfoContext(ctx, "generating",
+		"name", o.spec.Name,
 		"model", o.spec.Model,
+		"effort", o.spec.ReasoningEffort,
 		"non_streaming", nonStreaming,
 	)
 

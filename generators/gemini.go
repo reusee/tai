@@ -261,7 +261,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	ret, err = doWithRetry(ctx, g.Logger(), func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
+			"name", g.spec.Name,
 			"model", g.spec.Model,
+			"effort", g.spec.ReasoningEffort,
 			"non_streaming", nonStreaming,
 		)
 
