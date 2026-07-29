@@ -835,6 +835,259 @@ func TestResolveSpecRedirect(t *testing.T) {
 	})
 }
 
+func TestResolveSpecRandomRedirect(t *testing.T) {
+	t.Run("random redirect with single target", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				RandomRedirect: []string{"target"},
+				Variants: []Spec{
+					{
+						Name:  "target",
+						Type:  "openai",
+						Model: "target-model",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/target" {
+			t.Errorf("expected name 'base/target', got %q", s.Name)
+		}
+		if s.Model != "target-model" {
+			t.Errorf("expected model 'target-model', got %q", s.Model)
+		}
+	})
+
+	t.Run("random redirect picks one of multiple targets", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				RandomRedirect: []string{"target1", "target2"},
+				Variants: []Spec{
+					{
+						Name:  "target1",
+						Type:  "openai",
+						Model: "model1",
+					},
+					{
+						Name:  "target2",
+						Type:  "openai",
+						Model: "model2",
+					},
+				},
+			},
+		}
+		found := make(map[string]bool)
+		for i := 0; i < 50; i++ {
+			s, err := resolveSpec("base", localRoots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found[s.Name] = true
+		}
+		if len(found) < 2 {
+			t.Fatalf("expected both targets to be reachable, got: %v", found)
+		}
+	})
+
+	t.Run("redirect takes precedence over random redirect", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				Redirect:       "target1",
+				RandomRedirect: []string{"target2", "target3"},
+				Variants: []Spec{
+					{
+						Name:  "target1",
+						Type:  "openai",
+						Model: "model1",
+					},
+					{
+						Name:  "target2",
+						Type:  "openai",
+						Model: "model2",
+					},
+					{
+						Name:  "target3",
+						Type:  "openai",
+						Model: "model3",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/target1" {
+			t.Errorf("expected redirect to take precedence, got %q", s.Name)
+		}
+		if s.Model != "model1" {
+			t.Errorf("expected model1, got %q", s.Model)
+		}
+	})
+
+	t.Run("random redirect preserves inherited fields", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				ContextTokens:  100,
+				Temperature:    new(float32(0.5)),
+				RandomRedirect: []string{"child"},
+				Variants: []Spec{
+					{
+						Name:  "child",
+						Type:  "openai",
+						Model: "child-model",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child" {
+			t.Errorf("expected name 'base/child', got %q", s.Name)
+		}
+		if s.ContextTokens != 100 {
+			t.Errorf("expected context tokens 100, got %d", s.ContextTokens)
+		}
+		if s.Temperature == nil || *s.Temperature != 0.5 {
+			t.Errorf("expected temperature 0.5, got %v", s.Temperature)
+		}
+		if s.Model != "child-model" {
+			t.Errorf("expected model child-model, got %q", s.Model)
+		}
+	})
+
+	t.Run("absolute random redirect", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				RandomRedirect: []string{"/target1", "/target2"},
+			},
+			{
+				Name:  "target1",
+				Type:  "openai",
+				Model: "model1",
+			},
+			{
+				Name:  "target2",
+				Type:  "openai",
+				Model: "model2",
+			},
+		}
+		found := make(map[string]bool)
+		for i := 0; i < 50; i++ {
+			s, err := resolveSpec("base", localRoots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found[s.Name] = true
+		}
+		if len(found) < 2 {
+			t.Fatalf("expected both absolute targets to be reachable, got: %v", found)
+		}
+	})
+
+	t.Run("absolute random redirect does not inherit parent fields", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				ContextTokens:  100,
+				RandomRedirect: []string{"/target"},
+			},
+			{
+				Name:  "target",
+				Type:  "openai",
+				Model: "target-model",
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "target" {
+			t.Errorf("expected name 'target', got %q", s.Name)
+		}
+		if s.ContextTokens != 0 {
+			t.Errorf("expected context tokens 0 for absolute redirect, got %d", s.ContextTokens)
+		}
+		if s.Type != "openai" {
+			t.Errorf("expected type openai, got %q", s.Type)
+		}
+	})
+
+	t.Run("random redirect cycle detected", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				Aliases:        []string{"base/child"},
+				RandomRedirect: []string{"child"},
+			},
+			{
+				Name:  "child",
+				Model: "child-model",
+			},
+		}
+		_, err := resolveSpec("base", localRoots)
+		if err == nil {
+			t.Fatal("expected cycle detection error")
+		}
+	})
+
+	t.Run("random redirect does not apply to child paths", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:           "base",
+				Type:           "gemini",
+				RandomRedirect: []string{"child1"},
+				Variants: []Spec{
+					{
+						Name:  "child1",
+						Type:  "openai",
+						Model: "model1",
+					},
+					{
+						Name:  "child2",
+						Type:  "openai",
+						Model: "model2",
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child1" {
+			t.Fatalf("expected name 'base/child1', got %q", s.Name)
+		}
+		s, err = resolveSpec("base/child2", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Name != "base/child2" {
+			t.Errorf("expected name 'base/child2', got %q", s.Name)
+		}
+		if s.Model != "model2" {
+			t.Errorf("expected model model2, got %q", s.Model)
+		}
+	})
+}
+
 func TestResolveSpecMaxThinkingTokens(t *testing.T) {
 	t.Run("inherited from parent", func(t *testing.T) {
 		localRoots := []Spec{

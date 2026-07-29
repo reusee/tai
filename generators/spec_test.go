@@ -89,3 +89,38 @@ func TestSpecPreservedThinkingJSON(t *testing.T) {
 		t.Errorf("PreservedThinking not restored correctly: %+v", restored)
 	}
 }
+
+func TestSpecRandomRedirectJSON(t *testing.T) {
+	spec := Spec{
+		Name:           "test",
+		Type:           "gemini",
+		RandomRedirect: []string{"/target1", "/target2"},
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	v, ok := raw["random_redirect"]
+	if !ok {
+		t.Errorf("random_redirect not found in JSON")
+	}
+	arr, ok := v.([]any)
+	if !ok || len(arr) != 2 {
+		t.Errorf("expected 2 elements, got: %v", v)
+	}
+
+	// round trip
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.RandomRedirect) != 2 ||
+		restored.RandomRedirect[0] != "/target1" ||
+		restored.RandomRedirect[1] != "/target2" {
+		t.Errorf("RandomRedirect not restored correctly: %+v", restored)
+	}
+}

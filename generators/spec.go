@@ -12,6 +12,10 @@ resolves as "foo/bar/baz". An absolute redirect starting with "/" (e.g., "/foo/b
 path, replacing the current path entirely instead of appending. Redirect is not merged from parent to child;
 only the final spec in the path determines whether a redirect applies. Cycle detection prevents infinite
 redirect loops.
+RandomRedirect provides load balancing by randomly selecting one of several redirect targets. When the final
+spec in the path has RandomRedirect set and Redirect is not set, one entry is randomly chosen and applied as
+a redirect, following the same relative/absolute path resolution rules as Redirect. Redirect takes precedence
+over RandomRedirect when both are set. Like Redirect, RandomRedirect is not merged from parent to child.
 PreservedThinking controls whether reasoning thoughts from previous model responses are sent back to the
 server in subsequent requests. When not set or false, thoughts are stripped from outgoing requests to avoid
 sending reasoning content back to the model. When true, thoughts are included in the request so the model
@@ -39,6 +43,7 @@ type Spec struct {
 	ReasoningEffort   string         `json:"reasoning_effort"`
 	Aliases           []string       `json:"aliases"`
 	Redirect          string         `json:"redirect,omitempty"`
+	RandomRedirect    []string       `json:"random_redirect,omitempty"`
 	NoProxy           *bool          `json:"no_proxy,omitempty"`
 	PreservedThinking *bool          `json:"preserved_thinking,omitempty"`
 	Variants          []Spec         `json:"variants,omitempty"`

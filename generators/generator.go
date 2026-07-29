@@ -3,6 +3,7 @@ package generators
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 )
 
@@ -77,6 +78,7 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 		merged := Spec{}
 		currentMap := rootMap
 		var lastRedirect string
+		var lastRandomRedirects []string
 
 		for _, part := range parts {
 			spec, ok := currentMap[part]
@@ -141,9 +143,11 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.PreservedThinking != nil {
 				merged.PreservedThinking = spec.PreservedThinking
 			}
-			// Redirect is not merged from parent to child; only the
-			// final spec in the path determines whether a redirect applies.
+			// Redirect and RandomRedirect are not merged from parent to
+			// child; only the final spec in the path determines whether a
+			// redirect applies.
 			lastRedirect = spec.Redirect
+			lastRandomRedirects = spec.RandomRedirect
 			// descend into variants
 			nextMap := make(map[string]Spec, len(spec.Variants))
 			for _, v := range spec.Variants {
@@ -171,6 +175,22 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 				name = lastRedirect[1:]
 			} else {
 				name = name + "/" + lastRedirect
+			}
+			continue
+		}
+
+		// Handle random redirect: if the last spec in the path has a
+		// RandomRedirect field (and Redirect is not set), randomly pick
+		// one entry and apply it as a redirect. This enables load
+		// balancing across multiple endpoints. Entries follow the same
+		// resolution rules as Redirect: relative paths append to the
+		// current path, absolute paths starting with "/" replace it.
+		if len(lastRandomRedirects) > 0 {
+			picked := lastRandomRedirects[rand.IntN(len(lastRandomRedirects))]
+			if strings.HasPrefix(picked, "/") {
+				name = picked[1:]
+			} else {
+				name = name + "/" + picked
 			}
 			continue
 		}
