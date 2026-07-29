@@ -4,8 +4,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/reusee/dscope"
+	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/modes"
 )
 
@@ -21,7 +22,11 @@ entry point for non-Go code generation, complementing the Go-oriented default.
 var AnyCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
-		dscope.Provide(codes.CodeProviderName("any")),
+		func(
+			provider anytexts.CodeProvider,
+		) codetypes.CodeProvider {
+			return provider
+		},
 	},
 	Main: func(
 		generate codes.Generate,

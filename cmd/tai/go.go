@@ -5,9 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/reusee/dscope"
 	"github.com/reusee/tai/codes"
+	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/debugs"
+	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/modes"
 )
 
@@ -30,7 +31,11 @@ in Go projects without explicitly specifying the subcommand each time.
 var GoCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
-		dscope.Provide(codes.CodeProviderName("go")),
+		func(
+			provider gocodes.CodeProvider,
+		) codetypes.CodeProvider {
+			return provider
+		},
 	},
 	Main: func(
 		generate codes.Generate,
