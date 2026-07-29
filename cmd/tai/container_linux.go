@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -14,6 +16,17 @@ import (
 // or pre-isolated environments (e.g., CI runners that already provide sandboxing).
 // See TheoryOfContainerIsolation in main.go.
 const disableContainerEnv = "CAI_DISABLE_CONTAINER"
+
+// goWritableDirsEnv carries the colon-separated list of Go toolchain directories
+// that should be bind-mounted read-write inside the container. These are resolved
+// before entering the namespace because `go env` may not function correctly after
+// mount restrictions are applied. See TheoryOfContainerIsolation in main.go.
+const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
+
+// prSetNoNewPrivs is the prctl option number for PR_SET_NO_NEW_PRIVS on Linux.
+// It prevents the process and its descendants from gaining new privileges
+// through exec (e.g., setuid binaries). See TheoryOfContainerIsolation in main.go.
+const prSetNoNewPrivs = 38
 
 func maybeRunInContainer() {
 	// Allow disabling containerization for debugging or restricted kernels.
@@ -28,7 +41,15 @@ func maybeRunInContainer() {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.Env = append(os.Environ(), inContainerEnv+"=1")
+		env := append(os.Environ(), inContainerEnv+"=1")
+		// Resolve Go toolchain writable directories before entering the
+		// namespace, since `go env` may not work correctly after mount
+		// restrictions are applied. See TheoryOfContainerIsolation.
+		goDirs := resolveGoWritableDirs()
+		if len(goDirs) > 0 {
+			env = append(env, goWritableDirsEnv+"="+strings.Join(goDirs, string(filepath.ListSeparator)))
+		}
+		cmd.Env = env
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			// User namespace: allows unprivileged container creation.
 			// Mount namespace: enables filesystem isolation.
@@ -82,20 +103,200 @@ func maybeRunInContainer() {
 	}
 }
 
+// resolveGoWritableDirs resolves directories that the Go toolchain needs
+// write access to: GOCACHE (build cache), GOMODCACHE (downloaded modules),
+// and GOPATH/pkg (package objects). These are resolved before entering the
+// container namespace because `go env` may not function correctly after
+// mount restrictions are applied. Directories that don't exist are skipped.
+// See TheoryOfContainerIsolation in main.go.
+func resolveGoWritableDirs() []string {
+	var dirs []string
+	seen := make(map[string]bool)
+
+	addDir := func(dir string) {
+		dir = filepath.Clean(dir)
+		if dir == "" || dir == "/" || dir == "." {
+			return
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+
+	// GOCACHE: build cache directory.
+	if dir := os.Getenv("GOCACHE"); dir != "" {
+		addDir(dir)
+	} else {
+		addDir(goEnv("GOCACHE"))
+	}
+
+	// GOMODCACHE: module download cache.
+	if dir := os.Getenv("GOMODCACHE"); dir != "" {
+		addDir(dir)
+	} else {
+		addDir(goEnv("GOMODCACHE"))
+	}
+
+	// GOPATH/pkg: package object cache. GOPATH may contain multiple
+	// paths separated by colons; each one's pkg subdirectory is added.
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		gopath = goEnv("GOPATH")
+	}
+	if gopath != "" {
+		for _, p := range filepath.SplitList(gopath) {
+			addDir(filepath.Join(p, "pkg"))
+		}
+	}
+
+	return dirs
+}
+
+// goEnv runs `go env <key>` and returns the trimmed result. Returns an
+// empty string if go is not available or the key is not set.
+func goEnv(key string) string {
+	cmd := exec.Command("go", "env", key)
+	cmd.Env = os.Environ()
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// parseMountPoints reads /proc/self/mountinfo and returns a list of mount
+// point paths. Used to enumerate mounts for read-only remounting. Each line
+// of mountinfo has the mount point as the 5th field (index 4).
+func parseMountPoints() ([]string, error) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return nil, err
+	}
+	var mounts []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		mounts = append(mounts, fields[4])
+	}
+	return mounts, nil
+}
+
 // setupContainerFilesystem hardens the mount table inside the container
-// namespace. It makes all mounts private (preventing propagation to the
-// host), remounts /proc to show only namespace-local processes, makes
-// /sys read-only, and masks sensitive /proc paths that could leak kernel
-// information. See TheoryOfContainerIsolation in main.go.
+// namespace to enforce read-only filesystem access except for the current
+// working directory and Go toolchain directories. See TheoryOfContainerIsolation
+// in main.go.
 func setupContainerFilesystem() error {
-	// Make all mounts private to this namespace. This is critical: without
-	// it, subsequent mount operations could propagate to the host mount
-	// table via shared subtrees, modifying the host's filesystem view.
+	// 1. Make all mounts private to this namespace. This is critical:
+	// without it, subsequent mount operations could propagate to the
+	// host mount table via shared subtrees, modifying the host's
+	// filesystem view.
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mounts private: %w", err)
 	}
 
-	// Remount /proc to show only processes in this PID namespace.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	// 2. Parse mount points before making them read-only, so we can
+	// enumerate and selectively remount them.
+	mountPoints, err := parseMountPoints()
+	if err != nil {
+		return fmt.Errorf("parse mount points: %w", err)
+	}
+
+	// 3. Remount non-special mount points as read-only. This prevents
+	// writes to any directory that is not explicitly exempted. Special
+	// mounts (proc, sys, dev, tmp) are handled separately below.
+	// Failure for individual mounts is non-critical (the mount may not
+	// support remount or may already be read-only).
+	specialMounts := map[string]bool{
+		"/":           true,
+		"/proc":       true,
+		"/sys":        true,
+		"/dev":        true,
+		"/dev/pts":    true,
+		"/dev/shm":    true,
+		"/dev/mqueue": true,
+		"/run":        true,
+		"/tmp":        true,
+	}
+	for _, mp := range mountPoints {
+		if specialMounts[mp] {
+			continue
+		}
+		syscall.Mount("", mp, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+	}
+
+	// 4. Remount root as read-only. This is the primary filesystem
+	// restriction: everything under / is read-only unless overridden
+	// by a bind mount. Failure is non-critical (root may already be
+	// read-only or may not support remount).
+	syscall.Mount("", "/", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+
+	// 5. Bind-mount the current working directory onto itself read-write.
+	// This creates a new mount that shadows the read-only view of the
+	// same directory, allowing the AI to write files only within the
+	// project boundary. The bind mount covers the entire CWD subtree,
+	// so all files under CWD are writable.
+	// A second remount ensures the mount is explicitly read-write even
+	// if the source mount was read-only (bind mounts inherit the source
+	// mount's read-only flag; the remount clears it).
+	if cwd != "" && cwd != "/" {
+		if err := syscall.Mount(cwd, cwd, "", syscall.MS_BIND, ""); err == nil {
+			syscall.Mount("", cwd, "", syscall.MS_REMOUNT, "")
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: failed to make working directory writable in sandbox (%v)\n", err)
+		}
+	}
+
+	// 6. Bind-mount Go toolchain writable directories read-write.
+	// These directories (GOCACHE, GOMODCACHE, GOPATH/pkg) are needed by
+	// the Go toolchain for build cache, module downloads, and package
+	// objects. Directories already under CWD are skipped (already
+	// writable via the CWD bind mount). Failure for individual dirs
+	// is non-critical (the directory may not exist or may already be
+	// writable).
+	goDirsStr := os.Getenv(goWritableDirsEnv)
+	for _, dir := range filepath.SplitList(goDirsStr) {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "" || dir == "/" {
+			continue
+		}
+		// Skip directories already under CWD (already writable).
+		if dir == cwd || strings.HasPrefix(dir, cwd+string(filepath.Separator)) {
+			continue
+		}
+		if err := syscall.Mount(dir, dir, "", syscall.MS_BIND, ""); err == nil {
+			syscall.Mount("", dir, "", syscall.MS_REMOUNT, "")
+		}
+	}
+
+	// 7. Mount a fresh tmpfs on /tmp. This isolates temporary files from
+	// the host and provides a writable /tmp for tools that need it
+	// (e.g., go test creates temporary files). A size limit prevents
+	// disk exhaustion. Best-effort: if mounting fails, /tmp is either
+	// read-only (from the root mount) or whatever it was before.
+	_ = syscall.Unmount("/tmp", syscall.MNT_DETACH)
+	syscall.Mount("tmpfs", "/tmp", "tmpfs",
+		syscall.MS_NOSUID|syscall.MS_NODEV, "size=256m")
+
+	// 8. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
+	// This prevents the container from accessing host POSIX shared
+	// memory segments. Best-effort: if /dev/shm doesn't exist or
+	// mounting fails, the existing mount (or none) is used.
+	_ = syscall.Unmount("/dev/shm", syscall.MNT_DETACH)
+	syscall.Mount("tmpfs", "/dev/shm", "tmpfs",
+		syscall.MS_NOSUID|syscall.MS_NODEV, "size=64m")
+
+	// 9. Remount /proc to show only processes in this PID namespace.
 	// The host /proc exposes all host PIDs; the remount restricts
 	// visibility to the container's process tree. If unmount fails
 	// (e.g., /proc is busy), the remount is skipped and the host /proc
@@ -109,11 +310,11 @@ func setupContainerFilesystem() error {
 		}
 	}
 
-	// Make /sys read-only to prevent sysfs tampering. Failure is
+	// 10. Make /sys read-only to prevent sysfs tampering. Failure is
 	// non-critical: /sys may not be a separate mount point on all systems.
 	syscall.Mount("", "/sys", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
 
-	// Mask sensitive /proc files that could leak kernel memory or
+	// 11. Mask sensitive /proc files that could leak kernel memory or
 	// configuration. Bind-mount /dev/null over each path so reads return
 	// empty content instead of privileged data. Failure for individual
 	// paths is non-critical (the path may not exist on all kernels).
@@ -122,9 +323,27 @@ func setupContainerFilesystem() error {
 		"/proc/kallsyms",
 		"/proc/bus",
 		"/proc/config.gz",
+		"/proc/sched_debug",
+		"/proc/keys",
+		"/proc/timer_list",
 	} {
 		syscall.Mount("/dev/null", p, "", syscall.MS_BIND, "")
 	}
 
+	// 12. Set NO_NEW_PRIVS to prevent privilege escalation through exec.
+	// This ensures that even if a setuid binary is somehow executed, it
+	// cannot gain new privileges. Best-effort: failure is silently
+	// ignored since the user namespace already limits capabilities.
+	setNoNewPrivs()
+
 	return nil
+}
+
+// setNoNewPrivs sets the NO_NEW_PRIVS flag on the current process,
+// preventing it and its descendants from gaining new privileges through
+// exec. This is a defense-in-depth measure: the user namespace already
+// limits capabilities, but NO_NEW_PRIVS ensures setuid binaries cannot
+// escalate. Best-effort: failure is silently ignored.
+func setNoNewPrivs() {
+	_, _, _ = syscall.Syscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0)
 }
