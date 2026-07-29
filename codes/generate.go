@@ -274,21 +274,22 @@ func (Module) Generate(
 		if err != nil {
 			return err
 		}
-		args := generator.Spec()
+		spec := generator.Spec()
 		logger.Info("initial generator",
-			"model", args.Model,
-			"type", fmt.Sprintf("%T", generator),
-			"base_url", args.BaseURL,
+			"name", spec.Name,
+			"family", spec.Family,
+			"model", spec.Model,
+			"effort", spec.ReasoningEffort,
 		)
 
 		// Calculate basic limits
 		maxInputTokens := min(
-			args.ContextTokens,
+			spec.ContextTokens,
 			int(maxTokens),
 		)
-		if args.MaxGenerateTokens != nil {
+		if spec.MaxGenerateTokens != nil {
 			// Reserve space for reasoning and completion
-			maxInputTokens -= *args.MaxGenerateTokens * 2
+			maxInputTokens -= *spec.MaxGenerateTokens * 2
 		}
 
 		// Count tokens for fixed parts
@@ -300,7 +301,7 @@ func (Module) Generate(
 		// Collect function declarations from all sources for accurate token
 		// counting. See TheoryOfTokenBudgetStability.
 		var allFuncDecls []generators.FuncDecl
-		if args.DisableTools != nil && !*args.DisableTools {
+		if spec.DisableTools != nil && !*spec.DisableTools {
 			allFuncDecls = append(allFuncDecls, funcDecls...)
 			sort.SliceStable(allFuncDecls, func(i, j int) bool {
 				return allFuncDecls[i].Name < allFuncDecls[j].Name
