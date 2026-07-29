@@ -36,9 +36,8 @@ without a summary block, the output was likely cut off mid-stream. The loop
 summarizes the incomplete output, appends it as context, and retries from
 the pre-round state. This is distinct from generator-level retry which
 handles transient API errors. The retry logic and incomplete-output
-summarization were previously implemented as runPhaseWithRetry in
-codes/generate.go; they are now unified here so all commands can opt into
-retry behavior via RunOptions.
+summarization are unified here so all commands can opt into retry behavior
+via RunOptions.
 
 RetryOnApplyError handles model-generated errors that cause change block
 application to fail (e.g., invalid target, malformed code, goimports

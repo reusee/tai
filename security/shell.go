@@ -21,10 +21,9 @@ commands, test clauses, declarations) are rejected as unnecessary for read-only
 diagnostic operations.
 
 The validator checks each statement's redirections for output operators (>,
->>, <>, >&, >|, >>|, >&|, >>&, >>&|). Unlike the prior string-contains approach,
-the AST parser correctly distinguishes > characters inside quoted strings
-(e.g., echo "a > b") from actual redirection operators, eliminating false
-positives while maintaining the same security boundary. Input-only redirections
+>>, <>, >&, >|, >>|, >&|, >>&, >>&|). The AST parser correctly distinguishes >
+characters inside quoted strings (e.g., echo "a > b") from actual redirection
+operators, avoiding false positives. Input-only redirections
 (<, <<, <&) are permitted.
 
 Command substitutions ($(cmd) and <(cmd)/>(cmd)) are recursively validated: the
@@ -43,7 +42,7 @@ it is better to reject a safe command than to allow a dangerous one. Rejected
 commands return an error message as user content so the model can adjust and
 retry with an allowed command.
 
-Additional security checks extend the boundary beyond the original allowlist and
+Additional security checks extend the boundary beyond the allowlist and
 redirection policy. Background processes (cmd &) and coprocesses (coproc cmd)
 are rejected because they start detached processes that bypass the timeout and
 output capture. The Disown flag is rejected for the same reason. Heredoc bodies

@@ -33,8 +33,7 @@ Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are rejected for Go
 at the application layer because the model cannot reliably reproduce whitespace in find
 strings; structural operations must be used instead. See TheoryOfTextLevelOperations.
 Final output normalization ensures every written file ends with exactly one trailing
-newline, matching the convention enforced by go fmt. This replaces the prior use of
-bytes.TrimSpace which stripped the trailing newline entirely.
+newline, matching the convention enforced by go fmt.
 After building the modified Go source, parseAndFormat parses it immediately to catch
 syntax errors before goimports, which may report formatting-aware errors that obscure
 the root cause. On parse or goimports failure, an XML error log is written to the

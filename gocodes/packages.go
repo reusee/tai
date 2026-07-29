@@ -16,11 +16,8 @@ The packages loader deliberately avoids the heaviest analysis modes. NeedSyntax,
 NeedTypesInfo, and NeedTypes are omitted so go/packages never retains full ASTs,
 per-identifier types, or complete type-checking results for any dependency.
 NeedDeps is used so go/packages resolves the full dependency graph in a single
-go list invocation. The prior approach of iteratively loading imports by explicit
-PkgPath strings triggered go.mod consistency checks on every packages.Load call,
-producing excessive go.mod computation overhead that outweighed the memory savings
-of a smaller in-memory package set. Distances from root packages are computed via
-BFS over the Imports graph populated by NeedDeps, and only packages within
+go list invocation. Distances from root packages are computed via BFS over the
+Imports graph populated by NeedDeps, and only packages within
 MaxPackageDistanceFromRoot (default 2) have their files discovered and parsed.
 Go file ASTs are parsed lazily in files.go via parser.ParseFile for only the files
 within the distance bound.

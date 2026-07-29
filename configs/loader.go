@@ -36,8 +36,8 @@ accepts them as known fields. The closed schema still rejects fields that
 are neither in the schema nor in the globals, preserving typo detection
 for user-defined config fields.
 
-When no globals are provided, behavior is identical to the prior
-implementation: the file content is compiled directly with CompileBytes.
+When no globals are provided, the file content is compiled directly with
+CompileBytes.
 `
 
 type Loader struct {

@@ -17,8 +17,7 @@ read-only files for prompt-only rules) prepend or append their specific
 components to this common set. The common components are constructed once and
 reused by both the ai command (via AIComponents) and the codes module (via
 CodesComponents), ensuring that shell and continue components are consistently
-configured across all generation pipelines and eliminating the duplicate
-component construction that previously existed in each module.
+configured across all generation pipelines.
 
 Shell and continue components include RestatePrompt fields that provide short
 critical reminders reinforcing the block format rules at the end of the system

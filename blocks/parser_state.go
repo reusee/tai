@@ -13,11 +13,9 @@ from streamed model output. It sits between the generator and the downstream con
 intercepting text parts appended by the model to extract structured blocks (e.g., change
 and finish blocks) without losing non-block prose. Parsed blocks are passed to a
 BlockHandler callback that is responsible for all block management — processing,
-storing, or discarding blocks. ParserState itself does not store blocks, eliminating
-the need for block reconciliation (WithUpstream, PopBlocks, PopBlocksByKind) when
-the state chain is modified by other layers. This ensures that all state
-modifications happen exclusively through the State interface methods (AppendContent,
-Flush), with no extra methods that bypass the immutable state chain.
+storing, or discarding blocks. ParserState itself does not store blocks. This ensures
+that all state modifications happen exclusively through the State interface methods
+(AppendContent, Flush), with no extra methods that bypass the immutable state chain.
 
 ParserState is an immutable data structure: AppendContent and Flush return a new
 *ParserState rather than mutating in place. This preserves snapshot integrity for

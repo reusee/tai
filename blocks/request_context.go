@@ -36,13 +36,10 @@ model can access resources that require them, but remains read-only (HTTP GET).
 The glob tag lists files matching a pattern without reading their contents,
 allowing the model to discover files before requesting their content. It applies
 the same path sanity check as the file tag. Glob patterns are resolved relative
-to the root directory so that filepath.Glob and filepath.Walk search within the
-root's tree rather than the process's current working directory. The glob tag
-supports ** (globstar) patterns for recursive directory traversal, which
-filepath.Glob alone does not handle. When ** appears as a complete path segment,
-it matches zero or more directories; a custom walker resolves these patterns by
-splitting on **, walking the base directory, and matching the suffix pattern
-against the trailing path components of each file.
+to the root directory so that doublestar.FilepathGlob searches within the root's
+tree rather than the process's current working directory. The glob tag supports
+** (globstar) patterns for recursive directory traversal via doublestar. When **
+appears as a complete path segment, it matches zero or more directories.
 Only request-context blocks are consumed from ParserState during context processing;
 blocks of other kinds are preserved so they remain available after the context is provided.
 `

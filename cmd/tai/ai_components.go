@@ -15,13 +15,12 @@ blocks. Shell and continue components are processed in the generation loop,
 while memory blocks are processed after the loop by
 memories.UpdateMemoryFromBlock. The memory component's prompt includes the
 dynamic user profile text, read at Component construction time (provider
-resolution) rather than at prompt assembly time; this is equivalent to the
-prior inline approach because the profile is read once before generation
-starts. BlockFormatSystemPrompt is a prompt-only Component that teaches the
-model the boundary-delimited format used by memory blocks.
+resolution) rather than at prompt assembly time. BlockFormatSystemPrompt is a
+prompt-only Component that teaches the model the boundary-delimited block
+format used by memory blocks.
 
 The base AI assistant prompt text and the config-derived ExtraSystemPrompt are
-also prompt-only Components, unifying all system prompt contributions under the
+prompt-only Components, unifying all system prompt contributions under the
 Component framework. AISystemPrompt assembles only the dynamic current time,
 which must be computed at call time and cannot be a static Component.
 
@@ -29,9 +28,7 @@ Shell and continue components are reused from components.CommonComponents, the
 shared component set constructed in the components package. The codes module
 also reuses CommonComponents, prepending its codes-specific components (change,
 go-test, request-context) and appending summary, read-only files,
-mandatory planning, and extra system prompt. This eliminates the duplicate
-component construction that previously existed when the ai command and codes
-module each defined their own shell and continue components independently.
+mandatory planning, and extra system prompt.
 
 AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the codes module's CodesComponents
@@ -39,7 +36,7 @@ provider. Both the ai command and the codes module use distinct named types
 embedding components.ComponentSet, ensuring each module's components are
 resolved independently in the dscope scope without type conflicts.
 
-RestatePrompts are now included for the block format, memory, shell, and
+RestatePrompts are included for the block format, memory, shell, and
 continue components. Each RestatePrompt provides a short critical reminder
 that reinforces the block format rules (line-start requirement, boundary
 uniqueness, boundary matching) at the end of the system prompt, separated
@@ -49,9 +46,8 @@ rules as a distinct reminder section, mirroring the approach used by the
 codes module's change, go-test, and request-context components.
 `
 
-// baseAISystemPrompt is the base AI assistant prompt text, now a prompt-only
-// Component in AIComponents rather than a direct concatenation in
-// AISystemPrompt. See TheoryOfAIComponents.
+// baseAISystemPrompt is the base AI assistant prompt text, a prompt-only
+// Component in AIComponents. See TheoryOfAIComponents.
 const baseAISystemPrompt = `你是一个很有用的AI助手。
 在与用户交流时，输出易于阅读的文本，避免使用markdown格式，不要加入任何表示格式的符号，避免生成表格。`
 
@@ -74,8 +70,7 @@ func (Module) AIComponents(
 	var comps components.ComponentSet
 
 	// Base AI assistant prompt: prompt-only Component for unified prompt
-	// assembly. Previously prepended directly in AISystemPrompt.
-	// See TheoryOfAIComponents.
+	// assembly. See TheoryOfAIComponents.
 	comps = append(comps, components.Component{
 		PromptSection: baseAISystemPrompt,
 	})
@@ -114,8 +109,7 @@ func (Module) AIComponents(
 	comps = append(comps, components.CommonComponents(bool(flagShell))...)
 
 	// Extra system prompt from configuration: prompt-only Component.
-	// Previously appended directly in AISystemPrompt. Now unified under
-	// the Component framework. See TheoryOfAIComponents.
+	// See TheoryOfAIComponents.
 	if string(extra) != "" {
 		comps = append(comps, components.Component{
 			PromptSection: string(extra),
