@@ -45,6 +45,12 @@ syntax errors before goimports, which may report formatting-aware errors that ob
 the root cause. On parse or goimports failure, an XML error log is written to the
 current directory recording the original source, change block, modified content, and
 error. See TheoryOfErrorLogging.
+Package detection (hasPackage) skips leading comments, including build constraint
+comments such as //go:build and // +build, to determine whether the source already
+contains a package clause. Without this, a file whose package declaration is preceded
+by a build constraint would be misdetected as lacking a package, causing a synthetic
+"package p" prefix to be prepended and producing a file with two package declarations
+that fails to parse.
 `
 
 type BodyInfo struct {
@@ -1185,8 +1191,34 @@ func parseGoSource(fset *token.FileSet, filename string, src []byte) (*ast.File,
 	return nil, 0, err
 }
 
+// hasPackage reports whether the source contains a package clause, skipping
+// leading whitespace and comments (including build constraint comments such
+// as //go:build and // +build) that may precede the package declaration.
+// Without skipping comments, a file whose package clause is preceded by a
+// build constraint would be misdetected as lacking a package, causing a
+// synthetic "package p" prefix to be prepended and producing a file with
+// two package declarations that fails to parse.
 func hasPackage(src []byte) bool {
 	trimmed := bytes.TrimLeft(src, " \t\n\r")
+	for {
+		if bytes.HasPrefix(trimmed, []byte("//")) {
+			// Skip a line comment.
+			idx := bytes.IndexByte(trimmed, '\n')
+			if idx == -1 {
+				return false
+			}
+			trimmed = bytes.TrimLeft(trimmed[idx+1:], " \t\n\r")
+		} else if bytes.HasPrefix(trimmed, []byte("/*")) {
+			// Skip a block comment.
+			idx := bytes.Index(trimmed, []byte("*/"))
+			if idx == -1 {
+				return false
+			}
+			trimmed = bytes.TrimLeft(trimmed[idx+2:], " \t\n\r")
+		} else {
+			break
+		}
+	}
 	return bytes.HasPrefix(trimmed, []byte("package "))
 }
 

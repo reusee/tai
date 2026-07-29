@@ -1039,6 +1039,54 @@ func TestApplyChangeBlockTrailingNewlineConsistentWithGoFmt(t *testing.T) {
 	})
 }
 
+func TestApplyChangeBlockBuildConstraintBeforePackage(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	// A Go file with a build constraint before the package declaration.
+	// hasPackage must skip the build constraint comment to find the package
+	// clause; otherwise it incorrectly prepends "package p\n", producing a
+	// file with two package declarations that fails to parse.
+	original := "//go:build linux\n\npackage main\n\nfunc Old() {}\n"
+	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := ChangeBlock{
+		Op:       "MODIFY",
+		Target:   "Old",
+		FilePath: "test.go",
+		Body:     "func New() {}",
+	}
+	if err := ApplyChangeBlock(root, h); err != nil {
+		t.Fatalf("ApplyChangeBlock failed: %v", err)
+	}
+
+	result, err := root.ReadFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultStr := string(result)
+	if strings.Contains(resultStr, "Old") {
+		t.Fatalf("result should not contain Old:\n%s", resultStr)
+	}
+	if !strings.Contains(resultStr, "func New() {}") {
+		t.Fatalf("result should contain New:\n%s", resultStr)
+	}
+	// The build constraint must be preserved.
+	if !strings.Contains(resultStr, "//go:build linux") {
+		t.Fatalf("result should preserve build constraint:\n%s", resultStr)
+	}
+	// The synthetic "package p" must not appear.
+	if strings.Contains(resultStr, "package p") {
+		t.Fatalf("result should not contain synthetic 'package p':\n%s", resultStr)
+	}
+}
+
 func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 	t.Run("ReplaceNonGoFile", func(t *testing.T) {
 		dir := t.TempDir()
