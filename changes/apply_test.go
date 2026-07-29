@@ -786,97 +786,6 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 	})
 }
 
-func TestApplyFinishBlock(t *testing.T) {
-	newTestScope(t).Call(func(applyDiffFile ApplyDiffFile) {
-		t.Run("AtEnd", func(t *testing.T) {
-			dir := t.TempDir()
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer root.Close()
-
-			original := "package x\n\nfunc Old() {}\n"
-			if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			content := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n\n:::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n"
-			diffPath := filepath.Join(dir, "diff.txt")
-			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			count := 0
-			for _, err := range applyDiffFile(root, diffPath) {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				count++
-			}
-			if count != 1 {
-				t.Fatalf("expected 1 change block, got %d", count)
-			}
-
-			result, err := root.ReadFile("test.go")
-			if err != nil {
-				t.Fatal(err)
-			}
-			resultStr := string(result)
-			if strings.Contains(resultStr, "Old") {
-				t.Fatalf("result should not contain Old:\n%s", resultStr)
-			}
-			if !strings.Contains(resultStr, "func New() {}") {
-				t.Fatalf("result should contain New:\n%s", resultStr)
-			}
-		})
-
-		t.Run("BeforeChange", func(t *testing.T) {
-			dir := t.TempDir()
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer root.Close()
-
-			original := "package x\n\nfunc Old() {}\n"
-			if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			// finish block before change block — should be skipped and change still applied
-			content := ":::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n\n:::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-			diffPath := filepath.Join(dir, "diff.txt")
-			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			count := 0
-			for _, err := range applyDiffFile(root, diffPath) {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				count++
-			}
-			if count != 1 {
-				t.Fatalf("expected 1 change block, got %d", count)
-			}
-
-			result, err := root.ReadFile("test.go")
-			if err != nil {
-				t.Fatal(err)
-			}
-			resultStr := string(result)
-			if strings.Contains(resultStr, "Old") {
-				t.Fatalf("result should not contain Old:\n%s", resultStr)
-			}
-			if !strings.Contains(resultStr, "func New() {}") {
-				t.Fatalf("result should contain New:\n%s", resultStr)
-			}
-		})
-	})
-}
-
 func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 	newTestScope(t).Call(func(applyDiffFile ApplyDiffFile) {
 		run := func(t *testing.T, content string) {
@@ -917,7 +826,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 				t.Fatalf("applied change block should be removed from diff file:\n%s", remainingStr)
 			}
 			if !strings.Contains(remainingStr, "Renamed Old to New.") {
-				t.Fatalf("finish block should be preserved in diff file:\n%s", remainingStr)
+				t.Fatalf("summary block should be preserved in diff file:\n%s", remainingStr)
 			}
 
 			result, err := root.ReadFile("test.go")
@@ -934,13 +843,13 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 		}
 
 		changeBlock := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-		finishBlock := ":::栢彣 <finish>\nRenamed Old to New.\n:::栢彣 </finish>\n"
+		summaryBlock := ":::栢彣 <summary>\n- Renamed Old to New.\n:::栢彣 </summary>\n"
 
-		t.Run("ChangeThenFinish", func(t *testing.T) {
-			run(t, changeBlock+"\n"+finishBlock)
+		t.Run("ChangeThenSummary", func(t *testing.T) {
+			run(t, changeBlock+"\n"+summaryBlock)
 		})
-		t.Run("FinishThenChange", func(t *testing.T) {
-			run(t, finishBlock+"\n"+changeBlock)
+		t.Run("SummaryThenChange", func(t *testing.T) {
+			run(t, summaryBlock+"\n"+changeBlock)
 		})
 	})
 }

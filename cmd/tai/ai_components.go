@@ -28,7 +28,7 @@ which must be computed at call time and cannot be a static Component.
 Shell and continue components are reused from components.CommonComponents, the
 shared component set constructed in the components package. The codes module
 also reuses CommonComponents, prepending its codes-specific components (change,
-go-test, finish, request-context) and appending summary, read-only files,
+go-test, request-context) and appending summary, read-only files,
 mandatory planning, and extra system prompt. This eliminates the duplicate
 component construction that previously existed when the ai command and codes
 module each defined their own shell and continue components independently.
@@ -46,7 +46,7 @@ uniqueness, boundary matching) at the end of the system prompt, separated
 from the main PromptSections. This improves the model's adherence to the
 boundary-delimited block format by surfacing the most commonly violated
 rules as a distinct reminder section, mirroring the approach used by the
-codes module's change, go-test, finish, and request-context components.
+codes module's change, go-test, and request-context components.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, now a prompt-only

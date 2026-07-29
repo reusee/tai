@@ -72,7 +72,7 @@ In each round, the model selects one or more tasks from the list to execute,
 produces the corresponding change blocks, and ends with a continue block
 containing the updated task list — marking completed tasks and listing
 remaining tasks. This cycle repeats until all tasks are complete, at which
-point a finish block is used instead. This keeps each round focused and
+point a summary block is used instead. This keeps each round focused and
 reviewable while avoiding the single-request generation limit.
 
 Decomposition must precede any action, including analysis and reasoning, not
@@ -161,7 +161,7 @@ output bounded so that no single response approaches the limit.
   Emit NO change blocks in the planning round. For small tasks the plan can be
   brief — a short task list is sufficient.
 - The planning round MUST end with a continue block containing the task list,
-  never a finish block, because no changes have been produced yet.
+  never only a summary block, because no changes have been produced yet.
 - During planning, select and blend task decomposition strategies (see the
   Task Decomposition Strategies section below) to produce the initial task
   list. No single strategy suffices; blend structural, adaptive, quality, and
@@ -178,7 +178,7 @@ output bounded so that no single response approaches the limit.
 - Keep each execution round small. When in doubt, split finer: more rounds
   with less output per round is always safer than fewer rounds that risk
   truncation.
-- The final round ends with a finish block instead of a continue block.
+- The final round ends with a summary block instead of a continue block.
 - This mandate applies to EVERY task, including apparently trivial ones, and
   supersedes any guidance elsewhere that permits completing simple tasks in a
   single response without a continue block.

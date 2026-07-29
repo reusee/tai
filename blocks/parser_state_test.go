@@ -106,7 +106,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 		return nil
 	})
 
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n:::栢彣 </change>\n:::桀骥 <finish>\nDone.\n:::桀骥 </finish>\n"
+	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n:::栢彣 </change>\n:::桀骥 <summary>\n- Done.\n:::桀骥 </summary>\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -125,7 +125,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 	if collectedBlocks[1].Kind != "change" || collectedBlocks[1].Boundary != "栢彣" {
 		t.Fatalf("unexpected second block: %+v", collectedBlocks[1])
 	}
-	if collectedBlocks[2].Kind != "finish" || collectedBlocks[2].Boundary != "桀骥" {
+	if collectedBlocks[2].Kind != "summary" || collectedBlocks[2].Boundary != "桀骥" {
 		t.Fatalf("unexpected third block: %+v", collectedBlocks[2])
 	}
 }

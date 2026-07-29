@@ -19,7 +19,7 @@ any other module providing components.ComponentSet would conflict in the dscope 
 
 The codes module reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-finish, request-context) and appending summary, read-only files (prompt-only),
+request-context) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
 (prompt-only). This eliminates duplicate shell and continue component
 construction across modules.
@@ -30,7 +30,7 @@ trigger a new round for debugging with MaxRounds bounding the test-fix loop.
 When tests pass, no Parts are returned and no round is triggered by go-test,
 so other mechanisms (e.g., continue blocks) are unaffected. The go-test
 component is placed after change so tests run against the updated source, and
-before finish so test output is available for the next round.
+before summary so test output is available for the next round.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
@@ -38,13 +38,19 @@ blocks. This demonstrates the Component concept's unification of prompt-only
 mechanisms with block processing mechanisms under a single framework.
 
 ExtraSystemPrompt is also a prompt-only Component, unifying the config-derived
-extra prompt into the same assembly mechanism. Change, go-test, finish, and
+extra prompt into the same assembly mechanism. Change, go-test, and
 request-context components carry RestatePrompt fields — short critical reminders
 that reinforce block format rules, assembled via ComponentSet.RestatePrompts()
 separately from the main PromptSections. This brings the previously orphaned
 restate prompt constants (ChangeBlockRestatePromptText, GoTestBlockRestatePrompt,
-FinishBlockRestatePrompt, RequestContextRestatePrompt) under the Component
-framework, making them functional for the first time.
+RequestContextRestatePrompt) under the Component framework, making them functional
+for the first time.
+
+The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
+that reinforces the requirement to emit a summary block in every response as
+the round completion signal. The summary block is the sole completion signal:
+the generation loop checks for its presence to distinguish a normally ended
+round from truncated output.
 `
 
 // CodesComponents is the component set type for the codes module. It embeds
@@ -99,7 +105,7 @@ func (Module) CodesComponents(
 	// pass, no Parts are returned and no round is triggered, so other
 	// mechanisms (e.g., continue blocks) are unaffected. MaxRounds bounds
 	// the test-fix loop. Placed after change so tests run against updated
-	// source, and before finish so test output is available for the next
+	// source, and before summary so test output is available for the next
 	// round. See TheoryOfCodesComponents.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
@@ -121,14 +127,6 @@ func (Module) CodesComponents(
 			}
 			return result
 		},
-	})
-
-	// Finish component: informational, not processed in the component loop.
-	// RestatePrompt carries the finish block restate prompt.
-	comps = append(comps, components.Component{
-		Kind:          "finish",
-		PromptSection: blocks.FinishBlockSystemPrompt,
-		RestatePrompt: blocks.FinishBlockRestatePrompt,
 	})
 
 	// Request-context component: conditional on dynamicContext.
@@ -168,9 +166,13 @@ func (Module) CodesComponents(
 
 	// Summary component: processed in runPhaseWithRetry for completion detection
 	// and round statistics, not in the main component loop.
+	// RestatePrompt reinforces the requirement to emit a summary block in
+	// every response as the round completion signal. See
+	// TheoryOfCodesComponents.
 	comps = append(comps, components.Component{
 		Kind:          "summary",
 		PromptSection: blocks.SummaryBlockSystemPrompt,
+		RestatePrompt: blocks.SummaryBlockRestatePrompt,
 	})
 
 	// Read-only files: prompt-only component, no block kind.

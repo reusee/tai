@@ -289,9 +289,14 @@ Inserting content after a unique anchor in a config file...
 serde = { version = "1.0", features = ["derive"] }
 :::壴惉 </change>
 These changes should resolve the issue.
-:::桀骥 <finish>
-Fixed the Foo function, removed the unused Bar function, deleted the unused.go file, rewrote the config file, updated the Markdown description, and added a dependency.
-:::桀骥 </finish>
+:::桀骥 <summary>
+- Fixed the Foo function
+- Removed the unused Bar function
+- Deleted the unused.go file
+- Rewrote the config file
+- Updated the Markdown description
+- Added a dependency
+:::桀骥 </summary>
 `
 
 const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with XML attributes on the opening tag:
@@ -310,5 +315,5 @@ const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST 
 - **Special Go-only MODIFY targets**: Use ` + "`target=\"package\"`" + ` to replace the file's package clause, and ` + "`target=\"import\"`" + ` to replace all import declarations as a group. Both run goimports after replacement to ensure valid formatting and import synchronization.
 - Include the COMPLETE declaration code of the targeted entity. No ellipsis or placeholders.- **Prefer precise modifications over WRITE**: Use WRITE only when creating a new file or when the majority of the file content is changing. For small or localized changes, use MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE, INSERT_BEFORE, or INSERT_AFTER to minimize token cost and review blast radius.
 - If no changes are needed, omit all change blocks.
-- Even when no change blocks are emitted, a finish block is still required. Generate a finish block with "No changes were needed." as the summary.
+- Even when no change blocks are emitted, a summary block is still required. Generate a summary block with "No changes were needed." as the only bullet point.
 `

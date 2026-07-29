@@ -10,9 +10,11 @@ semantics. When a response ends with a continue block, the system extracts the
 block body, feeds it back verbatim as the next user message, and automatically
 starts a new generation round. By chaining rounds this way, the model can
 produce arbitrarily long outputs without hitting the single-request generation
-limit. Each round must end with either a finish block (session complete) or a
-continue block (another round follows), but not both, and the continue block
-must be the last block in the response.
+limit. Summary blocks and continue blocks can coexist in the same response:
+the summary block marks the round as complete, and the continue block prompts
+the next round's input. The two are not mutually exclusive. When both are
+present, the summary block must appear before the continue block, and the
+continue block must be the last block in the response.
 
 The mechanism is orthogonal to the conventions layered on top of it. The body
 is opaque to the mechanism: it carries no meaning beyond being fed back as
@@ -27,7 +29,7 @@ any single extension's semantics.
 const ContinueBlockSystemPrompt = `
 Continue Block Kind:
 
-The "continue" kind signals that the current generation round is over and another round should follow. The block body is fed back to you verbatim as the next user message, letting you supply yourself with input for the next round. It MUST be the last block in the response, after all other blocks.
+The "continue" kind signals that the current generation round is over and another round should follow. The block body is fed back to you verbatim as the next user message, letting you supply yourself with input for the next round. It MUST be the last block in the response, after all other blocks including the summary block.
 
 The continue block is a generic self-prompting mechanism with no prescribed content. Conventions layered on top of it (for example, the mandatory planning mandate, which carries the evolving task list in the body) define what the body should contain; the mechanism itself imposes none.
 
@@ -40,8 +42,8 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.
 - Use a continue block whenever another generation round is needed — for example, when the remaining output would exceed a single response's capacity.
-- A response MUST contain either a finish block (if the session is complete) or a continue block (if another round is needed), but NOT both.
-- The continue block MUST be the last block in the response; no other blocks may appear after it.
+- A response may end with both a summary block and a continue block: the summary block marks the round as complete, and the continue block prompts the next round's input. They are not mutually exclusive.
+- The continue block MUST be the last block in the response, after the summary block; no other blocks may appear after it.
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 

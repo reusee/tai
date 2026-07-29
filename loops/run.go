@@ -32,13 +32,13 @@ chat phase (generate -> chat -> generate -> chat -> ...), so single-shot
 mode still supports interactive sessions.
 
 RetryOnMissingCompletion handles truncated output: when a round ends
-without a summary or finish block, the output was likely cut off
-mid-stream. The loop summarizes the incomplete output, appends it as
-context, and retries from the pre-round state. This is distinct from
-generator-level retry which handles transient API errors. The retry logic
-and incomplete-output summarization were previously implemented as
-runPhaseWithRetry in codes/generate.go; they are now unified here so all
-commands can opt into retry behavior via RunOptions.
+without a summary block, the output was likely cut off mid-stream. The loop
+summarizes the incomplete output, appends it as context, and retries from
+the pre-round state. This is distinct from generator-level retry which
+handles transient API errors. The retry logic and incomplete-output
+summarization were previously implemented as runPhaseWithRetry in
+codes/generate.go; they are now unified here so all commands can opt into
+retry behavior via RunOptions.
 
 RetryOnApplyError handles model-generated errors that cause change block
 application to fail (e.g., invalid target, malformed code, goimports
@@ -287,18 +287,10 @@ func (Module) Run() Run {
 					break
 				}
 
-				// Check for completion blocks (summary or finish).
+				// Check for completion blocks (summary).
 				// Summaries were already extracted above, so check
 				// roundSummaries for a summary completion signal.
 				hasCompletion := len(roundSummaries) > 0
-				if !hasCompletion {
-					for _, block := range collectedBlocks {
-						if block.Kind == "finish" {
-							hasCompletion = true
-							break
-						}
-					}
-				}
 
 				if hasCompletion {
 					break

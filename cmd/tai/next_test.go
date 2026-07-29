@@ -311,7 +311,7 @@ func TestSystemPromptIncludesChangeBlockRestatePrompt(t *testing.T) {
 		if !strings.Contains(s, "Change Block Kind") {
 			t.Fatal("system prompt must include change block prompt when Go files are present")
 		}
-		if !strings.Contains(s, "a finish block is still required") {
+		if !strings.Contains(s, "a summary block is still required") {
 			t.Fatal("system prompt must include change block restate prompt when Go files are present")
 		}
 	})
