@@ -66,10 +66,11 @@ func TestLoadDynamicPathsConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := dscope.Get[dynConfig](scope)
-	if got.Value != "bar" {
-		t.Fatalf("expected %q, got %q", "bar", got.Value)
-	}
+	scope.Call(func(config dynConfig) {
+		if config.Value != "bar" {
+			t.Fatalf("expected %q, got %q", "bar", config.Value)
+		}
+	})
 }
 
 func TestLoadDynamicPathsConfigReevaluates(t *testing.T) {
@@ -94,10 +95,11 @@ secondary: "baz"`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	got := dscope.Get[dynConfig](scope)
-	if got.Value != "bar" {
-		t.Fatalf("expected %q, got %q", "bar", got.Value)
-	}
+	scope.Call(func(config dynConfig) {
+		if config.Value != "bar" {
+			t.Fatalf("expected %q, got %q", "bar", config.Value)
+		}
+	})
 
 	// Fork with a different dependency value; the provider should
 	// re-evaluate and pick up the new path's config value.
@@ -105,8 +107,9 @@ secondary: "baz"`), 0644); err != nil {
 		return dynPathPrefix{Prefix: "secondary"}
 	})
 
-	got = dscope.Get[dynConfig](scope)
-	if got.Value != "baz" {
-		t.Fatalf("expected %q after fork, got %q", "baz", got.Value)
-	}
+	scope.Call(func(config dynConfig) {
+		if config.Value != "baz" {
+			t.Fatalf("expected %q after fork, got %q", "baz", config.Value)
+		}
+	})
 }

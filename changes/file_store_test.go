@@ -5,23 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/modes"
 )
-
-func newTestApplyChangeBlockStore(t *testing.T) ApplyChangeBlockStore {
-	t.Helper()
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
-	scope := dscope.New(
-		modes.ForTest(t),
-		&loader,
-		new(Module),
-	)
-	return dscope.Get[ApplyChangeBlockStore](scope)
-}
 
 func TestMemoryStoreWriteReadFlush(t *testing.T) {
 	dir := t.TempDir()
@@ -227,187 +213,190 @@ func TestMemoryStoreRenameAndRead(t *testing.T) {
 }
 
 func TestMemoryStoreApplyChangeBlockStore(t *testing.T) {
-	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	newTestScope(t).Call(func(applyChangeBlockStore ApplyChangeBlockStore) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 
-	original := "package x\n\nfunc Old() {}\n"
-	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-		t.Fatal(err)
-	}
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	store := NewMemoryStore(NewRootStore(root))
+		store := NewMemoryStore(NewRootStore(root))
 
-	// Apply a MODIFY change block to the MemoryStore
-	h := ChangeBlock{
-		Op:       "MODIFY",
-		Target:   "Old",
-		FilePath: "test.go",
-		Body:     "func New() {}",
-	}
-	if err := applyChangeBlockStore(store, h); err != nil {
-		t.Fatalf("ApplyChangeBlockStore failed: %v", err)
-	}
+		// Apply a MODIFY change block to the MemoryStore
+		h := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "Old",
+			FilePath: "test.go",
+			Body:     "func New() {}",
+		}
+		if err := applyChangeBlockStore(store, h); err != nil {
+			t.Fatalf("ApplyChangeBlockStore failed: %v", err)
+		}
 
-	// Memory should have updated content
-	got, err := store.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(got), "Old") {
-		t.Fatalf("memory should not contain Old:\n%s", string(got))
-	}
-	if !strings.Contains(string(got), "func New() {}") {
-		t.Fatalf("memory should contain New:\n%s", string(got))
-	}
+		// Memory should have updated content
+		got, err := store.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "Old") {
+			t.Fatalf("memory should not contain Old:\n%s", string(got))
+		}
+		if !strings.Contains(string(got), "func New() {}") {
+			t.Fatalf("memory should contain New:\n%s", string(got))
+		}
 
-	// Disk should still have original content (not flushed)
-	diskContent, err := root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(diskContent), "func Old() {}") {
-		t.Fatalf("disk should still have original content before flush:\n%s", string(diskContent))
-	}
+		// Disk should still have original content (not flushed)
+		diskContent, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(diskContent), "func Old() {}") {
+			t.Fatalf("disk should still have original content before flush:\n%s", string(diskContent))
+		}
 
-	// Flush to disk
-	if err := store.Flush(); err != nil {
-		t.Fatal(err)
-	}
+		// Flush to disk
+		if err := store.Flush(); err != nil {
+			t.Fatal(err)
+		}
 
-	// Disk should now have updated content
-	diskContent, err = root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(diskContent), "Old") {
-		t.Fatalf("disk should not contain Old after flush:\n%s", string(diskContent))
-	}
-	if !strings.Contains(string(diskContent), "func New() {}") {
-		t.Fatalf("disk should contain New after flush:\n%s", string(diskContent))
-	}
+		// Disk should now have updated content
+		diskContent, err = root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(diskContent), "Old") {
+			t.Fatalf("disk should not contain Old after flush:\n%s", string(diskContent))
+		}
+		if !strings.Contains(string(diskContent), "func New() {}") {
+			t.Fatalf("disk should contain New after flush:\n%s", string(diskContent))
+		}
+	})
 }
 
 func TestMemoryStoreMultipleChangesSameFile(t *testing.T) {
-	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	newTestScope(t).Call(func(applyChangeBlockStore ApplyChangeBlockStore) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 
-	original := "package x\n\nfunc Old() {}\n"
-	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-		t.Fatal(err)
-	}
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	store := NewMemoryStore(NewRootStore(root))
+		store := NewMemoryStore(NewRootStore(root))
 
-	// First change: WRITE new content
-	h1 := ChangeBlock{
-		Op:       "WRITE",
-		FilePath: "test.go",
-		Body:     "package x\n\nfunc First() {}\n",
-	}
-	if err := applyChangeBlockStore(store, h1); err != nil {
-		t.Fatalf("first ApplyChangeBlockStore failed: %v", err)
-	}
+		// First change: WRITE new content
+		h1 := ChangeBlock{
+			Op:       "WRITE",
+			FilePath: "test.go",
+			Body:     "package x\n\nfunc First() {}\n",
+		}
+		if err := applyChangeBlockStore(store, h1); err != nil {
+			t.Fatalf("first ApplyChangeBlockStore failed: %v", err)
+		}
 
-	// Second change: MODIFY First → Second (uses in-memory content as base)
-	h2 := ChangeBlock{
-		Op:       "MODIFY",
-		Target:   "First",
-		FilePath: "test.go",
-		Body:     "func Second() {}",
-	}
-	if err := applyChangeBlockStore(store, h2); err != nil {
-		t.Fatalf("second ApplyChangeBlockStore failed: %v", err)
-	}
+		// Second change: MODIFY First → Second (uses in-memory content as base)
+		h2 := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "First",
+			FilePath: "test.go",
+			Body:     "func Second() {}",
+		}
+		if err := applyChangeBlockStore(store, h2); err != nil {
+			t.Fatalf("second ApplyChangeBlockStore failed: %v", err)
+		}
 
-	// Memory should have Second, not First or Old
-	got, err := store.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(got), "First") {
-		t.Fatalf("memory should not contain First:\n%s", string(got))
-	}
-	if strings.Contains(string(got), "Old") {
-		t.Fatalf("memory should not contain Old:\n%s", string(got))
-	}
-	if !strings.Contains(string(got), "func Second() {}") {
-		t.Fatalf("memory should contain Second:\n%s", string(got))
-	}
+		// Memory should have Second, not First or Old
+		got, err := store.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "First") {
+			t.Fatalf("memory should not contain First:\n%s", string(got))
+		}
+		if strings.Contains(string(got), "Old") {
+			t.Fatalf("memory should not contain Old:\n%s", string(got))
+		}
+		if !strings.Contains(string(got), "func Second() {}") {
+			t.Fatalf("memory should contain Second:\n%s", string(got))
+		}
 
-	// Disk should still have original content
-	diskContent, err := root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(diskContent), "func Old() {}") {
-		t.Fatalf("disk should still have original content:\n%s", string(diskContent))
-	}
+		// Disk should still have original content
+		diskContent, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(diskContent), "func Old() {}") {
+			t.Fatalf("disk should still have original content:\n%s", string(diskContent))
+		}
 
-	// Flush
-	if err := store.Flush(); err != nil {
-		t.Fatal(err)
-	}
+		// Flush
+		if err := store.Flush(); err != nil {
+			t.Fatal(err)
+		}
 
-	// Disk should have final content
-	diskContent, err = root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(diskContent), "func Second() {}") {
-		t.Fatalf("disk should contain Second after flush:\n%s", string(diskContent))
-	}
+		// Disk should have final content
+		diskContent, err = root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(diskContent), "func Second() {}") {
+			t.Fatalf("disk should contain Second after flush:\n%s", string(diskContent))
+		}
+	})
 }
 
 func TestMemoryStoreCreateNewFile(t *testing.T) {
-	applyChangeBlockStore := newTestApplyChangeBlockStore(t)
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	newTestScope(t).Call(func(applyChangeBlockStore ApplyChangeBlockStore) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 
-	store := NewMemoryStore(NewRootStore(root))
+		store := NewMemoryStore(NewRootStore(root))
 
-	// Create a new file via WRITE
-	h := ChangeBlock{
-		Op:       "WRITE",
-		FilePath: "new.go",
-		Body:     "package x\n\nfunc New() {}\n",
-	}
-	if err := applyChangeBlockStore(store, h); err != nil {
-		t.Fatalf("ApplyChangeBlockStore failed: %v", err)
-	}
+		// Create a new file via WRITE
+		h := ChangeBlock{
+			Op:       "WRITE",
+			FilePath: "new.go",
+			Body:     "package x\n\nfunc New() {}\n",
+		}
+		if err := applyChangeBlockStore(store, h); err != nil {
+			t.Fatalf("ApplyChangeBlockStore failed: %v", err)
+		}
 
-	// File should not exist on disk yet
-	_, err = root.ReadFile("new.go")
-	if err == nil {
-		t.Fatal("file should not exist on disk before flush")
-	}
+		// File should not exist on disk yet
+		_, err = root.ReadFile("new.go")
+		if err == nil {
+			t.Fatal("file should not exist on disk before flush")
+		}
 
-	// Flush
-	if err := store.Flush(); err != nil {
-		t.Fatal(err)
-	}
+		// Flush
+		if err := store.Flush(); err != nil {
+			t.Fatal(err)
+		}
 
-	// File should exist on disk after flush
-	got, err := root.ReadFile("new.go")
-	if err != nil {
-		t.Fatalf("file should exist on disk after flush: %v", err)
-	}
-	if !strings.Contains(string(got), "func New() {}") {
-		t.Fatalf("disk should contain New:\n%s", string(got))
-	}
+		// File should exist on disk after flush
+		got, err := root.ReadFile("new.go")
+		if err != nil {
+			t.Fatalf("file should exist on disk after flush: %v", err)
+		}
+		if !strings.Contains(string(got), "func New() {}") {
+			t.Fatalf("disk should contain New:\n%s", string(got))
+		}
+	})
 }
 
 func TestMemoryStoreFlushCreatesDirectories(t *testing.T) {
@@ -539,93 +528,95 @@ func TestRootStoreRenameCreatesDirectory(t *testing.T) {
 }
 
 func TestApplyChangeBlockWrapperDelegatesToStore(t *testing.T) {
-	applyChangeBlock := newTestApplyChangeBlock(t)
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 
-	original := "package x\n\nfunc Old() {}\n"
-	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-		t.Fatal(err)
-	}
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// ApplyChangeBlock (the wrapper) should delegate to ApplyChangeBlockStore
-	h := ChangeBlock{
-		Op:       "MODIFY",
-		Target:   "Old",
-		FilePath: "test.go",
-		Body:     "func New() {}",
-	}
-	if err := applyChangeBlock(root, h); err != nil {
-		t.Fatalf("ApplyChangeBlock failed: %v", err)
-	}
+		// ApplyChangeBlock (the wrapper) should delegate to ApplyChangeBlockStore
+		h := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "Old",
+			FilePath: "test.go",
+			Body:     "func New() {}",
+		}
+		if err := applyChangeBlock(root, h); err != nil {
+			t.Fatalf("ApplyChangeBlock failed: %v", err)
+		}
 
-	// Disk should have updated content (wrapper writes directly to disk)
-	got, err := root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(got), "Old") {
-		t.Fatalf("disk should not contain Old:\n%s", string(got))
-	}
-	if !strings.Contains(string(got), "func New() {}") {
-		t.Fatalf("disk should contain New:\n%s", string(got))
-	}
+		// Disk should have updated content (wrapper writes directly to disk)
+		got, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "Old") {
+			t.Fatalf("disk should not contain Old:\n%s", string(got))
+		}
+		if !strings.Contains(string(got), "func New() {}") {
+			t.Fatalf("disk should contain New:\n%s", string(got))
+		}
+	})
 }
 
 func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
-	applyChangeBlocks := newTestApplyChangeBlocks(t)
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	newTestScope(t).Call(func(applyChangeBlocks ApplyChangeBlocks) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 
-	original := "package x\n\nfunc Old() {}\n"
-	if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
-		t.Fatal(err)
-	}
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	state := generators.NewPrompts("", nil)
-	parserState := blocks.NewParserState(state)
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-	newState, err := parserState.AppendContent(&generators.Content{
-		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(text)},
+		state := generators.NewPrompts("", nil)
+		parserState := blocks.NewParserState(state)
+		text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
+		newState, err := parserState.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parserState = newState.(*blocks.ParserState)
+
+		changeBlocks := []blocks.Block{
+			{
+				Kind:       "change",
+				Boundary:   "徕珑",
+				Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
+				Body:       "func New() {}",
+			},
+		}
+
+		// ApplyChangeBlocks (the wrapper) should delegate to ApplyChangeBlocksStore
+		err = applyChangeBlocks(changeBlocks, root)
+		if err != nil {
+			t.Fatalf("ApplyChangeBlocks failed: %v", err)
+		}
+
+		// Disk should have updated content
+		got, err := root.ReadFile("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "Old") {
+			t.Fatalf("disk should not contain Old:\n%s", string(got))
+		}
+		if !strings.Contains(string(got), "func New() {}") {
+			t.Fatalf("disk should contain New:\n%s", string(got))
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	parserState = newState.(*blocks.ParserState)
-
-	changeBlocks := []blocks.Block{
-		{
-			Kind:       "change",
-			Boundary:   "徕珑",
-			Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
-			Body:       "func New() {}",
-		},
-	}
-
-	// ApplyChangeBlocks (the wrapper) should delegate to ApplyChangeBlocksStore
-	err = applyChangeBlocks(changeBlocks, root)
-	if err != nil {
-		t.Fatalf("ApplyChangeBlocks failed: %v", err)
-	}
-
-	// Disk should have updated content
-	got, err := root.ReadFile("test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(got), "Old") {
-		t.Fatalf("disk should not contain Old:\n%s", string(got))
-	}
-	if !strings.Contains(string(got), "func New() {}") {
-		t.Fatalf("disk should contain New:\n%s", string(got))
-	}
 }

@@ -35,10 +35,11 @@ func TestParseEmptyArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Chats](result)
-	if len(got) != 0 {
-		t.Fatalf("expected empty chats, got %v", got)
-	}
+	result.Call(func(chats Chats) {
+		if len(chats) != 0 {
+			t.Fatalf("expected empty chats, got %v", chats)
+		}
+	})
 }
 
 func TestParseSingleChat(t *testing.T) {
@@ -47,10 +48,11 @@ func TestParseSingleChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Chats](result)
-	if len(got) != 1 || got[0] != "hello" {
-		t.Fatalf("expected [hello], got %v", got)
-	}
+	result.Call(func(chats Chats) {
+		if len(chats) != 1 || chats[0] != "hello" {
+			t.Fatalf("expected [hello], got %v", chats)
+		}
+	})
 }
 
 // TestParseMultipleChatsAccumulate is the reproduction test for the stale
@@ -61,10 +63,11 @@ func TestParseMultipleChatsAccumulate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Chats](result)
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b], got %v", got)
-	}
+	result.Call(func(chats Chats) {
+		if len(chats) != 2 || chats[0] != "a" || chats[1] != "b" {
+			t.Fatalf("expected [a b], got %v", chats)
+		}
+	})
 }
 
 func TestParseUnknownFlag(t *testing.T) {
@@ -97,10 +100,11 @@ func TestParseDoesNotMutateOriginalScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	originalChats := dscope.Get[Chats](scope)
-	if len(originalChats) != 0 {
-		t.Fatalf("original scope should be unchanged, got %v", originalChats)
-	}
+	scope.Call(func(chats Chats) {
+		if len(chats) != 0 {
+			t.Fatalf("original scope should be unchanged, got %v", chats)
+		}
+	})
 }
 
 func TestParseNilNewValue(t *testing.T) {
@@ -117,10 +121,11 @@ func TestParseEffort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Effort](result)
-	if got != "high" {
-		t.Fatalf("expected high, got %v", got)
-	}
+	result.Call(func(effort Effort) {
+		if effort != "high" {
+			t.Fatalf("expected high, got %v", effort)
+		}
+	})
 }
 
 func TestParseEffortNoArg(t *testing.T) {
@@ -137,10 +142,11 @@ func TestParseFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Files](result)
-	if !got["a.go"] || !got["b.go"] {
-		t.Fatalf("expected a.go and b.go, got %v", got)
-	}
+	result.Call(func(files Files) {
+		if !files["a.go"] || !files["b.go"] {
+			t.Fatalf("expected a.go and b.go, got %v", files)
+		}
+	})
 }
 
 func TestParseFilesNoArg(t *testing.T) {
@@ -157,10 +163,11 @@ func TestParseFocus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Focus](result)
-	if len(got) != 2 || got[0] != "foo" || got[1] != "bar" {
-		t.Fatalf("expected [foo bar], got %v", got)
-	}
+	result.Call(func(focus Focus) {
+		if len(focus) != 2 || focus[0] != "foo" || focus[1] != "bar" {
+			t.Fatalf("expected [foo bar], got %v", focus)
+		}
+	})
 }
 
 func TestParseFocusNoArg(t *testing.T) {
@@ -177,10 +184,11 @@ func TestParseIgnoreWithAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Ignore](result)
-	if !got["a"] || !got["b"] || !got["c"] {
-		t.Fatalf("expected a, b, c, got %v", got)
-	}
+	result.Call(func(ignore Ignore) {
+		if !ignore["a"] || !ignore["b"] || !ignore["c"] {
+			t.Fatalf("expected a, b, c, got %v", ignore)
+		}
+	})
 }
 
 func TestParseIgnoreNoArg(t *testing.T) {
@@ -197,10 +205,11 @@ func TestParseMatchWithAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Match](result)
-	if !got["a"] || !got["b"] {
-		t.Fatalf("expected a, b, got %v", got)
-	}
+	result.Call(func(match Match) {
+		if !match["a"] || !match["b"] {
+			t.Fatalf("expected a, b, got %v", match)
+		}
+	})
 }
 
 func TestParseMatchNoArg(t *testing.T) {
@@ -217,10 +226,11 @@ func TestParseModelName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[ModelName](result)
-	if got != "gpt-4" {
-		t.Fatalf("expected gpt-4, got %v", got)
-	}
+	result.Call(func(name ModelName) {
+		if name != "gpt-4" {
+			t.Fatalf("expected gpt-4, got %v", name)
+		}
+	})
 }
 
 func TestParseModelNameNoArg(t *testing.T) {
@@ -237,10 +247,11 @@ func TestParseFastModelName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[FastModelName](result)
-	if got != "gpt-4o-mini" {
-		t.Fatalf("expected gpt-4o-mini, got %v", got)
-	}
+	result.Call(func(name FastModelName) {
+		if name != "gpt-4o-mini" {
+			t.Fatalf("expected gpt-4o-mini, got %v", name)
+		}
+	})
 }
 
 func TestParseFastModelNameNoArg(t *testing.T) {
@@ -257,10 +268,11 @@ func TestParseShellTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Shell](result)
-	if !bool(got) {
-		t.Fatalf("expected true, got %v", got)
-	}
+	result.Call(func(shell Shell) {
+		if !bool(shell) {
+			t.Fatalf("expected true, got %v", shell)
+		}
+	})
 }
 
 func TestParseShellFalse(t *testing.T) {
@@ -269,10 +281,11 @@ func TestParseShellFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Shell](result)
-	if bool(got) {
-		t.Fatalf("expected false, got %v", got)
-	}
+	result.Call(func(shell Shell) {
+		if bool(shell) {
+			t.Fatalf("expected false, got %v", shell)
+		}
+	})
 }
 
 func TestParseShellToggle(t *testing.T) {
@@ -281,10 +294,11 @@ func TestParseShellToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Shell](result)
-	if bool(got) {
-		t.Fatalf("expected false after toggle, got %v", got)
-	}
+	result.Call(func(shell Shell) {
+		if bool(shell) {
+			t.Fatalf("expected false after toggle, got %v", shell)
+		}
+	})
 }
 
 func TestParseThoughtsTrue(t *testing.T) {
@@ -293,10 +307,11 @@ func TestParseThoughtsTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Thoughts](result)
-	if got.Value == nil || !*got.Value {
-		t.Fatalf("expected true, got %v", got.Value)
-	}
+	result.Call(func(thoughts Thoughts) {
+		if thoughts.Value == nil || !*thoughts.Value {
+			t.Fatalf("expected true, got %v", thoughts.Value)
+		}
+	})
 }
 
 func TestParseThoughtsFalse(t *testing.T) {
@@ -305,10 +320,11 @@ func TestParseThoughtsFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := dscope.Get[Thoughts](result)
-	if got.Value == nil || *got.Value {
-		t.Fatalf("expected false, got %v", got.Value)
-	}
+	result.Call(func(thoughts Thoughts) {
+		if thoughts.Value == nil || *thoughts.Value {
+			t.Fatalf("expected false, got %v", thoughts.Value)
+		}
+	})
 }
 
 func TestParseMixedFlags(t *testing.T) {
@@ -323,19 +339,27 @@ func TestParseMixedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := dscope.Get[ModelName](result); got != "gpt-4" {
-		t.Fatalf("expected model gpt-4, got %v", got)
-	}
-	if got := dscope.Get[Effort](result); got != "high" {
-		t.Fatalf("expected effort high, got %v", got)
-	}
-	if got := dscope.Get[Shell](result); !bool(got) {
-		t.Fatalf("expected shell true, got %v", got)
-	}
-	if got := dscope.Get[Chats](result); len(got) != 1 || got[0] != "hello" {
-		t.Fatalf("expected chats [hello], got %v", got)
-	}
-	if got := dscope.Get[Focus](result); len(got) != 1 || got[0] != "target" {
-		t.Fatalf("expected focus [target], got %v", got)
-	}
+	result.Call(func(
+		name ModelName,
+		effort Effort,
+		shell Shell,
+		chats Chats,
+		focus Focus,
+	) {
+		if name != "gpt-4" {
+			t.Fatalf("expected model gpt-4, got %v", name)
+		}
+		if effort != "high" {
+			t.Fatalf("expected effort high, got %v", effort)
+		}
+		if !bool(shell) {
+			t.Fatalf("expected shell true, got %v", shell)
+		}
+		if len(chats) != 1 || chats[0] != "hello" {
+			t.Fatalf("expected chats [hello], got %v", chats)
+		}
+		if len(focus) != 1 || focus[0] != "target" {
+			t.Fatalf("expected focus [target], got %v", focus)
+		}
+	})
 }
