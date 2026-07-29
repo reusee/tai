@@ -19,19 +19,20 @@ reused by both the ai command (via AIComponents) and the codes module (via
 CodesComponents), ensuring that shell and continue components are consistently
 configured across all generation pipelines and eliminating the duplicate
 component construction that previously existed in each module.
+
+Shell and continue components include RestatePrompt fields that provide short
+critical reminders reinforcing the block format rules at the end of the system
+prompt, improving the model's adherence to the boundary-delimited block format
+across all generation commands.
 `
 
-// CommonComponents returns the components shared across all generation
-// commands: shell (conditional on the shell flag) and continue. Commands
-// that need additional components prepend or append their specific
-// components to this common set.
-// See TheoryOfCommonComponents.
 func CommonComponents(shell bool) ComponentSet {
 	var comps ComponentSet
 	if shell {
 		comps = append(comps, Component{
 			Kind:          "shell",
 			PromptSection: blocks.ShellBlockSystemPrompt,
+			RestatePrompt: blocks.ShellBlockRestatePrompt,
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 				parts, err := blocks.ProcessShellBlocks(pctx.Blocks)
 				return ProcessResult{Parts: parts, Err: err}
@@ -41,6 +42,7 @@ func CommonComponents(shell bool) ComponentSet {
 	comps = append(comps, Component{
 		Kind:          "continue",
 		PromptSection: blocks.ContinueBlockSystemPrompt,
+		RestatePrompt: blocks.ContinueBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 			parts := blocks.ProcessContinueBlocks(pctx.Blocks)
 			return ProcessResult{Parts: parts}

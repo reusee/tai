@@ -38,6 +38,15 @@ dscope resolves it independently from the codes module's CodesComponents
 provider. Both the ai command and the codes module use distinct named types
 embedding components.ComponentSet, ensuring each module's components are
 resolved independently in the dscope scope without type conflicts.
+
+RestatePrompts are now included for the block format, memory, shell, and
+continue components. Each RestatePrompt provides a short critical reminder
+that reinforces the block format rules (line-start requirement, boundary
+uniqueness, boundary matching) at the end of the system prompt, separated
+from the main PromptSections. This improves the model's adherence to the
+boundary-delimited block format by surfacing the most commonly violated
+rules as a distinct reminder section, mirroring the approach used by the
+codes module's change, go-test, finish, and request-context components.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, now a prompt-only
@@ -73,14 +82,19 @@ func (Module) AIComponents(
 
 	// BlockFormatSystemPrompt is a prompt-only Component that teaches the
 	// model the boundary-delimited block format used by memory blocks.
+	// RestatePrompt reinforces the critical line-start and boundary
+	// uniqueness rules at the end of the system prompt.
+	// See TheoryOfAIComponents.
 	comps = append(comps, components.Component{
 		PromptSection: blocks.BlockFormatSystemPrompt,
+		RestatePrompt: blocks.BlockFormatRestatePrompt,
 	})
 
 	// Memory component: the prompt includes the dynamic user profile text,
 	// read at construction time (provider resolution). Processing is done
 	// post-loop in ai.go via memories.UpdateMemoryFromBlock, not in the
-	// generation loop. See TheoryOfAIComponents.
+	// generation loop. RestatePrompt reinforces the memory block format.
+	// See TheoryOfAIComponents.
 	if !noMemory {
 		var profileText string
 		if entry, err := currentMemory(); err == nil && entry != nil {
@@ -89,6 +103,7 @@ func (Module) AIComponents(
 		comps = append(comps, components.Component{
 			Kind:          "memory",
 			PromptSection: memoryBlockSystemPrompt(profileText),
+			RestatePrompt: memoryBlockRestatePrompt,
 		})
 	}
 
@@ -141,3 +156,9 @@ func memoryBlockSystemPrompt(profileText string) string {
 用户画像：
 ` + profileText
 }
+
+const memoryBlockRestatePrompt = `- Memory block: emit :::<boundary> <memory>
+<memory>
+  <memory-item>user profile fact</memory-item>
+</memory>
+:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`

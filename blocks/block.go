@@ -131,6 +131,12 @@ This format avoids escaping issues and is easy to parse.
 - Before writing each closing marker, verify its boundary matches the corresponding opening marker of the same block. The most common cause of mismatched boundaries is copying a boundary from another block or from an example instead of reusing the one you opened with.
 `
 
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block marker (:::<boundary> <kind ...> and :::<boundary> </kind>) MUST start at the beginning of its own line, immediately after a newline. NEVER glue a marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
+- Generate a fresh random pair of two uncommon Chinese characters as the boundary for each block. Never reuse a boundary from any example in this prompt.
+- The closing marker MUST use the EXACT same boundary string as the opening marker.
+- Select boundary characters that do not appear anywhere in the block body.
+- No blank lines are required before or after a block.`
+
 // Block represents a parsed boundary block.
 type Block struct {
 	Kind       string

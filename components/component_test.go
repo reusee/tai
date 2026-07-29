@@ -149,6 +149,13 @@ func TestCommonComponents(t *testing.T) {
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
 		}
+		restate := comps.RestatePrompts()
+		if !strings.Contains(restate, "Shell block:") {
+			t.Fatal("RestatePrompts should contain shell block restate prompt")
+		}
+		if !strings.Contains(restate, "Continue block:") {
+			t.Fatal("RestatePrompts should contain continue block restate prompt")
+		}
 	})
 
 	t.Run("without shell", func(t *testing.T) {
@@ -166,6 +173,13 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
+		}
+		restate := comps.RestatePrompts()
+		if strings.Contains(restate, "Shell block:") {
+			t.Fatal("RestatePrompts should not contain shell block restate prompt when shell is disabled")
+		}
+		if !strings.Contains(restate, "Continue block:") {
+			t.Fatal("RestatePrompts should contain continue block restate prompt")
 		}
 	})
 }

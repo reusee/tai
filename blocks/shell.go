@@ -72,6 +72,10 @@ The "shell" kind allows the model to execute shell commands and receive the outp
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 
+const ShellBlockRestatePrompt = `- Shell block: emit :::<boundary> <shell>
+<shell command>
+:::<boundary> </shell> to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.`
+
 const shellTimeout = 30 * time.Second
 
 // executeShellCommand runs a shell command with a timeout and returns the

@@ -45,6 +45,10 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 - The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 
+const ContinueBlockRestatePrompt = `- Continue block: emit :::<boundary> <continue>
+<next user message content>
+:::<boundary> </continue> when another generation round is needed. It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round.`
+
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Each block's body becomes a Text part that will be
 // fed back as the next user message to trigger a new generation round.
