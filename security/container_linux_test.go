@@ -114,3 +114,20 @@ func TestSetNoNewPrivsDoesNotPanic(t *testing.T) {
 	// It is a best-effort operation that may silently fail.
 	setNoNewPrivs()
 }
+
+func TestResolveTmpfsSize(t *testing.T) {
+	// Default when env not set.
+	if got := resolveTmpfsSize("CAI_TEST_TMPFS_UNSET", "256m"); got != "256m" {
+		t.Fatalf("expected default 256m, got %s", got)
+	}
+	// Custom when env set.
+	t.Setenv("CAI_TEST_TMPFS_SET", "1g")
+	if got := resolveTmpfsSize("CAI_TEST_TMPFS_SET", "256m"); got != "1g" {
+		t.Fatalf("expected 1g, got %s", got)
+	}
+	// Empty env falls back to default.
+	t.Setenv("CAI_TEST_TMPFS_EMPTY", "")
+	if got := resolveTmpfsSize("CAI_TEST_TMPFS_EMPTY", "64m"); got != "64m" {
+		t.Fatalf("expected default 64m for empty env, got %s", got)
+	}
+}

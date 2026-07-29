@@ -61,6 +61,25 @@ const goWritableDirsEnv = "CAI_GO_WRITABLE_DIRS"
 // files in this directory. See TheoryOfContainerIsolation.
 const configDirEnv = "CAI_CONFIG_DIR"
 
+// tmpTmpfsSizeEnv carries the size limit for the /tmp tmpfs mount inside
+// the container. The value is passed through os.Environ() during re-exec.
+// When unset, defaultTmpTmpfsSize is used. This is configurable to prevent
+// false ENOSPC errors when tests create large temporary files that exceed
+// the default cap. See TheoryOfContainerIsolation.
+const tmpTmpfsSizeEnv = "CAI_TMP_TMPFS_SIZE"
+
+// shmTmpfsSizeEnv carries the size limit for the /dev/shm tmpfs mount
+// inside the container. The value is passed through os.Environ() during
+// re-exec. When unset, defaultShmTmpfsSize is used.
+// See TheoryOfContainerIsolation.
+const shmTmpfsSizeEnv = "CAI_SHM_TMPFS_SIZE"
+
+// defaultTmpTmpfsSize is the default size for the /tmp tmpfs mount.
+const defaultTmpTmpfsSize = "256m"
+
+// defaultShmTmpfsSize is the default size for the /dev/shm tmpfs mount.
+const defaultShmTmpfsSize = "64m"
+
 // inContainerEnv marks that the process is already running inside the
 // container namespace, ensuring re-execution happens only once.
 // See TheoryOfContainerIsolation.
@@ -232,6 +251,17 @@ func resolveConfigDir() string {
 	return dir
 }
 
+// resolveTmpfsSize returns the tmpfs size from the given environment
+// variable, or the default if the variable is unset or empty. Used to
+// configure /tmp and /dev/shm tmpfs size limits inside the container.
+// See TheoryOfContainerIsolation.
+func resolveTmpfsSize(envName, defaultSize string) string {
+	if s := os.Getenv(envName); s != "" {
+		return s
+	}
+	return defaultSize
+}
+
 // goEnv runs `go env <key>` and returns the trimmed result. Returns an
 // empty string if go is not available or the key is not set.
 func goEnv(key string) string {
@@ -263,9 +293,6 @@ func parseMountPoints() ([]string, error) {
 	return mounts, nil
 }
 
-// setupContainerFilesystem hardens the mount table inside the container
-// namespace to enforce read-only filesystem access except for the current
-// working directory and Go toolchain directories. See TheoryOfContainerIsolation.
 func setupContainerFilesystem() error {
 	// 1. Make all mounts private to this namespace. This is critical:
 	// without it, subsequent mount operations could propagate to the
@@ -377,20 +404,25 @@ func setupContainerFilesystem() error {
 
 	// 8. Mount a fresh tmpfs on /tmp. This isolates temporary files from
 	// the host and provides a writable /tmp for tools that need it
-	// (e.g., go test creates temporary files). A size limit prevents
-	// disk exhaustion. Best-effort: if mounting fails, /tmp is either
-	// read-only (from the root mount) or whatever it was before.
+	// (e.g., go test creates temporary files). The size limit is
+	// configurable via tmpTmpfsSizeEnv to prevent false ENOSPC errors
+	// when tests create large temporary files that exceed the default
+	// cap. Best-effort: if mounting fails, /tmp is either read-only
+	// (from the root mount) or whatever it was before.
 	_ = syscall.Unmount("/tmp", syscall.MNT_DETACH)
+	tmpSize := resolveTmpfsSize(tmpTmpfsSizeEnv, defaultTmpTmpfsSize)
 	syscall.Mount("tmpfs", "/tmp", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, "size=256m")
+		syscall.MS_NOSUID|syscall.MS_NODEV, "size="+tmpSize)
 
 	// 9. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
 	// This prevents the container from accessing host POSIX shared
-	// memory segments. Best-effort: if /dev/shm doesn't exist or
+	// memory segments. The size limit is configurable via
+	// shmTmpfsSizeEnv. Best-effort: if /dev/shm doesn't exist or
 	// mounting fails, the existing mount (or none) is used.
 	_ = syscall.Unmount("/dev/shm", syscall.MNT_DETACH)
+	shmSize := resolveTmpfsSize(shmTmpfsSizeEnv, defaultShmTmpfsSize)
 	syscall.Mount("tmpfs", "/dev/shm", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, "size=64m")
+		syscall.MS_NOSUID|syscall.MS_NODEV, "size="+shmSize)
 
 	// 10. Remount /proc to show only processes in this PID namespace.
 	// The host /proc exposes all host PIDs; the remount restricts
