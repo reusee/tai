@@ -109,11 +109,15 @@ func (Module) AIComponents(
 	comps = append(comps, components.CommonComponents(bool(flagShell))...)
 
 	// Extra system prompt from configuration: prompt-only Component.
+	// Each entry is added as a separate prompt-only Component so that
+	// multiple config sources are all included.
 	// See TheoryOfAIComponents.
-	if string(extra) != "" {
-		comps = append(comps, components.Component{
-			PromptSection: string(extra),
-		})
+	for _, prompt := range extra {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
 	}
 
 	ret.ComponentSet = comps

@@ -275,7 +275,7 @@ func TestExtraSystemPrompt(t *testing.T) {
 	).Fork(
 		modes.ForTest(t),
 		func() flags.ExtraSystemPrompt {
-			return "THIS_IS_EXTRA_SYSTEM_PROMPT"
+			return flags.ExtraSystemPrompt{"THIS_IS_EXTRA_SYSTEM_PROMPT"}
 		},
 	).Call(func(
 		systemPrompt SystemPrompt,

@@ -185,12 +185,16 @@ func (Module) CodesComponents(
 	}
 
 	// Extra system prompt from configuration: prompt-only Component.
+	// Each entry is added as a separate prompt-only Component so that
+	// multiple config sources are all included.
 	// Unified under the Component framework so all prompt contributions
 	// are assembled through comps.PromptSections(). See TheoryOfCodesComponents.
-	if string(extra) != "" {
-		comps = append(comps, components.Component{
-			PromptSection: string(extra),
-		})
+	for _, prompt := range extra {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
 	}
 
 	return CodesComponents{comps}

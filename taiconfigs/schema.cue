@@ -21,7 +21,10 @@ max_tokens?: int
 max_context_tokens?: int
 
 // extra_system_prompt provides additional instructions to the AI.
-extra_system_prompt?: string
+// extra_system_prompt provides additional instructions to the AI.
+// Accepts a single string or a list of strings; values from multiple
+// config files are aggregated additively.
+extra_system_prompt?: string | [...string]
 
 // match provides a regex to filter files by path.
 match?: string

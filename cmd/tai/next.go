@@ -71,8 +71,10 @@ func (Module) SystemPrompt(
 		ret += SystemPrompt(changes.ChangeBlockRestatePrompt()) + "\n"
 	}
 
-	if extra != "" {
-		ret += "\n\n" + SystemPrompt(extra) + "\n"
+	for _, e := range extra {
+		if e != "" {
+			ret += "\n\n" + SystemPrompt(e) + "\n"
+		}
 	}
 
 	if len(flagFocus) > 0 {
