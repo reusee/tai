@@ -143,7 +143,7 @@ func memoryBlockSystemPrompt(profileText string) string {
 </memory>
 :::<boundary> </memory>
 
-其中 <boundary> 是一个随机字符串，确保不会与内容冲突。你只需要提供你认为是当前最准确和相关的用户画像项。系统会自动将你的输入与现有记录合并，不会意外删除任何旧信息。
+其中 <boundary> 必须是两个不常用的汉字（例如：塅垝、瑱魃、骐骎），不能是字面文本 "<boundary>"。每次生成时请使用不同的随机汉字，确保不会与内容冲突。你只需要提供你认为是当前最准确和相关的用户画像项。系统会自动将你的输入与现有记录合并，不会意外删除任何旧信息。
 
 - 如果没有发现任何新信息，则不要生成此块。
 - 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。
@@ -159,4 +159,5 @@ const memoryBlockRestatePrompt = `- Memory block: emit :::<boundary> <memory>
 <memory>
   <memory-item>user profile fact</memory-item>
 </memory>
-:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`
+:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.
+- The <boundary> MUST be two actual Chinese characters (e.g., 塅垝, 瑱魃), NEVER the literal text "<boundary>". Writing ":::<boundary>" literally will cause the block to be silently ignored.`
