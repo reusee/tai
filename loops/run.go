@@ -18,12 +18,16 @@ const TheoryOfLoops = `
 The loops package unifies the generation loop pattern across all generation
 commands (codes, ai, next). The core pattern is:
 1. Wrap state with ParserState to collect blocks during streaming
-2. Execute the phase chain (generate -> chat -> nil) until done
+2. Execute the phase chain (generate only for commands that use OnIdle,
+   or generate -> chat -> nil for commands that chain chat as a phase)
+   until done
 3. Unwrap ParserState to get the base state
 4. Process collected blocks via ProcessComponents
 5. If a component triggers (produces parts or modifies state), append the
    parts and start a new round
-6. If no component triggers, the loop ends
+6. If no component triggers, invoke OnIdle (if set) for interactive input.
+   When OnIdle returns continue=true, a new round starts; when false, the
+   loop ends. OnIdle is nil for non-interactive commands (codes, ping, next).
 
 When Components is empty, the loop runs a single round (single-shot mode),
 used by commands that don't need multi-round generation or component
@@ -57,6 +61,16 @@ consumed=true, the block is not passed to ProcessComponents. This lets
 callers apply change blocks during streaming (early error detection) and
 prevent double-application by the change component. When consumed=false,
 the block is collected for component processing.
+
+The OnIdle mechanism ensures automated actions are processed before
+interactive user input. When a generation round ends and no component
+triggers a new round, the loop invokes the OnIdle handler (if set) to
+prompt the user for input. This ensures the model can chain multiple
+rounds of automated execution (continue, shell, go-test) without user
+intervention; the user is only prompted when no automated action is
+pending. Commands without interactive input (codes, ping, next) set
+OnIdle to nil, so the loop ends after the last automated action. See
+phases.TheoryOfIdleHandler.
 `
 
 // ApplyError is returned by BlockHandler when a change block fails to apply
@@ -95,7 +109,6 @@ type Run func(ctx context.Context, opts RunOptions) (Result, error)
 // streaming stops immediately. See TheoryOfLoops.
 type BlockHandler func(block blocks.Block) (consumed bool, err error)
 
-// RunOptions configures a generation loop.
 type RunOptions struct {
 	// Generator is the model used for generation.
 	Generator generators.Generator
@@ -151,6 +164,14 @@ type RunOptions struct {
 	// The summary is appended as user content to provide context for
 	// the retry. If nil, retry proceeds without a summary.
 	SummarizeIncomplete func(incompleteText string) (string, error)
+
+	// OnIdle is called when no component triggers after a round. It allows
+	// the caller to provide interactive input (e.g., chat prompt) and
+	// decide whether to continue with another round. If OnIdle returns
+	// continue=true, a new round starts. If false or OnIdle is nil,
+	// the loop ends. OnIdle is only invoked in multi-round mode (when
+	// Components is non-empty). See phases.TheoryOfIdleHandler.
+	OnIdle phases.IdleHandler
 }
 
 // Result holds the outcome of a generation loop.
@@ -383,6 +404,27 @@ func (Module) Run() Run {
 					}
 				}
 				continue
+			}
+
+			// No component triggered. Try OnIdle (e.g., chat prompt) to
+			// allow interactive user input before ending the loop.
+			// Automated actions (continue, shell, go-test,
+			// request-context) are processed first via component
+			// processing above; OnIdle is only invoked when no
+			// automated action is pending.
+			// See phases.TheoryOfIdleHandler.
+			if opts.OnIdle != nil {
+				var idleContinue bool
+				state, idleContinue, err = opts.OnIdle(ctx, state)
+				if err != nil {
+					return Result{
+						FinalState:      state,
+						RemainingBlocks: remainingBlocks,
+					}, err
+				}
+				if idleContinue {
+					continue
+				}
 			}
 
 			break

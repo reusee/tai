@@ -631,3 +631,173 @@ func TestRunApplyErrorNonApplyErrorNoRetry(t *testing.T) {
 		}
 	})
 }
+
+func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
+	withRun(t, func(run Run) {
+		genCount := 0
+		idleCount := 0
+
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			genCount++
+			return appendPhase("model output")
+		}
+
+		// A component that never triggers (no blocks match its kind).
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{}
+				},
+			},
+		}
+
+		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+			idleCount++
+			if idleCount <= 2 {
+				state, _ = state.AppendContent(&generators.Content{
+					Role:  generators.RoleUser,
+					Parts: []generators.Part{generators.Text("user input")},
+				})
+				return state, true, nil
+			}
+			return state, false, nil
+		})
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			OnIdle:       onIdle,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// 3 generate calls: initial round + 2 OnIdle continuations.
+		if genCount != 3 {
+			t.Fatalf("expected 3 generate calls, got %d", genCount)
+		}
+		// 3 OnIdle calls: after round 1, 2, and 3 (third returns false).
+		if idleCount != 3 {
+			t.Fatalf("expected 3 idle calls, got %d", idleCount)
+		}
+	})
+}
+
+func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
+	withRun(t, func(run Run) {
+		genCount := 0
+		idleCount := 0
+
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			genCount++
+			return appendPhase(":::徕珑 <shell>\necho hi\n:::徕珑 </shell>\n")
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+
+		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+			idleCount++
+			return state, false, nil
+		})
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			OnIdle:       onIdle,
+			MaxRounds:    3,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The shell component always triggers, so OnIdle is never called.
+		if genCount != 3 {
+			t.Fatalf("expected 3 generate calls, got %d", genCount)
+		}
+		if idleCount != 0 {
+			t.Fatalf("expected 0 idle calls (component always triggers), got %d", idleCount)
+		}
+	})
+}
+
+func TestRunOnIdleError(t *testing.T) {
+	withRun(t, func(run Run) {
+		expectedErr := errors.New("idle error")
+		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+			return state, false, expectedErr
+		})
+
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{}
+				},
+			},
+		}
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return appendPhase("model output")
+			},
+			OnIdle: onIdle,
+		})
+		if err == nil {
+			t.Fatal("expected error from OnIdle")
+		}
+		if !errors.Is(err, expectedErr) {
+			t.Fatalf("expected %v, got %v", expectedErr, err)
+		}
+	})
+}
+
+func TestRunOnIdleNilNoEffect(t *testing.T) {
+	withRun(t, func(run Run) {
+		genCount := 0
+
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			genCount++
+			return appendPhase("model output")
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{}
+				},
+			},
+		}
+
+		// OnIdle is nil — the loop should end after the first round
+		// when no component triggers.
+		_, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			OnIdle:       nil,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if genCount != 1 {
+			t.Fatalf("expected 1 generate call (no OnIdle to continue), got %d", genCount)
+		}
+	})
+}

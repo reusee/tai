@@ -67,6 +67,16 @@ filters by kind and dispatches to the appropriate component. Remaining blocks
 eliminates the need for ParserState to store blocks or for reconciliation
 between the state chain and block storage. See blocks.TheoryOfParserState and
 components.TheoryOfComponents.
+
+Automated Actions Before Interactive Input:
+The generation loop processes automated actions (continue, shell, memory blocks)
+before prompting the user for interactive input. The PhaseBuilder includes only
+the generate phase (not chat); the chat prompt is handled by OnIdle, which is
+invoked by the loop as a fallback when no component triggers. This ensures the
+model can chain multiple rounds of automated execution (shell commands, continue
+block self-prompting, test verification) without user intervention, and the user
+is only prompted when the model has no pending automated actions. See
+phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
 `
 
 var AICommand = Command{
@@ -80,7 +90,7 @@ var AICommand = Command{
 		comps AIComponents,
 		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
 		buildGenerate phases.BuildGenerate,
-		buildChat phases.BuildChat,
+		buildChatIdle phases.BuildChatIdle,
 		generator generators.Generator,
 		flagFiles flags.Files,
 		flagChats flags.Chats,
@@ -157,16 +167,20 @@ var AICommand = Command{
 		// does not interfere with memory block extraction.
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
-		// Run the unified generation loop. The loop handles ParserState
-		// wrapping, phase execution, and component processing between
-		// rounds. See loops.TheoryOfLoops.
+		// Run the unified generation loop. The PhaseBuilder includes only
+		// the generate phase (not chat); the chat prompt is handled by
+		// OnIdle, which is invoked by the loop when no component triggers.
+		// This ensures automated actions (continue, shell, memory blocks)
+		// are processed before prompting the user for input.
+		// See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
 		_, err = loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: baseState,
 			Components:   comps.ComponentSet,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
+				return buildGenerate(g, nil)(nil)
 			},
+			OnIdle:     buildChatIdle(generator, nil),
 			HTTPClient: nets.HTTPClient{},
 		})
 		ce(err)
