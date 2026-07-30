@@ -44,7 +44,6 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 - Use a continue block whenever another generation round is needed — for example, when the remaining output would exceed a single response's capacity.
 - A response may end with both a summary block and a continue block: the summary block marks the round as complete, and the continue block prompts the next round's input. They are not mutually exclusive.
 - The continue block MUST be the last block in the response, after the summary block; no other blocks may appear after it.
-- The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 
 const ContinueBlockRestatePrompt = `- Continue block: emit :::<boundary> <continue>

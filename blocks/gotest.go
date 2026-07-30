@@ -92,7 +92,6 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 - **Target specific tests**: When you modify or add a test function, name it in the -run argument so the verification is directly tied to your change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
-- The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 - The go-test block is NOT a completion signal. You MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
 - The go-test block should appear before the summary block in the response.
 

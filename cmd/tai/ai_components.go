@@ -159,5 +159,4 @@ const memoryBlockRestatePrompt = `- Memory block: emit :::<boundary> <memory>
 <memory>
   <memory-item>user profile fact</memory-item>
 </memory>
-:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.
-- The <boundary> MUST be two actual Chinese characters (e.g., 塅垝, 瑱魃), NEVER the literal text "<boundary>". Writing ":::<boundary>" literally will cause the block to be silently ignored.`
+:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`

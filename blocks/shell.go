@@ -69,7 +69,6 @@ The "shell" kind allows the model to execute shell commands and receive the outp
   - Heredoc bodies, arithmetic expansion, and parameter expansion are recursively validated for command substitutions.
 - If a command is rejected, the error message will be returned as user content. Adjust the command and try again.
 - Shell output triggers a new generation round so the model can act on the results.
-- The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 `
 
 const ShellBlockRestatePrompt = `- Shell block: emit :::<boundary> <shell>

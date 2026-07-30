@@ -39,7 +39,6 @@ The "summary" kind provides a brief description of the current generation round'
 - Keep each list item brief and easy to scan. Do not write long sentences or dense paragraphs.
 - The summary is displayed to the user after generation ends, alongside round statistics.
 - A summary block is required in EVERY response, even when no change blocks are emitted. When no changes were made, use "No changes were needed." as the only bullet point. Omitting the summary block causes the system to treat the output as truncated and retry the round unnecessarily.
-- The boundary is a random string chosen by the AI to prevent conflicts with the body content.
 
 **Example:**
 

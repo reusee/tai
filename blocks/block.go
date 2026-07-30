@@ -30,6 +30,13 @@ requirement is that each marker starts at the beginning of a line.
 **Unclosed block detection**: An opening marker at line start without a matching closing
 marker is a malformed block. The parser reports an error rather than silently skipping it,
 ensuring that incomplete output from the AI is surfaced to the user.
+
+**Boundary rule centralization**: The boundary rules (randomness, uniqueness,
+body-disjointness, matching) are centralized in BlockFormatSystemPrompt and
+BlockFormatRestatePrompt. Individual block kind prompts (continue, shell, go-test,
+summary, memory) must not repeat these rules; they reference the general format and
+focus on their kind-specific semantics. This avoids token waste from redundant
+boundary descriptions across multiple block kind prompts in the same system prompt.
 `
 
 const TheoryOfBoundaryUniqueness = `
