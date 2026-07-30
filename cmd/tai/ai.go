@@ -56,7 +56,8 @@ assembly) and this generation loop (output processing), ensuring that any block
 kind introduced in the prompt always has a matching processor. Shell and continue
 blocks are processed in the loop via components.ProcessComponents, which
 accumulates Parts into a single user message for the next round; memory blocks
-are processed after the loop by memories.UpdateMemoryFromBlock.
+are processed after each generation round via the OnRoundSuccess hook, which calls
+memories.UpdateMemoryFromBlock before the user is prompted for the next input.
 
 Block Collection:
 Blocks are collected by a BlockHandler callback set on ParserState during
@@ -69,8 +70,8 @@ between the state chain and block storage. See blocks.TheoryOfParserState and
 components.TheoryOfComponents.
 
 Automated Actions Before Interactive Input:
-The generation loop processes automated actions (continue, shell, memory blocks)
-before prompting the user for interactive input. The PhaseBuilder includes only
+The generation loop processes automated actions (continue, shell) and persists
+memory updates before prompting the user for interactive input. The PhaseBuilder includes only
 the generate phase (not chat); the chat prompt is handled by OnIdle, which is
 invoked by the loop as a fallback when no component triggers. This ensures the
 model can chain multiple rounds of automated execution (shell commands, continue
@@ -167,11 +168,21 @@ var AICommand = Command{
 		// does not interfere with memory block extraction.
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 
+		// Memory is updated after each generation round via the OnRoundSuccess
+		// hook, before the user is prompted for the next input (OnIdle). This
+		// ensures memory is persisted incrementally rather than deferred until
+		// the chat session ends. The buf Output layer captures assistant text
+		// (showThoughts=false) for memory block parsing; prevBufLen tracks the
+		// buffer position to extract only the new text from each round.
+		// See TheoryOfAiCommand.
+		prevBufLen := 0
+
 		// Run the unified generation loop. The PhaseBuilder includes only
 		// the generate phase (not chat); the chat prompt is handled by
 		// OnIdle, which is invoked by the loop when no component triggers.
-		// This ensures automated actions (continue, shell, memory blocks)
-		// are processed before prompting the user for input.
+		// This ensures automated actions (continue, shell) are processed
+		// before prompting the user for input, and memory is persisted
+		// after each round via OnRoundSuccess.
 		// See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
 		_, err = loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
@@ -180,20 +191,23 @@ var AICommand = Command{
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
+			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
+				if !noMemory {
+					newText := buf.String()[prevBufLen:]
+					prevBufLen = buf.Len()
+					if err := updateMemoryFromBlock(
+						memories.GetModelID(generator.Spec()),
+						newText,
+					); err != nil {
+						logger.ErrorContext(ctx, "update memory", "err", err)
+					}
+				}
+				return nil
+			},
 			OnIdle:     buildChatIdle(generator, nil),
 			HTTPClient: nets.HTTPClient{},
 		})
 		ce(err)
-
-		// update memory from block
-		if !noMemory {
-			if err := updateMemoryFromBlock(
-				memories.GetModelID(generator.Spec()),
-				buf.String(),
-			); err != nil {
-				logger.ErrorContext(ctx, "update memory", "err", err)
-			}
-		}
 
 	},
 }
