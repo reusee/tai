@@ -1,6 +1,7 @@
 package flags
 
 import (
+	"fmt"
 	"slices"
 
 	"cuelang.org/go/cue"
@@ -34,22 +35,24 @@ func (e ExtraSystemPrompt) ConfigPaths() []string {
 func (e ExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, error) {
 	ret := slices.Clone(e)
 	for _, v := range values {
-		// A config value may be a single string or a list of strings.
-		// Try single string first for backward compatibility with
-		// existing config files that use a plain string.
-		var s string
-		if err := v.Decode(&s); err == nil {
+		switch v.Kind() {
+		case cue.StringKind:
+			var s string
+			if err := v.Decode(&s); err != nil {
+				return nil, err
+			}
 			if s != "" {
 				ret = append(ret, s)
 			}
-			continue
+		case cue.ListKind:
+			var list []string
+			if err := v.Decode(&list); err != nil {
+				return nil, err
+			}
+			ret = append(ret, list...)
+		default:
+			return nil, fmt.Errorf("expected string or list, got %v", v.Kind())
 		}
-		// Try list of strings.
-		var list []string
-		if err := v.Decode(&list); err != nil {
-			return nil, err
-		}
-		ret = append(ret, list...)
 	}
 	return &ret, nil
 }
