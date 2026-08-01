@@ -30,6 +30,7 @@ func (c Command) Keys() map[string]string {
 		"go":    "Generate code for Go files (default in Go modules)",
 		"any":   "Generate code for arbitrary text files",
 		"ping":  "Test whether a model is reachable by sending a hello message",
+		"goal":  "Work toward a goal through multiple independent generation loops",
 	}
 }
 
@@ -58,6 +59,10 @@ func (c Command) Handle(key string, args []string) (newDef any, remainArgs []str
 
 	case "ping":
 		ret := PingCommand
+		return &ret, args, nil
+
+	case "goal":
+		ret := GoalCommand
 		return &ret, args, nil
 
 	}
