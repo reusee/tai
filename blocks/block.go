@@ -118,12 +118,17 @@ stack never returns to empty.
 
 The XML-tag validation after the delimiter prevents false positives from
 content that starts with "<<" but is not a block opening. The validation
-mirrors tryParseBlock: it extracts the delimiter, finds the first "<" in the
-remainder, and calls parseXMLOpeningTag to verify a well-formed XML tag. Lines
-like "<<some code" (no XML tag) or "<<text with < angle brackets>" (invalid XML
-tag) are treated as body content, not nested openings. This avoids false
-nesting from shell heredocs, code comments, or prose that happens to start with
-"<<".
+extracts the delimiter, finds the first "<" in the remainder, and calls
+TokenizeXMLTag to verify a well-formed XML tag. Lines like "<<some code" (no
+XML tag) or "<<text with < angle brackets>" (invalid XML tag) are treated as
+body content, not nested openings. This avoids false nesting from shell
+heredocs, code comments, or prose that happens to start with "<<". The
+validator also checks that the XML tag consumes the entire line (up to
+whitespace): a line like "<<FOO <tag> some text" has trailing content after
+the tag and is treated as body content, not a nested opening. Without this
+trailing-content check, the false nested opening would push "FOO" onto the
+delimiter stack, causing the outer block's closing marker to be treated as
+body content and the block to be incorrectly reported as unclosed.
 `
 
 const TheoryOfBlockFormat = `
@@ -352,10 +357,13 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 
 // nestedOpeningDelimiter checks if a line starting with "<<" is a valid
 // nested block opening marker and returns its delimiter. It validates
-// that the delimiter is followed by a valid XML opening tag, mirroring
-// the logic in tryParseBlock. This prevents false positives from content
-// that starts with "<<" but is not a block opening (e.g., shell heredocs,
-// text with angle brackets). See TheoryOfNestedBlockParsing.
+// that the delimiter is followed by a valid XML opening tag that consumes
+// the entire remaining line (up to whitespace), mirroring the logic in
+// tryParseBlock but with an additional trailing-content check. This
+// prevents false positives from content that starts with "<<" but is not
+// a block opening (e.g., shell heredocs, text with angle brackets, or
+// prose containing XML-like tags with trailing text). See
+// TheoryOfNestedBlockParsing.
 func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if !strings.HasPrefix(line, "<<") {
 		return "", false
@@ -374,8 +382,19 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if strings.HasPrefix(xmlPart, "</") {
 		return "", false
 	}
-	kind, _, valid := parseXMLOpeningTag(xmlPart)
-	if !valid || kind == "" {
+	token, consumed, valid := TokenizeXMLTag(xmlPart)
+	if !valid || token.IsClosing() || token.Kind == "" {
+		return "", false
+	}
+	// A real block opening marker line consists of only the delimiter and
+	// the XML opening tag — no trailing prose. Without this check, body
+	// content like "<<FOO <tag> some text" would be falsely detected as a
+	// nested block opening, pushing "FOO" onto the delimiter stack. If no
+	// line matching "FOO" alone follows, the outer block's closing marker
+	// is consumed as body content and the block is incorrectly reported
+	// as unclosed. See TheoryOfNestedBlockParsing.
+	remaining := strings.TrimSpace(xmlPart[consumed:])
+	if remaining != "" {
 		return "", false
 	}
 	return delimiter, true

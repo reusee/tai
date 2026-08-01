@@ -513,6 +513,34 @@ func TestParseFirstBlockNestedNotTriggeredByInvalidXML(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockNestedNotTriggeredByTrailingContent(t *testing.T) {
+	// A body line starting with "<<" followed by a valid XML tag but
+	// with trailing content must not trigger nesting. The trailing
+	// content indicates this is prose or code, not a real block opening.
+	// Without the trailing-content check, "FOO" would be pushed onto the
+	// stack, and the outer block's closing marker "DELIM1" would be
+	// treated as body content (because stack top is "FOO", not "DELIM1"),
+	// causing the block to be incorrectly reported as unclosed.
+	// See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<FOO <bar attr=\"value\"> some text\nfunc Foo() {}\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "<<FOO") {
+		t.Fatalf("body should contain the non-block line: %q", block.Body)
+	}
+}
+
 func TestParseFirstBlockNestedUnclosedInnerBlock(t *testing.T) {
 	// When the inner block is unclosed, the outer block is also
 	// unclosed because the stack never returns to empty.
