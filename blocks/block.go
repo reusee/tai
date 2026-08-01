@@ -89,6 +89,41 @@ prose content, but the model must verify the chosen pair is absent from the body
 before emitting the block. Body-disjointness is as important as the anti-reuse
 guarantee: both are integrity guarantees of the format, and violating either
 corrupts the block.
+
+Nested block parsing (see TheoryOfNestedBlockParsing) provides a safety net when
+the body unavoidably contains the delimiter as part of a nested block marker. The
+stack-based closing-marker scanner tracks nesting depth, so an inner block's
+closing marker pops the inner level rather than prematurely closing the outer
+block. This does not relax the body-disjointness recommendation for general content,
+but it correctly handles the specific case where the body contains well-formed
+nested blocks.
+`
+
+const TheoryOfNestedBlockParsing = `
+The parser supports nested blocks: when a block body contains another block
+opening marker (<<DELIMITER <kind ...>), the inner block's closing marker does
+not prematurely close the outer block. The closing-marker scanner maintains a
+delimiter stack initialized with the outer block's delimiter. Each line that
+starts with "<<" and contains a valid XML opening tag after the delimiter
+pushes that delimiter onto the stack, marking the start of a nested block. A
+line that is a delimiter alone on its own line pops the stack only if it matches
+the top; when the stack becomes empty, the outer block is closed. A closing
+marker that does not match the top of the stack is treated as body content.
+
+This correctly handles same-delimiter nesting (the inner block's closing marker
+pops the inner level, not the outer level) and different-delimiter nesting (a
+non-matching delimiter line is body content at the current nesting level). When
+a nested block is unclosed, the outer block is also unclosed, because the
+stack never returns to empty.
+
+The XML-tag validation after the delimiter prevents false positives from
+content that starts with "<<" but is not a block opening. The validation
+mirrors tryParseBlock: it extracts the delimiter, finds the first "<" in the
+remainder, and calls parseXMLOpeningTag to verify a well-formed XML tag. Lines
+like "<<some code" (no XML tag) or "<<text with < angle brackets>" (invalid XML
+tag) are treated as body content, not nested openings. This avoids false
+nesting from shell heredocs, code comments, or prose that happens to start with
+"<<".
 `
 
 const TheoryOfBlockFormat = `
@@ -262,13 +297,47 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	return
 }
 
+// nestedOpeningDelimiter checks if a line starting with "<<" is a valid
+// nested block opening marker and returns its delimiter. It validates
+// that the delimiter is followed by a valid XML opening tag, mirroring
+// the logic in tryParseBlock. This prevents false positives from content
+// that starts with "<<" but is not a block opening (e.g., shell heredocs,
+// text with angle brackets). See TheoryOfNestedBlockParsing.
+func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
+	if !strings.HasPrefix(line, "<<") {
+		return "", false
+	}
+	afterMarker := line[2:]
+	delimiter = extractDelimiter(afterMarker)
+	if delimiter == "" {
+		return "", false
+	}
+	rest := afterMarker[len(delimiter):]
+	ltIdx := strings.Index(rest, "<")
+	if ltIdx == -1 {
+		return "", false
+	}
+	xmlPart := strings.TrimSpace(rest[ltIdx:])
+	if strings.HasPrefix(xmlPart, "</") {
+		return "", false
+	}
+	kind, _, valid := parseXMLOpeningTag(xmlPart)
+	if !valid || kind == "" {
+		return "", false
+	}
+	return delimiter, true
+}
+
 // findClosingMarker searches for the delimiter alone on its own line within
-// the content starting from bodyStart. A line that does not match the
-// delimiter is treated as body content. See TheoryOfBoundaryUniqueness.
+// the content starting from bodyStart. It uses a stack-based approach to
+// handle nested blocks: lines starting with "<<" that contain a valid XML
+// opening tag push their delimiter onto the stack, and a closing marker pops
+// the stack only if it matches the top. The outer block closes when the stack
+// becomes empty. See TheoryOfNestedBlockParsing.
 func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd, blockEnd int, found bool) {
+	stack := []string{delimiter}
 	searchFrom := bodyStart
 	for {
-		// Find the end of the current line.
 		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
 		var line string
 		if lineEnd == -1 {
@@ -276,21 +345,46 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 		} else {
 			line = string(content[searchFrom : searchFrom+lineEnd])
 		}
-		// The closing marker is the delimiter alone on its own line.
-		// TrimSpace handles trailing whitespace the model may add.
-		if strings.TrimSpace(line) == delimiter {
-			bodyEnd = searchFrom
+
+		// Check for a nested opening marker. The XML-tag validation
+		// prevents false positives from content that starts with "<<"
+		// but is not a block opening. See TheoryOfNestedBlockParsing.
+		if nestedDelim, nested := nestedOpeningDelimiter(line); nested {
+			stack = append(stack, nestedDelim)
 			if lineEnd == -1 {
-				blockEnd = len(content)
-			} else {
-				blockEnd = searchFrom + lineEnd + 1
+				return 0, 0, false
 			}
-			return bodyEnd, blockEnd, true
+			searchFrom += lineEnd + 1
+			continue
 		}
+
+		// Check for a closing marker: the delimiter alone on its own
+		// line (with optional whitespace). The marker must match the
+		// top of the stack to pop; a non-matching marker is body
+		// content. See TheoryOfNestedBlockParsing.
+		trimmedLine := strings.TrimSpace(line)
+		if len(stack) > 0 && trimmedLine == stack[len(stack)-1] {
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				bodyEnd = searchFrom
+				if lineEnd == -1 {
+					blockEnd = len(content)
+				} else {
+					blockEnd = searchFrom + lineEnd + 1
+				}
+				return bodyEnd, blockEnd, true
+			}
+			if lineEnd == -1 {
+				return 0, 0, false
+			}
+			searchFrom += lineEnd + 1
+			continue
+		}
+
 		if lineEnd == -1 {
 			return 0, 0, false
 		}
-		searchFrom = searchFrom + lineEnd + 1
+		searchFrom += lineEnd + 1
 	}
 }
 

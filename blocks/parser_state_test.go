@@ -326,6 +326,44 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	}
 }
 
+func TestParserStateNestedBlocksSameDelimiter(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	// The outer block contains a nested block with the same delimiter.
+	// The nested block's closing marker must not prematurely close
+	// the outer block. See TheoryOfNestedBlockParsing.
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<DELIM1 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\nDELIM1\nfunc Outer() {}\nDELIM1\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block (outer), got %d", len(collectedBlocks))
+	}
+	if collectedBlocks[0].Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", collectedBlocks[0].Boundary)
+	}
+	if !contains(collectedBlocks[0].Body, "func Inner() {}") {
+		t.Fatalf("outer body should contain inner block body: %q", collectedBlocks[0].Body)
+	}
+	if !contains(collectedBlocks[0].Body, "func Outer() {}") {
+		t.Fatalf("outer body should contain outer block body: %q", collectedBlocks[0].Body)
+	}
+	if !contains(collectedBlocks[0].Body, "<<DELIM1") {
+		t.Fatalf("outer body should contain inner block opening marker: %q", collectedBlocks[0].Body)
+	}
+}
+
 func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block

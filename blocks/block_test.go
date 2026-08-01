@@ -310,6 +310,135 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
+	// When the body contains a nested block with the same delimiter,
+	// the nested block's closing marker must not prematurely close
+	// the outer block. See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<DELIM1 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\nDELIM1\nfunc Outer() {}\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Inner() {}") {
+		t.Fatalf("body should contain inner block body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Outer() {}") {
+		t.Fatalf("body should contain outer block body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "<<DELIM1") {
+		t.Fatalf("body should contain inner block opening marker: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
+	// When the body contains a nested block with a different delimiter,
+	// the nested block's closing marker pops the inner level. A
+	// non-matching delimiter line at the outer level is body content.
+	// See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<DELIM2 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\nDELIM2\nfunc Outer() {}\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Inner() {}") {
+		t.Fatalf("body should contain inner block body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Outer() {}") {
+		t.Fatalf("body should contain outer block body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "DELIM2") {
+		t.Fatalf("body should contain inner block closing marker: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedMultipleLevels(t *testing.T) {
+	// Multiple levels of nesting: outer > middle > inner. Each level's
+	// closing marker pops one level. See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<DELIM2 <change op=\"MODIFY\" target=\"Middle\" file-path=\"/middle.go\">\n<<DELIM3 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\nDELIM3\nfunc Middle() {}\nDELIM2\nfunc Outer() {}\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Inner() {}") {
+		t.Fatalf("body should contain innermost body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Middle() {}") {
+		t.Fatalf("body should contain middle body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Outer() {}") {
+		t.Fatalf("body should contain outer body: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedNotTriggeredByNonBlockContent(t *testing.T) {
+	// A body line starting with "<<" that is not a valid block opening
+	// (no XML tag after the delimiter) must not trigger nesting.
+	// See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text without xml tag\nfunc Foo() {}\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if !strings.Contains(block.Body, "<<some text without xml tag") {
+		t.Fatalf("body should contain the non-block line: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedNotTriggeredByInvalidXML(t *testing.T) {
+	// A body line starting with "<<" followed by text containing "<"
+	// but not forming a valid XML opening tag must not trigger nesting.
+	// See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text with < chars> and stuff\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if !strings.Contains(block.Body, "<<some text with < chars> and stuff") {
+		t.Fatalf("body should contain the non-block line: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedUnclosedInnerBlock(t *testing.T) {
+	// When the inner block is unclosed, the outer block is also
+	// unclosed because the stack never returns to empty.
+	// See TheoryOfNestedBlockParsing.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<DELIM1 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed inner block")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed inner block")
+	}
+}
+
 func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 	// Kind-specific prompts must not display the literal template marker
 	// "<<DELIMITER". The model imitates kind templates verbatim, and a
