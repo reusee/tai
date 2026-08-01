@@ -36,12 +36,13 @@ chat phase (generate -> chat -> generate -> chat -> ...), so single-shot
 mode still supports interactive sessions.
 
 RetryOnMissingCompletion handles truncated output: when a round ends
-without a summary block, the output was likely cut off mid-stream. The loop
-summarizes the incomplete output, appends it as context, and retries from
-the pre-round state. This is distinct from generator-level retry which
-handles transient API errors. The retry logic and incomplete-output
-summarization are unified here so all commands can opt into retry behavior
-via RunOptions.
+without a summary block, or when the finish reason indicates abnormal
+termination (e.g., "length" from max-token truncation), the output was
+likely cut off mid-stream. The loop summarizes the incomplete output,
+appends it as context, and retries from the pre-round state. This is
+distinct from generator-level retry which handles transient API errors.
+The retry logic and incomplete-output summarization are unified here so
+all commands can opt into retry behavior via RunOptions.
 
 RetryOnApplyError handles model-generated errors that cause change block
 application to fail (e.g., invalid target, malformed code, goimports
@@ -146,9 +147,11 @@ type RunOptions struct {
 	// Used for error logging, tapping, or appending error content.
 	OnPhaseError func(state generators.State, err error) generators.State
 
-	// RetryOnMissingCompletion enables retry when no summary or finish
-	// block is found in the collected blocks after a round. This
-	// handles truncated output where the model is cut off mid-stream.
+	// RetryOnMissingCompletion enables retry when no summary block is
+	// found in the collected blocks after a round, or when the finish
+	// reason indicates abnormal termination (e.g., "length" from
+	// max-token truncation). This handles truncated output where the
+	// model is cut off mid-stream.
 	RetryOnMissingCompletion bool
 	// RetryOnApplyError enables retry when a BlockHandler returns an
 	// *ApplyError. The loop appends the error message as user content
@@ -307,12 +310,16 @@ func (Module) Run() Run {
 					break
 				}
 
-				// Check for completion blocks (summary).
-				// Summaries were already extracted above, so check
-				// roundSummaries for a summary completion signal.
+				// Check for completion: a summary block signals normal
+				// completion, but an abnormal finish reason (e.g.,
+				// "length" from max-token truncation) overrides the
+				// summary signal and triggers retry. See
+				// TheoryOfSummaryCompletionRetry in codes/generate.go.
 				hasCompletion := len(roundSummaries) > 0
+				finishReason := extractFinishReason(phaseState, countContents(state))
+				isAbnormalFinish := isAbnormalFinishReason(finishReason)
 
-				if hasCompletion {
+				if hasCompletion && !isAbnormalFinish {
 					break
 				}
 				if retry >= maxRetries {
@@ -468,4 +475,41 @@ func extractIncompleteOutput(state generators.State, prevCount int) string {
 		i++
 	}
 	return strings.Join(parts, "\n")
+}
+
+// extractFinishReason scans new contents (after prevCount) for FinishReason
+// parts and returns the last finish reason found. Used to detect abnormal
+// termination such as max-token truncation ("length"). See
+// TheoryOfSummaryCompletionRetry in codes/generate.go.
+func extractFinishReason(state generators.State, prevCount int) string {
+	var reason string
+	i := 0
+	for c := range state.Contents() {
+		if i >= prevCount {
+			for _, p := range c.Parts {
+				if fr, ok := p.(generators.FinishReason); ok {
+					reason = string(fr)
+				}
+			}
+		}
+		i++
+	}
+	return reason
+}
+
+// abnormalFinishReasons lists finish reasons that indicate the output was
+// truncated or ended abnormally, warranting a retry with content
+// summarization. "length" (OpenAI) and "max_tokens" (some providers) mean
+// the model hit the output token limit. The comparison is case-insensitive.
+var abnormalFinishReasons = map[string]bool{
+	"length":     true,
+	"max_tokens": true,
+}
+
+// isAbnormalFinishReason reports whether the finish reason indicates the
+// output was truncated or otherwise ended abnormally, warranting a retry
+// with content summarization. See TheoryOfSummaryCompletionRetry in
+// codes/generate.go.
+func isAbnormalFinishReason(reason string) bool {
+	return abnormalFinishReasons[strings.ToLower(reason)]
 }

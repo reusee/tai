@@ -47,6 +47,31 @@ func appendPhase(text string) phases.Phase {
 	}
 }
 
+// appendPhaseWithFinish creates a phase that appends text content and a
+// finish reason, then returns nil (end of phase chain). Used to test
+// retry behavior for abnormal finish reasons like "length".
+func appendPhaseWithFinish(text string, finishReason string) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		newState, err = newState.AppendContent(&generators.Content{
+			Role: generators.RoleLog,
+			Parts: []generators.Part{
+				generators.FinishReason(finishReason),
+			},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+}
+
 // errorPhase creates a phase that returns an error.
 func errorPhase(err error) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -243,6 +268,69 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 		}
 		if callCount != 2 {
 			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
+		}
+	})
+}
+
+func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				// Summary block present but finish reason is "length"
+				// (max-token truncation). This should trigger retry
+				// despite the summary block.
+				return appendPhaseWithFinish("<<DELIM1 <summary>\nDone.\nDELIM1\n", "length")
+			}
+			// Second call: normal finish reason with summary.
+			return appendPhaseWithFinish("<<DELIM1 <summary>\nDone.\nDELIM1\n", "stop")
+		}
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               nil,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
+			SummarizeIncomplete: func(text string) (string, error) {
+				return "summary of truncated output", nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 calls (retry once for abnormal finish reason), got %d", callCount)
+		}
+	})
+}
+
+func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			return appendPhaseWithFinish("<<DELIM1 <summary>\nDone.\nDELIM1\n", "stop")
+		}
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               nil,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
+			SummarizeIncomplete: func(text string) (string, error) {
+				return "summary", nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 call (normal finish reason, no retry), got %d", callCount)
 		}
 	})
 }

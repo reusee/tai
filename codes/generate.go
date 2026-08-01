@@ -252,26 +252,32 @@ func summarizeRetryState(
 
 const TheoryOfSummaryCompletionRetry = `
 The summary block serves as the completion signal for each generation round.
-When a round ends without a summary block, the model's output was likely
-truncated mid-stream — the generation limit was reached before the model could
-emit its closing summary block. In that case, the round is retried from the
-original pre-generation State. State immutability (see TheoryOfStateImmutability)
-is the foundation for this retry: the pre-generation State is unaffected by the
-failed attempt, so retrying starts from a clean snapshot rather than corrupted
-partial state. The retry count is bounded to prevent infinite loops when a model
-consistently truncates. Change blocks from a truncated attempt are NOT applied:
-the retry discards the partial output entirely and regenerates from scratch,
-avoiding incomplete or malformed change blocks. This is distinct from the
-generator-level retry (see TheoryOfRetry and TheoryOfGenerateRetry) which
-handles transient API errors; this retry handles successful-but-incomplete
-output.
+When a round ends without a summary block, or when the finish reason indicates
+abnormal termination (e.g., "length" from max-token truncation), the model's
+output was likely truncated mid-stream — the generation limit was reached
+before the model could emit its closing summary block, or the model emitted a
+summary but continued generating and was cut off. In both cases, the round is
+retried from the original pre-generation State. State immutability (see
+TheoryOfStateImmutability) is the foundation for this retry: the pre-generation
+State is unaffected by the failed attempt, so retrying starts from a clean
+snapshot rather than corrupted partial state. The retry count is bounded to
+prevent infinite loops when a model consistently truncates. Change blocks from
+a truncated attempt are NOT applied: the retry discards the partial output
+entirely and regenerates from scratch, avoiding incomplete or malformed change
+blocks. This is distinct from the generator-level retry (see TheoryOfRetry and
+TheoryOfGenerateRetry) which handles transient API errors; this retry handles
+successful-but-incomplete output.
 
 Completion is detected by checking the externally collected blocks for summary
-kind. Because blocks are collected by the BlockHandler during AppendContent
-(not stored in ParserState), the check is a simple scan of the collected slice.
-On retry, the collected blocks are reset alongside the MemoryStore in the
-onPhaseStart callback, ensuring both external states are consistent with the
-rolled-back State. See TheoryOfParserState in blocks/parser_state.go.
+kind and the finish reason in the state for abnormal termination. A round is
+considered complete only when a summary block is present AND the finish reason
+is not abnormal (e.g., not "length"). Because blocks are collected by the
+BlockHandler during AppendContent (not stored in ParserState), the check is a
+simple scan of the collected slice. The finish reason is extracted from
+RoleLog content appended by the generator. On retry, the collected blocks are
+reset alongside the MemoryStore in the onPhaseStart callback, ensuring both
+external states are consistent with the rolled-back State. See
+TheoryOfParserState in blocks/parser_state.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
