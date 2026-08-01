@@ -77,7 +77,7 @@ const ShellBlockRestatePrompt = `- Shell block: emit
 <<齑靁 <shell>
 <shell command>
 齑靁
-to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const shellTimeout = 30 * time.Second
 

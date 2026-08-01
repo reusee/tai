@@ -163,7 +163,7 @@ type blockParseResult struct {
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Heredoc-Delimited):**
 
-Your response can include structured content using heredoc-delimited blocks.
+Responses can include structured content using heredoc-delimited blocks.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
@@ -181,14 +181,14 @@ DELIMITER
 **Line-Start Requirement (CRITICAL):**
 - The opening marker (<<DELIMITER <kind ...>) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
-- NEVER place the opening marker at the end of a line of text. If you have prose immediately before a block, end the prose with a newline first, then start the marker on its own new line.
-- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and your changes will be lost.
+- NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
+- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and the changes will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
   <<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
   徕珑
-- NOT this (marker glued to the end of the prose line — the block will NOT be parsed and your changes will be lost):
+- NOT this (marker glued to the end of the prose line — the block will NOT be parsed and the changes will be lost):
   Some explanation text.<<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
   徕珑
@@ -197,20 +197,20 @@ DELIMITER
 - Generate a fresh delimiter for each block: exactly two uncommon Chinese characters (e.g., 龘靐).
 - **Never reuse a delimiter that appears in any example in this prompt.** The example delimiters are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
 - Each block in a response must use a distinct pair of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but you MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
 - The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<徕珑 <change ...> MUST be closed with 徕珑, never 龘靐 or any other delimiter.
-- A line that does not match the delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter. If no matching closing line is found, the block is unclosed. Always close a block with the same delimiter you opened it with.
-- Before writing each closing line, verify its delimiter matches the corresponding opening marker of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the one you opened with.
+- A line that does not match the delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter. If no matching closing line is found, the block is unclosed. Always close a block with the same delimiter used to open it.
+- Before writing each closing line, verify its delimiter matches the corresponding opening marker of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 `
 
-const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by your freshly chosen delimiter (exactly two uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
-- **The DELIMITER MUST be exactly two uncommon Chinese characters** (e.g., 徕珑, 龘靐, 齉爩), NEVER the literal text "<DELIMITER>" or a common word. If you write "<<DELIMITER" literally, the parser cannot recognize the block and your changes will be silently lost.
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
+- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly two uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
+- **The DELIMITER MUST be exactly two uncommon Chinese characters** (e.g., 徕珑, 龘靐, 齉爩), NEVER the literal text "<DELIMITER>" or a common word. Writing "<<DELIMITER" literally causes the parser to fail to recognize the block and the changes will be silently lost.
 - Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - The closing line MUST use the EXACT same delimiter as the opening marker.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but you MUST verify the chosen pair is absent from the body before emitting the block.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen pair is absent from the body before emitting the block.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.

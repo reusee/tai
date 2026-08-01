@@ -43,7 +43,7 @@ text contains only the clean bullet-list summary without model preamble or
 trailing prose; if no block is found the raw text is returned as a fallback.
 `
 
-const SummarizeSystemPrompt = `You are a reasoning thought summarizer. Your sole task is to condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.
+const SummarizeSystemPrompt = `Condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.
 
 Output at most 2 bullet points. Each list item must be a single, short sentence capturing only the most important key point:
 - What problem the model is currently working on
@@ -51,7 +51,7 @@ Output at most 2 bullet points. Each list item must be a single, short sentence 
 
 Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.
 
-You MUST wrap your output in a summary block using the heredoc-delimited block format. Output ONLY the block, no other text before or after:
+Wrap the output in a summary block using the heredoc-delimited block format. Output ONLY the block, no other text before or after:
 
 <<爩麤 <summary>
 - first key point

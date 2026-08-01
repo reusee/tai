@@ -29,7 +29,7 @@ any single extension's semantics.
 const ContinueBlockSystemPrompt = `
 Continue Block Kind:
 
-The "continue" kind signals that the current generation round is over and another round should follow. The block body is fed back to you verbatim as the next user message, letting you supply yourself with input for the next round. It MUST be the last block in the response, after all other blocks including the summary block.
+The "continue" kind signals that the current generation round is over and another round should follow. The block body is fed back verbatim as the next user message, providing self-supplied input for the next round. It MUST be the last block in the response, after all other blocks including the summary block.
 
 The continue block is a generic self-prompting mechanism with no prescribed content. Conventions layered on top of it (for example, the mandatory planning mandate, which carries the evolving task list in the body) define what the body should contain; the mechanism itself imposes none.
 
@@ -39,7 +39,7 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 Continue the task: apply the remaining changes and verify them with tests.
 灪麤
 
-The delimiter 灪麤 in the example is illustrative only: in every block you emit, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 灪麤 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.
@@ -52,7 +52,7 @@ const ContinueBlockRestatePrompt = `- Continue block: when another generation ro
 <<龖爨 <continue>
 <next user message content>
 龖爨
-It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Each block's body becomes a Text part that will be

@@ -24,7 +24,7 @@ retries the round. When no changes were made, the summary block body should be
 const SummaryBlockSystemPrompt = `
 **Summary Block Kind:**
 
-The "summary" kind provides a brief description of the current generation round's content, including your reasoning and actions taken, and signals that the round is complete. One summary block MUST be emitted at the end of each generation round.
+The "summary" kind provides a brief description of the current generation round's content, including the reasoning and actions taken, and signals that the round is complete. One summary block MUST be emitted at the end of each generation round.
 
 **Summary Block Format (complete example):**
 
@@ -34,7 +34,7 @@ The "summary" kind provides a brief description of the current generation round'
 - Updated tests for unclosed blocks
 黿鼍
 
-The delimiter 黿鼍 in the example is illustrative only: in every block you emit, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 黿鼍 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Emit exactly one summary block per generation round.
@@ -52,7 +52,7 @@ const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary 
 齔齕
 - The summary block MUST appear after all other blocks. When a continue block is present, the summary block comes before it, and the continue block is the last block.
 - A summary block is required in every response, even when no change blocks are emitted. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
-- The example delimiter 齔齕 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- The example delimiter 齔齕 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessSummaryBlocks processes all summary blocks and returns their body
 // texts. Summaries are collected for terminal display after generation ends,
