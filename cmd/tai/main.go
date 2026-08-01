@@ -29,8 +29,7 @@ func main() {
 
 	scope, err = flags.Parse(scope, os.Args[1:])
 	if err != nil {
-		var helpErr *flags.HelpError
-		if errors.As(err, &helpErr) {
+		if helpErr, ok := errors.AsType[*flags.HelpError](err); ok {
 			fmt.Print(helpErr.Usage)
 			return
 		}
