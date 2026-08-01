@@ -132,6 +132,40 @@ func TestParseFirstBlockUnclosedReturnsPositions(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
+	// When an unclosed block is detected, the BlockParseError must include
+	// the full content from the opening marker to the end of the available
+	// content, providing context for debugging truncated output.
+	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {\n\treturn\n}\n")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed block")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.Content == "" {
+		t.Fatal("expected non-empty Content in BlockParseError")
+	}
+	if !strings.Contains(e.Content, "<<DELIM1") {
+		t.Fatalf("Content should include the opening marker: %q", e.Content)
+	}
+	if !strings.Contains(e.Content, "func Foo()") {
+		t.Fatalf("Content should include the partial body: %q", e.Content)
+	}
+	// The error message should include the content for user-facing display.
+	if !strings.Contains(err.Error(), "func Foo()") {
+		t.Fatalf("error message should include the partial content: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Content parsed so far") {
+		t.Fatalf("error message should include the 'Content parsed so far' label: %s", err.Error())
+	}
+}
+
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	// A body containing a line with a different delimiter
 	// is treated as body content. The block closes at the matching

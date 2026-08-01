@@ -336,10 +336,17 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	}
 	// Unclosed block: no matching end marker found. Always return an
 	// error, never finalize. An unclosed block is incomplete regardless
-	// of whether Flush has been called. See TheoryOfBlockFormat.
+	// of whether Flush has been called. The Content field captures the
+	// full text from the opening marker to the end of the available
+	// content, providing debugging context for truncated output.
+	// See TheoryOfBlockFormat.
 	result.start = blockStart
 	result.end = lineEnd + 1
-	result.err = &BlockParseError{BlockKind: kind, Boundary: delimiter}
+	result.err = &BlockParseError{
+		BlockKind: kind,
+		Boundary:  delimiter,
+		Content:   string(content[blockStart:]),
+	}
 	return
 }
 
@@ -452,12 +459,15 @@ func extractDelimiter(s string) string {
 // BlockParseError is returned by ParseFirstBlock for unclosed heredoc blocks.
 // An unclosed block is an opening marker with no matching closing delimiter
 // line. During streaming this may indicate incomplete output rather than a
-// definitive error. See TheoryOfBoundaryUniqueness.
+// definitive error. The Content field holds the full text from the opening
+// marker to the end of the available content, providing context for debugging.
+// See TheoryOfBoundaryUniqueness.
 type BlockParseError struct {
 	BlockKind string
 	Boundary  string
+	Content   string
 }
 
 func (e *BlockParseError) Error() string {
-	return fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line", e.BlockKind, e.Boundary)
+	return fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line\n\nContent parsed so far:\n%s", e.BlockKind, e.Boundary, e.Content)
 }
