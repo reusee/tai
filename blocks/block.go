@@ -79,12 +79,16 @@ effectively absent from code and prose, so the chance of a body line accidentall
 matching the delimiter is negligible, while reusing an example delimiter would cause
 a subsequent real block opened with that same delimiter to close at the wrong marker.
 
-The delimiter must also be disjoint from the block body. Because the parser closes
-the block at the first line matching the delimiter, a body line that matches the
-delimiter would prematurely terminate the block and discard all remaining content.
-The model should therefore select a delimiter that does not appear anywhere in the
-code or text it is about to emit, satisfying the anti-reuse guarantee and the
-body-disjointness guarantee simultaneously.
+The delimiter must also be disjoint from the block body; this is a hard requirement,
+not an optional suggestion. Because the parser closes the block at the first line
+matching the delimiter, a body line that matches the delimiter would prematurely
+terminate the block and discard all remaining content. The model must therefore
+select a delimiter that does not appear anywhere in the code or text it is about
+to emit. Two uncommon Chinese characters satisfy this by construction for code and
+prose content, but the model must verify the chosen pair is absent from the body
+before emitting the block. Body-disjointness is as important as the anti-reuse
+guarantee: both are integrity guarantees of the format, and violating either
+corrupts the block.
 `
 
 const TheoryOfBlockFormat = `
@@ -146,7 +150,7 @@ DELIMITER
 - Generate a fresh delimiter for each block: exactly two uncommon Chinese characters (e.g., 龘靐).
 - **Never reuse a delimiter that appears in any example in this prompt.** The example delimiters are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
 - Each block in a response must use a distinct pair of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
-- **Avoid body-content characters**: Select a delimiter that does not appear anywhere in the block body (the code or text between the markers). Two uncommon Chinese characters are very unlikely to appear in code or prose, but verify the chosen pair is absent from the body. A body line that matches the delimiter prematurely closes the block and truncates the remaining content.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but you MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
 - The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<徕珑 <change ...> MUST be closed with 徕珑, never 龘靐 or any other delimiter.
@@ -159,7 +163,7 @@ const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block ope
 - **The DELIMITER MUST be exactly two uncommon Chinese characters** (e.g., 徕珑, 龘靐, 齉爩), NEVER the literal text "<DELIMITER>" or a common word. If you write "<<DELIMITER" literally, the parser cannot recognize the block and your changes will be silently lost.
 - Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - The closing line MUST use the EXACT same delimiter as the opening marker.
-- Select a delimiter that does not appear anywhere in the block body. Two uncommon Chinese characters satisfy this by construction for code and prose content.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but you MUST verify the chosen pair is absent from the body before emitting the block.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.
