@@ -29,18 +29,20 @@ const TheoryOfStreamingApply = `
 Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
 from streamed model output, rather than directly to disk. This enables early
 error detection: if a change block fails to apply (e.g., invalid target,
-malformed code), the BlockHandler returns an *loops.ApplyError. When
-RetryOnApplyError is enabled, the loop retries the round with the error
-message appended as user content, resetting the MemoryStore to discard the
-failed changes. When disabled or retries are exhausted, generation stops. The
-in-memory store also ensures filesystem consistency on retry: when a round is
-retried (no completion block or an apply error), the MemoryStore is reset,
-discarding all changes without touching the disk. Only after a round succeeds
-are the in-memory changes flushed to disk in a single batch, so the disk is
-never left in a partially modified state by an interrupted round. Subsequent
-change blocks targeting the same file within a round use the in-memory content
-as the base, not the disk content, so multi-block edits to the same file are
-applied correctly within the round. The streaming apply is implemented via a
+malformed code), the BlockHandler returns a generic error so the loop routes it
+through OnPhaseError like any other phase error. OnPhaseError summarizes any
+partial model output (thoughts or body text) before the retry (see
+TheoryOfSummaryRetryOnError). The MemoryStore is reset by the OnRoundStart
+callback on each retry, discarding the failed changes. When retries are
+exhausted, generation stops. The in-memory store also ensures filesystem
+consistency on retry: when a round is retried (missing completion block, a
+phase error, or an apply error), the MemoryStore is reset, discarding all
+changes without touching the disk. Only after a round succeeds are the
+in-memory changes flushed to disk in a single batch, so the disk is never left
+in a partially modified state by an interrupted round. Subsequent change
+blocks targeting the same file within a round use the in-memory content as the
+base, not the disk content, so multi-block edits to the same file are applied
+correctly within the round. The streaming apply is implemented via a
 BlockHandler callback on ParserState: when a complete change block is parsed
 during AppendContent, the handler applies it via changes.ApplyChangeBlockStore
 to the MemoryStore. Non-change blocks are collected by the handler into an
@@ -185,6 +187,69 @@ func summarizeIncompleteOutput(
 	return block.Body, nil
 }
 
+func extractPartialOutput(state generators.State, skip int) string {
+	var builder strings.Builder
+	contentIndex := 0
+	for content := range state.Contents() {
+		if contentIndex < skip {
+			contentIndex++
+			continue
+		}
+		if content.Role == generators.RoleAssistant {
+			for _, part := range content.Parts {
+				switch p := part.(type) {
+				case generators.Text:
+					builder.WriteString(string(p))
+				case generators.Thought:
+					builder.WriteString(fmt.Sprint(p))
+				}
+			}
+		}
+		contentIndex++
+	}
+	return builder.String()
+}
+
+// summarizeRetryState appends a summarized retry message to errState when the
+// model already produced partial output, so the retry has condensed context.
+// It returns the new state, the new content count, and whether summarization
+// was used. See TheoryOfSummaryRetryOnError.
+func summarizeRetryState(
+	errState generators.State,
+	phaseErr error,
+	prevContentCount int,
+	summarize func(string) (string, error),
+) (newState generators.State, contentCount int, summarized bool) {
+	partialText := extractPartialOutput(errState, prevContentCount)
+	if partialText != "" {
+		if summary, err := summarize(partialText); err == nil && summary != "" {
+			msg := "The previous generation attempt was interrupted by an error after producing partial output. " +
+				"A summary is provided for context; this is a retry.\n\n" +
+				"Summary of partial output:\n" + summary + "\n\n" +
+				"Error: " + phaseErr.Error()
+			newState, err := errState.AppendContent(&generators.Content{
+				Role: generators.RoleUser,
+				Parts: []generators.Part{
+					generators.Text(msg),
+				},
+			})
+			if err == nil {
+				return newState, countContents(newState), true
+			}
+		}
+	}
+	newState, err := errState.AppendContent(&generators.Content{
+		Role: generators.RoleLog,
+		Parts: []generators.Part{
+			generators.Error{Error: phaseErr},
+		},
+	})
+	if err != nil {
+		return errState, countContents(errState), false
+	}
+	return newState, countContents(newState), false
+}
+
 const TheoryOfSummaryCompletionRetry = `
 The summary block serves as the completion signal for each generation round.
 When a round ends without a summary block, the model's output was likely
@@ -226,6 +291,21 @@ condensed context.
 The summary is prefixed with an explanatory note informing the model that the
 previous output was truncated and that this is a retry, so the model can
 distinguish a retry from a fresh request and adjust its behavior accordingly.
+`
+
+const TheoryOfSummaryRetryOnError = `
+Generation errors that occur after the model has already produced partial
+output (thoughts or body text) are retried with a summarized version of that
+output. Without summarization, the retry would replay the full partial output,
+costing tokens and risking repeated context overflows or the same failure.
+Summarizing condenses the partial output into a compact user message that
+preserves context while freeing budget, and changes the input so the retry
+does not repeat the same truncated response. This extends
+TheoryOfIncompleteOutputSummarization, which covers only the missing-completion
+case, to all generation-phase errors, including change-block apply errors,
+which are routed through the same OnPhaseError retry path instead of the
+separate RetryOnApplyError path so they benefit from the same summarization
+behavior.
 `
 
 func (Module) Generate(
@@ -427,8 +507,8 @@ func (Module) Generate(
 
 		// Run the unified generation loop. See loops.TheoryOfLoops.
 		// The loop handles ParserState wrapping, phase execution, retry
-		// on missing completion and apply errors, and component
-		// processing between rounds.
+		// on missing completion and errors, and component processing
+		// between rounds.
 		_, err = loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
@@ -437,14 +517,13 @@ func (Module) Generate(
 				if bool(apply) && block.Kind == "change" {
 					h, parsedOk := changes.ParseChangeBlock(block)
 					if !parsedOk {
-						return false, &loops.ApplyError{
-							Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
-						}
+						// Return a generic error so the loop routes it through
+						// OnPhaseError, which summarizes partial output before
+						// retrying. See TheoryOfSummaryRetryOnError.
+						return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
 					}
 					if err := applyChangeBlockStore(memStore, h); err != nil {
-						return false, &loops.ApplyError{
-							Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
-						}
+						return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
 					}
 					return true, nil
 				}
@@ -505,17 +584,15 @@ func (Module) Generate(
 			},
 
 			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
-				newState, appendErr := errState.AppendContent(&generators.Content{
-					Role: generators.RoleLog,
-					Parts: []generators.Part{
-						generators.Error{
-							Error: phaseErr,
-						},
+				newState, newContentCount, summarized := summarizeRetryState(
+					errState,
+					phaseErr,
+					prevContentCount,
+					func(text string) (string, error) {
+						return summarizeIncompleteOutput(ctx, fastModel, text)
 					},
-				})
-				if appendErr != nil {
-					return errState
-				}
+				)
+				prevContentCount = newContentCount
 
 				// Tap to debug.
 				var contents []*generators.Content
@@ -527,6 +604,9 @@ func (Module) Generate(
 					"contents":       contents,
 					"system_prompts": newState.SystemPrompt(),
 				}
+				if summarized {
+					globals["summarized_retry"] = true
+				}
 				if openAIError, ok := errors.AsType[generators.OpenAIError](phaseErr); ok {
 					globals["openai"] = openAIError
 				}
@@ -535,8 +615,11 @@ func (Module) Generate(
 			},
 
 			RetryOnMissingCompletion: true,
-			RetryOnApplyError:        true,
-			MaxRetries:               maxRetriesForMissingSummary,
+			// Apply errors are routed through OnPhaseError by returning generic
+			// errors from BlockHandler, so they benefit from the same summary
+			// retry behavior. See TheoryOfSummaryRetryOnError.
+			RetryOnApplyError: false,
+			MaxRetries:        maxRetriesForMissingSummary,
 			SummarizeIncomplete: func(incompleteText string) (string, error) {
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 			},
