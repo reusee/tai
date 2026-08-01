@@ -137,6 +137,18 @@ line — no XML closing tag is needed. The delimiter is the sole disambiguator b
 consecutive blocks within a single response.
 `
 
+const TheoryOfKindlessBlocks = `
+Models sometimes emit blocks whose opening marker omits the XML opening tag:
+<<DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these
+blocks with an empty Kind (see tryParseBlock). Because an empty Kind matches
+no component and cannot be used for lookup, such blocks can only be located by
+iterating all blocks in order — ParseBlocks provides this capability.
+Consumers that need a specific kind (e.g., the thought summarizer looking for
+a summary block) should first search the parsed blocks by kind and fall back
+to the first block only when no kinded block is found, since a kindless block
+is often the intended output.
+`
+
 // blockParseResult holds the outcome of attempting to parse a block in one
 // format. When matched is true, the format was recognized and the result
 // fields are populated; when false, the format did not apply and the caller
@@ -217,6 +229,34 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 	return parseFirstBlock(content)
 }
 
+// ParseBlocks parses all complete blocks from content in order. Blocks whose
+// opening marker omits the XML opening tag are parsed with an empty Kind;
+// such blocks can only be located by iterating all blocks, not by filtering
+// by kind. Unclosed blocks are skipped so that complete blocks following
+// them are still found. See TheoryOfKindlessBlocks.
+func ParseBlocks(content []byte) ([]Block, error) {
+	var blocks []Block
+	remaining := content
+	for len(remaining) > 0 {
+		block, _, end, ok, err := ParseFirstBlock(remaining)
+		if err != nil {
+			// Unclosed block: skip past its opening marker and continue
+			// scanning for subsequent complete blocks.
+			if end > 0 && end <= len(remaining) {
+				remaining = remaining[end:]
+				continue
+			}
+			return blocks, err
+		}
+		if !ok {
+			break
+		}
+		blocks = append(blocks, block)
+		remaining = remaining[end:]
+	}
+	return blocks, nil
+}
+
 func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
@@ -260,20 +300,26 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 		return
 	}
 	rest := openingLine[len(delimiter):]
-	ltIdx := strings.Index(rest, "<")
-	if ltIdx == -1 {
-		return
-	}
-	xmlPart := strings.TrimSpace(rest[ltIdx:])
-	// In heredoc format, the closing marker is the delimiter alone,
-	// so there is no XML closing tag on the opening line to reject.
-	// However, reject if the XML part starts with </ as a safety check.
-	if strings.HasPrefix(xmlPart, "</") {
-		return
-	}
-	kind, attrs, valid := parseXMLOpeningTag(xmlPart)
-	if !valid || kind == "" {
-		return
+
+	// The XML opening tag is optional: a model may emit
+	// <<DELIMITER ... DELIMITER with no kind or attributes. Such
+	// blocks are parsed with an empty Kind and can only be located by
+	// iterating all blocks. See TheoryOfKindlessBlocks.
+	var kind string
+	var attrs map[string]string
+	if ltIdx := strings.Index(rest, "<"); ltIdx != -1 {
+		xmlPart := strings.TrimSpace(rest[ltIdx:])
+		// In heredoc format, the closing marker is the delimiter alone,
+		// so there is no XML closing tag on the opening line to reject.
+		// However, reject if the XML part starts with </ as a safety check.
+		if strings.HasPrefix(xmlPart, "</") {
+			return
+		}
+		var valid bool
+		kind, attrs, valid = parseXMLOpeningTag(xmlPart)
+		if !valid || kind == "" {
+			return
+		}
 	}
 	matched = true
 	result.block.Kind = kind

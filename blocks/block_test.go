@@ -248,6 +248,29 @@ func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
+	// A block whose opening marker omits the XML opening tag is parsed
+	// with an empty Kind. Such blocks can only be located by iterating
+	// all blocks, not by filtering by kind. See TheoryOfKindlessBlocks.
+	content := []byte("<<DELIM1\nsummary body\nDELIM1\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "" {
+		t.Fatalf("expected empty kind, got %q", block.Kind)
+	}
+	if block.Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %q", block.Boundary)
+	}
+	if block.Body != "summary body" {
+		t.Fatalf("expected body 'summary body', got %q", block.Body)
+	}
+}
+
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	// Two blocks, the second ending without a trailing newline.
 	content := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM2 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\nDELIM2")
@@ -290,6 +313,23 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestParseBlocks(t *testing.T) {
+	content := []byte("<<DELIM1 <summary>\nfirst\nDELIM1\n<<DELIM2\nsecond\nDELIM2\n")
+	blocks, err := ParseBlocks(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "summary" || blocks[0].Body != "first" {
+		t.Fatalf("unexpected first block: %+v", blocks[0])
+	}
+	if blocks[1].Kind != "" || blocks[1].Body != "second" {
+		t.Fatalf("unexpected second block: %+v", blocks[1])
+	}
+}
+
 func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	// A non-matching end marker at the end without a trailing newline.
 	// The block should remain unclosed because no matching closing line exists.
@@ -307,6 +347,20 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	}
 	if e.BlockKind != "change" || e.Boundary != "DELIM1" {
 		t.Fatalf("expected unclosed block kind=change boundary=DELIM1, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+}
+
+func TestParseBlocksSkipsUnclosed(t *testing.T) {
+	content := []byte("<<DELIM1 <summary>\nunclosed\n<<DELIM2\nclosed body\nDELIM2\n")
+	blocks, err := ParseBlocks(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "" || blocks[0].Body != "closed body" {
+		t.Fatalf("unexpected block: %+v", blocks[0])
 	}
 }
 

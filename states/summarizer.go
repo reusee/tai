@@ -102,7 +102,10 @@ func (Module) GetDefaultSummarizer(
 // the summarization system prompt and returns the condensed summary text.
 // The system prompt instructs the model to wrap its output in a
 // boundary-delimited summary block; the block body is parsed and returned
-// as the clean summary text.
+// as the clean summary text. When the model emits a block without the XML
+// opening tag, the block has no kind and can only be found by iterating all
+// blocks; in that case the first block is used as a fallback.
+// See TheoryOfKindlessBlocks.
 func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, error) {
 	systemPrompt := SummarizeSystemPrompt
 	if s.language != "" {
@@ -138,9 +141,18 @@ func (s *Summarizer) Summarize(ctx context.Context, thoughts string) (string, er
 	// instructs the model to wrap its output in a boundary-delimited
 	// summary block; extracting the block body yields the clean
 	// bullet-list summary without model preamble or trailing prose.
-	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(sb.String()))
-	if err == nil && ok {
-		return strings.TrimSpace(block.Body), nil
+	// The model may emit a block without the XML opening tag; such a
+	// block has no kind and can only be found by iterating all blocks.
+	// Look for a summary block first, then fall back to the first block.
+	// See TheoryOfKindlessBlocks.
+	parsedBlocks, err := blocks.ParseBlocks([]byte(sb.String()))
+	if err == nil && len(parsedBlocks) > 0 {
+		for _, block := range parsedBlocks {
+			if block.Kind == "summary" {
+				return strings.TrimSpace(block.Body), nil
+			}
+		}
+		return strings.TrimSpace(parsedBlocks[0].Body), nil
 	}
 	// Fallback: return raw text if no block was found or on parse error
 	return sb.String(), nil

@@ -12,10 +12,12 @@ import (
 )
 
 type mockSummarizerGenerator struct {
-	summary   string
-	err       error
-	calls     int
-	lastInput string
+	summary     string
+	err         error
+	calls       int
+	lastInput   string
+	noHeader    bool
+	prefixBlock bool
 }
 
 func (m *mockSummarizerGenerator) Spec() generators.Spec {
@@ -43,8 +45,20 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 		}
 	}
 	// Wrap the summary in a heredoc-delimited summary block so that
-	// Summarize can parse it via blocks.ParseFirstBlock.
-	blockOutput := "<<DELIM1 <summary>\n" + m.summary + "\nDELIM1"
+	// Summarize can parse it via blocks.ParseBlocks. When noHeader is
+	// set, the block omits the XML opening tag, exercising the
+	// kindless-block fallback. When prefixBlock is set, a continue
+	// block precedes the summary block, exercising the summary-first
+	// lookup. See TheoryOfKindlessBlocks.
+	var blockOutput string
+	switch {
+	case m.prefixBlock:
+		blockOutput = "<<DELIM1 <continue>\ncontinue\nDELIM1\n<<DELIM2 <summary>\n" + m.summary + "\nDELIM2"
+	case m.noHeader:
+		blockOutput = "<<DELIM1\n" + m.summary + "\nDELIM1"
+	default:
+		blockOutput = "<<DELIM1 <summary>\n" + m.summary + "\nDELIM1"
+	}
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
@@ -285,6 +299,23 @@ func TestSummarizerExtractsText(t *testing.T) {
 	}
 }
 
+func TestSummarizerFallsBackToKindlessBlock(t *testing.T) {
+	// The model emits a summary block without the XML opening tag.
+	// Such a block has no kind and can only be found by iterating all
+	// blocks, so Summarize must fall back to the first block.
+	// See TheoryOfKindlessBlocks.
+	gen := &mockSummarizerGenerator{summary: "kindless summary", noHeader: true}
+	summarizer := NewSummarizer(gen)
+
+	result, err := summarizer.Summarize(context.Background(), "some thoughts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "kindless summary" {
+		t.Fatalf("expected 'kindless summary', got %q", result)
+	}
+}
+
 func TestThoughtsSummarizeResetsAfterSummarization(t *testing.T) {
 	gen := &mockSummarizerGenerator{summary: "summary"}
 	summarizer := NewSummarizer(gen)
@@ -467,6 +498,22 @@ func TestSummarizeSystemPromptUsesUncommonChineseDelimiter(t *testing.T) {
 	}
 	if strings.Contains(SummarizeSystemPrompt, "<<ENDSUM") {
 		t.Fatal("SummarizeSystemPrompt must not display the legacy ENDSUM example delimiter")
+	}
+}
+
+func TestSummarizerPrefersSummaryBlockOverEarlierBlocks(t *testing.T) {
+	// When the model emits a non-summary block before the summary block,
+	// Summarize must return the summary block's body, not the first
+	// block's body.
+	gen := &mockSummarizerGenerator{summary: "the real summary", prefixBlock: true}
+	summarizer := NewSummarizer(gen)
+
+	result, err := summarizer.Summarize(context.Background(), "some thoughts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "the real summary" {
+		t.Fatalf("expected 'the real summary', got %q", result)
 	}
 }
 
