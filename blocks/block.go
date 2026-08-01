@@ -34,9 +34,16 @@ ensuring that incomplete output from the AI is surfaced to the user.
 **Boundary rule centralization**: The boundary rules (randomness, uniqueness,
 body-disjointness, matching) are centralized in BlockFormatSystemPrompt and
 BlockFormatRestatePrompt. Individual block kind prompts (continue, shell, go-test,
-summary, memory) must not repeat these rules; they reference the general format and
-focus on their kind-specific semantics. This avoids token waste from redundant
-boundary descriptions across multiple block kind prompts in the same system prompt.
+summary, memory) must not restate the full rule set; they reference the general format
+and focus on their kind-specific semantics. Kind prompts do display structurally
+complete examples with illustrative concrete boundaries, because showing the literal
+placeholder marker ":::<boundary>" inside a kind template teaches the model to emit
+that placeholder verbatim, producing markers the parser cannot recognize. Each kind
+prompt may carry one pointed reminder tied to its example — use a freshly chosen
+two-character boundary, repeat the same pair in the closing marker, never write the
+placeholder literally — without restating the full rules. This keeps redundant boundary
+description near zero while giving the format-error-prone kinds (notably go-test and
+summary) correct imitation targets for both their opening and closing markers.
 `
 
 const TheoryOfBoundaryUniqueness = `
@@ -138,8 +145,9 @@ This format avoids escaping issues and is easy to parse.
 - Before writing each closing marker, verify its boundary matches the corresponding opening marker of the same block. The most common cause of mismatched boundaries is copying a boundary from another block or from an example instead of reusing the one you opened with.
 `
 
-const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block marker (:::<boundary> <kind ...> and :::<boundary> </kind>) MUST start at the beginning of its own line, immediately after a newline. NEVER glue a marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
-- **The <boundary> MUST be two actual Chinese characters** (e.g., 塅垝, 瑱魃, 骐骎), NEVER the literal text "<boundary>". If you write ":::<boundary>" literally, the parser cannot recognize the block and your changes will be silently lost. Always replace <boundary> with two randomly chosen uncommon Chinese characters.
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block marker line — both the opening ":::" line and the closing ":::" line — MUST start at the beginning of its own line, immediately after a newline. NEVER glue a marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
+- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: ':::' followed by your fresh two-Chinese-character boundary and the opening tag '<kind ...>' ending with '>'. Closing marker: ':::' followed by the SAME two characters and '</kind>' ending with '>', on its own line. Never swap or alter either marker.
+- **The <boundary> MUST be two actual Chinese characters** (e.g., 塅垝, 瑱魃, 骐骎), NEVER the literal text "<boundary>". If you write ":::<boundary>" literally, the parser cannot recognize the block and your changes will be silently lost.
 - Generate a fresh random pair of two uncommon Chinese characters as the boundary for each block. Never reuse a boundary from any example in this prompt.
 - The closing marker MUST use the EXACT same boundary string as the opening marker.
 - Select boundary characters that do not appear anywhere in the block body.

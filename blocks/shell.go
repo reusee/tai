@@ -34,11 +34,13 @@ Shell Block Kind:
 
 The "shell" kind allows the model to execute shell commands and receive the output as part of the next generation round. This enables the model to run tests, check build status, explore the codebase, and verify changes autonomously.
 
-**Shell Block Format:**
+**Shell Block Format (complete example):**
 
-:::<boundary> <shell>
-<shell command>
-:::<boundary> </shell>
+:::龘靐 <shell>
+go test ./...
+:::龘靐 </shell>
+
+The boundary 龘靐 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
 
 **Rules:**
 - Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
@@ -71,9 +73,11 @@ The "shell" kind allows the model to execute shell commands and receive the outp
 - Shell output triggers a new generation round so the model can act on the results.
 `
 
-const ShellBlockRestatePrompt = `- Shell block: emit :::<boundary> <shell>
+const ShellBlockRestatePrompt = `- Shell block: emit
+:::龘靐 <shell>
 <shell command>
-:::<boundary> </shell> to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.`
+:::龘靐 </shell>
+to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example boundary 龘靐 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
 
 const shellTimeout = 30 * time.Second
 

@@ -44,15 +44,20 @@ Only request-context blocks are consumed from ParserState during context process
 blocks of other kinds are preserved so they remain available after the context is provided.
 `
 
-const RequestContextSystemPrompt = `**Request-Context Block Kind:**
+const RequestContextSystemPrompt = `
+**Request-Context Block Kind:**
 
 The "request-context" kind allows you to request additional context needed to complete the task. When you need to read a file or fetch a network resource, emit a request-context block. The system will fetch the requested data and provide it as user input for your next generation turn.
 
-**Request-Context Block Format:**
+**Request-Context Block Format (complete example):**
 
-:::<boundary> <request-context>
-<one or more XML tags describing context requests>
-:::<boundary> </request-context>
+:::爨爩 <request-context>
+<file path="src/main.go" />
+<fetch addr="https://example.com/api" />
+<glob pattern="src/**/*.go" />
+:::爨爩 </request-context>
+
+The boundary 爨爩 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
@@ -84,17 +89,17 @@ I need to discover files matching a pattern...
 `
 
 const RequestContextRestatePrompt = `- If you need additional context (file contents, network resources, file listings), emit a request-context block:
-:::<boundary> <request-context>
+:::爨爩 <request-context>
 <file path="..." />
 <fetch addr="..." user-agent="..." referer="..." cookie="..." />
 <glob pattern="..." />
-:::<boundary> </request-context>
+:::爨爩 </request-context>
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
-`
+- The example boundary 爨爩 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
 
 // RequestContextRequest represents a single context request parsed from the block body.
 type RequestContextRequest struct {

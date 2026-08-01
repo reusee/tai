@@ -21,41 +21,38 @@ retries the round. When no changes were made, the summary block body should be
 "No changes were needed." so the model still signals normal completion.
 `
 
-const SummaryBlockSystemPrompt = `**Summary Block Kind:**
+const SummaryBlockSystemPrompt = `
+**Summary Block Kind:**
 
 The "summary" kind provides a brief description of the current generation round's content, including your reasoning and actions taken, and signals that the round is complete. One summary block MUST be emitted at the end of each generation round.
 
-**Summary Block Format:**
+**Summary Block Format (complete example):**
 
-:::<boundary> <summary>
-- <short point 1>
-- <short point 2>
-:::<boundary> </summary>
+:::翯翾 <summary>
+- Identified root cause in the parser
+- Added boundary-matching fix
+- Updated tests for unclosed blocks
+:::翯翾 </summary>
+
+The boundary 翯翾 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
 
 **Rules:**
 - Emit exactly one summary block per generation round.
 - The summary block MUST appear after all other blocks except continue blocks. When a continue block is present, the summary block MUST appear before it, and the continue block is the last block in the response.
-- The body MUST be a markdown bullet list using the "-" format. Each item is a single short, concise phrase describing what was done or thought in this round.
+- The body MUST contain ONLY the markdown bullet list in the "- " format; each item is a single short, concise phrase describing what was done or thought in this round. No prose and no other text inside the block.
 - Keep each list item brief and easy to scan. Do not write long sentences or dense paragraphs.
 - The summary is displayed to the user after generation ends, alongside round statistics.
 - A summary block is required in EVERY response, even when no change blocks are emitted. When no changes were made, use "No changes were needed." as the only bullet point. Omitting the summary block causes the system to treat the output as truncated and retry the round unnecessarily.
-
-**Example:**
-
-:::<boundary> <summary>
-- Identified root cause in the parser
-- Added boundary-matching fix
-- Updated tests for unclosed blocks
-:::<boundary> </summary>
 `
 
 const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary block with a bullet list of what was done:
-:::<boundary> <summary>
+:::翯翾 <summary>
 - short point 1
 - short point 2
-:::<boundary> </summary>
+:::翯翾 </summary>
 - The summary block MUST appear after all other blocks. When a continue block is present, the summary block comes before it, and the continue block is the last block.
-- A summary block is required in every response, even when no change blocks are emitted. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.`
+- A summary block is required in every response, even when no change blocks are emitted. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
+- The example boundary 翯翾 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
 
 // ProcessSummaryBlocks processes all summary blocks and returns their body
 // texts. Summaries are collected for terminal display after generation ends,

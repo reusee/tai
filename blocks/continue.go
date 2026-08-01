@@ -33,11 +33,13 @@ The "continue" kind signals that the current generation round is over and anothe
 
 The continue block is a generic self-prompting mechanism with no prescribed content. Conventions layered on top of it (for example, the mandatory planning mandate, which carries the evolving task list in the body) define what the body should contain; the mechanism itself imposes none.
 
-**Continue Block Format:**
+**Continue Block Format (complete example):**
 
-:::<boundary> <continue>
-<next user message content>
-:::<boundary> </continue>
+:::鸑鷟 <continue>
+Continue the task: apply the remaining changes and verify them with tests.
+:::鸑鷟 </continue>
+
+The boundary 鸑鷟 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
 
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.
@@ -46,9 +48,11 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 - The continue block MUST be the last block in the response, after the summary block; no other blocks may appear after it.
 `
 
-const ContinueBlockRestatePrompt = `- Continue block: emit :::<boundary> <continue>
+const ContinueBlockRestatePrompt = `- Continue block: when another generation round is needed, emit:
+:::鸑鷟 <continue>
 <next user message content>
-:::<boundary> </continue> when another generation round is needed. It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round.`
+:::鸑鷟 </continue>
+It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example boundary 鸑鷟 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
 
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Each block's body becomes a Text part that will be

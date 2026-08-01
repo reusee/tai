@@ -294,3 +294,30 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 }
+
+func TestKindPromptsNoLiteralBoundaryTemplate(t *testing.T) {
+	// Kind-specific prompts must not display the literal template marker
+	// ":::<boundary>". The model imitates kind templates verbatim, and a
+	// literal placeholder produces markers the parser cannot recognize
+	// (boundary extraction yields no Han characters). Kind prompts must
+	// instead show complete examples with concrete boundaries, so the
+	// model has a correct header/footer imitation target.
+	// See TheoryOfBlockFormatGeneral.
+	prompts := map[string]string{
+		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
+		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
+		"GoTestBlockSystemPrompt":     GoTestBlockSystemPrompt,
+		"GoTestBlockRestatePrompt":    GoTestBlockRestatePrompt,
+		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
+		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
+		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,
+		"SummaryBlockRestatePrompt":   SummaryBlockRestatePrompt,
+		"RequestContextSystemPrompt":  RequestContextSystemPrompt,
+		"RequestContextRestatePrompt": RequestContextRestatePrompt,
+	}
+	for name, prompt := range prompts {
+		if strings.Contains(prompt, ":::<boundary>") {
+			t.Fatalf("%s displays the literal template marker ':::<boundary>', which the model imitates verbatim; use a complete example with a concrete boundary instead", name)
+		}
+	}
+}
