@@ -3,6 +3,7 @@ package flags
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -157,9 +158,7 @@ func Usage(scope dscope.Scope) string {
 			continue
 		}
 		flag := flagValue.Interface().(Flag)
-		for key, desc := range flag.Keys() {
-			descriptions[key] = desc
-		}
+		maps.Copy(descriptions, flag.Keys())
 	}
 	// Add help keys so they appear in usage output.
 	for k := range helpKeys {

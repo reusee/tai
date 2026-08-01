@@ -102,7 +102,7 @@ var GoalCommand = Command{
 	) {
 		ctx := context.Background()
 
-		for iteration := 0; iteration < maxGoalIterations; iteration++ {
+		for iteration := range maxGoalIterations {
 			// Remove stale completion marker from previous iterations.
 			os.Remove(goalCompleteMarker)
 

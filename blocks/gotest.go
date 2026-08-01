@@ -133,7 +133,7 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 	// exec.Command, bypassing the shell entirely to avoid injection.
 	// See TheoryOfGoTestBlocks.
 	var testArgs []string
-	for _, line := range strings.Split(args, "\n") {
+	for line := range strings.SplitSeq(args, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			testArgs = append(testArgs, line)

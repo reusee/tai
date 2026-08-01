@@ -884,7 +884,7 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 			},
 		}
 		found := make(map[string]bool)
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			s, err := resolveSpec("base", localRoots)
 			if err != nil {
 				t.Fatal(err)
@@ -988,7 +988,7 @@ func TestResolveSpecRandomRedirect(t *testing.T) {
 			},
 		}
 		found := make(map[string]bool)
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			s, err := resolveSpec("base", localRoots)
 			if err != nil {
 				t.Fatal(err)

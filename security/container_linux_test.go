@@ -5,6 +5,7 @@ package security
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -97,13 +98,7 @@ func TestParseMountPoints(t *testing.T) {
 	if len(mounts) == 0 {
 		t.Fatal("expected at least one mount point")
 	}
-	foundRoot := false
-	for _, mp := range mounts {
-		if mp == "/" {
-			foundRoot = true
-			break
-		}
-	}
+	foundRoot := slices.Contains(mounts, "/")
 	if !foundRoot {
 		t.Fatal("expected / in mount points")
 	}
