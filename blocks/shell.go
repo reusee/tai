@@ -32,7 +32,7 @@ AST-level parsing. See security.TheoryOfShellSecurity for the security model.
 const ShellBlockSystemPrompt = `
 Shell Block Kind:
 
-The "shell" kind allows the model to execute shell commands and receive the output as part of the next generation round. This enables the model to run tests, check build status, explore the codebase, and verify changes autonomously.
+Use the "shell" kind to execute shell commands and receive the output as part of the next generation round. Use shell blocks to run tests, check build status, explore the codebase, and verify changes autonomously.
 
 **Shell Block Format (complete example):**
 

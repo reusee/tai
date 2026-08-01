@@ -24,7 +24,7 @@ retries the round. When no changes were made, the summary block body should be
 const SummaryBlockSystemPrompt = `
 **Summary Block Kind:**
 
-The "summary" kind provides a brief description of the current generation round's content, including the reasoning and actions taken, and signals that the round is complete. One summary block MUST be emitted at the end of each generation round.
+Use the "summary" kind to provide a brief description of the current generation round's content, including the reasoning and actions taken, and to signal that the round is complete. Emit exactly one summary block at the end of each generation round.
 
 **Summary Block Format (complete example):**
 

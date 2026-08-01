@@ -168,7 +168,7 @@ type blockParseResult struct {
 
 const BlockFormatSystemPrompt = `**Structured Output Format (Heredoc-Delimited):**
 
-Responses can include structured content using heredoc-delimited blocks.
+Use heredoc-delimited blocks to include structured content in responses.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**

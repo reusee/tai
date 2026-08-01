@@ -47,7 +47,7 @@ blocks of other kinds are preserved so they remain available after the context i
 const RequestContextSystemPrompt = `
 **Request-Context Block Kind:**
 
-The "request-context" kind enables requesting additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a request-context block. The system will fetch the requested data and provide it as user input for the next generation turn.
+Use the "request-context" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a request-context block. The system will fetch the requested data and provide it as user input for the next generation turn.
 
 **Request-Context Block Format (complete example):**
 

@@ -29,7 +29,7 @@ any single extension's semantics.
 const ContinueBlockSystemPrompt = `
 Continue Block Kind:
 
-The "continue" kind signals that the current generation round is over and another round should follow. The block body is fed back verbatim as the next user message, providing self-supplied input for the next round. It MUST be the last block in the response, after all other blocks including the summary block.
+Use the "continue" kind to signal that the current generation round is over and another round should follow. The block body is fed back verbatim as the next user message, providing self-supplied input for the next round. Place it as the last block in the response, after all other blocks including the summary block.
 
 The continue block is a generic self-prompting mechanism with no prescribed content. Conventions layered on top of it (for example, the mandatory planning mandate, which carries the evolving task list in the body) define what the body should contain; the mechanism itself imposes none.
 

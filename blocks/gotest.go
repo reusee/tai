@@ -77,7 +77,7 @@ alone.
 const GoTestBlockSystemPrompt = `
 Go-Test Block Kind:
 
-The "go-test" kind enables running Go tests and receiving the output as part of the next generation round. After making code changes (especially new or modified test files), emit a go-test block to verify the changes. The system will run go test and feed the results back.
+Use the "go-test" kind to run Go tests and receive the output as part of the next generation round. After making code changes (especially new or modified test files), emit a go-test block to verify the changes. The system will run go test and feed the results back.
 
 **Go-Test Block Format (complete example):**
 

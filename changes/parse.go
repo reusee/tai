@@ -217,7 +217,7 @@ func ParseFirstBoundaryChangeBlock(content []byte) (h ChangeBlock, start int, en
 
 const ChangeBlockPrompt = `**Change Block Kind:**
 
-The "change" kind defines code modifications using the heredoc block format. The opening tag's XML attributes specify the operation, target, and file path. The body is the complete declaration code.
+Use the "change" kind to define code modifications using the heredoc block format. The opening tag's XML attributes specify the operation, target, and file path. The body is the complete declaration code.
 
 **Change Block Format:**
 
@@ -249,7 +249,7 @@ The DELIMITER placeholder above is symbolic: in every real block, replace it wit
 **Prefer Precise Modifications:**
 Prefer precise modifications (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE, REPLACE, INSERT_BEFORE, INSERT_AFTER) over WRITE whenever the change is small or localized. WRITE replaces the entire file, which is token-expensive, requires re-reviewing every line, and risks altering unrelated code. Reserve WRITE for creating new files or when the majority of the file content is changing. See TheoryOfPreciseModifications.` + "**Special Go-Only Targets (MODIFY):**" + `
 
-The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targets that support only the MODIFY operation. They enable token-efficient modification of the package clause and import block without requiring WRITE to replace the entire file — essential when moving a file to a different package, renaming a package, or updating imports across dependent files.
+The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targets that support only the MODIFY operation. Use them to make token-efficient modifications to the package clause and import block without requiring WRITE to replace the entire file — essential when moving a file to a different package, renaming a package, or updating imports across dependent files.
 
 - **package**: Replaces the file's package clause (the ` + "`package xxx`" + ` line). The body must be the new package clause (e.g., ` + "`package newpkg`" + `). If the body contains extra declarations, only the package clause is extracted.
 - **import**: Replaces ALL import declarations in the file as a group. The body must be the new import block(s) (e.g., ` + "`import (\n\t\"fmt\"\n)`" + `) or individual import declarations. If the file has no existing imports, the new imports are inserted after the package clause. An empty body removes all imports; goimports adds back any imports still needed by the remaining code.
