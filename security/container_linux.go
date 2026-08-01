@@ -177,80 +177,6 @@ func MaybeRunInContainer() {
 	}
 }
 
-// resolveGoWritableDirs resolves directories that the Go toolchain needs
-// write access to: GOCACHE (build cache), GOMODCACHE (downloaded modules),
-// and GOPATH/pkg (package objects). These are resolved before entering the
-// container namespace because `go env` may not function correctly after
-// mount restrictions are applied. Directories that don't exist are skipped.
-// See TheoryOfContainerIsolation.
-func resolveGoWritableDirs() []string {
-	var dirs []string
-	seen := make(map[string]bool)
-
-	addDir := func(dir string) {
-		dir = filepath.Clean(dir)
-		if dir == "" || dir == "/" || dir == "." {
-			return
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			return
-		}
-		if !seen[dir] {
-			seen[dir] = true
-			dirs = append(dirs, dir)
-		}
-	}
-
-	// GOCACHE: build cache directory.
-	if dir := os.Getenv("GOCACHE"); dir != "" {
-		addDir(dir)
-	} else {
-		addDir(goEnv("GOCACHE"))
-	}
-
-	// GOMODCACHE: module download cache.
-	if dir := os.Getenv("GOMODCACHE"); dir != "" {
-		addDir(dir)
-	} else {
-		addDir(goEnv("GOMODCACHE"))
-	}
-
-	// GOPATH/pkg: package object cache. GOPATH may contain multiple
-	// paths separated by colons; each one's pkg subdirectory is added.
-	gopath := os.Getenv("GOPATH")
-	if gopath == "" {
-		gopath = goEnv("GOPATH")
-	}
-	if gopath != "" {
-		for _, p := range filepath.SplitList(gopath) {
-			addDir(filepath.Join(p, "pkg"))
-		}
-	}
-
-	return dirs
-}
-
-// resolveConfigDir resolves the user config directory where the memory
-// system (ai-memory.json) and chat history (ai-chat-history.json) persist
-// data. This is resolved before entering the container namespace because
-// os.UserConfigDir may not function correctly after mount restrictions
-// are applied. Returns an empty string if the directory does not exist
-// or cannot be determined. See TheoryOfContainerIsolation.
-func resolveConfigDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	dir = filepath.Clean(dir)
-	if dir == "" || dir == "/" || dir == "." {
-		return ""
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return ""
-	}
-	return dir
-}
-
 // resolveTmpfsSize returns the tmpfs size from the given environment
 // variable, or the default if the variable is unset or empty. Used to
 // configure /tmp and /dev/shm tmpfs size limits inside the container.
@@ -260,18 +186,6 @@ func resolveTmpfsSize(envName, defaultSize string) string {
 		return s
 	}
 	return defaultSize
-}
-
-// goEnv runs `go env <key>` and returns the trimmed result. Returns an
-// empty string if go is not available or the key is not set.
-func goEnv(key string) string {
-	cmd := exec.Command("go", "env", key)
-	cmd.Env = os.Environ()
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
 }
 
 // parseMountPoints reads /proc/self/mountinfo and returns a list of mount

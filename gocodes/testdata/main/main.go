@@ -3,7 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"github.com/reusee/tai/testdata/dep1"
+	"github.com/reusee/tai/gocodes/testdata/dep1"
 )
 
 func main() {

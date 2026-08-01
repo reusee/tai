@@ -11,6 +11,15 @@ import (
 
 func TestFilePathToPartsTextFile(t *testing.T) {
 	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
 	path := filepath.Join(dir, "test.txt")
 	content := "hello world"
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -48,6 +57,15 @@ func TestFilePathToPartsTextFile(t *testing.T) {
 
 func TestFilePathToPartsBinaryFile(t *testing.T) {
 	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
 	path := filepath.Join(dir, "test.png")
 	binContent := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
 	if err := os.WriteFile(path, binContent, 0644); err != nil {
@@ -91,5 +109,31 @@ func TestFilePathToPartsBinaryFile(t *testing.T) {
 	}
 	if !strings.Contains(string(endText), path) {
 		t.Fatal("binary file end marker missing path")
+	}
+}
+
+func TestFilePathToPartsRejectsOutsideWritableDirs(t *testing.T) {
+	// A file outside all writable directories (CWD, /tmp, Go dirs, config
+	// dir, /dev/shm) should be rejected at collection time. /var/tmp is
+	// not in the writable dirs list, so a file there is rejected. If
+	// /var/tmp is unavailable, the test is skipped.
+	nonWritableDir, err := os.MkdirTemp("/var/tmp", "tai_test_")
+	if err != nil {
+		t.Skipf("cannot create temp dir in /var/tmp: %v", err)
+	}
+	defer os.RemoveAll(nonWritableDir)
+
+	path := filepath.Join(nonWritableDir, "external.txt")
+	content := "external content"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = filePathToParts(path)
+	if err == nil {
+		t.Fatal("expected error for file outside writable directories")
+	}
+	if !strings.Contains(err.Error(), "outside writable directory") {
+		t.Fatalf("expected 'outside writable directory' error, got: %v", err)
 	}
 }

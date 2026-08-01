@@ -39,6 +39,7 @@ func TestContextPrompt(t *testing.T) {
 
 		var foundDep1, foundATxt, foundMain bool
 		for _, part := range parts {
+			t.Logf("%s\n", part)
 			text, ok := part.(generators.Text)
 			if !ok {
 				t.Fatalf("got %#v", part)
@@ -210,6 +211,82 @@ func main() {}
 		}
 		if !foundLarge {
 			t.Fatal("large embed file should be included when explicitly requested via pattern")
+		}
+	})
+}
+
+func TestFocusFileOutsideWritableDirs(t *testing.T) {
+	// When -pkg ../dep1 is used from a working directory under /var/tmp,
+	// dep1 becomes a root package (focus file), but its files are outside
+	// writable directories (CWD, /tmp, Go dirs, config dir, /dev/shm).
+	// ApplyChangeBlockStore rejects paths outside writable directories at
+	// apply time, so including them as focus files is misleading. Parts
+	// must reject them at collection time. See
+	// TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
+	//
+	// The module root is placed under /var/tmp (not /tmp) so that
+	// sibling directories like dep1 are outside writable dirs. If
+	// /var/tmp is unavailable, skip the test.
+	root, err := os.MkdirTemp("/var/tmp", "tai_test_")
+	if err != nil {
+		t.Skipf("cannot create temp dir in /var/tmp: %v", err)
+	}
+	defer os.RemoveAll(root)
+
+	// Create go.mod at the module root so both main and dep1 are in the
+	// same module. This lets the Go loader resolve ../dep1 from main.
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mainDir := filepath.Join(root, "main")
+	if err := os.MkdirAll(mainDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mainDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dep1Dir := filepath.Join(root, "dep1")
+	if err := os.MkdirAll(dep1Dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dep1Dir, "dep1.go"), []byte("package dep1\n\nfunc Foo() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(mainDir); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(mainDir)
+		},
+		func() LoadPatterns {
+			return LoadPatterns{"../dep1"}
+		},
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		_, err := provider.Parts(1<<20, countTokens, nil)
+		if err == nil {
+			t.Fatal("expected error for focus file outside writable directories")
+		}
+		if !strings.Contains(err.Error(), "outside writable directory") {
+			t.Fatalf("expected 'outside writable directory' error, got: %v", err)
 		}
 	})
 }

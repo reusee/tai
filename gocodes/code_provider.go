@@ -11,6 +11,7 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/pathutil"
 )
 
 type CodeProvider struct {
@@ -62,6 +63,27 @@ func (c CodeProvider) Parts(
 
 	// filter files based on exclusion patterns
 	files = c.filterFiles(files, patterns)
+
+	// Check that all focus files (root package files) are within
+	// writable directories. Files outside writable directories cannot
+	// be modified by change blocks (ApplyChangeBlockStore rejects paths
+	// that escape the current directory), so including them as focus
+	// files is misleading: the model would see the file content but
+	// could not modify it. Reject them at collection time rather than
+	// at apply time, surfacing the error before the model is invoked.
+	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
+	for _, file := range files {
+		if !file.PackageIsRoot {
+			continue
+		}
+		outside, err := pathutil.IsOutsideWritableDirs(file.Path)
+		if err != nil {
+			return nil, fmt.Errorf("check focus file path: %w", err)
+		}
+		if outside {
+			return nil, fmt.Errorf("focus file outside writable directory: %s", file.Path)
+		}
+	}
 
 	// Separate inclusion and exclusion patterns. Exclusion patterns use a
 	// "!" prefix; they are not file paths and must not be passed to IterFiles,

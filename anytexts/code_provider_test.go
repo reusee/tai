@@ -87,6 +87,20 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 }
 
 func TestSymlinks(t *testing.T) {
+	// nonWritableTempDir creates a temp dir outside all writable
+	// directories (not under CWD, /tmp, Go dirs, config dir, /dev/shm).
+	// /var/tmp is not in the writable dirs list. If unavailable, the
+	// calling subtest is skipped.
+	nonWritableTempDir := func(t *testing.T) string {
+		t.Helper()
+		dir, err := os.MkdirTemp("/var/tmp", "tai_test_")
+		if err != nil {
+			t.Skipf("cannot create temp dir in /var/tmp: %v", err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		return dir
+	}
+
 	t.Run("Followed", func(t *testing.T) {
 		dir := t.TempDir()
 		oldWd, err := os.Getwd()
@@ -200,8 +214,8 @@ func TestSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Create an external directory with a file outside the current directory.
-		externalDir := t.TempDir()
+		// Create an external directory with a file outside writable dirs.
+		externalDir := nonWritableTempDir(t)
 		if err := os.WriteFile(filepath.Join(externalDir, "external.txt"), []byte("external content"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -218,23 +232,15 @@ func TestSymlinks(t *testing.T) {
 			provider CodeProvider,
 			countTokens generators.BPETokenCounter,
 		) {
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
-			if err != nil {
-				t.Fatal(err)
+			// A directly-specified focus file that resolves outside
+			// writable directories is rejected at collection time.
+			// See TheoryOfFocusFileDirectoryCheck.
+			_, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
+			if err == nil {
+				t.Fatal("expected error for external symlink as focus file")
 			}
-			found := false
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "external content") {
-						found = true
-						if !strings.Contains(string(text), "(read-only)") {
-							t.Fatal("external symlink file should be marked as read-only")
-						}
-					}
-				}
-			}
-			if !found {
-				t.Fatal("external symlinked file content not found")
+			if !strings.Contains(err.Error(), "outside writable directory") {
+				t.Fatalf("expected 'outside writable directory' error, got: %v", err)
 			}
 		})
 	})
@@ -251,7 +257,7 @@ func TestSymlinks(t *testing.T) {
 		}
 
 		// Create an external directory with a file.
-		externalDir := t.TempDir()
+		externalDir := nonWritableTempDir(t)
 		if err := os.WriteFile(filepath.Join(externalDir, "nested.txt"), []byte("nested external content"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -268,25 +274,51 @@ func TestSymlinks(t *testing.T) {
 			provider CodeProvider,
 			countTokens generators.BPETokenCounter,
 		) {
-			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
-			if err != nil {
-				t.Fatal(err)
+			// A directly-specified focus directory that resolves outside
+			// writable directories is rejected at collection time.
+			// See TheoryOfFocusFileDirectoryCheck.
+			_, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
+			if err == nil {
+				t.Fatal("expected error for external symlink directory as focus file")
 			}
-			found := false
-			for _, part := range parts {
-				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "nested external content") {
-						found = true
-						if !strings.Contains(string(text), "(read-only)") {
-							t.Fatal("file under external symlink directory should be marked as read-only")
-						}
-					}
-				}
-			}
-			if !found {
-				t.Fatal("file under external symlink directory not found")
+			if !strings.Contains(err.Error(), "outside writable directory") {
+				t.Fatalf("expected 'outside writable directory' error, got: %v", err)
 			}
 		})
+	})
+}
+
+func TestFocusFileOutsideWritableDirs(t *testing.T) {
+	// A non-symlink file directly specified via a pattern that resolves
+	// outside all writable directories should be rejected at collection
+	// time, not at apply time. /var/tmp is not in the writable dirs list.
+	// See TheoryOfFocusFileDirectoryCheck.
+	externalDir, err := os.MkdirTemp("/var/tmp", "tai_test_")
+	if err != nil {
+		t.Skipf("cannot create temp dir in /var/tmp: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	externalPath := filepath.Join(externalDir, "external.txt")
+	if err := os.WriteFile(externalPath, []byte("external content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+		modes.ForTest(t),
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		_, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
+		if err == nil {
+			t.Fatal("expected error for focus file outside writable directories")
+		}
+		if !strings.Contains(err.Error(), "outside writable directory") {
+			t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+		}
 	})
 }
 

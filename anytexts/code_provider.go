@@ -2,6 +2,7 @@ package anytexts
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/pathutil"
 )
 
 const TheoryOfSymlinkTraversal = `
@@ -31,15 +33,51 @@ aborting the entire traversal.
 `
 
 const TheoryOfReadOnlySymlinks = `
-Files introduced via symbolic links that point outside the current working
-directory are marked as read-only in the file context markers. The model is
-warned not to modify these files because they reside outside the project tree
-and attempting to write to them may cause permission errors or unintended
-modifications to external files. This applies both to files that are direct
-symlinks to external locations and to files discovered inside directories
-that are symlinks to external locations. Symlinks to files or directories
-within the current directory are not marked as read-only since they are part
-of the project.
+Files discovered via symbolic links during directory traversal that point
+outside all writable directories are marked as read-only in the file
+context markers. The model is warned not to modify these files because they
+reside outside the writable directories and attempting to write to them may
+cause permission errors or unintended modifications to external files. This
+applies both to files that are direct symlinks to external locations and to
+files discovered inside directories that are symlinks to external locations.
+Symlinks to files or directories within a writable directory are not marked
+as read-only since they are writable.
+
+Directly-specified focus files that resolve outside writable directories are
+rejected at collection time rather than marked read-only; see
+TheoryOfFocusFileDirectoryCheck. The read-only annotation applies only to
+files discovered during directory traversal, where the user did not
+explicitly request the external file.
+
+The check resolves symlinks in the path via isOutsideWritableDirs, which
+delegates to pathutil.IsOutsideWritableDirs, to correctly handle symlinks
+that point outside writable directories. A symlink within a writable
+directory whose target is outside is marked read-only, because writing to
+it would write outside the writable directories.
+`
+
+const TheoryOfFocusFileDirectoryCheck = `
+Focus files (files directly specified via patterns) that resolve to a
+location outside all writable directories are rejected at collection time
+rather than at apply time. The writable directories are determined by the
+security package's container filesystem policy: the current working
+directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the
+user config directory, /tmp, and /dev/shm. This ensures the check is
+consistent with the security package's container isolation — no more and
+no less restrictive. Including a focus file that cannot be modified would
+be misleading: the model would see the file content but could not modify
+it. Erroring at collection time surfaces the problem before the model is
+invoked, avoiding wasted generation rounds.
+
+This check applies to directly-matched patterns (directMatch=true), not to
+files discovered during directory traversal. Files discovered via symlinks
+during traversal are still marked read-only (see TheoryOfReadOnlySymlinks)
+rather than rejected, because the user did not explicitly request them.
+
+The check resolves symlinks in the path via pathutil.IsOutsideWritableDirs
+to correctly handle symlinks that point outside writable directories. A
+symlink within a writable directory whose target is outside is rejected,
+because writing to it would write outside the writable directories.
 `
 
 const TheoryOfFileOrdering = `
@@ -121,7 +159,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 		// user-supplied pattern (directMatch=true) or discovered during
 		// directory traversal (directMatch=false). Directly matched
 		// paths are not subject to hidden-file filtering, so users can
-		// explicitly request hidden files (e.g., .env, .gitignore) via
+		// explicitly include hidden files (e.g., .env, .gitignore) via
 		// -file without having them silently skipped.
 		type queueItem struct {
 			path        string
@@ -213,15 +251,31 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 					// Symlink target inaccessible; skip silently.
 					continue
 				}
-				// If the symlink target is outside the current directory,
+				// If the symlink target is outside writable directories,
 				// mark this path as read-only. If the target is a directory,
 				// also record it so files discovered under it inherit the
 				// read-only status.
-				if isOutsideCurrentDir(realPath) {
+				if isOutsideWritableDirs(realPath) {
 					readOnly = true
 					if info.IsDir() {
 						externalSymlinkDirs[path] = true
 					}
+				}
+			}
+
+			// For directly-matched patterns, reject paths outside
+			// writable directories immediately. The writable directories
+			// match the security package's container filesystem policy.
+			// See TheoryOfFocusFileDirectoryCheck.
+			if item.directMatch {
+				outside, err := pathutil.IsOutsideWritableDirs(path)
+				if err != nil {
+					yield(FileInfo{}, fmt.Errorf("check focus file path: %w", err))
+					return
+				}
+				if outside {
+					yield(FileInfo{}, fmt.Errorf("focus file outside writable directory: %s", path))
+					return
 				}
 			}
 
@@ -340,42 +394,17 @@ func isAncestor(ancestor, path string) bool {
 	return !strings.HasPrefix(rel, "..")
 }
 
-// isOutsideCurrentDir reports whether the given path is outside the current
-// working directory. It is used to detect symbolic links that point to files
-// or directories outside the project tree, which should be treated as read-only.
-//
-// The path argument is expected to be already canonicalized (e.g. via
-// filepath.EvalSymlinks), so the working directory must be canonicalized the
-// same way before comparison. On platforms where the working directory
-// contains symlink components (such as macOS, where /var is a symlink to
-// /private/var), os.Getwd returns the logical path while the path argument
-// is canonical. Comparing a logical path against a canonical path makes
-// filepath.Rel produce a ".."-prefixed result even for internal targets,
-// falsely marking them as external and read-only.
-//
-// filepath.EvalSymlinks returns a relative path when the input is relative.
-// The path is converted to absolute (joined with the canonicalized working
-// directory) before comparison so that filepath.Rel can compute a valid
-// relative path; otherwise mixing an absolute cwd with a relative path
-// causes filepath.Rel to error and falsely classify internal targets as
-// external.
-func isOutsideCurrentDir(path string) bool {
-	cwd, err := os.Getwd()
+// isOutsideWritableDirs reports whether the given path is outside all
+// writable directories. It delegates to pathutil.IsOutsideWritableDirs,
+// which checks against the security package's container filesystem policy.
+// Errors are treated as "not outside" (writable) to avoid false read-only
+// markings on unresolvable paths. See security.TheoryOfWritableDirs.
+func isOutsideWritableDirs(path string) bool {
+	outside, err := pathutil.IsOutsideWritableDirs(path)
 	if err != nil {
 		return false
 	}
-	cwd, err = filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return false
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
-	}
-	rel, err := filepath.Rel(cwd, path)
-	if err != nil {
-		return true
-	}
-	return strings.HasPrefix(rel, "..")
+	return outside
 }
 
 // isUnderExternalDir checks whether the given path is under a directory that

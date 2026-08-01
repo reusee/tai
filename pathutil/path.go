@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/reusee/tai/security"
 )
 
 const TheoryOfPathSafety = `
@@ -13,6 +15,19 @@ directory or file names that merely start with two dots (e.g.,
 "..hidden", "..."). The check is shared across packages that handle
 model-supplied or user-supplied file paths, ensuring consistent safety
 semantics regardless of the path source.
+
+IsOutsideWritableDirs extends path safety to resolved file paths: it
+delegates to security.IsWritablePath, which reports whether a path (after
+symlink resolution) is inside one of the writable directories defined by
+the security package's container filesystem policy: the current working
+directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the
+user config directory, /tmp, and /dev/shm. This is used at focus file
+collection time to reject files that cannot be modified, surfacing the
+error before the model is invoked rather than at apply time. The
+canonicalization via filepath.EvalSymlinks handles platforms where the
+working directory contains symlink components (e.g., macOS /var →
+/private/var) and resolves symlinks in the path argument. See
+security.TheoryOfWritableDirs.
 `
 
 // EscapesDir reports whether a cleaned relative path escapes the current
@@ -22,6 +37,22 @@ semantics regardless of the path source.
 // names.
 func EscapesDir(cleaned string) bool {
 	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
+}
+
+// IsOutsideWritableDirs reports whether the given path resolves to a
+// location outside all writable directories. The writable directories are
+// determined by the security package's container filesystem policy: the
+// current working directory, Go toolchain directories (GOCACHE,
+// GOMODCACHE, GOPATH/pkg), the user config directory, /tmp, and /dev/shm.
+// This ensures the focus file check is consistent with the security
+// package's container isolation — no more and no less restrictive.
+// See security.TheoryOfWritableDirs and TheoryOfPathSafety.
+func IsOutsideWritableDirs(path string) (bool, error) {
+	writable, err := security.IsWritablePath(path)
+	if err != nil {
+		return false, err
+	}
+	return !writable, nil
 }
 
 // RootMkdirAll creates a directory path within an os.Root, creating parent
