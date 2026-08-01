@@ -124,11 +124,6 @@ func (Module) AIComponents(
 	return
 }
 
-// memoryBlockSystemPrompt constructs the memory block prompt section with the
-// user profile text. The prompt teaches the model how to emit memory blocks
-// and includes the current user profile for context. The profile text is read
-// at Component construction time and embedded as a static string in the
-// PromptSection. See TheoryOfAIComponents.
 func memoryBlockSystemPrompt(profileText string) string {
 	return `
 在每一轮对话中，你的任务流程如下：
@@ -136,14 +131,14 @@ func memoryBlockSystemPrompt(profileText string) string {
 2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或深化现有用户画像的新信息。
 3. 如果发现了新信息，请生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的格式为：
 
-:::<boundary> <memory>
+<<爨齉 <memory>
 <memory>
   <memory-item>用户画像项1</memory-item>
   <memory-item>用户画像项2</memory-item>
 </memory>
-:::<boundary> </memory>
+爨齉
 
-其中 <boundary> 必须是两个不常用的汉字（例如：塅垝、瑱魃、骐骎），不能是字面文本 "<boundary>"。每次生成时请使用不同的随机汉字，确保不会与内容冲突。你只需要提供你认为是当前最准确和相关的用户画像项。系统会自动将你的输入与现有记录合并，不会意外删除任何旧信息。
+其中 爨齉 是一个示例分隔符。每次生成时请选择两个新的非常用汉字作为分隔符，并确保分隔符不会与内容冲突。
 
 - 如果没有发现任何新信息，则不要生成此块。
 - 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。
@@ -155,8 +150,8 @@ func memoryBlockSystemPrompt(profileText string) string {
 ` + profileText
 }
 
-const memoryBlockRestatePrompt = `- Memory block: emit :::<boundary> <memory>
+const memoryBlockRestatePrompt = `- Memory block: emit <<麐黿 <memory>
 <memory>
   <memory-item>user profile fact</memory-item>
 </memory>
-:::<boundary> </memory> only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`
+麐黿 only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block. The example delimiter 麐黿 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line.`

@@ -8,7 +8,7 @@ import (
 )
 
 const TheoryOfParserState = `
-ParserState is a State decorator that incrementally parses boundary-delimited blocks
+ParserState is a State decorator that incrementally parses heredoc-delimited blocks
 from streamed model output. It sits between the generator and the downstream consumer,
 intercepting text parts appended by the model to extract structured blocks (e.g., change
 and finish blocks) without losing non-block prose. Parsed blocks are passed to a
@@ -31,22 +31,22 @@ block output, and parsing them would produce spurious blocks.
 
 The parser is incremental: each AppendContent call appends new text to the buffer and
 re-attempts to parse complete blocks. A block is only complete when a matching
-:::<boundary> </kind> marker is found at line start. A line-start :::<boundary> with a different
-boundary is treated as body content and does not close the block. If no matching closing
-marker is found, the block is unclosed (incomplete) and left in the buffer for the next
-AppendContent call, because streaming output may arrive in fragments. Text preceding the
-first block marker is prose and is discarded once a block is found, because ParserState's
-purpose is block extraction, not prose preservation.
+DELIMITER closing line is found. A line that does not match the delimiter is treated
+as body content and does not close the block. If no matching closing line is found,
+the block is unclosed (incomplete) and left in the buffer for the next AppendContent
+call, because streaming output may arrive in fragments. Text preceding the first block
+marker is prose and is discarded once a block is found, because ParserState's purpose is
+block extraction, not prose preservation.
 
-At Flush, an unclosed block (opening marker with no matching end marker) is treated as an
-error rather than being finalized, because an unclosed block indicates incomplete or
-truncated output. Complete blocks remaining in the buffer are discarded (not stored),
+At Flush, an unclosed block (opening marker with no matching closing line) is treated
+as an error rather than being finalized, because an unclosed block indicates incomplete
+or truncated output. Complete blocks remaining in the buffer are discarded (not stored),
 because the handler is responsible for block management and should have been called during
 AppendContent. Any remaining unparseable fragments are discarded so content appended after
 Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush content
-within the same block. Boundary strings are parsed as leading Han (Chinese) ideographs
-only; a non-Han character terminates the boundary so trailing model-added content does
-not corrupt block matching.
+within the same block. Delimiters are parsed as the text between << and the first
+whitespace or < character; this ensures the delimiter is extracted correctly regardless
+of what follows it on the opening line.
 
 A BlockHandler callback may be set at construction time to receive blocks as they are
 parsed during AppendContent. When the handler returns an error, AppendContent returns the

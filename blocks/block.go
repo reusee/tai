@@ -4,90 +4,98 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 const TheoryOfBlockFormatGeneral = `
-The boundary block format is a general-purpose structured output format for AI models.
-It uses delimited blocks with a random boundary string to avoid parsing conflicts with content.
+The heredoc block format is a general-purpose structured output format for AI models.
+It uses heredoc-style delimiters with an XML opening tag to avoid parsing conflicts with content.
 Each block has a kind (XML element name), attributes (XML attributes on the opening tag), and a body.
-The opening marker is :::<boundary> <kind attr1=".." attr2="..."> and the closing marker is
-:::<boundary> </kind>. Only the boundary string and the XML element structure are unified;
-the body content is defined by the specific kind.
-This format replaces ad-hoc XML or JSON escaping with a simple, parseable structure.
+The opening marker is <<DELIMITER <kind attr1=".." attr2="..."> and the closing marker is
+DELIMITER on its own line. The delimiter is a pair of uncommon Chinese characters chosen by the
+model; the closing line is simply the delimiter alone, with no XML closing tag. Only the delimiter
+string and the XML element structure are unified; the body content is defined by the specific kind.
+This format leverages the familiar heredoc syntax that models already know, improving
+parsing reliability.
 
-**Line-start requirement**: The opening marker and the closing marker must each appear at the
-beginning of a line. Any occurrence of ":::" that is not at the start of a line is treated as
-regular content and will not start a block. Models tend to glue the opening marker to the end
-of a preceding prose line rather than starting it on its own line, which causes the block to
-be silently ignored. The system prompt must therefore emphasize this rule with explicit
-correct/incorrect examples so the model internalizes the newline-before-marker discipline.
+**Delimiter selection policy**: Every delimiter MUST be exactly two uncommon Chinese characters
+(for example 徕珑). Content — source code, prompts, and configuration text — is overwhelmingly
+ASCII or common-script writing, so a pair of rare Chinese characters has negligible probability
+of appearing in a block body, satisfying the body-disjointness guarantee without requiring the
+model to scan its output for collisions. The fixed two-character length makes the delimiter
+visually distinct from content and keeps token cost constant. The model must never emit the
+literal placeholder "DELIMITER", must never reuse an example delimiter, and must never use a
+delimiter of any other length or script.
+
+**Line-start requirement**: The opening marker must appear at the beginning of a line.
+The closing marker (the delimiter alone) must also appear on its own line. Any ` + "`<<`" + ` that is
+not at the start of a line is treated as regular content and will not start a block. Models tend
+to glue the opening marker to the end of a preceding prose line rather than starting it on its
+own line, which causes the block to be silently ignored. The system prompt must therefore
+emphasize this rule with explicit correct/incorrect examples so the model internalizes the
+newline-before-marker discipline.
 
 **No surrounding blank lines**: Blocks do not require blank lines before or after them.
 A block can appear directly adjacent to other text or other blocks; the only structural
-requirement is that each marker starts at the beginning of a line.
+requirement is that the opening marker starts at the beginning of a line and the closing
+marker is on its own line.
 
 **Unclosed block detection**: An opening marker at line start without a matching closing
-marker is a malformed block. The parser reports an error rather than silently skipping it,
-ensuring that incomplete output from the AI is surfaced to the user.
+line (the delimiter alone on its own line) is a malformed block. The parser reports an error
+rather than silently skipping it, ensuring that incomplete output from the AI is surfaced
+to the user.
 
-**Boundary rule centralization**: The boundary rules (randomness, uniqueness,
+**Delimiter rule centralization**: The delimiter rules (selection, uniqueness,
 body-disjointness, matching) are centralized in BlockFormatSystemPrompt and
 BlockFormatRestatePrompt. Individual block kind prompts (continue, shell, go-test,
 summary, memory) must not restate the full rule set; they reference the general format
 and focus on their kind-specific semantics. Kind prompts do display structurally
-complete examples with illustrative concrete boundaries, because showing the literal
-placeholder marker ":::<boundary>" inside a kind template teaches the model to emit
-that placeholder verbatim, producing markers the parser cannot recognize. Each kind
-prompt may carry one pointed reminder tied to its example — use a freshly chosen
-two-character boundary, repeat the same pair in the closing marker, never write the
-placeholder literally — without restating the full rules. This keeps redundant boundary
-description near zero while giving the format-error-prone kinds (notably go-test and
-summary) correct imitation targets for both their opening and closing markers.
+complete examples with illustrative concrete delimiters, because showing the literal
+placeholder marker "<<DELIMITER" inside a kind template teaches the model to emit
+that placeholder verbatim, producing blocks with a non-unique delimiter. Each kind
+prompt may carry one pointed reminder tied to its example — choose a fresh pair of
+uncommon Chinese characters, repeat the same delimiter on the closing line, never write
+the placeholder literally — without restating the full rules. This keeps redundant
+delimiter description near zero while giving the format-error-prone kinds (notably
+go-test and summary) correct imitation targets for both their opening and closing
+markers.
 `
 
 const TheoryOfBoundaryUniqueness = `
-The boundary string is the sole disambiguator between consecutive delimited blocks within
-a single response. The parser closes a block at the first :::<boundary> </kind> marker found
-at line start whose boundary matches the opening marker's boundary and whose closing tag
-matches the opening kind. A line-start :::<boundary> with a different boundary is treated
-as body content, not a closing marker, because the body may legitimately contain example
-markers or other text that starts with ":::". The parser does not report a mismatched-
-boundary error; it simply continues scanning for the matching boundary. If no matching
-:::<boundary> </kind> is found, the block is unclosed. The closing marker line does not
-require a trailing newline: when the end marker is the last content in the buffer, the
-boundary and closing tag are extracted from the remaining content. If the boundary is
-incomplete (still streaming), the shorter extracted string will not match, so the block
-remains unclosed until the full boundary arrives.
+The delimiter is the sole disambiguator between consecutive delimited blocks within
+a single response. The parser closes a block at the first line that exactly matches
+the opening marker's delimiter. A line that does not match the delimiter is treated as
+body content. If no matching delimiter line is found, the block is unclosed. The
+closing marker line does not require a trailing newline: when the delimiter is the
+last content in the buffer, the parser extracts it from the remaining content. If
+the delimiter is incomplete (still streaming), the shorter extracted string will not
+match, so the block remains unclosed until the full delimiter arrives.
 
-Therefore the boundary must be a freshly generated random pair of uncommon, meaningless
-Chinese characters, never copied from the illustrative examples. The example blocks in the
-system prompt deliberately use distinct boundaries to demonstrate this rule, and those exact
-strings are forbidden for reuse. The randomness of the boundary is the integrity guarantee of
-the format: if the model reuses an example boundary, a subsequent real block opened with that
-same boundary would close at the wrong marker.
+Therefore the delimiter must be freshly chosen as exactly two uncommon Chinese
+characters, never copied from the illustrative examples. The example blocks in the
+system prompt deliberately use distinct delimiters to demonstrate this rule, and
+those exact strings are forbidden for reuse. The rarity of the chosen characters is
+the integrity guarantee of the format: a pair of uncommon Chinese characters is
+effectively absent from code and prose, so the chance of a body line accidentally
+matching the delimiter is negligible, while reusing an example delimiter would cause
+a subsequent real block opened with that same delimiter to close at the wrong marker.
 
-The boundary characters must also be disjoint from the block body. Because the parser closes
-the block at the first line-start :::<boundary> whose boundary matches, a body line that
-begins with ":::" followed by the same two ideographs and a matching closing tag would
-prematurely terminate the block and discard all remaining content. Block bodies are
-predominantly source code (ASCII), so most Han characters never occur in them; the collision
-risk arises when the body contains Chinese comments, string literals, or documentation that
-reproduces block markers. The model should therefore select rare, uncommon ideographs that
-do not appear anywhere in the code or text it is about to emit, satisfying the anti-reuse
-guarantee and the body-disjointness guarantee simultaneously.
+The delimiter must also be disjoint from the block body. Because the parser closes
+the block at the first line matching the delimiter, a body line that matches the
+delimiter would prematurely terminate the block and discard all remaining content.
+The model should therefore select a delimiter that does not appear anywhere in the
+code or text it is about to emit, satisfying the anti-reuse guarantee and the
+body-disjointness guarantee simultaneously.
 `
 
 const TheoryOfBlockFormat = `
-The parser uses a single boundary-delimited block format. The boundary (a
-random string of two uncommon, meaningless Chinese characters) precedes the
-kind as an XML opening tag:
-:::<boundary> <kind attr=".."> ... :::<boundary> </kind>. The boundary is
-extracted as the leading Han ideographs from the opening and closing lines;
-trailing non-Han content after the boundary is ignored. Closing markers
-(:::<boundary> </kind>) are always rejected as opening markers. The boundary
-string is the sole disambiguator between consecutive blocks within a single
-response.
+The parser uses a heredoc-style block format. The delimiter (a random string)
+precedes the kind as an XML opening tag:
+<<DELIMITER <kind attr=".."> ... DELIMITER. The delimiter is extracted as the
+text between ` + "`<<`" + ` and the first whitespace or ` + "`<`" + ` character on the opening
+line; trailing content after the delimiter is skipped by searching for the first
+` + "`<`" + ` in the rest of the line. The closing marker is the delimiter alone on its own
+line — no XML closing tag is needed. The delimiter is the sole disambiguator between
+consecutive blocks within a single response.
 `
 
 // blockParseResult holds the outcome of attempting to parse a block in one
@@ -102,55 +110,56 @@ type blockParseResult struct {
 	err   error
 }
 
-const BlockFormatSystemPrompt = `**Structured Output Format (Boundary-Delimited):**
+const BlockFormatSystemPrompt = `**Structured Output Format (Heredoc-Delimited):**
 
-Your response can include structured content using delimited blocks.
+Your response can include structured content using heredoc-delimited blocks.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
-:::<boundary> <kind attr1=".." attr2="...">
+<<DELIMITER <kind attr1=".." attr2="...">
 <kind-specific content>
-:::<boundary> </kind>
+DELIMITER
 
-- <boundary>: A random string composed of two uncommon meaningless Chinese characters that do not appear in the block body. A sufficiently random boundary ensures it cannot conflict with any content. Use a different boundary for each block in the same response. The same boundary MUST be used for the start and end markers of a single block.
+- DELIMITER: Exactly two uncommon Chinese characters (e.g., 徕珑) that do not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
 - <kind>: The type of block, specified as an XML element name. The valid kinds and their content formats are defined by the specific kind documentation. Attributes on the opening tag provide kind-specific metadata.
-- Content: The body between the start and end markers is defined by the specific kind. See the kind-specific format documentation for details.
+- Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
-- No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but every marker must start at the beginning of its own line.
+- No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but the opening marker must start at the beginning of its own line and the closing delimiter must be on its own line.
 - If no blocks are needed, simply omit them.
 
 **Line-Start Requirement (CRITICAL):**
-- The opening marker (:::<boundary> <kind ...>) and the closing marker (:::<boundary> </kind>) MUST each appear at the beginning of a line — immediately after a newline character or at the very start of the response.
-- NEVER place a marker at the end of a line of text. If you have prose immediately before a block, end the prose with a newline first, then start the marker on its own new line.
-- Any ":::" that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and your changes will be lost.
+- The opening marker (<<DELIMITER <kind ...>) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
+- NEVER place the opening marker at the end of a line of text. If you have prose immediately before a block, end the prose with a newline first, then start the marker on its own new line.
+- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and your changes will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  :::徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  <<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
-  :::徕珑 </change>
+  徕珑
 - NOT this (marker glued to the end of the prose line — the block will NOT be parsed and your changes will be lost):
-  Some explanation text.:::徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  Some explanation text.<<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
-  :::徕珑 </change>
+  徕珑
 
-**Boundary Uniqueness (CRITICAL):**
-- Generate a fresh random pair of two uncommon, meaningless Chinese characters as the boundary for each block.
-- **Never reuse a boundary string that appears in any example in this prompt.** The example boundaries are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
-- Each block in a response must use a distinct boundary so the parser can unambiguously pair each opening marker with its closing marker.
-- **Avoid body-content characters**: Select boundary characters that do not appear anywhere in the block body (the code or text between the markers). A body line that starts with ":::" followed by the same boundary prematurely closes the block and truncates the remaining content. Since block bodies are predominantly source code (ASCII), most Han characters are safe; pick rare, uncommon ideographs absent from any Chinese comments, string literals, or documentation you are about to emit.
+**Delimiter Uniqueness (CRITICAL):**
+- Generate a fresh delimiter for each block: exactly two uncommon Chinese characters (e.g., 龘靐).
+- **Never reuse a delimiter that appears in any example in this prompt.** The example delimiters are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
+- Each block in a response must use a distinct pair of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
+- **Avoid body-content characters**: Select a delimiter that does not appear anywhere in the block body (the code or text between the markers). Two uncommon Chinese characters are very unlikely to appear in code or prose, but verify the chosen pair is absent from the body. A body line that matches the delimiter prematurely closes the block and truncates the remaining content.
 
-**Boundary Matching (CRITICAL):**
-- The closing marker MUST use the EXACT same boundary string as the opening marker. A block opened with :::徕珑 <change ...> MUST be closed with :::徕珑 </change>, never :::栢彣 </change> or any other boundary.
-- A line-start :::<boundary> with a different boundary is treated as body content, not a closing marker. The parser continues scanning for the matching boundary. If no matching closing marker is found, the block is unclosed. Always close a block with the same boundary you opened it with.
-- Before writing each closing marker, verify its boundary matches the corresponding opening marker of the same block. The most common cause of mismatched boundaries is copying a boundary from another block or from an example instead of reusing the one you opened with.
+**Delimiter Matching (CRITICAL):**
+- The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<徕珑 <change ...> MUST be closed with 徕珑, never 龘靐 or any other delimiter.
+- A line that does not match the delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter. If no matching closing line is found, the block is unclosed. Always close a block with the same delimiter you opened it with.
+- Before writing each closing line, verify its delimiter matches the corresponding opening marker of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the one you opened with.
 `
 
-const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block marker line — both the opening ":::" line and the closing ":::" line — MUST start at the beginning of its own line, immediately after a newline. NEVER glue a marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: ':::' followed by your fresh two-Chinese-character boundary and the opening tag '<kind ...>' ending with '>'. Closing marker: ':::' followed by the SAME two characters and '</kind>' ending with '>', on its own line. Never swap or alter either marker.
-- **The <boundary> MUST be two actual Chinese characters** (e.g., 塅垝, 瑱魃, 骐骎), NEVER the literal text "<boundary>". If you write ":::<boundary>" literally, the parser cannot recognize the block and your changes will be silently lost.
-- Generate a fresh random pair of two uncommon Chinese characters as the boundary for each block. Never reuse a boundary from any example in this prompt.
-- The closing marker MUST use the EXACT same boundary string as the opening marker.
-- Select boundary characters that do not appear anywhere in the block body.
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and your changes will be lost.
+- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by your freshly chosen delimiter (exactly two uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
+- **The DELIMITER MUST be exactly two uncommon Chinese characters** (e.g., 徕珑, 龘靐, 齉爩), NEVER the literal text "<DELIMITER>" or a common word. If you write "<<DELIMITER" literally, the parser cannot recognize the block and your changes will be silently lost.
+- Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
+- The closing line MUST use the EXACT same delimiter as the opening marker.
+- Select a delimiter that does not appear anywhere in the block body. Two uncommon Chinese characters satisfy this by construction for code and prose content.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.
@@ -172,7 +181,7 @@ func ParseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, err error) {
 	searchFrom := 0
 	for {
-		idx := bytes.Index(content[searchFrom:], []byte(":::"))
+		idx := bytes.Index(content[searchFrom:], []byte("<<"))
 		if idx == -1 {
 			return
 		}
@@ -180,13 +189,13 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 
 		// The opening marker must be at the beginning of a line.
 		if idx > 0 && content[idx-1] != '\n' {
-			searchFrom = idx + 3
+			searchFrom = idx + 2
 			continue
 		}
 		blockStart := idx
 
-		// Extract the opening line after :::
-		lineStart := idx + 3
+		// Extract the opening line after <<
+		lineStart := idx + 2
 		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
 		if lineEnd == -1 {
 			searchFrom = idx + 1
@@ -195,8 +204,8 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		lineEnd += lineStart
 		openingLine := string(content[lineStart:lineEnd])
 
-		// Parse the block in the boundary-delimited format:
-		// :::<boundary> <kind ...> ... :::<boundary> </kind>
+		// Parse the block in the heredoc-delimited format:
+		// <<DELIMITER <kind ...> ... DELIMITER
 		// See TheoryOfBlockFormat.
 		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart); matched {
 			return r.block, r.start, r.end, r.ok, r.err
@@ -206,27 +215,20 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 	}
 }
 
-// tryParseBlock attempts to parse an opening line where the boundary (leading
-// Han ideographs) precedes an XML opening tag. Trailing non-Han content
-// between the boundary and the XML tag (e.g., "extra") is skipped by searching
-// for the first '<' in the rest of the line. Closing markers
-// (:::<boundary> </kind>) are rejected. Returns matched=false when the line
-// does not conform to the format. An unclosed block (no matching end marker)
-// always returns a BlockParseError; the block is never finalized, because an
-// unclosed block is incomplete regardless of whether Flush has been called.
-// See TheoryOfBlockFormat.
 func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) (result blockParseResult, matched bool) {
-	boundary := extractHanBoundary(openingLine)
-	if boundary == "" {
+	delimiter := extractDelimiter(openingLine)
+	if delimiter == "" {
 		return
 	}
-	rest := openingLine[len(boundary):]
+	rest := openingLine[len(delimiter):]
 	ltIdx := strings.Index(rest, "<")
 	if ltIdx == -1 {
 		return
 	}
 	xmlPart := strings.TrimSpace(rest[ltIdx:])
-	// :::<boundary> </kind> is a closing marker, never an opening marker.
+	// In heredoc format, the closing marker is the delimiter alone,
+	// so there is no XML closing tag on the opening line to reject.
+	// However, reject if the XML part starts with </ as a safety check.
 	if strings.HasPrefix(xmlPart, "</") {
 		return
 	}
@@ -236,10 +238,10 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	}
 	matched = true
 	result.block.Kind = kind
-	result.block.Boundary = boundary
+	result.block.Boundary = delimiter
 	result.block.Attributes = attrs
 	bodyStart := lineEnd + 1
-	bodyEnd, blockEnd, found := findClosingMarker(content, bodyStart, boundary, kind)
+	bodyEnd, blockEnd, found := findClosingMarker(content, bodyStart, delimiter)
 	if found {
 		result.block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
 		result.start = blockStart
@@ -252,98 +254,66 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	// of whether Flush has been called. See TheoryOfBlockFormat.
 	result.start = blockStart
 	result.end = lineEnd + 1
-	result.err = &BlockParseError{BlockKind: kind, Boundary: boundary}
+	result.err = &BlockParseError{BlockKind: kind, Boundary: delimiter}
 	return
 }
 
-// findClosingMarker searches for :::<boundary> ... </kind> at line
-// start, where ... is optional trailing content between the boundary and the
-// closing tag. A line-start :::<boundary> with a different boundary is treated
-// as body content. See TheoryOfBoundaryUniqueness.
-func findClosingMarker(content []byte, bodyStart int, boundary, kind string) (bodyEnd, blockEnd int, found bool) {
+// findClosingMarker searches for the delimiter alone on its own line within
+// the content starting from bodyStart. A line that does not match the
+// delimiter is treated as body content. See TheoryOfBoundaryUniqueness.
+func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd, blockEnd int, found bool) {
 	searchFrom := bodyStart
 	for {
-		offset := bytes.Index(content[searchFrom:], []byte(":::"))
-		if offset == -1 {
-			return 0, 0, false
-		}
-		candidate := searchFrom + offset
-		if candidate > 0 && content[candidate-1] != '\n' {
-			searchFrom = candidate + 3
-			continue
-		}
-		lineStart := candidate + 3
-		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
+		// Find the end of the current line.
+		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
 		var line string
 		if lineEnd == -1 {
-			line = string(content[lineStart:])
+			line = string(content[searchFrom:])
 		} else {
-			line = string(content[lineStart : lineStart+lineEnd])
+			line = string(content[searchFrom : searchFrom+lineEnd])
 		}
-		lineBoundary := extractHanBoundary(line)
-		if lineBoundary != boundary {
-			if lineEnd == -1 {
-				return 0, 0, false
-			}
-			searchFrom = lineStart + lineEnd + 1
-			continue
-		}
-		rest := line[len(boundary):]
-		closeIdx := strings.Index(rest, "</")
-		if closeIdx == -1 {
-			if lineEnd == -1 {
-				return 0, 0, false
-			}
-			searchFrom = lineStart + lineEnd + 1
-			continue
-		}
-		closePart := strings.TrimSpace(rest[closeIdx:])
-		endKind, isClosing := parseXMLClosingTag(closePart)
-		if isClosing && endKind == kind {
-			bodyEnd = candidate
+		// The closing marker is the delimiter alone on its own line.
+		// TrimSpace handles trailing whitespace the model may add.
+		if strings.TrimSpace(line) == delimiter {
+			bodyEnd = searchFrom
 			if lineEnd == -1 {
 				blockEnd = len(content)
 			} else {
-				blockEnd = lineStart + lineEnd + 1
+				blockEnd = searchFrom + lineEnd + 1
 			}
 			return bodyEnd, blockEnd, true
 		}
 		if lineEnd == -1 {
 			return 0, 0, false
 		}
-		searchFrom = lineStart + lineEnd + 1
+		searchFrom = searchFrom + lineEnd + 1
 	}
 }
 
-// extractHanBoundary extracts the leading Han (Chinese) ideographs from s.
-// Leading and trailing whitespace are trimmed first. Parsing then collects
-// consecutive Han characters and stops at the first non-Han character, which
-// is ignored and terminates the boundary. This ensures trailing content after
-// the boundary string (e.g., model-added annotations) does not corrupt block
-// matching. A field with no Han characters yields an empty string, causing the
+// extractDelimiter extracts the delimiter string from the opening line.
+// The delimiter is the text from the start of the (trimmed) line up to the
+// first whitespace or '<' character, whichever comes first. A line with no
+// characters before whitespace or '<' yields an empty string, causing the
 // marker to be skipped. See TheoryOfBoundaryUniqueness.
-func extractHanBoundary(s string) string {
+func extractDelimiter(s string) string {
 	s = strings.TrimSpace(s)
-	var buf []rune
-	for _, r := range s {
-		if unicode.Is(unicode.Han, r) {
-			buf = append(buf, r)
-		} else {
-			break
+	for i, r := range s {
+		if r == ' ' || r == '\t' || r == '<' {
+			return s[:i]
 		}
 	}
-	return string(buf)
+	return s
 }
 
-// BlockParseError is returned by ParseFirstBlock for unclosed boundary blocks.
-// An unclosed block is an opening marker with no matching :::end <boundary>
-// marker at line start. During streaming this may indicate incomplete output
-// rather than a definitive error. See TheoryOfBoundaryUniqueness.
+// BlockParseError is returned by ParseFirstBlock for unclosed heredoc blocks.
+// An unclosed block is an opening marker with no matching closing delimiter
+// line. During streaming this may indicate incomplete output rather than a
+// definitive error. See TheoryOfBoundaryUniqueness.
 type BlockParseError struct {
 	BlockKind string
 	Boundary  string
 }
 
 func (e *BlockParseError) Error() string {
-	return fmt.Sprintf("unclosed block: kind %q boundary %q has no matching end marker", e.BlockKind, e.Boundary)
+	return fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line", e.BlockKind, e.Boundary)
 }

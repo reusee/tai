@@ -10,8 +10,6 @@ import (
 	"github.com/reusee/tai/modes"
 )
 
-// mockGenerator satisfies generators.Generator for tests that need the
-// Memory provider resolved but don't use the generator.
 type mockGenerator struct{}
 
 func (mockGenerator) Spec() generators.Spec { return generators.Spec{} }
@@ -23,12 +21,8 @@ func (mockGenerator) Generate(context.Context, generators.State, *generators.Gen
 }
 
 func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
-	// Reproduction: when a continue block precedes a memory block,
-	// parseMemoryItems must scan past the continue block to find
-	// the memory block. Before the fix, only the first block was
-	// checked, so the memory block was silently missed.
-	text := ":::徕珑 <continue>\ncontinue content\n:::徕珑 </continue>\n" +
-		":::栢彣 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n:::栢彣 </memory>\n"
+	text := "<<DELIM1 <continue>\ncontinue content\nDELIM1\n" +
+		"<<DELIM2 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM2\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -43,13 +37,7 @@ func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
 }
 
 func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
-	// Reproduction: when an unclosed block (e.g., a finish block missing
-	// its end marker) precedes a memory block, parseMemoryItems must skip
-	// past the unclosed block to find the memory block. Before the fix,
-	// ParseFirstBlock returned an error for the unclosed block and
-	// parseMemoryItems propagated the error, never reaching the memory
-	// block.
-	text := ":::徕珑 <finish>\nSome summary.\n:::栢彣 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n:::栢彣 </memory>\n"
+	text := "<<DELIM1 <finish>\nSome summary.\n<<DELIM2 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM2\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -64,7 +52,7 @@ func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
 }
 
 func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
-	text := ":::徕珑 <continue>\ncontinue content\n:::徕珑 </continue>\n"
+	text := "<<DELIM1 <continue>\ncontinue content\nDELIM1\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -76,7 +64,7 @@ func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
 }
 
 func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
-	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n:::徕珑 </memory>\n"
+	text := "<<DELIM1 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM1\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -91,9 +79,9 @@ func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
 }
 
 func TestParseMemoryItemsMultipleNonMemoryBlocks(t *testing.T) {
-	text := ":::徕珑 <summary>\nsummary text\n:::徕珑 </summary>\n" +
-		":::栢彣 <continue>\ncontinue content\n:::栢彣 </continue>\n" +
-		":::骐骎 <memory>\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n:::骐骎 </memory>\n"
+	text := "<<DELIM1 <summary>\nsummary text\nDELIM1\n" +
+		"<<DELIM2 <continue>\ncontinue content\nDELIM2\n" +
+		"<<DELIM3 <memory>\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\nDELIM3\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -175,14 +163,9 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		return nil
 	}
 
-	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
+	text := "<<DELIM1 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\nDELIM1\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
-	// memories.Module embeds generators.Module, whose Memory provider
-	// requires generators.Generator. The scope must include a mock
-	// generator, configs.Loader (for GetGeneratorSpecs), and modes.Mode
-	// (for nets.ProxyAddr). See the user's instruction to use real
-	// dscope instances with Call rather than direct method calls.
 	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
@@ -221,8 +204,7 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 		return nil
 	}
 
-	// Same item from both memory block and pseudo-call
-	text := ":::徕珑 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n:::徕珑 </memory>\n" +
+	text := "<<DELIM1 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\nDELIM1\n" +
 		"update_user_profile(items=['duplicate'])"
 
 	loader := configs.NewLoader(nil, configs.LoaderConfig{})
@@ -260,7 +242,6 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 		return nil
 	}
 
-	// No memory block, only a textual pseudo-call
 	text := `I'll remember that. update_user_profile(items=["user likes Go"])`
 
 	loader := configs.NewLoader(nil, configs.LoaderConfig{})

@@ -88,7 +88,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase(":::徕珑 <shell>\necho hello\n:::徕珑 </shell>\n")
+				return appendPhase("<<DELIM1 <shell>\necho hello\nDELIM1\n")
 			}
 			return appendPhase("done")
 		}
@@ -165,7 +165,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			Components:   comps,
 			BlockHandler: blockHandler,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase(":::徕珑 <shell>\necho hi\n:::徕珑 </shell>\n")
+				return appendPhase("<<DELIM1 <shell>\necho hi\nDELIM1\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -224,7 +224,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 				return appendPhase("incomplete output without summary")
 			}
 			// Second call includes a summary block.
-			return appendPhase(":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+			return appendPhase("<<DELIM1 <summary>\nDone.\nDELIM1\n")
 		}
 
 		_, err := run(context.Background(), RunOptions{
@@ -303,9 +303,9 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				round++
 				if round == 1 {
-					return appendPhase(":::徕珑 <shell>\necho hi\n:::徕珑 </shell>\n")
+					return appendPhase("<<DELIM1 <shell>\necho hi\nDELIM1\n")
 				}
-				return appendPhase(":::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+				return appendPhase("<<DELIM1 <summary>\nDone.\nDELIM1\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -335,7 +335,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			Components:     nil,
 			OnRoundSuccess: onRoundSuccess,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase(":::徕珑 <summary>\nRound 1 done.\n:::徕珑 </summary>\n")
+				return appendPhase("<<DELIM1 <summary>\nRound 1 done.\nDELIM1\n")
 			},
 		})
 		if err != nil {
@@ -424,7 +424,7 @@ func TestRunMaxRounds(t *testing.T) {
 			MaxRounds:    3,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				callCount++
-				return appendPhase(":::徕珑 <shell>\necho hi\n:::徕珑 </shell>\n")
+				return appendPhase("<<DELIM1 <shell>\necho hi\nDELIM1\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -439,11 +439,6 @@ func TestRunMaxRounds(t *testing.T) {
 
 func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 	withRun(t, func(run Run) {
-		// Reproduction: when a phase returns nil state on error,
-		// loops.Run must fall back to the pre-phase state so OnPhaseError
-		// receives a valid (non-nil) state. Before the fix, the nil state
-		// was passed directly to OnPhaseError, causing a nil pointer
-		// dereference when it called errState.AppendContent.
 		var onPhaseErrorState generators.State
 		onPhaseError := func(state generators.State, err error) generators.State {
 			onPhaseErrorState = state
@@ -477,11 +472,9 @@ func TestRunRetryOnApplyError(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				// First round: emit a change block that will fail to apply.
-				return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+				return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
 			}
-			// Second round: success with summary only.
-			return appendPhase(":::徕珑 <summary>\nFixed.\n:::徕珑 </summary>\n")
+			return appendPhase("<<DELIM1 <summary>\nFixed.\nDELIM1\n")
 		}
 
 		applyAttempts := 0
@@ -521,7 +514,6 @@ func TestRunRetryOnApplyError(t *testing.T) {
 			t.Fatalf("expected OnRoundStart called at least 2 times, got %d", onRoundStartCalled)
 		}
 
-		// Verify the error message was appended as user content for the model.
 		foundErrorMsg := false
 		for c := range result.FinalState.Contents() {
 			if c.Role == generators.RoleUser {
@@ -545,7 +537,7 @@ func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+			return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
 		}
 
 		blockHandler := func(block blocks.Block) (bool, error) {
@@ -568,7 +560,6 @@ func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error after max retries exhausted")
 		}
-		// maxRetries=2 means: initial + 2 retries = 3 calls.
 		if callCount != 3 {
 			t.Fatalf("expected 3 calls (initial + 2 retries), got %d", callCount)
 		}
@@ -580,7 +571,7 @@ func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhase(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::徕珑 <summary>\nDone.\n:::徕珑 </summary>\n")
+			return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
 		}
 
 		blockHandler := func(block blocks.Block) (bool, error) {
@@ -642,7 +633,6 @@ func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
 			return appendPhase("model output")
 		}
 
-		// A component that never triggers (no blocks match its kind).
 		comps := components.ComponentSet{
 			{
 				Kind: "shell",
@@ -674,11 +664,9 @@ func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// 3 generate calls: initial round + 2 OnIdle continuations.
 		if genCount != 3 {
 			t.Fatalf("expected 3 generate calls, got %d", genCount)
 		}
-		// 3 OnIdle calls: after round 1, 2, and 3 (third returns false).
 		if idleCount != 3 {
 			t.Fatalf("expected 3 idle calls, got %d", idleCount)
 		}
@@ -692,7 +680,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			genCount++
-			return appendPhase(":::徕珑 <shell>\necho hi\n:::徕珑 </shell>\n")
+			return appendPhase("<<DELIM1 <shell>\necho hi\nDELIM1\n")
 		}
 
 		comps := components.ComponentSet{
@@ -722,7 +710,6 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// The shell component always triggers, so OnIdle is never called.
 		if genCount != 3 {
 			t.Fatalf("expected 3 generate calls, got %d", genCount)
 		}
@@ -784,8 +771,6 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 			},
 		}
 
-		// OnIdle is nil — the loop should end after the first round
-		// when no component triggers.
 		_, err := run(context.Background(), RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),

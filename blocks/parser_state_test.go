@@ -68,7 +68,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 2: opening marker and partial body (no end marker yet)
 	newState, err = ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 3: end marker completes the block
 	newState, err = ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::徕珑 </change>\n")},
+		Parts: []generators.Part{generators.Text("DELIM1\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,8 +93,8 @@ func TestParserStateStreamParsing(t *testing.T) {
 	if collectedBlocks[0].Kind != "change" {
 		t.Fatalf("expected kind change, got %s", collectedBlocks[0].Kind)
 	}
-	if collectedBlocks[0].Boundary != "徕珑" {
-		t.Fatalf("expected boundary 徕珑, got %s", collectedBlocks[0].Boundary)
+	if collectedBlocks[0].Boundary != "DELIM1" {
+		t.Fatalf("expected boundary DELIM1, got %s", collectedBlocks[0].Boundary)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 		return nil
 	})
 
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n:::栢彣 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n:::栢彣 </change>\n:::桀骥 <summary>\n- Done.\n:::桀骥 </summary>\n"
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM2 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\nDELIM2\n<<DELIM3 <summary>\n- Done.\nDELIM3\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -119,13 +119,13 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 	if len(collectedBlocks) != 3 {
 		t.Fatalf("expected 3 blocks, got %d", len(collectedBlocks))
 	}
-	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "DELIM1" {
 		t.Fatalf("unexpected first block: %+v", collectedBlocks[0])
 	}
-	if collectedBlocks[1].Kind != "change" || collectedBlocks[1].Boundary != "栢彣" {
+	if collectedBlocks[1].Kind != "change" || collectedBlocks[1].Boundary != "DELIM2" {
 		t.Fatalf("unexpected second block: %+v", collectedBlocks[1])
 	}
-	if collectedBlocks[2].Kind != "summary" || collectedBlocks[2].Boundary != "桀骥" {
+	if collectedBlocks[2].Kind != "summary" || collectedBlocks[2].Boundary != "DELIM3" {
 		t.Fatalf("unexpected third block: %+v", collectedBlocks[2])
 	}
 }
@@ -153,7 +153,7 @@ func TestParserStateIgnoresUserRole(t *testing.T) {
 	// User role content should not be parsed for blocks
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleUser,
-		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n")},
+		Parts: []generators.Part{generators.Text("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"),
+			generators.Thought("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"),
 		},
 	}
 	newState, err := ps.AppendContent(content)
@@ -198,8 +198,8 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content2 := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought(":::栢彣 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n:::栢彣 </change>\n"),
-			generators.Text(":::瑱魃 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n:::瑱魃 </change>\n"),
+			generators.Thought("<<DELIM2 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\nDELIM2\n"),
+			generators.Text("<<DELIM3 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\nDELIM3\n"),
 		},
 	}
 	newState, err = ps.AppendContent(content2)
@@ -210,7 +210,7 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	if len(collectedBlocks) != 1 {
 		t.Fatalf("expected 1 block from text part, got %d", len(collectedBlocks))
 	}
-	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "瑱魃" {
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "DELIM3" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
 }
@@ -226,7 +226,7 @@ func TestParserStatePendingText(t *testing.T) {
 	// Append incomplete block
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("prose before\n:::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody")},
+		Parts: []generators.Part{generators.Text("prose before\n<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestParserStatePendingText(t *testing.T) {
 	if pending == "" {
 		t.Fatal("PendingText should not be empty for incomplete block")
 	}
-	if !contains(pending, ":::徕珑") {
+	if !contains(pending, "<<DELIM1") {
 		t.Fatalf("PendingText should contain the opening marker: %q", pending)
 	}
 }
@@ -263,15 +263,15 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 		return nil
 	})
 
-	// The model opens a block with boundary 徕珑. The body contains a
-	// line-start :::栢彣 </change> with a different boundary. This should be
+	// The model opens a block with delimiter DELIM1. The body contains a
+	// line with a different delimiter DELIM2. This should be
 	// treated as body content, not a closing marker. Since no matching
-	// :::徕珑 </change> exists, the block is unclosed (incomplete) and no
+	// DELIM1 line exists, the block is unclosed (incomplete) and no
 	// error should be surfaced during streaming.
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(
-			":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::栢彣 </change>\n",
+			"<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM2\n",
 		)},
 	}
 	newState, err := ps.AppendContent(content)
@@ -285,7 +285,7 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 	}
 	// The content should remain in the buffer as pending text.
 	pending := ps.PendingText()
-	if !contains(pending, ":::徕珑") {
+	if !contains(pending, "<<DELIM1") {
 		t.Fatalf("pending text should contain the opening marker: %q", pending)
 	}
 }
@@ -298,11 +298,11 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 		return nil
 	})
 
-	// A body containing a line-start :::栢彣 </change> with a different boundary
-	// is treated as body content. When the matching :::徕珑 </change>
+	// A body containing a line with a different delimiter DELIM2
+	// is treated as body content. When the matching DELIM1
 	// arrives, the block is parsed correctly with the non-matching
-	// :::栢彣 </change> preserved in the body.
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n:::栢彣 </change>\nbody line 2\n:::徕珑 </change>\n"
+	// DELIM2 preserved in the body.
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\nDELIM2\nbody line 2\nDELIM1\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -315,11 +315,11 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 	if len(collectedBlocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
 	}
-	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "DELIM1" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
-	if !contains(collectedBlocks[0].Body, ":::栢彣 </change>") {
-		t.Fatalf("body should contain non-matching closing marker as content: %q", collectedBlocks[0].Body)
+	if !contains(collectedBlocks[0].Body, "DELIM2") {
+		t.Fatalf("body should contain non-matching delimiter line as content: %q", collectedBlocks[0].Body)
 	}
 	if !contains(collectedBlocks[0].Body, "body line 1") || !contains(collectedBlocks[0].Body, "body line 2") {
 		t.Fatalf("body should contain both body lines: %q", collectedBlocks[0].Body)
@@ -337,7 +337,7 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	// Append an unclosed block (no end marker yet).
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text(":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -358,8 +358,8 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if e.BlockKind != "change" || e.Boundary != "DELIM1" {
+		t.Fatalf("expected unclosed block kind=change boundary=DELIM1, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 }
 
@@ -372,7 +372,7 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	})
 
 	// Append a complete block (with end marker).
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -410,7 +410,7 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 
 	// The end marker is at the very end without a trailing newline.
 	// The block should be parsed correctly during streaming.
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>"
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -423,13 +423,13 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 	if len(collectedBlocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
 	}
-	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "徕珑" {
+	if collectedBlocks[0].Kind != "change" || collectedBlocks[0].Boundary != "DELIM1" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", collectedBlocks[0].Kind, collectedBlocks[0].Boundary)
 	}
 	if !contains(collectedBlocks[0].Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", collectedBlocks[0].Body)
 	}
-	if contains(collectedBlocks[0].Body, ":::徕珑") {
+	if contains(collectedBlocks[0].Body, "DELIM1") {
 		t.Fatalf("body should not contain the end marker: %q", collectedBlocks[0].Body)
 	}
 
@@ -452,7 +452,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -480,7 +480,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"
 		_, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -501,7 +501,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text1 := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+		text1 := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text1)},
@@ -514,7 +514,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 1 handler call, got %d", callCount)
 		}
 
-		text2 := ":::栢彣 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n:::栢彣 </change>\n"
+		text2 := "<<DELIM2 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\nDELIM2\n"
 		newState, err = ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text2)},
@@ -536,7 +536,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
+		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -573,7 +573,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 
 		// Unclosed change block (no closing marker) — simulates
 		// truncated output where the model is cut off mid-block.
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {\n\t// truncated"
+		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {\n\t// truncated"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -594,8 +594,8 @@ func TestParserStateBlockHandler(t *testing.T) {
 		if !isParseErr {
 			t.Fatalf("expected BlockParseError, got %T: %v", flushErr, flushErr)
 		}
-		if e.BlockKind != "change" || e.Boundary != "徕珑" {
-			t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+		if e.BlockKind != "change" || e.Boundary != "DELIM1" {
+			t.Fatalf("expected unclosed block kind=change boundary=DELIM1, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 		}
 	})
 }
@@ -607,7 +607,7 @@ func TestParserStateNoHandler(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	text := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n:::徕珑 </change>\n"
+	text := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},

@@ -217,13 +217,15 @@ func ParseFirstBoundaryChangeBlock(content []byte) (h ChangeBlock, start int, en
 
 const ChangeBlockPrompt = `**Change Block Kind:**
 
-The "change" kind defines code modifications using the boundary block format. The opening tag's XML attributes specify the operation, target, and file path. The body is the complete declaration code.
+The "change" kind defines code modifications using the heredoc block format. The opening tag's XML attributes specify the operation, target, and file path. The body is the complete declaration code.
 
 **Change Block Format:**
 
-:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<declaration_identifier|BEGIN|END|new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
+<<DELIMITER <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<declaration_identifier|BEGIN|END|new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
 <complete_declaration_code>
-:::<boundary> </change>
+DELIMITER
+
+The DELIMITER placeholder above is symbolic: in every real block, replace it with exactly two uncommon Chinese characters (e.g., 徕珑) that do not appear in the body, and never reuse any example delimiter shown below.
 
 **Rules:**
 - The opening tag attributes:
@@ -256,54 +258,55 @@ The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targe
 **Example:**
 
 I analyzed the code and found an issue with the Foo function...
-:::徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+<<齉爩 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
 // Foo does something important.
 func Foo() {
 	println("fixed")
 }
-:::徕珑 </change>
+齉爩
 The Bar function is now unused and should be removed...
-:::栢彣 <change op="DELETE" target="Bar" file-path="/home/user/foo.go">
-:::栢彣 </change>
+<<灪麤 <change op="DELETE" target="Bar" file-path="/home/user/foo.go">
+灪麤
 The unused.go file should be removed entirely...
-:::骐骎 <change op="DELETE" target="*" file-path="/home/user/unused.go">
-:::骐骎 </change>
+<<龖爨 <change op="DELETE" target="*" file-path="/home/user/unused.go">
+龖爨
 The config file needs to be completely rewritten...
-:::瑱魃 <change op="WRITE" file-path="/home/user/config.go">
+<<齾麐 <change op="WRITE" file-path="/home/user/config.go">
 package config
 
 func New() *Config {
 	return &Config{}
 }
-:::瑱魃 </change>
+齾麐
 Moving this file to a new package, just update the package clause...
-:::羿聕 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
+<<虋灩 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
 package newpkg
-:::羿聕 </change>
+虋灩
 Replacing a unique string in a Markdown file...
-:::崓嶆 <change op="REPLACE" find="old description text" file-path="/home/user/readme.md">
+<<爞齌 <change op="REPLACE" find="old description text" file-path="/home/user/readme.md">
 new description text
-:::崓嶆 </change>
+爞齌
 Inserting content after a unique anchor in a config file...
-:::壴惉 <change op="INSERT_AFTER" find="[dependencies]" file-path="/home/user/Cargo.toml">
+<<齑靁 <change op="INSERT_AFTER" find="[dependencies]" file-path="/home/user/Cargo.toml">
 serde = { version = "1.0", features = ["derive"] }
-:::壴惉 </change>
+齑靁
 These changes should resolve the issue.
-:::桀骥 <summary>
+<<黿鼍 <summary>
 - Fixed the Foo function
 - Removed the unused Bar function
 - Deleted the unused.go file
 - Rewrote the config file
 - Updated the Markdown description
 - Added a dependency
-:::桀骥 </summary>
+黿鼍
 `
 
-const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the boundary-delimited format with XML attributes on the opening tag:
-:::<boundary> <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<identifier_or_new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
+const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the heredoc-delimited format with XML attributes on the opening tag:
+<<DELIMITER <change op="<MODIFY|ADD_BEFORE|ADD_AFTER|DELETE|RENAME|WRITE|REPLACE|INSERT_BEFORE|INSERT_AFTER>" target="<identifier_or_new_file_path>" find="<unique_string_anchor>" file-path="<absolute_path>">
 <complete code>
-:::<boundary> </change>
+DELIMITER
 
+- The DELIMITER in the format above is symbolic: replace it with exactly two uncommon Chinese characters (e.g., 徕珑), the same delimiter on the opening and closing lines. Never write the literal text "DELIMITER" or any example delimiter.
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.

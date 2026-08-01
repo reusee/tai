@@ -81,14 +81,14 @@ The "go-test" kind allows you to run Go tests and receive the output as part of 
 
 **Go-Test Block Format (complete example):**
 
-:::崚嶒 <go-test>
+<<齾麐 <go-test>
 -run
 TestFoo
 -v
 /absolute/path/to/pkg/...
-:::崚嶒 </go-test>
+齾麐
 
-The boundary 崚嶒 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
+The delimiter 齾麐 in the example is illustrative only: in every block you emit, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
@@ -97,22 +97,22 @@ The boundary 崚嶒 in the example is illustrative only: in every block you emit
 - **Target specific tests**: When you modify or add a test function, name it in the -run argument so the verification is directly tied to your change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back to you as user content in the next round so you can debug and fix the issues. When tests pass, the output is not returned.
 - Prefer running tests after applying change blocks to verify correctness.
-- Close the go-test block with its closing marker before emitting any other block (e.g., the summary block): the closing marker must appear before the next block's opening marker.
+- Close the go-test block with its closing line before emitting any other block (e.g., the summary block): the closing line must appear before the next block's opening marker.
 - The go-test block is NOT a completion signal. You MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
 - The go-test block should appear before the summary block in the response.
 `
 
 const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block to verify:
-:::崚嶒 <go-test>
+<<虋灩 <go-test>
 <optional go test arguments, one per line>
-:::崚嶒 </go-test>
+虋灩
 - Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). You do not know the current working directory, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so you can construct correct absolute paths. If you do not know the working directory yet, use an empty body to run all tests (./...).
 - **Target specific tests**: When you modify or add a test function, name it in the -run argument so the verification is directly tied to your change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when you need a broad sanity check or do not yet know which tests are relevant.
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. You MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
-- The example boundary 崚嶒 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
+- The example delimiter 虋灩 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const goTestTimeout = 120 * time.Second
 

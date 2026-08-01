@@ -36,11 +36,11 @@ The "shell" kind allows the model to execute shell commands and receive the outp
 
 **Shell Block Format (complete example):**
 
-:::龘靐 <shell>
+<<爞齌 <shell>
 go test ./...
-:::龘靐 </shell>
+爞齌
 
-The boundary 龘靐 in the example is illustrative only: in every block you emit, use a freshly chosen pair of two uncommon, meaningless Chinese characters, and repeat the exact same pair in the closing marker. Every marker line starts at the beginning of a line and ends with the '>' of its tag. Never write the placeholder text "<boundary>" in a real marker.
+The delimiter 爞齌 in the example is illustrative only: in every block you emit, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
@@ -74,10 +74,10 @@ The boundary 龘靐 in the example is illustrative only: in every block you emit
 `
 
 const ShellBlockRestatePrompt = `- Shell block: emit
-:::龘靐 <shell>
+<<齑靁 <shell>
 <shell command>
-:::龘靐 </shell>
-to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example boundary 龘靐 is illustrative: use your own fresh pair of TWO Chinese characters, the SAME pair in both markers, each marker on its own line ending with '>'. Never write the placeholder text "<boundary>" literally.`
+齑靁
+to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const shellTimeout = 30 * time.Second
 

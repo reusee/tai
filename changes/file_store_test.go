@@ -582,7 +582,7 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 
 		state := generators.NewPrompts("", nil)
 		parserState := blocks.NewParserState(state)
-		text := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
+		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\nDELIM1\n"
 		newState, err := parserState.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -595,7 +595,7 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 		changeBlocks := []blocks.Block{
 			{
 				Kind:       "change",
-				Boundary:   "徕珑",
+				Boundary:   "DELIM1",
 				Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
 				Body:       "func New() {}",
 			},

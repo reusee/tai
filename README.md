@@ -170,12 +170,12 @@ generators: [
 ### Change Block Example
 
 ```
-:::<boundary> <change op="MODIFY" target="Foo" file-path="/path/to/file.go">
+<<CHG1 <change op="MODIFY" target="Foo" file-path="/path/to/file.go">
 // Foo does something important.
 func Foo() {
     println("fixed")
 }
-:::<boundary> </change>
+CHG1
 ```
 
 ### Change Operations
@@ -276,4 +276,3 @@ memories/         Per-model memory profiles
 states/           State layers (thoughts summarization)
 taiconfigs/       tai-specific configuration schema
 ```
-

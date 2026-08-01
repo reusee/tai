@@ -764,7 +764,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		}
 		defer root.Close()
 
-		content := ":::徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
+		content := "<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
 		diffPath := filepath.Join(dir, "diff.txt")
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -822,7 +822,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 				t.Fatal(err)
 			}
 			remainingStr := string(remaining)
-			if strings.Contains(remainingStr, "徕珑") {
+			if strings.Contains(remainingStr, "DELIM1") {
 				t.Fatalf("applied change block should be removed from diff file:\n%s", remainingStr)
 			}
 			if !strings.Contains(remainingStr, "Renamed Old to New.") {
@@ -842,8 +842,8 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 			}
 		}
 
-		changeBlock := ":::徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n:::徕珑 </change>\n"
-		summaryBlock := ":::栢彣 <summary>\n- Renamed Old to New.\n:::栢彣 </summary>\n"
+		changeBlock := "<<DELIM1 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\nDELIM1\n"
+		summaryBlock := "<<DELIM2 <summary>\n- Renamed Old to New.\nDELIM2\n"
 
 		t.Run("ChangeThenSummary", func(t *testing.T) {
 			run(t, changeBlock+"\n"+summaryBlock)

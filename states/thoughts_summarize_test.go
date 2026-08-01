@@ -42,9 +42,9 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 			}
 		}
 	}
-	// Wrap the summary in a boundary-delimited summary block so that
+	// Wrap the summary in a heredoc-delimited summary block so that
 	// Summarize can parse it via blocks.ParseFirstBlock.
-	blockOutput := ":::塅垝 <summary>\n" + m.summary + "\n:::塅垝 </summary>"
+	blockOutput := "<<DELIM1 <summary>\n" + m.summary + "\nDELIM1"
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
@@ -456,6 +456,17 @@ func TestSplitAtLastCompleteParagraph(t *testing.T) {
 				t.Errorf("remaining: got %q, want %q", remaining, tt.remaining)
 			}
 		})
+	}
+}
+
+func TestSummarizeSystemPromptUsesUncommonChineseDelimiter(t *testing.T) {
+	// The delimiter policy mandates exactly two uncommon Chinese characters
+	// per block. See TheoryOfBlockFormatGeneral in blocks/block.go.
+	if !strings.Contains(SummarizeSystemPrompt, "uncommon Chinese characters") {
+		t.Fatal("SummarizeSystemPrompt must mandate the two-uncommon-Chinese-characters delimiter policy")
+	}
+	if strings.Contains(SummarizeSystemPrompt, "<<ENDSUM") {
+		t.Fatal("SummarizeSystemPrompt must not display the legacy ENDSUM example delimiter")
 	}
 }
 
