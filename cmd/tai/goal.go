@@ -7,9 +7,9 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/prompts"
-	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/modes"
 )
 
@@ -47,9 +47,9 @@ construction-time state, a failed or interrupted loop cannot leak it into
 the next one. The cost is at most one re-evaluation of the provider chain
 per loop, bounded by the iteration limit and consistent with the intent
 that each loop starts from the current system state. Reset complements the
-anytexts.CodeProvider choice below: it clears per-scope provider caches,
-while anytexts is still required for process-level file caches that reset
-cannot reach.
+gocodes.CodeProvider default below: the gocodes pipeline holds no
+process-level caches — all caches live inside scope provider functions —
+so reset recomputes them on each loop.
 
 The .GOAL_COMPLETE marker file is the completion signal. The model is
 instructed to create it via a WRITE change block when it judges the goal as
@@ -58,15 +58,13 @@ If found, the goal is achieved and the command exits cleanly. If not found,
 another loop is started. The marker file is removed before each loop to prevent
 false positives from previous iterations.
 
-The anytexts.CodeProvider is used instead of gocodes.CodeProvider to avoid the
-sync.OnceValues cache in GetFiles. The gocodes pipeline caches loaded packages
-and parsed ASTs for the lifetime of the process, which is correct for
-single-shot commands (go, any) but incorrect for the goal command where each
-loop must see the current filesystem state. The anytexts.CodeProvider reads
-from disk on every call, ensuring each loop sees changes made by previous
-loops. This trades Go-specific context simplification (import distance, AST
-transformation) for filesystem freshness, which is the correct trade-off for
-iterative goal-directed execution.
+The gocodes.CodeProvider is the default for the goal command, matching the go
+subcommand's Go-oriented context organization (import distance, AST
+transformation). The gocodes pipeline holds no process-level caches: all
+caches, such as loaded packages and parsed ASTs, are defined within scope
+provider functions. Because each goal loop resolves a fresh codes.Generate
+from a reset scope, dscope.Reset rebuilds every provider-scoped cache, giving
+each loop an accurate view of the current filesystem state.
 `
 
 const maxGoalIterations = 20
@@ -102,7 +100,7 @@ var GoalCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
 		func(
-			provider anytexts.CodeProvider,
+			provider gocodes.CodeProvider,
 		) codetypes.CodeProvider {
 			return provider
 		},

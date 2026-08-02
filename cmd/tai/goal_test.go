@@ -52,3 +52,15 @@ func TestGoalSystemPromptNoLiteralDelimiter(t *testing.T) {
 		t.Fatal("GoalSystemPrompt must not display the literal template marker '<<DELIMITER'")
 	}
 }
+
+func TestGoalTheoryStatesNoProcessLevelCaches(t *testing.T) {
+	// The gocodes pipeline must not hold process-level caches: all caches
+	// live inside scope provider functions, so dscope.Reset recomputes them
+	// on every goal loop. See TheoryOfGoalCommand.
+	if !strings.Contains(TheoryOfGoalCommand, "no process-level caches") {
+		t.Fatal("TheoryOfGoalCommand must state that the gocodes pipeline holds no process-level caches")
+	}
+	if !strings.Contains(TheoryOfGoalCommand, "scope provider functions") {
+		t.Fatal("TheoryOfGoalCommand must state that all gocodes caches live inside scope provider functions")
+	}
+}
