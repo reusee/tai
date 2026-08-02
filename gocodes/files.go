@@ -89,6 +89,7 @@ func (Module) Files(
 	maxDistance MaxPackageDistanceFromRoot,
 	includeStdLib IncludeStdLib,
 	debug Debug,
+	loadDir LoadDir,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -270,6 +271,31 @@ func (Module) Files(
 		for _, pkg := range rootPkgs {
 			for _, file := range pkg.GoFiles {
 				rootPkgDirs[filepath.Dir(file)] = pkg
+				break
+			}
+		}
+		// Also include the module root directory for .md file scanning.
+		// When the module root has no direct .go files (e.g., all Go code
+		// lives in subdirectories), the root directory does not appear in
+		// rootPkgDirs and top-level documentation like README.md would be
+		// missed. Associate the root directory with an existing root
+		// package so .md files discovered there are treated as root
+		// package files (PackageIsRoot=true) and survive simplification.
+		// Only add the module root when it matches the LoadDir. When
+		// LoadDir is a subdirectory of the module root, the module root
+		// may contain files outside the writable directories (e.g., when
+		// running tests from a package subdirectory), and pulling them in
+		// would cause the focus file writable check to reject them at
+		// collection time.
+		loadDirPath := filepath.Clean(string(loadDir))
+		for _, pkg := range rootPkgs {
+			if pkg.Module != nil && pkg.Module.Dir != "" {
+				rootDir := filepath.Clean(pkg.Module.Dir)
+				if rootDir == loadDirPath {
+					if _, ok := rootPkgDirs[rootDir]; !ok {
+						rootPkgDirs[rootDir] = pkg
+					}
+				}
 				break
 			}
 		}
