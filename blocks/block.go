@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const TheoryOfBlockFormatGeneral = `
@@ -63,8 +64,8 @@ markers.
 const TheoryOfBoundaryUniqueness = `
 The delimiter is the sole disambiguator between consecutive delimited blocks within
 a single response. The parser closes a block at the first line that exactly matches
-the opening marker's delimiter. A line that does not match the delimiter is treated as
-body content. If no matching delimiter line is found, the block is unclosed. The
+the opening marker's delimiter. A line that does not match the delimiter is treated
+as body content. If no matching delimiter line is found, the block is unclosed. The
 closing marker line does not require a trailing newline: when the delimiter is the
 last content in the buffer, the parser extracts it from the remaining content. If
 the delimiter is incomplete (still streaming), the shorter extracted string will not
@@ -78,6 +79,9 @@ the integrity guarantee of the format: a pair of uncommon Chinese characters is
 effectively absent from code and prose, so the chance of a body line accidentally
 matching the delimiter is negligible, while reusing an example delimiter would cause
 a subsequent real block opened with that same delimiter to close at the wrong marker.
+The parser enforces the Han requirement at extraction time: extractDelimiter validates
+that every rune in the delimiter belongs to Unicode Han, rejecting ASCII and other
+scripts so that only Chinese-character delimiters are recognized as block markers.
 
 The delimiter must also be disjoint from the block body; this is a hard requirement,
 not an optional suggestion. Because the parser closes the block at the first line
@@ -462,17 +466,32 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 
 // extractDelimiter extracts the delimiter string from the opening line.
 // The delimiter is the text from the start of the (trimmed) line up to the
-// first whitespace or '<' character, whichever comes first. A line with no
-// characters before whitespace or '<' yields an empty string, causing the
-// marker to be skipped. See TheoryOfBoundaryUniqueness.
+// first whitespace or '<' character, whichever comes first. The delimiter
+// must consist solely of Unicode Han characters; any non-Han character
+// causes an empty string to be returned, so the marker is skipped and the
+// line is treated as regular content. This enforces the policy that block
+// delimiters are pairs of uncommon Chinese characters. A line with no
+// characters before whitespace or '<' also yields an empty string.
+// See TheoryOfBoundaryUniqueness.
 func extractDelimiter(s string) string {
 	s = strings.TrimSpace(s)
+	delimiter := s
 	for i, r := range s {
 		if r == ' ' || r == '\t' || r == '<' {
-			return s[:i]
+			delimiter = s[:i]
+			break
 		}
 	}
-	return s
+	// The delimiter must consist solely of Unicode Han characters.
+	// Non-Han delimiters are rejected so that only Chinese-character
+	// delimiters are recognized as block markers.
+	// See TheoryOfBoundaryUniqueness.
+	for _, r := range delimiter {
+		if !unicode.Is(unicode.Han, r) {
+			return ""
+		}
+	}
+	return delimiter
 }
 
 // BlockParseError is returned by ParseFirstBlock for unclosed heredoc blocks.
