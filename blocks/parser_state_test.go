@@ -364,6 +364,43 @@ func TestParserStateNestedBlocksSameDelimiter(t *testing.T) {
 	}
 }
 
+func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	// A body line that starts with "<<" and contains a valid XML tag
+	// but uses a DIFFERENT delimiter from the outer block must be
+	// treated as body content, not a nested opening. The outer block
+	// should close at its own delimiter without being affected by the
+	// different-delimiter opening. See TheoryOfNestedBlockParsing.
+	text := "<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<龘靐 <tag>\nfunc Foo() {}\n徕珑\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
+	}
+	if collectedBlocks[0].Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", collectedBlocks[0].Boundary)
+	}
+	if !contains(collectedBlocks[0].Body, "<<龘靐 <tag>") {
+		t.Fatalf("body should contain the different-delimiter opening as content: %q", collectedBlocks[0].Body)
+	}
+	if !contains(collectedBlocks[0].Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", collectedBlocks[0].Body)
+	}
+}
+
 func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block

@@ -107,18 +107,30 @@ const TheoryOfNestedBlockParsing = `
 The parser supports nested blocks: when a block body contains another block
 opening marker (<<DELIMITER <kind ...>), the inner block's closing marker does
 not prematurely close the outer block. The closing-marker scanner maintains a
-delimiter stack initialized with the outer block's delimiter. Each line that
-starts with "<<" and contains a valid XML opening tag after the delimiter
-pushes that delimiter onto the stack, marking the start of a nested block. A
-line that is a delimiter alone on its own line pops the stack only if it matches
-the top; when the stack becomes empty, the outer block is closed. A closing
-marker that does not match the top of the stack is treated as body content.
+delimiter stack initialized with the outer block's delimiter. A line that
+starts with "<<" and contains a valid XML opening tag after the delimiter is
+treated as a nested opening only when its delimiter matches the outer block's
+delimiter; matching delimiters are pushed onto the stack, marking the start of
+a nested block. A line that is a delimiter alone on its own line pops the stack
+only if it matches the top; when the stack becomes empty, the outer block is
+closed. A closing marker that does not match the top of the stack is treated as
+body content.
 
-This correctly handles same-delimiter nesting (the inner block's closing marker
-pops the inner level, not the outer level) and different-delimiter nesting (a
-non-matching delimiter line is body content at the current nesting level). When
-a nested block is unclosed, the outer block is also unclosed, because the
-stack never returns to empty.
+This correctly handles same-delimiter nesting (the inner block's closing
+marker pops the inner level, not the outer level). Different-delimiter opening
+markers in the body are treated as body content: they are not pushed onto the
+stack because they pose no collision risk — a different-delimiter closing line
+will never match the outer block's delimiter. When a same-delimiter nested
+block is unclosed, the outer block is also unclosed, because the stack never
+returns to empty.
+
+The same-delimiter restriction prevents false positives from body content that
+incidentally matches the <<HanHan <tag> pattern. If a different-delimiter
+opening were pushed onto the stack, the outer block's closing marker would not
+match the new stack top, and the block would be incorrectly reported as
+unclosed. By only tracking same-delimiter openings, the parser reserves stack
+pushes for genuine nesting scenarios where the inner closing marker must be
+distinguished from the outer closing marker.
 
 The XML-tag validation after the delimiter prevents false positives from
 content that starts with "<<" but is not a block opening. The validation
@@ -422,10 +434,13 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 			line = string(content[searchFrom : searchFrom+lineEnd])
 		}
 
-		// Check for a nested opening marker. The XML-tag validation
-		// prevents false positives from content that starts with "<<"
-		// but is not a block opening. See TheoryOfNestedBlockParsing.
-		if nestedDelim, nested := nestedOpeningDelimiter(line); nested {
+		// Check for a nested opening marker, but only when the nested
+		// delimiter matches the outer block's delimiter. Different
+		// delimiters in the body pose no collision risk and treating
+		// them as nested openings causes false positives when body
+		// content happens to match the <<HanHan <tag> pattern.
+		// See TheoryOfNestedBlockParsing.
+		if nestedDelim, nested := nestedOpeningDelimiter(line); nested && nestedDelim == stack[0] {
 			stack = append(stack, nestedDelim)
 			if lineEnd == -1 {
 				return 0, 0, false

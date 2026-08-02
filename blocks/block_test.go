@@ -458,10 +458,11 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 }
 
 func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
-	// When the body contains a nested block with a different delimiter,
-	// the nested block's closing marker pops the inner level. A
-	// non-matching delimiter line at the outer level is body content.
-	// See TheoryOfNestedBlockParsing.
+	// When the body contains a line that looks like a nested block
+	// opening with a different delimiter, it is treated as body content
+	// rather than pushed onto the stack. The different-delimiter closing
+	// line is also body content. The outer block closes at its own
+	// delimiter. See TheoryOfNestedBlockParsing.
 	content := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n徕珑\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
@@ -480,7 +481,33 @@ func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
 		t.Fatalf("body should contain outer block body: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "龘靐") {
-		t.Fatalf("body should contain inner block closing marker: %q", block.Body)
+		t.Fatalf("body should contain different-delimiter lines as content: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) {
+	// A body line that starts with "<<" and contains a valid XML tag
+	// but uses a DIFFERENT delimiter from the outer block must be
+	// treated as body content, not a nested opening. If it were pushed
+	// onto the stack, the outer block's closing marker would not match
+	// the stack top and the block would be incorrectly reported as
+	// unclosed. See TheoryOfNestedBlockParsing.
+	content := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<龘靐 <tag>\nfunc Foo() {}\n徕珑\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Boundary != "徕珑" {
+		t.Fatalf("expected boundary 徕珑, got %s", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "<<龘靐 <tag>") {
+		t.Fatalf("body should contain the different-delimiter opening as content: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
 	}
 }
 
