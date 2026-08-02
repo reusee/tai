@@ -61,6 +61,8 @@ log_level?: string
 
 // no_memory disables user profile memory persistence.
 no_memory?: bool
+// no_human disables interactive chat and REPL for unattended operation.
+no_human?: bool
 
 // ignore excludes files or patterns from the context.
 ignore?: [...string]

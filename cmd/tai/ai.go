@@ -96,6 +96,7 @@ var AICommand = Command{
 		flagFiles flags.Files,
 		flagChats flags.Chats,
 		noMemory NoMemory,
+		noHuman NoHuman,
 		loopRun loops.Run,
 	) {
 		ctx := context.Background()
@@ -180,6 +181,13 @@ var AICommand = Command{
 		// See TheoryOfAiCommand.
 		prevBufLen := 0
 
+		// When NoHuman is set, OnIdle is nil so the loop ends without
+		// prompting for input, enabling unattended operation.
+		var onIdle phases.IdleHandler
+		if !bool(noHuman) {
+			onIdle = buildChatIdle(generator, nil)
+		}
+
 		// Run the unified generation loop. The PhaseBuilder includes only
 		// the generate phase (not chat); the chat prompt is handled by
 		// OnIdle, which is invoked by the loop when no component triggers.
@@ -207,7 +215,7 @@ var AICommand = Command{
 				}
 				return nil
 			},
-			OnIdle:     buildChatIdle(generator, nil),
+			OnIdle:     onIdle,
 			HTTPClient: nets.HTTPClient{},
 		})
 		ce(err)

@@ -41,8 +41,9 @@ var GoCommand = Command{
 		generate codes.Generate,
 		tap debugs.Tap,
 		repl Repl,
+		noHuman NoHuman,
 	) {
-		if repl {
+		if bool(repl) && !bool(noHuman) {
 			tap(context.Background(), "repl", map[string]any{})
 			return
 		}

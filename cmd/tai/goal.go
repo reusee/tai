@@ -86,6 +86,7 @@ The delimiter 龘靐 is illustrative only: choose exactly two uncommon Chinese c
 var GoalCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
+		func() NoHuman { return NoHuman(true) },
 		func(
 			provider gocodes.CodeProvider,
 		) codetypes.CodeProvider {
