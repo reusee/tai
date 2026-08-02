@@ -201,7 +201,7 @@ func extractPartialOutput(state generators.State, skip int) string {
 				case generators.Text:
 					builder.WriteString(string(p))
 				case generators.Thought:
-					builder.WriteString(fmt.Sprint(p))
+					fmt.Fprint(&builder, p)
 				}
 			}
 		}
@@ -621,11 +621,8 @@ func (Module) Generate(
 			},
 
 			RetryOnMissingCompletion: true,
-			// Apply errors are routed through OnPhaseError by returning generic
-			// errors from BlockHandler, so they benefit from the same summary
-			// retry behavior. See TheoryOfSummaryRetryOnError.
-			RetryOnApplyError: false,
-			MaxRetries:        maxRetriesForMissingSummary,
+			RetryOnError:             true,
+			MaxRetries:               maxRetriesForMissingSummary,
 			SummarizeIncomplete: func(incompleteText string) (string, error) {
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 			},

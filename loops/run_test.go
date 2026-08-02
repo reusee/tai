@@ -72,6 +72,22 @@ func appendPhaseWithFinish(text string, finishReason string) phases.Phase {
 	}
 }
 
+// appendThenErrorPhase creates a phase that appends text content, then
+// returns the given error. Used to test error retry when content has been
+// output before the error occurs.
+func appendThenErrorPhase(text string, err error) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		newState, appendErr := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if appendErr != nil {
+			return nil, state, appendErr
+		}
+		return nil, newState, err
+	}
+}
+
 // errorPhase creates a phase that returns an error.
 func errorPhase(err error) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -554,61 +570,46 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 	})
 }
 
-func TestRunRetryOnApplyError(t *testing.T) {
+func TestRunRetryOnErrorWithContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
+				return appendThenErrorPhase("partial model output", errors.New("something went wrong"))
 			}
-			return appendPhase("<<DELIM1 <summary>\nFixed.\nDELIM1\n")
-		}
-
-		applyAttempts := 0
-		blockHandler := func(block blocks.Block) (bool, error) {
-			if block.Kind == "change" {
-				applyAttempts++
-				if applyAttempts == 1 {
-					return false, &ApplyError{Err: errors.New("invalid target: Foo not found")}
-				}
-				return true, nil
-			}
-			return false, nil
-		}
-
-		onRoundStartCalled := 0
-		onRoundStart := func() {
-			onRoundStartCalled++
+			return appendPhase("<<DELIM1 <summary>\nDone.\nDELIM1\n")
 		}
 
 		result, err := run(context.Background(), RunOptions{
-			Generator:         nil,
-			InitialState:      generators.NewPrompts("", nil),
-			Components:        nil,
-			BlockHandler:      blockHandler,
-			PhaseBuilder:      phaseBuilder,
-			OnRoundStart:      onRoundStart,
-			RetryOnApplyError: true,
-			MaxRetries:        3,
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: true,
+			MaxRetries:   3,
+			SummarizeIncomplete: func(text string) (string, error) {
+				return "summary of partial output", nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if callCount != 2 {
-			t.Fatalf("expected 2 phase calls (retry once), got %d", callCount)
-		}
-		if onRoundStartCalled < 2 {
-			t.Fatalf("expected OnRoundStart called at least 2 times, got %d", onRoundStartCalled)
+			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
 		}
 
 		foundErrorMsg := false
+		foundSummary := false
 		for c := range result.FinalState.Contents() {
 			if c.Role == generators.RoleUser {
 				for _, p := range c.Parts {
 					if text, ok := p.(generators.Text); ok {
-						if strings.Contains(string(text), "change block failed to apply") {
+						if strings.Contains(string(text), "error occurred") {
 							foundErrorMsg = true
+						}
+						if strings.Contains(string(text), "summary of partial output") {
+							foundSummary = true
 						}
 					}
 				}
@@ -617,33 +618,28 @@ func TestRunRetryOnApplyError(t *testing.T) {
 		if !foundErrorMsg {
 			t.Fatal("expected error message to be appended as user content")
 		}
+		if !foundSummary {
+			t.Fatal("expected incomplete output summary to be appended as user content")
+		}
 	})
 }
 
-func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
+func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
-		}
-
-		blockHandler := func(block blocks.Block) (bool, error) {
-			if block.Kind == "change" {
-				return false, &ApplyError{Err: errors.New("always fails")}
-			}
-			return false, nil
+			return appendThenErrorPhase("some output", errors.New("always fails"))
 		}
 
 		_, err := run(context.Background(), RunOptions{
-			Generator:         nil,
-			InitialState:      generators.NewPrompts("", nil),
-			Components:        nil,
-			BlockHandler:      blockHandler,
-			PhaseBuilder:      phaseBuilder,
-			OnRoundStart:      func() {},
-			RetryOnApplyError: true,
-			MaxRetries:        2,
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			OnRoundStart: func() {},
+			RetryOnError: true,
+			MaxRetries:   2,
 		})
 		if err == nil {
 			t.Fatal("expected error after max retries exhausted")
@@ -654,31 +650,23 @@ func TestRunRetryOnApplyErrorMaxRetries(t *testing.T) {
 	})
 }
 
-func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
+func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhase("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"test.go\">\nfunc Foo() {}\nDELIM1\n<<DELIM1 <summary>\nDone.\nDELIM1\n")
-		}
-
-		blockHandler := func(block blocks.Block) (bool, error) {
-			if block.Kind == "change" {
-				return false, &ApplyError{Err: errors.New("fails")}
-			}
-			return false, nil
+			return appendThenErrorPhase("some content", errors.New("some error"))
 		}
 
 		_, err := run(context.Background(), RunOptions{
-			Generator:         nil,
-			InitialState:      generators.NewPrompts("", nil),
-			Components:        nil,
-			BlockHandler:      blockHandler,
-			PhaseBuilder:      phaseBuilder,
-			RetryOnApplyError: false,
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: false,
 		})
 		if err == nil {
-			t.Fatal("expected error when RetryOnApplyError is disabled")
+			t.Fatal("expected error when RetryOnError is disabled")
 		}
 		if callCount != 1 {
 			t.Fatalf("expected 1 call (no retry), got %d", callCount)
@@ -686,7 +674,7 @@ func TestRunApplyErrorNoRetryWhenDisabled(t *testing.T) {
 	})
 }
 
-func TestRunApplyErrorNonApplyErrorNoRetry(t *testing.T) {
+func TestRunRetryOnErrorNoContentNoRetry(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -695,18 +683,18 @@ func TestRunApplyErrorNonApplyErrorNoRetry(t *testing.T) {
 		}
 
 		_, err := run(context.Background(), RunOptions{
-			Generator:         nil,
-			InitialState:      generators.NewPrompts("", nil),
-			Components:        nil,
-			PhaseBuilder:      phaseBuilder,
-			RetryOnApplyError: true,
-			MaxRetries:        3,
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: true,
+			MaxRetries:   3,
 		})
 		if err == nil {
-			t.Fatal("expected error for non-apply error")
+			t.Fatal("expected error without content output")
 		}
 		if callCount != 1 {
-			t.Fatalf("expected 1 call (non-apply errors should not retry), got %d", callCount)
+			t.Fatalf("expected 1 call (no content output, no retry), got %d", callCount)
 		}
 	})
 }
