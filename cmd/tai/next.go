@@ -184,7 +184,7 @@ var NextCommand = Command{
 			OnRoundStart: func() {
 				memStore.Reset()
 			},
-			RetryOnApplyError: true,
+			RetryOnError: true,
 		})
 		ce(err)
 
