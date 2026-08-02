@@ -7,7 +7,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260713161331-d38456fd1dc6
+	github.com/reusee/dscope v0.0.0-20260802013350-035b6d086c24
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/prompts v0.0.0-20260801144421-91587e260de0
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5

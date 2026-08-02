@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/codes"
@@ -34,6 +35,21 @@ over between loops, so the model always has an accurate view of the current
 codebase state. This prevents context overflow and ensures that changes made by
 previous loops are visible to subsequent loops through the filesystem, not
 through potentially stale conversation history.
+
+Each loop builds its codes.Generate from a fresh reset scope: Main takes
+dscope.Reset and invokes it once per iteration, resolving a new
+codes.Generate for every loop. Reset invalidates per-scope provider caches
+(see TheoryOfScopeReset in dscope), so any state captured at
+provider-evaluation time is rebuilt per loop instead of being shared across
+loops. This makes loop independence a structural guarantee rather than a
+convention: even if a provider in the codes.Generate chain retains
+construction-time state, a failed or interrupted loop cannot leak it into
+the next one. The cost is at most one re-evaluation of the provider chain
+per loop, bounded by the iteration limit and consistent with the intent
+that each loop starts from the current system state. Reset complements the
+anytexts.CodeProvider choice below: it clears per-scope provider caches,
+while anytexts is still required for process-level file caches that reset
+cannot reach.
 
 The .GOAL_COMPLETE marker file is the completion signal. The model is
 instructed to create it via a WRITE change block when it judges the goal as
@@ -98,11 +114,16 @@ var GoalCommand = Command{
 		},
 	},
 	Main: func(
-		generate codes.Generate,
+		reset dscope.Reset,
 	) {
 		ctx := context.Background()
 
 		for iteration := range maxGoalIterations {
+			scope := reset()
+
+			var generate codes.Generate
+			scope.Assign(&generate)
+
 			// Remove stale completion marker from previous iterations.
 			os.Remove(goalCompleteMarker)
 
