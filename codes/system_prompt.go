@@ -274,11 +274,10 @@ func (Module) SystemPrompt(
 ) (ret SystemPrompt) {
 	// Base prompt (prompts.Codes) and code provider prompt are prepended
 	// directly. All block-format, component, and extra prompts come from
-	// comps.PromptSections(). Restate prompts (critical reminders) are
-	// appended via comps.RestatePrompts(). ExtraSystemPrompt is now a
-	// prompt-only Component in CodesComponents, so it is no longer a
-	// separate parameter. See TheoryOfCodesComponents.
+	// comps.PromptSections(). Restate prompts are placed at the end of
+	// the user prompt via ComponentSet.UserPromptParts(), not in the
+	// system prompt.
+	// See TheoryOfCodesComponents.
 	return SystemPrompt(prompts.Codes + "\n" +
-		comps.PromptSections() +
-		comps.RestatePrompts())
+		comps.PromptSections())
 }

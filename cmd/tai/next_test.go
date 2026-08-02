@@ -286,7 +286,7 @@ func TestExtraSystemPrompt(t *testing.T) {
 	})
 }
 
-func TestSystemPromptIncludesChangeBlockRestatePrompt(t *testing.T) {
+func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -304,15 +304,31 @@ func TestSystemPromptIncludesChangeBlockRestatePrompt(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
+		func() generators.Generator { return aiMockGenerator{} },
 	).Call(func(
 		systemPrompt SystemPrompt,
+		userPrompt UserPrompt,
 	) {
 		s := string(systemPrompt)
 		if !strings.Contains(s, "Change Block Kind") {
 			t.Fatal("system prompt must include change block prompt when Go files are present")
 		}
-		if !strings.Contains(s, "a summary block is still required") {
-			t.Fatal("system prompt must include change block restate prompt when Go files are present")
+		// Restate prompt must NOT be in the system prompt (it is in the
+		// user prompt now).
+		if strings.Contains(s, "a summary block is still required") {
+			t.Fatal("system prompt must not include change block restate prompt")
+		}
+		// User prompt must include the restate prompt at the end.
+		foundRestate := false
+		for _, part := range userPrompt {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "a summary block is still required") {
+					foundRestate = true
+				}
+			}
+		}
+		if !foundRestate {
+			t.Fatal("user prompt must include change block restate prompt when Go files are present")
 		}
 	})
 }

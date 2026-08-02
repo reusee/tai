@@ -33,11 +33,13 @@ func (Module) AISystemPrompt(
 ) AISystemPrompt {
 	return func() (ret string, err error) {
 		// All system prompt contributions — base text, block format, memory,
-		// shell, continue, and extra prompt — are now unified as Components
-		// in AIComponents. Only the dynamic current time remains here
-		// because it must be computed at call time.
+		// shell, continue, and extra prompt — are unified as Components
+		// in AIComponents. Restate prompts are placed at the end of the user
+		// prompt via ComponentSet.UserPromptParts(), not in the system prompt.
+		// Only the dynamic current time remains here because it must be
+		// computed at call time.
 		// See TheoryOfAIComponents.
-		ret = comps.PromptSections() + comps.RestatePrompts()
+		ret = comps.PromptSections()
 
 		location, err := time.LoadLocation("Asia/Hong_Kong")
 		if err != nil {

@@ -39,11 +39,13 @@ resolved independently in the dscope scope without type conflicts.
 RestatePrompts are included for the block format, memory, shell, and
 continue components. Each RestatePrompt provides a short critical reminder
 that reinforces the block format rules (line-start requirement, boundary
-uniqueness, boundary matching) at the end of the system prompt, separated
-from the main PromptSections. This improves the model's adherence to the
-boundary-delimited block format by surfacing the most commonly violated
-rules as a distinct reminder section, mirroring the approach used by the
-codes module's change, go-test, and request-context components.
+uniqueness, boundary matching). Restate prompts are placed at the end of the
+user prompt via ComponentSet.UserPromptParts(), not in the system prompt, so
+they are the last content the model reads before generating. This improves
+the model's adherence to the boundary-delimited block format by surfacing
+the most commonly violated rules as a distinct reminder, mirroring the
+approach used by the codes module's change, go-test, and request-context
+components.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only

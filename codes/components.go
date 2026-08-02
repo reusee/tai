@@ -40,8 +40,9 @@ mechanisms with block processing mechanisms under a single framework.
 ExtraSystemPrompt is also a prompt-only Component, unifying the config-derived
 extra prompt into the same assembly mechanism. Change, go-test, and
 request-context components carry RestatePrompt fields — short critical reminders
-that reinforce block format rules, assembled via ComponentSet.RestatePrompts()
-separately from the main PromptSections.
+that reinforce block format rules. Restate prompts are placed at the end of
+the user prompt via ComponentSet.UserPromptParts(), not in the system prompt,
+so they are the last content the model reads before generating.
 
 The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
 that reinforces the requirement to emit a summary block in every response as

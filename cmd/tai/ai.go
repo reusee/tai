@@ -142,14 +142,17 @@ var AICommand = Command{
 			)
 		}
 
-		// Component user prompt parts are appended after file context.
-		parts = append(parts, comps.UserPromptParts()...)
-
 		// User input is wrapped with markers so the model can distinguish
 		// between reference file context and the task request.
 		parts = append(parts, generators.Text(
 			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
 		))
+
+		// Component user prompt parts (including restate prompts) are
+		// appended at the end of the user prompt so critical format
+		// reminders are the last thing the model reads before generating.
+		// See TheoryOfAIComponents.
+		parts = append(parts, comps.UserPromptParts()...)
 
 		var baseState generators.State
 		baseState = generators.NewPrompts(

@@ -30,11 +30,12 @@ user prompt contributions under the same Component framework as system prompt
 sections and restate reminders. ComponentSet is an ordered collection of
 Components that provides PromptSections (concatenating all system prompt
 contributions), RestatePrompts (concatenating all restate/reminder prompt
-contributions), UserPromptParts (concatenating all user prompt parts), and
-Processable (returning the subset with Process functions for the generation
-loop). RestatePrompts are assembled separately from PromptSections to keep
-critical format reminders grouped as a distinct section at the end of the
-system prompt.
+contributions), UserPromptParts (concatenating all user prompt parts, with
+restate prompts appended as the last element so critical format reminders are
+the last content the model reads before generating), and Processable (returning
+the subset with Process functions for the generation loop). Restate prompts are
+placed at the end of the user prompt, not the system prompt, so critical format
+reminders are the last thing the model reads before generating.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
@@ -165,12 +166,21 @@ func (c ComponentSet) RestatePrompts() string {
 // components, in registration order. These are prepended to the user's
 // input, similar to how CodeProvider.Parts provides context. Unlike
 // PromptSections which goes into the system prompt, UserPromptParts goes
-// into the user content. Components without UserPromptParts contribute
+// into the user content. Restate prompts are appended as the last user
+// prompt part so critical format reminders are the last thing the model
+// reads before generating. Components without UserPromptParts contribute
 // nothing. See TheoryOfComponents.
 func (c ComponentSet) UserPromptParts() []generators.Part {
 	var parts []generators.Part
 	for _, comp := range c {
 		parts = append(parts, comp.UserPromptParts...)
+	}
+	// Append restate prompts at the end of user prompt parts so critical
+	// format reminders are the last content the model reads before
+	// generating. Restate prompts are placed in the user prompt, not the
+	// system prompt. See TheoryOfComponents.
+	if restate := c.RestatePrompts(); restate != "" {
+		parts = append(parts, generators.Text(restate))
 	}
 	return parts
 }

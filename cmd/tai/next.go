@@ -6,10 +6,8 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/reusee/prompts"
-	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
@@ -45,30 +43,18 @@ application, causing blocks to be parsed but not written to disk.
 type SystemPrompt string
 
 func (Module) SystemPrompt(
-	codeProvider anytexts.CodeProvider,
 	logger logs.Logger,
 	extra flags.ExtraSystemPrompt,
-	flagFiles flags.Files,
+	hasGoFiles HasGoFiles,
 	flagFocus flags.Focus,
 	flagIgnore flags.Ignore,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
 
-	patterns := slices.Collect(maps.Keys(flagFiles))
-
-	hasGoFiles := false
-	for info, err := range codeProvider.IterFiles(patterns) {
-		ce(err)
-		if strings.HasSuffix(info.Path, ".go") {
-			hasGoFiles = true
-			break
-		}
-	}
 	if hasGoFiles {
 		logger.Info("has go file")
 		ret += "\n\n" + SystemPrompt(changes.ChangeBlockSystemPrompt()) + "\n\n"
-		ret += SystemPrompt(changes.ChangeBlockRestatePrompt()) + "\n"
 	}
 
 	for _, e := range extra {

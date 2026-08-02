@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
@@ -17,6 +18,7 @@ func (Module) UserPrompt(
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
+	hasGoFiles HasGoFiles,
 ) UserPrompt {
 
 	args := generator.Spec()
@@ -39,6 +41,13 @@ func (Module) UserPrompt(
 		slices.Collect(maps.Keys(flagFiles)),
 	)
 	ce(err)
+
+	// Restate prompts are placed at the end of the user prompt, not the
+	// system prompt, so critical format reminders are the last thing the
+	// model reads before generating.
+	if hasGoFiles {
+		parts = append(parts, generators.Text(changes.ChangeBlockRestatePrompt()))
+	}
 
 	return UserPrompt(parts)
 }

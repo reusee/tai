@@ -113,8 +113,7 @@ var GoalCommand = Command{
 		func(comps codes.CodesComponents) codes.SystemPrompt {
 			return codes.SystemPrompt(prompts.Codes + "\n" +
 				GoalSystemPrompt + "\n" +
-				comps.PromptSections() +
-				comps.RestatePrompts())
+				comps.PromptSections())
 		},
 	},
 	Main: func(

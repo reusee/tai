@@ -23,7 +23,7 @@ func (aiMockGenerator) Generate(context.Context, generators.State, *generators.G
 	return nil, nil
 }
 
-func TestAISystemPromptIncludesRestatePrompts(t *testing.T) {
+func TestAISystemPromptExcludesRestatePrompts(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Fork(
@@ -31,27 +31,52 @@ func TestAISystemPromptIncludesRestatePrompts(t *testing.T) {
 		func() generators.Generator { return aiMockGenerator{} },
 	).Call(func(
 		getSystemPrompt AISystemPrompt,
+		comps AIComponents,
 	) {
 		prompt, err := getSystemPrompt()
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Block format restate prompt
-		if !strings.Contains(prompt, "Block format (CRITICAL)") {
-			t.Fatal("system prompt must include block format restate prompt")
+		// System prompt must NOT contain restate prompts (they are placed
+		// at the end of the user prompt via UserPromptParts()).
+		if strings.Contains(prompt, "Block format (CRITICAL)") {
+			t.Fatal("system prompt must not include block format restate prompt")
 		}
-		// Continue block restate prompt (always included via CommonComponents)
-		if !strings.Contains(prompt, "Continue block:") {
-			t.Fatal("system prompt must include continue block restate prompt")
+		if strings.Contains(prompt, "Continue block:") {
+			t.Fatal("system prompt must not include continue block restate prompt")
 		}
-		// Memory block restate prompt (included by default, noMemory=false)
-		if !strings.Contains(prompt, "Memory block:") {
-			t.Fatal("system prompt must include memory block restate prompt")
+		if strings.Contains(prompt, "Memory block:") {
+			t.Fatal("system prompt must not include memory block restate prompt")
+		}
+		// Restate prompts must be available via comps.RestatePrompts() and
+		// comps.UserPromptParts().
+		restate := comps.RestatePrompts()
+		if !strings.Contains(restate, "Block format (CRITICAL)") {
+			t.Fatal("restate prompts must include block format restate prompt")
+		}
+		if !strings.Contains(restate, "Continue block:") {
+			t.Fatal("restate prompts must include continue block restate prompt")
+		}
+		if !strings.Contains(restate, "Memory block:") {
+			t.Fatal("restate prompts must include memory block restate prompt")
+		}
+		// UserPromptParts must include restate content.
+		userParts := comps.UserPromptParts()
+		foundRestate := false
+		for _, part := range userParts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "Block format (CRITICAL)") {
+					foundRestate = true
+				}
+			}
+		}
+		if !foundRestate {
+			t.Fatal("UserPromptParts must include restate prompt content")
 		}
 	})
 }
 
-func TestAISystemPromptIncludesShellRestatePromptWhenEnabled(t *testing.T) {
+func TestAIRestatePromptsIncludeShellWhenEnabled(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Fork(
@@ -59,38 +84,32 @@ func TestAISystemPromptIncludesShellRestatePromptWhenEnabled(t *testing.T) {
 		func() generators.Generator { return aiMockGenerator{} },
 		func() flags.Shell { return flags.Shell(true) },
 	).Call(func(
-		getSystemPrompt AISystemPrompt,
+		comps AIComponents,
 	) {
-		prompt, err := getSystemPrompt()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(prompt, "Shell block:") {
-			t.Fatal("system prompt must include shell block restate prompt when shell is enabled")
+		restate := comps.RestatePrompts()
+		if !strings.Contains(restate, "Shell block:") {
+			t.Fatal("restate prompts must include shell block restate prompt when shell is enabled")
 		}
 	})
 }
 
-func TestAISystemPromptExcludesShellRestatePromptWhenDisabled(t *testing.T) {
+func TestAIRestatePromptsExcludeShellWhenDisabled(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
 		func() generators.Generator { return aiMockGenerator{} },
 	).Call(func(
-		getSystemPrompt AISystemPrompt,
+		comps AIComponents,
 	) {
-		prompt, err := getSystemPrompt()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(prompt, "Shell block:") {
-			t.Fatal("system prompt must not include shell block restate prompt when shell is disabled")
+		restate := comps.RestatePrompts()
+		if strings.Contains(restate, "Shell block:") {
+			t.Fatal("restate prompts must not include shell block restate prompt when shell is disabled")
 		}
 	})
 }
 
-func TestAISystemPromptExcludesMemoryRestatePromptWhenNoMemory(t *testing.T) {
+func TestAIRestatePromptsExcludeMemoryWhenNoMemory(t *testing.T) {
 	dscope.New(
 		new(Module),
 	).Fork(
@@ -98,18 +117,15 @@ func TestAISystemPromptExcludesMemoryRestatePromptWhenNoMemory(t *testing.T) {
 		func() generators.Generator { return aiMockGenerator{} },
 		func() NoMemory { return NoMemory(true) },
 	).Call(func(
-		getSystemPrompt AISystemPrompt,
+		comps AIComponents,
 	) {
-		prompt, err := getSystemPrompt()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(prompt, "Memory block:") {
-			t.Fatal("system prompt must not include memory block restate prompt when noMemory is true")
+		restate := comps.RestatePrompts()
+		if strings.Contains(restate, "Memory block:") {
+			t.Fatal("restate prompts must not include memory block restate prompt when noMemory is true")
 		}
 		// Block format restate prompt should still be present
-		if !strings.Contains(prompt, "Block format (CRITICAL)") {
-			t.Fatal("system prompt must still include block format restate prompt when noMemory is true")
+		if !strings.Contains(restate, "Block format (CRITICAL)") {
+			t.Fatal("restate prompts must still include block format restate prompt when noMemory is true")
 		}
 	})
 }
