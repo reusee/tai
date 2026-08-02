@@ -21,8 +21,8 @@ func (mockGenerator) Generate(context.Context, generators.State, *generators.Gen
 }
 
 func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
-	text := "<<DELIM1 <continue>\ncontinue content\nDELIM1\n" +
-		"<<DELIM2 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM2\n"
+	text := "<<徕珑 <continue>\ncontinue content\n徕珑\n" +
+		"<<龘靐 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
 }
 
 func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
-	text := "<<DELIM1 <finish>\nSome summary.\n<<DELIM2 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM2\n"
+	text := "<<徕珑 <finish>\nSome summary.\n<<龘靐 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -64,14 +64,14 @@ func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
 }
 
 func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
-	text := "<<DELIM1 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\nDELIM1\n"
+	text := "<<徕珑 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n徕珑\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 {
-		t.Fatalf("expected 1 memory item, got %d", len(items))
+		t.Fatalf("expected 1 memory item, got %d: %v", len(items), items)
 	}
 	if items[0] != "user likes Go" {
 		t.Fatalf("expected 'user likes Go', got %q", items[0])
@@ -79,9 +79,9 @@ func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
 }
 
 func TestParseMemoryItemsMultipleNonMemoryBlocks(t *testing.T) {
-	text := "<<DELIM1 <summary>\nsummary text\nDELIM1\n" +
-		"<<DELIM2 <continue>\ncontinue content\nDELIM2\n" +
-		"<<DELIM3 <memory>\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\nDELIM3\n"
+	text := "<<徕珑 <summary>\nsummary text\n徕珑\n" +
+		"<<龘靐 <continue>\ncontinue content\n龘靐\n" +
+		"<<齉爩 <memory>\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n齉爩\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -163,7 +163,7 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		return nil
 	}
 
-	text := "<<DELIM1 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\nDELIM1\n" +
+	text := "<<徕珑 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n徕珑\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
 	loader := configs.NewLoader(nil, configs.LoaderConfig{})
