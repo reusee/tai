@@ -74,6 +74,10 @@ intervention; the user is only prompted when no automated action is
 pending. Commands without interactive input (codes, ping, next) set
 OnIdle to nil, so the loop ends after the last automated action. See
 phases.TheoryOfIdleHandler.
+
+Unmatched blocks are accumulated across rounds and returned in
+Result.RemainingBlocks, so callers can observe blocks emitted in any round
+(e.g., the goal command's done block).
 `
 
 // ApplyError is returned by BlockHandler when a change block fails to apply
@@ -405,10 +409,16 @@ func (Module) Run() Run {
 			}
 
 			// Process components.
+			// Unmatched blocks are accumulated across rounds so that
+			// blocks not consumed by any component (e.g., a goal done
+			// block emitted in a round that also triggers another round)
+			// remain available in Result.RemainingBlocks. See
+			// TheoryOfGoalCommand in cmd/tai/goal.go.
+			var roundRemaining []blocks.Block
 			var combinedParts []generators.Part
 			var triggered bool
 			var err error
-			remainingBlocks, state, combinedParts, triggered, err = components.ProcessComponents(
+			roundRemaining, state, combinedParts, triggered, err = components.ProcessComponents(
 				ctx, opts.Components, collectedBlocks, state,
 				opts.Root, opts.HTTPClient, roundCounts, true,
 			)
@@ -418,6 +428,7 @@ func (Module) Run() Run {
 					RemainingBlocks: remainingBlocks,
 				}, err
 			}
+			remainingBlocks = append(remainingBlocks, roundRemaining...)
 
 			if triggered {
 				if len(combinedParts) > 0 {

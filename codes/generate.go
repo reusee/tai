@@ -63,6 +63,12 @@ const maxRetriesForMissingSummary = 3
 
 type Generate func(ctx context.Context, output io.Writer) error
 
+// GenerateWithResult runs the full codes generation pipeline and returns the
+// loops.Result, which includes the final state and any remaining (unconsumed)
+// blocks. Used by the goal command to detect goal completion via done blocks
+// in Result.RemainingBlocks. See TheoryOfGoalCommand in cmd/tai/goal.go.
+type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Result, error)
+
 const TheoryOfTokenBudgetStability = `
 Accurate token budgeting preserves the prefix cache by ensuring deterministic
 file inclusion across requests. Function declarations from all sources — state
@@ -314,7 +320,20 @@ separate RetryOnApplyError path so they benefit from the same summarization
 behavior.
 `
 
+// Generate wraps GenerateWithResult, discarding the loops.Result so existing
+// callers (go, any) see the same func(ctx, output) error signature.
+// Callers that need the result (e.g., goal command) should use
+// GenerateWithResult directly.
 func (Module) Generate(
+	generateWithResult GenerateWithResult,
+) Generate {
+	return func(ctx context.Context, output io.Writer) error {
+		_, err := generateWithResult(ctx, output)
+		return err
+	}
+}
+
+func (Module) GenerateWithResult(
 	codeProvider codetypes.CodeProvider,
 	comps CodesComponents,
 	systemPrompt SystemPrompt,
@@ -337,15 +356,15 @@ func (Module) Generate(
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
 	loopRun loops.Run,
-) Generate {
+) GenerateWithResult {
 
-	return func(ctx context.Context, output io.Writer) error {
+	return func(ctx context.Context, output io.Writer) (loops.Result, error) {
 
 		// Open a root on the current directory to restrict all file I/O
 		// to the project tree. See TheoryOfRequestContext.
 		root, err := os.OpenRoot(".")
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 		defer root.Close()
 
@@ -357,7 +376,7 @@ func (Module) Generate(
 		// generator
 		generator, err := getDefaultGenerator()
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 		spec := generator.Spec()
 		logger.Info("initial generator",
@@ -380,7 +399,7 @@ func (Module) Generate(
 		// Count tokens for fixed parts
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 
 		// Collect function declarations from all sources for accurate token
@@ -394,13 +413,13 @@ func (Module) Generate(
 		}
 		funcTokens, err := countFuncsTokens(allFuncDecls, generator.CountTokens)
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 
 		// Calculate remaining budget for user content
 		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
-			return fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
+			return loops.Result{}, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
 		logger.Info("token limits",
 			"system", systemPromptTokens,
@@ -411,7 +430,7 @@ func (Module) Generate(
 		// user prompt
 		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 
 		// Component user prompt parts are appended after code provider parts.
@@ -425,7 +444,7 @@ func (Module) Generate(
 		}
 		userPromptTokens, err := generator.CountTokens(string(userPromptText))
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 		logger.Info("user prompt ready",
 			"tokens", userPromptTokens,
@@ -463,7 +482,7 @@ func (Module) Generate(
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
-				return err
+				return loops.Result{}, err
 			}
 			state = generators.NewOutput(state, output, false)
 			state = states.NewThoughtsSummarize(ctx, state, summarizer, output)
@@ -485,7 +504,7 @@ func (Module) Generate(
 		// See TheoryOfIncompleteOutputSummarization.
 		fastModel, err := getDefaultFastModel()
 		if err != nil {
-			return err
+			return loops.Result{}, err
 		}
 
 		// Set up initial phase: if an action argument is present, append it
@@ -499,13 +518,13 @@ func (Module) Generate(
 				},
 			})
 			if err != nil {
-				return err
+				return loops.Result{}, err
 			}
 			hasChats = true
 		}
 
 		if !hasChats {
-			return nil
+			return loops.Result{}, nil
 		}
 
 		// Track content count for statistics collection in OnRoundSuccess.
@@ -515,7 +534,7 @@ func (Module) Generate(
 		// The loop handles ParserState wrapping, phase execution, retry
 		// on missing completion and errors, and component processing
 		// between rounds.
-		_, err = loopRun(ctx, loops.RunOptions{
+		result, err := loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
 			Components:   comps.ComponentSet,
@@ -628,6 +647,6 @@ func (Module) Generate(
 			},
 		})
 
-		return err
+		return result, err
 	}
 }

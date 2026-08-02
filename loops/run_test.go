@@ -862,3 +862,57 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 		}
 	})
 }
+
+func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
+	// Reproduction: when a round emits an unmatched block (done) and
+	// another component triggers a new round, the unmatched block must
+	// survive into the final Result.RemainingBlocks. Before the fix,
+	// each round overwrote remainingBlocks with only that round's
+	// unmatched blocks, losing the done block.
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<DELIM1 <done>\ngoal achieved\nDELIM1\n<<DELIM2 <other>\ntrigger\nDELIM2\n")
+			}
+			return appendPhase("<<DELIM1 <summary>\nDone.\nDELIM1\n")
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "other",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("trigger output")},
+					}
+				},
+			},
+		}
+
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			HTTPClient:   nets.HTTPClient{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 rounds, got %d", callCount)
+		}
+
+		foundDone := false
+		for _, block := range result.RemainingBlocks {
+			if block.Kind == "done" {
+				foundDone = true
+				break
+			}
+		}
+		if !foundDone {
+			t.Fatal("done block from an earlier round must be preserved in Result.RemainingBlocks")
+		}
+	})
+}
