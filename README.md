@@ -16,7 +16,9 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 ## What It Is
 
-`tai` is a code generation tool for Go projects. It reads your codebase, sends it to an AI model with a task description, and applies the model's changes to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
+`tai` is a general-purpose AI tool. It sends context — files, user input, or arbitrary text — to an AI model and applies the model's output to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
+
+While Go code generation is the default command inside Go modules, the tool also handles arbitrary text file editing (`any`), interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), autonomous goal-directed workflows (`goal`), and boundary-delimited diff application (`patch`). Not all of these involve code.
 
 ## Installation
 
@@ -38,7 +40,17 @@ go install github.com/reusee/tai/cmd/tai@latest
 
 ## Usage Examples
 
-Generate code from a focus file:
+Interactive AI chat with persistent user profiles:
+
+```
+tai ai -model gemini-pro
+```
+
+Single-shot task on arbitrary input:
+
+```
+tai next -model gemini-pro chat "explain the difference between TCP and UDP"
+```Generate code from a focus file:
 
 ```
 tai -model gemini-pro -file internal/handler.go -file internal/handler_test.go \
@@ -169,4 +181,3 @@ git clone https://github.com/reusee/tai.git
 cd tai
 go test ./...
 ```
-
