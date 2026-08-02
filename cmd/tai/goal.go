@@ -119,39 +119,43 @@ var GoalCommand = Command{
 		for iteration := range maxGoalIterations {
 			scope := reset()
 
-			var generate codes.Generate
-			scope.Assign(&generate)
+			scope.Call(func(
+				generate codes.Generate,
+			) {
 
-			// Remove stale completion marker from previous iterations.
-			os.Remove(goalCompleteMarker)
-
-			fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", iteration+1, maxGoalIterations)
-
-			// Run a full generation cycle. Each call to generate is
-			// independent: it re-reads the codebase, organizes context
-			// from scratch, and runs the full generation pipeline
-			// (change blocks, go-test, shell, continue, etc.).
-			// See TheoryOfGoalCommand.
-			if err := generate(ctx, os.Stdout); err != nil {
-				// Print the error and continue to the next loop.
-				// Transient errors (API rate limits) may resolve in
-				// the next iteration; persistent errors (missing API
-				// key) will repeat and eventually exhaust the limit.
-				fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", iteration+1, err)
-				continue
-			}
-
-			// Check if the model signaled goal completion by creating
-			// the .GOAL_COMPLETE marker file via a WRITE change block.
-			// The MemoryStore in codes.Generate flushes change blocks
-			// to disk on round success, so the marker file is present
-			// on disk after a successful round that included the
-			// WRITE block. See TheoryOfGoalCommand.
-			if _, err := os.Stat(goalCompleteMarker); err == nil {
+				// Remove stale completion marker from previous iterations.
 				os.Remove(goalCompleteMarker)
-				fmt.Fprintf(os.Stdout, "\n=== Goal Achieved after %d loop(s) ===\n", iteration+1)
-				return
-			}
+
+				fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", iteration+1, maxGoalIterations)
+
+				// Run a full generation cycle. Each call to generate is
+				// independent: it re-reads the codebase, organizes context
+				// from scratch, and runs the full generation pipeline
+				// (change blocks, go-test, shell, continue, etc.).
+				// See TheoryOfGoalCommand.
+				if err := generate(ctx, os.Stdout); err != nil {
+					// Print the error and continue to the next loop.
+					// Transient errors (API rate limits) may resolve in
+					// the next iteration; persistent errors (missing API
+					// key) will repeat and eventually exhaust the limit.
+					fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", iteration+1, err)
+					return
+				}
+
+				// Check if the model signaled goal completion by creating
+				// the .GOAL_COMPLETE marker file via a WRITE change block.
+				// The MemoryStore in codes.Generate flushes change blocks
+				// to disk on round success, so the marker file is present
+				// on disk after a successful round that included the
+				// WRITE block. See TheoryOfGoalCommand.
+				if _, err := os.Stat(goalCompleteMarker); err == nil {
+					os.Remove(goalCompleteMarker)
+					fmt.Fprintf(os.Stdout, "\n=== Goal Achieved after %d loop(s) ===\n", iteration+1)
+					return
+				}
+
+			})
+
 		}
 
 		fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", maxGoalIterations)
