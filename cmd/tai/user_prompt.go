@@ -18,7 +18,7 @@ func (Module) UserPrompt(
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
-	hasGoFiles HasGoFiles,
+	hasFiles HasFiles,
 ) UserPrompt {
 
 	args := generator.Spec()
@@ -45,7 +45,7 @@ func (Module) UserPrompt(
 	// Restate prompts are placed at the end of the user prompt, not the
 	// system prompt, so critical format reminders are the last thing the
 	// model reads before generating.
-	if hasGoFiles {
+	if hasFiles {
 		parts = append(parts, generators.Text(changes.ChangeBlockRestatePrompt()))
 	}
 

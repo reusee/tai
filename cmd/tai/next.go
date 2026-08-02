@@ -45,15 +45,15 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	logger logs.Logger,
 	extra flags.ExtraSystemPrompt,
-	hasGoFiles HasGoFiles,
+	hasFiles HasFiles,
 	flagFocus flags.Focus,
 	flagIgnore flags.Ignore,
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
 
-	if hasGoFiles {
-		logger.Info("has go file")
+	if hasFiles {
+		logger.Info("has focus file")
 		ret += "\n\n" + SystemPrompt(changes.ChangeBlockSystemPrompt()) + "\n\n"
 	}
 

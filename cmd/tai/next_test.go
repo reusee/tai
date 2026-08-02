@@ -296,7 +296,9 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("test.go", []byte("package main\n"), 0644); err != nil {
+	// General-purpose tools must support file editing capabilities (change blocks)
+	// for any type of file, not exclusively Go files.
+	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,7 +313,7 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 	) {
 		s := string(systemPrompt)
 		if !strings.Contains(s, "Change Block Kind") {
-			t.Fatal("system prompt must include change block prompt when Go files are present")
+			t.Fatal("system prompt must include change block prompt when focus files are present")
 		}
 		// Restate prompt must NOT be in the system prompt (it is in the
 		// user prompt now).
@@ -328,7 +330,7 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 			}
 		}
 		if !foundRestate {
-			t.Fatal("user prompt must include change block restate prompt when Go files are present")
+			t.Fatal("user prompt must include change block restate prompt when focus files are present")
 		}
 	})
 }
