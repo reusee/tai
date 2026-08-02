@@ -5,11 +5,11 @@ go 1.26.1
 require (
 	cuelang.org/go v0.17.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/gabriel-vasile/mimetype v1.4.13
+	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260802013350-035b6d086c24
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
-	github.com/reusee/prompts v0.0.0-20260801144421-91587e260de0
+	github.com/reusee/prompts v0.0.0-20260802144136-07da8b916373
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.8.0
 	github.com/systemd/slog-journal v0.1.2
@@ -18,7 +18,7 @@ require (
 	golang.org/x/net v0.57.0
 	golang.org/x/term v0.45.0
 	golang.org/x/tools v0.47.0
-	google.golang.org/genai v1.64.0
+	google.golang.org/genai v1.66.0
 	mvdan.cc/sh/v3 v3.13.1
 )
 
@@ -58,7 +58,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
