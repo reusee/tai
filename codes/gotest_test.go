@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
 
@@ -61,7 +62,20 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 				t.Fatalf("unexpected error: %v", result.Err)
 			}
 			if len(result.Parts) != 0 {
-				t.Fatalf("expected no parts when tests pass, got %d parts", len(result.Parts))
+				t.Fatalf("expected no Parts when tests pass, got %d parts", len(result.Parts))
+			}
+			// BackgroundParts should contain a pass confirmation so that
+			// when another component triggers a new round, the model is
+			// informed that tests passed and does not re-emit go-test blocks.
+			if len(result.BackgroundParts) == 0 {
+				t.Fatal("expected BackgroundParts when tests pass")
+			}
+			text, ok := result.BackgroundParts[0].(generators.Text)
+			if !ok {
+				t.Fatalf("expected Text part in BackgroundParts, got %T", result.BackgroundParts[0])
+			}
+			if !strings.Contains(string(text), "passed") {
+				t.Fatalf("expected pass confirmation in BackgroundParts, got %q", text)
 			}
 			return
 		}
@@ -94,6 +108,11 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 			}
 			if len(result.Parts) == 0 {
 				t.Fatal("expected parts when tests fail; go-test must produce Parts to trigger a new round")
+			}
+			// BackgroundParts should not be set when tests fail — the
+			// failure output in Parts is the triggering content.
+			if len(result.BackgroundParts) != 0 {
+				t.Fatalf("expected no BackgroundParts when tests fail, got %d", len(result.BackgroundParts))
 			}
 			return
 		}

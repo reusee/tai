@@ -72,6 +72,17 @@ receives stdout and stderr exclusively when there are failures to debug and
 fix. When all tests pass, no parts are returned, the caller has nothing to
 append to the state, and no new round is triggered by the go-test component
 alone.
+
+When tests pass but another component (e.g., continue) triggers a new round,
+the go-test component provides BackgroundParts — a pass confirmation message
+— that ProcessComponents includes in the combined output alongside the
+triggering component's parts. This ensures the model knows the tests passed
+and does not re-emit go-test blocks in subsequent rounds, preventing
+unnecessary test reruns. BackgroundParts are discarded when no component
+triggers a new round, since there is no next round to carry them. This
+preserves the pass/fail asymmetry at the function level (ProcessGoTestBlocks
+still returns no parts on pass) while ensuring the model is informed of pass
+results when they are relevant to the next round.
 `
 
 const GoTestBlockSystemPrompt = `

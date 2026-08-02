@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/generators"
 )
 
 const TheoryOfCodesComponents = `
@@ -27,10 +28,15 @@ construction across modules.
 The go-test component runs Go tests after change blocks are applied. Test
 output is fed back to the model only when tests fail, producing Parts that
 trigger a new round for debugging with MaxRounds bounding the test-fix loop.
-When tests pass, no Parts are returned and no round is triggered by go-test,
-so other mechanisms (e.g., continue blocks) are unaffected. The go-test
-component is placed after change so tests run against the updated source, and
-before summary so test output is available for the next round.
+When tests pass, no Parts are returned and no round is triggered by go-test.
+However, the go-test component provides BackgroundParts — a pass confirmation
+message — that ProcessComponents includes in the combined output only when
+another component triggers a new round (e.g., continue). This ensures the
+model knows the tests passed and does not re-emit go-test blocks in
+subsequent rounds, preventing unnecessary test reruns. When no component
+triggers, BackgroundParts are discarded. The go-test component is placed
+after change so tests run against the updated source, and before summary so
+test output is available for the next round.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
@@ -100,11 +106,13 @@ func (Module) CodesComponents(
 	// Go-test component: run Go tests after change blocks are applied.
 	// Test output is fed back to the model only when tests fail,
 	// producing Parts that trigger a new round for debugging. When tests
-	// pass, no Parts are returned and no round is triggered, so other
-	// mechanisms (e.g., continue blocks) are unaffected. MaxRounds bounds
-	// the test-fix loop. Placed after change so tests run against updated
-	// source, and before summary so test output is available for the next
-	// round. See TheoryOfCodesComponents.
+	// pass, BackgroundParts carry a pass confirmation that
+	// ProcessComponents includes when another component triggers a new
+	// round, so the model knows tests passed and does not re-emit
+	// go-test blocks. MaxRounds bounds the test-fix loop. Placed after
+	// change so tests run against updated source, and before summary so
+	// test output is available for the next round.
+	// See TheoryOfCodesComponents and TheoryOfGoTestBlocks.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
 		PromptSection: blocks.GoTestBlockSystemPrompt,
@@ -115,13 +123,21 @@ func (Module) CodesComponents(
 			result := components.ProcessResult{
 				Err: err,
 			}
-			// Only feed test output to the next round when tests fail,
-			// so the model can debug the failures. When tests pass, no
-			// Parts are returned and no round is triggered by go-test,
-			// allowing other mechanisms (e.g., continue blocks) to
-			// function independently. See TheoryOfCodesComponents.
 			if failed {
+				// Only feed test output to the next round when tests fail,
+				// so the model can debug the failures. Parts trigger a new
+				// round for debugging.
 				result.Parts = parts
+			} else {
+				// Tests passed. Provide BackgroundParts so that when
+				// another component (e.g., continue) triggers a new
+				// round, the model is informed that tests passed and
+				// does not re-emit go-test blocks. When no component
+				// triggers, BackgroundParts are discarded because there
+				// is no next round to carry them.
+				result.BackgroundParts = []generators.Part{
+					generators.Text("Go tests passed. All test commands succeeded.\n\n"),
+				}
 			}
 			return result
 		},

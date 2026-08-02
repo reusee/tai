@@ -49,6 +49,15 @@ reconciliation: blocks are managed externally by the caller, and the state
 chain is modified exclusively through the State interface (AppendContent),
 with no extra methods that bypass the immutable state chain.
 
+ProcessResult carries a BackgroundParts field for informational output that
+should reach the model only when a subsequent round exists. Components like
+go-test produce BackgroundParts (e.g., a pass confirmation) without triggering
+a round themselves; ProcessComponents collects them and prepends them to the
+combined output when another component triggers a new round. When no component
+triggers, BackgroundParts are discarded because there is no next round to
+carry them. This prevents loops where the model re-emits blocks (e.g.,
+go-test) because it never learned the previous invocation's result.
+
 The mechanism is the integrity guarantee: it makes the coupling between prompt
 and processing explicit and machine-checkable rather than implicit and
 human-maintained. By extending the same mechanism to prompt-only contributions,
@@ -85,6 +94,14 @@ type ProcessResult struct {
 	State generators.State
 	// Parts are user parts to append to the state, triggering a new round.
 	Parts []generators.Part
+	// BackgroundParts are parts included in the combined output only when
+	// some other component triggers a new round (via Parts or State). Used
+	// by components like go-test that produce informational output (e.g.,
+	// "tests passed") which should be communicated to the model only when
+	// there is a next round, preventing the model from re-emitting
+	// unnecessary blocks. When no component triggers a new round,
+	// BackgroundParts are discarded.
+	BackgroundParts []generators.Part
 	// Err is the error encountered during processing, if any.
 	Err error
 }
@@ -207,6 +224,13 @@ func (c ComponentSet) Processable() []Component {
 // component MaxRounds limits are enforced, preventing infinite loops from
 // components that keep producing output.
 //
+// BackgroundParts from non-triggering components are collected during iteration
+// and prepended to combinedParts when any component triggers a new round. This
+// ensures the model receives informational output (e.g., "tests passed") from
+// non-triggering components alongside the triggering content, preventing
+// unnecessary re-emission of blocks in subsequent rounds. When no component
+// triggers, BackgroundParts are discarded.
+//
 // Both the ai command and the codes module call this function, so the
 // component processing loop is identical across all generation commands —
 // only the ComponentSet and block list differ. See TheoryOfComponents.
@@ -226,6 +250,13 @@ func ProcessComponents(
 	triggered bool,
 	err error,
 ) {
+	// Background parts are collected from components that produce
+	// informational output (e.g., go-test pass confirmation) without
+	// triggering a new round. They are prepended to combinedParts only
+	// when some other component triggers a round, ensuring the model
+	// receives the information alongside the triggering content.
+	var backgroundParts []generators.Part
+
 	for _, comp := range comps.Processable() {
 		if comp.Kind == "" {
 			continue
@@ -257,6 +288,11 @@ func ProcessComponents(
 			return allBlocks, state, combinedParts, triggered, result.Err
 		}
 
+		// Collect background parts from non-triggering components.
+		if len(result.BackgroundParts) > 0 {
+			backgroundParts = append(backgroundParts, result.BackgroundParts...)
+		}
+
 		componentTriggered := false
 		if result.State != nil {
 			state = result.State
@@ -277,6 +313,15 @@ func ProcessComponents(
 				}
 			}
 		}
+	}
+
+	// When a component triggered a new round, include background parts
+	// so the model receives informational output (e.g., "tests passed")
+	// from non-triggering components. Without this, the model would not
+	// know that tests passed and would re-emit go-test blocks in
+	// subsequent rounds, creating unnecessary loops.
+	if triggered && len(backgroundParts) > 0 {
+		combinedParts = append(backgroundParts, combinedParts...)
 	}
 
 	return allBlocks, state, combinedParts, triggered, nil
