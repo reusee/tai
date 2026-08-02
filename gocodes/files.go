@@ -217,9 +217,7 @@ func (Module) Files(
 				f.ModTime = info.ModTime()
 			}
 
-			// Parse the file individually. This replaces the previous
-			// approach of relying on pkg.Syntax (which required NeedSyntax
-			// and retained all ASTs in memory).
+			// Parse the file individually, only for files within the distance bound.
 			src, err := os.ReadFile(path)
 			if err != nil {
 				logger.Warn("cannot read go file", "path", path, "error", err)

@@ -85,16 +85,6 @@ func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generator
 	// All accumulated text is summarized (not just complete paragraphs)
 	// because the thought stream has ended or been interrupted by
 	// non-thought output.
-	//
-	// The condition checks hasNonThought (presence of non-thought parts)
-	// rather than !hasThought (absence of thought parts) so that a
-	// streaming chunk containing both Thought and Text parts — which is
-	// common when the model transitions from reasoning to answering
-	// within a single response — correctly flushes before the text is
-	// printed. The previous !hasThought check would skip the flush for
-	// mixed content, causing the text to appear first and the summary
-	// to appear later (after the next pure-text chunk), producing
-	// out-of-order output.
 	if hasNonThought && len(ret.accumulated) > 0 {
 		summary, err := ret.summarizer.Summarize(ret.ctx, ret.accumulated)
 		if err != nil {

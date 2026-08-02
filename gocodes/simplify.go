@@ -63,9 +63,7 @@ func (Module) SimplifyFiles(
 
 		// Clean up file state on exit to avoid leaking state into cached File objects.
 		// Confirmed.Ast is released here (after all transforms are done) because
-		// only Confirmed.Content is read by the caller. This recovers the AST
-		// memory that was previously freed prematurely in applyTransform's
-		// formatting defer, which broke subsequent AST-based transforms.
+		// only Confirmed.Content is read by the caller.
 		defer func() {
 			for _, f := range originalFiles {
 				if f == nil {

@@ -24,10 +24,10 @@ mixes reasoning with answer text) arrives, all accumulated thoughts — includin
 any thoughts in that same content — are flushed immediately before the content
 is propagated to upstream, regardless of interval or paragraph boundaries,
 ensuring the summary appears before the main text output rather than after it.
-The flush is triggered by the presence of non-thought parts, not by the absence
-of thought parts, so a mixed content with both Thought and Text parts correctly
-flushes before the text is printed. A separate, typically cheaper and faster
-generator is used for summarization to minimize latency and cost. The
+The flush is triggered by the presence of non-thought parts, so a mixed
+content with both Thought and Text parts correctly flushes before the text
+is printed. A separate, typically cheaper and faster generator is used for
+summarization to minimize latency and cost. The
 GetDefaultSummarizer provider wires the default fast model (obtained via
 GetDefaultFastModel) into a Summarizer. On Flush, any remaining accumulated
 thoughts are summarized before propagating the flush upstream. The

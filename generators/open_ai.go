@@ -521,8 +521,7 @@ func stateToOpenAIMessages(state State, preservedThinking bool) (messages []Chat
 		// Skip log and system content to prevent internal metadata (Usage,
 		// FinishReason, Error) from being sent to the API. This also preserves
 		// prefix cache stability: log messages interspersed with conversation
-		// messages would shift the position of cached content. The Gemini path
-		// already filters these roles; this brings the OpenAI path to parity.
+		// messages would shift the position of cached content.
 		if content.Role == RoleLog || content.Role == RoleSystem {
 			continue
 		}
