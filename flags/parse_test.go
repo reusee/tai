@@ -55,8 +55,8 @@ func TestParseSingleChat(t *testing.T) {
 	})
 }
 
-// TestParseMultipleChatsAccumulate is the reproduction test for the stale
-// flagMap bug: repeated chat flags must accumulate, not overwrite.
+// TestParseMultipleChatsAccumulate verifies that repeated chat flags
+// accumulate values rather than overwriting the previous one.
 func TestParseMultipleChatsAccumulate(t *testing.T) {
 	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"chat", "a", "chat", "b"})

@@ -722,9 +722,8 @@ func TestApplyChangeBlockPathWithDoubleDotPrefix(t *testing.T) {
 		defer root.Close()
 
 		// A file whose name starts with ".." but is not a parent-directory
-		// traversal (e.g., "..notescape.go") must be accepted by ApplyChangeBlock.
-		// Before the fix, strings.HasPrefix(filepath.Clean(path), "..")
-		// incorrectly rejected any path starting with two dots.
+		// traversal (e.g., "..notescape.go") must be accepted by
+		// ApplyChangeBlock. Only ".." and "../"-prefixed paths are rejected.
 		filename := "..notescape.go"
 		original := "package x\n\nfunc Old() {}\n"
 		if err := root.WriteFile(filename, []byte(original), 0644); err != nil {

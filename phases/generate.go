@@ -9,23 +9,17 @@ import (
 )
 
 const TheoryOfGenerateRetry = `
-The generate phase retries on ErrRetryable errors, but the retry count must be
-bounded to prevent infinite output loops. Without a bound, a generator that
-consistently returns ErrRetryable (e.g., Gemini's "no output" after exhausting
-its internal doWithRetry, or OpenAI's persistent 429) would cause BuildGenerate
-to retry indefinitely, hanging the entire generation pipeline. The bound is
-set to 3 attempts, which is sufficient for transient errors while preventing
-infinite loops. Generators that need finer-grained retry control (e.g., Gemini's
-doWithRetry with exponential backoff) handle their own internal retries; the
-BuildGenerate bound acts as an outer safety net. Additionally, doWithRetry in
-gemini.go strips ErrRetryable from its return error after exhausting its own
-retries, so the outer loop does not re-trigger on the same exhausted error.
+The generate phase retries on ErrRetryable errors, with a retry count bounded
+to 3 attempts to prevent infinite output loops. Generators that need finer-
+grained retry control (e.g., Gemini's doWithRetry with exponential backoff)
+handle their own internal retries; the BuildGenerate bound acts as an outer
+safety net. doWithRetry in gemini.go strips ErrRetryable from its return error
+after exhausting its own retries, so the outer loop does not re-trigger on the
+same exhausted error.
 
 When an error occurs (either non-retryable or after exhausting retries), the
-phase returns the input state rather than nil. This ensures that callers like
-loops.Run can pass a valid state to OnPhaseError, which may append error
-information or tap debugging context. Returning nil would cause a nil pointer
-dereference in OnPhaseError when it calls errState.AppendContent.
+phase returns the input state so that callers like loops.Run can pass a valid
+state to OnPhaseError.
 `
 
 type BuildGenerate func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder

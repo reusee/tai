@@ -9,14 +9,9 @@ import (
 
 const TheoryOfPatchCommand = `
 The "patch" subcommand applies a boundary-delimited diff file (default .AI) to
-the working tree without invoking any model, making it the offline counterpart
-to immediate apply (see codes.TheoryOfImmediateApply) and the batch diff write
-path (see changes.TheoryOfBatchDiffWrite). The generation subcommands ("go",
-"any") produce and apply change blocks during generation; "patch" decouples
-the apply step from generation so a pre-existing diff file can be replayed or
-inspected independently. It uses changes.ApplyDiffFile directly, reusing the
-same change-block-streaming apply logic embedded in codes.Generate without
-wiring the full generation pipeline.
+the working tree without invoking any model. It uses changes.ApplyDiffFile
+directly, reusing the same change-block-streaming apply logic embedded in
+codes.Generate without wiring the full generation pipeline.
 `
 
 var PatchCommand = Command{

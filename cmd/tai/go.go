@@ -20,7 +20,7 @@ continue blocks, and round statistics — by wiring codes.Module into the dscope
 scope. The -repl flag enables a REPL mode that taps the debugs infrastructure
 without running generation, useful for interactive debugging. This is the
 Go-oriented counterpart to the "any" subcommand for general-purpose text file
-generation, and succeeds the standalone gotai command.
+generation.
 
 When no subcommand is provided and the current directory is inside a Go module
 (a go.mod file is found by walking up the directory tree), the "go" subcommand

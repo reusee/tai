@@ -14,27 +14,20 @@ import (
 var flagType = reflect.TypeFor[Flag]()
 
 const TheoryOfFlagParsing = `
-flags parsing theory:
-- Flag types are discovered from the initial scope and keyed by their Flag.Keys
-  identifiers for argument matching. Each key maps to a human-readable
-  description used in usage output.
-- Duplicate key detection prevents two flag types from registering the same
-  key, which would cause ambiguous argument matching. Parse returns an error
-  listing both conflicting types.
-- Each iteration resolves the current flag value from the live scope, enabling
-  accumulating flags to observe values produced by earlier iterations within
-  the same parse pass.
-- A flag's Handle method receives the matched key so flags with multiple keys
-  (e.g. shell/no-shell) can distinguish invocations, and transforms remaining
-  args into a new def that is passed directly to scope.Fork. The def may be a
-  pointer to a typed value (e.g., &ret) or a function that provides the value
-  with injected dependencies, enabling flags to express richer scope
-  modifications than a simple value override.
-- Help keys (-help, --help, -h) are checked before the main parse loop. When
-  detected, Parse returns a HelpError carrying the formatted usage string so
-  the caller can display it without re-scanning the scope.
-- When an unknown flag is encountered, the error message includes the full
-  usage listing so the user can see all available flags.
+Flag types are discovered from the initial scope and keyed by their Flag.Keys
+identifiers for argument matching. Each key maps to a human-readable description
+used in usage output.
+
+Duplicate key detection prevents two flag types from registering the same key.
+Each iteration resolves the current flag value from the live scope, enabling
+accumulating flags to observe values produced by earlier iterations within the
+same parse pass.
+
+A flag's Handle method receives the matched key so flags with multiple keys can
+distinguish invocations, and transforms remaining args into a new def passed
+directly to scope.Fork.
+
+Help keys (-help, --help, -h) are checked before the main parse loop.
 `
 
 // ErrHelp is returned by Parse when a help flag (-help, --help, or -h) is

@@ -15,15 +15,13 @@ import (
 const TheoryOfCodesComponents = `
 CodesComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from other modules' ComponentSet providers (e.g.,
-the ai command's AIComponents). Without a separate type, the codes module and
-any other module providing components.ComponentSet would conflict in the dscope scope.
+the ai command's AIComponents).
 
 The codes module reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
 request-context) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
-(prompt-only). This eliminates duplicate shell and continue component
-construction across modules.
+(prompt-only).
 
 The go-test component runs Go tests after change blocks are applied. Test
 output is fed back to the model only when tests fail, producing Parts that
@@ -40,11 +38,9 @@ test output is available for the next round.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
-blocks. This demonstrates the Component concept's unification of prompt-only
-mechanisms with block processing mechanisms under a single framework.
+blocks.
 
-ExtraSystemPrompt is also a prompt-only Component, unifying the config-derived
-extra prompt into the same assembly mechanism. Change, go-test, and
+ExtraSystemPrompt is also a prompt-only Component. Change, go-test, and
 request-context components carry RestatePrompt fields — short critical reminders
 that reinforce block format rules. Restate prompts are placed at the end of
 the user prompt via ComponentSet.UserPromptParts(), not in the system prompt,

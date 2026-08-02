@@ -10,25 +10,19 @@ import (
 var configType = reflect.TypeFor[Config]()
 
 const TheoryOfConfigPathPrecedence = `
-Config path precedence theory:
-- ConfigPaths and ConfigPathsFunc return ordered paths where later paths
-  override earlier ones ("last non-zero wins"), not "first match wins".
-- Load passes the original scope value (before any path processing) as the
-  HandleConfig receiver for every path, preventing HandleConfig from
-  detecting whether a previous path already set a value. This guarantees
-  that later paths can always override earlier ones.
-- HandleConfig returns a newDef — a pointer to a typed value or a function
-  provider — that is passed directly to scope.Fork, exactly like
-  flags.Flag.Handle. It should return a def derived from the current
-  path's cue.Values if they contain a meaningful value, regardless of the
-  receiver state.
-- DynamicPathsConfig types are forked as provider functions (constructed
-  via reflect.MakeFunc) rather than static values. The provider's
-  parameters mirror the ConfigPathsFunc function's parameters, so dscope
-  re-evaluates the config value when dependencies change. The provider
-  captures the original scope value as the HandleConfig receiver and
-  returns it unchanged when no config path yields a value, preserving
-  Module-provided defaults.
+Config path precedence: ConfigPaths and ConfigPathsFunc return ordered paths
+where later paths override earlier ones ("last non-zero wins"). Load passes
+the original scope value (before any path processing) as the HandleConfig
+receiver for every path, preventing HandleConfig from detecting whether a
+previous path already set a value. This guarantees that later paths can always
+override earlier ones. HandleConfig returns a newDef — a pointer to a typed
+value or a function provider — that is passed directly to scope.Fork.
+DynamicPathsConfig types are forked as provider functions (constructed via
+reflect.MakeFunc) whose parameters mirror ConfigPathsFunc's parameters, so
+dscope re-evaluates the config value when dependencies change. The provider
+captures the original scope value as the HandleConfig receiver and returns it
+unchanged when no config path yields a value, preserving Module-provided
+defaults.
 `
 
 // Load reads configuration values from the loader and forks the scope

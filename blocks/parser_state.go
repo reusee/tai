@@ -23,7 +23,7 @@ rollback and retry: the pre-generation State is unaffected by a failed attempt, 
 retrying starts from a clean snapshot. Because blocks are managed externally by the
 caller (via the handler closure), rollback consistency is achieved by resetting the
 external block collection alongside other external state (e.g., MemoryStore) in the
-retry callback, rather than relying on state-chain reconciliation.
+retry callback.
 
 Only Text parts are collected into the parse buffer; Thought parts (model reasoning) are
 explicitly excluded because they may contain illustrative block markers that are not actual

@@ -13,64 +13,41 @@ const TheoryOfShellSecurity = `
 Shell command execution is protected by a command allowlist policy enforced
 through AST-level parsing with mvdan.cc/sh/v3. The shell parser produces a
 syntax tree that is walked to validate each command, providing accurate
-detection of redirections, command substitutions, and complex shell constructs
-that string-based splitting cannot reliably handle. Only CallExpr (simple
-commands) and BinaryCmd (pipelines, &&, ||) are permitted; all other shell
-constructs (if, while, for, case, subshell, block, function definitions, arithmetic
-commands, test clauses, declarations) are rejected as unnecessary for read-only
-diagnostic operations.
+detection of redirections, command substitutions, and complex shell constructs.
+Only CallExpr (simple commands) and BinaryCmd (pipelines, &&, ||) are permitted;
+all other shell constructs (if, while, for, case, subshell, block, function
+definitions, arithmetic commands, test clauses, declarations) are rejected as
+unnecessary for read-only diagnostic operations.
 
 The validator checks each statement's redirections for output operators (>,
->>, <>, >&, >|, >>|, >&|, >>&, >>&|). The AST parser correctly distinguishes >
-characters inside quoted strings (e.g., echo "a > b") from actual redirection
-operators, avoiding false positives. Input-only redirections
+>>, <>, >&, >|, >>|, >&|, >>&, >>&|). Input-only redirections
 (<, <<, <&) are permitted.
 
 Command substitutions ($(cmd) and <(cmd)/>(cmd)) are recursively validated: the
-nested statements are subject to the same allowlist and redirection checks. This
-prevents bypassing the allowlist via substitution, e.g., echo $(rm -rf /) is
-rejected because rm is not in the allowed list. The recursive validation extends
-into double-quoted strings ("$(cmd)") since command substitution is active inside
-double quotes.
+nested statements are subject to the same allowlist and redirection checks.
+The recursive validation extends into double-quoted strings ("$(cmd)") since
+command substitution is active inside double quotes.
 
-The find command's -exec, -execdir, -ok, and -okdir flags remain explicitly
+The find command's -exec, -execdir, -ok, and -okdir flags are explicitly
 forbidden to prevent arbitrary command execution through find. Commands with
 absolute paths (e.g., /usr/bin/ls) are normalized via filepath.Base before
 allowlist lookup. Commands that can execute arbitrary code (awk, sed) are
-excluded from the allowlist entirely. This is a conservative security boundary:
-it is better to reject a safe command than to allow a dangerous one. Rejected
-commands return an error message as user content so the model can adjust and
-retry with an allowed command.
+excluded from the allowlist entirely.
 
-Additional security checks extend the boundary beyond the allowlist and
-redirection policy. Background processes (cmd &) and coprocesses (coproc cmd)
-are rejected because they start detached processes that bypass the timeout and
-output capture. The Disown flag is rejected for the same reason. Heredoc bodies
-(redir.Hdoc) are validated for command substitutions, closing a bypass where
-cat with a heredoc containing $(cmd) would execute cmd inside the heredoc.
+Additional security checks: background processes (cmd &) and coprocesses
+(coproc cmd) are rejected. Heredoc bodies (redir.Hdoc) are validated for
+command substitutions. Arithmetic expansion, parameter expansion, and brace
+expansion are recursively validated for nested command and process
+substitutions.
 
-Arithmetic expansion, parameter expansion, and brace expansion are recursively
-validated for nested command and process substitutions. In bash, arithmetic
-expansion can contain command substitutions, and parameter expansion can contain
-nested expansions, array index arithmetic, and replacement patterns that include
-command substitutions. Brace expansion elements can also contain command
-substitutions. Without recursive validation, these constructs bypass the
-allowlist.
+Interpreter inline execution flags are blocked for scripting languages that
+can execute arbitrary code from command-line arguments: python and python3
+with -c or -m; node with -e/--eval, -p/--print, or -r/--require. The go
+-exec flag is blocked. The cargo subcommand list is restricted to read and
+diagnostic operations. The java command is restricted to version-only flags.
 
-Interpreter inline execution flags are blocked for scripting languages that can
-execute arbitrary code from command-line arguments: python and python3 with -c
-(inline code) or -m (module execution); node with -e/--eval (inline code),
--p/--print (evaluate and print), or -r/--require (module loading). The go -exec
-flag is blocked because it specifies an external command to run test binaries,
-enabling arbitrary command execution. The cargo subcommand list is restricted to
-read and diagnostic operations, explicitly excluding cargo run which executes the
-compiled program. The java command is restricted to version-only flags because
-java -jar and java ClassName both execute arbitrary code.
-
-The env command is restricted to environment variable inspection only. env can
-be used to run commands (env VAR=value command), bypassing the allowlist because
-the command name appears as an argument to env rather than as the command
-itself. Arguments to env that are not flags (starting with -) and not VAR=value
+The env command is restricted to environment variable inspection only.
+Arguments to env that are not flags (starting with -) and not VAR=value
 assignments are rejected as potential command execution.
 `
 

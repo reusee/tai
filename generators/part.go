@@ -6,14 +6,13 @@ import (
 
 const TheoryOfPartInterface = `
 The Part interface is a sealed type union for content parts. It uses only a
-marker method (isPart) to prevent external implementations, rather than
-exposing backend-specific conversion methods. Gemini-specific conversion is
-handled by the partToGemini function, which uses a type switch — mirroring the
-OpenAI path (stateToOpenAIMessages) that uses type switches rather than
-interface methods. Metadata types (Thought, FinishReason, Usage, Error) have
-no Gemini representation: Thought is skipped by a continue before the
-conversion call, and the other three are carried in RoleLog content that is
-filtered out before the conversion loop.
+marker method (isPart) to prevent external implementations. Gemini-specific
+conversion is handled by the partToGemini function, which uses a type switch —
+mirroring the OpenAI path (stateToOpenAIMessages) that uses type switches.
+Metadata types (Thought, FinishReason, Usage, Error) have no Gemini
+representation: Thought is skipped by a continue before the conversion call,
+and the other three are carried in RoleLog content that is filtered out before
+the conversion loop.
 `
 
 type Part interface {

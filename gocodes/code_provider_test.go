@@ -84,9 +84,9 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 	).Call(func(
 		provider CodeProvider,
 	) {
-		// Exclude the dep1 directory. Before the fix, this pattern only
-		// matched files exactly named "dep1", not files under the dep1
-		// directory, so dep1.go would not be excluded.
+		// Exclude the dep1 directory. The pattern "pkg" must match both
+		// files exactly named "pkg" and all files under the "pkg/"
+		// directory, so dep1.go must be excluded.
 		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, []string{"!../dep1"})
 		if err != nil {
 			t.Fatal(err)

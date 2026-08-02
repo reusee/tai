@@ -29,10 +29,9 @@ var _ codetypes.CodeProvider = CodeProvider{}
 const TheoryOfExtraFileContext = `
 Extra files requested via patterns are appended after project files to preserve
 the LLM prefix cache (project files form the stable prefix, extra files form the
-volatile suffix). Binary extra files must be wrapped with begin/end markers
-matching the text file format, including the MIME type, so the model can identify
-the attachment boundary. Without end markers, the model cannot determine where
-the binary attachment ends and subsequent content begins.
+volatile suffix). Binary extra files are wrapped with begin/end markers matching
+the text file format, including the MIME type, so the model can identify the
+attachment boundary.
 `
 
 // pendingExtraPart holds an extra file part to be added after project files.
@@ -302,8 +301,7 @@ and all files under the "pkg/" directory, acting as a directory prefix filter.
 Glob patterns (containing *, ?, or []) are matched via matchPattern, which
 supports ** for recursive directory matching. Exclusion patterns must be
 separated from inclusion patterns before being passed to IterFiles, because
-IterFiles treats all patterns as file paths to glob-expand; passing a
-"!"-prefixed pattern would cause os.Lstat to fail and abort iteration.
+IterFiles treats all patterns as file paths to glob-expand.
 `
 
 const TheoryOfEmbedFileSizeLimit = `

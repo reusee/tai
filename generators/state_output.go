@@ -14,11 +14,8 @@ const TheoryOfThoughtTags = `
 Thought tags bracket reasoning content in terminal output. The Output state
 layer tracks whether a thought block is open via lastOutputIsThought, opening
 a tag when a Thought part arrives and closing it when a non-Thought part
-follows. Flush must close any open thought tag and reset the tracking state
-at turn boundaries. Without this, an unclosed tag carries over to the next
-turn, causing the closing tag to appear at the start of the next turn's
-output and breaking downstream parsers that rely on properly matched tag
-pairs.
+follows. Flush closes any open thought tag and resets the tracking state at
+turn boundaries.
 `
 
 type Output struct {

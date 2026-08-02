@@ -302,16 +302,6 @@ func readContextFile(root *os.Root, path string) (string, error) {
 	return string(content), nil
 }
 
-// globFiles lists files matching a glob pattern. It applies the same path
-// sanity check as readContextFile: absolute patterns are permitted, while
-// relative patterns containing parent-directory traversal are rejected.
-// Patterns are resolved relative to the root directory via
-// doublestar.FilepathGlob, which natively handles ** (globstar) patterns for
-// recursive directory traversal. When ** appears as a complete path segment, it
-// matches zero or more directories. This unifies all glob-based file matching
-// across the system on the doublestar library, replacing the prior mix of
-// filepath.Glob and a custom ** walker. See TheoryOfPatternMatching in
-// anytexts/code_provider.go.
 func globFiles(root *os.Root, pattern string) ([]string, error) {
 	if !filepath.IsAbs(pattern) {
 		cleaned := filepath.Clean(pattern)
@@ -331,8 +321,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 		searchPattern = filepath.Join(rootDir, pattern)
 	}
 	// doublestar.FilepathGlob unifies glob expansion with native ** support.
-	// WithFilesOnly excludes directories, matching the prior globWithDoubleStar
-	// behavior where filepath.Walk skipped directories.
+	// WithFilesOnly excludes directories.
 	// See TheoryOfPatternMatching in anytexts/code_provider.go.
 	matches, err := doublestar.FilepathGlob(searchPattern, doublestar.WithFilesOnly())
 	if err != nil {

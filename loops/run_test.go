@@ -864,11 +864,9 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 }
 
 func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
-	// Reproduction: when a round emits an unmatched block (done) and
-	// another component triggers a new round, the unmatched block must
-	// survive into the final Result.RemainingBlocks. Before the fix,
-	// each round overwrote remainingBlocks with only that round's
-	// unmatched blocks, losing the done block.
+	// When a round emits an unmatched block (done) and another component
+	// triggers a new round, the unmatched block must survive into the
+	// final Result.RemainingBlocks.
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {

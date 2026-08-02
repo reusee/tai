@@ -96,11 +96,9 @@ func (g *nonRetryableErrorGenerator) Generate(ctx context.Context, state generat
 }
 
 func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
-	// Reproduction: when generator.Generate returns a non-retryable error,
-	// the phase must return the input state (not nil) so that callers
-	// like loops.Run can pass a valid state to OnPhaseError. Before the
-	// fix, the phase returned nil, causing a nil pointer dereference in
-	// OnPhaseError when it called errState.AppendContent.
+	// When generator.Generate returns a non-retryable error, the phase
+	// must return the input state (not nil) so that callers like loops.Run
+	// can pass a valid state to OnPhaseError.
 	gen := &nonRetryableErrorGenerator{}
 
 	dscope.New(

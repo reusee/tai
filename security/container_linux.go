@@ -32,13 +32,11 @@ bind-mounted read-write so the Go toolchain can function (build cache, module
 downloads, package objects). The user config directory is also resolved before
 namespace creation and bind-mounted read-write so the memory system
 (ai-memory.json) and chat history (ai-chat-history.json) can persist data across
-sessions. Without this exception, the read-only filesystem would cause all writes
-to the config directory to fail silently, losing memory updates. A fresh tmpfs
-is mounted on /tmp for isolated temporary file storage, and on /dev/shm for
-isolated shared memory. /proc is remounted to show only namespace-local
-processes, /sys is made read-only, and sensitive /proc paths are masked with
-bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents privilege
-escalation through exec, complementing the user namespace's capability
+sessions. A fresh tmpfs is mounted on /tmp for isolated temporary file storage,
+and on /dev/shm for isolated shared memory. /proc is remounted to show only
+namespace-local processes, /sys is made read-only, and sensitive /proc paths are
+masked with bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents
+privilege escalation through exec, complementing the user namespace's capability
 restrictions.
 `
 

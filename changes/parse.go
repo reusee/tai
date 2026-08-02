@@ -15,12 +15,8 @@ are only valid for Go files. For non-Go files, file-level operations (WRITE,
 RENAME, DELETE with target=*) and text-level operations (REPLACE,
 INSERT_BEFORE, INSERT_AFTER) are permitted. Text-level operations use a find
 attribute to locate a unique string anchor in the file and apply the edit
-relative to that anchor, enabling partial edits without replacing the entire
-file. The find string must be unique in the file; if it cannot be made unique,
-WRITE must be used to replace the entire file content. Conversely, text-level
-operations are not permitted for Go files because the model cannot reliably
-reproduce whitespace in the find string; structural operations must be used
-instead. See TheoryOfTextLevelOperations for the design rationale.
+relative to that anchor. The find string must be unique in the file; if it
+cannot be made unique, WRITE must be used. See TheoryOfTextLevelOperations.
 `
 
 const TheoryOfTextLevelOperations = `
@@ -34,27 +30,19 @@ or fall back to WRITE for full-file replacement.
 
 REPLACE substitutes the found string with the block body. An empty body
 effectively deletes the found text. INSERT_BEFORE inserts the body before the
-found anchor; INSERT_AFTER inserts it after. These operations are
-particularly useful for non-Go text files (e.g., Markdown, YAML, JSON,
-configuration) that cannot be structurally parsed to identify declarations.
+found anchor; INSERT_AFTER inserts it after.
 
-Text-level operations are restricted to non-Go files. For Go files,
-structural operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) are always
-available and must be used instead. The model has difficulty correctly
-reproducing whitespace characters (indentation, blank lines, trailing spaces)
-in the find string, causing the string match to fail on Go source code where
-whitespace is semantically significant for formatting. AST-based declaration
-matching used by structural operations does not depend on exact whitespace
-reproduction and is therefore more robust for Go files.
+Text-level operations are restricted to non-Go files. For Go files, structural
+operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) must be used instead. The
+model has difficulty correctly reproducing whitespace characters in the find
+string, causing the string match to fail on Go source code where whitespace is
+semantically significant for formatting. AST-based declaration matching does
+not depend on exact whitespace reproduction and is therefore more robust.
 
 The uniqueness requirement is the integrity guarantee: it prevents ambiguous
-edits where the model's find string matches multiple locations, which could
-silently modify the wrong part of the file. When the model cannot construct a
-unique find string (e.g., replacing a common pattern that appears many
-times), it must use WRITE to replace the entire file, ensuring the edit is
-unambiguous. Line-number-based approaches are deliberately avoided because
-models cannot reliably generate accurate line numbers; a unique string anchor
-is more robust because it is content-addressed rather than position-addressed.
+edits where the model's find string matches multiple locations. Line-number-
+based approaches are deliberately avoided because models cannot reliably
+generate accurate line numbers; a unique string anchor is content-addressed.
 `
 
 const TheoryOfSpecialGoTargets = `

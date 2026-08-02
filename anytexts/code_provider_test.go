@@ -334,9 +334,9 @@ func TestFileOrderingByPath(t *testing.T) {
 	}
 
 	// Create zzz.txt first and aaa.txt second, then set zzz.txt to an older
-	// modification time and aaa.txt to a newer one. With the old modtime-
-	// primary sort, zzz.txt would appear before aaa.txt. With path-based
-	// sorting, aaa.txt should appear before zzz.txt regardless of timestamps.
+	// modification time and aaa.txt to a newer one. Files should be sorted by
+	// path, not modification time, so aaa.txt must appear before zzz.txt
+	// regardless of timestamps.
 	if err := os.WriteFile("zzz.txt", []byte("zzz"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -477,8 +477,6 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 		// ~65 runes * 0.3 = 19 tokens. With maxTokens=16, the text file
 		// fits (15 <= 16) but the binary file markers push the total to
 		// 34 > 16, so the binary file is skipped.
-		// Before the fix, binary markers were not counted, so the binary
-		// file would always be included regardless of the budget.
 		parts, err := provider.Parts(16, generators.DeepseekTokenCounterFn, []string{"."})
 		if err != nil {
 			t.Fatal(err)

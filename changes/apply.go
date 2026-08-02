@@ -41,10 +41,7 @@ current directory recording the original source, change block, modified content,
 error. See TheoryOfErrorLogging.
 Package detection (hasPackage) skips leading comments, including build constraint
 comments such as //go:build and // +build, to determine whether the source already
-contains a package clause. Without this, a file whose package declaration is preceded
-by a build constraint would be misdetected as lacking a package, causing a synthetic
-"package p" prefix to be prepended and producing a file with two package declarations
-that fails to parse.
+contains a package clause.
 `
 
 type BodyInfo struct {
@@ -179,9 +176,7 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 }
 
 // finalizeContent ensures content ends with exactly one trailing newline,
-// matching the convention enforced by go fmt. goimports output already ends
-// with a single '\n', but bytes.TrimSpace was stripping it, producing files
-// that did not end with a newline — inconsistent with go fmt.
+// matching the convention enforced by go fmt.
 func finalizeContent(content []byte) []byte {
 	trimmed := bytes.TrimRight(content, "\r\n")
 	if len(trimmed) == 0 {
@@ -493,9 +488,8 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 							// getBodyInfo(finalBody) again. bodyInfo.Keyword == ""
 							// means the body was self-sufficient (no keyword prefix
 							// needed during parsing), so it already contains the
-							// keyword. If heuristic updated bodyInfo above, the
-							// updated value is used here, matching the prior
-							// semantics of re-parsing finalBody.
+							// keyword. If the heuristic updated bodyInfo above,
+							// the updated value is used here.
 							hasKeyword := false
 							if bodyInfo != nil && bodyInfo.entityCount() > 0 {
 								if bodyInfo.Keyword == "" {

@@ -179,7 +179,7 @@ func bar() {
 }
 
 func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
-	// The function now returns a fixed constant (maximumContextTokenBudget) regardless of input.
+	// The function returns a fixed constant (maximumContextTokenBudget) regardless of input.
 	for _, focus := range []int{0, 12 << 10, 60 << 10, 128 << 10} {
 		got := calculateMaxContextTokens()
 		want := maximumContextTokenBudget
@@ -321,11 +321,9 @@ func Foo() {
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		// With maxTokens=1, the buggy code simplifies until all files are deleted
-		// (allTokens < 1 is never true while files remain), causing root package
-		// files to be deleted and returning an error. The fixed code stops when
-		// contextTokens <= maxContextTokens (32K), so small context files are
-		// never simplified, preserving the LLM prefix cache.
+		// Simplification stops when contextTokens <= maxContextTokens
+		// (32K), so small context files are never simplified, preserving
+		// the LLM prefix cache.
 		parts, err := provider.Parts(1, countTokens, nil)
 		if err != nil {
 			t.Fatalf("Parts returned error: %v", err)
@@ -389,8 +387,6 @@ func Foo() {
 	}
 
 	// Simulate confirmation: move Pending to Confirmed, clear Pending.
-	// Before the fix, the formatting defer set Pending.Ast = nil, so
-	// Confirmed.Ast became nil after confirmation.
 	f.transformCond.L.Lock()
 	f.Confirmed = f.Pending
 	f.Pending = nil
@@ -398,9 +394,7 @@ func Foo() {
 	f.transformCond.L.Unlock()
 
 	// Phase 2: DeleteComments transform — reads Confirmed.Ast.
-	// Before the fix: deleteComments(nil) returned nil, causing the file
-	// to be incorrectly marked as "delete empty file after delete comments".
-	// After the fix: Confirmed.Ast is preserved, deleteComments works correctly.
+	// Confirmed.Ast must be preserved so deleteComments works correctly.
 	falseVal := false
 	f.Transform = &Transform{
 		MatchModuleIsRoot: &falseVal,
@@ -413,8 +407,7 @@ func Foo() {
 		t.Fatal("Pending should be set after DeleteComments transform")
 	}
 	if f.Pending.What == "delete empty file after delete comments" {
-		t.Fatalf("file incorrectly marked for deletion: Confirmed.Ast was nil, " +
-			"causing deleteComments to return nil")
+		t.Fatalf("file incorrectly marked for deletion: Confirmed.Ast was nil")
 	}
 	if f.Pending.What != "delete comments" {
 		t.Fatalf("expected 'delete comments', got: %s", f.Pending.What)
@@ -422,11 +415,12 @@ func Foo() {
 }
 
 func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
-	// Reproduction: the loader must not request NeedTypes, otherwise
-	// packages.Load type-checks the dependency graph and OOMs on large trees.
-	// NeedDeps is used (dependencies are loaded) but NeedTypes is omitted (no
-	// type checking), so memory stays bounded. Assert that Types and TypesInfo
-	// remain nil after a successful load against the real module wiring.
+	// The loader must not request NeedTypes, otherwise packages.Load
+	// type-checks the dependency graph and OOMs on large trees.
+	// NeedDeps is used (dependencies are loaded) but NeedTypes is omitted
+	// (no type checking), so memory stays bounded. Assert that Types and
+	// TypesInfo remain nil after a successful load against the real module
+	// wiring.
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),

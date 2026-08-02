@@ -18,18 +18,12 @@ constants with CUE's configuration language, allowing config files to stay
 in sync with Go-defined prompts, templates, and other values without
 duplication.
 
-CUE resolves references at compile time within a lexical scope. Compiling
-the file as a standalone value creates an isolated scope where references
-to fields not in the file itself are errors. Text concatenation and
-post-compilation Unify both fail because CUE resolves references during
-compilation, not during unification.
-
-The solution uses cue.Scope: globals are marshaled to JSON (valid CUE) and
-compiled as a CUE value. This value is passed as the scope option when
-compiling each config file, making the globals' fields available as the
-enclosing scope for reference resolution. References like prompts.fiction
-resolve against the globals during compilation, and the resulting value
-includes both the globals' fields and the file's fields.
+Globals are marshaled to JSON (valid CUE) and compiled as a CUE value.
+This value is passed as the cue.Scope option when compiling each config
+file, making the globals' fields available as the enclosing scope for
+reference resolution. References like prompts.fiction resolve against the
+globals during compilation, and the resulting value includes both the
+globals' fields and the file's fields.
 
 Globals are also embedded inside the close() schema so the closed schema
 accepts them as known fields. The closed schema still rejects fields that

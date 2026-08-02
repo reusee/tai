@@ -36,13 +36,9 @@ When only focus files change, all preceding context and dependency files remain
 identical, allowing LLM prefix caching to reuse cached key-value states for unchanged
 content.
 
-Within each priority group, files are ordered by their path as the primary key. This
-ensures a fully deterministic order that is independent of modification times. Using
-modification times would cause reordering whenever timestamps change (e.g., after a
-fresh checkout or touch), destroying the entire prefix cache. Path-based ordering
-guarantees that unchanged files always appear in the same position, maximizing cache
-reuse across requests. Modification time is kept as a final tiebreaker for hypothetical
-cases where two files could share the same path (impossible in practice).
+Within each priority group, files are ordered by their path as the primary key for
+a fully deterministic order independent of modification times, maximizing cache reuse.
+Modification time is a final tiebreaker.
 `
 
 type File struct {

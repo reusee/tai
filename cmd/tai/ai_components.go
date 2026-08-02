@@ -22,30 +22,17 @@ format used by memory blocks.
 The base AI assistant prompt text and the config-derived ExtraSystemPrompt are
 prompt-only Components, unifying all system prompt contributions under the
 Component framework. AISystemPrompt assembles only the dynamic current time,
-which must be computed at call time and cannot be a static Component.
+which must be computed at call time.
 
-Shell and continue components are reused from components.CommonComponents, the
-shared component set constructed in the components package. The codes module
-also reuses CommonComponents, prepending its codes-specific components (change,
-go-test, request-context) and appending summary, read-only files,
-mandatory planning, and extra system prompt.
-
+Shell and continue components are reused from components.CommonComponents.
 AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the codes module's CodesComponents
-provider. Both the ai command and the codes module use distinct named types
-embedding components.ComponentSet, ensuring each module's components are
-resolved independently in the dscope scope without type conflicts.
+provider.
 
-RestatePrompts are included for the block format, memory, shell, and
-continue components. Each RestatePrompt provides a short critical reminder
-that reinforces the block format rules (line-start requirement, boundary
-uniqueness, boundary matching). Restate prompts are placed at the end of the
-user prompt via ComponentSet.UserPromptParts(), not in the system prompt, so
-they are the last content the model reads before generating. This improves
-the model's adherence to the boundary-delimited block format by surfacing
-the most commonly violated rules as a distinct reminder, mirroring the
-approach used by the codes module's change, go-test, and request-context
-components.
+RestatePrompts are included for the block format, memory, shell, and continue
+components. Each RestatePrompt provides a short critical reminder that
+reinforces the block format rules. Restate prompts are placed at the end of the
+user prompt via ComponentSet.UserPromptParts(), not in the system prompt.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only

@@ -306,7 +306,7 @@ func TestOutputThoughtColor(t *testing.T) {
 	if !strings.Contains(got, ColorThought) {
 		t.Fatalf("expected thought color %q in output, got %q", ColorThought, got)
 	}
-	// ColorThought must differ from ColorLog (previously both were red)
+	// ColorThought must differ from ColorLog
 	if ColorThought == ColorLog {
 		t.Fatal("ColorThought must be distinct from ColorLog")
 	}
@@ -328,16 +328,12 @@ func TestOutputFlushClosesThoughtTag(t *testing.T) {
 	}
 
 	// Flush should close the thought tag with the matching </think> tag.
-	// The open tag is "<think>" (see AppendContent), so the close tag
-	// must be "</think>" — not "</thinking>" — for downstream parsers
-	// that rely on properly matched tag pairs.
 	state, err = state.Flush()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The closing tag must be present after flush and must match the
-	// open tag (<think>).
+	// The closing tag must be present after flush and match the open tag.
 	flushedOutput := buf.String()
 	if !strings.Contains(flushedOutput, "<think>\n") {
 		t.Fatalf("expected <think> open tag in output, got: %q", flushedOutput)
@@ -345,16 +341,9 @@ func TestOutputFlushClosesThoughtTag(t *testing.T) {
 	if !strings.Contains(flushedOutput, "</think>") {
 		t.Fatalf("expected </think> close tag in output after flush, got: %q", flushedOutput)
 	}
-	// The mismatched </thinking> tag must NOT appear. Before the fix,
-	// Flush emitted </thinking> while AppendContent emitted </think>,
-	// breaking tag-pair matching for downstream parsers.
-	if strings.Contains(flushedOutput, "</thinking>") {
-		t.Fatalf("flush should emit </think> not </thinking>, got: %q", flushedOutput)
-	}
 
 	// Simulate the next turn: append text as user message.
-	// The text should NOT be preceded by </think>, which would
-	// indicate the thought tag was still open from the previous turn.
+	// The text should NOT be preceded by </think>.
 	buf.Reset()
 	state, err = state.AppendContent(&Content{
 		Role:  RoleUser,

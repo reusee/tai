@@ -32,38 +32,21 @@ textual pseudo-call fallback) emitted by the model.
 Block parsing scans every block in the output, not just the first, because a
 memory block may be preceded by continue, shell, or summary blocks. Only the
 memory kind is consumed; other blocks are skipped and the scan advances past
-them. Unclosed blocks (opening marker with no matching end marker) are also
-skipped during scanning, so a memory block preceded by an unclosed block of
-another kind is still found. The pseudo-call fallback extracts textual
-update_user_profile(...) calls when the model fails to use the memory block
-format, tolerating both colon and assignment separators and both single- and
-double-quoted strings, matching common hallucination patterns.
+them. Unclosed blocks are also skipped during scanning. The pseudo-call
+fallback extracts textual update_user_profile(...) calls when the model fails
+to use the memory block format.
 
-Memory updates are merged additively rather than replaced: new items are
-appended to the existing item list, and a deduplication step prevents the same
-item from being recorded twice when it appears in both a memory block and a
-textual pseudo-call. The merge never prunes items, so once a fact is recorded
-it survives future rounds. This conservative policy protects long-term
-continuity of the user profile.
+Memory updates are merged additively: new items are appended to the existing
+item list, and a deduplication step prevents the same item from being recorded
+twice. The merge never prunes items.
 
 File access is guarded by an advisory lock file with PID-based stale detection
-and exponential backoff, so concurrent invocations do not corrupt the shared
-profile. Writes are atomic: content is written to a temporary file and renamed
-over the target, so a crash mid-write cannot leave a truncated profile. The
-profile path may be a symlink, in which case the symlink target is resolved so
-updates follow the link rather than replacing it.
+and exponential backoff. Writes are atomic: content is written to a temporary
+file and renamed over the target. The profile path may be a symlink, in which
+case the symlink target is resolved so updates follow the link.
 
 A fact-only policy governs what is recorded: only information the user
-explicitly expresses or that is confirmed by objective facts. The model must
-distinguish a user's topical interest (asking about a subject) from their
-personal status (undergoing that subject), preventing the profile from being
-polluted with unverified assumptions.
-
-UpdateMemoryFromBlock logs the outcome of each persistence operation: on
-success, it logs the model and item count so the user can confirm items were
-saved; on failure, it logs the error with context so write failures (e.g.,
-permission errors in a read-only container filesystem) are surfaced rather
-than silently lost.
+explicitly expresses or that is confirmed by objective facts.
 `
 
 type Memory struct {

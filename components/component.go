@@ -15,22 +15,16 @@ const TheoryOfComponents = `
 Component is the unified extension mechanism for the generation pipeline. It
 generalizes beyond block processing: a Component can contribute a system prompt
 section, a restate/reminder prompt, user prompt parts, define a block kind for
-parsing, process blocks of that kind, or any combination thereof. This
-unification eliminates the need for a separate concept for prompt-only
-mechanisms (e.g., read-only file rules, mandatory planning) that do not produce
-or consume blocks but still need to be assembled into the system prompt and
-managed as reusable, composable units.
+parsing, process blocks of that kind, or any combination thereof.
 
 A Component with a Process function is processed in the main generation loop;
 a Component without one (prompt-only or informational) contributes its
 PromptSection to the system prompt but is not invoked during output processing.
 A Component can also contribute UserPromptParts, which are prepended to the
-user's input similar to how CodeProvider.Parts provides context. This unifies
-user prompt contributions under the same Component framework as system prompt
-sections and restate reminders. ComponentSet is an ordered collection of
-Components that provides PromptSections (concatenating all system prompt
-contributions), RestatePrompts (concatenating all restate/reminder prompt
-contributions), UserPromptParts (concatenating all user prompt parts, with
+user's input similar to how CodeProvider.Parts provides context. ComponentSet is
+an ordered collection of Components that provides PromptSections (concatenating
+all system prompt contributions), RestatePrompts (concatenating all restate/reminder
+prompt contributions), UserPromptParts (concatenating all user prompt parts, with
 restate prompts appended as the last element so critical format reminders are
 the last content the model reads before generating), and Processable (returning
 the subset with Process functions for the generation loop). Restate prompts are
@@ -44,10 +38,7 @@ the ai command (cmd/tai/ai.go) and the codes module (codes/generate.go) call
 ProcessComponents with a []Block slice (collected by the BlockHandler during
 generation) and the current state. The function returns remaining blocks (not
 matched by any component), the updated state, combined parts, and whether any
-component triggered a new round. This eliminates the need for ParserState
-reconciliation: blocks are managed externally by the caller, and the state
-chain is modified exclusively through the State interface (AppendContent),
-with no extra methods that bypass the immutable state chain.
+component triggered a new round.
 
 ProcessResult carries a BackgroundParts field for informational output that
 should reach the model only when a subsequent round exists. Components like
@@ -58,14 +49,12 @@ triggers, BackgroundParts are discarded because there is no next round to
 carry them. This prevents loops where the model re-emits blocks (e.g.,
 go-test) because it never learned the previous invocation's result.
 
-The mechanism is the integrity guarantee: it makes the coupling between prompt
-and processing explicit and machine-checkable rather than implicit and
-human-maintained. By extending the same mechanism to prompt-only contributions,
-restate reminders, and user prompt parts, the system prompt assembly, user
-prompt assembly, and output processing loop share a single ComponentSet,
-ensuring that every prompt contribution is registered, every block kind has a
-matching processor, and every restate reminder and user prompt part is
-assembled through the same unified mechanism.
+The mechanism makes the coupling between prompt and processing explicit and
+machine-checkable. The system prompt assembly, user prompt assembly, and output
+processing loop share a single ComponentSet, ensuring that every prompt
+contribution is registered, every block kind has a matching processor, and
+every restate reminder and user prompt part is assembled through the same
+unified mechanism.
 `
 
 // ComponentProcessFunc processes blocks of a specific kind from the parser

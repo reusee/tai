@@ -72,11 +72,8 @@ type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Resul
 const TheoryOfTokenBudgetStability = `
 Accurate token budgeting preserves the prefix cache by ensuring deterministic
 file inclusion across requests. Function declarations from all sources — state
-layers, code/diff providers, and configuration files — must be counted together
-and sorted by name before measuring their token cost. Without config functions
-in the count, the user-content budget is overestimated, which can cause context
-window overflows that force file inclusion to change between requests,
-invalidating the entire prefix cache.
+layers, code/diff providers, and configuration files — are counted together
+and sorted by name before measuring their token cost.
 `
 
 func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, error)) (int, error) {
@@ -292,32 +289,24 @@ the partial output is summarized via a separate model call before retrying.
 The fast model (configured via fast_model or fast_model_name in tai.cue) is
 used for this summarization via GetDefaultFastModel, not the main generation
 model, to minimize latency and cost. The summary provides context about what
-was partially generated, and more importantly, changes the input to the model
-so that the retry attempt produces a different output rather than repeating
-the same truncation. Without input change, the model may produce identical
-truncated output on retry, leading to an infinite loop. The summary is
-requested via a summary block in the summarization prompt, and the parsed
-summary text is appended as a user message to the original state before
-retrying. This keeps the main conversation history clean while injecting the
-condensed context.
+was partially generated, and changes the input to the model so that the retry
+attempt produces a different output. The summary is requested via a summary
+block in the summarization prompt, and the parsed summary text is appended
+as a user message to the original state before retrying. This keeps the main
+conversation history clean while injecting the condensed context.
 The summary is prefixed with an explanatory note informing the model that the
-previous output was truncated and that this is a retry, so the model can
-distinguish a retry from a fresh request and adjust its behavior accordingly.
+previous output was truncated and that this is a retry.
 `
 
 const TheoryOfSummaryRetryOnError = `
 Generation errors that occur after the model has already produced partial
 output (thoughts or body text) are retried with a summarized version of that
-output. Without summarization, the retry would replay the full partial output,
-costing tokens and risking repeated context overflows or the same failure.
-Summarizing condenses the partial output into a compact user message that
-preserves context while freeing budget, and changes the input so the retry
-does not repeat the same truncated response. This extends
-TheoryOfIncompleteOutputSummarization, which covers only the missing-completion
-case, to all generation-phase errors, including change-block apply errors,
-which are routed through the same OnPhaseError retry path instead of the
-separate RetryOnApplyError path so they benefit from the same summarization
-behavior.
+output. Summarizing condenses the partial output into a compact user message
+that preserves context while freeing budget, and changes the input so the retry
+produces a different response. All generation-phase errors — including missing
+completion and change-block apply errors — are routed through the same
+OnPhaseError retry path with summarization, ensuring consistent retry behavior
+regardless of the error type.
 `
 
 // Generate wraps GenerateWithResult, discarding the loops.Result so existing

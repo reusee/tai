@@ -11,9 +11,7 @@ import (
 
 const TheoryOfContextStructure = `
 Context provided to the model must clearly delineate each file's boundaries using
-begin/end markers that include the file path. Without markers, the model cannot
-distinguish where one file ends and another begins, especially when file content
-contains code fences or similar delimiters. Binary files must also be wrapped with
+begin/end markers that include the file path. Binary files must also be wrapped with
 markers so the model understands the attachment boundary. User input must be
 separated from file context with its own marker so the model can distinguish
 between reference material and the task request.

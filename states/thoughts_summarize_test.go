@@ -616,13 +616,10 @@ func TestThoughtsSummarizeFlushOnNonThought(t *testing.T) {
 }
 
 func TestThoughtsSummarizeFlushOnMixedContent(t *testing.T) {
-	// Reproduction: when a single Content contains both Thought and Text
-	// parts (e.g., a streaming chunk where the model transitions from
-	// reasoning to answering), the summary must be flushed BEFORE the
-	// text is propagated to upstream and printed. The previous
-	// implementation checked !hasThought, which was false for mixed
-	// content (hasThought=true), so the text was printed first and the
-	// summary appeared later — out of order.
+	// When a single Content contains both Thought and Text parts (e.g., a
+	// streaming chunk where the model transitions from reasoning to
+	// answering), the summary must be flushed BEFORE the text is propagated
+	// to upstream and printed.
 	gen := &mockSummarizerGenerator{summary: "mixed summary"}
 	summarizer := NewSummarizer(gen)
 	buf := new(bytes.Buffer)

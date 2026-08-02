@@ -28,29 +28,16 @@ function arguments.
 
 The public types (ApplyChangeBlock, ApplyChangeBlockStore, ApplyChangeBlocks,
 ApplyChangeBlocksStore, ApplyDiffFile) are dscope-provided function types with
-no WriteErrorLog in their signatures. Callers inject them via dscope and call
-them with only runtime parameters.
+no WriteErrorLog in their signatures.
 
 Internal helpers (CallWriteErrorLog, ParseAndFormat, ApplySpecialTargetModify,
 ApplyFileLevelOp, ApplyTextLevelOp, ApplyGoModification) are exported
 dscope-provided types that decompose the apply logic into focused units. They
-must be exported because dscope uses reflect to discover provider methods, and
-reflect only finds exported methods. The dependency chain flows from WriteErrorLog
-through CallWriteErrorLog to ParseAndFormat, then to ApplySpecialTargetModify and
-ApplyGoModification, and finally to ApplyChangeBlockStore, ApplyChangeBlock,
-ApplyChangeBlocks, ApplyChangeBlocksStore, and ApplyDiffFile. Each provider
-method receives its dependencies as dscope-injected parameters and returns a
-closure that captures them, exactly like codes.Generate.
-
-The large ApplyChangeBlockStore is decomposed: ApplyFileLevelOp handles RENAME,
-WRITE, and DELETE* (file-level operations that bypass structural parsing);
-ApplyTextLevelOp handles REPLACE, INSERT_BEFORE, INSERT_AFTER for non-Go files;
-ApplyGoModification handles structural Go file edits (MODIFY, ADD_BEFORE,
-ADD_AFTER, DELETE, special targets package/import). Pure logic (buildRangeItems,
-buildModifiedSource) remains as regular functions in apply.go since they have no
-WriteErrorLog dependency. This decomposition follows the principle that each
-dscope-provided function should be focused and testable, with dependencies
-injected and runtime values passed as arguments.
+must be exported because dscope uses reflect to discover provider methods. The
+dependency chain flows from WriteErrorLog through CallWriteErrorLog to
+ParseAndFormat, then to ApplySpecialTargetModify and ApplyGoModification, and
+finally to ApplyChangeBlockStore, ApplyChangeBlock, ApplyChangeBlocks,
+ApplyChangeBlocksStore, and ApplyDiffFile.
 `
 
 // Public dscope-provided function types. These are the types callers inject

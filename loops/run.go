@@ -17,9 +17,7 @@ const TheoryOfLoops = `
 The loops package unifies the generation loop pattern across all generation
 commands (codes, ai, next). The core pattern is:
 1. Wrap state with ParserState to collect blocks during streaming
-2. Execute the phase chain (generate only for commands that use OnIdle,
-   or generate -> chat -> nil for commands that chain chat as a phase)
-   until done
+2. Execute the phase chain until done
 3. Unwrap ParserState to get the base state
 4. Process collected blocks via ProcessComponents
 5. If a component triggers (produces parts or modifies state), append the
@@ -28,56 +26,27 @@ commands (codes, ai, next). The core pattern is:
    When OnIdle returns continue=true, a new round starts; when false, the
    loop ends. OnIdle is nil for non-interactive commands (codes, ping, next).
 
-When Components is empty, the loop runs a single round (single-shot mode),
-used by commands that don't need multi-round generation or component
-processing. The phase chain itself can create an interactive loop via the
-chat phase (generate -> chat -> generate -> chat -> ...), so single-shot
-mode still supports interactive sessions.
+When Components is empty, the loop runs a single round (single-shot mode).
 
-RetryOnMissingCompletion handles truncated output: when a round ends
-without a summary block, or when the finish reason indicates abnormal
-termination (e.g., "length" from max-token truncation), the output was
-likely cut off mid-stream. The loop summarizes the incomplete output,
-appends it as context, and retries from the pre-round state. This is
-distinct from generator-level retry which handles transient API errors.
-The retry logic and incomplete-output summarization are unified here so
-all commands can opt into retry behavior via RunOptions.
+RetryOnMissingCompletion handles truncated output: when a round ends without
+a summary block, or when the finish reason indicates abnormal termination (e.g.,
+"length" from max-token truncation), the output was likely cut off mid-stream.
+The loop summarizes the incomplete output, appends it as context, and retries
+from the pre-round state.
 
-RetryOnError handles any error that occurs after the model has output
-content during a round. When a phase returns an error and the model has
-already generated content, the loop summarizes the incomplete output
-(using SummarizeIncomplete if available), appends both the error context
-and the summary as user content so the model can correct its output,
-resets per-round state via OnRoundStart (which resets the MemoryStore,
-discarding all changes from the failed attempt), and retries from the
-updated state. Errors that occur before any content is output do not
-trigger retry, since there is no incomplete content to summarize and the
-error likely indicates a configuration or infrastructure problem rather
-than a model output issue. This avoids enumerating specific error types:
-any error is retryable as long as the model produced partial output.
-RetryOnError and RetryOnMissingCompletion share the same MaxRetries
-budget and retry counter, so the total number of retries per round is
-bounded regardless of the trigger type.
+RetryOnError handles any error that occurs after the model has output content
+during a round. The loop summarizes the incomplete output (using
+SummarizeIncomplete if available), appends both the error context and the
+summary as user content, resets per-round state via OnRoundStart (which resets
+the MemoryStore, discarding all changes from the failed attempt), and retries
+from the updated state. Errors that occur before any content is output do not
+trigger retry.
 
-The BlockHandler type uses a consumed flag: when a handler returns
-consumed=true, the block is not passed to ProcessComponents. This lets
-callers apply change blocks during streaming (early error detection) and
-prevent double-application by the change component. When consumed=false,
-the block is collected for component processing.
-
-The OnIdle mechanism ensures automated actions are processed before
-interactive user input. When a generation round ends and no component
-triggers a new round, the loop invokes the OnIdle handler (if set) to
-prompt the user for input. This ensures the model can chain multiple
-rounds of automated execution (continue, shell, go-test) without user
-intervention; the user is only prompted when no automated action is
-pending. Commands without interactive input (codes, ping, next) set
-OnIdle to nil, so the loop ends after the last automated action. See
-phases.TheoryOfIdleHandler.
+The BlockHandler type uses a consumed flag: when a handler returns consumed=true,
+the block is not passed to ProcessComponents.
 
 Unmatched blocks are accumulated across rounds and returned in
-Result.RemainingBlocks, so callers can observe blocks emitted in any round
-(e.g., the goal command's done block).
+Result.RemainingBlocks, so callers can observe blocks emitted in any round.
 `
 
 // ApplyError is returned by BlockHandler when a change block fails to apply

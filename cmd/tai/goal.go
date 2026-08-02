@@ -27,52 +27,33 @@ evaluate goal completion after each loop; when it determines the goal is
 achieved, it emits a done block, and the command exits. A maximum iteration
 limit prevents infinite loops when the goal is never achieved.
 
-The design is inspired by autonomous agent goal features where the agent
-iteratively works toward an objective, reassessing after each cycle. The key
-insight is that each loop is fully independent: no conversation history carries
-over between loops, so the model always has an accurate view of the current
-codebase state. This prevents context overflow and ensures that changes made by
-previous loops are visible to subsequent loops through the filesystem, not
-through potentially stale conversation history.
-
 Each loop builds its generation from a fresh reset scope: Main takes
 dscope.Reset and invokes it once per iteration, resolving a new
-GenerateWithResult for every loop. Reset invalidates per-scope provider caches
-(see TheoryOfScopeReset in dscope), so any state captured at
-provider-evaluation time is rebuilt per loop instead of being shared across
-loops. This makes loop independence a structural guarantee rather than a
-convention: even if a provider in the GenerateWithResult chain retains
-construction-time state, a failed or interrupted loop cannot leak it into
-the next one. The cost is at most one re-evaluation of the provider chain
-per loop, bounded by the iteration limit and consistent with the intent
-that each loop starts from the current system state. Reset complements the
-gocodes.CodeProvider default below: the gocodes pipeline holds no
-process-level caches — all caches live inside scope provider functions —
-so reset recomputes them on each loop.
+GenerateWithResult for every loop. Reset invalidates per-scope provider caches,
+so any state captured at provider-evaluation time is rebuilt per loop instead
+of being shared across loops. This makes loop independence a structural
+guarantee rather than a convention: even if a provider in the
+GenerateWithResult chain retains construction-time state, a failed or
+interrupted loop cannot leak it into the next one.
 
-The done block is the completion signal, replacing the prior marker-file
-approach. The model is instructed to emit a done block (a heredoc-delimited
-block with kind "done") when it judges the goal as achieved.
-GenerateWithResult returns the loops.Result, which includes RemainingBlocks
-containing blocks not consumed by any component. The done block is not matched
-by any component, so it remains in RemainingBlocks. Because loops.Run
-accumulates unmatched blocks across all rounds within a single
-generateWithResult call, the done block is present in the final
-Result.RemainingBlocks even if another component triggered additional rounds
-in the same loop. After each loop, the goal command scans
+The done block is the completion signal. The model is instructed to emit a
+done block (a heredoc-delimited block with kind "done") when it judges the
+goal as achieved. GenerateWithResult returns the loops.Result, which
+includes RemainingBlocks containing blocks not consumed by any component.
+The done block is not matched by any component, so it remains in
+RemainingBlocks. Because loops.Run accumulates unmatched blocks across all
+rounds within a single generateWithResult call, the done block is present
+in the final Result.RemainingBlocks even if another component triggered
+additional rounds in the same loop. After each loop, the goal command scans
 Result.RemainingBlocks for a block with Kind "done". If found, the goal is
-achieved and the command exits cleanly. This in-band signal eliminates the
-need for filesystem side effects and makes the completion signal visible in
-the generation output.
+achieved and the command exits cleanly.
 
-The gocodes.CodeProvider is the default for the goal command, matching the go
-subcommand's Go-oriented context organization (import distance, AST
-transformation). The gocodes pipeline holds no process-level caches: all
-caches, such as loaded packages and parsed ASTs, are defined within scope
-provider functions. Because each goal loop resolves a fresh
-GenerateWithResult from a reset scope, dscope.Reset rebuilds every
-provider-scoped cache, giving each loop an accurate view of the current
-filesystem state.
+The gocodes.CodeProvider is the default for the goal command. The gocodes
+pipeline holds no process-level caches: all caches, such as loaded packages
+and parsed ASTs, are defined within scope provider functions. Because each
+goal loop resolves a fresh GenerateWithResult from a reset scope, dscope.Reset
+rebuilds every provider-scoped cache, giving each loop an accurate view of the
+current filesystem state.
 `
 
 const maxGoalIterations = 20

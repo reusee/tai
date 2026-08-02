@@ -6,10 +6,9 @@ import (
 
 const TheoryOfBatchDiffWrite = `
 The diff file is mutated in memory as change blocks are applied and persisted only once
-at the end of processing (or on early exit), rather than after every change block. This
-reduces I/O from O(N*S) to O(S) for N change blocks in a file of size S, without changing
-the on-disk result: applied change blocks are removed and non-change blocks (e.g.,
-finish summaries) are preserved exactly as before.
+at the end of processing (or on early exit). This reduces I/O from O(N*S) to O(S) for N
+change blocks in a file of size S. Applied change blocks are removed and non-change
+blocks (e.g., finish summaries) are preserved.
 `
 
 // ChangeBlockSystemPrompt returns the system prompt describing the change

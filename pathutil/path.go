@@ -21,13 +21,9 @@ delegates to security.IsWritablePath, which reports whether a path (after
 symlink resolution) is inside one of the writable directories defined by
 the security package's container filesystem policy: the current working
 directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the
-user config directory, /tmp, and /dev/shm. This is used at focus file
-collection time to reject files that cannot be modified, surfacing the
-error before the model is invoked rather than at apply time. The
-canonicalization via filepath.EvalSymlinks handles platforms where the
-working directory contains symlink components (e.g., macOS /var →
-/private/var) and resolves symlinks in the path argument. See
-security.TheoryOfWritableDirs.
+user config directory, /tmp, and /dev/shm. Canonicalization via
+filepath.EvalSymlinks handles platforms where the working directory contains
+symlink components and resolves symlinks in the path argument.
 `
 
 // EscapesDir reports whether a cleaned relative path escapes the current

@@ -312,9 +312,8 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 }
 
 func TestOpenAIErrorNoErrorField(t *testing.T) {
-	// Regression: when the API returns a non-200 status with valid JSON
-	// that lacks an "error" field, the code would panic with a nil pointer
-	// dereference when trying to set errResp.Error.HTTPStatusCode.
+	// When the API returns a non-200 status with valid JSON that lacks
+	// an "error" field, the code must handle it without panicking.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, `{"message": "something went wrong"}`)
@@ -376,9 +375,9 @@ func TestTemperatureAndMaxTokensOmittedWhenNotSet(t *testing.T) {
 }
 
 func TestTemperatureZeroIncludedInJSON(t *testing.T) {
-	// Regression: omitempty on Temperature caused 0 to be omitted from the
-	// request JSON, making the API fall back to its default (typically 1.0)
-	// instead of the intended deterministic temperature 0.
+	// Temperature 0 must be included in the request JSON. omitempty
+	// would omit it, causing the API to fall back to its default
+	// (typically 1.0) instead of the intended deterministic temperature 0.
 	req := ChatCompletionRequest{
 		Model:       "test-model",
 		Temperature: new(float32(0)),

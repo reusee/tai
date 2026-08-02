@@ -167,14 +167,6 @@ the model can chain multiple rounds of shell execution, continue block
 self-prompting, or test verification without user intervention, and the
 user is only prompted when the model has no pending automated actions.
 
-This replaces the prior design where the chat phase was chained directly
-after the generate phase (generate -> chat -> generate -> chat), which
-caused the user to be prompted between every generation round even when
-the model had emitted continue or shell blocks that should be processed
-automatically. The codes module already used a generate-only phase chain
-with component processing between rounds; the IdleHandler extends this
-pattern to interactive commands like ai.
-
 The IdleHandler loops internally for commands that do not produce new
 content (/write, /tap), only returning when the user provides input that
 should be sent to the model (normal text), requests a regeneration

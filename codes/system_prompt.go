@@ -10,14 +10,7 @@ The read-only annotation on file context markers — "(read-only)" for text file
 and ", read-only" for binary files — signals that a file resides outside the
 project tree and must not be modified. The system prompt translates this
 filesystem-level annotation into an explicit behavioral constraint on the
-model: change blocks must not target any path marked read-only. This closes
-the loop between the annotation produced by the file provider (see
-TheoryOfReadOnlySymlinks in anytexts) and the model's generation behavior.
-Without an explicit prompt-level rule, the model may attempt to modify
-read-only files based on their content, leading to apply errors or
-unintended writes outside the project boundary. The rule is stated once in
-the system prompt rather than per-file to keep the prompt compact and
-cacheable.
+model: change blocks must not target any path marked read-only.
 `
 
 const ReadOnlyFilesSystemPrompt = `**Read-Only Files:**
@@ -44,107 +37,68 @@ large or complex tasks, truncating the response mid-block and wasting the
 round. A plan-only first round followed by small execution rounds keeps each
 round's thinking and output bounded, so no single response approaches the
 generation limit. The mandate is opt-in via the -plan flag; when disabled (the
-default), the planning system prompt is omitted and the model may complete
-tasks in a single response without a continue block. When enabled, the
-mandate applies uniformly to every task, including apparently trivial ones,
-because truncation risk cannot be reliably predicted from the request alone;
-the cost is one extra short round-trip per task. This refines the continue
-block guidance: the exemption that allowed simple tasks to complete in a
-single response without a continue block is superseded when planning is
-enabled.
+default), the planning system prompt is omitted. When enabled, the mandate
+applies uniformly to every task, including apparently trivial ones, because
+truncation risk cannot be reliably predicted from the request alone; the cost
+is one extra short round-trip per task.
 
 Planning is an extension layered on top of the continue block mechanism (see
 TheoryOfContinueBlocks): the mechanism only transports the block body back as
 the next user message, while this mandate defines what the body contains and
-how rounds are structured. The two are orthogonal and must not be conflated:
-continue blocks may serve other extensions with entirely different body
-conventions, so nothing specific to planning belongs in the mechanism
-definition.
-
-The planning round applies structural and scheduling decomposition strategies
-(see TheoryOfTaskDecomposition) to produce the initial task list, while
-subsequent execution rounds apply adaptive and quality strategies as execution
-reveals new information. This makes decomposition a living hypothesis refined
-across rounds rather than a one-shot guess.
+how rounds are structured. The two are orthogonal: continue blocks may serve
+other extensions with entirely different body conventions.
 
 For complex tasks, the model maintains a task list in the continue block body.
 In each round, the model selects one or more tasks from the list to execute,
 produces the corresponding change blocks, and ends with a continue block
 containing the updated task list — marking completed tasks and listing
 remaining tasks. This cycle repeats until all tasks are complete, at which
-point a summary block is used instead. This keeps each round focused and
-reviewable while avoiding the single-request generation limit.
+point a summary block is used instead.
 
 Decomposition must precede any action, including analysis and reasoning, not
 just code changes. A composite task such as "find bugs and fix" contains an
 analysis phase (finding bugs) that may itself span many files or modules and
 exceed the generation limit if performed in a single round. The planning round
 must therefore partition the input space — for example by file or module group
-— so that each round analyzes or acts on only a subset. Decomposing only the
-fix phase after completing the analysis phase in one unbounded round defeats
-the purpose: the analysis round itself may truncate, losing bugs and wasting
-the round.
+— so that each round analyzes or acts on only a subset.
 `
 
 const TheoryOfTaskDecomposition = `
-Task decomposition is not a single algorithm but a portfolio of strategies
-applied in combination. No one strategy suffices for all tasks; the model must
-select and blend strategies based on task shape, risk profile, and observed
-progress. The strategies fall into four categories.
+Task decomposition is a portfolio of strategies applied in combination. No one
+strategy suffices for all tasks; the model must select and blend strategies
+based on task shape, risk profile, and observed progress.
 
 Structural strategies determine how work is divided: by input partition (e.g.,
 one round per focus-file group), by logical step sequence, or by architectural
 layer (interface definition before implementation before caller updates).
-Structural strategies produce the initial task list during the planning round.
 
-Adaptive strategies determine how the model responds during generation: if
-output is already long (reasoning or code), truncate immediately and continue
-in the next round rather than risking truncation; if a round reveals that a
-coarse task hides finer subtasks, refine the task list progressively; if an
-error occurs, dedicate the next round to diagnosis and fix; if execution
-feedback contradicts the plan, adjust the task list dynamically. Adaptive
-strategies make decomposition a living hypothesis, not a fixed decree.
+Adaptive strategies determine how the model responds during generation:
+truncate immediately and continue in the next round if output is already long;
+refine the task list progressively if a coarse task reveals finer subtasks;
+dedicate the next round to diagnosis and fix after an error; adjust the task
+list dynamically when execution feedback contradicts the plan.
 
 Quality strategies determine how correctness is ensured: include dedicated
-verification rounds (tests, build checks) after implementation; isolate
-high-uncertainty tasks as probing rounds that validate critical assumptions
-before committing to a path; gather context before making changes so the
-model never acts on unverified assumptions. Quality strategies front-load
-risk reduction.
+verification rounds after implementation; isolate high-uncertainty tasks as
+probing rounds; gather context before making changes.
 
-Scheduling strategies determine ordering and sizing: order by dependency so
-depended-upon tasks execute first; isolate high blast-radius changes to
-separate rounds; split by estimated token consumption so no round approaches
-the output limit; distinguish one-way door (irreversible) from two-way door
-(reversible) decisions, giving one-way doors a separate round with
-pre-validation. Scheduling strategies keep each round safe and bounded.
+Scheduling strategies determine ordering and sizing: order by dependency;
+isolate high blast-radius changes; split by estimated token consumption;
+distinguish one-way door (irreversible) from two-way door (reversible)
+decisions.
 
 The primary trigger for splitting into multiple rounds is the expected output
 volume of a single round: when a task requires more than approximately 5-7
-change blocks, or when an analysis phase must process many files or modules,
-the model should decompose it into multiple rounds. Analysis-heavy tasks are
-a primary trigger because the analysis itself — before any change blocks are
-produced — can exceed the generation limit if performed in a single round.
-Secondary triggers include natural phase boundaries (e.g., interface
-refactoring followed by caller updates) and dependency chains where later
-steps depend on earlier results. Each round should produce a coherent,
-reviewable set of changes; prefer fewer, larger rounds over many tiny rounds
-to minimize round-trip overhead.
+change blocks, or when an analysis phase must process many files or modules.
+Secondary triggers include natural phase boundaries and dependency chains.
+Each round should produce a coherent, reviewable set of changes; prefer fewer,
+larger rounds over many tiny rounds to minimize round-trip overhead.
 
-The planning round applies structural and scheduling strategies to produce the
-initial task list. Subsequent rounds apply adaptive and quality strategies as
-execution reveals new information. The continue block body carries the
-evolving task list, so decomposition is visible, reviewable, and correctable
-across rounds.
-
-Decomposition must precede any action, including analysis and reasoning, not
-just code changes. A composite task such as "find bugs and fix" contains an
-analysis phase that may itself span many files or modules; if decomposition is
-applied only to the fix phase after a single unbounded analysis round, that
-analysis round may exceed the generation limit and truncate, losing findings
-and wasting the round. The planning round must therefore partition the input
+Decomposition must precede any action, including analysis and reasoning. A
+composite task such as "find bugs and fix" contains an analysis phase that may
+itself span many files or modules; the planning round must partition the input
 space so that each round — whether analyzing or implementing — handles only a
-subset of the inputs.
+subset.
 `
 
 const MandatoryPlanningSystemPrompt = `**Mandatory Planning and Multi-Round Generation:**

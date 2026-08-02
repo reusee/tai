@@ -11,11 +11,10 @@ import (
 const TheoryOfErrorLogging = `
 When a change block application produces invalid Go, the error is often
 discovered by goimports, which reports a formatting-aware parse error that
-may obscure the root cause. To surface the real problem earlier and provide
-the model with enough context to self-correct, the apply pipeline parses the
-modified source immediately after building it — before invoking goimports.
-If the parse fails, the error is reported as a parse error rather than a
-goimports error, giving the model a clearer signal about what went wrong.
+may obscure the root cause. To surface the real problem earlier, the apply
+pipeline parses the modified source immediately after building it — before
+invoking goimports. If the parse fails, the error is reported as a parse
+error rather than a goimports error.
 
 On any error during apply that has meaningful context (source content and/or
 modified content), an XML error log is written to the error log directory. The
@@ -23,17 +22,11 @@ log records the original source file content, the change block (operation,
 target, file path, find, body), the modified file content (pre-goimports),
 and the error message. The filename follows the pattern
 .error-log.<datetime>.xml, using a filesystem-safe timestamp. Same-second
-collisions are handled by appending a numeric suffix. This gives the model
-the full context needed to analyze why the apply failed and emit a corrected
-change block in the next round.
+collisions are handled by appending a numeric suffix.
 
 ErrorLogDir is a dscope-provided type that controls where error logs are
 written. The default is the current working directory. In test environments,
-the provider is overridden with a temporary directory (e.g., t.TempDir())
-so tests do not pollute the working directory with .error-log.*.xml files.
-ErrorLogDir must never be stored in a mutable global variable; it is always
-resolved through dscope provider injection, ensuring the error log
-destination is configurable without hidden global state.
+the provider is overridden with a temporary directory.
 `
 
 // ErrorLogDir controls where error log XML files are written. The default

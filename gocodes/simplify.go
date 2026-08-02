@@ -27,11 +27,9 @@ Comment deletion does not affect import usage, so goimports is skipped for comme
 Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
 File ordering (see TheoryOfFileOrdering in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
 
-The context token budget is fixed at a constant value (maximumContextTokenBudget) rather than derived from focus file size.
-A fixed budget ensures that context files are simplified consistently across requests regardless of changes to focus files,
-preserving the prefix cache. A variable budget tied to focus file size would cause context file inclusion/exclusion to vary
-whenever focus files are edited, defeating prefix caching for the entire prompt.`
-
+The context token budget is fixed at a constant value (maximumContextTokenBudget)
+to ensure context files are simplified consistently across requests, preserving
+the prefix cache.`
 	maximumContextTokenBudget = 32 << 10
 )
 
@@ -453,9 +451,8 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 			f.Pending.Content = buf.Bytes()
 			// Keep f.Pending.Ast alive: subsequent transforms (DeleteComments,
 			// DeleteFunctionBody) read f.Confirmed.Ast after confirmation.
-			// Releasing it here caused deleteComments(nil) to return nil,
-			// incorrectly marking files for deletion. The AST is released
-			// in the SimplifyFiles cleanup defer after all transforms finish.
+			// The AST is released in the SimplifyFiles cleanup defer after
+			// all transforms finish.
 		} else if len(f.Pending.Content) > 0 {
 			content = string(f.Pending.Content)
 		}

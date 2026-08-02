@@ -102,15 +102,15 @@ included consecutively.
 
 const TheoryOfPatternMatching = `
 All file pattern matching — glob expansion and path matching — is unified on the
-doublestar library (github.com/bmatcuk/doublestar/v4). doublestar.FilepathGlob
-replaces filepath.Glob for glob expansion, adding native ** (globstar) support
-for recursive directory traversal. doublestar.PathMatch replaces filepath.Match
-for pattern matching, also supporting ** patterns. Non-glob exclusion patterns
-(e.g., "pkg") retain directory-prefix matching semantics alongside the
-doublestar path match, so "pkg" excludes both "pkg" itself and everything under
-"pkg/". This unification ensures consistent ** semantics across all file
-matching contexts: IterFiles glob expansion, isExcludedPath pattern matching,
-request-context glob tags, and gocodes exclusion/embed-requested checks.
+doublestar library (github.com/bmatcuk/doublestar/v4). Glob expansion uses
+doublestar.FilepathGlob for native ** (globstar) support for recursive directory
+traversal. Pattern matching uses doublestar.PathMatch, also supporting **
+patterns. Non-glob exclusion patterns (e.g., "pkg") retain directory-prefix
+matching semantics alongside the doublestar path match, so "pkg" excludes both
+"pkg" itself and everything under "pkg/". This ensures consistent ** semantics
+across all file matching contexts: IterFiles glob expansion, isExcludedPath
+pattern matching, request-context glob tags, and gocodes exclusion/embed-requested
+checks.
 
 Hidden files (those whose basename starts with ".") are skipped during
 directory traversal to avoid including unintended dotfiles (e.g., .git,
