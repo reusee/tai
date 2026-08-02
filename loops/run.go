@@ -13,6 +13,56 @@ import (
 	"github.com/reusee/tai/phases"
 )
 
+// TheoryOfContextPhilosophy articulates the system's single-shot context
+// construction philosophy. All context the model needs is assembled upfront
+// through pruning, simplification, and token budgeting — not discovered
+// through multi-turn conversation. This constant is referenced by other
+// theories to prevent suggestions that rely on long-conversation patterns.
+const TheoryOfContextPhilosophy = `
+The system provides all context the model needs in a single generation
+request, rather than discovering it through multi-turn conversation. This
+single-shot approach sets the system apart from mainstream agentic agents
+that grow context through dialogue.
+
+Upfront context construction: file contents, dependency graphs, system
+prompts, and task instructions are assembled before the first generation
+call. Pruning removes irrelevant files. Simplification strips function bodies
+and comments from non-focus packages. Token budgeting caps total input size.
+The model then reasons over the complete picture and produces changes ready
+for human review.
+
+Architectural constraints:
+
+- No long conversations. The system does not accumulate dialogue across
+  tasks. Each invocation builds fresh context from the filesystem state.
+  The ai command's interactive mode lets the user type messages across
+  turns, but each turn sends the full accumulated context to the model,
+  not a compressed fragment.
+
+- No conversation compression. The system never summarizes old dialogue to
+  free token budget. Context is managed solely through pruning, AST-level
+  simplification, and deterministic file ordering. Retry summarization
+  (TheoryOfSummaryCompletionRetry in codes/generate.go) condenses truncated
+  output for one-shot error recovery; it does not persist as compressed
+  history. Thought summarization (TheoryOfThoughtsSummarize in
+  states/summarizer.go) writes to the user's screen for readability; it
+  never feeds back into the model as compressed context.
+
+- No iterative discovery. The CodeProvider pipeline delivers all file and
+  code context upfront. The request-context block exists for external
+  resources unavailable at construction time (network fetches, glob
+  expansion), not as a substitute for upfront context.
+
+- Multi-round generation is task decomposition, not conversation. Continue
+  blocks split large tasks into bounded rounds. Shell and go-test blocks
+  run autonomous verification. The generation loop executes tasks; it is
+  not a chatbot.
+
+Features that assume a long-conversation model — growing context through
+dialogue, summarizing old turns to free budget, treating conversation
+history as a knowledge base — violate this philosophy and are out of scope.
+`
+
 const TheoryOfLoops = `
 The loops package unifies the generation loop pattern across all generation
 commands (codes, ai, next). The core pattern is:
@@ -47,6 +97,11 @@ the block is not passed to ProcessComponents.
 
 Unmatched blocks are accumulated across rounds and returned in
 Result.RemainingBlocks, so callers can observe blocks emitted in any round.
+
+The loop executes tasks, not conversations. Multi-round generation serves
+autonomous decomposition and verification; it does not accumulate dialogue.
+See TheoryOfContextPhilosophy for the single-shot context construction
+philosophy that governs context provision.
 `
 
 // ApplyError is returned by BlockHandler when a change block fails to apply

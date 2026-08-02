@@ -281,6 +281,11 @@ RoleLog content appended by the generator. On retry, the collected blocks are
 reset alongside the MemoryStore in the onPhaseStart callback, ensuring both
 external states are consistent with the rolled-back State. See
 TheoryOfParserState in blocks/parser_state.go.
+
+This retry is transient error recovery for truncated output. The summarized
+content does not persist as compressed history. Each retry regenerates from
+the original context, not from accumulated dialogue. See
+TheoryOfContextPhilosophy in loops/run.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
@@ -296,6 +301,11 @@ as a user message to the original state before retrying. This keeps the main
 conversation history clean while injecting the condensed context.
 The summary is prefixed with an explanatory note informing the model that the
 previous output was truncated and that this is a retry.
+
+This summarization is transient error recovery, not conversation compression.
+The summary is injected into one retry request and then discarded. The system
+does not maintain or compress dialogue history. See TheoryOfContextPhilosophy
+in loops/run.go.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -307,6 +317,11 @@ produces a different response. All generation-phase errors — including missing
 completion and change-block apply errors — are routed through the same
 OnPhaseError retry path with summarization, ensuring consistent retry behavior
 regardless of the error type.
+
+This summarization is transient error recovery. The condensed content is
+injected into one retry request and does not persist as compressed history.
+The system does not compress conversation. See TheoryOfContextPhilosophy in
+loops/run.go.
 `
 
 // Generate wraps GenerateWithResult, discarding the loops.Result so existing
