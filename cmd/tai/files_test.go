@@ -112,11 +112,11 @@ func TestFilePathToPartsBinaryFile(t *testing.T) {
 	}
 }
 
-func TestFilePathToPartsRejectsOutsideWritableDirs(t *testing.T) {
+func TestFilePathToPartsMarksOutsideWritableDirsAsReadOnly(t *testing.T) {
 	// A file outside all writable directories (CWD, /tmp, Go dirs, config
-	// dir, /dev/shm) should be rejected at collection time. /var/tmp is
-	// not in the writable dirs list, so a file there is rejected. If
-	// /var/tmp is unavailable, the test is skipped.
+	// dir, /dev/shm) should be marked as read-only rather than rejected.
+	// /var/tmp is not in the writable dirs list, so a file there is marked
+	// read-only. If /var/tmp is unavailable, the test is skipped.
 	nonWritableDir, err := os.MkdirTemp("/var/tmp", "tai_test_")
 	if err != nil {
 		t.Skipf("cannot create temp dir in /var/tmp: %v", err)
@@ -129,11 +129,25 @@ func TestFilePathToPartsRejectsOutsideWritableDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = filePathToParts(path)
-	if err == nil {
-		t.Fatal("expected error for file outside writable directories")
+	parts, err := filePathToParts(path)
+	if err != nil {
+		t.Fatalf("expected no error for file outside writable directories, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "outside writable directory") {
-		t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part for text file, got %d", len(parts))
+	}
+
+	text, ok := parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected Text part, got %T", parts[0])
+	}
+
+	s := string(text)
+	if !strings.Contains(s, "(read-only)") {
+		t.Fatal("text file outside writable dirs should be marked as read-only")
+	}
+	if !strings.Contains(s, content) {
+		t.Fatal("text file missing content")
 	}
 }

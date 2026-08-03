@@ -56,6 +56,7 @@ type File struct {
 	ModuleIsNil             bool
 	IsEmbed                 bool
 	DoNotSimplify           bool
+	ReadOnly                bool
 
 	transformCond *sync.Cond
 	Transform     *Transform
@@ -508,24 +509,25 @@ var formatBufPool = sync.Pool{
 	},
 }
 
-func formatASTForPrompt(w io.Writer, fileAst *ast.File, fset *token.FileSet, isRoot bool, path string, skipImports bool) error {
-	if isRoot {
-		_, err := fmt.Fprint(w, "``` begin of focus file "+path+"\n")
-		if err != nil {
-			return err
-		}
-	} else {
-		_, err := fmt.Fprint(w, "``` begin of context file "+path+"\n")
-		if err != nil {
-			return err
-		}
+func formatASTForPrompt(w io.Writer, fileAst *ast.File, fset *token.FileSet, isRoot bool, readOnly bool, path string, skipImports bool) error {
+	prefix := "focus file"
+	if !isRoot {
+		prefix = "context file"
+	}
+	readOnlyNote := ""
+	if readOnly {
+		readOnlyNote = " (read-only)"
+	}
+	_, err := fmt.Fprint(w, "``` begin of "+prefix+" "+path+readOnlyNote+"\n")
+	if err != nil {
+		return err
 	}
 
 	buf := formatBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer formatBufPool.Put(buf)
 
-	err := format.Node(buf, fset, fileAst)
+	err = format.Node(buf, fset, fileAst)
 	if err != nil {
 		panic(err)
 	}
@@ -553,35 +555,29 @@ func formatASTForPrompt(w io.Writer, fileAst *ast.File, fset *token.FileSet, isR
 		}
 	}
 
-	if isRoot {
-		_, err := fmt.Fprint(w, "``` end of focus file "+path+"\n\n")
-		if err != nil {
-			return err
-		}
-	} else {
-		_, err := fmt.Fprint(w, "``` end of context file "+path+"\n\n")
-		if err != nil {
-			return err
-		}
+	_, err = fmt.Fprint(w, "``` end of "+prefix+" "+path+"\n\n")
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path string) error {
-	if isRoot {
-		_, err := fmt.Fprint(w, "``` begin of focus file "+path+"\n")
-		if err != nil {
-			return err
-		}
-	} else {
-		_, err := fmt.Fprint(w, "``` begin of context file "+path+"\n")
-		if err != nil {
-			return err
-		}
+func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, readOnly bool, path string) error {
+	prefix := "focus file"
+	if !isRoot {
+		prefix = "context file"
+	}
+	readOnlyNote := ""
+	if readOnly {
+		readOnlyNote = " (read-only)"
+	}
+	_, err := fmt.Fprint(w, "``` begin of "+prefix+" "+path+readOnlyNote+"\n")
+	if err != nil {
+		return err
 	}
 
-	_, err := w.Write(content)
+	_, err = w.Write(content)
 	if err != nil {
 		return err
 	}
@@ -590,16 +586,9 @@ func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, path strin
 		return err
 	}
 
-	if isRoot {
-		_, err := fmt.Fprint(w, "``` end of focus file "+path+"\n\n")
-		if err != nil {
-			return err
-		}
-	} else {
-		_, err := fmt.Fprint(w, "``` end of context file "+path+"\n\n")
-		if err != nil {
-			return err
-		}
+	_, err = fmt.Fprint(w, "``` end of "+prefix+" "+path+"\n\n")
+	if err != nil {
+		return err
 	}
 
 	return nil

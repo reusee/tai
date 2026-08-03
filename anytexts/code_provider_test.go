@@ -233,14 +233,22 @@ func TestSymlinks(t *testing.T) {
 			countTokens generators.BPETokenCounter,
 		) {
 			// A directly-specified focus file that resolves outside
-			// writable directories is rejected at collection time.
-			// See TheoryOfFocusFileDirectoryCheck.
-			_, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
-			if err == nil {
-				t.Fatal("expected error for external symlink as focus file")
+			// writable directories is marked as read-only and included
+			// in the context. See TheoryOfFocusFileDirectoryCheck.
+			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link.txt"})
+			if err != nil {
+				t.Fatalf("expected no error for external symlink as focus file, got: %v", err)
 			}
-			if !strings.Contains(err.Error(), "outside writable directory") {
-				t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+			foundReadOnly := false
+			for _, part := range parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
+						foundReadOnly = true
+					}
+				}
+			}
+			if !foundReadOnly {
+				t.Fatal("expected external symlink file to be included with read-only marker")
 			}
 		})
 	})
@@ -275,14 +283,22 @@ func TestSymlinks(t *testing.T) {
 			countTokens generators.BPETokenCounter,
 		) {
 			// A directly-specified focus directory that resolves outside
-			// writable directories is rejected at collection time.
-			// See TheoryOfFocusFileDirectoryCheck.
-			_, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
-			if err == nil {
-				t.Fatal("expected error for external symlink directory as focus file")
+			// writable directories is marked as read-only and included
+			// in the context. See TheoryOfFocusFileDirectoryCheck.
+			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"ext"})
+			if err != nil {
+				t.Fatalf("expected no error for external symlink directory as focus file, got: %v", err)
 			}
-			if !strings.Contains(err.Error(), "outside writable directory") {
-				t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+			foundReadOnly := false
+			for _, part := range parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "nested external content") {
+						foundReadOnly = true
+					}
+				}
+			}
+			if !foundReadOnly {
+				t.Fatal("expected external symlink directory file to be included with read-only marker")
 			}
 		})
 	})
@@ -290,9 +306,9 @@ func TestSymlinks(t *testing.T) {
 
 func TestFocusFileOutsideWritableDirs(t *testing.T) {
 	// A non-symlink file directly specified via a pattern that resolves
-	// outside all writable directories should be rejected at collection
-	// time, not at apply time. /var/tmp is not in the writable dirs list.
-	// See TheoryOfFocusFileDirectoryCheck.
+	// outside all writable directories should be marked as read-only at
+	// collection time, not rejected. /var/tmp is not in the writable dirs
+	// list. See TheoryOfFocusFileDirectoryCheck.
 	externalDir, err := os.MkdirTemp("/var/tmp", "tai_test_")
 	if err != nil {
 		t.Skipf("cannot create temp dir in /var/tmp: %v", err)
@@ -312,12 +328,20 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		_, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
-		if err == nil {
-			t.Fatal("expected error for focus file outside writable directories")
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
+		if err != nil {
+			t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "outside writable directory") {
-			t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+		foundReadOnly := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "(read-only)") && strings.Contains(string(text), "external content") {
+					foundReadOnly = true
+				}
+			}
+		}
+		if !foundReadOnly {
+			t.Fatal("expected focus file outside writable directories to be included with read-only marker")
 		}
 	})
 }

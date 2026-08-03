@@ -63,13 +63,12 @@ func (c CodeProvider) Parts(
 	// filter files based on exclusion patterns
 	files = c.filterFiles(files, patterns)
 
-	// Check that all focus files (root package files) are within
-	// writable directories. Files outside writable directories cannot
-	// be modified by change blocks (ApplyChangeBlockStore rejects paths
-	// that escape the current directory), so including them as focus
-	// files is misleading: the model would see the file content but
-	// could not modify it. Reject them at collection time rather than
-	// at apply time, surfacing the error before the model is invoked.
+	// Check whether focus files (root package files) are within writable
+	// directories. Files outside writable directories are marked as
+	// read-only rather than rejected, because the model can still use
+	// their content as reference even though it cannot modify them.
+	// The read-only marker in the file context instructs the model not
+	// to emit change blocks targeting these files.
 	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
 	for _, file := range files {
 		if !file.PackageIsRoot {
@@ -80,7 +79,7 @@ func (c CodeProvider) Parts(
 			return nil, fmt.Errorf("check focus file path: %w", err)
 		}
 		if outside {
-			return nil, fmt.Errorf("focus file outside writable directory: %s", file.Path)
+			file.ReadOnly = true
 		}
 	}
 

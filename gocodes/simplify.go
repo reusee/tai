@@ -93,7 +93,7 @@ func (Module) SimplifyFiles(
 				}
 			} else {
 				buf := new(bytes.Buffer)
-				if err := formatContentForPrompt(buf, file.Content, file.PackageIsRoot, file.Path); err != nil {
+				if err := formatContentForPrompt(buf, file.Content, file.PackageIsRoot, file.ReadOnly, file.Path); err != nil {
 					return nil, err
 				}
 				file.Transform = &Transform{
@@ -442,7 +442,7 @@ func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCount
 		var content string
 		if f.Pending.Ast != nil {
 			buf := new(bytes.Buffer)
-			if err := formatASTForPrompt(buf, f.Pending.Ast, fset, f.PackageIsRoot, f.Path, skipImports); err != nil {
+			if err := formatASTForPrompt(buf, f.Pending.Ast, fset, f.PackageIsRoot, f.ReadOnly, f.Path, skipImports); err != nil {
 				panic(err)
 			}
 			content = buf.String()

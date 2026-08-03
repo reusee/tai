@@ -219,10 +219,9 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 	// When -pkg ../dep1 is used from a working directory under /var/tmp,
 	// dep1 becomes a root package (focus file), but its files are outside
 	// writable directories (CWD, /tmp, Go dirs, config dir, /dev/shm).
-	// ApplyChangeBlockStore rejects paths outside writable directories at
-	// apply time, so including them as focus files is misleading. Parts
-	// must reject them at collection time. See
-	// TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
+	// The files should be marked as read-only and included in the context
+	// with "(read-only)" markers rather than rejected.
+	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
 	//
 	// The module root is placed under /var/tmp (not /tmp) so that
 	// sibling directories like dep1 are outside writable dirs. If
@@ -281,12 +280,20 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		_, err := provider.Parts(1<<20, countTokens, nil)
-		if err == nil {
-			t.Fatal("expected error for focus file outside writable directories")
+		parts, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatalf("expected no error for focus file outside writable directories, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "outside writable directory") {
-			t.Fatalf("expected 'outside writable directory' error, got: %v", err)
+		foundReadOnly := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "focus file") && strings.Contains(string(text), "(read-only)") {
+					foundReadOnly = true
+				}
+			}
+		}
+		if !foundReadOnly {
+			t.Fatal("expected focus file outside writable directories to be included with read-only marker")
 		}
 	})
 }

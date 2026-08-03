@@ -33,21 +33,22 @@ aborting the entire traversal.
 `
 
 const TheoryOfReadOnlySymlinks = `
-Files discovered via symbolic links during directory traversal that point
-outside all writable directories are marked as read-only in the file
-context markers. The model is warned not to modify these files because they
-reside outside the writable directories and attempting to write to them may
-cause permission errors or unintended modifications to external files. This
-applies both to files that are direct symlinks to external locations and to
-files discovered inside directories that are symlinks to external locations.
-Symlinks to files or directories within a writable directory are not marked
-as read-only since they are writable.
+Symbolic links are followed so that content from other directories or files can
+be included via symlinks. Cycle detection uses two complementary mechanisms:
+1. Ancestor check: a symlink whose resolved target is an ancestor of the current
+   path would create an infinite loop and is skipped.
+2. Visited set: a map of resolved real paths records every symlink target that
+   has been followed. If a symlink resolves to a path already in the set, it is
+   skipped to break cycles that do not involve an ancestor relationship (e.g.,
+   mutual symlinks between sibling directories).
+Broken symlinks whose targets cannot be resolved are silently skipped rather than
+aborting the entire traversal.
 
 Directly-specified focus files that resolve outside writable directories are
-rejected at collection time rather than marked read-only; see
-TheoryOfFocusFileDirectoryCheck. The read-only annotation applies only to
-files discovered during directory traversal, where the user did not
-explicitly request the external file.
+marked read-only at collection time; see TheoryOfFocusFileDirectoryCheck.
+The read-only annotation applies to both directly-specified focus files
+and files discovered during directory traversal, ensuring the model is
+consistently informed that these files cannot be modified.
 
 The check resolves symlinks in the path via isOutsideWritableDirs, which
 delegates to pathutil.IsOutsideWritableDirs, to correctly handle symlinks
@@ -58,26 +59,28 @@ it would write outside the writable directories.
 
 const TheoryOfFocusFileDirectoryCheck = `
 Focus files (files directly specified via patterns) that resolve to a
-location outside all writable directories are rejected at collection time
-rather than at apply time. The writable directories are determined by the
-security package's container filesystem policy: the current working
-directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the
-user config directory, /tmp, and /dev/shm. This ensures the check is
-consistent with the security package's container isolation — no more and
-no less restrictive. Including a focus file that cannot be modified would
-be misleading: the model would see the file content but could not modify
-it. Erroring at collection time surfaces the problem before the model is
-invoked, avoiding wasted generation rounds.
+location outside all writable directories are marked as read-only at
+collection time rather than rejected. The writable directories are
+determined by the security package's container filesystem policy: the
+current working directory, Go toolchain directories (GOCACHE, GOMODCACHE,
+GOPATH/pkg), the user config directory, /tmp, and /dev/shm. This ensures
+the check is consistent with the security package's container isolation —
+no more and no less restrictive. A focus file outside writable directories
+can still provide useful reference context even though it cannot be
+modified; marking it as read-only informs the model that change blocks
+must not target it, while still allowing its content to inform changes
+to writable project files.
 
 This check applies to directly-matched patterns (directMatch=true), not to
 files discovered during directory traversal. Files discovered via symlinks
-during traversal are still marked read-only (see TheoryOfReadOnlySymlinks)
-rather than rejected, because the user did not explicitly request them.
+during traversal are also marked read-only (see TheoryOfReadOnlySymlinks)
+via the same mechanism.
 
 The check resolves symlinks in the path via pathutil.IsOutsideWritableDirs
 to correctly handle symlinks that point outside writable directories. A
-symlink within a writable directory whose target is outside is rejected,
-because writing to it would write outside the writable directories.
+symlink within a writable directory whose target is outside is marked
+read-only, because writing to it would write outside the writable
+directories.
 `
 
 const TheoryOfFileOrdering = `
@@ -263,9 +266,9 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 				}
 			}
 
-			// For directly-matched patterns, reject paths outside
-			// writable directories immediately. The writable directories
-			// match the security package's container filesystem policy.
+			// For directly-matched patterns, mark paths outside writable
+			// directories as read-only. The writable directories match
+			// the security package's container filesystem policy.
 			// See TheoryOfFocusFileDirectoryCheck.
 			if item.directMatch {
 				outside, err := pathutil.IsOutsideWritableDirs(path)
@@ -274,8 +277,7 @@ func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 					return
 				}
 				if outside {
-					yield(FileInfo{}, fmt.Errorf("focus file outside writable directory: %s", path))
-					return
+					readOnly = true
 				}
 			}
 
