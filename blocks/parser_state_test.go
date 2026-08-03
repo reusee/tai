@@ -438,6 +438,44 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 	}
 }
 
+func TestParserStateFlushErrorsOnTruncatedOpeningLineAtEOF(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	// The model output ends with an opening marker line that has no
+	// trailing newline. This is a truncated block: the closing marker
+	// must be alone on its own line, which cannot exist after EOF.
+	// Flush must report the truncation instead of silently dropping
+	// the block. See TheoryOfBlockFormat.
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
+	}
+
+	_, err = ps.Flush()
+	if err == nil {
+		t.Fatal("expected error for truncated opening line at flush")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+}
+
 func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block

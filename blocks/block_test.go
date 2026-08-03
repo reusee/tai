@@ -194,6 +194,107 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
+	// An opening marker whose line extends to EOF (no trailing newline)
+	// is a truncated block: the closing marker must be alone on its own
+	// line, which cannot exist after EOF. The parser must report an
+	// unclosed-block error instead of silently treating the marker as
+	// prose. See TheoryOfBlockFormat.
+	content := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for truncated opening line at EOF")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for truncated opening line at EOF")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.BlockKind != "change" || e.Boundary != "徕珑" {
+		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	}
+
+	// A kindless opening marker at EOF is also a truncated block.
+	content2 := []byte("<<徕珑")
+	_, _, _, ok, err = ParseFirstBlock(content2)
+	if err == nil {
+		t.Fatal("expected error for truncated kindless opening at EOF")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for truncated kindless opening at EOF")
+	}
+
+	// Text at line start that is not a block opening (non-Han delimiter)
+	// is still silently skipped at EOF.
+	content3 := []byte("<<some text")
+	_, _, _, ok, err = ParseFirstBlock(content3)
+	if err != nil {
+		t.Fatalf("unexpected error for non-block text at EOF: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no block for non-block text at EOF")
+	}
+}
+
+func TestBlockParseErrorCollisionHints(t *testing.T) {
+	// A line where the delimiter appears with trailing text is not a
+	// valid closing marker. The unclosed-block error should include a
+	// hint pointing at the malformed line so the model can locate it
+	// without scanning the entire body. See TheoryOfBoundaryUniqueness.
+	content := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑 extra\n")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block with malformed closing line")
+	}
+	if ok {
+		t.Fatal("expected ok to be false")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if len(e.Hints) != 1 {
+		t.Fatalf("expected 1 hint, got %d: %v", len(e.Hints), e.Hints)
+	}
+	if !strings.Contains(e.Hints[0], "徕珑 extra") {
+		t.Fatalf("hint should contain the malformed line: %q", e.Hints[0])
+	}
+	if !strings.Contains(err.Error(), "hint:") {
+		t.Fatalf("error should include the hint section: %s", err.Error())
+	}
+
+	// A line where the delimiter appears with leading text is also a
+	// malformed closing marker.
+	content2 := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nend 徕珑\n")
+	_, _, _, ok, err = ParseFirstBlock(content2)
+	if err == nil {
+		t.Fatal("expected error for unclosed block with malformed closing line")
+	}
+	e, isParseErr = err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if len(e.Hints) != 1 {
+		t.Fatalf("expected 1 hint, got %d: %v", len(e.Hints), e.Hints)
+	}
+
+	// No lines with the delimiter at the start or end: no hints.
+	content3 := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+	_, _, _, ok, err = ParseFirstBlock(content3)
+	if err == nil {
+		t.Fatal("expected error for unclosed block")
+	}
+	e, isParseErr = err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if len(e.Hints) != 0 {
+		t.Fatalf("expected 0 hints, got %d: %v", len(e.Hints), e.Hints)
+	}
+}
+
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	// A body containing a line with a different delimiter
 	// is treated as body content. The block closes at the matching

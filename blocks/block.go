@@ -101,6 +101,13 @@ closing marker pops the inner level rather than prematurely closing the outer
 block. This does not relax the body-disjointness recommendation for general content,
 but it correctly handles the specific case where the body contains well-formed
 nested blocks.
+
+When a block is unclosed, the error includes collision hints: body lines
+where the delimiter appears with leading or trailing text. Such lines are
+the most likely cause of an unclosed block — the model intended them as the
+closing marker but wrote extra text around the delimiter, so the parser does
+not recognize them. The hints point the model at the malformed lines without
+requiring it to scan the entire body in the error output.
 `
 
 const TheoryOfNestedBlockParsing = `
@@ -156,6 +163,12 @@ line; trailing content after the delimiter is skipped by searching for the first
 ` + "`<`" + ` in the rest of the line. The closing marker is the delimiter alone on its own
 line — no XML closing tag is needed. The delimiter is the sole disambiguator between
 consecutive blocks within a single response.
+
+An opening marker whose line extends to the end of the content (no trailing
+newline) is a truncated block: the closing marker must be alone on its own
+line, which cannot exist after EOF. The parser parses the line as an opening
+marker and reports an unclosed-block error, surfacing the truncation instead
+of silently treating the marker as prose.
 `
 
 const TheoryOfKindlessBlocks = `
@@ -294,14 +307,20 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		}
 		blockStart := idx
 
-		// Extract the opening line after <<
+		// Extract the opening line after <<. When the line extends to
+		// the end of the content (no trailing newline), the block is
+		// necessarily unclosed: the closing marker must be alone on its
+		// own line, which cannot exist after EOF. The line is still
+		// parsed as an opening marker so the truncation is reported as
+		// an unclosed-block error instead of silently dropping the
+		// block as prose. See TheoryOfBlockFormat.
 		lineStart := idx + 2
 		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
 		if lineEnd == -1 {
-			searchFrom = idx + 1
-			continue
+			lineEnd = len(content)
+		} else {
+			lineEnd += lineStart
 		}
-		lineEnd += lineStart
 		openingLine := string(content[lineStart:lineEnd])
 
 		// Parse the block in the heredoc-delimited format:
@@ -347,6 +366,12 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	result.block.Boundary = delimiter
 	result.block.Attributes = attrs
 	bodyStart := lineEnd + 1
+	if bodyStart > len(content) {
+		// The opening line extends to the end of the content, so the
+		// body is empty and the block is necessarily unclosed.
+		// See TheoryOfBlockFormat.
+		bodyStart = len(content)
+	}
 	bodyEnd, blockEnd, found := findClosingMarker(content, bodyStart, delimiter)
 	if found {
 		result.block.Body = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
@@ -363,10 +388,14 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	// See TheoryOfBlockFormat.
 	result.start = blockStart
 	result.end = lineEnd + 1
+	if result.end > len(content) {
+		result.end = len(content)
+	}
 	result.err = &BlockParseError{
 		BlockKind: kind,
 		Boundary:  delimiter,
 		Content:   string(content[blockStart:]),
+		Hints:     findDelimiterCollisionHints(content, bodyStart, delimiter),
 	}
 	return
 }
@@ -482,6 +511,40 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 	}
 }
 
+// findDelimiterCollisionHints scans the block body for lines where the
+// delimiter appears with leading or trailing text. Such lines are the most
+// likely cause of an unclosed block: the model intended them as the closing
+// marker but wrote extra text around the delimiter, so the parser does not
+// recognize them (the closing line must be the delimiter alone). The hints
+// point the model or user at the malformed lines without requiring them to
+// scan the entire body in the error output. Line numbers are absolute
+// (1-based) positions in the content. See TheoryOfBoundaryUniqueness.
+func findDelimiterCollisionHints(content []byte, bodyStart int, delimiter string) (hints []string) {
+	lineNo := bytes.Count(content[:bodyStart], []byte("\n")) + 1
+	searchFrom := bodyStart
+	for searchFrom < len(content) {
+		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
+		var line []byte
+		if lineEnd == -1 {
+			line = content[searchFrom:]
+		} else {
+			line = content[searchFrom : searchFrom+lineEnd]
+		}
+		trimmed := bytes.TrimSpace(line)
+		trimmedStr := string(trimmed)
+		if len(trimmedStr) > len(delimiter) &&
+			(strings.HasPrefix(trimmedStr, delimiter) || strings.HasSuffix(trimmedStr, delimiter)) {
+			hints = append(hints, fmt.Sprintf("line %d: %q", lineNo, trimmedStr))
+		}
+		if lineEnd == -1 {
+			break
+		}
+		searchFrom += lineEnd + 1
+		lineNo++
+	}
+	return hints
+}
+
 // extractDelimiter extracts the delimiter string from the opening line.
 // The delimiter is the text from the start of the (trimmed) line up to the
 // first whitespace or '<' character, whichever comes first. The delimiter
@@ -517,13 +580,24 @@ func extractDelimiter(s string) string {
 // line. During streaming this may indicate incomplete output rather than a
 // definitive error. The Content field holds the full text from the opening
 // marker to the end of the available content, providing context for debugging.
-// See TheoryOfBoundaryUniqueness.
+// The Hints field lists body lines where the delimiter appears with leading or
+// trailing text — the most likely cause of an unclosed block, because the
+// closing line must be the delimiter alone. See TheoryOfBoundaryUniqueness.
 type BlockParseError struct {
 	BlockKind string
 	Boundary  string
 	Content   string
+	Hints     []string
 }
 
 func (e *BlockParseError) Error() string {
-	return fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line\n\nContent parsed so far:\n%s", e.BlockKind, e.Boundary, e.Content)
+	msg := fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line", e.BlockKind, e.Boundary)
+	if len(e.Hints) > 0 {
+		msg += "\nhint: these body lines start or end with the delimiter but have extra text, so they are not valid closing markers (the closing line must be the delimiter alone):"
+		for _, hint := range e.Hints {
+			msg += "\n  " + hint
+		}
+	}
+	msg += fmt.Sprintf("\n\nContent parsed so far:\n%s", e.Content)
+	return msg
 }
