@@ -604,3 +604,62 @@ func TestProcessRequestContextBlocksPreservesNonRequestContextBlocks(t *testing.
 		t.Fatal("expected fetched content in state")
 	}
 }
+
+func TestProcessRequestContextBlocksFiltersByKind(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	content := "test content"
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := generators.NewPrompts("", nil)
+
+	// Non-request-context blocks must not set hasRC or append content.
+	// Before kind filtering, hasRequestContext was set unconditionally
+	// for every block, causing false positives and parse attempts on
+	// non-request-context bodies.
+	blocks := []Block{
+		{Kind: "change", Body: "some change"},
+		{Kind: "summary", Body: "- done"},
+	}
+	_, hasRC, err := ProcessRequestContextBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRC {
+		t.Fatal("expected hasRC=false for non-request-context blocks")
+	}
+
+	// Mixed blocks: only request-context blocks should be processed.
+	mixed := []Block{
+		{Kind: "change", Body: "some change"},
+		{Kind: "request-context", Body: `<file path="test.txt" />`},
+		{Kind: "summary", Body: "- done"},
+	}
+	newState, hasRC, err := ProcessRequestContextBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRC {
+		t.Fatal("expected hasRC=true for mixed blocks with request-context")
+	}
+	found := false
+	for c := range newState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok {
+				if strings.Contains(string(text), content) {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected request-context block to be processed in mixed blocks")
+	}
+}

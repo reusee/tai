@@ -424,55 +424,58 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 // becomes empty. See TheoryOfNestedBlockParsing.
 func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd, blockEnd int, found bool) {
 	stack := []string{delimiter}
+	delimLen := len(delimiter)
 	searchFrom := bodyStart
 	for {
 		lineEnd := bytes.IndexByte(content[searchFrom:], '\n')
-		var line string
-		if lineEnd == -1 {
-			line = string(content[searchFrom:])
+		atEOF := lineEnd == -1
+		var lineBytes []byte
+		if atEOF {
+			lineBytes = content[searchFrom:]
 		} else {
-			line = string(content[searchFrom : searchFrom+lineEnd])
+			lineBytes = content[searchFrom : searchFrom+lineEnd]
 		}
 
-		// Check for a nested opening marker, but only when the nested
-		// delimiter matches the outer block's delimiter. Different
-		// delimiters in the body pose no collision risk and treating
-		// them as nested openings causes false positives when body
-		// content happens to match the <<HanHan <tag> pattern.
-		// See TheoryOfNestedBlockParsing.
-		if nestedDelim, nested := nestedOpeningDelimiter(line); nested && nestedDelim == stack[0] {
-			stack = append(stack, nestedDelim)
-			if lineEnd == -1 {
-				return 0, 0, false
+		// Only lines starting with "<<" can be nested block openings.
+		// This byte-level check avoids string conversion for the vast
+		// majority of body lines (code, prose, etc.) that do not start
+		// with "<<". See TheoryOfNestedBlockParsing.
+		if len(lineBytes) >= 2 && lineBytes[0] == '<' && lineBytes[1] == '<' {
+			line := string(lineBytes)
+			if nestedDelim, nested := nestedOpeningDelimiter(line); nested && nestedDelim == stack[0] {
+				stack = append(stack, nestedDelim)
+				if atEOF {
+					return 0, 0, false
+				}
+				searchFrom += lineEnd + 1
+				continue
 			}
-			searchFrom += lineEnd + 1
-			continue
 		}
 
-		// Check for a closing marker: the delimiter alone on its own
-		// line (with optional whitespace). The marker must match the
-		// top of the stack to pop; a non-matching marker is body
-		// content. See TheoryOfNestedBlockParsing.
-		trimmedLine := strings.TrimSpace(line)
-		if len(stack) > 0 && trimmedLine == stack[len(stack)-1] {
+		// Check for closing marker: the delimiter alone on its own line
+		// (with optional whitespace). Use byte-level trimming and a
+		// length pre-check to avoid string allocation for lines that
+		// cannot match the delimiter. See TheoryOfNestedBlockParsing.
+		trimmed := bytes.TrimSpace(lineBytes)
+		if len(stack) > 0 && len(trimmed) == delimLen && string(trimmed) == stack[len(stack)-1] {
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
 				bodyEnd = searchFrom
-				if lineEnd == -1 {
+				if atEOF {
 					blockEnd = len(content)
 				} else {
 					blockEnd = searchFrom + lineEnd + 1
 				}
 				return bodyEnd, blockEnd, true
 			}
-			if lineEnd == -1 {
+			if atEOF {
 				return 0, 0, false
 			}
 			searchFrom += lineEnd + 1
 			continue
 		}
 
-		if lineEnd == -1 {
+		if atEOF {
 			return 0, 0, false
 		}
 		searchFrom += lineEnd + 1

@@ -81,13 +81,14 @@ to execute a command. The command runs with sh -c in the project root with a 30-
 
 const shellTimeout = 30 * time.Second
 
-// executeShellCommand runs a shell command with a timeout and returns the
-// combined stdout/stderr output with a status prefix.
-func executeShellCommand(cmdStr string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), shellTimeout)
+// executeShellCommand runs a shell command with a timeout derived from the
+// provided context and returns the combined stdout/stderr output with a
+// status prefix.
+func executeShellCommand(ctx context.Context, cmdStr string) string {
+	cancelCtx, cancel := context.WithTimeout(ctx, shellTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd := exec.CommandContext(cancelCtx, "sh", "-c", cmdStr)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -100,15 +101,20 @@ func executeShellCommand(cmdStr string) string {
 }
 
 // ProcessShellBlocks executes all shell blocks and returns the outputs as
-// generator parts. Each command is validated against the security allowlist
-// before execution; rejected commands return an error message as user content
-// instead of being executed. See security.TheoryOfShellSecurity.
-func ProcessShellBlocks(blocks []Block) ([]generators.Part, error) {
+// generator parts. Only blocks with Kind "shell" are processed; blocks of
+// other kinds are skipped. Each command is validated against the security
+// allowlist before execution; rejected commands return an error message as
+// user content instead of being executed. The provided context allows
+// callers to cancel long-running commands. See security.TheoryOfShellSecurity.
+func ProcessShellBlocks(blocks []Block, ctx context.Context) ([]generators.Part, error) {
 	if len(blocks) == 0 {
 		return nil, nil
 	}
 	var parts []generators.Part
 	for _, block := range blocks {
+		if block.Kind != "shell" {
+			continue
+		}
 		cmdStr := block.Body
 		if err := security.ValidateShellCommand(cmdStr); err != nil {
 			parts = append(parts, generators.Text(
@@ -116,7 +122,7 @@ func ProcessShellBlocks(blocks []Block) ([]generators.Part, error) {
 			))
 			continue
 		}
-		output := executeShellCommand(cmdStr)
+		output := executeShellCommand(ctx, cmdStr)
 		parts = append(parts, generators.Text(
 			fmt.Sprintf("Shell command: %s\n\n%s", cmdStr, output),
 		))

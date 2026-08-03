@@ -55,14 +55,18 @@ const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary 
 - The example delimiter 齔齕 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessSummaryBlocks processes all summary blocks and returns their body
-// texts. Summaries are collected for terminal display after generation ends,
-// not appended to the state. See TheoryOfSummaryBlocks.
+// texts. Only blocks with Kind "summary" are processed. Summaries are
+// collected for terminal display after generation ends, not appended to
+// the state. See TheoryOfSummaryBlocks.
 func ProcessSummaryBlocks(blocks []Block) []string {
 	if len(blocks) == 0 {
 		return nil
 	}
 	var summaries []string
 	for _, block := range blocks {
+		if block.Kind != "summary" {
+			continue
+		}
 		summaries = append(summaries, block.Body)
 	}
 	return summaries

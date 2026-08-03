@@ -215,9 +215,9 @@ func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTT
 
 // ProcessRequestContextBlocks checks request-context blocks, fetches the
 // requested content, and appends it as user content to the state. Only
-// request-context blocks are processed. The hasRequestContext flag indicates
-// whether any request-context blocks were found, so callers can trigger a
-// new round. See TheoryOfRequestContext.
+// blocks with Kind "request-context" are processed. The hasRequestContext
+// flag indicates whether any request-context blocks were found, so callers
+// can trigger a new round. See TheoryOfRequestContext.
 func ProcessRequestContextBlocks(
 	blocks []Block,
 	ctx context.Context,
@@ -227,6 +227,9 @@ func ProcessRequestContextBlocks(
 ) (generators.State, bool, error) {
 	hasRequestContext := false
 	for _, block := range blocks {
+		if block.Kind != "request-context" {
+			continue
+		}
 		hasRequestContext = true
 		requests, parseErr := parseRequestContextBody(block.Body)
 		if parseErr != nil {

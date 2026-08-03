@@ -51,15 +51,18 @@ const ContinueBlockRestatePrompt = `- Continue block: when another generation ro
 It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessContinueBlocks processes all continue blocks and returns their body
-// texts as generator parts. Each block's body becomes a Text part that will be
-// fed back as the next user message to trigger a new generation round.
-// See TheoryOfContinueBlocks.
+// texts as generator parts. Only blocks with Kind "continue" are processed.
+// Each block's body becomes a Text part that will be fed back as the next
+// user message to trigger a new generation round. See TheoryOfContinueBlocks.
 func ProcessContinueBlocks(blocks []Block) []generators.Part {
 	if len(blocks) == 0 {
 		return nil
 	}
 	var parts []generators.Part
 	for _, block := range blocks {
+		if block.Kind != "continue" {
+			continue
+		}
 		parts = append(parts, generators.Text(block.Body))
 	}
 	return parts

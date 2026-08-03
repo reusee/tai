@@ -186,12 +186,13 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 }
 
 // ProcessGoTestBlocks runs Go tests for all go-test blocks and returns the
-// outputs as generator parts. Output parts are only collected when a test run
-// fails, so the model receives stdout and stderr exclusively when there are
-// failures to debug and fix. When all tests pass, no parts are returned and
-// the caller has nothing to feed back. The failed flag indicates whether any
-// test run failed, so callers can set Continue to trigger a new round for
-// debugging. See TheoryOfGoTestBlocks.
+// outputs as generator parts. Only blocks with Kind "go-test" are processed.
+// Output parts are only collected when a test run fails, so the model
+// receives stdout and stderr exclusively when there are failures to debug
+// and fix. When all tests pass, no parts are returned and the caller has
+// nothing to feed back. The failed flag indicates whether any test run
+// failed, so callers can set Continue to trigger a new round for debugging.
+// See TheoryOfGoTestBlocks.
 func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, bool, error) {
 	if len(blocks) == 0 {
 		return nil, false, nil
@@ -199,6 +200,9 @@ func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part
 	var parts []generators.Part
 	anyFailed := false
 	for _, block := range blocks {
+		if block.Kind != "go-test" {
+			continue
+		}
 		args := block.Body
 		output, failed := executeGoTest(ctx, args)
 		if failed {

@@ -1,6 +1,7 @@
 package blocks
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ func TestProcessShellBlocks(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "echo hello world"},
 	}
-	parts, err := ProcessShellBlocks(blocks)
+	parts, err := ProcessShellBlocks(blocks, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -31,7 +32,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "cat /nonexistent"},
 	}
-	parts, err := ProcessShellBlocks(blocks)
+	parts, err := ProcessShellBlocks(blocks, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestProcessShellBlocksCommandFailure(t *testing.T) {
 }
 
 func TestProcessShellBlocksEmpty(t *testing.T) {
-	parts, err := ProcessShellBlocks(nil)
+	parts, err := ProcessShellBlocks(nil, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestProcessShellBlocksRejectsForbiddenCommand(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "rm -rf /tmp/test"},
 	}
-	parts, err := ProcessShellBlocks(blocks)
+	parts, err := ProcessShellBlocks(blocks, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestProcessShellBlocksRejectsRedirection(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "echo hello > /tmp/test"},
 	}
-	parts, err := ProcessShellBlocks(blocks)
+	parts, err := ProcessShellBlocks(blocks, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestProcessShellBlocksAllowsGitStatus(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "git status"},
 	}
-	parts, err := ProcessShellBlocks(blocks)
+	parts, err := ProcessShellBlocks(blocks, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessShellBlocks failed: %v", err)
 	}
@@ -108,5 +109,23 @@ func TestProcessShellBlocksAllowsGitStatus(t *testing.T) {
 	output := string(parts[0].(generators.Text))
 	if strings.Contains(output, "Shell command rejected") {
 		t.Fatalf("git status should be allowed, got: %s", output)
+	}
+}
+
+func TestProcessShellBlocksFiltersByKind(t *testing.T) {
+	blocks := []Block{
+		{Kind: "summary", Body: "echo hello"},
+		{Kind: "shell", Body: "echo hello world"},
+	}
+	parts, err := ProcessShellBlocks(blocks, context.Background())
+	if err != nil {
+		t.Fatalf("ProcessShellBlocks failed: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	output := string(parts[0].(generators.Text))
+	if !strings.Contains(output, "hello world") {
+		t.Fatalf("expected output to contain 'hello world', got: %s", output)
 	}
 }
