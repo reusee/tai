@@ -33,7 +33,7 @@ func CommonComponents(shell bool) ComponentSet {
 			PromptSection: blocks.ShellBlockSystemPrompt,
 			RestatePrompt: blocks.ShellBlockRestatePrompt,
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
-				parts, err := blocks.ProcessShellBlocks(pctx.Blocks)
+				parts, err := blocks.ProcessShellBlocks(pctx.Blocks, ctx)
 				return ProcessResult{Parts: parts, Err: err}
 			},
 		})
