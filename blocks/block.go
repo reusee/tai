@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const TheoryOfBlockFormatGeneral = `
@@ -567,14 +568,51 @@ func extractDelimiter(s string) string {
 	return delimiter
 }
 
+// maxParseErrorContentLength caps the amount of block content included in a
+// BlockParseError message. An unclosed block can have an arbitrarily large
+// body (e.g., a model emitting a large file before being cut off); including
+// the full body would produce an enormous error message and waste context
+// when fed back to the model for self-correction.
+const maxParseErrorContentLength = 2000
+
+// truncateParseErrorContent truncates block content for display in error
+// messages. Content within the limit is returned unchanged. Larger content
+// is reduced to a head and tail portion separated by a truncation note: the
+// head preserves the opening marker (which identifies the block), and the
+// tail shows where the content ended (where the closing marker was expected).
+// Cut points are adjusted to UTF-8 rune boundaries so the truncated output is
+// never split mid-rune.
+func truncateParseErrorContent(content string) string {
+	if len(content) <= maxParseErrorContentLength {
+		return content
+	}
+	headLen := maxParseErrorContentLength * 2 / 3
+	tailLen := maxParseErrorContentLength - headLen
+	// Adjust the head cut back to a rune boundary.
+	for headLen > 0 && !utf8.RuneStart(content[headLen]) {
+		headLen--
+	}
+	// Adjust the tail start forward to a rune boundary.
+	tailStart := len(content) - tailLen
+	for tailStart < len(content) && !utf8.RuneStart(content[tailStart]) {
+		tailStart++
+	}
+	omitted := tailStart - headLen
+	return content[:headLen] +
+		fmt.Sprintf("\n...[truncated, %d bytes omitted]...\n", omitted) +
+		content[tailStart:]
+}
+
 // BlockParseError is returned by ParseFirstBlock for unclosed heredoc blocks.
 // An unclosed block is an opening marker with no matching closing delimiter
 // line. During streaming this may indicate incomplete output rather than a
 // definitive error. The Content field holds the full text from the opening
 // marker to the end of the available content, providing context for debugging.
-// The Hints field lists body lines where the delimiter appears with leading or
-// trailing text — the most likely cause of an unclosed block, because the
-// closing line must be the delimiter alone. See TheoryOfBoundaryUniqueness.
+// The Error message truncates large content to keep the feedback bounded; the
+// full content remains available in this field. The Hints field lists body
+// lines where the delimiter appears with leading or trailing text — the most
+// likely cause of an unclosed block, because the closing line must be the
+// delimiter alone. See TheoryOfBoundaryUniqueness.
 type BlockParseError struct {
 	BlockKind string
 	Boundary  string
@@ -590,6 +628,6 @@ func (e *BlockParseError) Error() string {
 			msg += "\n  " + hint
 		}
 	}
-	msg += fmt.Sprintf("\n\nContent parsed so far:\n%s", e.Content)
+	msg += fmt.Sprintf("\n\nContent parsed so far:\n%s", truncateParseErrorContent(e.Content))
 	return msg
 }

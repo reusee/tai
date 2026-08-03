@@ -62,6 +62,17 @@ continue to be processed normally. This self-healing capability is especially
 important in unattended tasks where no human is available to intervene. The
 number of consecutive parse-error correction rounds is bounded to prevent
 infinite loops when the model persistently emits malformed output.
+
+The partial content included in the error message is truncated when the block
+body is large: an unclosed block can contain an arbitrarily large body (e.g.,
+a model emitting a large file before being cut off), and including the full
+body would make the error message enormous, wasting context in the
+self-correction round. The truncated message keeps the head — the opening
+marker, which identifies the block — and the tail — where the content ended,
+where the closing marker was expected — so the model still has a concrete
+target for correction. The full content remains available in
+BlockParseError.Content for programmatic inspection; only the formatted error
+string is truncated.
 `
 
 // BlockHandler is called when a new block is parsed during AppendContent.

@@ -3,6 +3,7 @@ package blocks
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
@@ -320,6 +321,79 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 	}
 	if len(e.Hints) != 0 {
 		t.Fatalf("expected 0 hints, got %d: %v", len(e.Hints), e.Hints)
+	}
+}
+
+func TestTruncateParseErrorContent(t *testing.T) {
+	t.Run("WithinLimit", func(t *testing.T) {
+		content := strings.Repeat("a", maxParseErrorContentLength)
+		if got := truncateParseErrorContent(content); got != content {
+			t.Fatal("content within the limit should be unchanged")
+		}
+	})
+
+	t.Run("OverLimit", func(t *testing.T) {
+		middleMarker := "MARKER_IN_MIDDLE"
+		content := strings.Repeat("a", 3000) + middleMarker + strings.Repeat("b", 3000)
+		got := truncateParseErrorContent(content)
+		if strings.Contains(got, middleMarker) {
+			t.Fatal("middle content should be omitted")
+		}
+		if !strings.Contains(got, "bytes omitted") {
+			t.Fatal("truncation note should be present")
+		}
+		if !strings.HasPrefix(got, strings.Repeat("a", 10)) {
+			t.Fatal("head should be preserved")
+		}
+		if !strings.HasSuffix(got, strings.Repeat("b", 10)) {
+			t.Fatal("tail should be preserved")
+		}
+		if len(got) > maxParseErrorContentLength+200 {
+			t.Fatalf("truncated output should stay bounded, got %d bytes", len(got))
+		}
+	})
+
+	t.Run("DoesNotSplitRunes", func(t *testing.T) {
+		// 12000 bytes of 3-byte runes: the head and tail cuts fall inside
+		// runes and must be adjusted to rune boundaries.
+		content := strings.Repeat("世", 4000)
+		got := truncateParseErrorContent(content)
+		if !utf8.ValidString(got) {
+			t.Fatal("truncated content must be valid UTF-8")
+		}
+	})
+}
+
+func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
+	// A very large unclosed block must produce an error message that omits
+	// the middle of the content, keeping only a truncated head and tail.
+	// Without truncation, the error message would be enormous and waste
+	// context when fed back to the model for self-correction.
+	middleMarker := "MIDDLE_CONTENT_MARKER"
+	largeBody := strings.Repeat("x", 5000) + middleMarker + strings.Repeat("y", 5000)
+	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\n" + largeBody)
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for unclosed block")
+	}
+	// The middle of the content must be omitted from the error message.
+	if strings.Contains(err.Error(), middleMarker) {
+		t.Fatal("error message should not include the middle of a large block")
+	}
+	// The error message must indicate that the content was truncated.
+	if !strings.Contains(err.Error(), "bytes omitted") {
+		t.Fatalf("error message should indicate truncation: %s", err.Error())
+	}
+	// The opening marker must be preserved (it identifies the block).
+	if !strings.Contains(err.Error(), "<<徕珑龘") {
+		t.Fatalf("error message should preserve the opening marker: %s", err.Error())
+	}
+	// The tail must be preserved so the model sees where the content ended.
+	if !strings.Contains(err.Error(), strings.Repeat("y", 10)) {
+		t.Fatalf("error message should preserve the tail: %s", err.Error())
 	}
 }
 
