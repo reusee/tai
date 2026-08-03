@@ -131,19 +131,19 @@ func TestAIRestatePromptsExcludeMemoryWhenNoMemory(t *testing.T) {
 }
 
 func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly two uncommon Chinese characters
+	// The delimiter policy mandates an uncommon two-character Chinese word
 	// per block. Both memory prompts must state the policy and must not
 	// display the legacy MEMEND example delimiter. See
 	// TheoryOfBlockFormatGeneral in blocks/block.go.
 	prompt := memoryBlockSystemPrompt("")
-	if !strings.Contains(prompt, "非常用汉字") {
-		t.Fatal("memoryBlockSystemPrompt must mandate the two-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(prompt, "不常用的两字词") {
+		t.Fatal("memoryBlockSystemPrompt must mandate the uncommon-two-character-Chinese-word delimiter policy")
 	}
 	if strings.Contains(prompt, "<<MEMEND") {
 		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
 	}
-	if !strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese characters") {
-		t.Fatal("memoryBlockRestatePrompt must mandate the two-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(memoryBlockRestatePrompt, "uncommon two-character Chinese word") {
+		t.Fatal("memoryBlockRestatePrompt must mandate the uncommon-two-character-Chinese-word delimiter policy")
 	}
 	if strings.Contains(memoryBlockRestatePrompt, "<<MEMEND") {
 		t.Fatal("memoryBlockRestatePrompt must not display the legacy MEMEND example delimiter")

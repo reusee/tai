@@ -51,8 +51,8 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if strings.Contains(GoalSystemPrompt, ".GOAL_COMPLETE") {
 		t.Fatal("GoalSystemPrompt must not reference .GOAL_COMPLETE marker file")
 	}
-	if !strings.Contains(GoalSystemPrompt, "uncommon Chinese characters") {
-		t.Fatal("GoalSystemPrompt must mandate the two-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(GoalSystemPrompt, "uncommon two-character Chinese word") {
+		t.Fatal("GoalSystemPrompt must mandate the uncommon-two-character-Chinese-word delimiter policy")
 	}
 }
 

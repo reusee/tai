@@ -12,15 +12,15 @@ The heredoc block format is a general-purpose structured output format for AI mo
 It uses heredoc-style delimiters with an XML opening tag to avoid parsing conflicts with content.
 Each block has a kind (XML element name), attributes (XML attributes on the opening tag), and a body.
 The opening marker is <<DELIMITER <kind attr1=".." attr2="..."> and the closing marker is
-DELIMITER on its own line. The delimiter is a pair of uncommon Chinese characters chosen by the
+DELIMITER on its own line. The delimiter is an uncommon two-character Chinese word chosen by the
 model; the closing line is simply the delimiter alone, with no XML closing tag. Only the delimiter
 string and the XML element structure are unified; the body content is defined by the specific kind.
 This format leverages the familiar heredoc syntax that models already know, improving
 parsing reliability.
 
-**Delimiter selection policy**: Every delimiter MUST be exactly two uncommon Chinese characters
-(for example 徕珑). Content — source code, prompts, and configuration text — is overwhelmingly
-ASCII or common-script writing, so a pair of rare Chinese characters has negligible probability
+**Delimiter selection policy**: Every delimiter MUST be an uncommon two-character Chinese word
+(for example 葳蕤). Content — source code, prompts, and configuration text — is overwhelmingly
+ASCII or common-script writing, so a rare two-character Chinese word has negligible probability
 of appearing in a block body, satisfying the body-disjointness guarantee without requiring the
 model to scan its output for collisions. The fixed two-character length makes the delimiter
 visually distinct from content and keeps token cost constant. The model must never emit the
@@ -53,8 +53,8 @@ and focus on their kind-specific semantics. Kind prompts do display structurally
 complete examples with illustrative concrete delimiters, because showing the literal
 placeholder marker "<<DELIMITER" inside a kind template teaches the model to emit
 that placeholder verbatim, producing blocks with a non-unique delimiter. Each kind
-prompt may carry one pointed reminder tied to its example — choose a fresh pair of
-uncommon Chinese characters, repeat the same delimiter on the closing line, never write
+prompt may carry one pointed reminder tied to its example — choose a fresh uncommon
+two-character Chinese word, repeat the same delimiter on the closing line, never write
 the placeholder literally — without restating the full rules. This keeps redundant
 delimiter description near zero while giving the format-error-prone kinds (notably
 go-test and summary) correct imitation targets for both their opening and closing
@@ -71,11 +71,11 @@ last content in the buffer, the parser extracts it from the remaining content. I
 the delimiter is incomplete (still streaming), the shorter extracted string will not
 match, so the block remains unclosed until the full delimiter arrives.
 
-Therefore the delimiter must be freshly chosen as exactly two uncommon Chinese
-characters, never copied from the illustrative examples. The example blocks in the
+Therefore the delimiter must be freshly chosen as an uncommon two-character Chinese
+word, never copied from the illustrative examples. The example blocks in the
 system prompt deliberately use distinct delimiters to demonstrate this rule, and
-those exact strings are forbidden for reuse. The rarity of the chosen characters is
-the integrity guarantee of the format: a pair of uncommon Chinese characters is
+those exact strings are forbidden for reuse. The rarity of the chosen word is
+the integrity guarantee of the format: an uncommon two-character Chinese word is
 effectively absent from code and prose, so the chance of a body line accidentally
 matching the delimiter is negligible, while reusing an example delimiter would cause
 a subsequent real block opened with that same delimiter to close at the wrong marker.
@@ -88,8 +88,8 @@ not an optional suggestion. Because the parser closes the block at the first lin
 matching the delimiter, a body line that matches the delimiter would prematurely
 terminate the block and discard all remaining content. The model must therefore
 select a delimiter that does not appear anywhere in the code or text it is about
-to emit. Two uncommon Chinese characters satisfy this by construction for code and
-prose content, but the model must verify the chosen pair is absent from the body
+to emit. An uncommon two-character Chinese word satisfies this by construction for code and
+prose content, but the model must verify the chosen word is absent from the body
 before emitting the block. Body-disjointness is as important as the anti-reuse
 guarantee: both are integrity guarantees of the format, and violating either
 corrupts the block.
@@ -192,7 +192,7 @@ This format avoids escaping issues and is easy to parse.
 <kind-specific content>
 DELIMITER
 
-- DELIMITER: Exactly two uncommon Chinese characters (e.g., 徕珑) that do not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
+- DELIMITER: An uncommon two-character Chinese word (e.g., 葳蕤) that does not appear in the block body. The rarity of the word ensures the delimiter cannot conflict with any content. Use a different uncommon two-character Chinese word for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
 - <kind>: The type of block, specified as an XML element name. The valid kinds and their content formats are defined by the specific kind documentation. Attributes on the opening tag provide kind-specific metadata.
 - Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
@@ -206,32 +206,32 @@ DELIMITER
 - Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and the changes will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  <<葳蕤 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
-  徕珑
+  葳蕤
 - NOT this (marker glued to the end of the prose line — the block will NOT be parsed and the changes will be lost):
-  Some explanation text.<<徕珑 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  Some explanation text.<<葳蕤 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
-  徕珑
+  葳蕤
 
 **Delimiter Uniqueness (CRITICAL):**
-- Generate a fresh delimiter for each block: exactly two uncommon Chinese characters (e.g., 龘靐).
+- Generate a fresh delimiter for each block: an uncommon two-character Chinese word (e.g., 龃龉).
 - **Never reuse a delimiter that appears in any example in this prompt.** The example delimiters are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
-- Each block in a response must use a distinct pair of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
+- Each block in a response must use a distinct uncommon two-character Chinese word so the parser can unambiguously pair each opening marker with its closing line.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. An uncommon two-character Chinese word is very unlikely to appear in code or prose, but MUST verify the chosen word is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<徕珑 <change ...> MUST be closed with 徕珑, never 龘靐 or any other delimiter.
+- The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<葳蕤 <change ...> MUST be closed with 葳蕤, never 龃龉 or any other delimiter.
 - A line that does not match the delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter. If no matching closing line is found, the block is unclosed. Always close a block with the same delimiter used to open it.
 - Before writing each closing line, verify its delimiter matches the corresponding opening marker of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 `
 
 const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly two uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
-- **The DELIMITER MUST be exactly two uncommon Chinese characters** (e.g., 徕珑, 龘靐, 齉爩), NEVER the literal text "<DELIMITER>" or a common word. Writing "<<DELIMITER" literally causes the parser to fail to recognize the block and the changes will be silently lost.
-- Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
+- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon two-character Chinese word) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
+- **The DELIMITER MUST be an uncommon two-character Chinese word** (e.g., 葳蕤, 龃龉, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word. Writing "<<DELIMITER" literally causes the parser to fail to recognize the block and the changes will be silently lost.
+- Generate a fresh uncommon two-character Chinese word for each block. Never reuse a delimiter from any example in this prompt.
 - The closing line MUST use the EXACT same delimiter as the opening marker.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen pair is absent from the body before emitting the block.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. An uncommon two-character Chinese word satisfies this by construction for code and prose, but MUST verify the chosen word is absent from the body before emitting the block.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.
@@ -485,7 +485,7 @@ func findClosingMarker(content []byte, bodyStart int, delimiter string) (bodyEnd
 // must consist solely of Unicode Han characters; any non-Han character
 // causes an empty string to be returned, so the marker is skipped and the
 // line is treated as regular content. This enforces the policy that block
-// delimiters are pairs of uncommon Chinese characters. A line with no
+// delimiters are uncommon two-character Chinese words. A line with no
 // characters before whitespace or '<' also yields an empty string.
 // See TheoryOfBoundaryUniqueness.
 func extractDelimiter(s string) string {

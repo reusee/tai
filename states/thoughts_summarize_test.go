@@ -491,10 +491,10 @@ func TestSplitAtLastCompleteParagraph(t *testing.T) {
 }
 
 func TestSummarizeSystemPromptUsesUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly two uncommon Chinese characters
+	// The delimiter policy mandates an uncommon two-character Chinese word
 	// per block. See TheoryOfBlockFormatGeneral in blocks/block.go.
-	if !strings.Contains(SummarizeSystemPrompt, "uncommon Chinese characters") {
-		t.Fatal("SummarizeSystemPrompt must mandate the two-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(SummarizeSystemPrompt, "uncommon two-character Chinese word") {
+		t.Fatal("SummarizeSystemPrompt must mandate the uncommon-two-character-Chinese-word delimiter policy")
 	}
 	if strings.Contains(SummarizeSystemPrompt, "<<ENDSUM") {
 		t.Fatal("SummarizeSystemPrompt must not display the legacy ENDSUM example delimiter")

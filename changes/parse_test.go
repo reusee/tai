@@ -499,7 +499,7 @@ func TestValidateChangeBlockNonGoFileTextLevelOpsAllowed(t *testing.T) {
 }
 
 func TestChangeBlockPromptsUseUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly two uncommon Chinese characters
+	// The delimiter policy mandates an uncommon two-character Chinese word
 	// per block. Both the change block prompt and its restate prompt must
 	// state the policy and must not display legacy English example
 	// delimiters, which the model would imitate verbatim.
@@ -508,8 +508,8 @@ func TestChangeBlockPromptsUseUncommonChineseDelimiter(t *testing.T) {
 		"ChangeBlockPrompt":        ChangeBlockPrompt,
 		"ChangeBlockRestatePrompt": ChangeBlockRestatePromptText,
 	} {
-		if !strings.Contains(prompt, "uncommon Chinese characters") {
-			t.Fatalf("%s must mandate the two-uncommon-Chinese-characters delimiter policy", name)
+		if !strings.Contains(prompt, "uncommon two-character Chinese word") {
+			t.Fatalf("%s must mandate the uncommon-two-character-Chinese-word delimiter policy", name)
 		}
 		for _, legacy := range []string{"<<CHG1", "<<ENDRT", "<<DELIM1", "<<BLOCK1"} {
 			if strings.Contains(prompt, legacy) {

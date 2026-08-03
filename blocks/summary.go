@@ -28,13 +28,13 @@ Use the "summary" kind to provide a brief description of the current generation 
 
 **Summary Block Format (complete example):**
 
-<<黿鼍 <summary>
+<<峬峭 <summary>
 - Identified root cause in the parser
 - Added boundary-matching fix
 - Updated tests for unclosed blocks
-黿鼍
+峬峭
 
-The delimiter 黿鼍 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 峬峭 in the example is illustrative only: in every block emitted, choose an uncommon two-character Chinese word as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Emit exactly one summary block per generation round.
@@ -46,13 +46,13 @@ The delimiter 黿鼍 in the example is illustrative only: in every block emitted
 `
 
 const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary block with a bullet list of what was done:
-<<齔齕 <summary>
+<<褵褷 <summary>
 - short point 1
 - short point 2
-齔齕
+褵褷
 - The summary block MUST appear after all other blocks. When a continue block is present, the summary block comes before it, and the continue block is the last block.
 - A summary block is required in every response, even when no change blocks are emitted. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
-- The example delimiter 齔齕 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- The example delimiter 褵褷 is illustrative: choose an uncommon two-character Chinese word as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessSummaryBlocks processes all summary blocks and returns their body
 // texts. Summaries are collected for terminal display after generation ends,

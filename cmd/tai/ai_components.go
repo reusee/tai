@@ -120,14 +120,14 @@ func memoryBlockSystemPrompt(profileText string) string {
 2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或深化现有用户画像的新信息。
 3. 如果发现了新信息，生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的格式为：
 
-<<爨齉 <memory>
+<<巑岏 <memory>
 <memory>
   <memory-item>用户画像项1</memory-item>
   <memory-item>用户画像项2</memory-item>
 </memory>
-爨齉
+巑岏
 
-其中 爨齉 是一个示例分隔符。每次生成时选择两个新的非常用汉字作为分隔符，并确保分隔符不会与内容冲突。
+其中 巑岏 是一个示例分隔符。每次生成时选择一个新的不常用的两字词作为分隔符，并确保分隔符不会与内容冲突。
 
 - 如果没有发现任何新信息，则不要生成此块。
 - 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。
@@ -139,8 +139,8 @@ func memoryBlockSystemPrompt(profileText string) string {
 ` + profileText
 }
 
-const memoryBlockRestatePrompt = `- Memory block: emit <<麐黿 <memory>
+const memoryBlockRestatePrompt = `- Memory block: emit <<褵褷 <memory>
 <memory>
   <memory-item>user profile fact</memory-item>
 </memory>
-麐黿 only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block. The example delimiter 麐黿 is illustrative: choose your own two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line.`
+褵褷 only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block. The example delimiter 褵褷 is illustrative: choose your own uncommon two-character Chinese word as the delimiter, the SAME delimiter on the closing line.`
