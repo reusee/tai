@@ -88,6 +88,162 @@ func appendThenErrorPhase(text string, err error) phases.Phase {
 	}
 }
 
+// appendPhaseWithFlush appends text content and then flushes the state,
+// so ParserState.Flush collects parse errors from unclosed blocks. Used
+// to test parse-error correction in the loop. See
+// TheoryOfParseErrorCollection.
+func appendPhaseWithFlush(text string) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		newState, err = newState.Flush()
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+}
+
+func TestRunParseErrorCorrection(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				// Emit an unclosed block (no closing delimiter) — a
+				// parse error that must be fed back for self-correction.
+				return appendPhaseWithFlush("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+			}
+			// Second round: corrected output with a summary block.
+			return appendPhaseWithFlush("<<徕珑 <summary>\nDone.\n徕珑\n")
+		}
+
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 rounds (1 parse-error correction round), got %d", callCount)
+		}
+
+		// The parse error feedback must be present in the state as user
+		// content so the model can correct the malformed block.
+		foundFeedback := false
+		for c := range result.FinalState.Contents() {
+			if c.Role == generators.RoleUser {
+				for _, p := range c.Parts {
+					if text, ok := p.(generators.Text); ok {
+						if strings.Contains(string(text), "could not be parsed") {
+							foundFeedback = true
+						}
+					}
+				}
+			}
+		}
+		if !foundFeedback {
+			t.Fatal("expected parse error feedback in state")
+		}
+	})
+}
+
+func TestRunParseErrorCorrectionBound(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			// Persistently emit an unclosed block — a parse error every
+			// round. The correction loop must stop after
+			// maxParseErrorRounds.
+			return appendPhaseWithFlush("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+		}
+
+		_, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Initial round + maxParseErrorRounds correction rounds.
+		if callCount != 1+maxParseErrorRounds {
+			t.Fatalf("expected %d rounds, got %d", 1+maxParseErrorRounds, callCount)
+		}
+	})
+}
+
+func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				// A complete shell block followed by an unclosed change
+				// block. The shell block is processed by the component;
+				// the parse error feedback is prepended to the shell
+				// output.
+				return appendPhaseWithFlush("<<龘靐 <shell>\necho hi\n龘靐\n<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+			}
+			return appendPhaseWithFlush("<<徕珑 <summary>\nDone.\n徕珑\n")
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			HTTPClient:   nets.HTTPClient{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 rounds, got %d", callCount)
+		}
+
+		// Both the parse error feedback and the shell output must be in
+		// the user content of the final state.
+		var userText string
+		for c := range result.FinalState.Contents() {
+			if c.Role == generators.RoleUser {
+				for _, p := range c.Parts {
+					if text, ok := p.(generators.Text); ok {
+						userText += string(text)
+					}
+				}
+			}
+		}
+		if !strings.Contains(userText, "could not be parsed") {
+			t.Fatal("expected parse error feedback in user content")
+		}
+		if !strings.Contains(userText, "shell output") {
+			t.Fatal("expected shell output in user content")
+		}
+	})
+}
+
 // errorPhase creates a phase that returns an error.
 func errorPhase(err error) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {

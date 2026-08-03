@@ -38,27 +38,30 @@ call, because streaming output may arrive in fragments. Text preceding the first
 marker is prose and is discarded once a block is found, because ParserState's purpose is
 block extraction, not prose preservation.
 
-At Flush, an unclosed block (opening marker with no matching closing line) is treated
-as an error rather than being finalized, because an unclosed block indicates incomplete
-or truncated output. Complete blocks remaining in the buffer are discarded (not stored),
-because the handler is responsible for block management and should have been called during
-AppendContent. Any remaining unparseable fragments are discarded so content appended after
-Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush content
-within the same block. Delimiters are parsed as the text between << and the first
-whitespace or < character; this ensures the delimiter is extracted correctly regardless
-of what follows it on the opening line.
+At Flush, an unclosed block (opening marker with no matching closing line) is collected
+as a parse error (see TheoryOfParseErrorCollection) rather than treated as a fatal error,
+because the caller can feed the error back to the model for self-correction. Complete
+blocks remaining in the buffer are discarded (not stored), because the handler is
+responsible for block management and should have been called during AppendContent. Any
+remaining unparseable fragments are discarded so content appended after Flush (e.g., from
+a subsequent generation cycle) is never combined with pre-Flush content within the same
+block. Delimiters are parsed as the text between << and the first whitespace or <
+character; this ensures the delimiter is extracted correctly regardless of what follows
+it on the opening line.
+`
 
-A BlockHandler callback may be set at construction time to receive blocks as they are
-parsed during AppendContent. When the handler returns an error, AppendContent returns the
-error immediately, stopping streaming. The handler is not called during Flush because
-only unclosed (incomplete) blocks or already-parsed complete blocks remain at that point.
-The handler is propagated to all new ParserState instances created by AppendContent and
-Flush, so it remains active across the entire generation session. The handler signature
-is func(block Block) error — the handler processes the block however it wishes (apply it,
-store it externally, or discard it) and returns nil on success or an error to stop
-streaming. This design makes the handler the sole authority over block lifecycle
-management, keeping ParserState focused on parsing and the State chain focused on
-content storage.
+const TheoryOfParseErrorCollection = `
+Parse errors — blocks whose closing delimiter is missing or malformed — are
+collected during streaming rather than treated as fatal generation errors. A
+block that cannot be parsed is malformed or truncated model output, not a
+system failure: the model may correct it given the right feedback. Collecting
+the error with the block kind, boundary, partial content, and collision hints
+and feeding it back as user content in the next round gives the model a
+concrete target for self-correction, while successfully parsed blocks
+continue to be processed normally. This self-healing capability is especially
+important in unattended tasks where no human is available to intervene. The
+number of consecutive parse-error correction rounds is bounded to prevent
+infinite loops when the model persistently emits malformed output.
 `
 
 // BlockHandler is called when a new block is parsed during AppendContent.
@@ -67,18 +70,11 @@ content storage.
 // error immediately, stopping streaming.
 type BlockHandler func(block Block) error
 
-// ParserState wraps an upstream State and incrementally parses boundary-delimited
-// blocks from streamed model output. As the model appends text parts, the
-// accumulated text is scanned for complete blocks using ParseFirstBlock. Parsed
-// blocks are passed to a BlockHandler callback; ParserState does not store blocks
-// itself. The handler is the sole authority over block lifecycle management.
-//
-// ParserState is immutable: AppendContent and Flush return a new *ParserState
-// rather than mutating in place. See TheoryOfParserState.
 type ParserState struct {
-	upstream generators.State
-	buf      []byte
-	handler  BlockHandler
+	upstream    generators.State
+	buf         []byte
+	handler     BlockHandler
+	parseErrors []*BlockParseError
 }
 
 // NewParserState creates a ParserState that wraps the given upstream State.
@@ -106,9 +102,10 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 	// Only parse blocks from model-generated content, not from user or system input.
 	if content.Role != generators.RoleAssistant && content.Role != generators.RoleModel {
 		return &ParserState{
-			upstream: newUpstream,
-			buf:      s.buf,
-			handler:  s.handler,
+			upstream:    newUpstream,
+			buf:         s.buf,
+			handler:     s.handler,
+			parseErrors: s.parseErrors,
 		}, nil
 	}
 
@@ -143,9 +140,10 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 				// See TheoryOfParserState.
 				buf = buf[end:]
 				return &ParserState{
-					upstream: newUpstream,
-					buf:      buf,
-					handler:  s.handler,
+					upstream:    newUpstream,
+					buf:         buf,
+					handler:     s.handler,
+					parseErrors: s.parseErrors,
 				}, handlerErr
 			}
 		}
@@ -154,9 +152,10 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 	}
 
 	return &ParserState{
-		upstream: newUpstream,
-		buf:      buf,
-		handler:  s.handler,
+		upstream:    newUpstream,
+		buf:         buf,
+		handler:     s.handler,
+		parseErrors: s.parseErrors,
 	}, nil
 }
 
@@ -179,19 +178,35 @@ func (s *ParserState) Flush() (generators.State, error) {
 	}
 
 	// During Flush, an unclosed block (opening marker with no matching
-	// end marker) is an error, not a finalized block. An unclosed block
-	// indicates incomplete or truncated output. Complete blocks should
-	// have been parsed and handled during AppendContent; any complete
-	// blocks remaining in the buffer (e.g., from a handler error that
-	// stopped parsing early) are discarded because the handler is the
-	// sole authority over block management. Remaining unparseable
-	// fragments are discarded so post-flush content does not combine
-	// with pre-flush fragments. See TheoryOfParserState.
+	// end marker) is a parse error, not a fatal error. Parse errors are
+	// collected via ParseErrors instead of being returned, so the
+	// generation flow continues and the caller can feed them back to the
+	// model for self-correction. The scanner skips past each unclosed
+	// block's opening marker so subsequent block markers are still found.
+	// Complete blocks should have been parsed and handled during
+	// AppendContent; any complete blocks remaining in the buffer are
+	// discarded because the handler is the sole authority over block
+	// management. Remaining unparseable fragments are discarded so
+	// post-flush content does not combine with pre-flush fragments.
+	// See TheoryOfParseErrorCollection.
 	buf := slices.Clone(s.buf)
+	parseErrors := slices.Clone(s.parseErrors)
 	for {
 		_, _, end, ok, err := parseFirstBlock(buf)
 		if err != nil {
-			return nil, err
+			// Unclosed block: collect the parse error and skip past
+			// its opening marker so subsequent block markers are still
+			// found. If the marker cannot be skipped, stop scanning to
+			// avoid an infinite loop.
+			// See TheoryOfParseErrorCollection.
+			if parseErr, ok := err.(*BlockParseError); ok {
+				parseErrors = append(parseErrors, parseErr)
+			}
+			if end > 0 && end <= len(buf) {
+				buf = buf[end:]
+				continue
+			}
+			break
 		}
 		if !ok {
 			break
@@ -201,10 +216,21 @@ func (s *ParserState) Flush() (generators.State, error) {
 	}
 
 	return &ParserState{
-		upstream: newUpstream,
-		buf:      nil,
-		handler:  s.handler,
+		upstream:    newUpstream,
+		buf:         nil,
+		handler:     s.handler,
+		parseErrors: parseErrors,
 	}, nil
+}
+
+// ParseErrors returns the parse errors collected during Flush. Unclosed
+// blocks (opening markers with no matching closing line) are collected
+// here instead of aborting the generation flow, so the caller can feed
+// them back to the model for self-correction. The returned slice is a
+// copy; modifying it does not affect the ParserState. See
+// TheoryOfParseErrorCollection.
+func (s *ParserState) ParseErrors() []*BlockParseError {
+	return slices.Clone(s.parseErrors)
 }
 
 func (s *ParserState) Unwrap() generators.State {

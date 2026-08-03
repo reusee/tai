@@ -401,7 +401,7 @@ func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) 
 	}
 }
 
-func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
+func TestParserStateFlushCollectsParseErrors(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block
 	ps := NewParserState(upstream, func(block Block) error {
@@ -423,22 +423,26 @@ func TestParserStateFlushErrorsOnUnclosed(t *testing.T) {
 		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
 	}
 
-	// Flush should return an error for the unclosed block, because an
-	// unclosed block is incomplete and must not be finalized.
-	_, err = ps.Flush()
-	if err == nil {
-		t.Fatal("expected error for unclosed block at flush")
+	// Flush must not return an error for the unclosed block. The block
+	// is collected as a parse error instead, so the generation flow
+	// continues and the caller can feed the error back to the model for
+	// self-correction. See TheoryOfParseErrorCollection.
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
 	}
-	e, isParseErr := err.(*BlockParseError)
-	if !isParseErr {
-		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	ps = flushedState.(*ParserState)
+
+	parseErrors := ps.ParseErrors()
+	if len(parseErrors) != 1 {
+		t.Fatalf("expected 1 parse error, got %d", len(parseErrors))
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if parseErrors[0].BlockKind != "change" || parseErrors[0].Boundary != "徕珑" {
+		t.Fatalf("expected parse error kind=change boundary=徕珑, got kind=%q boundary=%q", parseErrors[0].BlockKind, parseErrors[0].Boundary)
 	}
 }
 
-func TestParserStateFlushErrorsOnTruncatedOpeningLineAtEOF(t *testing.T) {
+func TestParserStateFlushCollectsTruncatedOpeningLineParseError(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block
 	ps := NewParserState(upstream, func(block Block) error {
@@ -449,8 +453,9 @@ func TestParserStateFlushErrorsOnTruncatedOpeningLineAtEOF(t *testing.T) {
 	// The model output ends with an opening marker line that has no
 	// trailing newline. This is a truncated block: the closing marker
 	// must be alone on its own line, which cannot exist after EOF.
-	// Flush must report the truncation instead of silently dropping
-	// the block. See TheoryOfBlockFormat.
+	// Flush must collect the truncation as a parse error instead of
+	// silently dropping the block or aborting the flow.
+	// See TheoryOfBlockFormat and TheoryOfParseErrorCollection.
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")},
@@ -463,16 +468,18 @@ func TestParserStateFlushErrorsOnTruncatedOpeningLineAtEOF(t *testing.T) {
 		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
 	}
 
-	_, err = ps.Flush()
-	if err == nil {
-		t.Fatal("expected error for truncated opening line at flush")
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush must not return an error for truncated opening line, got: %v", err)
 	}
-	e, isParseErr := err.(*BlockParseError)
-	if !isParseErr {
-		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	ps = flushedState.(*ParserState)
+
+	parseErrors := ps.ParseErrors()
+	if len(parseErrors) != 1 {
+		t.Fatalf("expected 1 parse error, got %d", len(parseErrors))
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if parseErrors[0].BlockKind != "change" || parseErrors[0].Boundary != "徕珑" {
+		t.Fatalf("expected parse error kind=change boundary=徕珑, got kind=%q boundary=%q", parseErrors[0].BlockKind, parseErrors[0].Boundary)
 	}
 }
 
@@ -510,6 +517,88 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	// No pending text should remain after flush.
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty pending text after flush, got %q", pending)
+	}
+}
+
+func TestParserStateFlushCollectsMultipleParseErrors(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	ps := NewParserState(upstream)
+
+	// Two unclosed blocks separated by content. Both are collected as
+	// parse errors during Flush; the scanner skips past each opening
+	// marker to find the next block marker. See
+	// TheoryOfParseErrorCollection.
+	text := "<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n" +
+		"<<龘靐 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
+	}
+	ps = flushedState.(*ParserState)
+
+	parseErrors := ps.ParseErrors()
+	if len(parseErrors) != 2 {
+		t.Fatalf("expected 2 parse errors, got %d", len(parseErrors))
+	}
+	if parseErrors[0].Boundary != "徕珑" {
+		t.Fatalf("expected first parse error boundary 徕珑, got %s", parseErrors[0].Boundary)
+	}
+	if parseErrors[1].Boundary != "龘靐" {
+		t.Fatalf("expected second parse error boundary 龘靐, got %s", parseErrors[1].Boundary)
+	}
+}
+
+func TestParserStateFlushCollectsParseErrorsAfterCompleteBlocks(t *testing.T) {
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	// A complete block followed by an unclosed block. The complete block
+	// is parsed and handled during AppendContent; the unclosed block is
+	// collected as a parse error during Flush. See
+	// TheoryOfParseErrorCollection.
+	text := "<<徕珑 <summary>\nDone.\n徕珑\n" +
+		"<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 complete block, got %d", len(collectedBlocks))
+	}
+	if collectedBlocks[0].Kind != "summary" {
+		t.Fatalf("expected summary block, got %s", collectedBlocks[0].Kind)
+	}
+
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
+	}
+	ps = flushedState.(*ParserState)
+
+	parseErrors := ps.ParseErrors()
+	if len(parseErrors) != 1 {
+		t.Fatalf("expected 1 parse error, got %d", len(parseErrors))
+	}
+	if parseErrors[0].BlockKind != "change" || parseErrors[0].Boundary != "龘靐" {
+		t.Fatalf("expected parse error kind=change boundary=龘靐, got kind=%q boundary=%q", parseErrors[0].BlockKind, parseErrors[0].Boundary)
 	}
 }
 
@@ -663,22 +752,24 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 0 handled blocks before flush, got %d", len(handledBlocks))
 		}
 
-		// Flush returns an error for the unclosed block. The handler
-		// is not called because the block is incomplete.
-		_, err = ps.Flush()
-		if err == nil {
-			t.Fatal("expected error for unclosed block at flush")
+		// Flush collects the unclosed block as a parse error instead of
+		// returning an error. The handler is not called because the block
+		// is incomplete. See TheoryOfParseErrorCollection.
+		flushedState, err := ps.Flush()
+		if err != nil {
+			t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
 		}
+		ps = flushedState.(*ParserState)
 
-		// Handler should NOT be called for unclosed blocks during Flush,
-		// because unclosed blocks are incomplete (e.g., from truncated
-		// output) and must not be finalized or applied.
 		if len(handledBlocks) != 0 {
 			t.Fatalf("expected 0 handled blocks after flush (unclosed block not applied), got %d", len(handledBlocks))
 		}
+		if len(ps.ParseErrors()) != 1 {
+			t.Fatalf("expected 1 parse error, got %d", len(ps.ParseErrors()))
+		}
 	})
 
-	t.Run("UnclosedBlockCausesFlushError", func(t *testing.T) {
+	t.Run("UnclosedBlockCollectedAsParseError", func(t *testing.T) {
 		upstream := &mockState{systemPrompt: "system prompt"}
 		ps := NewParserState(upstream, func(block Block) error {
 			return nil
@@ -696,19 +787,21 @@ func TestParserStateBlockHandler(t *testing.T) {
 		}
 		ps = newState.(*ParserState)
 
-		// Flush should return an error for the unclosed block, because
-		// an unclosed block indicates incomplete or truncated output and
-		// must not be finalized.
-		_, flushErr := ps.Flush()
-		if flushErr == nil {
-			t.Fatal("expected error for unclosed block at flush")
+		// Flush must not return an error; the unclosed block is collected
+		// as a parse error so the caller can feed it back to the model for
+		// self-correction. See TheoryOfParseErrorCollection.
+		flushedState, err := ps.Flush()
+		if err != nil {
+			t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
 		}
-		e, isParseErr := flushErr.(*BlockParseError)
-		if !isParseErr {
-			t.Fatalf("expected BlockParseError, got %T: %v", flushErr, flushErr)
+		ps = flushedState.(*ParserState)
+
+		parseErrors := ps.ParseErrors()
+		if len(parseErrors) != 1 {
+			t.Fatalf("expected 1 parse error, got %d", len(parseErrors))
 		}
-		if e.BlockKind != "change" || e.Boundary != "徕珑" {
-			t.Fatalf("expected unclosed block kind=change boundary=徕珑, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+		if parseErrors[0].BlockKind != "change" || parseErrors[0].Boundary != "徕珑" {
+			t.Fatalf("expected parse error kind=change boundary=徕珑, got kind=%q boundary=%q", parseErrors[0].BlockKind, parseErrors[0].Boundary)
 		}
 	})
 }
