@@ -53,11 +53,11 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 	var blockOutput string
 	switch {
 	case m.prefixBlock:
-		blockOutput = "<<徕珑 <continue>\ncontinue\n徕珑\n<<龘靐 <summary>\n" + m.summary + "\n龘靐"
+		blockOutput = "<<徕珑龘 <continue>\ncontinue\n徕珑龘\n<<龘靐齉 <summary>\n" + m.summary + "\n龘靐齉"
 	case m.noHeader:
-		blockOutput = "<<徕珑\n" + m.summary + "\n徕珑"
+		blockOutput = "<<徕珑龘\n" + m.summary + "\n徕珑龘"
 	default:
-		blockOutput = "<<徕珑 <summary>\n" + m.summary + "\n徕珑"
+		blockOutput = "<<徕珑龘 <summary>\n" + m.summary + "\n徕珑龘"
 	}
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,

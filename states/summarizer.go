@@ -56,12 +56,12 @@ Pick only the most essential points. Do not be exhaustive. The user reads this t
 
 Wrap the output in a summary block using the heredoc-delimited block format. Output ONLY the block, no other text before or after:
 
-<<爩麤 <summary>
+<<爩麤黿 <summary>
 - first key point
 - second key point
-爩麤
+爩麤黿
 
-The delimiter 爩麤 in the example is illustrative only: choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+The delimiter 爩麤黿 in the example is illustrative only: choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ThoughtsSummarizeLanguage is an alias for flags.ThoughtsSummarizeLanguage.
 type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage

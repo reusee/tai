@@ -36,11 +36,11 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 
 **Shell Block Format (complete example):**
 
-<<爞齌 <shell>
+<<爞齌黿 <shell>
 go test ./...
-爞齌
+爞齌黿
 
-The delimiter 爞齌 in the example is illustrative only: in every block you emit, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 爞齌黿 in the example is illustrative only: in every block you emit, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
@@ -74,10 +74,10 @@ The delimiter 爞齌 in the example is illustrative only: in every block you emi
 `
 
 const ShellBlockRestatePrompt = `- Shell block: emit
-<<齑靁 <shell>
+<<齑靁虋 <shell>
 <shell command>
-齑靁
-to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+齑靁虋
+to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁虋 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const shellTimeout = 30 * time.Second
 

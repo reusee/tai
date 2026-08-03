@@ -31,11 +31,11 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 
 **Continue Block Format (complete example):**
 
-<<灪麤 <continue>
+<<灪麤爨 <continue>
 Continue the task: apply the remaining changes and verify them with tests.
-灪麤
+灪麤爨
 
-The delimiter 灪麤 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 灪麤爨 in the example is illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.
@@ -45,10 +45,10 @@ The delimiter 灪麤 in the example is illustrative only: in every block emitted
 `
 
 const ContinueBlockRestatePrompt = `- Continue block: when another generation round is needed, emit:
-<<龖爨 <continue>
+<<龖爨齾 <continue>
 <next user message content>
-龖爨
-It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+龖爨齾
+It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨齾 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Only blocks with Kind "continue" are processed.

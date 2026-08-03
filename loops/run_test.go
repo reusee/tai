@@ -117,10 +117,10 @@ func TestRunParseErrorCorrection(t *testing.T) {
 			if callCount == 1 {
 				// Emit an unclosed block (no closing delimiter) — a
 				// parse error that must be fed back for self-correction.
-				return appendPhaseWithFlush("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 			}
 			// Second round: corrected output with a summary block.
-			return appendPhaseWithFlush("<<徕珑 <summary>\nDone.\n徕珑\n")
+			return appendPhaseWithFlush("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
 		result, err := run(context.Background(), RunOptions{
@@ -164,7 +164,7 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 			// Persistently emit an unclosed block — a parse error every
 			// round. The correction loop must stop after
 			// maxParseErrorRounds.
-			return appendPhaseWithFlush("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+			return appendPhaseWithFlush("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 		}
 
 		_, err := run(context.Background(), RunOptions{
@@ -193,9 +193,9 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 				// block. The shell block is processed by the component;
 				// the parse error feedback is prepended to the shell
 				// output.
-				return appendPhaseWithFlush("<<龘靐 <shell>\necho hi\n龘靐\n<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("<<龘靐齉 <shell>\necho hi\n龘靐齉\n<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 			}
-			return appendPhaseWithFlush("<<徕珑 <summary>\nDone.\n徕珑\n")
+			return appendPhaseWithFlush("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
 		comps := components.ComponentSet{
@@ -285,7 +285,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<徕珑 <shell>\necho hello\n徕珑\n")
+				return appendPhase("<<徕珑龘 <shell>\necho hello\n徕珑龘\n")
 			}
 			return appendPhase("done")
 		}
@@ -362,7 +362,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			Components:   comps,
 			BlockHandler: blockHandler,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<徕珑 <shell>\necho hi\n徕珑\n")
+				return appendPhase("<<徕珑龘 <shell>\necho hi\n徕珑龘\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -421,7 +421,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 				return appendPhase("incomplete output without summary")
 			}
 			// Second call includes a summary block.
-			return appendPhase("<<徕珑 <summary>\nDone.\n徕珑\n")
+			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
 		_, err := run(context.Background(), RunOptions{
@@ -453,10 +453,10 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 				// Summary block present but finish reason is "length"
 				// (max-token truncation). This should trigger retry
 				// despite the summary block.
-				return appendPhaseWithFinish("<<徕珑 <summary>\nDone.\n徕珑\n", "length")
+				return appendPhaseWithFinish("<<徕珑龘 <summary>\nDone.\n徕珑龘\n", "length")
 			}
 			// Second call: normal finish reason with summary.
-			return appendPhaseWithFinish("<<徕珑 <summary>\nDone.\n徕珑\n", "stop")
+			return appendPhaseWithFinish("<<徕珑龘 <summary>\nDone.\n徕珑龘\n", "stop")
 		}
 
 		_, err := run(context.Background(), RunOptions{
@@ -484,7 +484,7 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhaseWithFinish("<<徕珑 <summary>\nDone.\n徕珑\n", "stop")
+			return appendPhaseWithFinish("<<徕珑龘 <summary>\nDone.\n徕珑龘\n", "stop")
 		}
 
 		_, err := run(context.Background(), RunOptions{
@@ -563,9 +563,9 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				round++
 				if round == 1 {
-					return appendPhase("<<徕珑 <shell>\necho hi\n徕珑\n")
+					return appendPhase("<<徕珑龘 <shell>\necho hi\n徕珑龘\n")
 				}
-				return appendPhase("<<徕珑 <summary>\nDone.\n徕珑\n")
+				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -595,7 +595,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			Components:     nil,
 			OnRoundSuccess: onRoundSuccess,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<徕珑 <summary>\nRound 1 done.\n徕珑\n")
+				return appendPhase("<<徕珑龘 <summary>\nRound 1 done.\n徕珑龘\n")
 			},
 		})
 		if err != nil {
@@ -684,7 +684,7 @@ func TestRunMaxRounds(t *testing.T) {
 			MaxRounds:    3,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				callCount++
-				return appendPhase("<<徕珑 <shell>\necho hi\n徕珑\n")
+				return appendPhase("<<徕珑龘 <shell>\necho hi\n徕珑龘\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -912,7 +912,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			genCount++
-			return appendPhase("<<徕珑 <shell>\necho hi\n徕珑\n")
+			return appendPhase("<<徕珑龘 <shell>\necho hi\n徕珑龘\n")
 		}
 
 		comps := components.ComponentSet{
@@ -1028,9 +1028,9 @@ func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<徕珑 <done>\ngoal achieved\n徕珑\n<<龘靐 <other>\ntrigger\n龘靐\n")
+				return appendPhase("<<徕珑龘 <done>\ngoal achieved\n徕珑龘\n<<龘靐齉 <other>\ntrigger\n龘靐齉\n")
 			}
-			return appendPhase("<<徕珑 <summary>\nDone.\n徕珑\n")
+			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
 		comps := components.ComponentSet{

@@ -763,7 +763,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		}
 		defer root.Close()
 
-		content := "<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
+		content := "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
 		diffPath := filepath.Join(dir, "diff.txt")
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -841,8 +841,8 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 			}
 		}
 
-		changeBlock := "<<徕珑 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n徕珑\n"
-		summaryBlock := "<<龘靐 <summary>\n- Renamed Old to New.\n龘靐\n"
+		changeBlock := "<<徕珑龘 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n徕珑龘\n"
+		summaryBlock := "<<龘靐齉 <summary>\n- Renamed Old to New.\n龘靐齉\n"
 
 		t.Run("ChangeThenSummary", func(t *testing.T) {
 			run(t, changeBlock+"\n"+summaryBlock)

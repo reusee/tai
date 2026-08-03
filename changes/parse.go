@@ -213,7 +213,7 @@ Use the "change" kind to define code modifications using the heredoc block forma
 <complete_declaration_code>
 DELIMITER
 
-The DELIMITER placeholder above is symbolic: in every real block, replace it with exactly two uncommon Chinese characters (e.g., 徕珑) that do not appear in the body, and never reuse any example delimiter shown below.
+The DELIMITER placeholder above is symbolic: in every real block, replace it with exactly three uncommon Chinese characters (e.g., 徕珑龘) that do not appear in the body, and never reuse any example delimiter shown below.
 
 **Rules:**
 - The opening tag attributes:
@@ -246,47 +246,47 @@ The ` + "`package`" + ` and ` + "`import`" + ` targets are special Go-only targe
 **Example:**
 
 I analyzed the code and found an issue with the Foo function...
-<<齉爩 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+<<齉爩龖 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
 // Foo does something important.
 func Foo() {
 	println("fixed")
 }
-齉爩
+齉爩龖
 The Bar function is now unused and should be removed...
-<<灪麤 <change op="DELETE" target="Bar" file-path="/home/user/foo.go">
-灪麤
+<<灪麤爨 <change op="DELETE" target="Bar" file-path="/home/user/foo.go">
+灪麤爨
 The unused.go file should be removed entirely...
-<<龖爨 <change op="DELETE" target="*" file-path="/home/user/unused.go">
-龖爨
+<<龖爨齾 <change op="DELETE" target="*" file-path="/home/user/unused.go">
+龖爨齾
 The config file needs to be completely rewritten...
-<<齾麐 <change op="WRITE" file-path="/home/user/config.go">
+<<齾麐黿 <change op="WRITE" file-path="/home/user/config.go">
 package config
 
 func New() *Config {
 	return &Config{}
 }
-齾麐
+齾麐黿
 Moving this file to a new package, just update the package clause...
-<<虋灩 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
+<<虋灩黿 <change op="MODIFY" target="package" file-path="/home/user/moved.go">
 package newpkg
-虋灩
+虋灩黿
 Replacing a unique string in a Markdown file...
-<<爞齌 <change op="REPLACE" find="old description text" file-path="/home/user/readme.md">
+<<爞齌黿 <change op="REPLACE" find="old description text" file-path="/home/user/readme.md">
 new description text
-爞齌
+爞齌黿
 Inserting content after a unique anchor in a config file...
-<<齑靁 <change op="INSERT_AFTER" find="[dependencies]" file-path="/home/user/Cargo.toml">
+<<齑靁虋 <change op="INSERT_AFTER" find="[dependencies]" file-path="/home/user/Cargo.toml">
 serde = { version = "1.0", features = ["derive"] }
-齑靁
+齑靁虋
 These changes should resolve the issue.
-<<黿鼍 <summary>
+<<黿鼍爩 <summary>
 - Fixed the Foo function
 - Removed the unused Bar function
 - Deleted the unused.go file
 - Rewrote the config file
 - Updated the Markdown description
 - Added a dependency
-黿鼍
+黿鼍爩
 `
 
 const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST use the heredoc-delimited format with XML attributes on the opening tag:
@@ -294,7 +294,7 @@ const ChangeBlockRestatePromptText = `**CRITICAL**: All code modifications MUST 
 <complete code>
 DELIMITER
 
-- The DELIMITER in the format above is symbolic: replace it with exactly two uncommon Chinese characters (e.g., 徕珑), the same delimiter on the opening and closing lines. Never write the literal text "DELIMITER" or any example delimiter.
+- The DELIMITER in the format above is symbolic: replace it with exactly three uncommon Chinese characters (e.g., 徕珑龘), the same delimiter on the opening and closing lines. Never write the literal text "DELIMITER" or any example delimiter.
 - **ONE ENTITY PER BLOCK**: Each block MUST target exactly ONE top-level entity and contain ONLY that entity's complete definition. Never include multiple top-level declarations in a single block.
 - For methods, use TypeName.MethodName or *TypeName.MethodName as the target.
 - For RENAME, ` + "`target`" + ` is the new file path; the code body is ignored.
