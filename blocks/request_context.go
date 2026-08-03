@@ -51,13 +51,13 @@ Use the "request-context" kind to request additional context needed to complete 
 
 **Request-Context Block Format (complete example):**
 
-<<龃龉 <request-context>
+<<龘靐 <request-context>
 <file path="src/main.go" />
 <fetch addr="https://example.com/api" />
 <glob pattern="src/**/*.go" />
-龃龉
+龘靐
 
-The delimiter 龃龉 in the example is illustrative only: in every block emitted, choose an uncommon two-character Chinese word as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 龘靐 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
@@ -73,33 +73,33 @@ The delimiter 龃龉 in the example is illustrative only: in every block emitted
 **Example:**
 
 Need to see the content of a file to proceed...
-<<葳蕤 <request-context>
+<<齉爩 <request-context>
 <file path="src/main.go" />
-葳蕤
+齉爩
 
 Need to fetch a web page that requires a custom user-agent and cookie...
-<<蹀躞 <request-context>
+<<黿鼍 <request-context>
 <fetch addr="https://example.com/api" user-agent="MyBot/1.0" cookie="session=abc123" />
-蹀躞
+黿鼍
 
 Need to discover files matching a pattern...
-<<缱绻 <request-context>
+<<龖爨 <request-context>
 <glob pattern="src/**/*.go" />
-缱绻
+龖爨
 `
 
 const RequestContextRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a request-context block:
-<<旖旎 <request-context>
+<<齾麐 <request-context>
 <file path="..." />
 <fetch addr="..." user-agent="..." referer="..." cookie="..." />
 <glob pattern="..." />
-旖旎
+齾麐
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
-- The example delimiter 旖旎 is illustrative: choose an uncommon two-character Chinese word as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- The example delimiter 齾麐 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 // RequestContextRequest represents a single context request parsed from the block body.
 type RequestContextRequest struct {

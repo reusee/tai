@@ -92,14 +92,14 @@ Use the "go-test" kind to run Go tests and receive the output as part of the nex
 
 **Go-Test Block Format (complete example):**
 
-<<旖旎 <go-test>
+<<齾麐 <go-test>
 -run
 TestFoo
 -v
 /absolute/path/to/pkg/...
-旖旎
+齾麐
 
-The delimiter 旖旎 in the example is illustrative only: in every block emitted, choose an uncommon two-character Chinese word as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiter 齾麐 in the example is illustrative only: in every block emitted, choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
@@ -114,16 +114,16 @@ The delimiter 旖旎 in the example is illustrative only: in every block emitted
 `
 
 const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block to verify:
-<<蹁跹 <go-test>
+<<虋灩 <go-test>
 <optional go test arguments, one per line>
-蹁跹
+虋灩
 - Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). The current working directory is not known, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so correct absolute paths can be constructed. If the working directory is not yet known, use an empty body to run all tests (./...).
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
-- The example delimiter 蹁跹 is illustrative: choose an uncommon two-character Chinese word as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- The example delimiter 虋灩 is illustrative: choose two uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const goTestTimeout = 120 * time.Second
 

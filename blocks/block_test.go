@@ -642,7 +642,7 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 }
 
 func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
-	// The delimiter policy mandates an uncommon two-character Chinese word
+	// The delimiter policy mandates exactly two uncommon Chinese characters
 	// per block. Every prompt that shows a block example must state this
 	// policy, and must not display legacy English example delimiters that
 	// the model would imitate verbatim. See TheoryOfBlockFormatGeneral.
@@ -661,8 +661,8 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"RequestContextRestatePrompt": RequestContextRestatePrompt,
 	}
 	for name, prompt := range prompts {
-		if !strings.Contains(prompt, "uncommon two-character Chinese word") {
-			t.Fatalf("%s must mandate the uncommon-two-character-Chinese-word delimiter policy", name)
+		if !strings.Contains(prompt, "uncommon Chinese characters") {
+			t.Fatalf("%s must mandate the two-uncommon-Chinese-characters delimiter policy", name)
 		}
 		for _, legacy := range []string{
 			"<<DELIM1", "<<BLOCK1", "<<ENDBLOCK", "<<TESTEND",

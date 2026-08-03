@@ -72,11 +72,11 @@ You are working toward a goal that may require multiple independent loops to ach
 **Goal Completion Signal:**
 When you determine the goal is fully achieved, emit a done block:
 
-<<峬峭 <done>
+<<龘靐 <done>
 goal achieved
-峬峭
+龘靐
 
-The delimiter 峬峭 is illustrative only: choose an uncommon two-character Chinese word as the delimiter, and use the same delimiter on the closing line.
+The delimiter 龘靐 is illustrative only: choose exactly two uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line.
 
 - Only emit a done block when the goal is genuinely achieved. If unsure, do NOT emit it; continue working in the next loop.
 - Each loop is independent: you start fresh with the current filesystem state. Re-read files to verify previous changes before building on them.
