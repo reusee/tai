@@ -332,7 +332,13 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	if delimiter == "" {
 		return
 	}
-	rest := openingLine[len(delimiter):]
+	// extractDelimiter trims leading whitespace internally, so we must
+	// also trim before slicing to align the rest-of-line offset with
+	// the extracted delimiter. Without this, leading whitespace between
+	// << and the delimiter causes rest to start at a wrong byte offset
+	// (inside a multi-byte rune), producing garbled text.
+	trimmedOpeningLine := strings.TrimSpace(openingLine)
+	rest := trimmedOpeningLine[len(delimiter):]
 
 	// The XML opening tag is optional: a model may emit
 	// <<DELIMITER ... DELIMITER with no kind or attributes. Such
@@ -437,7 +443,12 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if delimiter == "" {
 		return "", false
 	}
-	rest := afterMarker[len(delimiter):]
+	// extractDelimiter trims leading whitespace internally, so we must
+	// also trim before slicing to align the rest-of-line offset with
+	// the extracted delimiter. Without this, leading whitespace between
+	// << and the delimiter causes rest to start at a wrong byte offset.
+	trimmedAfterMarker := strings.TrimSpace(afterMarker)
+	rest := trimmedAfterMarker[len(delimiter):]
 	ltIdx := strings.Index(rest, "<")
 	if ltIdx == -1 {
 		return "", false

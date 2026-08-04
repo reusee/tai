@@ -545,6 +545,68 @@ func TestParseFirstBlockTrailingContent(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
+	// A block with leading whitespace between << and the delimiter
+	// must be parsed correctly. extractDelimiter trims the input, so
+	// the rest-of-line computation must also use the trimmed string
+	// to avoid slicing into the middle of a multi-byte rune.
+	content := []byte("<< 徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found with leading whitespace after <<")
+	}
+	if block.Kind != "change" {
+		t.Fatalf("expected kind change, got %s", block.Kind)
+	}
+	if block.Boundary != "徕珑龘" {
+		t.Fatalf("expected boundary 徕珑龘, got %q", block.Boundary)
+	}
+	if !strings.Contains(block.Body, "func Foo() {}") {
+		t.Fatalf("body should contain the code: %q", block.Body)
+	}
+
+	// Multiple leading spaces.
+	content2 := []byte("<<   龘靐齉 <summary>\n- done\n龘靐齉\n")
+	block2, _, _, ok2, err2 := ParseFirstBlock(content2)
+	if err2 != nil {
+		t.Fatalf("unexpected error: %v", err2)
+	}
+	if !ok2 {
+		t.Fatal("expected block to be found with multiple leading spaces")
+	}
+	if block2.Kind != "summary" {
+		t.Fatalf("expected kind summary, got %s", block2.Kind)
+	}
+	if block2.Boundary != "龘靐齉" {
+		t.Fatalf("expected boundary 龘靐齉, got %q", block2.Boundary)
+	}
+	if block2.Body != "- done" {
+		t.Fatalf("expected body '- done', got %q", block2.Body)
+	}
+
+	// Kindless block with leading whitespace.
+	content3 := []byte("<< 齉爩龖\nbody text\n齉爩龖\n")
+	block3, _, _, ok3, err3 := ParseFirstBlock(content3)
+	if err3 != nil {
+		t.Fatalf("unexpected error: %v", err3)
+	}
+	if !ok3 {
+		t.Fatal("expected kindless block to be found with leading whitespace")
+	}
+	if block3.Kind != "" {
+		t.Fatalf("expected empty kind, got %q", block3.Kind)
+	}
+	if block3.Boundary != "齉爩龖" {
+		t.Fatalf("expected boundary 齉爩龖, got %q", block3.Boundary)
+	}
+	if block3.Body != "body text" {
+		t.Fatalf("expected body 'body text', got %q", block3.Body)
+	}
+}
+
 func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
 	// The closing line must be the delimiter alone. Trailing content
 	// causes the line to not match the delimiter, leaving the block unclosed.
