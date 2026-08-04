@@ -24,6 +24,17 @@ prompt-only Components, unifying all system prompt contributions under the
 Component framework. AISystemPrompt assembles only the dynamic current time,
 which must be computed at call time.
 
+The memory component is appended last, after the static shell/continue and
+extra prompt components, so that the dynamic user profile text — which
+changes across sessions as the profile accumulates — never shifts the
+position of static system prompt sections. When the profile changes, only
+the final memory section changes; the base, block-format, shell, continue,
+and extra prompt sections remain byte-identical and fully cacheable. This
+applies the dynamic-content-last principle to the system prompt; the same
+principle places the current time at the end of the system prompt and the
+user input at the end of the user prompt (see TheoryOfAiCommand). See
+TheoryOfPrefixCaching in generators/state_func_map.go.
+
 Shell and continue components are reused from components.CommonComponents.
 AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the codes module's CodesComponents
@@ -74,23 +85,6 @@ func (Module) AIComponents(
 		RestatePrompt: blocks.BlockFormatRestatePrompt,
 	})
 
-	// Memory component: the prompt includes the dynamic user profile text,
-	// read at construction time (provider resolution). Processing is done
-	// post-loop in ai.go via memories.UpdateMemoryFromBlock, not in the
-	// generation loop. RestatePrompt reinforces the memory block format.
-	// See TheoryOfAIComponents.
-	if !noMemory {
-		var profileText string
-		if entry, err := currentMemory(); err == nil && entry != nil {
-			profileText = strings.Join(entry.Items, "\n")
-		}
-		comps = append(comps, components.Component{
-			Kind:          "memory",
-			PromptSection: memoryBlockSystemPrompt(profileText),
-			RestatePrompt: memoryBlockRestatePrompt,
-		})
-	}
-
 	// Common components: shell (conditional on flagShell) and continue.
 	// Reused from components.CommonComponents so that shell and continue
 	// configuration is shared across all generation commands.
@@ -107,6 +101,27 @@ func (Module) AIComponents(
 				PromptSection: prompt,
 			})
 		}
+	}
+
+	// Memory component: appended last so the dynamic user profile text —
+	// which changes across sessions as the profile accumulates — never
+	// shifts the position of the static components above. When the profile
+	// changes, only this final section changes; the base, block-format,
+	// shell/continue, and extra prompt sections remain byte-identical and
+	// fully cacheable. Processing is done post-loop in ai.go via
+	// memories.UpdateMemoryFromBlock, not in the generation loop.
+	// RestatePrompt reinforces the memory block format.
+	// See TheoryOfAIComponents.
+	if !noMemory {
+		var profileText string
+		if entry, err := currentMemory(); err == nil && entry != nil {
+			profileText = strings.Join(entry.Items, "\n")
+		}
+		comps = append(comps, components.Component{
+			Kind:          "memory",
+			PromptSection: memoryBlockSystemPrompt(profileText),
+			RestatePrompt: memoryBlockRestatePrompt,
+		})
 	}
 
 	ret.ComponentSet = comps
