@@ -35,6 +35,16 @@ silent change loss — malformed change blocks that are never applied — visibl
 in unattended operation, where no human is available to notice missing
 changes.
 
+The goal command also corrects course across loops in unattended operation.
+When a loop fails with an error or produces uncorrected malformed blocks, the
+outcome is carried into the next loop's system prompt as GoalFeedback, so the
+model can correct its approach without a human observer. The feedback is
+appended at the end of the system prompt, keeping the stable prefix
+byte-identical across loops for LLM prefix caching. When the same error
+message occurs maxConsecutiveGoalErrors times in a row, the goal command stops
+early with a diagnostic message instead of burning the remaining iterations on
+a persistent failure.
+
 The gocodes.CodeProvider is the default for the goal command. The gocodes
 pipeline holds no process-level caches: all caches, such as loaded packages
 and parsed ASTs, are defined within scope provider functions. Because each
@@ -44,6 +54,27 @@ current filesystem state.
 `
 
 const maxGoalIterations = 20
+
+// maxConsecutiveGoalErrors bounds the number of consecutive goal loops that
+// fail with the same error before the goal command stops early. In unattended
+// operation, a persistent failure (e.g., a missing API key or a consistently
+// malformed response) would otherwise burn all remaining iterations without
+// progress. Stopping early with a diagnostic message surfaces the failure
+// while it is fresh. See TheoryOfGoalCommand.
+const maxConsecutiveGoalErrors = 3
+
+// GoalFeedback carries the outcome of the previous goal loop into the next
+// loop's system prompt. In unattended operation, the model cannot ask a human
+// what went wrong; the feedback summarizes the previous loop's failure (an
+// error or uncorrected malformed blocks) so the next loop can correct its
+// approach. The default provider returns empty feedback; GoalCommand.Main
+// forks the loop scope with the actual feedback value before each iteration.
+// See TheoryOfGoalCommand.
+type GoalFeedback string
+
+func (Module) GoalFeedback() GoalFeedback {
+	return ""
+}
 
 const GoalSystemPrompt = `
 **Goal-Directed Multi-Loop Execution:**
@@ -79,10 +110,22 @@ var GoalCommand = Command{
 		) codetypes.CodeProvider {
 			return provider
 		},
-		func(comps codes.CodesComponents) codes.SystemPrompt {
-			return codes.SystemPrompt(prompts.Codes + "\n" +
+		func(
+			comps codes.CodesComponents,
+			feedback GoalFeedback,
+		) codes.SystemPrompt {
+			prompt := prompts.Codes + "\n" +
 				GoalSystemPrompt + "\n" +
-				comps.PromptSections())
+				comps.PromptSections()
+			// Feedback from the previous loop is appended at the end of
+			// the system prompt so the stable prefix (base prompt, goal
+			// prompt, component sections) remains byte-identical across
+			// loops for LLM prefix caching; only the feedback suffix
+			// changes. See TheoryOfGoalCommand.
+			if feedback != "" {
+				prompt += "\n\n" + string(feedback)
+			}
+			return codes.SystemPrompt(prompt)
 		},
 	},
 	Main: func(
@@ -96,8 +139,31 @@ var GoalCommand = Command{
 		// stop after the current iteration.
 		achieved := false
 
+		// stopRequested records whether the goal loop should stop after
+		// the current iteration, e.g., when the same error has occurred
+		// maxConsecutiveGoalErrors times in a row. The loop body runs
+		// inside a closure passed to scope.Call, so a return there only
+		// exits the closure; the flag lets the outer loop stop after the
+		// current iteration. See TheoryOfGoalCommand.
+		stopRequested := false
+
+		// feedback carries the previous loop's outcome into the next
+		// loop's system prompt via GoalFeedback, so the model can correct
+		// its approach in unattended operation without a human observer.
+		// See TheoryOfGoalCommand.
+		var feedback GoalFeedback
+
+		// Repeated-error detection: the same error message across
+		// consecutive loops indicates a persistent failure that further
+		// loops are unlikely to resolve. See TheoryOfGoalCommand.
+		var lastErrMsg string
+		consecutiveErrors := 0
+
 		for iteration := range maxGoalIterations {
 			scope := reset()
+			if feedback != "" {
+				scope = scope.Fork(func() GoalFeedback { return feedback })
+			}
 
 			scope.Call(func(
 				generateWithResult codes.GenerateWithResult,
@@ -118,8 +184,44 @@ var GoalCommand = Command{
 					// the next iteration; persistent errors (missing API
 					// key) will repeat and eventually exhaust the limit.
 					fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", iteration+1, err)
+
+					// Detect repeated identical errors and stop early. In
+					// unattended operation, a persistent failure burns
+					// iterations without progress; stopping with a
+					// diagnostic lets the operator investigate.
+					// See TheoryOfGoalCommand.
+					errMsg := err.Error()
+					if errMsg == lastErrMsg {
+						consecutiveErrors++
+					} else {
+						consecutiveErrors = 1
+						lastErrMsg = errMsg
+					}
+					if consecutiveErrors >= maxConsecutiveGoalErrors {
+						fmt.Fprintf(os.Stderr,
+							"\n=== Goal Stopped: the same error occurred %d consecutive times ===\n%s\n",
+							maxConsecutiveGoalErrors, errMsg)
+						stopRequested = true
+						return
+					}
+
+					// Carry the failure into the next loop's system prompt
+					// so the model can correct the cause and continue from
+					// the current filesystem state. Changes from successful
+					// rounds of the failed loop are already applied; only
+					// the failed round's changes were discarded.
+					// See TheoryOfGoalCommand.
+					feedback = GoalFeedback(fmt.Sprintf(
+						"[System note: The previous goal loop failed: %v\nCorrect the cause of this error in this loop and continue from the current filesystem state.]",
+						err))
 					return
 				}
+
+				// The loop succeeded; reset repeated-error tracking so that
+				// only consecutive failures count toward
+				// maxConsecutiveGoalErrors. See TheoryOfGoalCommand.
+				consecutiveErrors = 0
+				lastErrMsg = ""
 
 				// Report malformed blocks that could not be corrected
 				// within the parse-error correction budget. In
@@ -131,6 +233,17 @@ var GoalCommand = Command{
 					fmt.Fprintf(os.Stderr,
 						"Goal loop %d: %d malformed block(s) could not be corrected (e.g., kind %q boundary %q); some changes may be missing.\n",
 						iteration+1, len(result.ParseErrors), first.BlockKind, first.Boundary)
+
+					// Carry the uncorrected malformed blocks into the next
+					// loop's system prompt so the model can re-emit them in
+					// corrected form. In unattended operation, the next loop
+					// is the model's only chance to fix them.
+					// See TheoryOfGoalCommand.
+					feedback = GoalFeedback(fmt.Sprintf(
+						"[System note: The previous goal loop produced %d malformed block(s) that could not be corrected, e.g., kind %q with boundary %q. These blocks were NOT applied. In this loop, re-emit ONLY the corrected versions of these blocks; do not re-emit blocks that were applied successfully.]",
+						len(result.ParseErrors), first.BlockKind, first.Boundary))
+				} else {
+					feedback = ""
 				}
 
 				// Check if the model signaled goal completion by
@@ -147,12 +260,12 @@ var GoalCommand = Command{
 
 			})
 
-			if achieved {
+			if achieved || stopRequested {
 				break
 			}
 		}
 
-		if !achieved {
+		if !achieved && !stopRequested {
 			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", maxGoalIterations)
 		}
 	},

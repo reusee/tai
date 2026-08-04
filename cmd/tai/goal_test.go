@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -173,4 +174,141 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 		t.Fatalf("expected block kind in parse error report, got: %s", string(stderr))
 	}
 	_ = stdout
+}
+
+func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
+	t.Run("StopsAfterRepeatedErrors", func(t *testing.T) {
+		// When the same error occurs maxConsecutiveGoalErrors times in a
+		// row, the goal command must stop early instead of burning the
+		// remaining iterations on a persistent failure in unattended
+		// operation. See TheoryOfGoalCommand.
+		calls := 0
+		fakeScope := dscope.New(
+			func() codes.GenerateWithResult {
+				return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+					calls++
+					return loops.Result{}, errors.New("persistent failure")
+				}
+			},
+		)
+		reset := dscope.Reset(func() dscope.Scope { return fakeScope })
+
+		oldStdout := os.Stdout
+		oldStderr := os.Stderr
+		rOut, wOut, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rErr, wErr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = wOut
+		os.Stderr = wErr
+
+		mainFn := GoalCommand.Main.(func(dscope.Reset))
+		mainFn(reset)
+
+		wOut.Close()
+		wErr.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		stdout, err := io.ReadAll(rOut)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stderr, err := io.ReadAll(rErr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rOut.Close()
+		rErr.Close()
+
+		if calls != maxConsecutiveGoalErrors {
+			t.Fatalf("expected %d calls before stop, got %d", maxConsecutiveGoalErrors, calls)
+		}
+		if !strings.Contains(string(stderr), "same error occurred") {
+			t.Fatalf("expected repeated error diagnostic in stderr, got: %s", string(stderr))
+		}
+		if strings.Contains(string(stdout), "Goal Not Achieved") {
+			t.Fatalf("expected no 'Goal Not Achieved' message when stopping early, got: %s", string(stdout))
+		}
+	})
+
+	t.Run("CarriesFeedbackToNextLoop", func(t *testing.T) {
+		// The goal command must carry the previous loop's failure into
+		// the next loop's system prompt so the model can correct its
+		// approach in unattended operation. See TheoryOfGoalCommand.
+		calls := 0
+		var seenPrompts []string
+		fakeScope := dscope.New(
+			func() GoalFeedback { return "" },
+			func(
+				systemPrompt codes.SystemPrompt,
+			) codes.GenerateWithResult {
+				return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+					calls++
+					seenPrompts = append(seenPrompts, string(systemPrompt))
+					if calls == 1 {
+						return loops.Result{}, errors.New("first loop failed")
+					}
+					return loops.Result{
+						RemainingBlocks: []blocks.Block{{Kind: "done"}},
+					}, nil
+				}
+			},
+			func(
+				feedback GoalFeedback,
+			) codes.SystemPrompt {
+				return codes.SystemPrompt("BASE_PROMPT" + string(feedback))
+			},
+		)
+		reset := dscope.Reset(func() dscope.Scope { return fakeScope })
+
+		oldStdout := os.Stdout
+		oldStderr := os.Stderr
+		rOut, wOut, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rErr, wErr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = wOut
+		os.Stderr = wErr
+
+		mainFn := GoalCommand.Main.(func(dscope.Reset))
+		mainFn(reset)
+
+		wOut.Close()
+		wErr.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		stdout, err := io.ReadAll(rOut)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stderr, err := io.ReadAll(rErr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rOut.Close()
+		rErr.Close()
+
+		if calls != 2 {
+			t.Fatalf("expected 2 calls, got %d", calls)
+		}
+		if len(seenPrompts) != 2 {
+			t.Fatalf("expected 2 prompts, got %d", len(seenPrompts))
+		}
+		if strings.Contains(seenPrompts[0], "first loop failed") {
+			t.Fatalf("first prompt must not contain feedback, got: %s", seenPrompts[0])
+		}
+		if !strings.Contains(seenPrompts[1], "first loop failed") {
+			t.Fatalf("expected feedback in second prompt, got: %s", seenPrompts[1])
+		}
+		_ = stdout
+		_ = stderr
+	})
 }

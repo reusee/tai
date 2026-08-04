@@ -928,6 +928,95 @@ func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 	})
 }
 
+func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
+	withRun(t, func(run Run) {
+		t.Run("ErrorRetry", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) phases.Phase {
+				callCount++
+				return appendThenErrorPhase("partial output", errors.New("some error"))
+			}
+
+			result, err := run(context.Background(), RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				Components:   nil,
+				PhaseBuilder: phaseBuilder,
+				RetryOnError: true,
+				MaxRetries:   2,
+			})
+			if err == nil {
+				t.Fatal("expected error after retries exhausted")
+			}
+			if callCount != 3 {
+				t.Fatalf("expected 3 calls (initial + 2 retries), got %d", callCount)
+			}
+
+			// The retry feedback must include the attempt number. With
+			// MaxRetries=2, two retry feedback messages are appended, one
+			// for each retry.
+			feedbackCount := 0
+			for c := range result.FinalState.Contents() {
+				if c.Role == generators.RoleUser {
+					for _, p := range c.Parts {
+						if text, ok := p.(generators.Text); ok {
+							if strings.Contains(string(text), "retry attempt") {
+								feedbackCount++
+							}
+						}
+					}
+				}
+			}
+			if feedbackCount != 2 {
+				t.Fatalf("expected 2 retry feedback messages with attempt numbers, got %d", feedbackCount)
+			}
+		})
+
+		t.Run("MissingCompletion", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) phases.Phase {
+				callCount++
+				return appendPhase("incomplete output")
+			}
+
+			result, err := run(context.Background(), RunOptions{
+				Generator:                nil,
+				InitialState:             generators.NewPrompts("", nil),
+				Components:               nil,
+				PhaseBuilder:             phaseBuilder,
+				RetryOnMissingCompletion: true,
+				MaxRetries:               1,
+				SummarizeIncomplete: func(text string) (string, error) {
+					return "summary", nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if callCount != 2 {
+				t.Fatalf("expected 2 calls (initial + 1 retry), got %d", callCount)
+			}
+
+			// The retry feedback must include the attempt number.
+			foundAttempt := false
+			for c := range result.FinalState.Contents() {
+				if c.Role == generators.RoleUser {
+					for _, p := range c.Parts {
+						if text, ok := p.(generators.Text); ok {
+							if strings.Contains(string(text), "retry attempt 1 of 1") {
+								foundAttempt = true
+							}
+						}
+					}
+				}
+			}
+			if !foundAttempt {
+				t.Fatal("expected retry attempt number in missing completion feedback")
+			}
+		})
+	})
+}
+
 func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0

@@ -109,6 +109,11 @@ specific guidance: because the retry discards all change blocks from the failed
 attempt, the model is instructed to re-emit every intended change block,
 correcting the one that failed.
 
+Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3")
+so the model knows how much retry budget remains and can prioritize correcting
+the error. This is especially important in unattended operation, where no human
+can intervene when the budget is exhausted.
+
 The BlockHandler type uses a consumed flag: when a handler returns consumed=true,
 the block is not passed to ProcessComponents.
 
@@ -142,7 +147,7 @@ func (e *ApplyError) Unwrap() error {
 	return e.Err
 }
 
-const errorRetryPrefix = "[System note: An error occurred: %s. Please correct the issue and continue.]\n\n"
+const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. Please correct the issue and continue.]\n\n"
 
 const defaultMaxRetries = 3
 
@@ -155,7 +160,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
 
 // Run executes generation rounds in a loop. Each round wraps the state
 // with ParserState, executes the phase chain, processes blocks via
@@ -359,7 +364,9 @@ func (Module) Run() Run {
 					// OnRoundStart (which resets the MemoryStore,
 					// discarding failed changes), and retries from the
 					// updated state. Errors that occur before any
-					// content is output do not trigger retry.
+					// content is output do not trigger retry. The
+					// feedback states the current attempt number so the
+					// model knows how much retry budget remains.
 					// See TheoryOfLoops.
 					if opts.RetryOnError && retry < maxRetries {
 						prevCount := countContents(state)
@@ -368,7 +375,7 @@ func (Module) Run() Run {
 
 							var retryParts []generators.Part
 							retryParts = append(retryParts, generators.Text(
-								fmt.Sprintf(errorRetryPrefix, roundErr.Error())))
+								fmt.Sprintf(errorRetryPrefix, roundErr.Error(), retry+1, maxRetries)))
 
 							// For change block apply errors, add specific
 							// guidance: the retry discards ALL change
@@ -388,7 +395,7 @@ func (Module) Run() Run {
 								if incompleteText != "" {
 									if summaryText, summaryErr := opts.SummarizeIncomplete(incompleteText); summaryErr == nil && summaryText != "" {
 										retryParts = append(retryParts, generators.Text(
-											incompleteOutputSummaryPrefix+summaryText))
+											fmt.Sprintf(incompleteOutputSummaryPrefix, retry+1, maxRetries)+summaryText))
 									}
 								}
 							}
@@ -452,7 +459,9 @@ func (Module) Run() Run {
 					break
 				}
 
-				// Summarize incomplete output and retry.
+				// Summarize incomplete output and retry. The feedback
+				// states the current attempt number so the model knows
+				// how much retry budget remains. See TheoryOfLoops.
 				if opts.SummarizeIncomplete != nil {
 					incompleteText := extractIncompleteOutput(phaseState, countContents(state))
 					if incompleteText != "" {
@@ -462,7 +471,7 @@ func (Module) Run() Run {
 							state, appendErr = state.AppendContent(&generators.Content{
 								Role: generators.RoleUser,
 								Parts: []generators.Part{
-									generators.Text(incompleteOutputSummaryPrefix + summaryText),
+									generators.Text(fmt.Sprintf(incompleteOutputSummaryPrefix, retry+1, maxRetries) + summaryText),
 								},
 							})
 							if appendErr != nil {
