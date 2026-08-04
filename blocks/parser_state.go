@@ -60,8 +60,13 @@ and feeding it back as user content in the next round gives the model a
 concrete target for self-correction, while successfully parsed blocks
 continue to be processed normally. This self-healing capability is especially
 important in unattended tasks where no human is available to intervene. The
-number of consecutive parse-error correction rounds is bounded to prevent
-infinite loops when the model persistently emits malformed output.
+correction budget is cumulative per run: the loop (see TheoryOfLoops) feeds
+parse errors back only for a bounded number of rounds since the last clean
+round, and the feedback states the attempt number so the model knows when it
+is on its final attempt. When the budget is exhausted, feedback stops and the
+uncorrected parse errors are surfaced via loops.Result.ParseErrors, so a
+persistently malformed model cannot restart the correction cycle indefinitely
+and unattended callers can detect silent change loss.
 
 The partial content included in the error message is truncated when the block
 body is large: an unclosed block can contain an arbitrarily large body (e.g.,

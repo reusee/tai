@@ -116,3 +116,61 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 		t.Fatal("goal not achieved message must not appear when done block found; the loop must stop after the first loop")
 	}
 }
+
+func TestGoalCommandReportsParseErrors(t *testing.T) {
+	// Uncorrected malformed blocks must be reported per goal loop so
+	// silent change loss is surfaced in unattended operation.
+	// See TheoryOfGoalCommand.
+	fakeScope := dscope.New(
+		func() codes.GenerateWithResult {
+			return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+				return loops.Result{
+					ParseErrors: []*blocks.BlockParseError{
+						{BlockKind: "change", Boundary: "徕珑龘"},
+					},
+				}, nil
+			}
+		},
+	)
+	reset := dscope.Reset(func() dscope.Scope { return fakeScope })
+
+	// Redirect stdout and stderr to capture the command's output.
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	mainFn := GoalCommand.Main.(func(dscope.Reset))
+	mainFn(reset)
+
+	wOut.Close()
+	wErr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	stdout, err := io.ReadAll(rOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := io.ReadAll(rErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rOut.Close()
+	rErr.Close()
+
+	if !strings.Contains(string(stderr), "malformed block(s) could not be corrected") {
+		t.Fatalf("expected parse error report in stderr, got: %s", string(stderr))
+	}
+	if !strings.Contains(string(stderr), "change") {
+		t.Fatalf("expected block kind in parse error report, got: %s", string(stderr))
+	}
+	_ = stdout
+}

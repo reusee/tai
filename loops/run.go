@@ -2,6 +2,7 @@ package loops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -81,10 +82,15 @@ When Components is empty, the loop runs a single round (single-shot mode).
 Parse errors — blocks whose closing delimiter is missing or malformed — are
 collected from ParserState after each round and fed back as user content in the
 next round, so the model can self-correct malformed output instead of aborting
-the generation flow. The number of consecutive parse-error correction rounds is
-bounded by maxParseErrorRounds to prevent infinite loops when the model
-persistently emits malformed blocks. See TheoryOfParseErrorCollection in
-blocks/parser_state.go.
+the generation flow. The correction budget (maxParseErrorRounds) is cumulative
+per run: it resets only when a round produces no parse errors, so a model that
+persistently emits malformed blocks cannot restart the correction cycle
+indefinitely when other components keep triggering rounds. The feedback states
+the correction attempt number so the model knows when it is on its final
+attempt. When the budget is exhausted, the malformed blocks are no longer fed
+back; they are recorded in Result.ParseErrors so callers in unattended
+operation (e.g., the goal command) can detect silent change loss. See
+TheoryOfParseErrorCollection in blocks/parser_state.go.
 
 RetryOnMissingCompletion handles truncated output: when a round ends without
 a summary block, or when the finish reason indicates abnormal termination (e.g.,
@@ -98,7 +104,10 @@ SummarizeIncomplete if available), appends both the error context and the
 summary as user content, resets per-round state via OnRoundStart (which resets
 the MemoryStore, discarding all changes from the failed attempt), and retries
 from the updated state. Errors that occur before any content is output do not
-trigger retry.
+trigger retry. For change block apply errors (ApplyError), the feedback adds
+specific guidance: because the retry discards all change blocks from the failed
+attempt, the model is instructed to re-emit every intended change block,
+correcting the one that failed.
 
 The BlockHandler type uses a consumed flag: when a handler returns consumed=true,
 the block is not passed to ProcessComponents.
@@ -118,7 +127,9 @@ philosophy that governs context provision.
 // from other error types for logging or diagnostics. The loop's retry
 // behavior is governed by RetryOnError, which retries any error that occurs
 // after the model has output content, regardless of the specific error type.
-// See TheoryOfLoops.
+// The retry feedback for ApplyError instructs the model to re-emit every
+// intended change block, because the retry discards all change blocks from
+// the failed attempt. See TheoryOfLoops.
 type ApplyError struct {
 	Err error
 }
@@ -135,10 +146,13 @@ const errorRetryPrefix = "[System note: An error occurred: %s. Please correct th
 
 const defaultMaxRetries = 3
 
-// maxParseErrorRounds bounds the number of consecutive rounds that feed
-// parse errors back to the model for self-correction. When the model
-// persistently emits malformed blocks, the correction loop must terminate
-// to avoid an infinite generation loop. See TheoryOfParseErrorCollection.
+// maxParseErrorRounds bounds the number of rounds that feed parse errors
+// back to the model for self-correction. The bound is cumulative per run:
+// it resets only when a round produces no parse errors, so a model that
+// persistently emits malformed blocks cannot restart the correction cycle
+// indefinitely when other components keep triggering rounds. When the
+// bound is reached, feedback stops and the uncorrected parse errors are
+// recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
 const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
@@ -232,6 +246,12 @@ type Result struct {
 	FinalState generators.State
 	// RemainingBlocks are blocks not matched by any component.
 	RemainingBlocks []blocks.Block
+	// ParseErrors lists blocks that could not be parsed and were not
+	// corrected within the maxParseErrorRounds correction budget. In
+	// unattended operation, callers (e.g., the goal command) can inspect
+	// this to detect silent change loss from persistently malformed
+	// model output. See TheoryOfLoops.
+	ParseErrors []*blocks.BlockParseError
 }
 
 func (Module) Run() Run {
@@ -244,17 +264,27 @@ func (Module) Run() Run {
 			maxRetries = defaultMaxRetries
 		}
 
-		// consecutiveParseErrorRounds counts consecutive rounds that
-		// produced parse errors and received correction feedback. It is
-		// bounded by maxParseErrorRounds to prevent infinite loops when
-		// the model persistently emits malformed blocks.
+		// parseErrorCorrectionRounds counts rounds that produced parse
+		// errors and received correction feedback since the last clean
+		// round. The correction budget is cumulative per run: it resets
+		// only when a round produces no parse errors, so a model that
+		// persistently emits malformed blocks cannot restart the
+		// correction cycle indefinitely when other components keep
+		// triggering rounds. When the budget is exhausted, feedback stops
+		// and the uncorrected parse errors are recorded in the Result.
+		// See TheoryOfLoops.
+		parseErrorCorrectionRounds := 0
+		// uncorrectedParseErrors accumulates parse errors from rounds
+		// where the correction budget was exhausted. They are surfaced in
+		// Result.ParseErrors so unattended callers can detect silent
+		// change loss. See TheoryOfLoops.
+		var uncorrectedParseErrors []*blocks.BlockParseError
 		// skipOnRoundStart is set when a round produced parse errors and
 		// its changes were already flushed by OnRoundSuccess; it prevents
 		// the next round's OnRoundStart from resetting per-round state
 		// (e.g., MemoryStore) that would discard the successfully applied
 		// changes before the model corrects the malformed blocks.
 		// See TheoryOfParseErrorCollection.
-		consecutiveParseErrorRounds := 0
 		skipOnRoundStart := false
 
 		for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
@@ -339,6 +369,19 @@ func (Module) Run() Run {
 							var retryParts []generators.Part
 							retryParts = append(retryParts, generators.Text(
 								fmt.Sprintf(errorRetryPrefix, roundErr.Error())))
+
+							// For change block apply errors, add specific
+							// guidance: the retry discards ALL change
+							// blocks from the failed attempt (OnRoundStart
+							// resets the in-memory store below), so the
+							// model must re-emit every intended change
+							// block, correcting the one that failed.
+							// See TheoryOfLoops.
+							var applyErr *ApplyError
+							if errors.As(roundErr, &applyErr) {
+								retryParts = append(retryParts, generators.Text(
+									"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
+							}
 
 							if opts.SummarizeIncomplete != nil {
 								incompleteText := extractIncompleteOutput(phaseState, prevCount)
@@ -442,6 +485,7 @@ func (Module) Run() Run {
 				return Result{
 					FinalState:      phaseState,
 					RemainingBlocks: remainingBlocks,
+					ParseErrors:     uncorrectedParseErrors,
 				}, roundErr
 			}
 
@@ -451,6 +495,7 @@ func (Module) Run() Run {
 					return Result{
 						FinalState:      phaseState,
 						RemainingBlocks: remainingBlocks,
+						ParseErrors:     uncorrectedParseErrors,
 					}, err
 				}
 			}
@@ -460,29 +505,20 @@ func (Module) Run() Run {
 			// Parse error handling: feed parse errors back to the model
 			// for self-correction in the next round. A round that
 			// produced parse errors always triggers another round (within
-			// the maxParseErrorRounds bound), so the model can re-emit the
-			// malformed blocks in corrected form. The changes from blocks
-			// that parsed successfully were already flushed by
-			// OnRoundSuccess; skipOnRoundStart prevents the correction
+			// the maxParseErrorRounds correction budget), so the model can
+			// re-emit the malformed blocks in corrected form. The changes
+			// from blocks that parsed successfully were already flushed
+			// by OnRoundSuccess; skipOnRoundStart prevents the correction
 			// round from resetting per-round state that would discard
-			// them. When the bound is reached, the output is preserved
-			// as-is and the flow continues normally.
+			// them. When the budget is exhausted, feedback stops and the
+			// uncorrected parse errors are recorded in the Result.
 			// See TheoryOfParseErrorCollection.
 			var parseErrorParts []generators.Part
-			if len(roundParseErrors) > 0 {
-				if consecutiveParseErrorRounds < maxParseErrorRounds {
-					consecutiveParseErrorRounds++
-					skipOnRoundStart = true
-					parseErrorParts = []generators.Part{
-						generators.Text(formatParseErrors(roundParseErrors)),
-					}
-				} else {
-					consecutiveParseErrorRounds = 0
-					skipOnRoundStart = false
-				}
-			} else {
-				consecutiveParseErrorRounds = 0
-				skipOnRoundStart = false
+			var roundUncorrected []*blocks.BlockParseError
+			parseErrorParts, parseErrorCorrectionRounds, skipOnRoundStart, roundUncorrected =
+				decideParseErrorFeedback(roundParseErrors, parseErrorCorrectionRounds)
+			if len(roundUncorrected) > 0 {
+				uncorrectedParseErrors = appendUncorrectedParseErrors(uncorrectedParseErrors, roundUncorrected)
 			}
 
 			// Single-shot mode: no component processing. When parse errors
@@ -499,6 +535,7 @@ func (Module) Run() Run {
 						return Result{
 							FinalState:      state,
 							RemainingBlocks: remainingBlocks,
+							ParseErrors:     uncorrectedParseErrors,
 						}, err
 					}
 					continue
@@ -506,6 +543,7 @@ func (Module) Run() Run {
 				return Result{
 					FinalState:      state,
 					RemainingBlocks: collectedBlocks,
+					ParseErrors:     uncorrectedParseErrors,
 				}, nil
 			}
 
@@ -527,6 +565,7 @@ func (Module) Run() Run {
 				return Result{
 					FinalState:      state,
 					RemainingBlocks: remainingBlocks,
+					ParseErrors:     uncorrectedParseErrors,
 				}, err
 			}
 			remainingBlocks = append(remainingBlocks, roundRemaining...)
@@ -549,6 +588,7 @@ func (Module) Run() Run {
 						return Result{
 							FinalState:      state,
 							RemainingBlocks: remainingBlocks,
+							ParseErrors:     uncorrectedParseErrors,
 						}, err
 					}
 				}
@@ -569,6 +609,7 @@ func (Module) Run() Run {
 					return Result{
 						FinalState:      state,
 						RemainingBlocks: remainingBlocks,
+						ParseErrors:     uncorrectedParseErrors,
 					}, err
 				}
 				if idleContinue {
@@ -582,6 +623,7 @@ func (Module) Run() Run {
 		return Result{
 			FinalState:      state,
 			RemainingBlocks: remainingBlocks,
+			ParseErrors:     uncorrectedParseErrors,
 		}, nil
 	}
 }
@@ -660,15 +702,74 @@ func isAbnormalFinishReason(reason string) bool {
 // back to the model for self-correction. The message states that only
 // the listed blocks were not applied and must be re-emitted, so the
 // model does not re-emit already-applied blocks (which would duplicate
-// ADD_BEFORE/ADD_AFTER changes). The full error text — block kind,
-// delimiter, collision hints, and partial content — gives the model a
-// concrete target for correction. See TheoryOfParseErrorCollection.
-func formatParseErrors(errors []*blocks.BlockParseError) string {
+// ADD_BEFORE/ADD_AFTER changes). The attempt number makes the correction
+// budget explicit so the model knows when it is on its final attempt and
+// that persistently malformed blocks will be silently dropped. The full
+// error text — block kind, delimiter, collision hints, and partial
+// content — gives the model a concrete target for correction. See
+// TheoryOfParseErrorCollection.
+func formatParseErrors(errors []*blocks.BlockParseError, attempt, maxAttempts int) string {
 	var sb strings.Builder
-	sb.WriteString("[System note: The following blocks in your previous output could not be parsed and were not applied. Re-emit ONLY the corrected versions of these blocks. Do NOT re-emit any other blocks — they were applied successfully and re-emitting them would duplicate changes. After re-emitting the corrected blocks, end your response with a summary block.]\n\n")
+	sb.WriteString("[System note: The following blocks in your previous output could not be parsed and were not applied. Re-emit ONLY the corrected versions of these blocks. Do NOT re-emit any other blocks — they were applied successfully and re-emitting them would duplicate changes. ")
+	fmt.Fprintf(&sb, "This is correction attempt %d of %d; if the corrected blocks remain malformed after the final attempt, they will be silently dropped. ", attempt, maxAttempts)
+	sb.WriteString("After re-emitting the corrected blocks, end your response with a summary block.]\n\n")
 	for _, parseErr := range errors {
 		sb.WriteString(parseErr.Error())
 		sb.WriteString("\n\n")
 	}
 	return sb.String()
+}
+
+// decideParseErrorFeedback decides whether to feed parse errors back to
+// the model for self-correction. The correction budget is cumulative per
+// run: it resets only when a round produces no parse errors (returning a
+// reset counter), so a model that persistently emits malformed blocks
+// cannot restart the correction cycle indefinitely when other components
+// keep triggering rounds. When the budget is exhausted, no feedback is
+// produced and the round's parse errors are returned as uncorrected so
+// the caller can record them in Result.ParseErrors. See TheoryOfLoops.
+func decideParseErrorFeedback(
+	roundParseErrors []*blocks.BlockParseError,
+	correctionRounds int,
+) (
+	feedback []generators.Part,
+	correctionRoundsOut int,
+	skipOnRoundStart bool,
+	uncorrected []*blocks.BlockParseError,
+) {
+	if len(roundParseErrors) == 0 {
+		return nil, 0, false, nil
+	}
+	if correctionRounds < maxParseErrorRounds {
+		correctionRounds++
+		return []generators.Part{
+			generators.Text(formatParseErrors(roundParseErrors, correctionRounds, maxParseErrorRounds)),
+		}, correctionRounds, true, nil
+	}
+	return nil, correctionRounds, false, roundParseErrors
+}
+
+// appendUncorrectedParseErrors appends parse errors to the accumulated
+// uncorrected list, skipping errors already recorded from previous
+// rounds. A model that fails to correct tends to repeat the same
+// malformed block; deduplication keeps Result.ParseErrors concise.
+func appendUncorrectedParseErrors(
+	accumulated []*blocks.BlockParseError,
+	roundErrors []*blocks.BlockParseError,
+) []*blocks.BlockParseError {
+	for _, parseErr := range roundErrors {
+		duplicate := false
+		for _, existing := range accumulated {
+			if existing.Boundary == parseErr.Boundary &&
+				existing.BlockKind == parseErr.BlockKind &&
+				existing.Content == parseErr.Content {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			accumulated = append(accumulated, parseErr)
+		}
+	}
+	return accumulated
 }

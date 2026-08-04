@@ -14,39 +14,26 @@ import (
 )
 
 const TheoryOfGoalCommand = `
-The "goal" subcommand implements autonomous goal-directed multi-loop execution.
-Unlike "next" which performs a single generation round, or "ai" which is
-interactive, "goal" runs multiple independent generation loops until the model
-judges the goal as achieved. Each loop is a complete generation cycle with
-fresh context organization: the model re-reads the codebase from the current
-filesystem state, analyzes the situation, makes changes, runs tests, and
-assesses progress toward the goal. This independence ensures each loop starts
-from the actual filesystem state (which may have been modified by previous
-loops), not from accumulated conversation history. The model is prompted to
-evaluate goal completion after each loop; when it determines the goal is
-achieved, it emits a done block, and the command exits. A maximum iteration
-limit prevents infinite loops when the goal is never achieved.
+The goal command autonomously runs the generation pipeline for a set number of
+iterations (maxGoalIterations) until a done block is observed. Each loop is a
+fresh, independent generation session: the loop re-reads the codebase,
+organizes context from scratch, and runs the full generation pipeline (change
+blocks, go-test, shell, continue, etc.). This is crucial for unattended
+operation because each loop starts from the current filesystem state, so the
+model's changes from the previous loop are visible in the next one. The goal
+command is the "no-human" mode: NoHuman is true, so the loop runs without any
+interactive input.
 
-Each loop builds its generation from a fresh reset scope: Main takes
-dscope.Reset and invokes it once per iteration, resolving a new
-GenerateWithResult for every loop. Reset invalidates per-scope provider caches,
-so any state captured at provider-evaluation time is rebuilt per loop instead
-of being shared across loops. This makes loop independence a structural
-guarantee rather than a convention: even if a provider in the
-GenerateWithResult chain retains construction-time state, a failed or
-interrupted loop cannot leak it into the next one.
+A done block signals goal completion. The model emits a done block when it
+believes the goal is achieved, and the goal command stops. Because the done
+block is not consumed by any component, it remains in
+Result.RemainingBlocks; the goal command checks there.
 
-The done block is the completion signal. The model is instructed to emit a
-done block (a heredoc-delimited block with kind "done") when it judges the
-goal as achieved. GenerateWithResult returns the loops.Result, which
-includes RemainingBlocks containing blocks not consumed by any component.
-The done block is not matched by any component, so it remains in
-RemainingBlocks. Because loops.Run accumulates unmatched blocks across all
-rounds within a single generateWithResult call, the done block is present
-in the final Result.RemainingBlocks even if another component triggered
-additional rounds in the same loop. After each loop, the goal command scans
-Result.RemainingBlocks for a block with Kind "done". If found, the goal is
-achieved and the command exits cleanly.
+Malformed blocks that cannot be corrected within the parse-error correction
+budget are reported per loop via loops.Result.ParseErrors. Reporting makes
+silent change loss — malformed change blocks that are never applied — visible
+in unattended operation, where no human is available to notice missing
+changes.
 
 The gocodes.CodeProvider is the default for the goal command. The gocodes
 pipeline holds no process-level caches: all caches, such as loaded packages
@@ -132,6 +119,18 @@ var GoalCommand = Command{
 					// key) will repeat and eventually exhaust the limit.
 					fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", iteration+1, err)
 					return
+				}
+
+				// Report malformed blocks that could not be corrected
+				// within the parse-error correction budget. In
+				// unattended operation, silently dropped change blocks
+				// would cause incomplete changes without any signal.
+				// See TheoryOfGoalCommand.
+				if len(result.ParseErrors) > 0 {
+					first := result.ParseErrors[0]
+					fmt.Fprintf(os.Stderr,
+						"Goal loop %d: %d malformed block(s) could not be corrected (e.g., kind %q boundary %q); some changes may be missing.\n",
+						iteration+1, len(result.ParseErrors), first.BlockKind, first.Boundary)
 				}
 
 				// Check if the model signaled goal completion by

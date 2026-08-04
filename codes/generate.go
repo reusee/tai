@@ -30,12 +30,14 @@ const TheoryOfStreamingApply = `
 Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
 from streamed model output, rather than directly to disk. This enables early
 error detection: if a change block fails to apply (e.g., invalid target,
-malformed code), the BlockHandler returns a generic error so the loop routes it
-through OnPhaseError like any other phase error. OnPhaseError summarizes any
-partial model output (thoughts or body text) before the retry (see
-TheoryOfSummaryRetryOnError). The MemoryStore is reset by the OnRoundStart
-callback on each retry, discarding the failed changes. When retries are
-exhausted, generation stops. The in-memory store also ensures filesystem
+malformed code), the BlockHandler returns a *loops.ApplyError so the retry loop
+can provide change-block-specific guidance — the retry discards all change
+blocks from the failed attempt, so the model re-emits every intended change
+block — and routes the error through OnPhaseError like any other phase error.
+OnPhaseError summarizes any partial model output (thoughts or body text) before
+the retry (see TheoryOfSummaryRetryOnError). The MemoryStore is reset by the
+OnRoundStart callback on each retry, discarding the failed changes. When retries
+are exhausted, generation stops. The in-memory store also ensures filesystem
 consistency on retry: when a round is retried (missing completion block, a
 phase error, or an apply error), the MemoryStore is reset, discarding all
 changes without touching the disk. Only after a round succeeds are the
@@ -508,13 +510,14 @@ func (Module) GenerateWithResult(
 		// Track per-round token statistics for end-of-session reporting.
 		// See TheoryOfRoundStatistics.
 		var roundStats []roundStat
+		defer func() {
+			printRoundStats(output, roundStats)
+		}()
+
 		// roundStartTime records the start of the current round, set by
 		// OnRoundStart before generation and used to compute the round
 		// duration in OnRoundSuccess.
 		var roundStartTime time.Time
-		defer func() {
-			printRoundStats(output, roundStats)
-		}()
 
 		// Get the fast model for summarization tasks.
 		// See TheoryOfIncompleteOutputSummarization.
@@ -558,13 +561,19 @@ func (Module) GenerateWithResult(
 				if bool(apply) && block.Kind == "change" {
 					h, parsedOk := changes.ParseChangeBlock(block)
 					if !parsedOk {
-						// Return a generic error so the loop routes it through
-						// OnPhaseError, which summarizes partial output before
-						// retrying. See TheoryOfSummaryRetryOnError.
-						return false, fmt.Errorf("unparseable change block with boundary %s", block.Boundary)
+						// Return an ApplyError so the retry loop can provide
+						// change-block-specific guidance: the retry discards
+						// all change blocks from the failed attempt, so the
+						// model must re-emit every intended change block.
+						// See TheoryOfLoops.
+						return false, &loops.ApplyError{
+							Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
+						}
 					}
 					if err := applyChangeBlockStore(memStore, h); err != nil {
-						return false, fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err)
+						return false, &loops.ApplyError{
+							Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
+						}
 					}
 					return true, nil
 				}
@@ -685,6 +694,16 @@ func (Module) GenerateWithResult(
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 			},
 		})
+
+		// Surface uncorrected malformed blocks in unattended operation:
+		// when the parse-error correction budget is exhausted, the
+		// malformed blocks are silently not applied. Logging the count
+		// makes the change loss visible. See TheoryOfLoops.
+		if err == nil && len(result.ParseErrors) > 0 {
+			logger.WarnContext(ctx, "uncorrected malformed blocks",
+				"count", len(result.ParseErrors),
+			)
+		}
 
 		return result, err
 	}

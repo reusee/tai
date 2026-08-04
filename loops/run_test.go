@@ -244,6 +244,72 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 	})
 }
 
+func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
+	// When components keep triggering rounds, a model that persistently
+	// emits malformed blocks must not restart the parse-error correction
+	// cycle after the budget is exhausted. The correction budget is
+	// cumulative per run: feedback is given only for the first
+	// maxParseErrorRounds rounds with parse errors, then stops until a
+	// clean round resets the budget. Uncorrected parse errors are
+	// surfaced in Result.ParseErrors. See TheoryOfLoops.
+	withRun(t, func(run Run) {
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+
+		// Every round emits a complete shell block (triggers a new round)
+		// plus an unclosed change block (parse error).
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			return appendPhaseWithFlush(
+				"<<龘靐齉 <shell>\necho hi\n龘靐齉\n" +
+					"<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+		}
+
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   comps,
+			PhaseBuilder: phaseBuilder,
+			HTTPClient:   nets.HTTPClient{},
+			MaxRounds:    8,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Parse error feedback appears only in the first maxParseErrorRounds
+		// rounds. Rounds 4+ receive only shell output.
+		feedbackCount := 0
+		for c := range result.FinalState.Contents() {
+			if c.Role != generators.RoleUser {
+				continue
+			}
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "could not be parsed") {
+						feedbackCount++
+					}
+				}
+			}
+		}
+		if feedbackCount != maxParseErrorRounds {
+			t.Fatalf("expected %d parse-error feedbacks (cumulative bound), got %d", maxParseErrorRounds, feedbackCount)
+		}
+
+		// The uncorrected parse errors must be surfaced in the result.
+		if len(result.ParseErrors) == 0 {
+			t.Fatal("expected uncorrected parse errors in Result.ParseErrors")
+		}
+	})
+}
+
 // errorPhase creates a phase that returns an error.
 func errorPhase(err error) phases.Phase {
 	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -776,6 +842,62 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 		}
 		if !foundSummary {
 			t.Fatal("expected incomplete output summary to be appended as user content")
+		}
+	})
+}
+
+func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
+	// Change block apply errors must produce specific guidance in the
+	// retry feedback: the retry discards all change blocks from the
+	// failed attempt, so the model must re-emit every intended change
+	// block. Generic error feedback would leave the model guessing
+	// whether its changes were accepted. See TheoryOfLoops.
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendThenErrorPhase(
+					"partial model output",
+					&ApplyError{Err: errors.New("apply change block MODIFY Foo: target not found")},
+				)
+			}
+			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+		}
+
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: true,
+			MaxRetries:   3,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
+		}
+
+		foundGuidance := false
+		for c := range result.FinalState.Contents() {
+			if c.Role != generators.RoleUser {
+				continue
+			}
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					// The guidance phrase starts the sentence ("Re-emit"),
+					// so compare case-insensitively to the lowercase
+					// assertion. See TheoryOfLoops.
+					if strings.Contains(strings.ToLower(string(text)), "re-emit every intended change block") {
+						foundGuidance = true
+					}
+				}
+			}
+		}
+		if !foundGuidance {
+			t.Fatal("expected ApplyError guidance in retry feedback")
 		}
 	})
 }

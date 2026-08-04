@@ -142,6 +142,12 @@ func TestCommonComponents(t *testing.T) {
 		if processable[1].Kind != "continue" {
 			t.Fatalf("expected second component to be continue, got %s", processable[1].Kind)
 		}
+		if processable[0].MaxRounds != maxShellRounds {
+			t.Fatalf("expected shell MaxRounds %d, got %d", maxShellRounds, processable[0].MaxRounds)
+		}
+		if processable[1].MaxRounds != maxContinueRounds {
+			t.Fatalf("expected continue MaxRounds %d, got %d", maxContinueRounds, processable[1].MaxRounds)
+		}
 		prompt := comps.PromptSections()
 		if !strings.Contains(prompt, "Shell Block Kind") {
 			t.Fatal("PromptSections should contain shell block prompt")
@@ -166,6 +172,9 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if processable[0].Kind != "continue" {
 			t.Fatalf("expected component to be continue, got %s", processable[0].Kind)
+		}
+		if processable[0].MaxRounds != maxContinueRounds {
+			t.Fatalf("expected continue MaxRounds %d, got %d", maxContinueRounds, processable[0].MaxRounds)
 		}
 		prompt := comps.PromptSections()
 		if strings.Contains(prompt, "Shell Block Kind") {
