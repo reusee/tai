@@ -223,6 +223,28 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 	}
 }
 
+func TestBlockParseErrorLineNumber(t *testing.T) {
+	// The error must include the 1-based line number of the opening
+	// marker so the model can locate the malformed block in its output,
+	// especially when the content is truncated. See
+	// TheoryOfParseErrorCollection.
+	content := []byte("prose line\n<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
+	_, _, _, _, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for unclosed block")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.Line != 2 {
+		t.Fatalf("expected line 2, got %d", e.Line)
+	}
+	if !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("error message should include the line number, got: %s", err.Error())
+	}
+}
+
 func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 	// An opening marker whose line extends to EOF (no trailing newline)
 	// is a truncated block: the closing marker must be alone on its own
@@ -264,6 +286,43 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected no block for non-block text at EOF")
+	}
+}
+
+func TestParseFirstBlockMalformedOpeningTag(t *testing.T) {
+	// A line with a valid three-character Han delimiter followed by a
+	// malformed XML opening tag (missing '>') is a malformed block, not
+	// prose. It must be reported as a parse error so the model can
+	// correct it. See TheoryOfParseErrorCollection.
+	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\"\nfunc Foo() {}\n")
+	_, _, _, ok, err := ParseFirstBlock(content)
+	if err == nil {
+		t.Fatal("expected error for malformed opening tag")
+	}
+	if ok {
+		t.Fatal("expected ok to be false for malformed opening tag")
+	}
+	e, isParseErr := err.(*BlockParseError)
+	if !isParseErr {
+		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
+	}
+	if e.Boundary != "徕珑龘" {
+		t.Fatalf("expected boundary 徕珑龘, got %q", e.Boundary)
+	}
+	if e.BlockKind != "change" {
+		t.Fatalf("expected block kind change, got %q", e.BlockKind)
+	}
+	if e.Line != 1 {
+		t.Fatalf("expected line 1, got %d", e.Line)
+	}
+	if e.Reason == "" {
+		t.Fatal("expected reason for malformed opening tag")
+	}
+	if !strings.Contains(err.Error(), "malformed block") {
+		t.Fatalf("expected 'malformed block' in error, got: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "XML opening tag") {
+		t.Fatalf("expected 'XML opening tag' in error, got: %s", err.Error())
 	}
 }
 

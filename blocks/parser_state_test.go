@@ -557,6 +557,55 @@ func TestParserStateFlushCollectsMultipleParseErrors(t *testing.T) {
 	}
 }
 
+func TestParserStateFlushHandlesCompleteBlocksAfterUnclosed(t *testing.T) {
+	// A complete block that follows a malformed block in the same buffer
+	// is not reachable during AppendContent (the parser stops at the
+	// malformed block). Flush must handle it so valid blocks are not
+	// lost because a preceding block was malformed.
+	// See TheoryOfParseErrorCollection.
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	text := "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n" +
+		"<<龘靐齉 <summary>\nDone.\n龘靐齉\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	// No complete block is handled during AppendContent because the
+	// parser stops at the unclosed change block.
+	if len(collectedBlocks) != 0 {
+		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
+	}
+
+	flushedState, err := ps.Flush()
+	if err != nil {
+		t.Fatalf("Flush must not return an error, got: %v", err)
+	}
+	ps = flushedState.(*ParserState)
+
+	// The unclosed block is a parse error; the complete summary block is
+	// handled at Flush so it is not lost.
+	if len(ps.ParseErrors()) != 1 {
+		t.Fatalf("expected 1 parse error, got %d", len(ps.ParseErrors()))
+	}
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 handled block, got %d", len(collectedBlocks))
+	}
+	if collectedBlocks[0].Kind != "summary" {
+		t.Fatalf("expected summary block, got %s", collectedBlocks[0].Kind)
+	}
+}
+
 func TestParserStateFlushCollectsParseErrorsAfterCompleteBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block

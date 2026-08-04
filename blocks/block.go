@@ -156,6 +156,12 @@ newline) is a truncated block: the closing marker must be alone on its own
 line, which cannot exist after EOF. The parser parses the line as an opening
 marker and reports an unclosed-block error, surfacing the truncation instead
 of silently treating the marker as prose.
+
+An opening line with a valid three-character Han delimiter followed by an
+invalid or incomplete XML opening tag (e.g., a missing ">") is a malformed
+block, not prose: the delimiter marks the line as an intended block opening.
+The parser reports it as a parse error so the model can correct it, rather
+than silently dropping the intended block.
 `
 
 const TheoryOfKindlessBlocks = `
@@ -345,6 +351,31 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 		var valid bool
 		kind, attrs, valid = parseXMLOpeningTag(xmlPart)
 		if !valid || kind == "" {
+			// A valid three-character Han delimiter followed by an
+			// XML-like tag marks this line as an intended block opening
+			// whose opening tag is malformed or incomplete (e.g., a
+			// missing '>'). Report it as a parse error instead of
+			// silently treating it as prose, so the model can correct
+			// it. During streaming the line may be incomplete and the
+			// error is transient; it is collected only at Flush.
+			// See TheoryOfParseErrorCollection.
+			blockKind := extractTagName(xmlPart)
+			matched = true
+			result.block.Kind = blockKind
+			result.block.Boundary = delimiter
+			result.block.Attributes = attrs
+			result.start = blockStart
+			result.end = lineEnd + 1
+			if result.end > len(content) {
+				result.end = len(content)
+			}
+			result.err = &BlockParseError{
+				BlockKind: blockKind,
+				Boundary:  delimiter,
+				Content:   string(content[blockStart:]),
+				Line:      bytes.Count(content[:blockStart], []byte("\n")) + 1,
+				Reason:    "has an invalid or incomplete XML opening tag",
+			}
 			return
 		}
 	}
@@ -382,6 +413,7 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 		BlockKind: kind,
 		Boundary:  delimiter,
 		Content:   string(content[blockStart:]),
+		Line:      bytes.Count(content[:blockStart], []byte("\n")) + 1,
 		Hints:     findDelimiterCollisionHints(content, bodyStart, delimiter),
 	}
 	return
@@ -568,6 +600,26 @@ func extractDelimiter(s string) string {
 	return delimiter
 }
 
+// extractTagName extracts the element name from a possibly-incomplete XML
+// opening tag. Returns "" if no valid XML name is present. Used to report
+// the block kind in parse errors for malformed opening tags, where the tag
+// could not be fully tokenized by TokenizeXMLTag.
+func extractTagName(xmlPart string) string {
+	s := strings.TrimSpace(xmlPart)
+	if !strings.HasPrefix(s, "<") {
+		return ""
+	}
+	s = s[1:]
+	for len(s) > 0 && isXMLSpace(s[0]) {
+		s = s[1:]
+	}
+	start := 0
+	for start < len(s) && isXMLNameChar(s[start]) {
+		start++
+	}
+	return s[:start]
+}
+
 // maxParseErrorContentLength caps the amount of block content included in a
 // BlockParseError message. An unclosed block can have an arbitrarily large
 // body (e.g., a model emitting a large file before being cut off); including
@@ -603,25 +655,41 @@ func truncateParseErrorContent(content string) string {
 		content[tailStart:]
 }
 
-// BlockParseError is returned by ParseFirstBlock for unclosed heredoc blocks.
-// An unclosed block is an opening marker with no matching closing delimiter
-// line. During streaming this may indicate incomplete output rather than a
+// BlockParseError is returned by ParseFirstBlock for malformed heredoc
+// blocks: an unclosed block (an opening marker with no matching closing
+// delimiter line) or a block whose opening tag is invalid or incomplete.
+// During streaming this may indicate incomplete output rather than a
 // definitive error. The Content field holds the full text from the opening
-// marker to the end of the available content, providing context for debugging.
-// The Error message truncates large content to keep the feedback bounded; the
-// full content remains available in this field. The Hints field lists body
-// lines where the delimiter appears with leading or trailing text — the most
-// likely cause of an unclosed block, because the closing line must be the
-// delimiter alone. See TheoryOfBoundaryUniqueness.
+// marker to the end of the available content, providing context for
+// debugging. The Line field holds the 1-based line number of the opening
+// marker in the content. The Reason field distinguishes malformed opening
+// tags from unclosed blocks. The Error message truncates large content to
+// keep the feedback bounded; the full content remains available in this
+// field. The Hints field lists body lines where the delimiter appears with
+// leading or trailing text — the most likely cause of an unclosed block,
+// because the closing line must be the delimiter alone.
+// See TheoryOfBoundaryUniqueness.
 type BlockParseError struct {
 	BlockKind string
 	Boundary  string
 	Content   string
+	Line      int
+	Reason    string
 	Hints     []string
 }
 
 func (e *BlockParseError) Error() string {
-	msg := fmt.Sprintf("unclosed block: kind %q delimiter %q has no matching closing line", e.BlockKind, e.Boundary)
+	prefix := "unclosed block"
+	detail := "has no matching closing line"
+	if e.Reason != "" {
+		prefix = "malformed block"
+		detail = e.Reason
+	}
+	location := ""
+	if e.Line > 0 {
+		location = fmt.Sprintf(" at line %d", e.Line)
+	}
+	msg := fmt.Sprintf("%s%s: kind %q delimiter %q %s", prefix, location, e.BlockKind, e.Boundary, detail)
 	if len(e.Hints) > 0 {
 		msg += "\nhint: these body lines start or end with the delimiter but have extra text, so they are not valid closing markers (the closing line must be the delimiter alone):"
 		for _, hint := range e.Hints {

@@ -51,33 +51,44 @@ it on the opening line.
 `
 
 const TheoryOfParseErrorCollection = `
-Parse errors — blocks whose closing delimiter is missing or malformed — are
-collected during streaming rather than treated as fatal generation errors. A
-block that cannot be parsed is malformed or truncated model output, not a
-system failure: the model may correct it given the right feedback. Collecting
-the error with the block kind, boundary, partial content, and collision hints
-and feeding it back as user content in the next round gives the model a
+Parse errors — blocks whose opening tag is malformed or whose closing
+delimiter is missing or malformed — are collected during streaming rather
+than treated as fatal generation errors. A block that cannot be parsed is
+malformed or truncated model output, not a system failure: the model may
+correct it given the right feedback. Collecting the error with the block
+kind, boundary, line number, partial content, and collision hints and
+feeding it back as user content in the next round gives the model a
 concrete target for self-correction, while successfully parsed blocks
-continue to be processed normally. This self-healing capability is especially
-important in unattended tasks where no human is available to intervene. The
-correction budget is cumulative per run: the loop (see TheoryOfLoops) feeds
-parse errors back only for a bounded number of rounds since the last clean
-round, and the feedback states the attempt number so the model knows when it
-is on its final attempt. When the budget is exhausted, feedback stops and the
-uncorrected parse errors are surfaced via loops.Result.ParseErrors, so a
-persistently malformed model cannot restart the correction cycle indefinitely
-and unattended callers can detect silent change loss.
+continue to be processed normally. A line with a valid three-character Han
+delimiter followed by an invalid or incomplete XML opening tag is a
+malformed block, not prose: the delimiter marks the line as an intended
+block opening, so the model must be told what went wrong rather than having
+its intended block silently dropped. Complete blocks that follow a malformed
+block in the same buffer are not reachable during AppendContent, because the
+parser stops at the first malformed block; Flush handles them so valid
+blocks are never lost because a preceding block was malformed. This
+self-healing capability is especially important in unattended tasks where no
+human is available to intervene. The correction budget is cumulative per
+run: the loop (see TheoryOfLoops) feeds parse errors back only for a bounded
+number of rounds since the last clean round, and the feedback states the
+attempt number so the model knows when it is on its final attempt. When the
+budget is exhausted, feedback stops and the uncorrected parse errors are
+surfaced via loops.Result.ParseErrors, so a persistently malformed model
+cannot restart the correction cycle indefinitely and unattended callers can
+detect silent change loss.
 
 The partial content included in the error message is truncated when the block
-body is large: an unclosed block can contain an arbitrarily large body (e.g.,
+body is large: a malformed block can contain an arbitrarily large body (e.g.,
 a model emitting a large file before being cut off), and including the full
 body would make the error message enormous, wasting context in the
 self-correction round. The truncated message keeps the head — the opening
 marker, which identifies the block — and the tail — where the content ended,
 where the closing marker was expected — so the model still has a concrete
-target for correction. The full content remains available in
-BlockParseError.Content for programmatic inspection; only the formatted error
-string is truncated.
+target for correction. The error also carries the 1-based line number of the
+opening marker, so the model can locate the malformed block in its own
+output even when the content is truncated. The full content remains available
+in BlockParseError.Content for programmatic inspection; only the formatted
+error string is truncated.
 `
 
 // BlockHandler is called when a new block is parsed during AppendContent.
@@ -193,24 +204,27 @@ func (s *ParserState) Flush() (generators.State, error) {
 		return nil, err
 	}
 
-	// During Flush, an unclosed block (opening marker with no matching
-	// end marker) is a parse error, not a fatal error. Parse errors are
-	// collected via ParseErrors instead of being returned, so the
-	// generation flow continues and the caller can feed them back to the
-	// model for self-correction. The scanner skips past each unclosed
-	// block's opening marker so subsequent block markers are still found.
-	// Complete blocks should have been parsed and handled during
-	// AppendContent; any complete blocks remaining in the buffer are
-	// discarded because the handler is the sole authority over block
-	// management. Remaining unparseable fragments are discarded so
-	// post-flush content does not combine with pre-flush fragments.
+	// During Flush, a malformed block (an unclosed block with no matching
+	// end marker, or an invalid opening tag) is a parse error, not a fatal
+	// error. Parse errors are collected via ParseErrors instead of being
+	// returned, so the generation flow continues and the caller can feed
+	// them back to the model for self-correction. The scanner skips past
+	// each malformed block's opening marker so subsequent block markers
+	// are still found.
+	// A complete block remaining in the buffer at Flush was not handled
+	// during AppendContent: the parser stops at the first malformed block,
+	// so complete blocks following it are not reached until Flush. The
+	// handler is called for them so valid blocks are never lost because a
+	// preceding block was malformed. See TheoryOfParseErrorCollection.
+	// Remaining unparseable fragments are discarded so post-flush content
+	// does not combine with pre-flush fragments.
 	// See TheoryOfParseErrorCollection.
 	buf := slices.Clone(s.buf)
 	parseErrors := slices.Clone(s.parseErrors)
 	for {
-		_, _, end, ok, err := parseFirstBlock(buf)
+		block, _, end, ok, err := parseFirstBlock(buf)
 		if err != nil {
-			// Unclosed block: collect the parse error and skip past
+			// Malformed block: collect the parse error and skip past
 			// its opening marker so subsequent block markers are still
 			// found. If the marker cannot be skipped, stop scanning to
 			// avoid an infinite loop.
@@ -227,7 +241,15 @@ func (s *ParserState) Flush() (generators.State, error) {
 		if !ok {
 			break
 		}
-		// Skip complete block (already handled during AppendContent).
+		// A complete block remaining in the buffer at Flush was not
+		// handled during AppendContent (the parser stopped at a
+		// preceding malformed block). Handle it now so valid blocks are
+		// not lost. See TheoryOfParseErrorCollection.
+		if s.handler != nil {
+			if handlerErr := s.handler(block); handlerErr != nil {
+				return nil, handlerErr
+			}
+		}
 		buf = buf[end:]
 	}
 

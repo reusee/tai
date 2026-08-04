@@ -81,16 +81,12 @@ When Components is empty, the loop runs a single round (single-shot mode).
 
 Parse errors — blocks whose closing delimiter is missing or malformed — are
 collected from ParserState after each round and fed back as user content in the
-next round, so the model can self-correct malformed output instead of aborting
-the generation flow. The correction budget (maxParseErrorRounds) is cumulative
-per run: it resets only when a round produces no parse errors, so a model that
-persistently emits malformed blocks cannot restart the correction cycle
-indefinitely when other components keep triggering rounds. The feedback states
-the correction attempt number so the model knows when it is on its final
-attempt. When the budget is exhausted, the malformed blocks are no longer fed
-back; they are recorded in Result.ParseErrors so callers in unattended
-operation (e.g., the goal command) can detect silent change loss. See
-TheoryOfParseErrorCollection in blocks/parser_state.go.
+next round, so the model can self-correct its malformed blocks. The correction
+budget is bounded by maxParseErrorRounds: feedback stops after that many
+consecutive rounds with parse errors, and the uncorrected errors are surfaced
+via Result.ParseErrors. The budget resets when a round produces no parse
+errors. Feedback states the attempt number (e.g., "correction attempt 1 of 3")
+so the model knows when it is on its final attempt.
 
 RetryOnMissingCompletion handles truncated output: when a round ends without
 a summary block, or when the finish reason indicates abnormal termination (e.g.,
@@ -109,21 +105,17 @@ specific guidance: because the retry discards all change blocks from the failed
 attempt, the model is instructed to re-emit every intended change block,
 correcting the one that failed.
 
+Because the retry discards the failed attempt's output entirely — structured
+blocks (change, shell, go-test, continue) in it were not applied — both retry
+feedback messages instruct the model to re-emit every block it intends to take
+effect. Without this instruction, the model may interpret "continue from where
+you left off" as emitting only the continuation text, silently losing blocks
+that were generated but not applied.
+
 Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3")
 so the model knows how much retry budget remains and can prioritize correcting
 the error. This is especially important in unattended operation, where no human
 can intervene when the budget is exhausted.
-
-The BlockHandler type uses a consumed flag: when a handler returns consumed=true,
-the block is not passed to ProcessComponents.
-
-Unmatched blocks are accumulated across rounds and returned in
-Result.RemainingBlocks, so callers can observe blocks emitted in any round.
-
-The loop executes tasks, not conversations. Multi-round generation serves
-autonomous decomposition and verification; it does not accumulate dialogue.
-See TheoryOfContextPhilosophy for the single-shot context construction
-philosophy that governs context provision.
 `
 
 // ApplyError is returned by BlockHandler when a change block fails to apply
@@ -147,7 +139,7 @@ func (e *ApplyError) Unwrap() error {
 	return e.Err
 }
 
-const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. Please correct the issue and continue.]\n\n"
+const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
 
 const defaultMaxRetries = 3
 
@@ -160,7 +152,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. Below is a summary of the incomplete output. Please continue from where you left off, incorporating the context below.]\n\n"
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Below is a summary of the incomplete output; continue from where you left off, incorporating the context below.]\n\n"
 
 // Run executes generation rounds in a loop. Each round wraps the state
 // with ParserState, executes the phase chain, processes blocks via
