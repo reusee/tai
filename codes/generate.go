@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -657,7 +656,7 @@ func (Module) GenerateWithResult(
 			},
 
 			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
-				newState, newContentCount, summarized := summarizeRetryState(
+				newState, newContentCount, _ := summarizeRetryState(
 					errState,
 					phaseErr,
 					prevContentCount,
@@ -666,24 +665,6 @@ func (Module) GenerateWithResult(
 					},
 				)
 				prevContentCount = newContentCount
-
-				// Tap to debug.
-				var contents []*generators.Content
-				for c := range newState.Contents() {
-					contents = append(contents, c)
-				}
-				globals := map[string]any{
-					"error":          phaseErr.Error(),
-					"contents":       contents,
-					"system_prompts": newState.SystemPrompt(),
-				}
-				if summarized {
-					globals["summarized_retry"] = true
-				}
-				if openAIError, ok := errors.AsType[generators.OpenAIError](phaseErr); ok {
-					globals["openai"] = openAIError
-				}
-				tap(ctx, "codes generate error", globals)
 				return newState
 			},
 

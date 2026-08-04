@@ -3,6 +3,7 @@ package phases
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
@@ -116,6 +117,64 @@ func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
 		}
 		if state == nil {
 			t.Fatal("expected non-nil state on non-retryable error, got nil")
+		}
+	})
+}
+
+type partialOutputGenerator struct {
+	calls *int
+}
+
+func (g *partialOutputGenerator) Spec() generators.Spec           { return generators.Spec{} }
+func (g *partialOutputGenerator) CountTokens(string) (int, error) { return 0, nil }
+func (g *partialOutputGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+	*g.calls++
+	newState, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text("partial output")},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newState, errors.New("stream error")
+}
+
+func TestBuildGenerateNonRetryableErrorPreservesPartialOutput(t *testing.T) {
+	calls := 0
+	gen := &partialOutputGenerator{calls: &calls}
+
+	dscope.New(
+		new(Module),
+		new(debugs.Module),
+	).Call(func(
+		buildGenerate BuildGenerate,
+	) {
+		phase := buildGenerate(gen, nil)(nil)
+
+		initialState := generators.NewPrompts("", nil)
+		_, state, err := phase(context.Background(), initialState)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if state == nil {
+			t.Fatal("expected non-nil state")
+		}
+		// The returned state must contain the partial output so the caller
+		// (loops.Run) can detect the content increase and trigger a retry
+		// with summarization.
+		found := false
+		for c := range state.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok && strings.Contains(string(text), "partial output") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("expected partial output in returned state")
+		}
+		if calls != 1 {
+			t.Fatalf("expected 1 call, got %d", calls)
 		}
 	})
 }

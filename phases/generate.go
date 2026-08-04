@@ -24,6 +24,15 @@ state to OnPhaseError.
 
 type BuildGenerate func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder
 
+// countContents returns the number of contents in the state.
+func countContents(state generators.State) int {
+	count := 0
+	for range state.Contents() {
+		count++
+	}
+	return count
+}
+
 func (Module) BuildGenerate() BuildGenerate {
 	return func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder {
 		return func(cont Phase) Phase {
@@ -39,6 +48,13 @@ func (Module) BuildGenerate() BuildGenerate {
 						lastErr = err
 						if errors.Is(err, generators.ErrRetryable) {
 							continue
+						}
+						// If the generator produced partial output before the
+						// error, return that state so the caller (loops.Run)
+						// can detect the content increase and trigger a retry
+						// with summarization. See TheoryOfGenerateRetry.
+						if newState != nil && countContents(newState) > countContents(state) {
+							return nil, newState, err
 						}
 						// Return the input state (not nil) so callers like
 						// loops.Run can pass a valid state to OnPhaseError.
