@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/tai/generators"
 )
@@ -250,5 +251,28 @@ func TestPrintRoundStatsNoSummaries(t *testing.T) {
 	output := buf.String()
 	if strings.Contains(output, "=== Round Summaries ===") {
 		t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
+	}
+}
+
+func TestPrintRoundStatsWithDuration(t *testing.T) {
+	var buf bytes.Buffer
+	stats := []roundStat{
+		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
+		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
+	}
+	printRoundStats(&buf, stats)
+	output := buf.String()
+	if !strings.Contains(output, "Duration") {
+		t.Fatalf("expected Duration column header, got: %s", output)
+	}
+	if !strings.Contains(output, "3s") {
+		t.Fatalf("expected duration '3s' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "1.5s") {
+		t.Fatalf("expected duration '1.5s' in output, got: %s", output)
+	}
+	// Total duration: 3s + 1.5s = 4.5s
+	if !strings.Contains(output, "4.5s") {
+		t.Fatalf("expected total duration '4.5s' in output, got: %s", output)
 	}
 }

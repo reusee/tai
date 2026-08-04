@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
@@ -89,12 +90,14 @@ func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, erro
 
 const TheoryOfRoundStatistics = `
 Round statistics track per-round token usage (prompt, completion, thoughts,
-cached) across the full generation session. Statistics are collected after
-each successful phase execution by scanning newly appended contents for
-Usage parts, and printed once at the end of the session via a deferred
-call. Deferred printing avoids interleaving statistics with model output
-during generation and ensures stats are reported even when the session
-ends early due to an error.
+cached) and running time across the full generation session. Statistics are
+collected after each successful phase execution by scanning newly appended
+contents for Usage parts, and printed once at the end of the session via a
+deferred call. Deferred printing avoids interleaving statistics with model
+output during generation and ensures stats are reported even when the session
+ends early due to an error. The round duration is measured from the OnRoundStart
+callback to OnRoundSuccess, covering the full round including retries; the
+elapsed time is assigned to every stat entry produced by the round.
 `
 
 type roundStat struct {
@@ -103,6 +106,7 @@ type roundStat struct {
 	CompletionTokens int
 	ThoughtTokens    int
 	CachedTokens     int
+	Duration         time.Duration
 	Summary          string
 }
 
@@ -112,19 +116,23 @@ func printRoundStats(w io.Writer, stats []roundStat) {
 	}
 	fmt.Fprintf(w, "\n=== Generation Statistics ===\n")
 	fmt.Fprintf(w, "Total rounds: %d\n\n", len(stats))
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached")
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------")
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
 	var totalPrompt, totalCompletion, totalThoughts, totalCached int
+	var totalDuration time.Duration
 	for _, s := range stats {
-		fmt.Fprintf(w, "%-6d %12d %12d %12d %12d\n",
-			s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens)
+		fmt.Fprintf(w, "%-6d %12d %12d %12d %12d %12s\n",
+			s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
+			s.Duration.Round(time.Millisecond).String())
 		totalPrompt += s.PromptTokens
 		totalCompletion += s.CompletionTokens
 		totalThoughts += s.ThoughtTokens
 		totalCached += s.CachedTokens
+		totalDuration += s.Duration
 	}
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------")
-	fmt.Fprintf(w, "%-6s %12d %12d %12d %12d\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached)
+	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
+	fmt.Fprintf(w, "%-6s %12d %12d %12d %12d %12s\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
+		totalDuration.Round(time.Millisecond).String())
 	fmt.Fprintf(w, "==============================\n")
 
 	// Print round summaries if any exist. See TheoryOfSummaryBlocks.
@@ -500,6 +508,10 @@ func (Module) GenerateWithResult(
 		// Track per-round token statistics for end-of-session reporting.
 		// See TheoryOfRoundStatistics.
 		var roundStats []roundStat
+		// roundStartTime records the start of the current round, set by
+		// OnRoundStart before generation and used to compute the round
+		// duration in OnRoundSuccess.
+		var roundStartTime time.Time
 		defer func() {
 			printRoundStats(output, roundStats)
 		}()
@@ -566,6 +578,9 @@ func (Module) GenerateWithResult(
 
 			OnRoundStart: func() {
 				memStore.Reset()
+				// Record the round start time for duration statistics.
+				// See TheoryOfRoundStatistics.
+				roundStartTime = time.Now()
 			},
 
 			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
@@ -575,6 +590,12 @@ func (Module) GenerateWithResult(
 				if err := memStore.Flush(); err != nil {
 					return err
 				}
+
+				// Compute the round duration from the start time recorded by
+				// OnRoundStart. The duration covers the full round including
+				// retries. See TheoryOfRoundStatistics.
+				elapsed := time.Since(roundStartTime)
+				statsStartIdx := len(roundStats)
 
 				// Collect round statistics from newly appended contents.
 				// See TheoryOfRoundStatistics.
@@ -597,6 +618,13 @@ func (Module) GenerateWithResult(
 				}
 				prevContentCount = contentIndex
 
+				// Assign the round duration to all stat entries created in
+				// this round. A round may produce multiple Usage parts (e.g.,
+				// when retries occur); all share the same round duration.
+				for i := statsStartIdx; i < len(roundStats); i++ {
+					roundStats[i].Duration = elapsed
+				}
+
 				// Associate summary blocks with the current round.
 				if len(summaries) > 0 {
 					summaryText := strings.Join(summaries, "\n")
@@ -604,11 +632,18 @@ func (Module) GenerateWithResult(
 						roundStats[len(roundStats)-1].Summary = summaryText
 					} else {
 						roundStats = append(roundStats, roundStat{
-							Round:   len(roundStats) + 1,
-							Summary: summaryText,
+							Round:    len(roundStats) + 1,
+							Duration: elapsed,
+							Summary:  summaryText,
 						})
 					}
 				}
+
+				// If OnRoundStart is skipped for the next round (parse-error
+				// correction rounds), the duration is measured from here,
+				// approximating the next round's start time. See
+				// TheoryOfParseErrorCollection in blocks/parser_state.go.
+				roundStartTime = time.Now()
 				return nil
 			},
 
