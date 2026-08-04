@@ -71,58 +71,6 @@ func TestPrintRoundStats(t *testing.T) {
 	})
 }
 
-func TestCountContents(t *testing.T) {
-	t.Run("Empty", func(t *testing.T) {
-		state := generators.NewPrompts("", nil)
-		if count := countContents(state); count != 0 {
-			t.Fatalf("expected 0 contents, got %d", count)
-		}
-	})
-
-	t.Run("Multiple", func(t *testing.T) {
-		state := generators.NewPrompts("", []*generators.Content{
-			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hello")}},
-			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("hi")}},
-			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("bye")}},
-		})
-		if count := countContents(state); count != 3 {
-			t.Fatalf("expected 3 contents, got %d", count)
-		}
-	})
-}
-
-func TestExtractPartialOutput(t *testing.T) {
-	state := generators.NewPrompts("", []*generators.Content{
-		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("question")}},
-		{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("base answer")}},
-		{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("partial answer"), generators.Thought("thinking...")}},
-	})
-
-	t.Run("SkipBase", func(t *testing.T) {
-		got := extractPartialOutput(state, 2)
-		if !strings.Contains(got, "partial answer") || !strings.Contains(got, "thinking...") {
-			t.Fatalf("expected partial answer and thoughts, got %q", got)
-		}
-		if strings.Contains(got, "base answer") {
-			t.Fatalf("base answer should be skipped, got %q", got)
-		}
-	})
-
-	t.Run("NoSkip", func(t *testing.T) {
-		got := extractPartialOutput(state, 0)
-		if !strings.Contains(got, "base answer") {
-			t.Fatalf("expected base answer when no skip, got %q", got)
-		}
-	})
-
-	t.Run("SkipAll", func(t *testing.T) {
-		got := extractPartialOutput(state, 3)
-		if got != "" {
-			t.Fatalf("expected empty, got %q", got)
-		}
-	})
-}
-
 func TestSummarizeRetryState(t *testing.T) {
 	base := generators.NewPrompts("", []*generators.Content{
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("question")}},
@@ -146,8 +94,8 @@ func TestSummarizeRetryState(t *testing.T) {
 		if !summarized {
 			t.Fatal("expected summarized=true")
 		}
-		if count != countContents(state) {
-			t.Fatalf("expected count %d, got %d", countContents(state), count)
+		if count != generators.CountContents(state) {
+			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
 		foundSummary := false
 		foundError := false
@@ -179,8 +127,8 @@ func TestSummarizeRetryState(t *testing.T) {
 		if summarized {
 			t.Fatal("expected summarized=false")
 		}
-		if count != countContents(state) {
-			t.Fatalf("expected count %d, got %d", countContents(state), count)
+		if count != generators.CountContents(state) {
+			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
 		// Only examine contents appended by summarizeRetryState (after the
 		// prevContentCount base contents); the base state may contain user
@@ -217,8 +165,8 @@ func TestSummarizeRetryState(t *testing.T) {
 		if summarized {
 			t.Fatal("expected summarized=false on summarize error")
 		}
-		if count != countContents(state) {
-			t.Fatalf("expected count %d, got %d", countContents(state), count)
+		if count != generators.CountContents(state) {
+			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
 	})
 }

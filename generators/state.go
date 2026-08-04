@@ -25,3 +25,12 @@ type State interface {
 	Flush() (State, error)
 	Unwrap() State
 }
+
+// CountContents returns the number of contents in the state.
+func CountContents(state State) int {
+	count := 0
+	for range state.Contents() {
+		count++
+	}
+	return count
+}

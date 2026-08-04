@@ -29,8 +29,8 @@ const TheoryOfStreamingApply = `
 Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
 from streamed model output, rather than directly to disk. This enables early
 error detection: if a change block fails to apply (e.g., invalid target,
-malformed code), the BlockHandler returns a *loops.ApplyError so the retry loop
-can provide change-block-specific guidance — the retry discards all change
+malformed code), the BlockHandler returns a *changes.ApplyError so the retry
+loop can provide change-block-specific guidance — the retry discards all change
 blocks from the failed attempt, so the model re-emits every intended change
 block — and routes the error through OnPhaseError like any other phase error.
 OnPhaseError summarizes any partial model output (thoughts or body text) before
@@ -47,14 +47,15 @@ base, not the disk content, so multi-block edits to the same file are applied
 correctly within the round. The streaming apply is implemented via a
 BlockHandler callback on ParserState: when a complete change block is parsed
 during AppendContent, the handler applies it via changes.ApplyChangeBlockStore
-to the MemoryStore. Non-change blocks are collected by the handler into an
-external slice for post-phase processing by ProcessComponents. During Flush,
-the handler is not called for unclosed blocks, because they are incomplete
-(e.g., from truncated output) and applying them would cause errors.
-Successfully applied change blocks are consumed by the handler (not collected),
-so ProcessComponents finds no change blocks to re-apply. When the apply flag
-is disabled, no handler is set and all blocks are collected, preserving the
-no-apply behavior.
+to the MemoryStore. The handler is built by changes.BuildChangeBlockHandler,
+sharing the change-application logic with the next command. Non-change blocks
+are collected by the handler into an external slice for post-phase processing
+by ProcessComponents. During Flush, the handler is not called for unclosed
+blocks, because they are incomplete (e.g., from truncated output) and applying
+them would cause errors. Successfully applied change blocks are consumed by
+the handler (not collected), so ProcessComponents finds no change blocks to
+re-apply. When the apply flag is disabled, no handler is set and all blocks
+are collected, preserving the no-apply behavior.
 `
 
 const maxRequestContextRounds = 5
@@ -155,14 +156,6 @@ func printRoundStats(w io.Writer, stats []roundStat) {
 	}
 }
 
-func countContents(state generators.State) int {
-	count := 0
-	for range state.Contents() {
-		count++
-	}
-	return count
-}
-
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	generator generators.Generator,
@@ -199,29 +192,6 @@ func summarizeIncompleteOutput(
 	return block.Body, nil
 }
 
-func extractPartialOutput(state generators.State, skip int) string {
-	var builder strings.Builder
-	contentIndex := 0
-	for content := range state.Contents() {
-		if contentIndex < skip {
-			contentIndex++
-			continue
-		}
-		if content.Role == generators.RoleAssistant {
-			for _, part := range content.Parts {
-				switch p := part.(type) {
-				case generators.Text:
-					builder.WriteString(string(p))
-				case generators.Thought:
-					fmt.Fprint(&builder, p)
-				}
-			}
-		}
-		contentIndex++
-	}
-	return builder.String()
-}
-
 // summarizeRetryState appends a summarized retry message to errState when the
 // model already produced partial output, so the retry has condensed context.
 // It returns the new state, the new content count, and whether summarization
@@ -232,7 +202,7 @@ func summarizeRetryState(
 	prevContentCount int,
 	summarize func(string) (string, error),
 ) (newState generators.State, contentCount int, summarized bool) {
-	partialText := extractPartialOutput(errState, prevContentCount)
+	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
 		if summary, err := summarize(partialText); err == nil && summary != "" {
 			msg := "The previous generation attempt was interrupted by an error after producing partial output. " +
@@ -246,7 +216,7 @@ func summarizeRetryState(
 				},
 			})
 			if err == nil {
-				return newState, countContents(newState), true
+				return newState, generators.CountContents(newState), true
 			}
 		}
 	}
@@ -257,9 +227,9 @@ func summarizeRetryState(
 		},
 	})
 	if err != nil {
-		return errState, countContents(errState), false
+		return errState, generators.CountContents(errState), false
 	}
-	return newState, countContents(newState), false
+	return newState, generators.CountContents(newState), false
 }
 
 const TheoryOfSummaryCompletionRetry = `
@@ -358,7 +328,7 @@ func (Module) GenerateWithResult(
 	maxTokens flags.MaxTokens,
 	buildChat phases.BuildChat,
 	tap debugs.Tap,
-	applyChangeBlockStore changes.ApplyChangeBlockStore,
+	buildChangeBlockHandler changes.BuildChangeBlockHandler,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
 	summarizeThoughts states.SummarizeThoughts,
@@ -546,7 +516,23 @@ func (Module) GenerateWithResult(
 		}
 
 		// Track content count for statistics collection in OnRoundSuccess.
-		prevContentCount := countContents(state)
+		prevContentCount := generators.CountContents(state)
+
+		// Build the change block handler when apply is enabled. The handler
+		// applies change blocks immediately to the MemoryStore as they are
+		// parsed during streaming, enabling early error detection. Apply
+		// errors are returned as *changes.ApplyError so the loop can retry,
+		// resetting the MemoryStore to discard failed changes. The handler
+		// is built by changes.BuildChangeBlockHandler so the change-
+		// application logic is shared with the next command. When apply is
+		// disabled, no handler is set and all blocks are collected for
+		// component processing. See changes.TheoryOfInMemoryApply and
+		// loops.TheoryOfLoops.
+		var blockHandler loops.BlockHandler
+		if bool(apply) {
+			handler := buildChangeBlockHandler(memStore)
+			blockHandler = loops.BlockHandler(handler)
+		}
 
 		// Run the unified generation loop. See loops.TheoryOfLoops.
 		// The loop handles ParserState wrapping, phase execution, retry
@@ -556,28 +542,7 @@ func (Module) GenerateWithResult(
 			Generator:    generator,
 			InitialState: state,
 			Components:   comps.ComponentSet,
-			BlockHandler: func(block blocks.Block) (bool, error) {
-				if bool(apply) && block.Kind == "change" {
-					h, parsedOk := changes.ParseChangeBlock(block)
-					if !parsedOk {
-						// Return an ApplyError so the retry loop can provide
-						// change-block-specific guidance: the retry discards
-						// all change blocks from the failed attempt, so the
-						// model must re-emit every intended change block.
-						// See TheoryOfLoops.
-						return false, &loops.ApplyError{
-							Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
-						}
-					}
-					if err := applyChangeBlockStore(memStore, h); err != nil {
-						return false, &loops.ApplyError{
-							Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
-						}
-					}
-					return true, nil
-				}
-				return false, nil
-			},
+			BlockHandler: blockHandler,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(nil)
 			},

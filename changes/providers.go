@@ -27,8 +27,8 @@ values like the target store/root and change block content) are passed as
 function arguments.
 
 The public types (ApplyChangeBlock, ApplyChangeBlockStore, ApplyChangeBlocks,
-ApplyChangeBlocksStore, ApplyDiffFile) are dscope-provided function types with
-no WriteErrorLog in their signatures.
+ApplyChangeBlocksStore, ApplyDiffFile, BuildChangeBlockHandler) are
+dscope-provided function types with no WriteErrorLog in their signatures.
 
 Internal helpers (CallWriteErrorLog, ParseAndFormat, ApplySpecialTargetModify,
 ApplyFileLevelOp, ApplyTextLevelOp, ApplyGoModification) are exported
@@ -37,7 +37,7 @@ must be exported because dscope uses reflect to discover provider methods. The
 dependency chain flows from WriteErrorLog through CallWriteErrorLog to
 ParseAndFormat, then to ApplySpecialTargetModify and ApplyGoModification, and
 finally to ApplyChangeBlockStore, ApplyChangeBlock, ApplyChangeBlocks,
-ApplyChangeBlocksStore, and ApplyDiffFile.
+ApplyChangeBlocksStore, ApplyDiffFile, and BuildChangeBlockHandler.
 `
 
 // Public dscope-provided function types. These are the types callers inject

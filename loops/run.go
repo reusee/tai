@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/nets"
@@ -100,10 +101,10 @@ SummarizeIncomplete if available), appends both the error context and the
 summary as user content, resets per-round state via OnRoundStart (which resets
 the MemoryStore, discarding all changes from the failed attempt), and retries
 from the updated state. Errors that occur before any content is output do not
-trigger retry. For change block apply errors (ApplyError), the feedback adds
-specific guidance: because the retry discards all change blocks from the failed
-attempt, the model is instructed to re-emit every intended change block,
-correcting the one that failed.
+trigger retry. For change block apply errors (changes.ApplyError), the
+feedback adds specific guidance: because the retry discards all change blocks
+from the failed attempt, the model is instructed to re-emit every intended
+change block, correcting the one that failed.
 
 Because the retry discards the failed attempt's output entirely — structured
 blocks (change, shell, go-test, continue) in it were not applied — both retry
@@ -117,27 +118,6 @@ so the model knows how much retry budget remains and can prioritize correcting
 the error. This is especially important in unattended operation, where no human
 can intervene when the budget is exhausted.
 `
-
-// ApplyError is returned by BlockHandler when a change block fails to apply
-// due to model-generated errors (e.g., invalid target, malformed code,
-// goimports failure). Callers may use errors.As to distinguish apply errors
-// from other error types for logging or diagnostics. The loop's retry
-// behavior is governed by RetryOnError, which retries any error that occurs
-// after the model has output content, regardless of the specific error type.
-// The retry feedback for ApplyError instructs the model to re-emit every
-// intended change block, because the retry discards all change blocks from
-// the failed attempt. See TheoryOfLoops.
-type ApplyError struct {
-	Err error
-}
-
-func (e *ApplyError) Error() string {
-	return e.Err.Error()
-}
-
-func (e *ApplyError) Unwrap() error {
-	return e.Err
-}
 
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
 
@@ -361,8 +341,8 @@ func (Module) Run() Run {
 					// model knows how much retry budget remains.
 					// See TheoryOfLoops.
 					if opts.RetryOnError && retry < maxRetries {
-						prevCount := countContents(state)
-						if countContents(phaseState) > prevCount {
+						prevCount := generators.CountContents(state)
+						if generators.CountContents(phaseState) > prevCount {
 							state = phaseState
 
 							var retryParts []generators.Part
@@ -376,14 +356,14 @@ func (Module) Run() Run {
 							// model must re-emit every intended change
 							// block, correcting the one that failed.
 							// See TheoryOfLoops.
-							var applyErr *ApplyError
+							var applyErr *changes.ApplyError
 							if errors.As(roundErr, &applyErr) {
 								retryParts = append(retryParts, generators.Text(
 									"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
 							}
 
 							if opts.SummarizeIncomplete != nil {
-								incompleteText := extractIncompleteOutput(phaseState, prevCount)
+								incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
 								if incompleteText != "" {
 									if summaryText, summaryErr := opts.SummarizeIncomplete(incompleteText); summaryErr == nil && summaryText != "" {
 										retryParts = append(retryParts, generators.Text(
@@ -441,7 +421,7 @@ func (Module) Run() Run {
 				// summary signal and triggers retry. See
 				// TheoryOfSummaryCompletionRetry in codes/generate.go.
 				hasCompletion := len(roundSummaries) > 0
-				finishReason := extractFinishReason(phaseState, countContents(state))
+				finishReason := extractFinishReason(phaseState, generators.CountContents(state))
 				isAbnormalFinish := isAbnormalFinishReason(finishReason)
 
 				if hasCompletion && !isAbnormalFinish {
@@ -455,7 +435,7 @@ func (Module) Run() Run {
 				// states the current attempt number so the model knows
 				// how much retry budget remains. See TheoryOfLoops.
 				if opts.SummarizeIncomplete != nil {
-					incompleteText := extractIncompleteOutput(phaseState, countContents(state))
+					incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(state))
 					if incompleteText != "" {
 						summaryText, err := opts.SummarizeIncomplete(incompleteText)
 						if err == nil && summaryText != "" {
@@ -629,19 +609,11 @@ func (Module) Run() Run {
 	}
 }
 
-// countContents returns the number of contents in the state.
-func countContents(state generators.State) int {
-	count := 0
-	for range state.Contents() {
-		count++
-	}
-	return count
-}
-
-// extractIncompleteOutput collects Text and Thought parts from contents
+// ExtractIncompleteOutput collects Text and Thought parts from contents
 // appended after prevCount, returning them as a single string for
-// summarization.
-func extractIncompleteOutput(state generators.State, prevCount int) string {
+// summarization. It is shared by the codes module's retry summarization
+// (codes.summarizeRetryState) and the loop's own retry paths.
+func ExtractIncompleteOutput(state generators.State, prevCount int) string {
 	var parts []string
 	i := 0
 	for c := range state.Contents() {

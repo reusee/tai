@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"os"
 	"slices"
 
 	"github.com/reusee/prompts"
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -34,10 +32,12 @@ ParserState block handler that writes to an in-memory MemoryStore during
 streaming, then flushes to disk after the generation round succeeds. This
 reuses the same in-memory apply mechanism as the codes module (see
 changes.TheoryOfInMemoryApply), ensuring early error detection — a
-malformed change block triggers a retry via loops.ApplyError, resetting
+malformed change block triggers a retry via changes.ApplyError, resetting
 the MemoryStore to discard failed changes — while preserving filesystem
-consistency on failure. The -no-apply flag disables change block
-application, causing blocks to be parsed but not written to disk.
+consistency on failure. The handler is built by
+changes.BuildChangeBlockHandler, sharing the change-application logic with
+the codes module. The -no-apply flag disables change block application,
+causing blocks to be parsed but not applied to disk.
 `
 
 type SystemPrompt string
@@ -94,7 +94,7 @@ var NextCommand = Command{
 		buildChat phases.BuildChat,
 		flagThoughts flags.Thoughts,
 		apply flags.Apply,
-		applyChangeBlockStore changes.ApplyChangeBlockStore,
+		buildChangeBlockHandler changes.BuildChangeBlockHandler,
 		loopRun loops.Run,
 	) {
 		ctx := context.Background()
@@ -131,28 +131,15 @@ var NextCommand = Command{
 		// BlockHandler applies change blocks immediately to the
 		// MemoryStore as they are parsed during streaming, enabling
 		// early error detection. Apply errors are returned as
-		// *loops.ApplyError so the loop can retry, resetting the
-		// MemoryStore to discard failed changes. See
+		// *changes.ApplyError so the loop can retry, resetting the
+		// MemoryStore to discard failed changes. The handler is built
+		// by changes.BuildChangeBlockHandler so the change-application
+		// logic is shared with the codes module. See
 		// changes.TheoryOfInMemoryApply and loops.TheoryOfLoops.
 		var blockHandler loops.BlockHandler
 		if bool(apply) {
-			blockHandler = func(block blocks.Block) (bool, error) {
-				if block.Kind != "change" {
-					return false, nil
-				}
-				h, parsedOk := changes.ParseChangeBlock(block)
-				if !parsedOk {
-					return false, &loops.ApplyError{
-						Err: fmt.Errorf("unparseable change block with boundary %s", block.Boundary),
-					}
-				}
-				if err := applyChangeBlockStore(memStore, h); err != nil {
-					return false, &loops.ApplyError{
-						Err: fmt.Errorf("apply change block %s %s: %w", h.Op, h.Target, err),
-					}
-				}
-				return true, nil
-			}
+			handler := buildChangeBlockHandler(memStore)
+			blockHandler = loops.BlockHandler(handler)
 		}
 
 		// Run the unified generation loop in single-shot mode (no

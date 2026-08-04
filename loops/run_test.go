@@ -8,6 +8,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
@@ -859,7 +860,7 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 			if callCount == 1 {
 				return appendThenErrorPhase(
 					"partial model output",
-					&ApplyError{Err: errors.New("apply change block MODIFY Foo: target not found")},
+					&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: target not found")},
 				)
 			}
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
@@ -1374,6 +1375,58 @@ func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 		}
 		if !foundDone {
 			t.Fatal("done block from an earlier round must be preserved in Result.RemainingBlocks")
+		}
+	})
+}
+
+func TestExtractIncompleteOutput(t *testing.T) {
+	state := generators.NewPrompts("", []*generators.Content{
+		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("question")}},
+		{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("base answer")}},
+		{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("partial answer"), generators.Thought("thinking...")}},
+	})
+
+	t.Run("SkipBase", func(t *testing.T) {
+		got := ExtractIncompleteOutput(state, 2)
+		if !strings.Contains(got, "partial answer") || !strings.Contains(got, "thinking...") {
+			t.Fatalf("expected partial answer and thoughts, got %q", got)
+		}
+		if strings.Contains(got, "base answer") {
+			t.Fatalf("base answer should be skipped, got %q", got)
+		}
+	})
+
+	t.Run("NoSkip", func(t *testing.T) {
+		got := ExtractIncompleteOutput(state, 0)
+		if !strings.Contains(got, "base answer") {
+			t.Fatalf("expected base answer when no skip, got %q", got)
+		}
+		// ExtractIncompleteOutput processes all roles, so user content
+		// is included when prevCount is 0.
+		if !strings.Contains(got, "question") {
+			t.Fatalf("expected question when no skip, got %q", got)
+		}
+	})
+
+	t.Run("SkipAll", func(t *testing.T) {
+		got := ExtractIncompleteOutput(state, 3)
+		if got != "" {
+			t.Fatalf("expected empty, got %q", got)
+		}
+	})
+
+	t.Run("NonTextPartsIgnored", func(t *testing.T) {
+		stateWithMeta := generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleLog, Parts: []generators.Part{
+				generators.Usage{},
+				generators.FinishReason("stop"),
+				generators.Error{Error: errors.New("err")},
+			}},
+			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("visible")}},
+		})
+		got := ExtractIncompleteOutput(stateWithMeta, 0)
+		if got != "visible" {
+			t.Fatalf("expected only text parts, got %q", got)
 		}
 	})
 }
