@@ -129,3 +129,32 @@ func TestProcessShellBlocksFiltersByKind(t *testing.T) {
 		t.Fatalf("expected output to contain 'hello world', got: %s", output)
 	}
 }
+
+func TestShellPromptsWaitForResults(t *testing.T) {
+	// Shell output is returned as user content only in the NEXT round, so
+	// the model must not emit content that depends on shell output in the
+	// same response. Multiple independent shell blocks in one response are
+	// allowed, but a shell block whose command depends on another shell
+	// block's output — or a change block that depends on shell output —
+	// would act on results that have not yet arrived, creating pointless
+	// loops. The prompts must state the wait-for-results semantics
+	// explicitly. See TheoryOfShellBlocks.
+	prompts := map[string]string{
+		"ShellBlockSystemPrompt":  ShellBlockSystemPrompt,
+		"ShellBlockRestatePrompt": ShellBlockRestatePrompt,
+	}
+	for name, prompt := range prompts {
+		if strings.Contains(prompt, "ONE shell block") {
+			t.Fatalf("%s must not restrict the model to a single shell block per response", name)
+		}
+		if !strings.Contains(prompt, "NEXT round") {
+			t.Fatalf("%s must state that shell output is returned only in the next round", name)
+		}
+		if !strings.Contains(prompt, "summary block") {
+			t.Fatalf("%s must instruct the model to end the response with a summary block after emitting shell blocks", name)
+		}
+		if !strings.Contains(prompt, "independent") {
+			t.Fatalf("%s must state that multiple shell blocks are only allowed when their commands are independent", name)
+		}
+	}
+}

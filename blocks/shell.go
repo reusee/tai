@@ -24,6 +24,20 @@ so the model knows how to emit shell blocks, and the generation loop executes
 any shell blocks found in model output, feeding results back as user content
 for the next round.
 
+The turn-based semantics are critical: shell output is delivered only in the
+next generation round, never in the response that contains the shell blocks.
+The model may emit multiple shell blocks in one response, but only when their
+commands are independent of one another: every shell block in a response
+executes only after the response ends, so no shell block can use the output
+of another shell block from the same response. Content that depends on shell
+output — whether a change block or a request-context block — must never be
+emitted in the same response as the shell blocks it depends on: the model
+would act on results it has not yet received, creating pointless loops. After
+the last shell block, the model should end the response with a summary block
+and wait for the results before emitting dependent content. The system prompt
+and restate prompt (ShellBlockSystemPrompt, ShellBlockRestatePrompt) state
+these rules explicitly so the model waits for the results before proceeding.
+
 Shell command validation is handled by the security package
 (security.ValidateShellCommand), which enforces a command allowlist via
 AST-level parsing. See security.TheoryOfShellSecurity for the security model.
@@ -47,7 +61,12 @@ The delimiter 爞齌黿 in the example is illustrative only: in every block you 
 - The command is executed with ` + "`" + `sh -c` + "`" + ` in the project root directory.
 - Both stdout and stderr are captured and returned as user content in the next round.
 - A timeout of 30 seconds is enforced per command.
-- **Security policy**: Only commands in the allowed list are executed. Allowed command categories:
+- Shell output is NOT available in the current response: it is returned as user content only at the start of the NEXT round, after ALL shell blocks in the response have been executed.
+- You MAY emit multiple shell blocks in one response, but only when their commands are independent of one another: no shell block can use the output of another shell block from the same response.
+- Do NOT emit change blocks or request-context blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
+- After the last shell block, stop generating, end the response with a summary block, and wait for the results.
+- When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
+**Security policy**: Only commands in the allowed list are executed. Allowed command categories:
   - File viewing: ls, cat, head, tail, wc, file, stat, tree, du, df
   - Search: grep, rg, find (without -exec), which, whereis
   - Text processing: sort, uniq, cut, tr, diff, comm, paste, column
@@ -77,7 +96,9 @@ const ShellBlockRestatePrompt = `- Shell block: emit
 <<齑靁虋 <shell>
 <shell command>
 齑靁虋
-to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round. The example delimiter 齑靁虋 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
+- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or request-context blocks that depend on the shell output until the results arrive.
+- The example delimiter 齑靁虋 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
 
 const shellTimeout = 30 * time.Second
 
