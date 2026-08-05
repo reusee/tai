@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"go/token"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -40,6 +41,7 @@ func (Module) Packages(
 	loadDir LoadDir,
 	loadPatterns LoadPatterns,
 	contextPatterns ContextPatterns,
+	workspace Workspace,
 ) (
 	getRootPackages GetRootPackages,
 	getContextPackages GetContextPackages,
@@ -52,6 +54,38 @@ func (Module) Packages(
 	var err error
 
 	init := sync.OnceFunc(func() {
+		// In workspace mode, load from the workspace root so that package
+		// resolution covers every module in the workspace. See
+		// TheoryOfWorkspace.
+		dir := string(loadDir)
+		if workspace != "" {
+			dir = string(workspace)
+			// The go command forbids -mod=mod in workspace mode ("-mod may
+			// only be set to readonly or vendor when in workspace mode").
+			// Strip it here as a safety net for envs supplied via config,
+			// which bypass the Envs provider's workspace-aware handling.
+			// See TheoryOfModModEnv and TheoryOfWorkspace.
+			envs = Envs(withoutModModEnv(envs))
+			// The go command rejects "./..." from a non-module workspace
+			// root ("directory prefix . does not contain modules listed in
+			// go.work or their selected dependencies"), so the default
+			// "./..." pattern is replaced with one pattern per workspace
+			// module. See TheoryOfWorkspace.
+			if len(loadPatterns) == 1 && loadPatterns[0] == "./..." {
+				modules := workspaceModules(string(workspace))
+				patterns := make([]string, 0, len(modules))
+				for _, moduleDir := range modules {
+					rel, err := filepath.Rel(string(workspace), moduleDir)
+					if err != nil {
+						continue
+					}
+					patterns = append(patterns, "./"+filepath.ToSlash(rel)+"/...")
+				}
+				if len(patterns) > 0 {
+					loadPatterns = LoadPatterns(patterns)
+				}
+			}
+		}
 		// NeedDeps loads the full dependency graph in a single go list
 		// invocation. Packages beyond MaxPackageDistanceFromRoot are still
 		// filtered out in Files() via BFS distance computation, but loading
@@ -69,7 +103,7 @@ func (Module) Packages(
 				packages.NeedEmbedPatterns,
 			Tests: !bool(noTests),
 			Env:   envs,
-			Dir:   string(loadDir),
+			Dir:   dir,
 		}
 
 		rootPkgs, err = packages.Load(config, loadPatterns...)

@@ -29,12 +29,20 @@ func (e Envs) HandleConfig(path string, values []*cue.Value) (any, error) {
 	return &ret, nil
 }
 
-func (Module) Envs() (ret Envs) {
+func (Module) Envs(workspace Workspace) (ret Envs) {
 	ret = os.Environ()
-	// Ensure GOFLAGS includes -mod=mod so go list can resolve packages without
-	// requiring go.mod to be perfectly tidy. The -mod=mod flag allows go to
-	// update go.mod automatically instead of erroring.
-	// See TheoryOfModModEnv.
-	ret = Envs(withModModEnv(ret))
+	if workspace == "" {
+		// Ensure GOFLAGS includes -mod=mod so go list can resolve packages
+		// without requiring go.mod to be perfectly tidy. The -mod=mod flag
+		// allows go to update go.mod automatically instead of erroring.
+		// See TheoryOfModModEnv.
+		ret = Envs(withModModEnv(ret))
+	} else {
+		// The go command forbids -mod=mod in workspace mode ("-mod may only
+		// be set to readonly or vendor when in workspace mode"), so strip
+		// any incompatible -mod= flag from GOFLAGS instead of injecting one.
+		// See TheoryOfModModEnv and TheoryOfWorkspace.
+		ret = Envs(withoutModModEnv(ret))
+	}
 	return
 }

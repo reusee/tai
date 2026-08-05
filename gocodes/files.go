@@ -91,6 +91,7 @@ func (Module) Files(
 	includeStdLib IncludeStdLib,
 	debug Debug,
 	loadDir LoadDir,
+	workspace Workspace,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -298,6 +299,23 @@ func (Module) Files(
 					}
 				}
 				break
+			}
+		}
+		// In workspace mode, add the root of every workspace module so
+		// that top-level documentation (README.md) in each module is
+		// discovered. See TheoryOfWorkspace.
+		if workspace != "" {
+			for _, moduleDir := range workspaceModules(string(workspace)) {
+				moduleDir = filepath.Clean(moduleDir)
+				if _, ok := rootPkgDirs[moduleDir]; ok {
+					continue
+				}
+				for _, pkg := range rootPkgs {
+					if pkg.Module != nil && filepath.Clean(pkg.Module.Dir) == moduleDir {
+						rootPkgDirs[moduleDir] = pkg
+						break
+					}
+				}
 			}
 		}
 		// include .md files in root package directories

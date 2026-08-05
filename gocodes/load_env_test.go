@@ -78,3 +78,88 @@ func TestWithModModEnv(t *testing.T) {
 		}
 	})
 }
+
+func TestWithoutModModEnv(t *testing.T) {
+	t.Run("removes mod=mod", func(t *testing.T) {
+		envs := []string{"PATH=/usr/bin", "GOFLAGS=-trimpath -mod=mod"}
+		result := withoutModModEnv(envs)
+		found := false
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				found = true
+				if strings.Contains(e, "-mod=") {
+					t.Fatalf("-mod flag not removed, got %q", e)
+				}
+				if e != "GOFLAGS=-trimpath" {
+					t.Fatalf("GOFLAGS not preserved, got %q", e)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("GOFLAGS entry missing, got %v", result)
+		}
+	})
+
+	t.Run("keeps mod=readonly", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=readonly"}
+		result := withoutModModEnv(envs)
+		found := false
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				found = true
+				if !strings.Contains(e, "-mod=readonly") {
+					t.Fatalf("-mod=readonly should be preserved, got %q", e)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("GOFLAGS entry missing, got %v", result)
+		}
+	})
+
+	t.Run("keeps mod=vendor", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=vendor"}
+		result := withoutModModEnv(envs)
+		found := false
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				found = true
+				if !strings.Contains(e, "-mod=vendor") {
+					t.Fatalf("-mod=vendor should be preserved, got %q", e)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("GOFLAGS entry missing, got %v", result)
+		}
+	})
+
+	t.Run("removes GOFLAGS when empty", func(t *testing.T) {
+		envs := []string{"PATH=/usr/bin", "GOFLAGS=-mod=mod"}
+		result := withoutModModEnv(envs)
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				t.Fatalf("empty GOFLAGS should be removed, got %v", result)
+			}
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 entry, got %v", result)
+		}
+	})
+
+	t.Run("no GOFLAGS unchanged", func(t *testing.T) {
+		envs := []string{"PATH=/usr/bin", "HOME=/root"}
+		result := withoutModModEnv(envs)
+		if len(result) != len(envs) {
+			t.Fatalf("expected same length, got %v", result)
+		}
+	})
+
+	t.Run("does not modify original slice", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=mod"}
+		_ = withoutModModEnv(envs)
+		if envs[0] != "GOFLAGS=-mod=mod" {
+			t.Fatalf("original slice was modified: %v", envs)
+		}
+	})
+}
