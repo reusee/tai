@@ -77,13 +77,18 @@ func TestGoalTheoryStatesNoProcessLevelCaches(t *testing.T) {
 }
 
 func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
-	// The loop body runs inside a closure passed to scope.Call, so a
-	// return there only exits the closure. If the loop continues after
-	// a done block, the "Goal Not Achieved" message appears, failing
-	// this test. See TheoryOfGoalCommand.
+	// A done block is a declaration, not a verdict: the goal command must
+	// run one more loop to verify the declaration against the current
+	// filesystem state, and only a second consecutive done block confirms
+	// the goal. The loop body runs inside a closure passed to scope.Call,
+	// so a return there only exits the closure; if the loop continued
+	// after confirmation, the "Goal Not Achieved" message would appear,
+	// failing this test. See TheoryOfGoalCommand.
+	calls := 0
 	fakeScope := dscope.New(
 		func() codes.GenerateWithResultWithStats {
 			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+				calls++
 				return loops.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
 				}, nil, nil
@@ -111,11 +116,16 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	}
 	r.Close()
 
+	// The first loop declares completion; the second loop verifies the
+	// declaration against the current filesystem state and confirms it.
+	if calls != 2 {
+		t.Fatalf("expected 2 calls (declaration + verification), got %d", calls)
+	}
 	if !strings.Contains(string(output), "Goal Achieved") {
-		t.Fatal("expected goal achieved message when done block present")
+		t.Fatal("expected goal achieved message when done block confirmed by verification loop")
 	}
 	if strings.Contains(string(output), "Goal Not Achieved") {
-		t.Fatal("goal not achieved message must not appear when done block found; the loop must stop after the first loop")
+		t.Fatal("goal not achieved message must not appear when done block confirmed")
 	}
 }
 
@@ -239,7 +249,9 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 	t.Run("CarriesFeedbackToNextLoop", func(t *testing.T) {
 		// The goal command must carry the previous loop's failure into
 		// the next loop's system prompt so the model can correct its
-		// approach in unattended operation. See TheoryOfGoalCommand.
+		// approach in unattended operation. A done block emitted after a
+		// failure is a declaration, so a third loop is needed to verify it
+		// before the goal is confirmed. See TheoryOfGoalCommand.
 		calls := 0
 		var seenPrompts []string
 		fakeScope := dscope.New(
@@ -297,17 +309,20 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		rOut.Close()
 		rErr.Close()
 
-		if calls != 2 {
-			t.Fatalf("expected 2 calls, got %d", calls)
+		if calls != 3 {
+			t.Fatalf("expected 3 calls (failure, done declaration, verification), got %d", calls)
 		}
-		if len(seenPrompts) != 2 {
-			t.Fatalf("expected 2 prompts, got %d", len(seenPrompts))
+		if len(seenPrompts) != 3 {
+			t.Fatalf("expected 3 prompts, got %d", len(seenPrompts))
 		}
 		if strings.Contains(seenPrompts[0], "first loop failed") {
 			t.Fatalf("first prompt must not contain feedback, got: %s", seenPrompts[0])
 		}
 		if !strings.Contains(seenPrompts[1], "first loop failed") {
 			t.Fatalf("expected feedback in second prompt, got: %s", seenPrompts[1])
+		}
+		if !strings.Contains(seenPrompts[2], goalDoneVerificationPrompt) {
+			t.Fatalf("expected verification feedback in third prompt, got: %s", seenPrompts[2])
 		}
 		_ = stdout
 		_ = stderr
@@ -320,6 +335,10 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	// the per-loop print at each loop's end — so the user can review the
 	// entire process in a single table. The Loop column identifies which
 	// goal loop produced each round. See codes.TheoryOfRoundStatistics.
+	//
+	// With done-block verification, the command runs two loops (declaration
+	// and verification), so the aggregated totals cover both loops.
+	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
 		func() codes.GenerateWithResultWithStats {
 			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
@@ -356,7 +375,7 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	outputStr := string(output)
 	// The aggregated statistics must be printed after the goal completes,
 	// with the goal-specific title, the Loop column, and totals across all
-	// loops (111 + 222 = 333 prompt tokens).
+	// loops (111 + 222 = 333 prompt tokens per loop, 333 x 2 loops = 666).
 	if !strings.Contains(outputStr, "Goal Loop Statistics") {
 		t.Fatal("expected aggregated goal loop statistics after goal completes")
 	}
@@ -366,7 +385,72 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	if !strings.Contains(outputStr, "Loop 1 Round 2: second round") {
 		t.Fatal("expected loop-aware summary line for round 2 in aggregated statistics")
 	}
-	if !strings.Contains(outputStr, "333") {
+	if !strings.Contains(outputStr, "Loop 2 Round 1: first round") {
+		t.Fatal("expected loop-aware summary line for round 1 of the verification loop in aggregated statistics")
+	}
+	if !strings.Contains(outputStr, "Loop 2 Round 2: second round") {
+		t.Fatal("expected loop-aware summary line for round 2 of the verification loop in aggregated statistics")
+	}
+	if !strings.Contains(outputStr, "666") {
 		t.Fatal("expected aggregated totals across all loops")
+	}
+}
+
+func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
+	// A done block is a declaration, not a verdict: the filesystem may
+	// have changed while the declaring loop ran (e.g., todo.md may have
+	// gained new tasks), so the goal must be re-assessed in a fresh loop
+	// that reads the current filesystem state. When the verification loop
+	// finds remaining work and emits no done block, the declaration is
+	// overturned and the command continues running until the loop budget
+	// is exhausted. See TheoryOfGoalCommand.
+	calls := 0
+	fakeScope := dscope.New(
+		func() codes.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+				calls++
+				if calls == 1 {
+					// First loop: declares the goal achieved.
+					return loops.Result{
+						RemainingBlocks: []blocks.Block{{Kind: "done"}},
+					}, nil, nil
+				}
+				// Verification loop and all subsequent loops: re-read the
+				// filesystem, find remaining work, emit no done block.
+				return loops.Result{}, nil, nil
+			}
+		},
+	)
+	reset := dscope.Reset(func() dscope.Scope { return fakeScope })
+
+	// Redirect stdout to capture the command's output.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	mainFn := GoalCommand.Main.(func(dscope.Reset))
+	mainFn(reset)
+
+	w.Close()
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	// The command must continue after the verification loop overturns the
+	// declaration, running until the loop budget is exhausted.
+	if calls != maxGoalIterations {
+		t.Fatalf("expected %d calls, got %d", maxGoalIterations, calls)
+	}
+	if strings.Contains(string(output), "Goal Achieved") {
+		t.Fatal("goal achieved must not appear when the verification loop overturns the declaration")
+	}
+	if !strings.Contains(string(output), "Goal Not Achieved") {
+		t.Fatal("expected goal not achieved message when the verification loop overturns the declaration")
 	}
 }

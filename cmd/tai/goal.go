@@ -15,7 +15,7 @@ import (
 
 const TheoryOfGoalCommand = `
 The goal command autonomously runs the generation pipeline for a set number of
-iterations (maxGoalIterations) until a done block is observed. Each loop is a
+iterations (maxGoalIterations) until a done block is confirmed. Each loop is a
 fresh, independent generation session: the loop re-reads the codebase,
 organizes context from scratch, and runs the full generation pipeline (change
 blocks, go-test, shell, continue, etc.). This is crucial for unattended
@@ -24,10 +24,21 @@ model's changes from the previous loop are visible in the next one. The goal
 command is the "no-human" mode: NoHuman is true, so the loop runs without any
 interactive input.
 
-A done block signals goal completion. The model emits a done block when it
-believes the goal is achieved, and the goal command stops. Because the done
-block is not consumed by any component, it remains in
-Result.RemainingBlocks; the goal command checks there.
+A done block is a completion declaration, not a verdict. The model emits a
+done block when it believes the goal is achieved; the goal command then
+carries goalDoneVerificationPrompt into the next loop, which re-reads the
+current filesystem state and re-assesses the goal. Only a second consecutive
+done block confirms the goal and stops the command. This verification step is
+required because the filesystem may change while a loop runs: a loop that
+loaded todo.md containing only task A cannot see task B added by the user
+during execution, so its done declaration may rest on stale context. The
+verification loop sees the latest files, so the goal-achieved verdict always
+reflects the current state. Because the done block is not consumed by any
+component, it remains in Result.RemainingBlocks; the goal command checks
+there. When the declaration lands on the final budget loop, the command runs
+one extra verification loop beyond the budget. A loop that fails or produces
+uncorrected malformed blocks overturns a pending declaration: the goal state
+is unknown or changes are missing, so the goal is not achieved.
 
 Malformed blocks that cannot be corrected within the parse-error correction
 budget are reported per loop via loops.Result.ParseErrors. Reporting makes
@@ -105,10 +116,24 @@ goal achieved
 
 The delimiter 龘靐齉 is illustrative only: choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line.
 
+- A done block is a completion declaration, not a verdict. The next loop starts fresh, re-reads the current filesystem state — which may have changed while this loop ran (e.g., todo.md may have gained new tasks) — and verifies the declaration. Only when a second consecutive loop also emits a done block is the goal confirmed.
 - Only emit a done block when the goal is genuinely achieved. If unsure, do NOT emit it; continue working in the next loop.
 - Each loop is independent: you start fresh with the current filesystem state. Re-read files to verify previous changes before building on them.
 - Be thorough: verify your changes with tests (go-test blocks) before declaring the goal achieved.
 `
+
+// goalDoneVerificationPrompt is the feedback carried into the loop
+// immediately after a loop that emitted a done block. A done block is a
+// completion declaration, not a verdict: the filesystem may have changed
+// since the declaring loop loaded its context (e.g., todo.md may have
+// gained new tasks), so the declaration must be verified in a fresh loop
+// that re-reads the current filesystem state. Only a second consecutive
+// done block confirms the goal. See TheoryOfGoalCommand.
+const goalDoneVerificationPrompt = `
+[System note: The previous goal loop emitted a done block declaring the goal achieved. The filesystem may have changed since that loop loaded its context — for example, todo.md may have been updated with new tasks. Verify the declaration against the CURRENT filesystem state: re-read the relevant files (including todo.md) and confirm whether every task is genuinely complete.
+
+If the goal is genuinely achieved, emit a done block again to confirm.
+If there is remaining work (e.g., new tasks were added while the previous loop ran), do NOT emit a done block; instead, continue working on the remaining work in this loop.]`
 
 var GoalCommand = Command{
 	Defs: []any{
@@ -142,10 +167,10 @@ var GoalCommand = Command{
 	) {
 		ctx := context.Background()
 
-		// achieved records whether a done block was observed. The loop
-		// body runs inside a closure passed to scope.Call, so a return
-		// there only exits the closure; the flag lets the outer loop
-		// stop after the current iteration.
+		// achieved records whether a done block was confirmed by a
+		// verification loop. The loop body runs inside a closure passed to
+		// scope.Call, so a return there only exits the closure; the flag
+		// lets the outer loop stop after the current iteration.
 		achieved := false
 
 		// stopRequested records whether the goal loop should stop after
@@ -176,7 +201,25 @@ var GoalCommand = Command{
 		// a glance. See codes.TheoryOfRoundStatistics.
 		var allStats []codes.RoundStat
 
-		for iteration := range maxGoalIterations {
+		// pendingDoneVerification records whether the previous loop emitted
+		// a done block. A done block is a completion declaration, not a
+		// verdict: the filesystem may have changed since the declaring loop
+		// loaded its context (e.g., todo.md may have gained new tasks), so
+		// the declaration must be verified in a fresh loop that re-reads
+		// the current filesystem state. Only a second consecutive done
+		// block confirms the goal; a failed loop or uncorrected malformed
+		// blocks overturn the declaration. See TheoryOfGoalCommand.
+		pendingDoneVerification := false
+
+		// loopsRun counts the loops actually executed, including the extra
+		// verification loop beyond the budget, so status messages and the
+		// Loop column of the aggregated statistics reflect the true count.
+		loopsRun := 0
+
+		// runOneLoop executes a single generation loop and updates the
+		// shared loop state. It returns true when the goal command should
+		// stop after this loop (goal confirmed or repeated-error stop).
+		runOneLoop := func() bool {
 			scope := reset()
 			if feedback != "" {
 				scope = scope.Fork(func() GoalFeedback { return feedback })
@@ -185,8 +228,6 @@ var GoalCommand = Command{
 			scope.Call(func(
 				generateWithResultWithStats codes.GenerateWithResultWithStats,
 			) {
-
-				fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", iteration+1, maxGoalIterations)
 
 				// Run a full generation cycle. Each call to
 				// generateWithResultWithStats is independent: it re-reads the
@@ -204,14 +245,14 @@ var GoalCommand = Command{
 				// process at a glance. See codes.TheoryOfRoundStatistics.
 				allStats = append(allStats, stats...)
 				for i := loopStart; i < len(allStats); i++ {
-					allStats[i].Loop = iteration + 1
+					allStats[i].Loop = loopsRun
 				}
 				if err != nil {
 					// Print the error and continue to the next loop.
 					// Transient errors (API rate limits) may resolve in
 					// the next iteration; persistent errors (missing API
 					// key) will repeat and eventually exhaust the limit.
-					fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", iteration+1, err)
+					fmt.Fprintf(os.Stderr, "Goal loop %d failed: %v\n", loopsRun, err)
 
 					// Detect repeated identical errors and stop early. In
 					// unattended operation, a persistent failure burns
@@ -232,6 +273,12 @@ var GoalCommand = Command{
 						stopRequested = true
 						return
 					}
+
+					// A failed loop overturns a pending done declaration:
+					// the failure means the goal state is unknown, so the
+					// declaration cannot be confirmed. See
+					// TheoryOfGoalCommand.
+					pendingDoneVerification = false
 
 					// Carry the failure into the next loop's system prompt
 					// so the model can correct the cause and continue from
@@ -255,12 +302,15 @@ var GoalCommand = Command{
 				// within the parse-error correction budget. In
 				// unattended operation, silently dropped change blocks
 				// would cause incomplete changes without any signal.
-				// See TheoryOfGoalCommand.
+				// Uncorrected malformed blocks overturn a pending done
+				// declaration: changes may be missing, so the goal is not
+				// achieved. See TheoryOfGoalCommand.
 				if len(result.ParseErrors) > 0 {
 					first := result.ParseErrors[0]
 					fmt.Fprintf(os.Stderr,
 						"Goal loop %d: %d malformed block(s) could not be corrected (e.g., kind %q boundary %q); some changes may be missing.\n",
-						iteration+1, len(result.ParseErrors), first.BlockKind, first.Boundary)
+						loopsRun, len(result.ParseErrors), first.BlockKind, first.Boundary)
+					pendingDoneVerification = false
 
 					// Carry the uncorrected malformed blocks into the next
 					// loop's system prompt so the model can re-emit them in
@@ -270,31 +320,71 @@ var GoalCommand = Command{
 					feedback = GoalFeedback(fmt.Sprintf(
 						"[System note: The previous goal loop produced %d malformed block(s) that could not be corrected, e.g., kind %q with boundary %q. These blocks were NOT applied. In this loop, re-emit ONLY the corrected versions of these blocks; do not re-emit blocks that were applied successfully.]",
 						len(result.ParseErrors), first.BlockKind, first.Boundary))
-				} else {
-					feedback = ""
+					return
 				}
 
-				// Check if the model signaled goal completion by
-				// emitting a done block. The done block is not consumed
-				// by any component, so it remains in
-				// Result.RemainingBlocks. See TheoryOfGoalCommand.
+				// Check if the model signaled goal completion by emitting a
+				// done block. The done block is not consumed by any
+				// component, so it remains in Result.RemainingBlocks.
+				// See TheoryOfGoalCommand.
+				foundDone := false
 				for _, block := range result.RemainingBlocks {
 					if block.Kind == "done" {
-						fmt.Fprintf(os.Stdout, "\n=== Goal Achieved after %d loop(s) ===\n", iteration+1)
-						achieved = true
-						return
+						foundDone = true
+						break
 					}
 				}
 
+				if foundDone {
+					if pendingDoneVerification {
+						// A second consecutive done block confirms the
+						// declaration: the verification loop re-read the
+						// current filesystem state, so the verdict reflects
+						// the latest files. See TheoryOfGoalCommand.
+						fmt.Fprintf(os.Stdout, "\n=== Goal Achieved after %d loop(s) ===\n", loopsRun)
+						achieved = true
+						return
+					}
+					// First done block: a declaration, not a verdict. The
+					// next loop must re-read the current filesystem state
+					// (which may have changed while this loop ran, e.g.,
+					// todo.md may have gained new tasks) and verify the
+					// declaration before the goal is confirmed.
+					// See TheoryOfGoalCommand.
+					pendingDoneVerification = true
+					feedback = GoalFeedback(goalDoneVerificationPrompt)
+					return
+				}
+
+				// No done block: clear any pending declaration and feedback
+				// so the next loop starts fresh.
+				pendingDoneVerification = false
+				feedback = ""
 			})
 
-			if achieved || stopRequested {
+			return achieved || stopRequested
+		}
+
+		for loopsRun < maxGoalIterations {
+			loopsRun++
+			fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", loopsRun, maxGoalIterations)
+			if runOneLoop() {
 				break
 			}
 		}
 
+		// A done block declaration on the final budget loop is still just a
+		// declaration: it must be verified in a fresh loop that sees the
+		// latest filesystem state. Run one extra verification loop beyond
+		// the budget. See TheoryOfGoalCommand.
+		if pendingDoneVerification && !achieved && !stopRequested {
+			loopsRun++
+			fmt.Fprintf(os.Stdout, "\n=== Goal Verification Loop %d (beyond budget) ===\n\n", loopsRun)
+			runOneLoop()
+		}
+
 		if !achieved && !stopRequested {
-			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", maxGoalIterations)
+			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", loopsRun)
 		}
 
 		// Print all loop statistics once more, aggregated, after the goal
