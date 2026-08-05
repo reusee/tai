@@ -37,7 +37,7 @@ var _ configs.Config = DynamicContext(false)
 var _ flags.Flag = DynamicContext(true)
 
 func (d DynamicContext) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return DynamicContext(true), args, nil
+	return new(DynamicContext(true)), args, nil
 }
 
 func (d DynamicContext) Keys() map[string]string {

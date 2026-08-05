@@ -19,19 +19,6 @@ import (
 	"github.com/reusee/tai/pathutil"
 )
 
-const TheoryOfSymlinkTraversal = `
-Symbolic links are followed so that content from other directories or files can
-be included via symlinks. Cycle detection uses two complementary mechanisms:
-1. Ancestor check: a symlink whose resolved target is an ancestor of the current
-   path would create an infinite loop and is skipped.
-2. Visited set: a map of resolved real paths records every symlink target that
-   has been followed. If a symlink resolves to a path already in the set, it is
-   skipped to break cycles that do not involve an ancestor relationship (e.g.,
-   mutual symlinks between sibling directories).
-Broken symlinks whose targets cannot be resolved are silently skipped rather than
-aborting the entire traversal.
-`
-
 const TheoryOfReadOnlySymlinks = `
 Symbolic links are followed so that content from other directories or files can
 be included via symlinks. Cycle detection uses two complementary mechanisms:

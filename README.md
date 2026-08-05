@@ -12,7 +12,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 **In-memory apply with filesystem consistency.** Change blocks are applied to an in-memory store during streaming, not directly to disk. If a change block fails — invalid target, malformed code — generation stops immediately and the in-memory store is discarded. Only after a round succeeds are changes flushed to disk in a single batch. The disk is never left in a partially modified state by an interrupted round.
 
-**Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution is governed by an AST-level command allowlist. Focus files outside writable directories are rejected at collection time.
+**Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution is governed by an AST-level command allowlist. Focus files outside writable directories are marked read-only at collection time.
 
 ## What It Is
 
@@ -50,7 +50,9 @@ Single-shot task on arbitrary input:
 
 ```
 tai next -model gemini-pro chat "explain the difference between TCP and UDP"
-```Generate code from a focus file:
+```
+
+Generate code from a focus file:
 
 ```
 tai -model gemini-pro -file internal/handler.go -file internal/handler_test.go \
@@ -149,11 +151,11 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 The model emits structured output as heredoc-delimited blocks. Each block has a kind (XML element name), attributes, and a body:
 
 ```
-<<徕珑 <change op="MODIFY" target="Foo" file-path="/path/to/file.go">
+<<徕珑龘 <change op="MODIFY" target="Foo" file-path="/path/to/file.go">
 func Foo() {
     // modified code
 }
-徕珑
+徕珑龘
 ```
 
 Block kinds: `change`, `shell`, `go-test`, `continue`, `summary`, `request-context`, `memory`.

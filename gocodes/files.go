@@ -446,10 +446,8 @@ func (Module) Files(
 			}
 		}
 
-		// sort — module is the outermost tier so that all non-root-module
-		// files (dependencies, stdlib) form the stable prefix, followed by
-		// root-module context files, then root-module focus files.
-		// See FileOrderingTheory.
+		// Sort files into stable tiers for LLM prefix cache reuse.
+		// See TheoryOfFileOrdering.
 		slices.SortStableFunc(files, func(a, b *File) int {
 			// root module last — outermost grouping so that all non-root-module
 			// files (dependencies, stdlib) form the stable prefix, maximizing
