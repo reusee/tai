@@ -97,10 +97,13 @@ doublestar.FilepathGlob for native ** (globstar) support for recursive directory
 traversal. Pattern matching uses doublestar.PathMatch, also supporting **
 patterns. Non-glob exclusion patterns (e.g., "pkg") retain directory-prefix
 matching semantics alongside the doublestar path match, so "pkg" excludes both
-"pkg" itself and everything under "pkg/". This ensures consistent ** semantics
-across all file matching contexts: IterFiles glob expansion, isExcludedPath
-pattern matching, request-context glob tags, and gocodes exclusion/embed-requested
-checks.
+"pkg" itself and everything under "pkg/". Slash-less exclusion patterns (e.g.,
+"*.md" or "README.md") additionally match the path's basename at any depth,
+following gitignore-style semantics, so files in subdirectories or sibling
+workspace modules (paths containing "..") are still excluded. This ensures
+consistent ** semantics across all file matching contexts: IterFiles glob
+expansion, isExcludedPath pattern matching, request-context glob tags, and
+gocodes exclusion/embed-requested checks.
 
 Hidden files (those whose basename starts with ".") are skipped during
 directory traversal to avoid including unintended dotfiles (e.g., .git,
@@ -413,20 +416,54 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 // isExcludedPath checks whether the given path is excluded by any exclusion
 // pattern. Non-glob patterns are treated as directory prefixes: "pkg"
 // excludes both "pkg" itself and everything under "pkg/". Glob patterns
-// are matched with filepath.Match.
+// are matched with doublestar.PathMatch. The path is also matched with
+// leading ".." components stripped, so patterns are evaluated against the
+// project or workspace root rather than the current position. Slash-less
+// patterns (e.g., "*.md" or "README.md") additionally match the path's
+// basename at any depth, following gitignore-style semantics.
+// See TheoryOfPatternMatching.
 func isExcludedPath(path string, excludePatterns []string) bool {
 	cleanedPath := filepath.Clean(path)
+	baseName := filepath.Base(cleanedPath)
+
+	// Strip leading ".." components so patterns are matched against the
+	// path relative to the project or workspace root. A file in a sibling
+	// workspace module has path "../mod2/README.md"; the pattern
+	// "mod2/README.md" must still match it. See TheoryOfPatternMatching.
+	trimmedPath := cleanedPath
+	for strings.HasPrefix(trimmedPath, ".."+string(filepath.Separator)) {
+		trimmedPath = strings.TrimPrefix(trimmedPath, ".."+string(filepath.Separator))
+	}
+
 	for _, pattern := range excludePatterns {
 		cleanedPattern := filepath.Clean(pattern)
-		if cleanedPath == cleanedPattern {
-			return true
-		}
-		if !strings.ContainsAny(cleanedPattern, "*?[") &&
-			strings.HasPrefix(cleanedPath, cleanedPattern+string(filepath.Separator)) {
-			return true
-		}
+
+		// Glob match against the raw path and the path with leading
+		// ".." stripped.
 		if matched, err := doublestar.PathMatch(pattern, path); err == nil && matched {
 			return true
+		}
+		if matched, err := doublestar.PathMatch(pattern, trimmedPath); err == nil && matched {
+			return true
+		}
+
+		// Directory-prefix match for non-glob patterns: "pkg" excludes
+		// both "pkg" itself and everything under "pkg/".
+		if !strings.ContainsAny(cleanedPattern, "*?[") &&
+			(cleanedPath == cleanedPattern ||
+				strings.HasPrefix(cleanedPath, cleanedPattern+string(filepath.Separator)) ||
+				trimmedPath == cleanedPattern ||
+				strings.HasPrefix(trimmedPath, cleanedPattern+string(filepath.Separator))) {
+			return true
+		}
+
+		// Slash-less patterns match the basename at any depth, so files
+		// in subdirectories or sibling workspace modules are excluded by
+		// name or extension.
+		if !strings.Contains(cleanedPattern, string(filepath.Separator)) {
+			if matched, err := doublestar.PathMatch(cleanedPattern, baseName); err == nil && matched {
+				return true
+			}
 		}
 	}
 	return false

@@ -298,9 +298,15 @@ Exclusion patterns (prefixed with "!") filter files from the context provided
 to the model. A non-glob pattern like "pkg" matches both a file named "pkg"
 and all files under the "pkg/" directory, acting as a directory prefix filter.
 Glob patterns (containing *, ?, or []) are matched via matchPattern, which
-supports ** for recursive directory matching. Exclusion patterns must be
-separated from inclusion patterns before being passed to IterFiles, because
-IterFiles treats all patterns as file paths to glob-expand.
+supports ** for recursive directory matching. Patterns are also matched against
+the path with leading ".." components stripped, so a file in a sibling
+workspace module (relPath "../mod2/README.md") is excluded by the pattern
+"mod2/README.md". Slash-less patterns (e.g., "*.md" or "README.md") additionally
+match the path's basename at any depth, following gitignore-style semantics:
+automatically-included markdown files are excluded by name or extension
+regardless of their directory. Exclusion patterns must be separated from
+inclusion patterns before being passed to IterFiles, because IterFiles treats
+all patterns as file paths to glob-expand.
 `
 
 const TheoryOfEmbedFileSizeLimit = `
@@ -316,17 +322,50 @@ always static assets that add noise without aiding code generation.
 // isExcludedPath checks whether the given relative path is excluded by any
 // exclusion pattern. Supports glob matching via matchPattern, plus directory
 // prefix matching for non-glob patterns (e.g., "pkg" excludes all files
-// under the "pkg" directory). See TheoryOfExclusionPatterns.
+// under the "pkg" directory). The path is also matched with leading ".."
+// components stripped, so patterns are evaluated against the project or
+// workspace root rather than the load directory's position. Slash-less
+// patterns (e.g., "*.md" or "README.md") additionally match the path's
+// basename at any depth, so automatically-included markdown files are
+// excluded by name or extension regardless of their directory.
+// See TheoryOfExclusionPatterns.
 func isExcludedPath(relPath string, excludePatterns []string) bool {
 	cleanedRelPath := filepath.Clean(relPath)
+	baseName := filepath.Base(cleanedRelPath)
+
+	// Strip leading ".." components so patterns are matched against the
+	// path relative to the project or workspace root. A file in a sibling
+	// workspace module has relPath "../mod2/README.md"; the pattern
+	// "mod2/README.md" must still match it. See TheoryOfExclusionPatterns.
+	trimmedRelPath := cleanedRelPath
+	for strings.HasPrefix(trimmedRelPath, ".."+string(filepath.Separator)) {
+		trimmedRelPath = strings.TrimPrefix(trimmedRelPath, ".."+string(filepath.Separator))
+	}
+
 	for _, pattern := range excludePatterns {
-		if matchPattern(relPath, pattern) {
+		cleanedPattern := filepath.Clean(pattern)
+
+		// Glob match against the full path and the path with leading
+		// ".." stripped.
+		if matchPattern(relPath, pattern) || matchPattern(trimmedRelPath, pattern) {
 			return true
 		}
-		cleanedPattern := filepath.Clean(pattern)
+
+		// Directory-prefix match for non-glob patterns: "pkg" excludes
+		// both "pkg" itself and everything under "pkg/".
 		if !strings.ContainsAny(cleanedPattern, "*?[") &&
-			(strings.HasPrefix(cleanedRelPath, cleanedPattern+string(filepath.Separator)) ||
-				cleanedRelPath == cleanedPattern) {
+			(cleanedRelPath == cleanedPattern ||
+				strings.HasPrefix(cleanedRelPath, cleanedPattern+string(filepath.Separator)) ||
+				trimmedRelPath == cleanedPattern ||
+				strings.HasPrefix(trimmedRelPath, cleanedPattern+string(filepath.Separator))) {
+			return true
+		}
+
+		// Slash-less patterns match the basename at any depth, so
+		// automatically-included markdown files in subdirectories or
+		// sibling workspace modules are excluded by name or extension.
+		if !strings.Contains(cleanedPattern, string(filepath.Separator)) &&
+			matchPattern(baseName, cleanedPattern) {
 			return true
 		}
 	}

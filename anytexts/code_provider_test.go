@@ -462,6 +462,58 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 	})
 }
 
+func TestIsExcludedPathMatchesBasename(t *testing.T) {
+	// Slash-less exclusion patterns must match the path's basename at any
+	// depth, following gitignore-style semantics. Without this,
+	// -exclude "*.md" fails to exclude markdown files in subdirectories.
+	// See TheoryOfPatternMatching.
+	tests := []struct {
+		name     string
+		path     string
+		patterns []string
+		excluded bool
+	}{
+		{
+			name:     "glob matches basename in subdirectory",
+			path:     "docs/README.md",
+			patterns: []string{"*.md"},
+			excluded: true,
+		},
+		{
+			name:     "plain name matches basename in subdirectory",
+			path:     "docs/README.md",
+			patterns: []string{"README.md"},
+			excluded: true,
+		},
+		{
+			name:     "absolute path basename match",
+			path:     "/home/user/project/README.md",
+			patterns: []string{"*.md"},
+			excluded: true,
+		},
+		{
+			name:     "slash pattern matches dotdot-stripped path",
+			path:     "../mod2/README.md",
+			patterns: []string{"mod2/README.md"},
+			excluded: true,
+		},
+		{
+			name:     "unrelated file not excluded",
+			path:     "docs/main.go",
+			patterns: []string{"*.md"},
+			excluded: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExcludedPath(tt.path, tt.patterns)
+			if got != tt.excluded {
+				t.Fatalf("isExcludedPath(%q, %v) = %v, want %v", tt.path, tt.patterns, got, tt.excluded)
+			}
+		})
+	}
+}
+
 func TestBinaryFileTokenBudget(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
