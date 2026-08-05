@@ -21,7 +21,8 @@ func (Module) Debug() Debug {
 var _ flags.Flag = Debug(true)
 
 func (d Debug) Handle(key string, args []string) (newValue any, remainArgs []string, err error) {
-	return Debug(true), args, nil
+	ret := Debug(true)
+	return &ret, args, nil
 }
 
 func (d Debug) Keys() map[string]string {

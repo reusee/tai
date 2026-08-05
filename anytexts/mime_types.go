@@ -20,7 +20,7 @@ func (i IncludeMimeTypes) Handle(key string, args []string) (newValue any, remai
 	case "-pdf":
 		m["application/pdf"] = true
 	}
-	return m, args, nil
+	return &m, args, nil
 }
 
 func (i IncludeMimeTypes) Keys() map[string]string {
