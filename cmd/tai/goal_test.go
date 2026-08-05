@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
@@ -81,11 +82,11 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	// a done block, the "Goal Not Achieved" message appears, failing
 	// this test. See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResult {
-			return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+		func() codes.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
 				return loops.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
-				}, nil
+				}, nil, nil
 			}
 		},
 	)
@@ -123,13 +124,13 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	// silent change loss is surfaced in unattended operation.
 	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResult {
-			return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+		func() codes.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
 				return loops.Result{
 					ParseErrors: []*blocks.BlockParseError{
 						{BlockKind: "change", Boundary: "徕珑龘"},
 					},
-				}, nil
+				}, nil, nil
 			}
 		},
 	)
@@ -184,10 +185,10 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		// operation. See TheoryOfGoalCommand.
 		calls := 0
 		fakeScope := dscope.New(
-			func() codes.GenerateWithResult {
-				return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+			func() codes.GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
 					calls++
-					return loops.Result{}, errors.New("persistent failure")
+					return loops.Result{}, nil, errors.New("persistent failure")
 				}
 			},
 		)
@@ -245,16 +246,16 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 			func() GoalFeedback { return "" },
 			func(
 				systemPrompt codes.SystemPrompt,
-			) codes.GenerateWithResult {
-				return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+			) codes.GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
 					calls++
 					seenPrompts = append(seenPrompts, string(systemPrompt))
 					if calls == 1 {
-						return loops.Result{}, errors.New("first loop failed")
+						return loops.Result{}, nil, errors.New("first loop failed")
 					}
 					return loops.Result{
 						RemainingBlocks: []blocks.Block{{Kind: "done"}},
-					}, nil
+					}, nil, nil
 				}
 			},
 			func(
@@ -311,4 +312,61 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		_ = stdout
 		_ = stderr
 	})
+}
+
+func TestGoalCommandAggregatesStatistics(t *testing.T) {
+	// The goal command must retain each loop's round statistics and print
+	// them once more, aggregated, after the goal completes — in addition to
+	// the per-loop print at each loop's end — so the user can review the
+	// entire process in a single table. The Loop column identifies which
+	// goal loop produced each round. See codes.TheoryOfRoundStatistics.
+	fakeScope := dscope.New(
+		func() codes.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+				return loops.Result{
+					RemainingBlocks: []blocks.Block{{Kind: "done"}},
+				}, []codes.RoundStat{
+					{Round: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
+					{Round: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
+				}, nil
+			}
+		},
+	)
+	reset := dscope.Reset(func() dscope.Scope { return fakeScope })
+
+	// Redirect stdout to capture the command's output.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	mainFn := GoalCommand.Main.(func(dscope.Reset))
+	mainFn(reset)
+
+	w.Close()
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	outputStr := string(output)
+	// The aggregated statistics must be printed after the goal completes,
+	// with the goal-specific title, the Loop column, and totals across all
+	// loops (111 + 222 = 333 prompt tokens).
+	if !strings.Contains(outputStr, "Goal Loop Statistics") {
+		t.Fatal("expected aggregated goal loop statistics after goal completes")
+	}
+	if !strings.Contains(outputStr, "Loop 1 Round 1: first round") {
+		t.Fatal("expected loop-aware summary line for round 1 in aggregated statistics")
+	}
+	if !strings.Contains(outputStr, "Loop 1 Round 2: second round") {
+		t.Fatal("expected loop-aware summary line for round 2 in aggregated statistics")
+	}
+	if !strings.Contains(outputStr, "333") {
+		t.Fatal("expected aggregated totals across all loops")
+	}
 }

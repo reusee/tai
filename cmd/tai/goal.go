@@ -48,9 +48,18 @@ a persistent failure.
 The gocodes.CodeProvider is the default for the goal command. The gocodes
 pipeline holds no process-level caches: all caches, such as loaded packages
 and parsed ASTs, are defined within scope provider functions. Because each
-goal loop resolves a fresh GenerateWithResult from a reset scope, dscope.Reset
-rebuilds every provider-scoped cache, giving each loop an accurate view of the
-current filesystem state.
+goal loop resolves a fresh GenerateWithResultWithStats from a reset scope,
+dscope.Reset rebuilds every provider-scoped cache, giving each loop an
+accurate view of the current filesystem state.
+
+Each goal loop prints its round statistics at the loop's end (see
+codes.TheoryOfRoundStatistics). In addition, the goal command accumulates the
+statistics of every loop — via the statistics-returning
+codes.GenerateWithResultWithStats, with codes.RoundStat.Loop set to the loop
+number — and prints them once more, aggregated, after the goal completes. The
+aggregated report lets the user review the entire process in a single table:
+token usage, durations, and round summaries across all loops, with the Loop
+column identifying which goal loop produced each round.
 `
 
 const maxGoalIterations = 20
@@ -159,6 +168,14 @@ var GoalCommand = Command{
 		var lastErrMsg string
 		consecutiveErrors := 0
 
+		// allStats accumulates the round statistics of every goal loop so
+		// they can be printed once more, aggregated, after the goal
+		// completes — in addition to the per-loop print at each loop's end.
+		// The Loop field is set to the loop number when each loop's stats
+		// are appended, so the aggregated table shows the entire process at
+		// a glance. See codes.TheoryOfRoundStatistics.
+		var allStats []codes.RoundStat
+
 		for iteration := range maxGoalIterations {
 			scope := reset()
 			if feedback != "" {
@@ -166,18 +183,29 @@ var GoalCommand = Command{
 			}
 
 			scope.Call(func(
-				generateWithResult codes.GenerateWithResult,
+				generateWithResultWithStats codes.GenerateWithResultWithStats,
 			) {
 
 				fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", iteration+1, maxGoalIterations)
 
 				// Run a full generation cycle. Each call to
-				// generateWithResult is independent: it re-reads the
+				// generateWithResultWithStats is independent: it re-reads the
 				// codebase, organizes context from scratch, and runs
 				// the full generation pipeline (change blocks, go-test,
-				// shell, continue, etc.).
-				// See TheoryOfGoalCommand.
-				result, err := generateWithResult(ctx, os.Stdout)
+				// shell, continue, etc.). It returns the loop result
+				// together with the round statistics collected during the
+				// loop, which are retained for the aggregated final report.
+				// See TheoryOfGoalCommand and codes.TheoryOfRoundStatistics.
+				loopStart := len(allStats)
+				result, stats, err := generateWithResultWithStats(ctx, os.Stdout)
+				// Retain this loop's statistics for the aggregated final
+				// report. The Loop field identifies the goal loop that
+				// produced each round, so the final table shows the entire
+				// process at a glance. See codes.TheoryOfRoundStatistics.
+				allStats = append(allStats, stats...)
+				for i := loopStart; i < len(allStats); i++ {
+					allStats[i].Loop = iteration + 1
+				}
 				if err != nil {
 					// Print the error and continue to the next loop.
 					// Transient errors (API rate limits) may resolve in
@@ -267,6 +295,15 @@ var GoalCommand = Command{
 
 		if !achieved && !stopRequested {
 			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", maxGoalIterations)
+		}
+
+		// Print all loop statistics once more, aggregated, after the goal
+		// completes so the user can review the entire process in a single
+		// table. The per-loop print at each loop's end remains. The Loop
+		// column identifies which goal loop produced each round.
+		// See codes.TheoryOfRoundStatistics.
+		if len(allStats) > 0 {
+			codes.PrintRoundStats(os.Stdout, allStats, "Goal Loop Statistics")
 		}
 	},
 }

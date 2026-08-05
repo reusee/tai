@@ -13,7 +13,7 @@ import (
 func TestPrintRoundStats(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		var buf bytes.Buffer
-		printRoundStats(&buf, nil)
+		PrintRoundStats(&buf, nil)
 		if buf.Len() != 0 {
 			t.Fatalf("expected no output for empty stats, got: %s", buf.String())
 		}
@@ -21,10 +21,10 @@ func TestPrintRoundStats(t *testing.T) {
 
 	t.Run("SingleRound", func(t *testing.T) {
 		var buf bytes.Buffer
-		stats := []roundStat{
+		stats := []RoundStat{
 			{Round: 1, PromptTokens: 1000, CompletionTokens: 500, ThoughtTokens: 200, CachedTokens: 100},
 		}
-		printRoundStats(&buf, stats)
+		PrintRoundStats(&buf, stats)
 		output := buf.String()
 		if !strings.Contains(output, "Total rounds: 1") {
 			t.Fatalf("expected total rounds 1, got: %s", output)
@@ -39,12 +39,12 @@ func TestPrintRoundStats(t *testing.T) {
 
 	t.Run("MultipleRoundsWithTotals", func(t *testing.T) {
 		var buf bytes.Buffer
-		stats := []roundStat{
+		stats := []RoundStat{
 			{Round: 1, PromptTokens: 111, CompletionTokens: 51, ThoughtTokens: 21, CachedTokens: 11},
 			{Round: 2, PromptTokens: 222, CompletionTokens: 82, ThoughtTokens: 32, CachedTokens: 22},
 			{Round: 3, PromptTokens: 333, CompletionTokens: 123, ThoughtTokens: 53, CachedTokens: 33},
 		}
-		printRoundStats(&buf, stats)
+		PrintRoundStats(&buf, stats)
 		output := buf.String()
 		if !strings.Contains(output, "Total rounds: 3") {
 			t.Fatalf("expected total rounds 3, got: %s", output)
@@ -173,11 +173,11 @@ func TestSummarizeRetryState(t *testing.T) {
 
 func TestPrintRoundStatsWithSummaries(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []roundStat{
+	stats := []RoundStat{
 		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
 		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
 	}
-	printRoundStats(&buf, stats)
+	PrintRoundStats(&buf, stats)
 	output := buf.String()
 	if !strings.Contains(output, "=== Round Summaries ===") {
 		t.Fatalf("expected summaries section, got: %s", output)
@@ -192,10 +192,10 @@ func TestPrintRoundStatsWithSummaries(t *testing.T) {
 
 func TestPrintRoundStatsNoSummaries(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []roundStat{
+	stats := []RoundStat{
 		{Round: 1, PromptTokens: 1000, CompletionTokens: 500},
 	}
-	printRoundStats(&buf, stats)
+	PrintRoundStats(&buf, stats)
 	output := buf.String()
 	if strings.Contains(output, "=== Round Summaries ===") {
 		t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
@@ -204,11 +204,11 @@ func TestPrintRoundStatsNoSummaries(t *testing.T) {
 
 func TestPrintRoundStatsWithDuration(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []roundStat{
+	stats := []RoundStat{
 		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
 		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
 	}
-	printRoundStats(&buf, stats)
+	PrintRoundStats(&buf, stats)
 	output := buf.String()
 	if !strings.Contains(output, "Duration") {
 		t.Fatalf("expected Duration column header, got: %s", output)
@@ -222,5 +222,31 @@ func TestPrintRoundStatsWithDuration(t *testing.T) {
 	// Total duration: 3s + 1.5s = 4.5s
 	if !strings.Contains(output, "4.5s") {
 		t.Fatalf("expected total duration '4.5s' in output, got: %s", output)
+	}
+}
+
+func TestPrintRoundStatsWithLoopColumn(t *testing.T) {
+	var buf bytes.Buffer
+	stats := []RoundStat{
+		{Loop: 1, Round: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
+		{Loop: 1, Round: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
+	}
+	PrintRoundStats(&buf, stats, "Goal Loop Statistics")
+	output := buf.String()
+	if !strings.Contains(output, "=== Goal Loop Statistics ===") {
+		t.Fatalf("expected custom title, got: %s", output)
+	}
+	if !strings.Contains(output, "Loop") {
+		t.Fatalf("expected Loop column in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Loop 1 Round 1: first round") {
+		t.Fatalf("expected loop-aware summary for round 1, got: %s", output)
+	}
+	if !strings.Contains(output, "Loop 1 Round 2: second round") {
+		t.Fatalf("expected loop-aware summary for round 2, got: %s", output)
+	}
+	// Total prompt tokens across all loops: 111 + 222 = 333
+	if !strings.Contains(output, "333") {
+		t.Fatalf("expected aggregated total prompt tokens, got: %s", output)
 	}
 }

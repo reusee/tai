@@ -66,10 +66,18 @@ const maxRetriesForMissingSummary = 3
 
 type Generate func(ctx context.Context, output io.Writer) error
 
+// GenerateWithResultWithStats runs the full codes generation pipeline and
+// returns the loops.Result together with the round statistics collected
+// during the run. The statistics are returned (not only printed) so that
+// callers that run multiple independent generation sessions — such as the
+// goal command — can accumulate them and re-print the entire process
+// aggregated after all sessions complete. See TheoryOfRoundStatistics.
+type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error)
+
 // GenerateWithResult runs the full codes generation pipeline and returns the
 // loops.Result, which includes the final state and any remaining (unconsumed)
-// blocks. Used by the goal command to detect goal completion via done blocks
-// in Result.RemainingBlocks. See TheoryOfGoalCommand in cmd/tai/goal.go.
+// blocks. It wraps GenerateWithResultWithStats, discarding the round
+// statistics. Used by commands that do not need the statistics (go, any).
 type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Result, error)
 
 const TheoryOfTokenBudgetStability = `
@@ -100,9 +108,26 @@ output during generation and ensures stats are reported even when the session
 ends early due to an error. The round duration is measured from the OnRoundStart
 callback to OnRoundSuccess, covering the full round including retries; the
 elapsed time is assigned to every stat entry produced by the round.
+
+GenerateWithResultWithStats returns the collected RoundStat slice alongside
+the loops.Result, so callers that run multiple independent generation
+sessions — such as the goal command — can accumulate the statistics of every
+session and re-print them aggregated after all sessions complete, in
+addition to the per-session print at each session's end. The RoundStat.Loop
+field records which goal loop produced each round; PrintRoundStats renders a
+Loop column and loop-prefixed summary lines when any stat carries a non-zero
+Loop, and accepts an optional title for the aggregated report. See
+TheoryOfGoalCommand in cmd/tai/goal.go.
 `
 
-type roundStat struct {
+// RoundStat records per-round token usage (prompt, completion, thoughts,
+// cached), running time, and summary for a single generation round. The
+// Loop field identifies the goal loop that produced the round when the
+// statistics are aggregated across multiple goal loops (goal command);
+// it is zero for single-session runs (go, any). See
+// TheoryOfRoundStatistics.
+type RoundStat struct {
+	Loop             int
 	Round            int
 	PromptTokens     int
 	CompletionTokens int
@@ -112,29 +137,63 @@ type roundStat struct {
 	Summary          string
 }
 
-func printRoundStats(w io.Writer, stats []roundStat) {
+// PrintRoundStats writes the round statistics table to w. The optional
+// title replaces the default "Generation Statistics" header. When any
+// stat has a non-zero Loop field (goal command aggregation), a Loop
+// column is rendered and summary lines are prefixed with the loop
+// number. See TheoryOfRoundStatistics.
+func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 	if len(stats) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "\n=== Generation Statistics ===\n")
+	header := "Generation Statistics"
+	if len(title) > 0 && title[0] != "" {
+		header = title[0]
+	}
+	hasLoop := false
+	for _, s := range stats {
+		if s.Loop != 0 {
+			hasLoop = true
+			break
+		}
+	}
+
+	fmt.Fprintf(w, "\n=== %s ===\n", header)
 	fmt.Fprintf(w, "Total rounds: %d\n\n", len(stats))
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
+	if hasLoop {
+		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "Loop", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
+		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "-----", "-----", "------", "----------", "--------", "-------", "--------")
+	} else {
+		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
+		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
+	}
 	var totalPrompt, totalCompletion, totalThoughts, totalCached int
 	var totalDuration time.Duration
 	for _, s := range stats {
-		fmt.Fprintf(w, "%-6d %12d %12d %12d %12d %12s\n",
-			s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
-			s.Duration.Round(time.Millisecond).String())
+		if hasLoop {
+			fmt.Fprintf(w, "%-6d %-6d %12d %12d %12d %12d %12s\n",
+				s.Loop, s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
+				s.Duration.Round(time.Millisecond).String())
+		} else {
+			fmt.Fprintf(w, "%-6d %12d %12d %12d %12d %12s\n",
+				s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
+				s.Duration.Round(time.Millisecond).String())
+		}
 		totalPrompt += s.PromptTokens
 		totalCompletion += s.CompletionTokens
 		totalThoughts += s.ThoughtTokens
 		totalCached += s.CachedTokens
 		totalDuration += s.Duration
 	}
-	fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
-	fmt.Fprintf(w, "%-6s %12d %12d %12d %12d %12s\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
-		totalDuration.Round(time.Millisecond).String())
+	if hasLoop {
+		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "-----", "-----", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-6s %-6s %12d %12d %12d %12d %12s\n", "", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
+			totalDuration.Round(time.Millisecond).String())
+	} else {
+		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-6s %12d %12d %12d %12d %12s\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
+			totalDuration.Round(time.Millisecond).String())
+	}
 	fmt.Fprintf(w, "==============================\n")
 
 	// Print round summaries if any exist. See TheoryOfSummaryBlocks.
@@ -149,7 +208,11 @@ func printRoundStats(w io.Writer, stats []roundStat) {
 		fmt.Fprintf(w, "\n=== Round Summaries ===\n")
 		for _, s := range stats {
 			if s.Summary != "" {
-				fmt.Fprintf(w, "Round %d: %s\n", s.Round, s.Summary)
+				if hasLoop {
+					fmt.Fprintf(w, "Loop %d Round %d: %s\n", s.Loop, s.Round, s.Summary)
+				} else {
+					fmt.Fprintf(w, "Round %d: %s\n", s.Round, s.Summary)
+				}
 			}
 		}
 		fmt.Fprintf(w, "==============================\n")
@@ -305,8 +368,6 @@ loops/run.go.
 
 // Generate wraps GenerateWithResult, discarding the loops.Result so existing
 // callers (go, any) see the same func(ctx, output) error signature.
-// Callers that need the result (e.g., goal command) should use
-// GenerateWithResult directly.
 func (Module) Generate(
 	generateWithResult GenerateWithResult,
 ) Generate {
@@ -316,7 +377,20 @@ func (Module) Generate(
 	}
 }
 
+// GenerateWithResult wraps GenerateWithResultWithStats, discarding the round
+// statistics so existing callers see the same (loops.Result, error)
+// signature. Callers that need the statistics (e.g., goal command) should
+// use GenerateWithResultWithStats directly. See TheoryOfRoundStatistics.
 func (Module) GenerateWithResult(
+	generateWithResultWithStats GenerateWithResultWithStats,
+) GenerateWithResult {
+	return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+		result, _, err := generateWithResultWithStats(ctx, output)
+		return result, err
+	}
+}
+
+func (Module) GenerateWithResultWithStats(
 	codeProvider codetypes.CodeProvider,
 	comps CodesComponents,
 	systemPrompt SystemPrompt,
@@ -339,15 +413,15 @@ func (Module) GenerateWithResult(
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
 	loopRun loops.Run,
-) GenerateWithResult {
+) GenerateWithResultWithStats {
 
-	return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
 		// Open a root on the current directory to restrict all file I/O
 		// to the project tree. See TheoryOfRequestContext.
 		root, err := os.OpenRoot(".")
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 		defer root.Close()
 
@@ -359,7 +433,7 @@ func (Module) GenerateWithResult(
 		// generator
 		generator, err := getDefaultGenerator()
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 		spec := generator.Spec()
 		logger.Info("initial generator",
@@ -382,7 +456,7 @@ func (Module) GenerateWithResult(
 		// Count tokens for fixed parts
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 
 		// Collect function declarations from all sources for accurate token
@@ -396,13 +470,13 @@ func (Module) GenerateWithResult(
 		}
 		funcTokens, err := countFuncsTokens(allFuncDecls, generator.CountTokens)
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 
 		// Calculate remaining budget for user content
 		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
-			return loops.Result{}, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
+			return loops.Result{}, nil, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
 		logger.Info("token limits",
 			"system", systemPromptTokens,
@@ -413,7 +487,7 @@ func (Module) GenerateWithResult(
 		// user prompt
 		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 
 		// Component user prompt parts are appended after code provider parts.
@@ -427,7 +501,7 @@ func (Module) GenerateWithResult(
 		}
 		userPromptTokens, err := generator.CountTokens(string(userPromptText))
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 		logger.Info("user prompt ready",
 			"tokens", userPromptTokens,
@@ -465,7 +539,7 @@ func (Module) GenerateWithResult(
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
-				return loops.Result{}, err
+				return loops.Result{}, nil, err
 			}
 			state = generators.NewOutput(state, output, false)
 			state = states.NewThoughtsSummarize(ctx, state, summarizer, output)
@@ -477,10 +551,14 @@ func (Module) GenerateWithResult(
 		// it internally. See loops.TheoryOfLoops.
 
 		// Track per-round token statistics for end-of-session reporting.
+		// The stats are returned via GenerateWithResultWithStats so callers
+		// that run multiple sessions (e.g., goal) can aggregate them, and
+		// printed here via a deferred call so the per-session report is
+		// shown even when the session ends early due to an error.
 		// See TheoryOfRoundStatistics.
-		var roundStats []roundStat
+		var roundStats []RoundStat
 		defer func() {
-			printRoundStats(output, roundStats)
+			PrintRoundStats(output, roundStats)
 		}()
 
 		// roundStartTime records the start of the current round, set by
@@ -492,7 +570,7 @@ func (Module) GenerateWithResult(
 		// See TheoryOfIncompleteOutputSummarization.
 		fastModel, err := getDefaultFastModel()
 		if err != nil {
-			return loops.Result{}, err
+			return loops.Result{}, nil, err
 		}
 
 		// Set up initial phase: if an action argument is present, append it
@@ -506,13 +584,13 @@ func (Module) GenerateWithResult(
 				},
 			})
 			if err != nil {
-				return loops.Result{}, err
+				return loops.Result{}, nil, err
 			}
 			hasChats = true
 		}
 
 		if !hasChats {
-			return loops.Result{}, nil
+			return loops.Result{}, nil, nil
 		}
 
 		// Track content count for statistics collection in OnRoundSuccess.
@@ -577,7 +655,7 @@ func (Module) GenerateWithResult(
 					if contentIndex >= prevContentCount {
 						for _, part := range c.Parts {
 							if usage, ok := part.(generators.Usage); ok {
-								roundStats = append(roundStats, roundStat{
+								roundStats = append(roundStats, RoundStat{
 									Round:            len(roundStats) + 1,
 									PromptTokens:     usage.Prompt.TokenCount,
 									CompletionTokens: usage.Candidates.TokenCount,
@@ -604,7 +682,7 @@ func (Module) GenerateWithResult(
 					if len(roundStats) > 0 {
 						roundStats[len(roundStats)-1].Summary = summaryText
 					} else {
-						roundStats = append(roundStats, roundStat{
+						roundStats = append(roundStats, RoundStat{
 							Round:    len(roundStats) + 1,
 							Duration: elapsed,
 							Summary:  summaryText,
@@ -651,6 +729,6 @@ func (Module) GenerateWithResult(
 			)
 		}
 
-		return result, err
+		return result, roundStats, err
 	}
 }
