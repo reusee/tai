@@ -568,6 +568,15 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 // INSERT_AFTER) to the file content. It searches for the find string,
 // verifies it is unique (appears exactly once), and applies the edit
 // relative to the found position. See TheoryOfTextLevelOperations.
+//
+// INSERT_BEFORE and INSERT_AFTER keep the inserted content on its own
+// line(s): a newline separator is added automatically when the block body
+// does not already carry one. Block bodies are trimmed of leading and
+// trailing whitespace during parsing, so an emitted body never has a
+// usable boundary newline; inserting it raw would merge the inserted line
+// into the anchor line. This mirrors the Go structural ADD operations,
+// which also separate inserted declarations with newlines.
+// See TheoryOfTextLevelOperations.
 func applyTextEdit(src []byte, h ChangeBlock) ([]byte, error) {
 	find := h.Find
 	if find == "" {
@@ -589,9 +598,17 @@ func applyTextEdit(src []byte, h ChangeBlock) ([]byte, error) {
 	case "REPLACE":
 		content = content[:idx] + h.Body + content[idx+len(find):]
 	case "INSERT_BEFORE":
-		content = content[:idx] + h.Body + content[idx:]
+		body := h.Body
+		if body != "" && !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		content = content[:idx] + body + content[idx:]
 	case "INSERT_AFTER":
-		content = content[:idx+len(find)] + h.Body + content[idx+len(find):]
+		body := h.Body
+		if body != "" && !strings.HasPrefix(body, "\n") {
+			body = "\n" + body
+		}
+		content = content[:idx+len(find)] + body + content[idx+len(find):]
 	default:
 		return nil, fmt.Errorf("unknown text-level operation: %s", h.Op)
 	}

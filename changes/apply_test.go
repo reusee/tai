@@ -1332,3 +1332,85 @@ func TestApplyChangeBlockTextLevelOps(t *testing.T) {
 		})
 	})
 }
+
+func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
+	// INSERT_BEFORE and INSERT_AFTER must keep the inserted content on its
+	// own line. Block bodies are trimmed of leading and trailing whitespace
+	// during parsing, so an emitted body never carries a boundary newline;
+	// without an automatic separator, the first inserted line merges into
+	// the anchor line (INSERT_AFTER) or the anchor line merges into the
+	// last inserted line (INSERT_BEFORE). These subtests reproduce the
+	// merge end-to-end through block parsing and diff application.
+	// See TheoryOfTextLevelOperations.
+	newTestScope(t).Call(func(applyDiffFile ApplyDiffFile) {
+
+		t.Run("InsertBefore", func(t *testing.T) {
+			dir := t.TempDir()
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+
+			original := "# Title\n\n## Section\n"
+			if err := root.WriteFile("readme.md", []byte(original), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			diffPath := filepath.Join(dir, "diff.txt")
+			content := "<<徕珑龘 <change op=\"INSERT_BEFORE\" find=\"## Section\" file-path=\"readme.md\">\n## New Section\n徕珑龘\n"
+			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, err := range applyDiffFile(root, diffPath) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := root.ReadFile("readme.md")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(result), "## New Section\n## Section") {
+				t.Fatalf("inserted content must stay on its own line:\n%s", string(result))
+			}
+		})
+
+		t.Run("InsertAfter", func(t *testing.T) {
+			dir := t.TempDir()
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+
+			original := "[dependencies]\n"
+			if err := root.WriteFile("Cargo.toml", []byte(original), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			diffPath := filepath.Join(dir, "diff.txt")
+			content := "<<徕珑龘 <change op=\"INSERT_AFTER\" find=\"[dependencies]\" file-path=\"Cargo.toml\">\nserde = { version = \"1.0\", features = [\"derive\"] }\n徕珑龘\n"
+			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, err := range applyDiffFile(root, diffPath) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := root.ReadFile("Cargo.toml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(result), "[dependencies]\nserde") {
+				t.Fatalf("inserted content must stay on its own line:\n%s", string(result))
+			}
+		})
+
+	})
+}

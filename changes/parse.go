@@ -32,6 +32,17 @@ REPLACE substitutes the found string with the block body. An empty body
 effectively deletes the found text. INSERT_BEFORE inserts the body before the
 found anchor; INSERT_AFTER inserts it after.
 
+INSERT_BEFORE and INSERT_AFTER always place the inserted content on its own
+line(s): a newline separator is added automatically when the block body does
+not already carry one. Block bodies are trimmed of leading and trailing
+whitespace during parsing, so an emitted body never has a usable boundary
+newline of its own; inserting it raw would merge the first inserted line with
+the anchor line (INSERT_AFTER) or the anchor line with the last inserted line
+(INSERT_BEFORE), corrupting two lines that should remain separate. This
+mirrors the Go structural ADD operations (see buildModifiedSource in
+apply.go), which also separate inserted declarations with newlines; the
+text-level operations apply the same line-boundary principle to plain text.
+
 Text-level operations are restricted to non-Go files. For Go files, structural
 operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) must be used instead. The
 model has difficulty correctly reproducing whitespace characters in the find
