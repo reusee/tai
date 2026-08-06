@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -127,6 +128,16 @@ const maxParseErrorRounds = 3
 
 const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Continue from where you left off, incorporating the context in the continue block below.]\n\n"
 
+// InteractionRecorder provider: the default is nil, meaning no interaction
+// recording. Commands that want recording pass their recorder explicitly
+// through RunOptions.InteractionRecorder, which takes precedence over the
+// loop's default. Keeping the default provider here (rather than in an
+// outer module) avoids duplicate-definition conflicts in dscope scopes.
+// See records.TheoryOfInteractionRecording.
+func (Module) InteractionRecorder() InteractionRecorder {
+	return nil
+}
+
 // Run executes generation rounds in a loop. Each round wraps the state
 // with ParserState, executes the phase chain, processes blocks via
 // components, and continues if a component triggers a new round.
@@ -138,6 +149,43 @@ type Run func(ctx context.Context, opts RunOptions) (Result, error)
 // the block is not passed to ProcessComponents. If err is non-nil,
 // streaming stops immediately. See TheoryOfLoops.
 type BlockHandler func(block blocks.Block) (consumed bool, err error)
+
+// InteractionRecorder receives generation events for interaction recording
+// and self-improvement analysis. The records package implements it with a
+// sqlite-backed recorder (see records.TheoryOfInteractionRecording) that
+// persists sessions and events to a single database file. When the recorder
+// is disabled, Enabled returns false and the loop skips all recording work.
+type InteractionRecorder interface {
+	// Enabled reports whether recording is active. When false, the loop
+	// does not wrap the state, record contents, or call the lifecycle
+	// methods.
+	Enabled() bool
+	// StartSession begins a recording session for the given command.
+	// Called once when the loop starts.
+	StartSession(command string)
+	// EndSession closes the current session with the given outcome.
+	// A non-nil error marks the session as failed.
+	EndSession(err error)
+	// SystemPrompt records the session's system prompt. Called once when
+	// the loop starts.
+	SystemPrompt(prompt string)
+	// RoundStart marks the beginning of a generation round.
+	RoundStart()
+	// RoundSuccess marks a round that completed normally, carrying the
+	// summary block bodies.
+	RoundSuccess(summaries []string)
+	// RoundTruncated marks a round that ended without a completion signal
+	// (no summary block or abnormal finish reason) and was retried.
+	RoundTruncated()
+	// RoundError marks a round that failed with an error.
+	RoundError(err error)
+	// Content records a content appended to the generation state.
+	Content(content *generators.Content)
+	// Block records a structured block parsed from the model output.
+	Block(block blocks.Block)
+	// ParseError records a malformed block that could not be parsed.
+	ParseError(parseErr *blocks.BlockParseError)
+}
 
 type RunOptions struct {
 	// Generator is the model used for generation.
@@ -159,6 +207,19 @@ type RunOptions struct {
 	HTTPClient nets.HTTPClient
 	// MaxRounds limits the number of rounds. 0 means unlimited.
 	MaxRounds int
+
+	// InteractionRecorder receives generation events (contents, blocks,
+	// round lifecycle) for interaction recording and self-improvement
+	// analysis. When nil, the Recorder provider default is used (see the
+	// InteractionRecorder provider in this package).
+	// See records.TheoryOfInteractionRecording.
+	InteractionRecorder InteractionRecorder
+
+	// Command identifies the invoking command (e.g., "ai", "next"). It is
+	// recorded as the session's command name when interaction recording
+	// is active. When empty, "codes" is used.
+	// See records.TheoryOfInteractionRecording.
+	Command string
 
 	// OnRoundStart is called before each round (including retries).
 	// Used to reset per-round state (e.g., MemoryStore.Reset).
@@ -278,8 +339,97 @@ type Result struct {
 	Diffs []changes.FileDiff
 }
 
-func (Module) Run() Run {
-	return func(ctx context.Context, opts RunOptions) (Result, error) {
+// RecordState reports the given state's system prompt and contents to the
+// interaction recorder and returns a state that captures future appends.
+// When the recorder is nil or disabled, the state is returned unchanged
+// and enabled is false. Commands that run phases outside the loop (e.g.,
+// ping) use this to participate in interaction recording.
+// See records.TheoryOfInteractionRecording.
+func RecordState(recorder InteractionRecorder, state generators.State) (generators.State, bool) {
+	if recorder == nil || !recorder.Enabled() {
+		return state, false
+	}
+	recorder.SystemPrompt(state.SystemPrompt())
+	for content := range state.Contents() {
+		recorder.Content(content)
+	}
+	return recordedState{upstream: state, recorder: recorder}, true
+}
+
+// recordedState is a State layer that reports appended contents to an
+// InteractionRecorder. It sits below ParserState so every content append
+// (user input, model output, reasoning thoughts, tool calls, retry
+// feedback) is captured for interaction recording. State immutability is
+// preserved: AppendContent and Flush return a new recordedState.
+// See records.TheoryOfInteractionRecording.
+type recordedState struct {
+	upstream generators.State
+	recorder InteractionRecorder
+}
+
+func (s recordedState) Unwrap() generators.State {
+	return s.upstream
+}
+
+func (s recordedState) Flush() (generators.State, error) {
+	newUpstream, err := s.upstream.Flush()
+	if err != nil {
+		return nil, err
+	}
+	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
+}
+
+func (s recordedState) Functions() iter.Seq[*generators.Function] {
+	return s.upstream.Functions()
+}
+
+func (s recordedState) SystemPrompt() string {
+	return s.upstream.SystemPrompt()
+}
+
+func (s recordedState) Contents() iter.Seq[*generators.Content] {
+	return s.upstream.Contents()
+}
+
+var _ generators.State = recordedState{}
+
+func (s recordedState) AppendContent(content *generators.Content) (generators.State, error) {
+	s.recorder.Content(content)
+	newUpstream, err := s.upstream.AppendContent(content)
+	if err != nil {
+		return nil, err
+	}
+	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
+}
+
+func (Module) Run(
+	recorder InteractionRecorder,
+) Run {
+	return func(ctx context.Context, opts RunOptions) (result Result, err error) {
+		// Determine the active interaction recorder. When the caller does
+		// not pass one explicitly, the provider-injected default is used,
+		// so every loop run records interactions automatically.
+		// See records.TheoryOfInteractionRecording.
+		rec := opts.InteractionRecorder
+		if rec == nil {
+			rec = recorder
+		}
+		opts.InteractionRecorder = rec
+		recording := rec != nil && rec.Enabled()
+		if recording {
+			command := opts.Command
+			if command == "" {
+				command = "codes"
+			}
+			rec.StartSession(command)
+			// EndSession is deferred so every return path — including
+			// errors — closes the session with the final outcome. The
+			// named result value carries the loop's error.
+			defer func() {
+				rec.EndSession(err)
+			}()
+		}
+
 		state := opts.InitialState
 		var remainingBlocks []blocks.Block
 		roundCounts := make(map[string]int)
@@ -311,7 +461,27 @@ func (Module) Run() Run {
 		// See TheoryOfParseErrorCollection.
 		skipOnRoundStart := false
 
+		// Report the initial system prompt and contents, then wrap the
+		// state so every subsequent content append is captured for
+		// interaction recording. The recordedState layer sits below
+		// ParserState so both the parsed blocks and the contents
+		// carrying them are recorded. Recording is skipped entirely when
+		// the recorder is nil or disabled.
+		// See records.TheoryOfInteractionRecording.
+		state, _ = RecordState(rec, state)
+
+		// recordRoundError reports a failed round to the interaction
+		// recorder when recording is active.
+		recordRoundError := func(err error) {
+			if rec != nil && rec.Enabled() {
+				rec.RoundError(err)
+			}
+		}
+
 		for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
+			if rec != nil && rec.Enabled() {
+				rec.RoundStart()
+			}
 			if opts.OnRoundStart != nil && !skipOnRoundStart {
 				opts.OnRoundStart()
 			}
@@ -330,6 +500,12 @@ func (Module) Run() Run {
 				// Create parser handler that collects blocks and
 				// optionally invokes the caller's BlockHandler.
 				parserHandler := func(block blocks.Block) error {
+					// Report every parsed block to the interaction
+					// recorder, whether or not it is consumed by the
+					// caller's BlockHandler.
+					if rec != nil && rec.Enabled() {
+						rec.Block(block)
+					}
 					if opts.BlockHandler != nil {
 						consumed, err := opts.BlockHandler(block)
 						if err != nil {
@@ -370,6 +546,12 @@ func (Module) Run() Run {
 					// fed back to the model for self-correction.
 					// See TheoryOfParseErrorCollection.
 					roundParseErrors = ps.ParseErrors()
+					// Report malformed blocks to the interaction recorder.
+					if rec != nil && rec.Enabled() {
+						for _, parseErr := range roundParseErrors {
+							rec.ParseError(parseErr)
+						}
+					}
 				} else {
 					phaseState = wrappedState
 				}
@@ -391,6 +573,12 @@ func (Module) Run() Run {
 						prevCount := generators.CountContents(state)
 						if generators.CountContents(phaseState) > prevCount {
 							state = phaseState
+
+							// Report the failed attempt to the
+							// interaction recorder.
+							if rec != nil && rec.Enabled() {
+								rec.RoundError(roundErr)
+							}
 
 							var retryParts []generators.Part
 							retryParts = append(retryParts, generators.Text(
@@ -431,8 +619,8 @@ func (Module) Run() Run {
 							// so it appears as a separate loop.
 							// See TheoryOfRoundStatistics.
 							if opts.OnRoundTruncated != nil {
-								if err := opts.OnRoundTruncated(phaseState, state, summary); err != nil {
-									roundErr = err
+								if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
+									roundErr = rerr
 									break
 								}
 							}
@@ -503,6 +691,12 @@ func (Module) Run() Run {
 					break
 				}
 
+				// Report the truncated attempt to the interaction
+				// recorder.
+				if rec != nil && rec.Enabled() {
+					rec.RoundTruncated()
+				}
+
 				// Summarize incomplete output and retry. The retry process
 				// produces both a summary of the truncated output (recorded
 				// as the truncated round's summary in round statistics) and
@@ -516,8 +710,8 @@ func (Module) Run() Run {
 				if opts.SummarizeIncomplete != nil {
 					incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(state))
 					if incompleteText != "" {
-						retrySummary, err := opts.SummarizeIncomplete(incompleteText)
-						if err == nil && retrySummary != nil {
+						retrySummary, rerr := opts.SummarizeIncomplete(incompleteText)
+						if rerr == nil && retrySummary != nil {
 							summary = retrySummary.Summary
 							retryPrompt = retrySummary.RetryPrompt
 						}
@@ -528,8 +722,8 @@ func (Module) Run() Run {
 				// appears as a separate loop. The summary is synthesized
 				// by the retry process. See TheoryOfRoundStatistics.
 				if opts.OnRoundTruncated != nil {
-					if err := opts.OnRoundTruncated(phaseState, state, summary); err != nil {
-						roundErr = err
+					if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
+						roundErr = rerr
 						break
 					}
 				}
@@ -555,6 +749,7 @@ func (Module) Run() Run {
 			}
 
 			if roundErr != nil {
+				recordRoundError(roundErr)
 				if opts.OnPhaseError != nil {
 					phaseState = opts.OnPhaseError(phaseState, roundErr)
 				}
@@ -567,13 +762,20 @@ func (Module) Run() Run {
 
 			// OnRoundSuccess hook.
 			if opts.OnRoundSuccess != nil {
-				if err := opts.OnRoundSuccess(phaseState, roundSummaries); err != nil {
+				if serr := opts.OnRoundSuccess(phaseState, roundSummaries); serr != nil {
+					recordRoundError(serr)
 					return Result{
 						FinalState:      phaseState,
 						RemainingBlocks: remainingBlocks,
 						ParseErrors:     uncorrectedParseErrors,
-					}, err
+					}, serr
 				}
+			}
+
+			// Report the successfully completed round to the interaction
+			// recorder.
+			if rec != nil && rec.Enabled() {
+				rec.RoundSuccess(roundSummaries)
 			}
 
 			state = phaseState
@@ -602,17 +804,18 @@ func (Module) Run() Run {
 			// correction round instead of ending the loop.
 			if len(opts.Components) == 0 {
 				if len(parseErrorParts) > 0 {
-					var err error
-					state, err = state.AppendContent(&generators.Content{
+					var aerr error
+					state, aerr = state.AppendContent(&generators.Content{
 						Role:  generators.RoleUser,
 						Parts: parseErrorParts,
 					})
-					if err != nil {
+					if aerr != nil {
+						recordRoundError(aerr)
 						return Result{
 							FinalState:      state,
 							RemainingBlocks: remainingBlocks,
 							ParseErrors:     uncorrectedParseErrors,
-						}, err
+						}, aerr
 					}
 					continue
 				}
@@ -632,17 +835,18 @@ func (Module) Run() Run {
 			var roundRemaining []blocks.Block
 			var combinedParts []generators.Part
 			var triggered bool
-			var err error
-			roundRemaining, state, combinedParts, triggered, err = components.ProcessComponents(
+			var cerr error
+			roundRemaining, state, combinedParts, triggered, cerr = components.ProcessComponents(
 				ctx, opts.Components, collectedBlocks, state,
 				opts.Root, opts.HTTPClient, roundCounts, true,
 			)
-			if err != nil {
+			if cerr != nil {
+				recordRoundError(cerr)
 				return Result{
 					FinalState:      state,
 					RemainingBlocks: remainingBlocks,
 					ParseErrors:     uncorrectedParseErrors,
-				}, err
+				}, cerr
 			}
 			remainingBlocks = append(remainingBlocks, roundRemaining...)
 
@@ -656,16 +860,17 @@ func (Module) Run() Run {
 
 			if triggered {
 				if len(combinedParts) > 0 {
-					state, err = state.AppendContent(&generators.Content{
+					state, cerr = state.AppendContent(&generators.Content{
 						Role:  generators.RoleUser,
 						Parts: combinedParts,
 					})
-					if err != nil {
+					if cerr != nil {
+						recordRoundError(cerr)
 						return Result{
 							FinalState:      state,
 							RemainingBlocks: remainingBlocks,
 							ParseErrors:     uncorrectedParseErrors,
-						}, err
+						}, cerr
 					}
 				}
 				continue
@@ -680,13 +885,14 @@ func (Module) Run() Run {
 			// See phases.TheoryOfIdleHandler.
 			if opts.OnIdle != nil {
 				var idleContinue bool
-				state, idleContinue, err = opts.OnIdle(ctx, state)
-				if err != nil {
+				state, idleContinue, cerr = opts.OnIdle(ctx, state)
+				if cerr != nil {
+					recordRoundError(cerr)
 					return Result{
 						FinalState:      state,
 						RemainingBlocks: remainingBlocks,
 						ParseErrors:     uncorrectedParseErrors,
-					}, err
+					}, cerr
 				}
 				if idleContinue {
 					continue

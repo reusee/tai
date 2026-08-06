@@ -23,6 +23,7 @@ import (
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/states"
 )
 
@@ -565,6 +566,7 @@ func (Module) GenerateWithResultWithStats(
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
 	loopRun loops.Run,
+	recorder *records.Recorder,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
@@ -766,7 +768,10 @@ func (Module) GenerateWithResultWithStats(
 		// Run the unified generation loop. See loops.TheoryOfLoops.
 		// The loop handles ParserState wrapping, phase execution, retry
 		// on missing completion and errors, and component processing
-		// between rounds.
+		// between rounds. The interaction recorder is passed explicitly
+		// so every round, content, and block is captured when -record is
+		// enabled.
+		// See records.TheoryOfInteractionRecording.
 		result, err := loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
@@ -775,8 +780,10 @@ func (Module) GenerateWithResultWithStats(
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
-			Root:       root,
-			HTTPClient: httpClient,
+			Root:                root,
+			HTTPClient:          httpClient,
+			Command:             "codes",
+			InteractionRecorder: recorder,
 
 			OnRoundStart: func() {
 				memStore.Reset()

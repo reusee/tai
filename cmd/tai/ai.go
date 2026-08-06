@@ -16,6 +16,7 @@ import (
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/vars"
 )
 
@@ -111,6 +112,7 @@ var AICommand = Command{
 		noMemory NoMemory,
 		noHuman NoHuman,
 		loopRun loops.Run,
+		recorder *records.Recorder,
 	) {
 		ctx := context.Background()
 
@@ -205,12 +207,15 @@ var AICommand = Command{
 		// OnIdle, which is invoked by the loop when no component triggers.
 		// This ensures automated actions (continue, shell) are processed
 		// before prompting the user for input, and memory is persisted
-		// after each round via OnRoundSuccess.
-		// See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
+		// after each round via OnRoundSuccess. The interaction recorder is
+		// passed explicitly so the session is captured when -record is
+		// enabled. See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
 		_, err = loopRun(ctx, loops.RunOptions{
-			Generator:    generator,
-			InitialState: baseState,
-			Components:   comps.ComponentSet,
+			Generator:           generator,
+			InitialState:        baseState,
+			Components:          comps.ComponentSet,
+			Command:             "ai",
+			InteractionRecorder: recorder,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(nil)
 			},

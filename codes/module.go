@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/states"
 	"github.com/reusee/tai/taiconfigs"
 )
@@ -24,4 +25,5 @@ type Module struct {
 	Changes    changes.Module
 	States     states.Module
 	Loops      loops.Module
+	Records    records.Module
 }

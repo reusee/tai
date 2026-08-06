@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/taiconfigs"
 )
 
@@ -24,4 +25,5 @@ type Module struct {
 	Codes      codes.Module
 	AnyTexts   anytexts.Module
 	Loops      loops.Module
+	Records    records.Module
 }

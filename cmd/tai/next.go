@@ -14,6 +14,7 @@ import (
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 )
 
 const TheoryOfNextCommand = `
@@ -96,6 +97,7 @@ var NextCommand = Command{
 		apply flags.Apply,
 		buildChangeBlockHandler changes.BuildChangeBlockHandler,
 		loopRun loops.Run,
+		recorder *records.Recorder,
 	) {
 		ctx := context.Background()
 
@@ -145,12 +147,16 @@ var NextCommand = Command{
 		// Run the unified generation loop in single-shot mode (no
 		// components). The phase chain (generate -> chat) drives the
 		// interactive session. Apply errors trigger a retry with the
-		// error message fed back as user content. See loops.TheoryOfLoops.
+		// error message fed back as user content. The interaction
+		// recorder is passed explicitly so the session is captured when
+		// -record is enabled. See loops.TheoryOfLoops.
 		_, err = loopRun(ctx, loops.RunOptions{
-			Generator:    generator,
-			InitialState: state,
-			Components:   nil,
-			BlockHandler: blockHandler,
+			Generator:           generator,
+			InitialState:        state,
+			Components:          nil,
+			BlockHandler:        blockHandler,
+			Command:             "next",
+			InteractionRecorder: recorder,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
 			},

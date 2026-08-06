@@ -5,8 +5,10 @@ import (
 	"os"
 
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/records"
 )
 
 const TheoryOfPingCommand = `
@@ -25,10 +27,12 @@ var PingCommand = Command{
 		modes.ForProduction(),
 	},
 	Main: func(
+		recorder *records.Recorder,
 		generator generators.Generator,
 		buildGenerate phases.BuildGenerate,
 	) {
 		ctx := context.Background()
+		defer records.RecordSession(recorder, "ping")()
 
 		var state generators.State
 		state = generators.NewPrompts(
@@ -43,6 +47,11 @@ var PingCommand = Command{
 			},
 		)
 		state = generators.NewOutput(state, os.Stdout, true)
+
+		// ping runs its phase chain directly rather than through the
+		// unified generation loop, so wrap the state with the recording
+		// layer explicitly to capture contents.
+		state, _ = loops.RecordState(recorder, state)
 
 		phase := buildGenerate(generator, nil)(nil)
 		for phase != nil {
