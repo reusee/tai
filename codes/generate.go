@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
@@ -64,6 +65,20 @@ const maxGoTestRounds = 10
 
 const maxRetriesForMissingSummary = 3
 
+const TheoryOfReviewLoop = `
+The review loop runs after the main generation loop (or after the goal
+command completes) when the -review flag is enabled. It opens a fresh dscope
+scope so the latest filesystem state is loaded as context — the same reset
+mechanism the goal command uses per loop — and runs one generation session
+per configured review model, sequentially. Each review session replaces the
+original chat input with a review instruction ("审核并修正这些改动") followed
+by the unified diff of all changes made through the MemoryStore during the
+main generation session. The review model works from an independent context
+and corrects potential errors in the changes, improving accuracy. Session
+originals are retained across round resets so the diff always reflects the
+full session delta, not only the last round. See changes.TheoryOfInMemoryApply.
+`
+
 type Generate func(ctx context.Context, output io.Writer) error
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and
@@ -74,11 +89,80 @@ type Generate func(ctx context.Context, output io.Writer) error
 // aggregated after all sessions complete. See TheoryOfRoundStatistics.
 type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error)
 
+// RunReview provider. It is separate from GenerateWithResultWithStats so
+// review is opt-in and does not recursively trigger itself. Each review
+// session opens a fresh scope (via dscope.Reset) so the model reads the
+// latest filesystem state, and replaces Chats with the review instruction
+// plus the session diffs. See TheoryOfReviewLoop.
+func (Module) RunReview(
+	reset dscope.Reset,
+	review Review,
+	reviewModels ReviewModels,
+	getDefaultGenerator generators.GetDefaultGenerator,
+) RunReview {
+	return func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		if !bool(review) || len(diffs) == 0 {
+			return nil
+		}
+
+		models := append([]string{}, reviewModels...)
+		if len(models) == 0 {
+			generator, err := getDefaultGenerator()
+			if err != nil {
+				return err
+			}
+			name := generator.Spec().Name
+			if name == "" {
+				name = generator.Spec().Model
+			}
+			if name != "" {
+				models = append(models, name)
+			}
+		}
+
+		prompt := buildReviewPrompt(diffs)
+		for _, model := range models {
+			scope := reset()
+			scope = scope.Fork(func() flags.Chats {
+				return flags.Chats([]string{prompt})
+			})
+			if model != "" {
+				scope = scope.Fork(func() flags.ModelName {
+					return flags.ModelName(model)
+				})
+			}
+			var reviewErr error
+			scope.Call(func(generateWithResultWithStats GenerateWithResultWithStats) {
+				_, _, reviewErr = generateWithResultWithStats(ctx, output)
+			})
+			if reviewErr != nil {
+				return fmt.Errorf("review with model %s: %w", model, reviewErr)
+			}
+		}
+
+		return nil
+	}
+}
+
+// buildReviewPrompt assembles the review user message: the review
+// instruction followed by the session diffs.
+func buildReviewPrompt(diffs []changes.FileDiff) string {
+	return "审核并修正这些改动\n\n以下是本次改动产生的diff：\n\n" + changes.FormatFileDiffs(diffs)
+}
+
 // GenerateWithResult runs the full codes generation pipeline and returns the
 // loops.Result, which includes the final state and any remaining (unconsumed)
 // blocks. It wraps GenerateWithResultWithStats, discarding the round
 // statistics. Used by commands that do not need the statistics (go, any).
 type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Result, error)
+
+// RunReview runs one or more review generation sessions after the main
+// generation completes. Each review session uses a fresh scope (latest
+// filesystem context) and a review model from ReviewModels, in order.
+// When ReviewModels is empty, the default generator is used once. The
+// diffs are passed to the model through Chats so they appear in the user
+// prompt. See TheoryOfReviewLoop.
+type RunReview func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error
 
 const TheoryOfTokenBudgetStability = `
 Accurate token budgeting preserves the prefix cache by ensuring deterministic
@@ -776,6 +860,10 @@ func (Module) GenerateWithResultWithStats(
 				"count", len(result.ParseErrors),
 			)
 		}
+
+		// Session diffs are attached to the result for the review loop.
+		// See TheoryOfReviewLoop.
+		result.Diffs = memStore.Diffs()
 
 		return result, roundStats, err
 	}

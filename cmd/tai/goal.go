@@ -7,6 +7,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/prompts"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/gocodes"
@@ -164,6 +165,7 @@ var GoalCommand = Command{
 	},
 	Main: func(
 		reset dscope.Reset,
+		runReview codes.RunReview,
 	) {
 		ctx := context.Background()
 
@@ -200,6 +202,11 @@ var GoalCommand = Command{
 		// are appended, so the aggregated table shows the entire process at
 		// a glance. See codes.TheoryOfRoundStatistics.
 		var allStats []codes.RoundStat
+
+		// allDiffs accumulates the session diffs of every goal loop so the
+		// review loop can review all changes made during the goal.
+		// See TheoryOfReviewLoop.
+		var allDiffs []changes.FileDiff
 
 		// pendingDoneVerification records whether the previous loop emitted
 		// a done block. A done block is a completion declaration, not a
@@ -247,6 +254,9 @@ var GoalCommand = Command{
 				for i := loopStart; i < len(allStats); i++ {
 					allStats[i].Loop = loopsRun
 				}
+				// Retain this loop's session diffs for the review loop.
+				// See TheoryOfReviewLoop.
+				allDiffs = append(allDiffs, result.Diffs...)
 				if err != nil {
 					// Print the error and continue to the next loop.
 					// Transient errors (API rate limits) may resolve in
@@ -385,6 +395,12 @@ var GoalCommand = Command{
 
 		if !achieved && !stopRequested {
 			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", loopsRun)
+		}
+
+		// Review all changes made during the goal after the goal completes.
+		// See TheoryOfReviewLoop.
+		if err := runReview(ctx, os.Stdout, allDiffs); err != nil {
+			fmt.Fprintf(os.Stderr, "Review failed: %v\n", err)
 		}
 
 		// Print all loop statistics once more, aggregated, after the goal

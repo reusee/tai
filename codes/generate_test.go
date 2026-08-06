@@ -247,3 +247,21 @@ func TestPrintRoundStatsWithLoopColumn(t *testing.T) {
 		t.Fatalf("expected aggregated total prompt tokens, got: %s", output)
 	}
 }
+
+func TestReviewModelsFlagAndConfig(t *testing.T) {
+	f := ReviewModels(nil)
+	newDef, remainArgs, err := f.Handle("-review-model", []string{"gemini-pro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remainArgs) != 0 {
+		t.Fatalf("expected no remaining args, got %v", remainArgs)
+	}
+	ret, ok := newDef.(*ReviewModels)
+	if !ok {
+		t.Fatalf("expected *ReviewModels, got %T", newDef)
+	}
+	if len(*ret) != 1 || (*ret)[0] != "gemini-pro" {
+		t.Fatalf("unexpected ReviewModels: %v", *ret)
+	}
+}

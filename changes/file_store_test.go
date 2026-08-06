@@ -467,6 +467,91 @@ func TestMemoryStoreRenameNonExistentFile(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDiffs(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "package x\n\nfunc Old() {}\n"
+	if err := root.WriteFile("a.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.WriteFile("b.go", []byte("# b\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMemoryStore(NewRootStore(root))
+
+	if err := store.WriteFile("a.go", []byte("package x\n\nfunc New() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteFile("c.go", []byte("new file"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("b.go"); err != nil {
+		t.Fatal(err)
+	}
+
+	diffs := store.Diffs()
+	if len(diffs) != 3 {
+		t.Fatalf("expected 3 diffs, got %d", len(diffs))
+	}
+	// Paths are sorted: a.go, b.go, c.go
+	if diffs[0].Path != "a.go" || diffs[1].Path != "b.go" || diffs[2].Path != "c.go" {
+		t.Fatalf("unexpected diff order: %v, %v, %v", diffs[0].Path, diffs[1].Path, diffs[2].Path)
+	}
+	if string(diffs[0].Original) != original {
+		t.Fatalf("a.go original mismatch: %q", string(diffs[0].Original))
+	}
+	if !strings.Contains(string(diffs[0].Current), "func New() {}") {
+		t.Fatalf("a.go current mismatch: %q", string(diffs[0].Current))
+	}
+	if !diffs[1].OriginalExists || diffs[1].CurrentExists {
+		t.Fatal("b.go should be deleted in current state")
+	}
+	if diffs[2].OriginalExists || !diffs[2].CurrentExists {
+		t.Fatal("c.go should be a new file")
+	}
+}
+
+func TestMemoryStoreDiffsPersistAcrossReset(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "old content"
+	if err := root.WriteFile("a.txt", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMemoryStore(NewRootStore(root))
+
+	if err := store.WriteFile("a.txt", []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store.Reset()
+	if err := store.WriteFile("a.txt", []byte("v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diffs := store.Diffs()
+	if len(diffs) != 1 {
+		t.Fatalf("expected 1 diff, got %d", len(diffs))
+	}
+	if string(diffs[0].Original) != original {
+		t.Fatalf("session original should be %q, got %q", original, string(diffs[0].Original))
+	}
+	if string(diffs[0].Current) != "v2" {
+		t.Fatalf("current should be %q, got %q", "v2", string(diffs[0].Current))
+	}
+}
+
 func TestRootStoreWriteFileCreatesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)

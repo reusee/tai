@@ -11,6 +11,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/loops"
 )
@@ -105,8 +106,10 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset))
-	mainFn(reset)
+	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		return nil
+	}))
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -160,8 +163,10 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	os.Stdout = wOut
 	os.Stderr = wErr
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset))
-	mainFn(reset)
+	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		return nil
+	}))
 
 	wOut.Close()
 	wErr.Close()
@@ -217,8 +222,10 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(dscope.Reset))
-		mainFn(reset)
+		mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+		mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+			return nil
+		}))
 
 		wOut.Close()
 		wErr.Close()
@@ -291,8 +298,10 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(dscope.Reset))
-		mainFn(reset)
+		mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+		mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+			return nil
+		}))
 
 		wOut.Close()
 		wErr.Close()
@@ -361,8 +370,10 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset))
-	mainFn(reset)
+	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		return nil
+	}))
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -431,8 +442,10 @@ func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset))
-	mainFn(reset)
+	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
+	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		return nil
+	}))
 
 	w.Close()
 	os.Stdout = oldStdout

@@ -271,6 +271,11 @@ type Result struct {
 	// this to detect silent change loss from persistently malformed
 	// model output. See TheoryOfLoops.
 	ParseErrors []*blocks.BlockParseError
+	// Diffs are the session diffs of all changes applied through the
+	// in-memory file store during this run. They are used by the review
+	// loop to present the changes to a second model. See
+	// TheoryOfReviewLoop in codes/generate.go.
+	Diffs []changes.FileDiff
 }
 
 func (Module) Run() Run {

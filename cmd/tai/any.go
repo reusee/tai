@@ -29,9 +29,14 @@ var AnyCommand = Command{
 		},
 	},
 	Main: func(
-		generate codes.Generate,
+		generateWithResult codes.GenerateWithResult,
+		runReview codes.RunReview,
 	) {
-		if err := generate(context.Background(), os.Stdout); err != nil {
+		result, err := generateWithResult(context.Background(), os.Stdout)
+		if err != nil {
+			panic(err)
+		}
+		if err := runReview(context.Background(), os.Stdout, result.Diffs); err != nil {
 			panic(err)
 		}
 	},

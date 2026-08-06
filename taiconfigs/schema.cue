@@ -63,6 +63,12 @@ no_memory?: bool
 // no_human disables interactive chat and REPL for unattended operation.
 no_human?: bool
 
+// review enables a review loop after generation to review and fix changes.
+review?: bool
+
+// review_models lists the models used for the review loop, in order.
+review_models?: [...string]
+
 // ignore excludes files or patterns from the context.
 ignore?: [...string]
 
