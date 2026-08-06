@@ -2,11 +2,15 @@ package codes
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 )
@@ -263,5 +267,104 @@ func TestReviewModelsFlagAndConfig(t *testing.T) {
 	}
 	if len(*ret) != 1 || (*ret)[0] != "gemini-pro" {
 		t.Fatalf("unexpected ReviewModels: %v", *ret)
+	}
+}
+
+// reviewMockGenerator satisfies generators.Generator for review loop tests.
+// See TestRunReviewSkipsWhenNoDiffs and TestRunReviewRunsWhenDiffsExist.
+type reviewMockGenerator struct{}
+
+func (reviewMockGenerator) Spec() generators.Spec {
+	return generators.Spec{Model: "test-model"}
+}
+
+func (reviewMockGenerator) CountTokens(string) (int, error) {
+	return 0, nil
+}
+
+func (reviewMockGenerator) Generate(context.Context, generators.State, *generators.GenerateOptions) (generators.State, error) {
+	return nil, nil
+}
+
+func TestRunReviewSkipsWhenNoDiffs(t *testing.T) {
+	// When no change blocks were produced (empty diffs), the review loop
+	// must not initiate a generation session, even when the -review flag
+	// is enabled. Reviewing an empty diff set would waste tokens and
+	// produce review noise without any changes to review. The provider is
+	// invoked directly (rather than resolved via dscope) so the assertion
+	// does not depend on dscope's handling of the Reset type. See
+	// TheoryOfReviewLoop.
+	generationInitiated := false
+	fakeReset := dscope.Reset(func() dscope.Scope {
+		generationInitiated = true
+		return dscope.New()
+	})
+
+	var m Module
+	runReview := m.RunReview(
+		fakeReset,
+		true,
+		nil,
+		func() (generators.Generator, error) {
+			generationInitiated = true
+			return reviewMockGenerator{}, nil
+		},
+	)
+
+	// nil diffs (the actual case when no change blocks were applied).
+	if err := runReview(context.Background(), io.Discard, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Empty non-nil diffs.
+	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if generationInitiated {
+		t.Fatal("review loop must not initiate generation when no diffs exist")
+	}
+}
+
+func TestRunReviewRunsWhenDiffsExist(t *testing.T) {
+	// Positive control: when change blocks were produced (non-empty
+	// diffs) and the -review flag is enabled, the review loop must
+	// initiate a generation session with a fresh scope that re-reads the
+	// current filesystem state. The provider is invoked directly (rather
+	// than resolved via dscope) so the fake scope is guaranteed to be
+	// used; this guards the skip test against a vacuous pass. See
+	// TheoryOfReviewLoop.
+	generationInitiated := false
+	fakeReset := dscope.Reset(func() dscope.Scope {
+		return dscope.New(
+			func() GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
+					generationInitiated = true
+					return loops.Result{}, nil, nil
+				}
+			},
+		)
+	})
+
+	var m Module
+	runReview := m.RunReview(
+		fakeReset,
+		true,
+		nil,
+		func() (generators.Generator, error) {
+			return reviewMockGenerator{}, nil
+		},
+	)
+	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{
+		{
+			Path:           "test.go",
+			Original:       []byte("old content"),
+			OriginalExists: true,
+			Current:        []byte("new content"),
+			CurrentExists:  true,
+		},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !generationInitiated {
+		t.Fatal("review loop must initiate generation when diffs exist")
 	}
 }

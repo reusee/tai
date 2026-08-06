@@ -67,16 +67,24 @@ const maxRetriesForMissingSummary = 3
 
 const TheoryOfReviewLoop = `
 The review loop runs after the main generation loop (or after the goal
-command completes) when the -review flag is enabled. It opens a fresh dscope
-scope so the latest filesystem state is loaded as context — the same reset
-mechanism the goal command uses per loop — and runs one generation session
-per configured review model, sequentially. Each review session replaces the
-original chat input with a review instruction ("审核并修正这些改动") followed
-by the unified diff of all changes made through the MemoryStore during the
-main generation session. The review model works from an independent context
-and corrects potential errors in the changes, improving accuracy. Session
-originals are retained across round resets so the diff always reflects the
-full session delta, not only the last round. See changes.TheoryOfInMemoryApply.
+command completes) when the -review flag is enabled. The review loop is
+skipped when the session produced no applied changes — an empty diff set.
+Without this, enabling -review on a session where the model emitted no
+change blocks (or changes were not applied, e.g., with -no-apply) would
+still initiate a wasteful review generation over an empty diff. The diff
+set is derived from the in-memory store's session originals, so it is
+empty exactly when no change blocks were applied to the working tree (see
+changes.TheoryOfInMemoryApply). When diffs exist, the review loop opens a
+fresh dscope scope so the latest filesystem state is loaded as context — the
+same reset mechanism the goal command uses per loop — and runs one
+generation session per configured review model, sequentially. Each review
+session replaces the original chat input with a review instruction
+("审核并修正这些改动") followed by the unified diff of all changes made
+through the MemoryStore during the main generation session. The review
+model works from an independent context and corrects potential errors in
+the changes, improving accuracy. Session originals are retained across
+round resets so the diff always reflects the full session delta, not only
+the last round. See changes.TheoryOfInMemoryApply.
 `
 
 type Generate func(ctx context.Context, output io.Writer) error
