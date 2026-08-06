@@ -97,15 +97,8 @@ go?: {
 	// context_patterns specifies additional patterns for context packages.
 	context_patterns?: [...string]
 
-	// max_distance sets the maximum import distance from root packages to include.
-	// Defaults to 2.
-	max_distance?: int
-
 	// no_tests, if true, excludes test files from the context.
 	no_tests?: bool
-
-	// include_std, if true, includes standard library packages in the context.
-	include_std?: bool
 
 	// show_token_counts, if true, displays token counts for each included file.
 	show_token_counts?: bool
