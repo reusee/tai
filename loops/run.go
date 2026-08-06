@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"strings"
 
@@ -70,48 +71,40 @@ The loops package unifies the generation loop pattern across all generation
 commands (codes, ai, next). The core pattern is:
 1. Wrap state with ParserState to collect blocks during streaming
 2. Execute the phase chain until done
-3. Unwrap ParserState to get the base state
-4. Process collected blocks via ProcessComponents
-5. If a component triggers (produces parts or modifies state), append the
-   parts and start a new round
-6. If no component triggers, invoke OnIdle (if set) for interactive input.
-   When OnIdle returns continue=true, a new round starts; when false, the
-   loop ends. OnIdle is nil for non-interactive commands (codes, ping, next).
+3. Unwrap ParserState to get the final state and collected blocks
+4. Process collected blocks through components (if any)
+5. Repeat until no components trigger or MaxRounds is reached
 
-When Components is empty, the loop runs a single round (single-shot mode).
+The loop is designed around the concept of "rounds" and "retries":
+- A round is one pass through the phase chain, producing a set of blocks.
+- A retry is a re-execution of the phase chain within the same round, triggered
+  by a missing completion (no summary block) or an error after content output.
 
-Parse errors — blocks whose closing delimiter is missing or malformed — are
-collected from ParserState after each round and fed back as user content in the
-next round, so the model can self-correct its malformed blocks. The correction
-budget is bounded by maxParseErrorRounds: feedback stops after that many
-consecutive rounds with parse errors, and the uncorrected errors are surfaced
-via Result.ParseErrors. The budget resets when a round produces no parse
-errors. Feedback states the attempt number (e.g., "correction attempt 1 of 3")
-so the model knows when it is on its final attempt.
+Retries are treated as loops in round statistics. When a round is truncated
+(no summary block or abnormal finish reason) and will be retried, the retry
+process (SummarizeIncomplete) produces both a summary of the truncated output
+and a continue block whose content is the compressed version of the truncated
+output. The summary is recorded as the truncated round's summary via
+OnRoundTruncated, so the truncated round appears as a separate loop in round
+statistics. The continue block's content is fed to the retry round as user
+input, framing the retry as a continuation consistent with the model's own
+continue block mechanism.
 
-RetryOnMissingCompletion handles truncated output: when a round ends without
-a summary block, or when the finish reason indicates abnormal termination (e.g.,
-"length" from max-token truncation), the output was likely cut off mid-stream.
-The loop summarizes the incomplete output, appends it as context, and retries
-from the pre-round state.
+Retry on missing completion:
+- When a round ends without a summary block, or when the finish reason
+  indicates abnormal termination (e.g., "length" from max-token truncation),
+  the model's output was likely truncated mid-stream — the generation limit
+  was reached before the model could emit its closing summary block, or the
+  model emitted a summary but continued generating and was cut off. In both
+  cases, the round is retried from the original pre-generation State.
+- The retry feedback states the current attempt number so the model knows
+  how much retry budget remains. See TheoryOfLoops.
 
-RetryOnError handles any error that occurs after the model has output content
-during a round. The loop summarizes the incomplete output (using
-SummarizeIncomplete if available), appends both the error context and the
-summary as user content, resets per-round state via OnRoundStart (which resets
-the MemoryStore, discarding all changes from the failed attempt), and retries
-from the updated state. Errors that occur before any content is output do not
-trigger retry. For change block apply errors (changes.ApplyError), the
-feedback adds specific guidance: because the retry discards all change blocks
-from the failed attempt, the model is instructed to re-emit every intended
-change block, correcting the one that failed.
-
-Because the retry discards the failed attempt's output entirely — structured
-blocks (change, shell, go-test, continue) in it were not applied — both retry
-feedback messages instruct the model to re-emit every block it intends to take
-effect. Without this instruction, the model may interpret "continue from where
-you left off" as emitting only the continuation text, silently losing blocks
-that were generated but not applied.
+Retry on error:
+- When an error occurs after the model has output content, the loop retries
+  from the state that includes the partial output. The error context and a
+  summary of the partial output are appended as user content.
+- Errors that occur before any content is output do not trigger retry.
 
 Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3")
 so the model knows how much retry budget remains and can prioritize correcting
@@ -132,7 +125,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Below is a summary of the incomplete output; continue from where you left off, incorporating the context below.]\n\n"
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Continue from where you left off, incorporating the context in the continue block below.]\n\n"
 
 // Run executes generation rounds in a loop. Each round wraps the state
 // with ParserState, executes the phase chain, processes blocks via
@@ -146,7 +139,6 @@ type Run func(ctx context.Context, opts RunOptions) (Result, error)
 // streaming stops immediately. See TheoryOfLoops.
 type BlockHandler func(block blocks.Block) (consumed bool, err error)
 
-// RunOptions configures a generation loop run.
 type RunOptions struct {
 	// Generator is the model used for generation.
 	Generator generators.Generator
@@ -179,6 +171,16 @@ type RunOptions struct {
 	// summaries contains summary block bodies extracted from the round.
 	OnRoundSuccess func(state generators.State, summaries []string) error
 
+	// OnRoundTruncated is called when a round is truncated (no summary
+	// block or abnormal finish reason) and will be retried. It receives
+	// the state with the truncated output, the state that will be the
+	// base for the retry round, and the synthesized summary of the
+	// truncated output. The callback records the truncated round in
+	// round statistics. Unlike OnRoundSuccess, it must not flush
+	// per-round state (e.g., MemoryStore) because the truncated round's
+	// changes are discarded. See TheoryOfLoops.
+	OnRoundTruncated func(truncatedState generators.State, retryBaseState generators.State, summary string) error
+
 	// OnPhaseError is called when a phase returns an error, before
 	// the loop stops. The returned state is included in the Result.
 	// Used for error logging, tapping, or appending error content.
@@ -204,9 +206,11 @@ type RunOptions struct {
 	// and MaxRetries is 0.
 	MaxRetries int
 	// SummarizeIncomplete summarizes incomplete output before retrying.
-	// The summary is appended as user content to provide context for
-	// the retry. If nil, retry proceeds without a summary.
-	SummarizeIncomplete func(incompleteText string) (string, error)
+	// The retry process produces both a summary of the truncated output
+	// (used as the truncated round's summary in round statistics) and
+	// the compressed content fed to the retry round as user input. If
+	// nil, retry proceeds without a summary.
+	SummarizeIncomplete func(incompleteText string) (*RetrySummary, error)
 
 	// OnIdle is called when no component triggers after a round. It allows
 	// the caller to provide interactive input (e.g., chat prompt) and
@@ -215,6 +219,44 @@ type RunOptions struct {
 	// the loop ends. OnIdle is only invoked in multi-round mode (when
 	// Components is non-empty). See phases.TheoryOfIdleHandler.
 	OnIdle phases.IdleHandler
+}
+
+// RetrySummary holds the outcome of summarizing truncated output for retry.
+// The retry process has two tasks: producing a summary of the truncated
+// output (recorded as the truncated round's summary in round statistics)
+// and producing the compressed content fed to the retry round as user
+// input, framed as a continue block. See TheoryOfLoops.
+type RetrySummary struct {
+	// Summary is the summary of the truncated output, used as the
+	// truncated round's summary in round statistics.
+	Summary string
+	// RetryPrompt is the compressed version of the truncated output,
+	// fed to the retry round as user input.
+	RetryPrompt string
+}
+
+// freshDelimiter returns a fresh trio of uncommon Chinese characters for
+// use as a block delimiter in system-generated blocks. The delimiter is
+// chosen randomly from a set of uncommon Chinese characters so it is
+// unlikely to appear in the block body.
+func freshDelimiter() string {
+	const uncommonChars = "龘靐齉爩麤黿鼍爨灪虋齾齑靁齌齍齎齏爞齔齕"
+	chars := []rune(uncommonChars)
+	return string([]rune{
+		chars[rand.IntN(len(chars))],
+		chars[rand.IntN(len(chars))],
+		chars[rand.IntN(len(chars))],
+	})
+}
+
+// formatRetryPrompt formats the retry prompt as a continue block with a
+// fresh delimiter, prefixed by the retry system note. The continue block
+// frames the retry as a continuation, consistent with the model's own
+// continue block mechanism. See TheoryOfLoops.
+func formatRetryPrompt(retryPrompt string, attempt, maxAttempts int) string {
+	delimiter := freshDelimiter()
+	return fmt.Sprintf(incompleteOutputSummaryPrefix, attempt, maxAttempts) +
+		"<<" + delimiter + " <continue>\n" + retryPrompt + "\n" + delimiter
 }
 
 // Result holds the outcome of a generation loop.
@@ -362,14 +404,39 @@ func (Module) Run() Run {
 									"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
 							}
 
+							// Summarize the failed attempt's output. The
+							// retry process produces both a summary
+							// (recorded as the failed round's summary in
+							// round statistics) and the compressed content
+							// fed to the retry round as user input.
+							summary := ""
+							retryPrompt := ""
 							if opts.SummarizeIncomplete != nil {
 								incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
 								if incompleteText != "" {
-									if summaryText, summaryErr := opts.SummarizeIncomplete(incompleteText); summaryErr == nil && summaryText != "" {
-										retryParts = append(retryParts, generators.Text(
-											fmt.Sprintf(incompleteOutputSummaryPrefix, retry+1, maxRetries)+summaryText))
+									retrySummary, summaryErr := opts.SummarizeIncomplete(incompleteText)
+									if summaryErr == nil && retrySummary != nil {
+										summary = retrySummary.Summary
+										retryPrompt = retrySummary.RetryPrompt
 									}
 								}
+							}
+
+							// Record the failed round in round statistics
+							// so it appears as a separate loop.
+							// See TheoryOfRoundStatistics.
+							if opts.OnRoundTruncated != nil {
+								if err := opts.OnRoundTruncated(phaseState, state, summary); err != nil {
+									roundErr = err
+									break
+								}
+							}
+
+							// Append the continue block as the retry user
+							// prompt.
+							if retryPrompt != "" {
+								retryParts = append(retryParts, generators.Text(
+									formatRetryPrompt(retryPrompt, retry+1, maxRetries)))
 							}
 
 							var appendErr error
@@ -431,25 +498,48 @@ func (Module) Run() Run {
 					break
 				}
 
-				// Summarize incomplete output and retry. The feedback
-				// states the current attempt number so the model knows
-				// how much retry budget remains. See TheoryOfLoops.
+				// Summarize incomplete output and retry. The retry process
+				// produces both a summary of the truncated output (recorded
+				// as the truncated round's summary in round statistics) and
+				// a continue block whose content is the compressed version
+				// of the truncated output, fed to the retry round as user
+				// input. The feedback states the current attempt number so
+				// the model knows how much retry budget remains.
+				// See TheoryOfLoops.
+				summary := ""
+				retryPrompt := ""
 				if opts.SummarizeIncomplete != nil {
 					incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(state))
 					if incompleteText != "" {
-						summaryText, err := opts.SummarizeIncomplete(incompleteText)
-						if err == nil && summaryText != "" {
-							var appendErr error
-							state, appendErr = state.AppendContent(&generators.Content{
-								Role: generators.RoleUser,
-								Parts: []generators.Part{
-									generators.Text(fmt.Sprintf(incompleteOutputSummaryPrefix, retry+1, maxRetries) + summaryText),
-								},
-							})
-							if appendErr != nil {
-								break
-							}
+						retrySummary, err := opts.SummarizeIncomplete(incompleteText)
+						if err == nil && retrySummary != nil {
+							summary = retrySummary.Summary
+							retryPrompt = retrySummary.RetryPrompt
 						}
+					}
+				}
+
+				// Record the truncated round in round statistics so it
+				// appears as a separate loop. The summary is synthesized
+				// by the retry process. See TheoryOfRoundStatistics.
+				if opts.OnRoundTruncated != nil {
+					if err := opts.OnRoundTruncated(phaseState, state, summary); err != nil {
+						roundErr = err
+						break
+					}
+				}
+
+				// Append the continue block as the retry user prompt.
+				if retryPrompt != "" {
+					var appendErr error
+					state, appendErr = state.AppendContent(&generators.Content{
+						Role: generators.RoleUser,
+						Parts: []generators.Part{
+							generators.Text(formatRetryPrompt(retryPrompt, retry+1, maxRetries)),
+						},
+					})
+					if appendErr != nil {
+						break
 					}
 				}
 

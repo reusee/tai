@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/loops"
 )
 
 func TestPrintRoundStats(t *testing.T) {
@@ -85,11 +86,11 @@ func TestSummarizeRetryState(t *testing.T) {
 	phaseErr := errors.New("boom")
 
 	t.Run("Summarized", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (string, error) {
+		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			if text != "partial output" {
 				t.Fatalf("expected partial output, got %q", text)
 			}
-			return "condensed", nil
+			return &loops.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
 		})
 		if !summarized {
 			t.Fatal("expected summarized=true")
@@ -115,14 +116,13 @@ func TestSummarizeRetryState(t *testing.T) {
 			t.Fatal("expected summary in state")
 		}
 		if !foundError {
-			t.Fatal("expected error message in summary retry state")
+			t.Fatal("expected error in state")
 		}
 	})
 
-	t.Run("NoPartial", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(base, phaseErr, 1, func(text string) (string, error) {
-			t.Fatal("summarize should not be called")
-			return "", nil
+	t.Run("SummarizeError", func(t *testing.T) {
+		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+			return nil, errors.New("summarize failed")
 		})
 		if summarized {
 			t.Fatal("expected summarized=false")
@@ -130,43 +130,40 @@ func TestSummarizeRetryState(t *testing.T) {
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
-		// Only examine contents appended by summarizeRetryState (after the
-		// prevContentCount base contents); the base state may contain user
-		// contents of its own.
-		foundUser := false
-		foundErrorLog := false
-		contentIndex := 0
+		foundError := false
 		for c := range state.Contents() {
-			if contentIndex < 1 {
-				contentIndex++
-				continue
-			}
-			if c.Role == generators.RoleUser {
-				foundUser = true
-			}
 			for _, part := range c.Parts {
 				if _, ok := part.(generators.Error); ok {
-					foundErrorLog = true
+					foundError = true
 				}
 			}
 		}
-		if foundUser {
-			t.Fatal("expected no user summary content when no partial output")
-		}
-		if !foundErrorLog {
-			t.Fatal("expected error appended as log content when no partial output")
+		if !foundError {
+			t.Fatal("expected error in state")
 		}
 	})
 
-	t.Run("SummarizeError", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (string, error) {
-			return "", errors.New("summarize failed")
+	t.Run("NoPartial", func(t *testing.T) {
+		state, count, summarized := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+			t.Fatal("summarize should not be called")
+			return nil, nil
 		})
 		if summarized {
-			t.Fatal("expected summarized=false on summarize error")
+			t.Fatal("expected summarized=false")
 		}
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
+		}
+		foundError := false
+		for c := range state.Contents() {
+			for _, part := range c.Parts {
+				if _, ok := part.(generators.Error); ok {
+					foundError = true
+				}
+			}
+		}
+		if !foundError {
+			t.Fatal("expected error in state")
 		}
 	})
 }

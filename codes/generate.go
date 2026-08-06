@@ -99,25 +99,20 @@ func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, erro
 }
 
 const TheoryOfRoundStatistics = `
-Round statistics track per-round token usage (prompt, completion, thoughts,
-cached) and running time across the full generation session. Statistics are
-collected after each successful phase execution by scanning newly appended
-contents for Usage parts, and printed once at the end of the session via a
-deferred call. Deferred printing avoids interleaving statistics with model
-output during generation and ensures stats are reported even when the session
-ends early due to an error. The round duration is measured from the OnRoundStart
-callback to OnRoundSuccess, covering the full round including retries; the
-elapsed time is assigned to every stat entry produced by the round.
+Round statistics are collected per round to provide visibility into token
+usage and duration. Each round produces a RoundStat entry with:
+- Round number (1-based)
+- Prompt tokens, completion tokens, thought tokens, cached tokens
+- Duration (from OnRoundStart to OnRoundSuccess)
+- Summary (from summary blocks in the round)
 
-GenerateWithResultWithStats returns the collected RoundStat slice alongside
-the loops.Result, so callers that run multiple independent generation
-sessions — such as the goal command — can accumulate the statistics of every
-session and re-print them aggregated after all sessions complete, in
-addition to the per-session print at each session's end. The RoundStat.Loop
-field records which goal loop produced each round; PrintRoundStats renders a
-Loop column and loop-prefixed summary lines when any stat carries a non-zero
-Loop, and accepts an optional title for the aggregated report. See
-TheoryOfGoalCommand in cmd/tai/goal.go.
+Truncated rounds (no summary block) that are retried are recorded via
+OnRoundTruncated with the summary synthesized by the retry process, so they
+appear as separate loops in the statistics. The retry round itself is
+recorded by OnRoundSuccess when it completes successfully.
+
+The statistics are printed at the end of the session via a deferred call,
+so they are shown even when the session ends early due to an error.
 `
 
 // RoundStat records per-round token usage (prompt, completion, thoughts,
@@ -219,15 +214,67 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 	}
 }
 
+// collectRoundStats scans newly appended contents (after prevContentCount)
+// for Usage parts and appends RoundStat entries, assigning the given
+// duration and summary. It returns the updated stats and the new content
+// count of the scanned state. Used by OnRoundSuccess and OnRoundTruncated
+// to record round statistics. See TheoryOfRoundStatistics.
+func collectRoundStats(
+	roundStats []RoundStat,
+	state generators.State,
+	prevContentCount int,
+	elapsed time.Duration,
+	summary string,
+) ([]RoundStat, int) {
+	statsStartIdx := len(roundStats)
+	contentIndex := 0
+	for c := range state.Contents() {
+		if contentIndex >= prevContentCount {
+			for _, part := range c.Parts {
+				if usage, ok := part.(generators.Usage); ok {
+					roundStats = append(roundStats, RoundStat{
+						Round:            len(roundStats) + 1,
+						PromptTokens:     usage.Prompt.TokenCount,
+						CompletionTokens: usage.Candidates.TokenCount,
+						ThoughtTokens:    usage.Thoughts.TokenCount,
+						CachedTokens:     usage.Prompt.TokenCountCached,
+					})
+				}
+			}
+		}
+		contentIndex++
+	}
+	for i := statsStartIdx; i < len(roundStats); i++ {
+		roundStats[i].Duration = elapsed
+	}
+	if summary != "" {
+		if len(roundStats) > 0 {
+			roundStats[len(roundStats)-1].Summary = summary
+		} else {
+			roundStats = append(roundStats, RoundStat{
+				Round:    len(roundStats) + 1,
+				Duration: elapsed,
+				Summary:  summary,
+			})
+		}
+	}
+	return roundStats, contentIndex
+}
+
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	generator generators.Generator,
 	incompleteText string,
-) (string, error) {
+) (*loops.RetrySummary, error) {
 	if incompleteText == "" {
-		return "", nil
+		return nil, nil
 	}
-	systemPrompt := "You are a summarization assistant. Summarize the following incomplete model output concisely. Output ONLY a summary block with your summary. Do not include any other text."
+	systemPrompt := `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks:
+
+1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
+2. A continue block (kind "continue") whose body is a compressed version of the truncated output, to be fed back to the model as the next user message for retry.
+
+Output ONLY these two blocks, no other text.`
 	var state generators.State
 	state = generators.NewPrompts(systemPrompt, []*generators.Content{
 		{
@@ -244,34 +291,53 @@ func summarizeIncompleteOutput(
 	}
 	_, err := generator.Generate(ctx, state, options)
 	if err != nil {
-		return "", fmt.Errorf("summarization call failed: %w", err)
+		return nil, fmt.Errorf("summarization call failed: %w", err)
 	}
 	outputText := buf.String()
-	block, _, _, ok, err := blocks.ParseFirstBlock([]byte(outputText))
-	if err != nil || !ok || block.Kind != "summary" {
-		// Fallback: use the entire output as summary
-		return outputText, nil
+	parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
+	if err != nil {
+		// Fallback: use the entire output as both summary and retry prompt.
+		return &loops.RetrySummary{
+			Summary:     outputText,
+			RetryPrompt: outputText,
+		}, nil
 	}
-	return block.Body, nil
+	var summary, continueContent string
+	for _, block := range parsedBlocks {
+		switch block.Kind {
+		case "summary":
+			summary = block.Body
+		case "continue":
+			continueContent = block.Body
+		}
+	}
+	if summary == "" {
+		summary = outputText
+	}
+	if continueContent == "" {
+		continueContent = summary
+	}
+	return &loops.RetrySummary{
+		Summary:     summary,
+		RetryPrompt: continueContent,
+	}, nil
 }
 
-// summarizeRetryState appends a summarized retry message to errState when the
-// model already produced partial output, so the retry has condensed context.
-// It returns the new state, the new content count, and whether summarization
-// was used. See TheoryOfSummaryRetryOnError.
 func summarizeRetryState(
 	errState generators.State,
 	phaseErr error,
 	prevContentCount int,
-	summarize func(string) (string, error),
+	summarize func(string) (*loops.RetrySummary, error),
 ) (newState generators.State, contentCount int, summarized bool) {
 	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
-		if summary, err := summarize(partialText); err == nil && summary != "" {
+		if retrySummary, err := summarize(partialText); err == nil && retrySummary != nil {
 			msg := "The previous generation attempt was interrupted by an error after producing partial output. " +
 				"A summary is provided for context; this is a retry.\n\n" +
-				"Summary of partial output:\n" + summary + "\n\n" +
-				"Error: " + phaseErr.Error()
+				"Summary of partial output:\n" + retrySummary.Summary + "\n\n" +
+				"Error: " + phaseErr.Error() + "\n\n" +
+				"Continue from where you left off, incorporating the context below:\n\n" +
+				retrySummary.RetryPrompt
 			newState, err := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
@@ -331,23 +397,17 @@ TheoryOfContextPhilosophy in loops/run.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
-When a generation round produces incomplete output (no summary block),
-the partial output is summarized via a separate model call before retrying.
-The fast model (configured via fast_model or fast_model_name in tai.cue) is
-used for this summarization via GetDefaultFastModel, not the main generation
-model, to minimize latency and cost. The summary provides context about what
-was partially generated, and changes the input to the model so that the retry
-attempt produces a different output. The summary is requested via a summary
-block in the summarization prompt, and the parsed summary text is appended
-as a user message to the original state before retrying. This keeps the main
-conversation history clean while injecting the condensed context.
-The summary is prefixed with an explanatory note informing the model that the
-previous output was truncated and that this is a retry.
+When a round is truncated (no summary block) or errors after producing
+partial output, the incomplete output is summarized before retrying. The
+retry process has two tasks: producing a summary of the truncated output
+(recorded as the truncated round's summary in round statistics) and
+producing the compressed content fed to the retry round as user input,
+framed as a continue block. The summary provides context for the retry,
+and the compressed content allows the model to continue from where it
+left off without re-reading the full truncated output.
 
-This summarization is transient error recovery, not conversation compression.
-The summary is injected into one retry request and then discarded. The system
-does not maintain or compress dialogue history. See TheoryOfContextPhilosophy
-in loops/run.go.
+The summarization uses a fast model to minimize latency. The summary is
+appended as user content with a system note explaining the retry.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -414,7 +474,6 @@ func (Module) GenerateWithResultWithStats(
 	apply flags.Apply,
 	loopRun loops.Run,
 ) GenerateWithResultWithStats {
-
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
 		// Open a root on the current directory to restrict all file I/O
@@ -646,49 +705,17 @@ func (Module) GenerateWithResultWithStats(
 				// OnRoundStart. The duration covers the full round including
 				// retries. See TheoryOfRoundStatistics.
 				elapsed := time.Since(roundStartTime)
-				statsStartIdx := len(roundStats)
 
-				// Collect round statistics from newly appended contents.
+				// Collect round statistics from newly appended contents and
+				// associate summary blocks with the current round.
 				// See TheoryOfRoundStatistics.
-				contentIndex := 0
-				for c := range roundState.Contents() {
-					if contentIndex >= prevContentCount {
-						for _, part := range c.Parts {
-							if usage, ok := part.(generators.Usage); ok {
-								roundStats = append(roundStats, RoundStat{
-									Round:            len(roundStats) + 1,
-									PromptTokens:     usage.Prompt.TokenCount,
-									CompletionTokens: usage.Candidates.TokenCount,
-									ThoughtTokens:    usage.Thoughts.TokenCount,
-									CachedTokens:     usage.Prompt.TokenCountCached,
-								})
-							}
-						}
-					}
-					contentIndex++
-				}
-				prevContentCount = contentIndex
-
-				// Assign the round duration to all stat entries created in
-				// this round. A round may produce multiple Usage parts (e.g.,
-				// when retries occur); all share the same round duration.
-				for i := statsStartIdx; i < len(roundStats); i++ {
-					roundStats[i].Duration = elapsed
-				}
-
-				// Associate summary blocks with the current round.
+				summaryText := ""
 				if len(summaries) > 0 {
-					summaryText := strings.Join(summaries, "\n")
-					if len(roundStats) > 0 {
-						roundStats[len(roundStats)-1].Summary = summaryText
-					} else {
-						roundStats = append(roundStats, RoundStat{
-							Round:    len(roundStats) + 1,
-							Duration: elapsed,
-							Summary:  summaryText,
-						})
-					}
+					summaryText = strings.Join(summaries, "\n")
 				}
+				roundStats, prevContentCount = collectRoundStats(
+					roundStats, roundState, prevContentCount, elapsed, summaryText,
+				)
 
 				// If OnRoundStart is skipped for the next round (parse-error
 				// correction rounds), the duration is measured from here,
@@ -698,12 +725,33 @@ func (Module) GenerateWithResultWithStats(
 				return nil
 			},
 
+			OnRoundTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
+				// Record the truncated round in round statistics so it
+				// appears as a separate loop. The summary is synthesized
+				// by the retry process. The retry base state's content
+				// count becomes the new prevContentCount, so the retry
+				// round's statistics collection starts after the retry
+				// prompt. See TheoryOfRoundStatistics.
+				elapsed := time.Since(roundStartTime)
+				roundStats, _ = collectRoundStats(
+					roundStats, truncatedState, prevContentCount, elapsed, summary,
+				)
+				prevContentCount = generators.CountContents(retryBaseState)
+				return nil
+			},
+
 			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
+				// Record the failed round in round statistics so it appears
+				// as a separate loop. The failed round has no synthesized
+				// summary because no retry follows. See TheoryOfRoundStatistics.
+				elapsed := time.Since(roundStartTime)
+				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, "")
+
 				newState, newContentCount, _ := summarizeRetryState(
 					errState,
 					phaseErr,
 					prevContentCount,
-					func(text string) (string, error) {
+					func(text string) (*loops.RetrySummary, error) {
 						return summarizeIncompleteOutput(ctx, fastModel, text)
 					},
 				)
@@ -714,7 +762,7 @@ func (Module) GenerateWithResultWithStats(
 			RetryOnMissingCompletion: true,
 			RetryOnError:             true,
 			MaxRetries:               maxRetriesForMissingSummary,
-			SummarizeIncomplete: func(incompleteText string) (string, error) {
+			SummarizeIncomplete: func(incompleteText string) (*loops.RetrySummary, error) {
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 			},
 		})
