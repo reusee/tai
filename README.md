@@ -111,6 +111,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-fast-model` | Set the fast model for summarization |
 | `-file` | Add a file to the context |
 | `-shell` | Enable shell block execution |
+| `-stdin` | Add standard input content to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |
 | `-dynamic-context` | Enable dynamic context fetching via request-context blocks |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |

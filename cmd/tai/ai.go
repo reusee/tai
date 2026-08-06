@@ -115,11 +115,6 @@ var AICommand = Command{
 		ctx := context.Background()
 
 		input := strings.Join(flagChats, "\n")
-
-		stdin := getStdinContent()
-		if len(stdin) > 0 {
-			input = input + "\n" + string(stdin)
-		}
 		logger.InfoContext(ctx, "input", "len", len(input))
 
 		systemPrompt, err := getSystemPrompt()

@@ -2,8 +2,24 @@ package flags
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"slices"
+
+	"golang.org/x/term"
 )
+
+const TheoryOfStdinFlag = `
+The -stdin flag adds the content of standard input to the chat messages
+(Chats). It is implemented as an additional key on the Chats flag type
+itself, alongside "chat". This composes correctly with chat flags
+regardless of argument order: each Handle invocation reads the current
+Chats value from the scope (which includes all previously parsed chat
+and stdin flags), appends its contribution, and forks an updated
+pointer. Standard input is read at flag parse time, so the content is
+captured exactly once. If standard input is a terminal, no content is
+read and the current Chats value is forked unchanged.
+`
 
 type Chats []string
 
@@ -15,14 +31,39 @@ var _ Flag = Chats(nil)
 
 func (c Chats) Keys() map[string]string {
 	return map[string]string{
-		"chat": "Add a chat message to the conversation",
+		"chat":   "Add a chat message to the conversation",
+		"-stdin": "Add standard input content to the chat messages",
 	}
 }
 
 func (c Chats) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
-	if len(args) == 0 {
-		return nil, nil, fmt.Errorf("expecting string argument, got empty")
+	switch key {
+	case "chat":
+		if len(args) == 0 {
+			return nil, nil, fmt.Errorf("expecting string argument, got empty")
+		}
+		ret := append(slices.Clone(c), args[0])
+		return &ret, args[1:], nil
+	case "-stdin":
+		content := readStdinContent()
+		if len(content) == 0 {
+			return &c, args, nil
+		}
+		ret := append(slices.Clone(c), string(content))
+		return &ret, args, nil
 	}
-	ret := append(slices.Clone(c), args[0])
-	return &ret, args[1:], nil
+	panic("key not handle: " + key)
+}
+
+// readStdinContent reads all of standard input if it is not a terminal.
+// Returns nil if stdin is a terminal or if reading fails.
+func readStdinContent() []byte {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil
+	}
+	content, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil
+	}
+	return content
 }
