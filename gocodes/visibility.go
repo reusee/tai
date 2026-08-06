@@ -22,8 +22,14 @@ than package B, A's visibility is not lower than B's.
 
 Focus packages are always at level 3 (all files) and do not count
 against the 32K context budget. Non-focus packages share the 32K budget.
-The budget is fixed to ensure context files are simplified consistently
-across requests, preserving the LLM prefix cache.
+The budget is a hard limit: packages are initially invisible, then
+upgraded to their minimum visibility in priority order as the budget
+allows, subject to the predecessor constraint. A package's minimum
+visibility is capped to the predecessor's level; if the capped minimum
+is zero or unaffordable, the package remains invisible and caps all
+subsequent packages. After minimum visibility allocation, the
+water-filling algorithm upgrades packages further within the remaining
+budget.
 `
 
 const maximumContextTokenBudget = 32 << 10
@@ -183,8 +189,6 @@ func precomputeTokenCounts(
 	return nil
 }
 
-// allocateVisibility assigns visibility levels to logical packages using
-// the water-filling algorithm. See TheoryOfVisibilityAllocation.
 func allocateVisibility(
 	logicalPkgs []*LogicalPackage,
 	logger logs.Logger,
@@ -197,24 +201,55 @@ func allocateVisibility(
 		}
 	}
 
-	// Compute initial cost for non-focus packages (excluding DoNotSimplify)
-	var totalCost int
+	// Start all non-focus packages at invisible, then upgrade to min visibility
+	// in priority order as budget allows.
+	remaining := maximumContextTokenBudget
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			continue
 		}
-		totalCost += lp.BudgetTokensByLevel[lp.MinVisibility]
+		lp.Visibility = VisibilityInvisible
 	}
 
-	remaining := maximumContextTokenBudget - totalCost
-	if remaining < 0 {
-		remaining = 0
+	// Allocate minimum visibility in priority order with the predecessor
+	// constraint: a package's visibility must not exceed the previous
+	// package's visibility, enforcing the construction principle that
+	// higher-priority packages have at least as much visibility as
+	// lower-priority ones. If a package cannot afford its (possibly capped)
+	// minimum visibility, it stays invisible and caps all subsequent
+	// packages.
+	predecessorLevel := VisibilityAll
+	for _, lp := range logicalPkgs {
+		if lp.Category == CategoryFocus {
+			predecessorLevel = lp.Visibility
+			continue
+		}
+		minVis := lp.MinVisibility
+		if minVis == VisibilityInvisible {
+			predecessorLevel = lp.Visibility
+			continue
+		}
+		// Cap to predecessor level (construction principle)
+		if minVis > predecessorLevel {
+			minVis = predecessorLevel
+		}
+		if minVis == VisibilityInvisible {
+			predecessorLevel = lp.Visibility
+			continue
+		}
+		cost := lp.BudgetTokensByLevel[minVis]
+		if cost <= remaining {
+			lp.Visibility = minVis
+			remaining -= cost
+			predecessorLevel = minVis
+		} else {
+			// Can't afford; stays invisible
+			predecessorLevel = lp.Visibility
+		}
 	}
 
 	if debug {
-		logger.Info("visibility allocation start",
-			"initial cost", totalCost,
-			"budget", maximumContextTokenBudget,
+		logger.Info("visibility after min allocation",
 			"remaining", remaining,
 		)
 	}

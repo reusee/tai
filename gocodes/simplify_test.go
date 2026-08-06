@@ -13,6 +13,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -186,6 +187,95 @@ func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
 			t.Errorf("for focus %d: expected %d, got %d", focus, want, got)
 		}
 	}
+}
+
+func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
+	t.Run("blocks lower priority when higher priority invisible", func(t *testing.T) {
+		// Bug reproduction: when a higher-priority package cannot afford
+		// any visibility level, lower-priority packages must not exceed
+		// its visibility (zero). Without the predecessor constraint in
+		// the minimum visibility allocation, the lower-priority package
+		// gets level 1 while the higher-priority package stays at 0,
+		// violating the construction principle.
+		// See TheoryOfVisibilityAllocation.
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			},
+			{
+				PkgPath:       "context",
+				Category:      CategoryContext,
+				MinVisibility: VisibilityCode,
+				Visibility:    VisibilityInvisible,
+				// Level 2 costs 50000, exceeding the 32K budget
+				BudgetTokensByLevel: [4]int{0, 40000, 50000, 50000},
+			},
+			{
+				PkgPath:       "samemodule",
+				Category:      CategorySameModule,
+				MinVisibility: VisibilityDoc,
+				Visibility:    VisibilityInvisible,
+				// Level 1 costs 50, affordable on its own
+				BudgetTokensByLevel: [4]int{0, 50, 50, 50},
+			},
+		}
+
+		allocateVisibility(pkgs, logs.Logger{}, false)
+
+		if pkgs[0].Visibility != VisibilityAll {
+			t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
+		}
+		if pkgs[1].Visibility != VisibilityInvisible {
+			t.Fatalf("context should be invisible, got %d", pkgs[1].Visibility)
+		}
+		if pkgs[2].Visibility != VisibilityInvisible {
+			t.Fatalf("samemodule should be invisible (predecessor constraint), got %d", pkgs[2].Visibility)
+		}
+	})
+
+	t.Run("construction principle holds when affordable", func(t *testing.T) {
+		// Verify the construction principle holds when packages can afford
+		// their minimum visibility: higher-priority packages have at least
+		// as much visibility as lower-priority ones.
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			},
+			{
+				PkgPath:             "context",
+				Category:            CategoryContext,
+				MinVisibility:       VisibilityCode,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 100, 200, 300},
+			},
+			{
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 50, 100, 150},
+			},
+		}
+
+		allocateVisibility(pkgs, logs.Logger{}, false)
+
+		if pkgs[0].Visibility < pkgs[1].Visibility {
+			t.Fatalf("construction principle violated: focus (%d) < context (%d)",
+				pkgs[0].Visibility, pkgs[1].Visibility)
+		}
+		if pkgs[1].Visibility < pkgs[2].Visibility {
+			t.Fatalf("construction principle violated: context (%d) < samemodule (%d)",
+				pkgs[1].Visibility, pkgs[2].Visibility)
+		}
+	})
 }
 
 func TestMatchPattern(t *testing.T) {
