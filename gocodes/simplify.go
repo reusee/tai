@@ -3,23 +3,22 @@ package gocodes
 import (
 	"cmp"
 	"fmt"
-	"go/ast"
-	"go/token"
 	"slices"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/logs"
-	"golang.org/x/tools/go/ast/astutil"
 )
 
 const TheoryOfSimplification = `
 Simplification uses package-level visibility levels (0-3) instead of
 file-level transforms. Each package is assigned a visibility level based
 on its priority (category, distance, path) and the 32K context budget.
-Level 0: invisible (deleted). Level 1: Go documentation (function bodies
-omitted, comments preserved). Level 2: full Go code without test files.
-Level 3: all files including tests, non-Go files, and embed files.
+Level 0: invisible (deleted). Level 1: package documentation via
+go doc -all -cmd -u (per-package output, not per-file). Level 2: full
+Go code without test files (raw file content from disk). Level 3: all
+files including tests, non-Go files, and embed files (raw file content
+from disk).
 
 The water-filling algorithm upgrades packages from their minimum visibility
 to higher levels as the budget allows, processing packages in priority order.
@@ -34,18 +33,15 @@ between consecutive requests for LLM prefix caching.
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
 func (Module) SimplifyFiles(
-	getFileSet GetFileSet,
 	getRootPackages GetRootPackages,
 	getContextPackages GetContextPackages,
 	logger logs.Logger,
 	debug Debug,
+	loadDir LoadDir,
+	envs Envs,
+	workspace Workspace,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
-		fset, err := getFileSet()
-		if err != nil {
-			return nil, err
-		}
-
 		rootPkgs, err := getRootPackages()
 		if err != nil {
 			return nil, err
@@ -72,8 +68,14 @@ func (Module) SimplifyFiles(
 		// 4. Sort by priority (category, distance, path)
 		sortPackagesByPriority(logicalPkgs)
 
-		// 5. Pre-compute token counts at each visibility level concurrently
-		if err := precomputeTokenCounts(logicalPkgs, fset, countTokens); err != nil {
+		// 5. Pre-compute token counts at each visibility level concurrently.
+		// go doc runs from the load directory (or workspace root in
+		// workspace mode) so it can resolve package import paths.
+		dir := string(loadDir)
+		if workspace != "" {
+			dir = string(workspace)
+		}
+		if err := precomputeTokenCounts(logicalPkgs, countTokens, dir, []string(envs)); err != nil {
 			return nil, err
 		}
 
@@ -83,27 +85,85 @@ func (Module) SimplifyFiles(
 		// 7. Collect output files at their assigned visibility levels
 		var result []*File
 		for _, lp := range logicalPkgs {
-			// Build lookup maps for the current visibility level and level 3
-			renderedAtVisibility := make(map[*File]renderedFile)
-			if lp.Visibility > VisibilityInvisible {
-				for _, rf := range lp.RenderedFiles[lp.Visibility] {
-					renderedAtVisibility[rf.file] = rf
-				}
-			}
+			// DoNotSimplify files are always at level 3 (full content),
+			// regardless of the package's visibility level.
 			renderedAtAll := make(map[*File]renderedFile)
 			for _, rf := range lp.RenderedFiles[VisibilityAll] {
 				renderedAtAll[rf.file] = rf
 			}
-
 			for _, f := range lp.Files {
-				var rf renderedFile
-				var ok bool
-				// DoNotSimplify files are always at level 3 (full content)
-				if f.DoNotSimplify {
-					rf, ok = renderedAtAll[f]
-				} else if lp.Visibility > VisibilityInvisible {
-					rf, ok = renderedAtVisibility[f]
+				if !f.DoNotSimplify {
+					continue
 				}
+				rf, ok := renderedAtAll[f]
+				if !ok {
+					continue
+				}
+				f.LogicalPkgPath = lp.PkgPath
+				f.PackageDistanceFromRoot = lp.Distance
+				f.Confirmed = &Transformed{
+					What:      "visibility level 3 (do not simplify)",
+					Content:   []byte(rf.content),
+					NumTokens: rf.tokens,
+				}
+				result = append(result, f)
+			}
+
+			if lp.Visibility == VisibilityInvisible {
+				continue
+			}
+
+			// Level 1: emit a single synthetic entry with go doc output.
+			// The synthetic file uses the package path as its Path so
+			// compareFilesForOutput can sort it correctly.
+			if lp.Visibility == VisibilityDoc && lp.DocContent != "" {
+				if len(lp.Files) == 0 {
+					continue
+				}
+				moduleIsRoot := false
+				moduleIsNil := true
+				for _, f := range lp.Files {
+					moduleIsRoot = f.ModuleIsRoot
+					moduleIsNil = f.ModuleIsNil
+					break
+				}
+				mainPkg := lp.MainPackage
+				if mainPkg == nil && len(lp.Packages) > 0 {
+					mainPkg = lp.Packages[0]
+				}
+				pkgPathDepth := len(strings.Split(lp.PkgPath, "/"))
+				docFile := &File{
+					Path:                    lp.PkgPath,
+					IsGoFile:                true,
+					Content:                 []byte(lp.DocContent),
+					Package:                 mainPkg,
+					PackageIsRoot:           false,
+					PackageDistanceFromRoot: lp.Distance,
+					PackagePathDepth:        pkgPathDepth,
+					Module:                  lp.Module,
+					ModuleIsRoot:            moduleIsRoot,
+					ModuleIsNil:             moduleIsNil,
+					LogicalPkgPath:          lp.PkgPath,
+					Confirmed: &Transformed{
+						What:      "visibility level 1 (go doc)",
+						Content:   []byte(lp.DocContent),
+						NumTokens: lp.DocTokens,
+					},
+				}
+				result = append(result, docFile)
+				continue
+			}
+
+			// Levels 2 and 3: per-file rendering with raw disk content.
+			renderedAtVisibility := make(map[*File]renderedFile)
+			for _, rf := range lp.RenderedFiles[lp.Visibility] {
+				renderedAtVisibility[rf.file] = rf
+			}
+			for _, f := range lp.Files {
+				if f.DoNotSimplify {
+					continue
+				}
+				rf, ok := renderedAtVisibility[f]
 				if !ok {
 					continue
 				}
@@ -186,45 +246,6 @@ func compareFilesForOutput(a, b *File) int {
 		return 1
 	}
 	return 0
-}
-
-// deleteFunctionBody replaces all function bodies with a panic call.
-// The original AST is not modified: a shallow copy with a cloned Decls
-// slice is made before applying the transformation, so cursor.Replace
-// operates on the copy's Decls, not the original's.
-func deleteFunctionBody(file *ast.File) *ast.File {
-	// Clone the Decls slice to prevent astutil.Apply from mutating the
-	// original AST through a shared slice. astutil.Apply may share the
-	// Decls slice between the original and the copy; cloning it ensures
-	// cursor.Replace only affects the copy.
-	fileCopy := *file
-	fileCopy.Decls = slices.Clone(file.Decls)
-
-	return astutil.Apply(&fileCopy, func(cursor *astutil.Cursor) bool {
-		if decl, ok := cursor.Node().(*ast.FuncDecl); ok {
-			if decl.Body == nil {
-				return true
-			}
-			newDecl := *decl
-			newDecl.Body = &ast.BlockStmt{
-				List: []ast.Stmt{
-					&ast.ExprStmt{
-						X: &ast.CallExpr{
-							Fun: &ast.Ident{Name: "panic"},
-							Args: []ast.Expr{
-								&ast.BasicLit{
-									Kind:  token.STRING,
-									Value: `"function body omitted"`,
-								},
-							},
-						},
-					},
-				},
-			}
-			cursor.Replace(&newDecl)
-		}
-		return true
-	}, nil).(*ast.File)
 }
 
 // matchPattern reports whether the relative path matches the glob pattern,

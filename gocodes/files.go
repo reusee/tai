@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"fmt"
 	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
@@ -19,7 +18,6 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/tai/logs"
 	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/imports"
 )
 
 const TheoryOfFileOrdering = `
@@ -486,68 +484,6 @@ func (Module) Files(
 
 		return
 	})
-}
-
-// formatBufPool reuses bytes.Buffer instances across concurrent transform
-// workers to reduce GC pressure during the simplification pipeline.
-var formatBufPool = sync.Pool{
-	New: func() any {
-		return new(bytes.Buffer)
-	},
-}
-
-func formatASTForPrompt(w io.Writer, fileAst *ast.File, fset *token.FileSet, isRoot bool, readOnly bool, path string, skipImports bool) error {
-	prefix := "focus file"
-	if !isRoot {
-		prefix = "context file"
-	}
-	readOnlyNote := ""
-	if readOnly {
-		readOnlyNote = " (read-only)"
-	}
-	_, err := fmt.Fprint(w, "``` begin of "+prefix+" "+path+readOnlyNote+"\n")
-	if err != nil {
-		return err
-	}
-
-	buf := formatBufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer formatBufPool.Put(buf)
-
-	err = format.Node(buf, fset, fileAst)
-	if err != nil {
-		panic(err)
-	}
-
-	var res []byte
-	if skipImports {
-		// Comment deletion does not change import usage, so goimports
-		// would be a no-op. Skip it to avoid redundant parsing.
-		res = buf.Bytes()
-	} else {
-		res, err = imports.Process(path, buf.Bytes(), nil)
-		if err != nil {
-			res = buf.Bytes()
-		}
-	}
-
-	_, err = w.Write(res)
-	if err != nil {
-		return err
-	}
-	if !bytes.HasSuffix(res, []byte("\n")) {
-		_, err = fmt.Fprintf(w, "\n")
-		if err != nil {
-			return err
-		}
-	}
-
-	_, err = fmt.Fprint(w, "``` end of "+prefix+" "+path+"\n\n")
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func formatContentForPrompt(w io.Writer, content []byte, isRoot bool, readOnly bool, path string) error {

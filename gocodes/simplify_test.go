@@ -1,10 +1,6 @@
 package gocodes
 
 import (
-	"bytes"
-	"go/format"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,75 +103,6 @@ module test
 		_ = parts
 	})
 
-}
-
-func TestDeleteFunctionBodyPreservesDoc(t *testing.T) {
-	fset := token.NewFileSet()
-	const src = `package main
-
-// This is the doc for main.
-func main() {
-       println("hello")
-}
-`
-	file, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	simplified := deleteFunctionBody(file)
-
-	buf := new(bytes.Buffer)
-	err = format.Node(buf, fset, simplified)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got := buf.String()
-	if !strings.Contains(got, "// This is the doc for main.") {
-		t.Errorf("doc comment was removed:\n%s", got)
-	}
-	if strings.Contains(got, `println("hello")`) {
-		t.Errorf("function body was not removed:\n%s", got)
-	}
-	if !strings.Contains(got, `panic("function body omitted")`) {
-		t.Errorf("function body not correctly replaced:\n%s", got)
-	}
-}
-
-func TestDeleteFunctionBody(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "test", `
-package main
-
-func main() {
-       println("hello")
-}
-
-func foo() (int, error) {
-       return 0, nil
-}
-
-func bar() {
-       println("hello")
-}
-       `, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	simplified := deleteFunctionBody(file)
-
-	buf := new(bytes.Buffer)
-	err = format.Node(buf, fset, simplified)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := buf.String()
-	if strings.Count(text, `panic("function body omitted")`) != 3 {
-		t.Fatalf("expected 3 panics, got %s", text)
-	}
 }
 
 func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {

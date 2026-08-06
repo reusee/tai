@@ -100,6 +100,11 @@ type LogicalPackage struct {
 	// against the 32K context budget.
 	BudgetTokensByLevel [4]int
 
+	// DocContent and DocTokens hold the go doc output for level 1
+	// (VisibilityDoc). Level 1 is per-package, not per-file.
+	DocContent string
+	DocTokens  int
+
 	rootPkgSet    bool
 	contextPkgSet bool
 }

@@ -3,8 +3,10 @@ package gocodes
 import (
 	"bytes"
 	"fmt"
-	"go/token"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/reusee/tai/logs"
@@ -56,47 +58,59 @@ func shouldIncludeFile(f *File, level VisibilityLevel) bool {
 	return false
 }
 
-// renderFileAtLevel renders a single file at the given visibility level
-// and returns the content (with markers) and token count.
-func renderFileAtLevel(
-	f *File,
-	level VisibilityLevel,
-	fset *token.FileSet,
+// renderPackageDoc runs `go doc -all -cmd -u` for the package and wraps
+// the output with context package markers. Level 1 documentation is
+// per-package, not per-file. If go doc fails, the caller treats the
+// package as unaffordable at level 1 (cost set to 1<<30).
+func renderPackageDoc(
+	pkgPath string,
+	dir string,
+	envs []string,
 	countTokens func(string) (int, error),
 ) (content string, tokens int, err error) {
-	isRoot := f.PackageIsRoot
-	readOnly := f.ReadOnly
+	cmd := exec.Command("go", "doc", "-all", "-cmd", "-u", pkgPath)
+	cmd.Dir = dir
+	cmd.Env = envs
+	output, err := cmd.Output()
+	if err != nil {
+		return "", 0, err
+	}
+
+	text := string(output)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	content = "``` begin of context package " + pkgPath + "\n" +
+		text +
+		"``` end of context package " + pkgPath + "\n"
+
+	tokens, err = countTokens(content)
+	if err != nil {
+		return "", 0, err
+	}
+	return content, tokens, nil
+}
+
+// renderFileAtLevel renders a single file at the given visibility level
+// and returns the content (with markers) and token count. Uses raw disk
+// content instead of formatting the AST.
+func renderFileAtLevel(
+	f *File,
+	countTokens func(string) (int, error),
+) (content string, tokens int, err error) {
+	rawContent := f.Content
+	if len(rawContent) == 0 {
+		data, err := os.ReadFile(f.Path)
+		if err != nil {
+			return "", 0, err
+		}
+		rawContent = data
+		f.Content = data
+	}
 
 	var buf bytes.Buffer
-
-	switch level {
-	case VisibilityDoc:
-		// Level 1: Go documentation — delete function bodies, keep comments.
-		// Run goimports (skipImports=false) to remove imports that became
-		// unused after function body deletion.
-		simplified := deleteFunctionBody(f.AstFile)
-		if err := formatASTForPrompt(&buf, simplified, fset, isRoot, readOnly, f.Path, false); err != nil {
-			return "", 0, err
-		}
-
-	case VisibilityCode:
-		// Level 2: Full Go code without test files.
-		// Skip goimports since the AST is unmodified from the parsed source.
-		if err := formatASTForPrompt(&buf, f.AstFile, fset, isRoot, readOnly, f.Path, true); err != nil {
-			return "", 0, err
-		}
-
-	case VisibilityAll:
-		// Level 3: All files including tests, non-Go, and embed files.
-		if f.IsGoFile {
-			if err := formatASTForPrompt(&buf, f.AstFile, fset, isRoot, readOnly, f.Path, true); err != nil {
-				return "", 0, err
-			}
-		} else {
-			if err := formatContentForPrompt(&buf, f.Content, isRoot, readOnly, f.Path); err != nil {
-				return "", 0, err
-			}
-		}
+	if err := formatContentForPrompt(&buf, rawContent, f.PackageIsRoot, f.ReadOnly, f.Path); err != nil {
+		return "", 0, err
 	}
 
 	content = buf.String()
@@ -110,14 +124,13 @@ func renderFileAtLevel(
 // precomputeTokenCounts concurrently renders each logical package at each
 // visibility level and stores the results. See TheoryOfVisibilityAllocation.
 //
-// Levels are rendered from high to low (3→1) so that levels 2 and 3, which
-// use the original AST directly, are rendered before level 1, which calls
-// deleteFunctionBody. This prevents any potential AST mutation from
-// corrupting the higher-level renderings.
+// Level 1 uses go doc -all -cmd -u for per-package documentation.
+// Levels 2 and 3 use raw file content from disk.
 func precomputeTokenCounts(
 	logicalPkgs []*LogicalPackage,
-	fset *token.FileSet,
 	countTokens func(string) (int, error),
+	dir string,
+	envs []string,
 ) error {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, min(runtime.NumCPU()*8, 32))
@@ -141,10 +154,30 @@ func precomputeTokenCounts(
 				}
 			}()
 
-			// Render from high to low level so that levels 2 and 3 use
-			// the original (unmodified) AST before level 1 potentially
-			// mutates it via deleteFunctionBody.
-			for level := VisibilityAll; level >= VisibilityDoc; level-- {
+			// Level 1: package documentation via go doc.
+			// Skip go doc for focus packages (always at level 3).
+			// If go doc fails, set the budget cost to 1<<30 so the
+			// package cannot afford level 1 and stays invisible.
+			if lp.Category != CategoryFocus {
+				content, tokens, err := renderPackageDoc(lp.PkgPath, dir, envs, countTokens)
+				if err != nil {
+					lp.DocContent = ""
+					lp.DocTokens = 0
+					lp.BudgetTokensByLevel[VisibilityDoc] = 1 << 30
+					lp.TokensByLevel[VisibilityDoc] = 0
+				} else {
+					lp.DocContent = content
+					lp.DocTokens = tokens
+					lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+					lp.TokensByLevel[VisibilityDoc] = tokens
+				}
+			} else {
+				lp.BudgetTokensByLevel[VisibilityDoc] = 0
+				lp.TokensByLevel[VisibilityDoc] = 0
+			}
+
+			// Levels 2 and 3: per-file rendering with raw disk content.
+			for level := VisibilityAll; level >= VisibilityCode; level-- {
 				var files []renderedFile
 				var allTokens int
 				var budgetTokens int
@@ -153,7 +186,7 @@ func precomputeTokenCounts(
 					if !shouldIncludeFile(f, level) {
 						continue
 					}
-					content, tokens, err := renderFileAtLevel(f, level, fset, countTokens)
+					content, tokens, err := renderFileAtLevel(f, countTokens)
 					if err != nil {
 						errOnce.Do(func() {
 							select {
