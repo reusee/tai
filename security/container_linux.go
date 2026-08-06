@@ -33,10 +33,14 @@ downloads, package objects). The user config directory is also resolved before
 namespace creation and bind-mounted read-write so the memory system
 (ai-memory.json) and chat history (ai-chat-history.json) can persist data across
 sessions. A fresh tmpfs is mounted on /tmp for isolated temporary file storage,
-and on /dev/shm for isolated shared memory. /proc is remounted to show only
-namespace-local processes, /sys is made read-only, and sensitive /proc paths are
-masked with bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents
-privilege escalation through exec, complementing the user namespace's capability
+and on /dev/shm for isolated shared memory; these tmpfs mounts carry no explicit
+size limit by default (the kernel caps tmpfs at half of physical RAM), so large
+temporary files created by tests or builds do not trigger false ENOSPC errors,
+though an explicit limit can still be imposed via environment variables when
+tighter control is desired. /proc is remounted to show only namespace-local
+processes, /sys is made read-only, and sensitive /proc paths are masked with
+bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents privilege
+escalation through exec, complementing the user namespace's capability
 restrictions.
 `
 
@@ -61,22 +65,17 @@ const configDirEnv = "CAI_CONFIG_DIR"
 
 // tmpTmpfsSizeEnv carries the size limit for the /tmp tmpfs mount inside
 // the container. The value is passed through os.Environ() during re-exec.
-// When unset, defaultTmpTmpfsSize is used. This is configurable to prevent
-// false ENOSPC errors when tests create large temporary files that exceed
-// the default cap. See TheoryOfContainerIsolation.
+// When unset, the tmpfs is mounted without an explicit size limit (kernel
+// default: up to half of physical RAM). This is configurable to impose a
+// tighter cap when desired. See TheoryOfContainerIsolation.
 const tmpTmpfsSizeEnv = "CAI_TMP_TMPFS_SIZE"
 
 // shmTmpfsSizeEnv carries the size limit for the /dev/shm tmpfs mount
 // inside the container. The value is passed through os.Environ() during
-// re-exec. When unset, defaultShmTmpfsSize is used.
+// re-exec. When unset, the tmpfs is mounted without an explicit size
+// limit (kernel default: up to half of physical RAM).
 // See TheoryOfContainerIsolation.
 const shmTmpfsSizeEnv = "CAI_SHM_TMPFS_SIZE"
-
-// defaultTmpTmpfsSize is the default size for the /tmp tmpfs mount.
-const defaultTmpTmpfsSize = "256m"
-
-// defaultShmTmpfsSize is the default size for the /dev/shm tmpfs mount.
-const defaultShmTmpfsSize = "64m"
 
 // inContainerEnv marks that the process is already running inside the
 // container namespace, ensuring re-execution happens only once.
@@ -175,15 +174,17 @@ func MaybeRunInContainer() {
 	}
 }
 
-// resolveTmpfsSize returns the tmpfs size from the given environment
-// variable, or the default if the variable is unset or empty. Used to
-// configure /tmp and /dev/shm tmpfs size limits inside the container.
+// tmpfsMountData returns the mount data string for a tmpfs mount, applying
+// the size limit from the given environment variable when set. When unset
+// or empty, the empty string is returned, mounting the tmpfs without an
+// explicit size limit (kernel default: up to half of physical RAM). Used to
+// configure /tmp and /dev/shm tmpfs mounts inside the container.
 // See TheoryOfContainerIsolation.
-func resolveTmpfsSize(envName, defaultSize string) string {
+func tmpfsMountData(envName string) string {
 	if s := os.Getenv(envName); s != "" {
-		return s
+		return "size=" + s
 	}
-	return defaultSize
+	return ""
 }
 
 // parseMountPoints reads /proc/self/mountinfo and returns a list of mount
@@ -317,24 +318,24 @@ func setupContainerFilesystem() error {
 	// 8. Mount a fresh tmpfs on /tmp. This isolates temporary files from
 	// the host and provides a writable /tmp for tools that need it
 	// (e.g., go test creates temporary files). The size limit is
-	// configurable via tmpTmpfsSizeEnv to prevent false ENOSPC errors
-	// when tests create large temporary files that exceed the default
-	// cap. Best-effort: if mounting fails, /tmp is either read-only
-	// (from the root mount) or whatever it was before.
+	// configurable via tmpTmpfsSizeEnv; when unset, the tmpfs is mounted
+	// without an explicit size limit (kernel default: up to half of
+	// physical RAM), avoiding false ENOSPC errors when tests create
+	// large temporary files. Best-effort: if mounting fails, /tmp is
+	// either read-only (from the root mount) or whatever it was before.
 	_ = syscall.Unmount("/tmp", syscall.MNT_DETACH)
-	tmpSize := resolveTmpfsSize(tmpTmpfsSizeEnv, defaultTmpTmpfsSize)
 	syscall.Mount("tmpfs", "/tmp", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, "size="+tmpSize)
+		syscall.MS_NOSUID|syscall.MS_NODEV, tmpfsMountData(tmpTmpfsSizeEnv))
 
 	// 9. Mount a fresh tmpfs on /dev/shm for shared memory isolation.
 	// This prevents the container from accessing host POSIX shared
 	// memory segments. The size limit is configurable via
-	// shmTmpfsSizeEnv. Best-effort: if /dev/shm doesn't exist or
+	// shmTmpfsSizeEnv; when unset, the tmpfs is mounted without an
+	// explicit size limit. Best-effort: if /dev/shm doesn't exist or
 	// mounting fails, the existing mount (or none) is used.
 	_ = syscall.Unmount("/dev/shm", syscall.MNT_DETACH)
-	shmSize := resolveTmpfsSize(shmTmpfsSizeEnv, defaultShmTmpfsSize)
 	syscall.Mount("tmpfs", "/dev/shm", "tmpfs",
-		syscall.MS_NOSUID|syscall.MS_NODEV, "size="+shmSize)
+		syscall.MS_NOSUID|syscall.MS_NODEV, tmpfsMountData(shmTmpfsSizeEnv))
 
 	// 10. Remount /proc to show only processes in this PID namespace.
 	// The host /proc exposes all host PIDs; the remount restricts

@@ -110,19 +110,19 @@ func TestSetNoNewPrivsDoesNotPanic(t *testing.T) {
 	setNoNewPrivs()
 }
 
-func TestResolveTmpfsSize(t *testing.T) {
-	// Default when env not set.
-	if got := resolveTmpfsSize("CAI_TEST_TMPFS_UNSET", "256m"); got != "256m" {
-		t.Fatalf("expected default 256m, got %s", got)
+func TestTmpfsMountData(t *testing.T) {
+	// No size option when env not set.
+	if got := tmpfsMountData("CAI_TEST_TMPFS_UNSET"); got != "" {
+		t.Fatalf("expected empty mount data, got %q", got)
 	}
-	// Custom when env set.
+	// Size option when env set.
 	t.Setenv("CAI_TEST_TMPFS_SET", "1g")
-	if got := resolveTmpfsSize("CAI_TEST_TMPFS_SET", "256m"); got != "1g" {
-		t.Fatalf("expected 1g, got %s", got)
+	if got := tmpfsMountData("CAI_TEST_TMPFS_SET"); got != "size=1g" {
+		t.Fatalf("expected size=1g, got %q", got)
 	}
-	// Empty env falls back to default.
+	// Empty env falls back to no size option.
 	t.Setenv("CAI_TEST_TMPFS_EMPTY", "")
-	if got := resolveTmpfsSize("CAI_TEST_TMPFS_EMPTY", "64m"); got != "64m" {
-		t.Fatalf("expected default 64m for empty env, got %s", got)
+	if got := tmpfsMountData("CAI_TEST_TMPFS_EMPTY"); got != "" {
+		t.Fatalf("expected empty mount data for empty env, got %q", got)
 	}
 }
