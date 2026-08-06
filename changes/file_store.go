@@ -121,22 +121,48 @@ func FormatFileDiffs(diffs []FileDiff) string {
 	return b.String()
 }
 
+const TheoryOfReviewDiffContext = `
+Review diffs are rendered as unified diffs with a bounded context window
+instead of whole-file hunks. Whole-file hunks flood the review model's
+context with unchanged lines when a large file has small localized changes,
+wasting the review budget and diluting attention. Each changed region
+therefore carries a bounded window of unchanged context lines around it,
+matching the familiar git diff -U30 output, and hunks whose windows overlap
+are merged like git does. The window size is set by diffContextLines in
+this file. New and deleted files are exempt: every line is new or removed,
+so the full content is shown, exactly as git diff does for such files.
+`
+
+// diffContextLines is the number of unchanged context lines shown around
+// each changed region in a rendered unified diff, matching `git diff -U30`.
+// See TheoryOfReviewDiffContext.
+const diffContextLines = 30
+
 // maxDiffMatrixCells caps the LCS matrix size for line diffs. Beyond this,
 // a full old/new listing is used instead of an exact minimal diff.
 const maxDiffMatrixCells = 4_000_000
 
 // formatUnifiedDiff produces a unified diff between original and current
-// file content. Line numbers are coarse (whole-file hunks) but sufficient
-// for review purposes.
+// file content. Each changed region is rendered as a hunk with at most
+// diffContextLines of unchanged context around it; overlapping hunks are
+// merged into a single hunk, matching git diff -U30. Returns an empty
+// string when the content is unchanged. See TheoryOfReviewDiffContext.
 func formatUnifiedDiff(path string, original, current []byte) string {
 	oldLines := splitLines(original)
 	newLines := splitLines(current)
+	ops := computeDiffOps(oldLines, newLines)
+	hunks := buildDiffHunks(oldLines, newLines, ops)
+	if len(hunks) == 0 {
+		return ""
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n+++ %s\n", path, path)
-	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(oldLines), len(newLines))
-	for _, line := range diffLines(oldLines, newLines) {
-		b.WriteString(line)
-		b.WriteByte('\n')
+	for _, hunk := range hunks {
+		fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", hunk.oldStart, hunk.oldCount, hunk.newStart, hunk.newCount)
+		for _, line := range hunk.lines {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
 }
@@ -153,20 +179,86 @@ func splitLines(content []byte) []string {
 	return strings.Split(s, "\n")
 }
 
-// diffLines computes a line-level diff between two line slices using an LCS
-// table. When the matrix exceeds maxDiffMatrixCells, the fallback is to list
-// all old lines as deletions and all new lines as additions.
-func diffLines(a, b []string) []string {
-	n, m := len(a), len(b)
+// buildDiffHunks groups an edit script into hunks with at most
+// diffContextLines of unchanged context around each changed region,
+// merging hunks whose context windows overlap. This mirrors git diff -U30
+// output: each hunk carries the context needed to understand the change
+// while keeping large unchanged regions out of the diff. See
+// TheoryOfReviewDiffContext.
+func buildDiffHunks(oldLines, newLines []string, ops []diffOp) []diffHunk {
+	// Find maximal runs of changed (non-equal) ops.
+	var runs [][2]int // [start, end) indices into ops
+	runStart := -1
+	for i, op := range ops {
+		if op.kind != diffOpEqual {
+			if runStart == -1 {
+				runStart = i
+			}
+		} else if runStart != -1 {
+			runs = append(runs, [2]int{runStart, i})
+			runStart = -1
+		}
+	}
+	if runStart != -1 {
+		runs = append(runs, [2]int{runStart, len(ops)})
+	}
+
+	// Extend each run with context and merge overlapping ranges.
+	type hunkRange struct{ start, end int }
+	var ranges []hunkRange
+	for _, run := range runs {
+		start := max(0, run[0]-diffContextLines)
+		end := min(len(ops), run[1]+diffContextLines)
+		if len(ranges) > 0 && start <= ranges[len(ranges)-1].end {
+			ranges[len(ranges)-1].end = max(ranges[len(ranges)-1].end, end)
+		} else {
+			ranges = append(ranges, hunkRange{start, end})
+		}
+	}
+
+	// Materialize hunks with line numbers and rendered lines.
+	hunks := make([]diffHunk, 0, len(ranges))
+	for _, r := range ranges {
+		hunk := diffHunk{
+			lines: make([]string, 0, r.end-r.start),
+		}
+		first := ops[r.start]
+		hunk.oldStart = first.oldIdx + 1
+		hunk.newStart = first.newIdx + 1
+		for _, op := range ops[r.start:r.end] {
+			switch op.kind {
+			case diffOpEqual:
+				hunk.lines = append(hunk.lines, "  "+oldLines[op.oldIdx])
+				hunk.oldCount++
+				hunk.newCount++
+			case diffOpDelete:
+				hunk.lines = append(hunk.lines, "- "+oldLines[op.oldIdx])
+				hunk.oldCount++
+			case diffOpInsert:
+				hunk.lines = append(hunk.lines, "+ "+newLines[op.newIdx])
+				hunk.newCount++
+			}
+		}
+		hunks = append(hunks, hunk)
+	}
+	return hunks
+}
+
+// computeDiffOps computes the line-level edit script between oldLines and
+// newLines using an LCS table. When the matrix exceeds maxDiffMatrixCells,
+// the fallback lists all old lines as deletions followed by all new lines
+// as additions. See maxDiffMatrixCells.
+func computeDiffOps(oldLines, newLines []string) []diffOp {
+	n, m := len(oldLines), len(newLines)
 	if n*m > maxDiffMatrixCells {
-		res := make([]string, 0, n+m)
-		for _, line := range a {
-			res = append(res, "- "+line)
+		ops := make([]diffOp, 0, n+m)
+		for i := range n {
+			ops = append(ops, diffOp{kind: diffOpDelete, oldIdx: i})
 		}
-		for _, line := range b {
-			res = append(res, "+ "+line)
+		for j := range m {
+			ops = append(ops, diffOp{kind: diffOpInsert, newIdx: j})
 		}
-		return res
+		return ops
 	}
 	dp := make([][]int, n+1)
 	for i := range dp {
@@ -174,7 +266,7 @@ func diffLines(a, b []string) []string {
 	}
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
-			if a[i] == b[j] {
+			if oldLines[i] == newLines[j] {
 				dp[i][j] = dp[i+1][j+1] + 1
 			} else if dp[i+1][j] >= dp[i][j+1] {
 				dp[i][j] = dp[i+1][j]
@@ -183,29 +275,62 @@ func diffLines(a, b []string) []string {
 			}
 		}
 	}
-	var res []string
+	var ops []diffOp
 	i, j := 0, 0
 	for i < n && j < m {
-		if a[i] == b[j] {
-			res = append(res, "  "+a[i])
+		if oldLines[i] == newLines[j] {
+			ops = append(ops, diffOp{kind: diffOpEqual, oldIdx: i, newIdx: j})
 			i++
 			j++
 		} else if dp[i][j+1] >= dp[i+1][j] {
-			res = append(res, "+ "+b[j])
+			ops = append(ops, diffOp{kind: diffOpInsert, oldIdx: i, newIdx: j})
 			j++
 		} else {
-			res = append(res, "- "+a[i])
+			ops = append(ops, diffOp{kind: diffOpDelete, oldIdx: i, newIdx: j})
 			i++
 		}
 	}
 	for ; i < n; i++ {
-		res = append(res, "- "+a[i])
+		ops = append(ops, diffOp{kind: diffOpDelete, oldIdx: i, newIdx: m})
 	}
 	for ; j < m; j++ {
-		res = append(res, "+ "+b[j])
+		ops = append(ops, diffOp{kind: diffOpInsert, oldIdx: n, newIdx: j})
 	}
-	return res
+	return ops
 }
+
+// diffHunk is a contiguous changed region with surrounding context,
+// rendered as a unified diff hunk:
+// @@ -oldStart,oldCount +newStart,newCount @@
+// followed by the hunk's lines. See TheoryOfReviewDiffContext.
+type diffHunk struct {
+	oldStart int
+	newStart int
+	oldCount int
+	newCount int
+	lines    []string
+}
+
+// diffOp is a single line-level diff operation in the edit script between
+// old and new content. For equal ops both indices point at the matched
+// lines. For delete ops oldIdx is the removed old line and newIdx marks the
+// position in the new content where the removal happens. For insert ops
+// newIdx is the added new line and oldIdx marks the position in the old
+// content where the insertion happens.
+type diffOp struct {
+	kind   diffOpKind
+	oldIdx int
+	newIdx int
+}
+
+const (
+	diffOpEqual  diffOpKind = ' '
+	diffOpDelete diffOpKind = '-'
+	diffOpInsert diffOpKind = '+'
+)
+
+// diffOpKind identifies the kind of a single line-level diff operation.
+type diffOpKind byte
 
 // MemoryStore is a FileStore that caches writes in memory and reads from
 // memory first, falling back to the underlying store for unmodified files.

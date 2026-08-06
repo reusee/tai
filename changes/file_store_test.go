@@ -1,6 +1,7 @@
 package changes
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -704,4 +705,169 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 			t.Fatalf("disk should contain New:\n%s", string(got))
 		}
 	})
+}
+
+// TestFormatFileDiffsContextLimited verifies that FormatFileDiffs renders
+// modified files with context-limited hunks while keeping the file header.
+// See TheoryOfReviewDiffContext.
+func TestFormatFileDiffsContextLimited(t *testing.T) {
+	oldLines, newLines := makeBaseLines(100)
+	newLines[49] = "line 50 changed"
+
+	output := FormatFileDiffs([]FileDiff{
+		{
+			Path:           "test.txt",
+			Original:       []byte(strings.Join(oldLines, "\n") + "\n"),
+			OriginalExists: true,
+			Current:        []byte(strings.Join(newLines, "\n") + "\n"),
+			CurrentExists:  true,
+		},
+	})
+
+	if !strings.Contains(output, "=== test.txt ===\n") {
+		t.Fatalf("expected the file header:\n%s", output)
+	}
+	if !strings.Contains(output, "@@ -20,61 +20,61 @@\n") {
+		t.Fatalf("expected the limited-context hunk header:\n%s", output)
+	}
+	if strings.Contains(output, "  line 10\n") {
+		t.Fatalf("line 10 is beyond the context window and must not appear:\n%s", output)
+	}
+}
+
+// TestFormatUnifiedDiffNoChanges verifies that unchanged content produces
+// no hunks and an empty diff string. See TheoryOfReviewDiffContext.
+func TestFormatUnifiedDiffNoChanges(t *testing.T) {
+	content := []byte("line 1\nline 2\nline 3\n")
+	if diff := formatUnifiedDiff("test.txt", content, content); diff != "" {
+		t.Fatalf("expected empty diff for unchanged content, got:\n%s", diff)
+	}
+}
+
+// TestFormatUnifiedDiffSeparateHunks verifies that changes more than
+// 2*diffContextLines apart render as separate hunks with their own context
+// windows. See TheoryOfReviewDiffContext.
+func TestFormatUnifiedDiffSeparateHunks(t *testing.T) {
+	oldLines, newLines := makeBaseLines(200)
+	newLines[9] = "line 10 changed"
+	newLines[149] = "line 150 changed"
+
+	diff := formatUnifiedDiff(
+		"test.txt",
+		[]byte(strings.Join(oldLines, "\n")+"\n"),
+		[]byte(strings.Join(newLines, "\n")+"\n"),
+	)
+
+	if !strings.Contains(diff, "@@ -1,40 +1,40 @@\n") {
+		t.Fatalf("expected first hunk header @@ -1,40 +1,40 @@:\n%s", diff)
+	}
+	if !strings.Contains(diff, "@@ -120,61 +120,61 @@\n") {
+		t.Fatalf("expected second hunk header @@ -120,61 +120,61 @@:\n%s", diff)
+	}
+	hunkCount := 0
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "@@") {
+			hunkCount++
+		}
+	}
+	if hunkCount != 2 {
+		t.Fatalf("expected 2 separate hunks, got %d:\n%s", hunkCount, diff)
+	}
+}
+
+// TestFormatUnifiedDiffMergesOverlappingHunks verifies that changes whose
+// context windows overlap render as a single merged hunk, like git does.
+// See TheoryOfReviewDiffContext.
+func TestFormatUnifiedDiffMergesOverlappingHunks(t *testing.T) {
+	oldLines, newLines := makeBaseLines(100)
+	newLines[49] = "line 50 changed"
+	newLines[54] = "line 55 changed"
+
+	diff := formatUnifiedDiff(
+		"test.txt",
+		[]byte(strings.Join(oldLines, "\n")+"\n"),
+		[]byte(strings.Join(newLines, "\n")+"\n"),
+	)
+
+	hunkCount := 0
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "@@") {
+			hunkCount++
+		}
+	}
+	if hunkCount != 1 {
+		t.Fatalf("expected a single merged hunk, got %d:\n%s", hunkCount, diff)
+	}
+}
+
+// TestFormatUnifiedDiffChangeAtFileStart verifies that a change at the
+// very start of a file produces a hunk whose context window extends only
+// forward, starting at line 1. See TheoryOfReviewDiffContext.
+func TestFormatUnifiedDiffChangeAtFileStart(t *testing.T) {
+	oldLines, newLines := makeBaseLines(100)
+	newLines[0] = "line 1 changed"
+
+	diff := formatUnifiedDiff(
+		"test.txt",
+		[]byte(strings.Join(oldLines, "\n")+"\n"),
+		[]byte(strings.Join(newLines, "\n")+"\n"),
+	)
+
+	if !strings.Contains(diff, "@@ -1,31 +1,31 @@\n") {
+		t.Fatalf("expected hunk header @@ -1,31 +1,31 @@:\n%s", diff)
+	}
+	if !strings.Contains(diff, "  line 31\n") {
+		t.Fatalf("expected context line 31 (within the window):\n%s", diff)
+	}
+	if strings.Contains(diff, "  line 32\n") {
+		t.Fatalf("line 32 is beyond the context window and must not appear:\n%s", diff)
+	}
+}
+
+// TestFormatUnifiedDiffContextLimited verifies that a single localized
+// change renders as one hunk carrying at most diffContextLines of context
+// on each side (git diff -U30 style), with lines beyond the window
+// excluded. See TheoryOfReviewDiffContext.
+func TestFormatUnifiedDiffContextLimited(t *testing.T) {
+	oldLines, newLines := makeBaseLines(100)
+	newLines[49] = "line 50 changed"
+
+	diff := formatUnifiedDiff(
+		"test.txt",
+		[]byte(strings.Join(oldLines, "\n")+"\n"),
+		[]byte(strings.Join(newLines, "\n")+"\n"),
+	)
+
+	if !strings.Contains(diff, "@@ -20,61 +20,61 @@\n") {
+		t.Fatalf("expected hunk header @@ -20,61 +20,61 @@:\n%s", diff)
+	}
+	if !strings.Contains(diff, "  line 20\n") {
+		t.Fatalf("expected context line 20 (within the window):\n%s", diff)
+	}
+	if !strings.Contains(diff, "  line 80\n") {
+		t.Fatalf("expected context line 80 (within the window):\n%s", diff)
+	}
+	if !strings.Contains(diff, "- line 50\n") || !strings.Contains(diff, "+ line 50 changed\n") {
+		t.Fatalf("expected the changed line:\n%s", diff)
+	}
+	if strings.Contains(diff, "  line 10\n") {
+		t.Fatalf("line 10 is beyond the context window and must not appear:\n%s", diff)
+	}
+	if strings.Contains(diff, "  line 90\n") {
+		t.Fatalf("line 90 is beyond the context window and must not appear:\n%s", diff)
+	}
+}
+
+// makeBaseLines returns two identical line slices with the given number of
+// 1-based numbered lines ("line 1" through "line N"). Tests mutate the
+// returned newLines to simulate changes.
+func makeBaseLines(n int) (oldLines, newLines []string) {
+	oldLines = make([]string, 0, n)
+	newLines = make([]string, 0, n)
+	for i := 1; i <= n; i++ {
+		line := fmt.Sprintf("line %d", i)
+		oldLines = append(oldLines, line)
+		newLines = append(newLines, line)
+	}
+	return
 }
