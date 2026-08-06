@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/reusee/dscope"
@@ -352,66 +351,6 @@ func Foo() {
 		}
 	})
 
-}
-
-func TestApplyTransformPreservesConfirmedAst(t *testing.T) {
-	fset := token.NewFileSet()
-	src := `package dep
-
-// Foo does something.
-func Foo() {
-	println("hello")
-}
-`
-	astFile, err := parser.ParseFile(fset, "dep.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	f := &File{
-		Path:          "dep.go",
-		IsGoFile:      true,
-		AstFile:       astFile,
-		ModuleIsRoot:  false,
-		PackageIsRoot: false,
-		transformCond: sync.NewCond(new(sync.Mutex)),
-	}
-
-	counter := generators.TokenCounter(func(s string) (int, error) { return len(s), nil })
-
-	// Phase 1: Initial Set transform — produces Pending with Ast and formatted Content.
-	f.Transform = &Transform{Set: f.AstFile}
-	f.applyTransform(fset, counter)
-	if f.Pending == nil {
-		t.Fatal("Pending should be set after initial transform")
-	}
-
-	// Simulate confirmation: move Pending to Confirmed, clear Pending.
-	f.transformCond.L.Lock()
-	f.Confirmed = f.Pending
-	f.Pending = nil
-	f.transformCond.Broadcast()
-	f.transformCond.L.Unlock()
-
-	// Phase 2: DeleteComments transform — reads Confirmed.Ast.
-	// Confirmed.Ast must be preserved so deleteComments works correctly.
-	falseVal := false
-	f.Transform = &Transform{
-		MatchModuleIsRoot: &falseVal,
-		DeleteComments:    true,
-		SkipImports:       true,
-	}
-	f.applyTransform(fset, counter)
-
-	if f.Pending == nil {
-		t.Fatal("Pending should be set after DeleteComments transform")
-	}
-	if f.Pending.What == "delete empty file after delete comments" {
-		t.Fatalf("file incorrectly marked for deletion: Confirmed.Ast was nil")
-	}
-	if f.Pending.What != "delete comments" {
-		t.Fatalf("expected 'delete comments', got: %s", f.Pending.What)
-	}
 }
 
 func TestPackagesLoadOmitsNeedTypes(t *testing.T) {

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
@@ -44,6 +43,7 @@ Modification time is a final tiebreaker.
 type File struct {
 	Path                    string
 	IsGoFile                bool
+	IsTestFile              bool
 	Content                 []byte
 	TokenFile               *token.File
 	AstFile                 *ast.File
@@ -57,28 +57,17 @@ type File struct {
 	IsEmbed                 bool
 	DoNotSimplify           bool
 	ReadOnly                bool
+	LogicalPkgPath          string
 
-	transformCond *sync.Cond
-	Transform     *Transform
-	Pending       *Transformed
-	Confirmed     *Transformed
-	ModTime       time.Time
+	Confirmed *Transformed
+	ModTime   time.Time
 }
 
 type Transformed struct {
 	What      string
-	Ast       *ast.File
 	Content   []byte
 	NumTokens int
 }
-
-type MaxPackageDistanceFromRoot int
-
-func (Module) MaxPackageDistanceFromRoot() MaxPackageDistanceFromRoot {
-	return 2
-}
-
-var _ configs.Config = MaxPackageDistanceFromRoot(0)
 
 type GetFiles func() ([]*File, error)
 
@@ -87,8 +76,6 @@ func (Module) Files(
 	getRootPackages GetRootPackages,
 	getContextPackages GetContextPackages,
 	logger logs.Logger,
-	maxDistance MaxPackageDistanceFromRoot,
-	includeStdLib IncludeStdLib,
 	debug Debug,
 	loadDir LoadDir,
 	workspace Workspace,
@@ -110,50 +97,40 @@ func (Module) Files(
 			return nil, err
 		}
 
-		// packageDistanceFromRoot records the shortest import distance from
-		// any root or context package. Computed via BFS over the Imports graph
-		// populated by NeedDeps in a single packages.Load call.
+		// Collect all packages from the dependency graph by walking imports.
+		// No distance limit; the visibility system in visibility.go determines
+		// which packages are visible based on the 32K context budget.
 		// See TheoryOfLightweightPackageLoading in packages.go.
-		packageDistanceFromRoot := make(map[*packages.Package]int)
-		for _, pkg := range rootPkgs {
-			packageDistanceFromRoot[pkg] = 0
-		}
-		for _, pkg := range contextPkgs {
-			if _, ok := packageDistanceFromRoot[pkg]; !ok {
-				packageDistanceFromRoot[pkg] = 0
-			}
-		}
-
-		// BFS to compute distances up to maxDistance. With NeedDeps, all
-		// transitive dependencies are already loaded and accessible via
-		// pkg.Imports, so no additional packages.Load calls are needed.
-		queue := append([]*packages.Package{}, rootPkgs...)
-		queue = append(queue, contextPkgs...)
-		for len(queue) > 0 {
-			pkg := queue[0]
-			queue = queue[1:]
-			d := packageDistanceFromRoot[pkg]
-			if d >= int(maxDistance) {
-				continue
-			}
+		allPkgsSet := make(map[*packages.Package]bool)
+		var walkImports func(pkg *packages.Package)
+		walkImports = func(pkg *packages.Package) {
 			for _, imp := range pkg.Imports {
-				if imp == nil {
+				if imp == nil || allPkgsSet[imp] {
 					continue
 				}
-				if _, ok := packageDistanceFromRoot[imp]; !ok {
-					packageDistanceFromRoot[imp] = d + 1
-					queue = append(queue, imp)
-				}
+				allPkgsSet[imp] = true
+				walkImports(imp)
+			}
+		}
+		for _, pkg := range rootPkgs {
+			allPkgsSet[pkg] = true
+			walkImports(pkg)
+		}
+		for _, pkg := range contextPkgs {
+			if !allPkgsSet[pkg] {
+				allPkgsSet[pkg] = true
+				walkImports(pkg)
 			}
 		}
 
-		// Collect all packages within the distance bound.
-		allPkgs := make([]*packages.Package, 0, len(packageDistanceFromRoot))
-		for pkg, d := range packageDistanceFromRoot {
-			if d <= int(maxDistance) {
-				allPkgs = append(allPkgs, pkg)
-			}
+		// Convert to sorted slice for deterministic ordering.
+		allPkgs := make([]*packages.Package, 0, len(allPkgsSet))
+		for pkg := range allPkgsSet {
+			allPkgs = append(allPkgs, pkg)
 		}
+		slices.SortStableFunc(allPkgs, func(a, b *packages.Package) int {
+			return cmp.Compare(a.PkgPath, b.PkgPath)
+		})
 
 		// rootPkgSet provides O(1) root package membership checks.
 		rootPkgSet := make(map[*packages.Package]bool, len(rootPkgs))
@@ -163,16 +140,12 @@ func (Module) Files(
 
 		// root modules
 		// Only the modules of root and context packages are root modules.
-		// Dependency packages discovered via the BFS over Imports within
-		// MaxPackageDistanceFromRoot may belong to external modules. Marking
-		// an external module as root would classify its files as root-module
-		// files, causing them to bypass the non-root-module simplification
-		// transforms (comment stripping, function body deletion) and the
-		// deletion transforms that enforce the context token budget. With the
-		// previous iteration over allPkgs, dependency files were never
-		// simplified and could consume the entire context budget, eventually
-		// triggering the "files from root packages deleted" error when focus
-		// files were deleted to meet the budget. See TheoryOfFileOrdering.
+		// Dependency packages discovered via import walking may belong to
+		// external modules. Marking an external module as root would classify
+		// its files as root-module files, causing them to bypass the
+		// non-root-module simplification transforms (comment stripping,
+		// function body deletion) and the deletion transforms that enforce
+		// the context token budget. See TheoryOfFileOrdering.
 		rootModulePaths := make(map[string]bool)
 		for _, pkg := range rootPkgs {
 			if pkg.Module != nil {
@@ -190,10 +163,10 @@ func (Module) Files(
 			}
 		}
 
-		// Discover Go files from pkg.GoFiles and parse individually.
-		// Only files within maxDistance are parsed, avoiding OOM from parsing
-		// all transitive dependency ASTs. See TheoryOfLightweightPackageLoading
-		// in packages.go for the rationale.
+		// Discover Go files from pkg.goFiles and parse individually.
+		// All packages in the dependency graph are included; the visibility
+		// system determines which are visible based on the 32K context budget.
+		// See TheoryOfLightweightPackageLoading in packages.go.
 		seenFilePaths := make(map[string]bool)
 		type goFileEntry struct {
 			path string
@@ -218,27 +191,17 @@ func (Module) Files(
 
 		for _, entry := range allGoFiles {
 			pkg := entry.pkg
-			distance := packageDistanceFromRoot[pkg]
-			// Filter early: skip files beyond maxDistance or in stdlib
-			// without -include-std, avoiding unnecessary parsing and memory.
-			if distance > int(maxDistance) {
-				continue
-			}
-			if pkg.Module == nil && !includeStdLib {
-				continue
-			}
 
 			path := entry.path
 			f := &File{
-				Path:          path,
-				IsGoFile:      true,
-				transformCond: sync.NewCond(new(sync.Mutex)),
+				Path:     path,
+				IsGoFile: true,
 			}
 			if info, err := os.Stat(path); err == nil {
 				f.ModTime = info.ModTime()
 			}
 
-			// Parse the file individually, only for files within the distance bound.
+			// Parse the file individually.
 			src, err := os.ReadFile(path)
 			if err != nil {
 				logger.Warn("cannot read go file", "path", path, "error", err)
@@ -254,7 +217,7 @@ func (Module) Files(
 
 			f.Package = pkg
 			f.PackageIsRoot = rootPkgSet[pkg]
-			f.PackageDistanceFromRoot = distance
+			f.PackageDistanceFromRoot = 0 // overwritten by simplify.go
 			f.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
 			f.Module = pkg.Module
 			f.ModuleIsRoot = pkg.Module != nil && rootModulePaths[pkg.Module.Path]
@@ -400,15 +363,6 @@ func (Module) Files(
 				defer func() { <-nonGoSem }()
 
 				pkg := nonGoFilePaths[path]
-				// Filter early: skip files beyond maxDistance or in stdlib
-				// without -include-std, avoiding reading unnecessary content.
-				distance := packageDistanceFromRoot[pkg]
-				if distance > int(maxDistance) {
-					return
-				}
-				if pkg.Module == nil && !includeStdLib {
-					return
-				}
 
 				content, err := os.ReadFile(path)
 				if err != nil {
@@ -442,13 +396,12 @@ func (Module) Files(
 					Content:                 content,
 					Package:                 pkg,
 					PackageIsRoot:           rootPkgSet[pkg],
-					PackageDistanceFromRoot: distance,
+					PackageDistanceFromRoot: 0, // overwritten by simplify.go
 					PackagePathDepth:        len(strings.Split(pkg.PkgPath, "/")),
 					Module:                  pkg.Module,
 					ModuleIsRoot:            pkg.Module != nil && rootModulePaths[pkg.Module.Path],
 					ModuleIsNil:             pkg.Module == nil,
 					IsEmbed:                 embedFilePaths[path],
-					transformCond:           sync.NewCond(new(sync.Mutex)),
 				}
 				if info != nil {
 					f.ModTime = info.ModTime()

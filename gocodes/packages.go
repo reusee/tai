@@ -18,10 +18,11 @@ NeedTypesInfo, and NeedTypes are omitted so go/packages never retains full ASTs,
 per-identifier types, or complete type-checking results for any dependency.
 NeedDeps is used so go/packages resolves the full dependency graph in a single
 go list invocation. Distances from root packages are computed via BFS over the
-Imports graph populated by NeedDeps, and only packages within
-MaxPackageDistanceFromRoot (default 2) have their files discovered and parsed.
-Go file ASTs are parsed lazily in files.go via parser.ParseFile for only the files
-within the distance bound.
+Imports graph populated by NeedDeps. All packages in the dependency graph have
+their files discovered and parsed, with no distance limit by default; the
+water-filling algorithm in visibility.go determines which packages are visible
+based on the 32K context budget. Go file ASTs are parsed in files.go via
+parser.ParseFile.
 `
 
 // packages returned by the loader

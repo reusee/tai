@@ -7,43 +7,6 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
-// IncludeStdLib configs.Config implementation.
-// See flags.TheoryOfConfigFlagParity.
-
-var _ configs.Config = IncludeStdLib(false)
-
-type IncludeStdLib bool
-
-func (Module) IncludeStdLib() IncludeStdLib {
-	return false
-}
-
-var _ flags.Flag = IncludeStdLib(false)
-
-func (i IncludeStdLib) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
-	ret := IncludeStdLib(true)
-	return &ret, args, nil
-}
-
-func (i IncludeStdLib) Keys() map[string]string {
-	return map[string]string{
-		"-include-std": "Include standard library packages in the context",
-	}
-}
-
-func (i IncludeStdLib) ConfigPaths() []string {
-	return []string{"go.include_std"}
-}
-
-func (i IncludeStdLib) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var b bool
-	if err := values[0].Decode(&b); err != nil {
-		return nil, err
-	}
-	ret := IncludeStdLib(b)
-	return &ret, nil
-}
-
 // ShowTokenCounts configs.Config implementation.
 // See flags.TheoryOfConfigFlagParity.
 

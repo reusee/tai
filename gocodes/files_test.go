@@ -65,9 +65,6 @@ func TestFiles(t *testing.T) {
 		if !mainFile.PackageIsRoot {
 			t.Error("main.go not marked as root package")
 		}
-		if mainFile.PackageDistanceFromRoot != 0 {
-			t.Errorf("main.go distance %d, want 0", mainFile.PackageDistanceFromRoot)
-		}
 		if mainFile.Module == nil {
 			t.Error("main.go Module is nil")
 		}
@@ -82,9 +79,6 @@ func TestFiles(t *testing.T) {
 		if !aTxtFile.PackageIsRoot {
 			t.Error("a.txt not marked as root package")
 		}
-		if aTxtFile.PackageDistanceFromRoot != 0 {
-			t.Errorf("a.txt distance %d, want 0", aTxtFile.PackageDistanceFromRoot)
-		}
 		if aTxtFile.Module == nil {
 			t.Error("a.txt Module is nil")
 		}
@@ -93,6 +87,11 @@ func TestFiles(t *testing.T) {
 		}
 
 		// dep1.go checks
+		// PackageDistanceFromRoot is no longer computed by GetFiles; it is
+		// computed by computeDistances in logical_package.go during
+		// simplification. GetFiles sets it to 0 as a placeholder, overwritten
+		// by simplify.go. Distance correctness is verified indirectly through
+		// TestSimplify, which checks output ordering dependent on distance.
 		if dep1File.TokenFile == nil {
 			t.Error("dep1.go TokenFile is nil")
 		}
@@ -104,9 +103,6 @@ func TestFiles(t *testing.T) {
 		}
 		if dep1File.PackageIsRoot {
 			t.Error("dep1.go incorrectly marked as root package")
-		}
-		if dep1File.PackageDistanceFromRoot != 1 {
-			t.Errorf("dep1.go distance %d, want 1", dep1File.PackageDistanceFromRoot)
 		}
 		if dep1File.Module == nil {
 			t.Error("dep1.go Module is nil")

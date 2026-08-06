@@ -1,51 +1,42 @@
 package gocodes
 
 import (
-	"bytes"
-	"context"
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/token"
-	"runtime"
+	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-const (
-	TheoryOfSimplification = `Simplification keeps operative files primary and dependency context secondary.
-Context is useful for explanation and cross-file reasoning, but its budget must remain tightly bounded so large repositories cannot crowd out the files being actively changed.
-The budget rule is kept separate from the concurrent transform pipeline so policy changes stay testable and reviewable.
-Formatting uses goimports to ensure that imports remain synchronized with the code after subtractions (like deleting function bodies or unused types).
-Comment deletion does not affect import usage, so goimports is skipped for comment-only transforms to avoid redundant parsing.
-Files explicitly requested via patterns (extra context) bypass the simplification logic to ensure their full content is available as requested, while still being accounted for in the token budget.
-File ordering (see TheoryOfFileOrdering in files.go) places stable context files first and volatile focus files last, maximizing the common prefix between consecutive requests for LLM prefix caching.
+const TheoryOfSimplification = `
+Simplification uses package-level visibility levels (0-3) instead of
+file-level transforms. Each package is assigned a visibility level based
+on its priority (category, distance, path) and the 32K context budget.
+Level 0: invisible (deleted). Level 1: Go documentation (function bodies
+omitted, comments preserved). Level 2: full Go code without test files.
+Level 3: all files including tests, non-Go files, and embed files.
 
-The context token budget is fixed at a constant value (maximumContextTokenBudget)
-to ensure context files are simplified consistently across requests, preserving
-the prefix cache.`
-	maximumContextTokenBudget = 32 << 10
-)
+The water-filling algorithm upgrades packages from their minimum visibility
+to higher levels as the budget allows, processing packages in priority order.
+See TheoryOfVisibilityAllocation in visibility.go.
+
+Focus packages are always at level 3 and do not count against the budget.
+File ordering (see TheoryOfFileOrdering in files.go) places stable context
+files first and volatile focus files last, maximizing the common prefix
+between consecutive requests for LLM prefix caching.
+`
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
-// calculateMaxContextTokens returns the fixed token budget for context (non-root) files.
-// The budget is constant (maximumContextTokenBudget) to ensure that context files are
-// simplified to the same level every request, preserving the LLM prefix cache.
-// When focus files change, only focus files differ in the prompt; all preceding context
-// content remains byte-identical and fully cacheable.
-func calculateMaxContextTokens() int {
-	return maximumContextTokenBudget
-}
-
 func (Module) SimplifyFiles(
 	getFileSet GetFileSet,
+	getRootPackages GetRootPackages,
+	getContextPackages GetContextPackages,
 	logger logs.Logger,
 	debug Debug,
 ) SimplifyFiles {
@@ -55,530 +46,161 @@ func (Module) SimplifyFiles(
 			return nil, err
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		originalFiles := make([]*File, len(files))
-		copy(originalFiles, files)
-
-		// Clean up file state on exit to avoid leaking state into cached File objects.
-		// Confirmed.Ast is released here (after all transforms are done) because
-		// only Confirmed.Content is read by the caller.
-		defer func() {
-			for _, f := range originalFiles {
-				if f == nil {
-					continue
-				}
-				f.transformCond.L.Lock()
-				f.Transform = nil
-				f.Pending = nil
-				f.DoNotSimplify = false
-				if f.Confirmed != nil {
-					f.Confirmed.Ast = nil
-				}
-				f.transformCond.Broadcast()
-				f.transformCond.L.Unlock()
-			}
-		}()
-
-		jobChan := make(chan *File, len(files))
-		wg := new(sync.WaitGroup)
-		startTokenCounters(ctx, jobChan, fset, countTokens, wg)
-
-		for _, file := range files {
-			if file.IsGoFile {
-				// initial transform
-				file.Transform = &Transform{
-					Set: file.AstFile,
-				}
-			} else {
-				buf := new(bytes.Buffer)
-				if err := formatContentForPrompt(buf, file.Content, file.PackageIsRoot, file.ReadOnly, file.Path); err != nil {
-					return nil, err
-				}
-				file.Transform = &Transform{
-					SetContent: buf.Bytes(),
-				}
-			}
-			jobChan <- file
-		}
-
-		allTokens := 0
-		contextTokens := 0
-		for _, file := range files {
-			file.transformCond.L.Lock()
-			for file.Transform != nil {
-				// wait transform done
-				file.transformCond.Wait()
-			}
-			if file.Pending != nil {
-				if debug {
-					logger.InfoContext(ctx, "file operation confirmed",
-						"path", file.Path,
-						"what", file.Pending.What,
-					)
-				}
-				// confirm
-				allTokens += file.Pending.NumTokens
-				if !file.PackageIsRoot {
-					contextTokens += file.Pending.NumTokens
-				}
-				file.Confirmed = file.Pending
-				file.Pending = nil
-			}
-			file.transformCond.Broadcast()
-			file.transformCond.L.Unlock()
-		}
-
-		focusTokens := allTokens - contextTokens
-		maxContextTokens := calculateMaxContextTokens()
-		logger.InfoContext(ctx, "initial tokens",
-			"all tokens", allTokens,
-			"context tokens", contextTokens,
-			"focus tokens", focusTokens,
-			"max context tokens", maxContextTokens,
-		)
-
-		transforms := makeTransforms()
-
-		sema := make(chan bool, runtime.NumCPU()*8)
-
-		// Track number of pending semaphore acquisitions for cleanup on early exit.
-		// We use a pointer int64 to share state between the dispatch and confirmation loops.
-		pendingSema := new(int64)
-
-		wg.Go(func() {
-			for _, transform := range transforms {
-				for i := range files {
-					file := files[i]
-					if file == nil {
-						continue
-					}
-					if file.DoNotSimplify {
-						continue
-					}
-
-					// set next transform and send job to workers
-					file.transformCond.L.Lock()
-					for file.Transform != nil || file.Pending != nil {
-						select {
-						case <-ctx.Done():
-							file.transformCond.L.Unlock()
-							return
-						default:
-						}
-						// wait last transform to be confirmed
-						file.transformCond.Wait()
-					}
-					file.Transform = transform
-					file.transformCond.L.Unlock()
-					file.transformCond.Broadcast()
-					select {
-					case jobChan <- file:
-					case <-ctx.Done():
-						return
-					}
-
-					select {
-					case sema <- true:
-						atomic.AddInt64(pendingSema, 1)
-					case <-ctx.Done():
-						return
-					}
-
-				}
-			}
-		})
-
-		var numFilesFromRootPackageDeleted int
-	loop_ops:
-		for range transforms {
-			for i := range files {
-				file := files[i]
-				if file == nil {
-					continue
-				}
-
-				// Stop simplifying as soon as context tokens fall within the fixed
-				// budget. Only the context budget gates simplification — the total
-				// token count (allTokens) is intentionally excluded so that context
-				// files are simplified to the same level every request regardless of
-				// focus file size, preserving the LLM prefix cache. The maxTokens
-				// parameter does not influence context simplification depth; it is
-				// used solely by the caller (CodeProvider.Parts) for the extra-files
-				// budget.
-				if contextTokens <= maxContextTokens {
-					cancel()
-					break loop_ops
-				}
-
-				if file.DoNotSimplify {
-					continue
-				}
-
-				select {
-				case <-sema:
-					atomic.AddInt64(pendingSema, -1)
-				case <-ctx.Done():
-					break loop_ops
-				}
-
-				file.transformCond.L.Lock()
-				for file.Transform != nil {
-					// wait transform done
-					file.transformCond.Wait()
-				}
-				if file.Pending != nil {
-					// confirm
-					if file.Confirmed != nil {
-						allTokens -= file.Confirmed.NumTokens
-						if !file.PackageIsRoot {
-							contextTokens -= file.Confirmed.NumTokens
-						}
-					}
-					if debug {
-						logger.InfoContext(ctx, "file operation confirmed",
-							"path", file.Path,
-							"what", file.Pending.What,
-						)
-					}
-					if file.Pending.Ast == nil && len(file.Pending.Content) == 0 {
-						// delete
-						files[i] = nil
-						file.Confirmed = nil
-						if file.PackageIsRoot {
-							numFilesFromRootPackageDeleted++
-						}
-					} else {
-						// updated
-						allTokens += file.Pending.NumTokens
-						if !file.PackageIsRoot {
-							contextTokens += file.Pending.NumTokens
-						}
-						file.Confirmed = file.Pending
-					}
-					file.Pending = nil
-					file.transformCond.Broadcast()
-				}
-				file.transformCond.L.Unlock()
-
-			}
-		}
-
-		// Drain any pending semaphore slots after early exit to prevent resource leak.
-		for atomic.LoadInt64(pendingSema) > 0 {
-			select {
-			case <-sema:
-				atomic.AddInt64(pendingSema, -1)
-			default:
-				// No more available, all drained
-				atomic.StoreInt64(pendingSema, 0)
-			}
-		}
-
-		cancel()
-		// keep broadcasting to wake up goroutines potentially stuck in Wait()
-		allDone := make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(time.Millisecond * 50)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-allDone:
-					return
-				case <-ticker.C:
-					for _, f := range originalFiles {
-						if f != nil {
-							f.transformCond.Broadcast()
-						}
-					}
-				}
-			}
-		}()
-		wg.Wait()
-		close(allDone)
-
-		if numFilesFromRootPackageDeleted > 0 {
-			return nil, fmt.Errorf("files from root packages deleted: %d", numFilesFromRootPackageDeleted)
-		}
-
-		retFiles := files[:0]
-		for _, file := range files {
-			if file == nil {
-				continue
-			}
-			retFiles = append(retFiles, file)
-			if debug {
-				logger.Info("use file", "path", file.Path)
-			}
-		}
-
-		return retFiles, nil
-	}
-}
-
-func startTokenCounters(ctx context.Context, jobChan chan *File, fset *token.FileSet, counter generators.TokenCounter, wg *sync.WaitGroup) {
-	// Cap the number of concurrent token‑counting workers to a fixed limit
-	// rather than using runtime.NumCPU(). Formatting large ASTs and running
-	// the tokenizer both allocate substantial memory; unbounded concurrency
-	// on high‑core machines can cause sporadic OOM when many large files
-	// happen to be processed simultaneously.
-	const maxTokenCounterWorkers = 8
-	numWorkers := min(runtime.NumCPU(), maxTokenCounterWorkers)
-	for range numWorkers {
-		wg.Go(func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case file := <-jobChan:
-					file.applyTransform(fset, counter)
-				}
-			}
-		})
-	}
-}
-
-type Transform struct {
-	MatchModuleIsRoot  *bool
-	MatchPackageIsRoot *bool
-
-	Set                 *ast.File
-	SetContent          []byte
-	DeleteTestFiles     bool
-	DeleteMarkdownFiles bool
-	DeleteComments      bool
-	DeleteFunctionBody  bool
-	DeleteFile          bool
-
-	// SkipImports skips goimports processing when the transform cannot
-	// change import usage (e.g., comment deletion), avoiding redundant
-	// parsing and formatting overhead.
-	SkipImports bool
-}
-
-func makeTransforms() (ops []*Transform) {
-
-	// non-root module
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:   new(false),
-		DeleteTestFiles:     true,
-		DeleteMarkdownFiles: true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot: new(false),
-		DeleteComments:    true,
-		SkipImports:       true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  new(false),
-		DeleteFunctionBody: true,
-	})
-
-	// root module, non-root package
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:   new(true),
-		MatchPackageIsRoot:  new(false),
-		DeleteTestFiles:     true,
-		DeleteMarkdownFiles: true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  new(true),
-		MatchPackageIsRoot: new(false),
-		DeleteComments:     true,
-		SkipImports:        true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  new(true),
-		MatchPackageIsRoot: new(false),
-		DeleteFunctionBody: true,
-	})
-
-	// delete non-root files
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot: new(false),
-		DeleteFile:        true,
-	})
-	ops = append(ops, &Transform{
-		MatchModuleIsRoot:  new(true),
-		MatchPackageIsRoot: new(false),
-		DeleteFile:         true,
-	})
-
-	// root package
-	ops = append(ops, &Transform{
-		MatchPackageIsRoot: new(true),
-		DeleteFile:         true,
-	})
-
-	return
-}
-
-func (f *File) applyTransform(fset *token.FileSet, counter generators.TokenCounter) {
-	f.transformCond.L.Lock()
-	defer f.transformCond.L.Unlock()
-	defer f.transformCond.Broadcast()
-
-	if f.Transform == nil {
-		// no transform
-		return
-	}
-	defer func() {
-		f.Transform = nil
-	}()
-
-	if f.Pending != nil {
-		// Pending must be confirmed before calling applyTransform
-		panic("pending is not null")
-	}
-
-	// Capture skipImports before the formatting defer runs so it is
-	// available even after f.Transform is set to nil by a later defer.
-	skipImports := f.Transform.SkipImports
-	defer func() {
-		if f.Pending == nil {
-			return
-		}
-		var content string
-		if f.Pending.Ast != nil {
-			buf := new(bytes.Buffer)
-			if err := formatASTForPrompt(buf, f.Pending.Ast, fset, f.PackageIsRoot, f.ReadOnly, f.Path, skipImports); err != nil {
-				panic(err)
-			}
-			content = buf.String()
-			f.Pending.Content = buf.Bytes()
-			// Keep f.Pending.Ast alive: subsequent transforms (DeleteComments,
-			// DeleteFunctionBody) read f.Confirmed.Ast after confirmation.
-			// The AST is released in the SimplifyFiles cleanup defer after
-			// all transforms finish.
-		} else if len(f.Pending.Content) > 0 {
-			content = string(f.Pending.Content)
-		}
-		n, err := counter(content)
+		rootPkgs, err := getRootPackages()
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
-		f.Pending.NumTokens = n
-	}()
+		contextPkgs, err := getContextPackages()
+		if err != nil {
+			return nil, err
+		}
 
-	// match
-	if f.Transform.MatchModuleIsRoot != nil && *f.Transform.MatchModuleIsRoot != f.ModuleIsRoot {
-		// not matched, no change
-		return
-	}
-	if f.Transform.MatchPackageIsRoot != nil && *f.Transform.MatchPackageIsRoot != f.PackageIsRoot {
-		// not matched, no change
-		return
-	}
+		// Identify test files by path suffix
+		for _, f := range files {
+			f.IsTestFile = strings.HasSuffix(f.Path, "_test.go")
+		}
 
-	// set
-	if f.Transform.Set != nil {
-		f.Pending = &Transformed{
-			What: "set initial ast",
-			Ast:  f.Transform.Set,
-		}
-		return
-	}
-	if f.Transform.SetContent != nil {
-		f.Pending = &Transformed{
-			What:    "set initial content",
-			Content: f.Transform.SetContent,
-		}
-		return
-	}
+		// 1. Build logical packages from files
+		logicalPkgs := buildLogicalPackages(files, rootPkgs, contextPkgs)
 
-	// delete test file
-	if f.Transform.DeleteTestFiles && strings.HasSuffix(f.Path, "_test.go") {
-		f.Pending = &Transformed{
-			What: "delete test file",
-		}
-		return
-	}
+		// 2. Categorize each logical package
+		categorizePackages(logicalPkgs, rootPkgs, contextPkgs)
 
-	// delete markdown file
-	if f.Transform.DeleteMarkdownFiles && strings.HasSuffix(strings.ToLower(f.Path), ".md") {
-		f.Pending = &Transformed{
-			What: "delete markdown file",
-		}
-		return
-	}
+		// 3. Compute distances via BFS from focus packages
+		computeDistances(logicalPkgs)
 
-	// delete comments
-	if f.Transform.DeleteComments && f.Confirmed != nil {
-		if !f.IsGoFile {
-			return
+		// 4. Sort by priority (category, distance, path)
+		sortPackagesByPriority(logicalPkgs)
+
+		// 5. Pre-compute token counts at each visibility level concurrently
+		if err := precomputeTokenCounts(logicalPkgs, fset, countTokens); err != nil {
+			return nil, err
 		}
-		simplified := deleteComments(f.Confirmed.Ast)
-		if simplified == nil {
-			f.Pending = &Transformed{
-				What: "delete empty file after delete comments",
+
+		// 6. Water-fill: allocate visibility levels within budget
+		allocateVisibility(logicalPkgs, logger, debug)
+
+		// 7. Collect output files at their assigned visibility levels
+		var result []*File
+		for _, lp := range logicalPkgs {
+			// Build lookup maps for the current visibility level and level 3
+			renderedAtVisibility := make(map[*File]renderedFile)
+			if lp.Visibility > VisibilityInvisible {
+				for _, rf := range lp.RenderedFiles[lp.Visibility] {
+					renderedAtVisibility[rf.file] = rf
+				}
 			}
-			return
-		}
-		f.Pending = &Transformed{
-			What: "delete comments",
-			Ast:  simplified,
-		}
-		return
-	}
+			renderedAtAll := make(map[*File]renderedFile)
+			for _, rf := range lp.RenderedFiles[VisibilityAll] {
+				renderedAtAll[rf.file] = rf
+			}
 
-	// delete function body
-	if f.Transform.DeleteFunctionBody && f.Confirmed != nil {
-		if !f.IsGoFile {
-			return
+			for _, f := range lp.Files {
+				var rf renderedFile
+				var ok bool
+				// DoNotSimplify files are always at level 3 (full content)
+				if f.DoNotSimplify {
+					rf, ok = renderedAtAll[f]
+				} else if lp.Visibility > VisibilityInvisible {
+					rf, ok = renderedAtVisibility[f]
+				}
+				if !ok {
+					continue
+				}
+				f.LogicalPkgPath = lp.PkgPath
+				f.PackageDistanceFromRoot = lp.Distance
+				f.Confirmed = &Transformed{
+					What:      fmt.Sprintf("visibility level %d", lp.Visibility),
+					Content:   []byte(rf.content),
+					NumTokens: rf.tokens,
+				}
+				result = append(result, f)
+			}
 		}
-		f.Pending = &Transformed{
-			What: "delete function body",
-			Ast:  deleteFunctionBody(f.Confirmed.Ast),
-		}
-		return
-	}
 
-	// delete file
-	if f.Transform.DeleteFile {
-		f.Pending = &Transformed{
-			What: "delete file",
-		}
-		return
-	}
+		// 8. Sort for output (prefix cache optimization)
+		slices.SortStableFunc(result, compareFilesForOutput)
 
+		return result, nil
+	}
 }
 
-func deleteComments(file *ast.File) *ast.File {
-	// Apply transformations to remove comments from within declarations.
-	newFile := astutil.Apply(file, func(cursor *astutil.Cursor) bool {
-		if _, ok := cursor.Node().(*ast.CommentGroup); ok {
-			cursor.Replace((*ast.CommentGroup)(nil))
-		}
-		return true
-	}, nil).(*ast.File)
-
-	if newFile == nil {
-		return nil
+// compareFilesForOutput implements the output ordering for prefix cache
+// optimization. See TheoryOfFileOrdering in files.go.
+func compareFilesForOutput(a, b *File) int {
+	// root module last — outermost grouping so that all non-root-module
+	// files (dependencies, stdlib) form the stable prefix
+	if !a.ModuleIsRoot && b.ModuleIsRoot {
+		return -1
+	} else if a.ModuleIsRoot && !b.ModuleIsRoot {
+		return 1
 	}
 
-	// Explicitly clear top-level comments as astutil.Apply does not traverse them.
-	// If newFile is the same as file, create a copy to modify its Comments field.
-	if newFile == file {
-		clone := *file
-		clone.Comments = nil
-		newFile = &clone
-	} else {
-		// If newFile is already a copy (because Apply made changes elsewhere),
-		// just clear its comments.
-		newFile.Comments = nil
+	// non-nil module last (nil modules like stdlib come first within
+	// the non-root-module group)
+	if a.ModuleIsNil && !b.ModuleIsNil {
+		return -1
+	} else if !a.ModuleIsNil && b.ModuleIsNil {
+		return 1
 	}
 
-	// If the file has no declarations and no comments (after clearing), return nil.
-	if len(newFile.Decls) == 0 && len(newFile.Comments) == 0 {
-		return nil
+	// root package last — within each module group, context files
+	// (non-root packages) precede focus files (root package)
+	if !a.PackageIsRoot && b.PackageIsRoot {
+		return -1
+	} else if a.PackageIsRoot && !b.PackageIsRoot {
+		return 1
 	}
 
-	return newFile
+	// go files last
+	if !a.IsGoFile && b.IsGoFile {
+		return -1
+	} else if a.IsGoFile && !b.IsGoFile {
+		return 1
+	}
+
+	// low distance last
+	if a.PackageDistanceFromRoot != b.PackageDistanceFromRoot {
+		return -cmp.Compare(a.PackageDistanceFromRoot, b.PackageDistanceFromRoot)
+	}
+
+	// shallow package last
+	if a.PackagePathDepth != b.PackagePathDepth {
+		return -cmp.Compare(a.PackagePathDepth, b.PackagePathDepth)
+	}
+
+	// logical package path alphabetical
+	if a.LogicalPkgPath != b.LogicalPkgPath {
+		return cmp.Compare(a.LogicalPkgPath, b.LogicalPkgPath)
+	}
+
+	// file path alphabetical — primary stable key
+	if a.Path != b.Path {
+		return cmp.Compare(a.Path, b.Path)
+	}
+
+	// modification time — final tiebreaker
+	if a.ModTime.Before(b.ModTime) {
+		return -1
+	} else if b.ModTime.Before(a.ModTime) {
+		return 1
+	}
+	return 0
 }
 
+// deleteFunctionBody replaces all function bodies with a panic call.
+// The original AST is not modified: a shallow copy with a cloned Decls
+// slice is made before applying the transformation, so cursor.Replace
+// operates on the copy's Decls, not the original's.
 func deleteFunctionBody(file *ast.File) *ast.File {
-	return astutil.Apply(file, func(cursor *astutil.Cursor) bool {
+	// Clone the Decls slice to prevent astutil.Apply from mutating the
+	// original AST through a shared slice. astutil.Apply may share the
+	// Decls slice between the original and the copy; cloning it ensures
+	// cursor.Replace only affects the copy.
+	fileCopy := *file
+	fileCopy.Decls = slices.Clone(file.Decls)
+
+	return astutil.Apply(&fileCopy, func(cursor *astutil.Cursor) bool {
 		if decl, ok := cursor.Node().(*ast.FuncDecl); ok {
 			if decl.Body == nil {
 				return true
@@ -606,8 +228,7 @@ func deleteFunctionBody(file *ast.File) *ast.File {
 }
 
 // matchPattern reports whether the relative path matches the glob pattern,
-// using doublestar.PathMatch for ** (globstar) support. This unifies all
-// pattern matching on the doublestar library.
+// using doublestar.PathMatch for ** (globstar) support.
 // See TheoryOfPatternMatching in anytexts/code_provider.go.
 func matchPattern(name, pattern string) bool {
 	matched, err := doublestar.PathMatch(pattern, name)
