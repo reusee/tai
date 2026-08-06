@@ -1,6 +1,7 @@
 package gocodes
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -116,4 +117,94 @@ func TestFiles(t *testing.T) {
 
 	})
 
+}
+
+func TestDependencyModuleNotMarkedAsRootModule(t *testing.T) {
+	// Only the modules of root and context packages are root modules.
+	// Dependency packages discovered via the BFS over Imports within
+	// MaxPackageDistanceFromRoot may belong to external modules; marking
+	// those modules as root would classify dependency files as root-module
+	// files, causing them to bypass the non-root-module simplification
+	// transforms (comment stripping, function body deletion) and the
+	// deletion transforms that enforce the context token budget. See
+	// TheoryOfFileOrdering.
+	root := t.TempDir()
+	// Clear GOWORK so workspace detection relies on walking up from the
+	// load directory, independent of the host environment.
+	t.Setenv("GOWORK", "")
+
+	// app module requires the sibling dep module via a local replace, so
+	// the dependency is resolved without network access.
+	appDir := filepath.Join(root, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "go.mod"), []byte(`module example.com/app
+
+go 1.21
+
+require example.com/dep v0.0.0
+
+replace example.com/dep => ../dep
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "main.go"), []byte(`package main
+
+import "example.com/dep"
+
+func main() { dep.Foo() }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	depDir := filepath.Join(root, "dep")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "go.mod"), []byte(`module example.com/dep
+
+go 1.21
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "dep.go"), []byte(`package dep
+
+// Foo does something.
+func Foo() {
+	println("hello")
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(appDir)
+		},
+	).Call(func(
+		getFiles GetFiles,
+	) {
+		files, err := getFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var depFile *File
+		for _, f := range files {
+			if f.Path == filepath.Join(depDir, "dep.go") {
+				depFile = f
+			}
+		}
+		if depFile == nil {
+			t.Fatal("dependency file not loaded")
+		}
+		if depFile.ModuleIsRoot {
+			t.Fatal("dependency module must not be marked as root module")
+		}
+	})
 }

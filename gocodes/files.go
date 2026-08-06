@@ -162,12 +162,30 @@ func (Module) Files(
 		}
 
 		// root modules
+		// Only the modules of root and context packages are root modules.
+		// Dependency packages discovered via the BFS over Imports within
+		// MaxPackageDistanceFromRoot may belong to external modules. Marking
+		// an external module as root would classify its files as root-module
+		// files, causing them to bypass the non-root-module simplification
+		// transforms (comment stripping, function body deletion) and the
+		// deletion transforms that enforce the context token budget. With the
+		// previous iteration over allPkgs, dependency files were never
+		// simplified and could consume the entire context budget, eventually
+		// triggering the "files from root packages deleted" error when focus
+		// files were deleted to meet the budget. See TheoryOfFileOrdering.
 		rootModulePaths := make(map[string]bool)
-		for _, pkg := range allPkgs {
+		for _, pkg := range rootPkgs {
 			if pkg.Module != nil {
 				rootModulePaths[pkg.Module.Path] = true
 			}
-			if debug {
+		}
+		for _, pkg := range contextPkgs {
+			if pkg.Module != nil {
+				rootModulePaths[pkg.Module.Path] = true
+			}
+		}
+		if debug {
+			for _, pkg := range allPkgs {
 				logger.Info("loaded package", "path", pkg.PkgPath)
 			}
 		}
