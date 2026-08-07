@@ -38,10 +38,10 @@ const TheoryOfVisibilityAllocation = `
 The context token budget for non-focus packages is dynamic: it is derived
 from the total token count of the focus packages so that large
 repositories receive a proportionally larger context budget. The budget
-is focusTokens / 2, rounded to the nearest multiple of
+is focusTokens / 4, rounded to the nearest multiple of
 contextTokenBudgetUnit (32K), with a floor at one unit. A repository
-whose focus packages total 64K tokens gets a 32K context budget; a 200K
-focus package gets a 96K budget. This scaling prevents a large focus
+whose focus packages total 128K tokens gets a 32K context budget; a 200K
+focus package gets a 64K budget. This scaling prevents a large focus
 package from starving its dependencies and supporting packages, which
 would degrade the model's ability to reason about cross-package
 interactions. Small projects stay at the 32K floor, matching the
@@ -85,13 +85,13 @@ per package.
 // contextTokenBudgetUnit is the base unit of the dynamic context token
 // budget: it is both the floor (minimum budget) and the alignment
 // multiple. The budget for context (non-focus) packages is
-// focusTokens / 2 rounded to the nearest multiple of this unit, with a
+// focusTokens / 4 rounded to the nearest multiple of this unit, with a
 // floor at one unit. See TheoryOfVisibilityAllocation.
 const contextTokenBudgetUnit = 32 << 10
 
 // calculateMaxContextTokens computes the dynamic token budget for context
 // (non-focus) files from the total token count of the focus packages: the
-// budget is focusTokens / 2, rounded to the nearest multiple of
+// budget is focusTokens / 4, rounded to the nearest multiple of
 // contextTokenBudgetUnit, with a floor at one unit. The computation is
 // deterministic — identical focus packages always produce an identical
 // budget — so context files are simplified to the same level across
@@ -100,8 +100,8 @@ const contextTokenBudgetUnit = 32 << 10
 // budgets so that context packages are not starved. See
 // TheoryOfVisibilityAllocation.
 func calculateMaxContextTokens(focusTokens int) int {
-	half := focusTokens / 2
-	rounded := ((half + contextTokenBudgetUnit/2) / contextTokenBudgetUnit) * contextTokenBudgetUnit
+	quarter := focusTokens / 4
+	rounded := ((quarter + contextTokenBudgetUnit/2) / contextTokenBudgetUnit) * contextTokenBudgetUnit
 	if rounded < contextTokenBudgetUnit {
 		rounded = contextTokenBudgetUnit
 	}
@@ -312,7 +312,7 @@ func allocateVisibility(
 	}
 
 	// The context token budget is dynamic: it is derived from the total
-	// token count of the focus packages (focusTokens / 2, rounded to the
+	// token count of the focus packages (focusTokens / 4, rounded to the
 	// nearest multiple of contextTokenBudgetUnit, floored at one unit),
 	// so large repositories with big focus packages receive
 	// proportionally larger budgets for context packages. The

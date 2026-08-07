@@ -109,20 +109,19 @@ module test
 
 func TestCalculateMaxContextTokensDynamic(t *testing.T) {
 	// The context token budget scales with focus package size: focus
-	// tokens / 2, rounded to the nearest multiple of
+	// tokens / 4, rounded to the nearest multiple of
 	// contextTokenBudgetUnit, with a floor at one unit. See
 	// TheoryOfVisibilityAllocation.
 	tests := []struct {
 		focusTokens int
 		want        int
 	}{
-		{0, contextTokenBudgetUnit},        // half=0 → rounds to 0 → floor at one unit
-		{12 << 10, contextTokenBudgetUnit}, // half=6K → rounds to 0 → floor at one unit
-		{60 << 10, contextTokenBudgetUnit}, // half=30K → rounds to 32K
-		{64 << 10, contextTokenBudgetUnit}, // half=32K → exactly 32K
-		{100 << 10, 64 << 10},              // half=50K → rounds to 64K
-		{128 << 10, 64 << 10},              // half=64K → exactly 64K
-		{200 << 10, 96 << 10},              // half=100K → rounds to 96K
+		{0, contextTokenBudgetUnit},         // quarter=0 → rounds to 0 → floor at one unit
+		{24 << 10, contextTokenBudgetUnit},  // quarter=6K → rounds to 0 → floor at one unit
+		{128 << 10, contextTokenBudgetUnit}, // quarter=32K → exactly 32K
+		{200 << 10, 64 << 10},               // quarter=50K → rounds to 64K
+		{256 << 10, 64 << 10},               // quarter=64K → exactly 64K
+		{400 << 10, 96 << 10},               // quarter=100K → rounds to 96K
 	}
 	for _, tt := range tests {
 		got := calculateMaxContextTokens(tt.focusTokens)
