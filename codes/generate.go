@@ -354,6 +354,29 @@ func collectRoundStats(
 	return roundStats, contentIndex
 }
 
+// retrySummarizationSystemPrompt instructs the summarization model to
+// extract the valuable conclusions of the truncated output — important
+// discoveries, decisions, facts, the state of completed work, and next
+// steps — rather than reproducing the reasoning that led to them.
+// Truncation most often happens when thinking is too long; carrying the
+// conclusions over lets the retry round adopt them instead of
+// re-deriving them, reducing the thinking it needs and lowering the
+// chance of truncating again. See TheoryOfIncompleteOutputSummarization.
+const retrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks:
+
+1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
+
+2. A continue block (kind "continue") whose body is the retry prompt: the essence of the truncated output that the next round needs to continue from where the model left off. Truncation most often happens when thinking is too long, and the truncated thinking has already produced valuable results. The retry prompt must carry these results over — the conclusions, not the reasoning that led to them — so the next round adopts them instead of re-deriving them and needs less thinking.
+
+Prioritize the following valuable content in the retry prompt:
+- Important discoveries and insights the model reached
+- Important decisions the model made
+- Important facts the model established about the codebase, the task, or the environment
+- The state of the work: what was completed and what remains
+- The next steps the model was about to take
+
+Output ONLY these two blocks, no other text.`
+
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	generator generators.Generator,
@@ -362,12 +385,7 @@ func summarizeIncompleteOutput(
 	if incompleteText == "" {
 		return nil, nil
 	}
-	systemPrompt := `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks:
-
-1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
-2. A continue block (kind "continue") whose body is a compressed version of the truncated output, to be fed back to the model as the next user message for retry.
-
-Output ONLY these two blocks, no other text.`
+	systemPrompt := retrySummarizationSystemPrompt
 	var state generators.State
 	state = generators.NewPrompts(systemPrompt, []*generators.Content{
 		{
@@ -429,7 +447,7 @@ func summarizeRetryState(
 				"A summary is provided for context; this is a retry.\n\n" +
 				"Summary of partial output:\n" + retrySummary.Summary + "\n\n" +
 				"Error: " + phaseErr.Error() + "\n\n" +
-				"Continue from where you left off, incorporating the context below:\n\n" +
+				"The retry content below carries the valuable conclusions already reached in the partial output — discoveries, decisions, and facts. Adopt them; do not re-derive them, so this retry needs less thinking than the failed attempt:\n\n" +
 				retrySummary.RetryPrompt
 			newState, err := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
@@ -467,10 +485,10 @@ State is unaffected by the failed attempt, so retrying starts from a clean
 snapshot rather than corrupted partial state. The retry count is bounded to
 prevent infinite loops when a model consistently truncates. Change blocks from
 a truncated attempt are NOT applied: the retry discards the partial output
-entirely and regenerates from scratch, avoiding incomplete or malformed change
-blocks. This is distinct from the generator-level retry (see TheoryOfRetry and
-TheoryOfGenerateRetry) which handles transient API errors; this retry handles
-successful-but-incomplete output.
+entirely and regenerates from the pre-round state, avoiding incomplete or
+malformed change blocks. This is distinct from the generator-level retry (see
+TheoryOfRetry and TheoryOfGenerateRetry) which handles transient API errors;
+this retry handles successful-but-incomplete output.
 
 Completion is detected by checking the externally collected blocks for summary
 kind and the finish reason in the state for abnormal termination. A round is
@@ -485,8 +503,9 @@ TheoryOfParserState in blocks/parser_state.go.
 
 This retry is transient error recovery for truncated output. The summarized
 content does not persist as compressed history. Each retry regenerates from
-the original context, not from accumulated dialogue. See
-TheoryOfContextPhilosophy in loops/run.go.
+the original context, supplemented by the conclusions extracted from the
+truncated thinking (see TheoryOfIncompleteOutputSummarization), not from
+accumulated dialogue. See TheoryOfContextPhilosophy in loops/run.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
@@ -494,10 +513,28 @@ When a round is truncated (no summary block) or errors after producing
 partial output, the incomplete output is summarized before retrying. The
 retry process has two tasks: producing a summary of the truncated output
 (recorded as the truncated round's summary in round statistics) and
-producing the compressed content fed to the retry round as user input,
-framed as a continue block. The summary provides context for the retry,
-and the compressed content allows the model to continue from where it
-left off without re-reading the full truncated output.
+producing the content fed to the retry round as user input, framed as a
+continue block. The summary provides context for the retry; the continue
+block carries what the retry round should adopt.
+
+Truncation most often happens when the model thinks too long. The
+truncated reasoning is not wasted: it has already produced valuable
+results — discoveries, decisions, and facts. Discarding these results and
+letting the retry round re-derive them from scratch would spend the
+thinking budget a second time, risking the same truncation. The retry
+summarization therefore extracts the thinking results from the truncated
+output — the conclusions, not the reasoning that led to them — and
+carries them into the continue block fed to the retry round. The
+extraction prioritizes the most valuable content: important discoveries
+and insights, important decisions, important facts about the codebase or
+task, the state of completed work, and the next steps the model was about
+to take. The retry round adopts these pre-established conclusions and
+continues from where the model left off, so it needs less thinking than
+the truncated attempt.
+
+The same extraction serves both retry paths: missing-completion retries
+(truncated output) and error retries (partial output followed by an
+error). See TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
 The summarization uses a fast model to minimize latency. The summary is
 appended as user content with a system note explaining the retry.
@@ -512,6 +549,14 @@ produces a different response. All generation-phase errors — including missing
 completion and change-block apply errors — are routed through the same
 OnPhaseError retry path with summarization, ensuring consistent retry behavior
 regardless of the error type.
+
+The summarization extracts the valuable content of the partial output —
+the discoveries, decisions, and facts the model had already established —
+and presents them to the retry round. The retry therefore continues from
+the model's conclusions instead of re-deriving them, reducing the thinking
+it needs and lowering the chance of failing again. The extraction is the
+same one used for truncated output; see
+TheoryOfIncompleteOutputSummarization.
 
 This summarization is transient error recovery. The condensed content is
 injected into one retry request and does not persist as compressed history.

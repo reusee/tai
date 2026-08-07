@@ -172,6 +172,28 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 }
 
+func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
+	// The retry summarization prompt must instruct the summarizer to
+	// extract the valuable conclusions of the truncated thinking — important
+	// discoveries, decisions, and facts — rather than reproducing the
+	// reasoning that led to them, so the retry round adopts the conclusions
+	// instead of re-deriving them and needs less thinking. See
+	// TheoryOfIncompleteOutputSummarization.
+	for _, want := range []string{
+		`(kind "summary")`,
+		`(kind "continue")`,
+		"discoveries",
+		"decisions",
+		"facts",
+		"conclusions",
+		"re-deriving",
+	} {
+		if !strings.Contains(retrySummarizationSystemPrompt, want) {
+			t.Fatalf("retrySummarizationSystemPrompt must mention %q", want)
+		}
+	}
+}
+
 func TestPrintRoundStatsWithSummaries(t *testing.T) {
 	var buf bytes.Buffer
 	stats := []RoundStat{

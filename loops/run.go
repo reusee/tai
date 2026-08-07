@@ -84,12 +84,16 @@ The loop is designed around the concept of "rounds" and "retries":
 Retries are treated as loops in round statistics. When a round is truncated
 (no summary block or abnormal finish reason) and will be retried, the retry
 process (SummarizeIncomplete) produces both a summary of the truncated output
-and a continue block whose content is the compressed version of the truncated
-output. The summary is recorded as the truncated round's summary via
+and a continue block whose content is the essence of the truncated output.
+The summary is recorded as the truncated round's summary via
 OnRoundTruncated, so the truncated round appears as a separate loop in round
 statistics. The continue block's content is fed to the retry round as user
 input, framing the retry as a continuation consistent with the model's own
-continue block mechanism.
+continue block mechanism. The content is the summarizer's extraction of the
+truncated thinking's valuable conclusions — discoveries, decisions, and
+facts — so the retry round adopts them instead of re-deriving them, reducing
+the thinking it needs and lowering the chance of truncating again. See
+TheoryOfIncompleteOutputSummarization in codes/generate.go.
 
 Retry on missing completion:
 - When a round ends without a summary block, or when the finish reason
@@ -126,7 +130,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Continue from where you left off, incorporating the context in the continue block below.]\n\n"
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. The continue block below carries the valuable conclusions already reached in the truncated thinking: discoveries, decisions, facts, completed work, and next steps. Adopt these conclusions and continue from where you left off; do not re-derive them, so this round needs less thinking than the truncated attempt.]\n\n"
 
 // InteractionRecorder provider: the default is nil, meaning no interaction
 // recording. Commands that want recording pass their recorder explicitly
