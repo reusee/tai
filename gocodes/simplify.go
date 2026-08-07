@@ -68,19 +68,46 @@ func (Module) SimplifyFiles(
 		// 4. Sort by priority (category, distance, path)
 		sortPackagesByPriority(logicalPkgs)
 
-		// 5. Pre-compute token counts at each visibility level concurrently.
-		// go doc runs from the load directory (or workspace root in
-		// workspace mode) so it can resolve package import paths.
+		// 5. Pre-compute per-file token counts at visibility levels 2 and 3
+		// concurrently. Level 1 (package documentation) costs are computed
+		// lazily during allocation, only for packages that reach level 1.
+		// See TheoryOfLazyPackageDoc in visibility.go.
+		if err := precomputeTokenCounts(logicalPkgs, countTokens); err != nil {
+			return nil, err
+		}
+
+		// 6. Water-fill: allocate visibility levels within budget. The
+		// computeDoc hook runs go doc for a package exactly when the
+		// allocation considers placing it at level 1, caching the result
+		// so packages that never reach level 1 skip the expensive
+		// subprocess entirely. go doc runs from the load directory (or
+		// workspace root in workspace mode) so it can resolve package
+		// import paths. See TheoryOfLazyPackageDoc in visibility.go.
 		dir := string(loadDir)
 		if workspace != "" {
 			dir = string(workspace)
 		}
-		if err := precomputeTokenCounts(logicalPkgs, countTokens, dir, []string(envs)); err != nil {
-			return nil, err
+		computeDoc := func(lp *LogicalPackage) {
+			if lp.docComputed {
+				return
+			}
+			content, tokens, err := renderPackageDoc(lp.PkgPath, dir, []string(envs), countTokens)
+			if err != nil {
+				// A failed go doc makes level 1 unaffordable, matching
+				// the eager behavior. See TheoryOfLazyPackageDoc.
+				lp.DocContent = ""
+				lp.DocTokens = 0
+				lp.BudgetTokensByLevel[VisibilityDoc] = 1 << 30
+				lp.TokensByLevel[VisibilityDoc] = 0
+			} else {
+				lp.DocContent = content
+				lp.DocTokens = tokens
+				lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+				lp.TokensByLevel[VisibilityDoc] = tokens
+			}
+			lp.docComputed = true
 		}
-
-		// 6. Water-fill: allocate visibility levels within budget
-		allocateVisibility(logicalPkgs, logger, debug)
+		allocateVisibility(logicalPkgs, logger, debug, computeDoc)
 
 		// 7. Collect output files at their assigned visibility levels
 		var result []*File

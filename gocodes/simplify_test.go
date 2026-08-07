@@ -151,7 +151,7 @@ func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
 			},
 		}
 
-		allocateVisibility(pkgs, logs.Logger{}, false)
+		allocateVisibility(pkgs, logs.Logger{}, false, nil)
 
 		if pkgs[0].Visibility != VisibilityAll {
 			t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
@@ -192,7 +192,7 @@ func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
 			},
 		}
 
-		allocateVisibility(pkgs, logs.Logger{}, false)
+		allocateVisibility(pkgs, logs.Logger{}, false, nil)
 
 		if pkgs[0].Visibility < pkgs[1].Visibility {
 			t.Fatalf("construction principle violated: focus (%d) < context (%d)",
@@ -201,6 +201,121 @@ func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
 		if pkgs[1].Visibility < pkgs[2].Visibility {
 			t.Fatalf("construction principle violated: context (%d) < samemodule (%d)",
 				pkgs[1].Visibility, pkgs[2].Visibility)
+		}
+	})
+}
+
+func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
+	// Package documentation (go doc output) is computed lazily, only for
+	// packages that actually reach visibility level 1. The eager approach
+	// ran go doc for every non-focus package in the dependency graph — one
+	// Go toolchain subprocess per package — even though most packages end
+	// at level 0 (invisible) or at levels 2/3 (full code), where the doc
+	// output is never used. See TheoryOfLazyPackageDoc.
+
+	t.Run("ComputesDocForLevelOnePackages", func(t *testing.T) {
+		var docCalls []string
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			},
+			{
+				// Same-module package whose doc fits the budget but whose
+				// full code (level 2) does not: it lands at level 1, so
+				// its doc is computed exactly once.
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 100, 1 << 30, 1 << 30},
+			},
+		}
+		computeDoc := func(lp *LogicalPackage) {
+			if lp.docComputed {
+				return
+			}
+			docCalls = append(docCalls, lp.PkgPath)
+			lp.DocContent = "doc"
+			lp.DocTokens = 100
+			lp.BudgetTokensByLevel[VisibilityDoc] = 100
+			lp.TokensByLevel[VisibilityDoc] = 100
+			lp.docComputed = true
+		}
+		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+
+		if len(docCalls) != 1 || docCalls[0] != "samemodule" {
+			t.Fatalf("expected doc computed once for samemodule, got %v", docCalls)
+		}
+		if pkgs[1].Visibility != VisibilityDoc {
+			t.Fatalf("expected samemodule at level 1, got %d", pkgs[1].Visibility)
+		}
+	})
+
+	t.Run("SkipsDocForPackagesNeverAtLevelOne", func(t *testing.T) {
+		var docCalls []string
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			},
+			{
+				// Context package whose doc AND code costs exceed the
+				// budget: it stays invisible, capping every subsequent
+				// package at level 0. It is probed once for the 0→1
+				// upgrade — the single unavoidable go doc invocation
+				// needed to learn its real doc cost — and the docComputed
+				// guard prevents repeated probes on later water-fill
+				// iterations.
+				PkgPath:             "context",
+				Category:            CategoryContext,
+				MinVisibility:       VisibilityCode,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 60000, 60000, 60000},
+			},
+			{
+				// Capped to level 0 by the predecessor constraint in the
+				// min-visibility pass, and blocked from the 0→1 upgrade
+				// in the water-fill phase: its doc is never needed. The
+				// eager approach would have run go doc for this package.
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 50, 50, 50},
+			},
+		}
+		computeDoc := func(lp *LogicalPackage) {
+			if lp.docComputed {
+				return
+			}
+			docCalls = append(docCalls, lp.PkgPath)
+			// The fake doc cost equals the pre-set cost, so the
+			// allocation behaves as if the doc were pre-computed.
+			lp.docComputed = true
+		}
+		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+
+		// samemodule never reaches level 1 and must never have its doc
+		// computed.
+		for _, p := range docCalls {
+			if p == "samemodule" {
+				t.Fatalf("doc must not be computed for a package capped at level 0: %v", docCalls)
+			}
+		}
+		// context is probed exactly once; the docComputed guard prevents
+		// repeated go doc invocations on subsequent water-fill iterations.
+		if len(docCalls) != 1 || docCalls[0] != "context" {
+			t.Fatalf("expected one doc probe for context, got %v", docCalls)
+		}
+		if pkgs[2].Visibility != VisibilityInvisible {
+			t.Fatalf("expected samemodule invisible (predecessor constraint), got %d", pkgs[2].Visibility)
 		}
 	})
 }

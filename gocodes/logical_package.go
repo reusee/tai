@@ -105,6 +105,12 @@ type LogicalPackage struct {
 	DocContent string
 	DocTokens  int
 
+	// docComputed reports whether the package's go doc output has been
+	// computed. Doc computation is lazy: only packages that reach
+	// visibility level 1 run the go doc subprocess, exactly once.
+	// See TheoryOfLazyPackageDoc in visibility.go.
+	docComputed bool
+
 	rootPkgSet    bool
 	contextPkgSet bool
 }

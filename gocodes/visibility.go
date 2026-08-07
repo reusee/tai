@@ -12,6 +12,28 @@ import (
 	"github.com/reusee/tai/logs"
 )
 
+const TheoryOfLazyPackageDoc = `
+Package documentation (go doc output) is computed lazily, only for packages
+that actually reach visibility level 1. The eager approach ran go doc -all
+-cmd -u for every non-focus package in the dependency graph during
+precomputeTokenCounts, spawning one Go toolchain subprocess per package —
+hundreds of processes for a typical project — even though most packages end
+at level 0 (invisible) or at levels 2/3 (full code), where the doc output is
+never used. The allocation algorithm only requires a package's doc cost when
+it considers placing the package at level 1: in the minimum-visibility
+allocation (MinVisibility == 1, capped by the predecessor constraint) and in
+the water-filling upgrade from level 0 to level 1. At exactly those decision
+points allocateVisibility invokes computeDoc, which runs go doc once, caches
+the result on the package (docComputed, DocContent, DocTokens), and sets the
+level-1 token costs. Until a package's doc is computed, its level-1 budget
+cost carries the sentinel 1<<30, which makes level 1 unaffordable; the
+sentinel is never read by a decision because computeDoc runs first whenever
+level 1 is considered. A failed go doc leaves the sentinel in place, matching
+the eager behavior that treated doc failure as unaffordable. Together this
+preserves the exact allocation and output of the eager version while
+eliminating hundreds of wasted subprocess invocations.
+`
+
 const TheoryOfVisibilityAllocation = `
 The visibility allocation uses a water-filling algorithm that upgrades
 packages from their minimum visibility to higher levels as the budget
@@ -132,11 +154,16 @@ func renderFileAtLevel(
 	return content, tokens, nil
 }
 
+// precomputeTokenCounts renders and token-counts each file at visibility
+// levels 2 and 3 for every logical package, in parallel. Level 1 (package
+// documentation via go doc) costs are NOT computed here: they are computed
+// lazily by allocateVisibility only for packages that actually reach
+// visibility level 1, because the go doc subprocess is expensive and most
+// packages never use its output (they end at level 0 or at levels 2/3 where
+// the full code is shown instead). See TheoryOfLazyPackageDoc.
 func precomputeTokenCounts(
 	logicalPkgs []*LogicalPackage,
 	countTokens func(string) (int, error),
-	dir string,
-	envs []string,
 ) error {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, min(runtime.NumCPU()*8, 32))
@@ -160,27 +187,14 @@ func precomputeTokenCounts(
 				}
 			}()
 
-			// Level 1: package documentation via go doc.
-			// Skip go doc for focus packages (always at level 3).
-			// If go doc fails, set the budget cost to 1<<30 so the
-			// package cannot afford level 1 and stays invisible.
-			if lp.Category != CategoryFocus {
-				content, tokens, err := renderPackageDoc(lp.PkgPath, dir, envs, countTokens)
-				if err != nil {
-					lp.DocContent = ""
-					lp.DocTokens = 0
-					lp.BudgetTokensByLevel[VisibilityDoc] = 1 << 30
-					lp.TokensByLevel[VisibilityDoc] = 0
-				} else {
-					lp.DocContent = content
-					lp.DocTokens = tokens
-					lp.BudgetTokensByLevel[VisibilityDoc] = tokens
-					lp.TokensByLevel[VisibilityDoc] = tokens
-				}
-			} else {
-				lp.BudgetTokensByLevel[VisibilityDoc] = 0
-				lp.TokensByLevel[VisibilityDoc] = 0
-			}
+			// Level 1 (package documentation) costs are computed lazily by
+			// allocateVisibility, only for packages that reach visibility
+			// level 1. The sentinel 1<<30 makes level 1 unaffordable until
+			// the doc is computed; packages that never reach level 1 skip
+			// the expensive go doc subprocess entirely.
+			// See TheoryOfLazyPackageDoc.
+			lp.BudgetTokensByLevel[VisibilityDoc] = 1 << 30
+			lp.TokensByLevel[VisibilityDoc] = 0
 
 			// Levels 2 and 3: per-file rendering with raw disk content.
 			// Render and token-count each file exactly once, then reuse the
@@ -250,7 +264,15 @@ func allocateVisibility(
 	logicalPkgs []*LogicalPackage,
 	logger logs.Logger,
 	debug Debug,
+	computeDoc func(lp *LogicalPackage),
 ) {
+	// computeDoc may be nil when callers pre-populate doc costs (tests).
+	// Production wiring always provides it via SimplifyFiles.
+	// See TheoryOfLazyPackageDoc.
+	if computeDoc == nil {
+		computeDoc = func(*LogicalPackage) {}
+	}
+
 	// Focus packages are always at level 3
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
@@ -293,6 +315,13 @@ func allocateVisibility(
 		if minVis == VisibilityInvisible {
 			predecessorLevel = lp.Visibility
 			continue
+		}
+		// Placing the package at level 1 requires its go doc cost; compute
+		// it lazily, once per package. Packages that never reach level 1
+		// skip the expensive go doc subprocess entirely.
+		// See TheoryOfLazyPackageDoc.
+		if minVis == VisibilityDoc {
+			computeDoc(lp)
 		}
 		cost := lp.BudgetTokensByLevel[minVis]
 		if cost <= remaining {
@@ -337,6 +366,12 @@ func allocateVisibility(
 			if nextLevel > predecessorLevel {
 				predecessorLevel = currentLevel
 				continue
+			}
+
+			// Entering level 1 requires the package's go doc cost; compute
+			// it lazily, once per package. See TheoryOfLazyPackageDoc.
+			if nextLevel == VisibilityDoc {
+				computeDoc(lp)
 			}
 
 			upgradeCost := lp.BudgetTokensByLevel[nextLevel] - lp.BudgetTokensByLevel[currentLevel]
