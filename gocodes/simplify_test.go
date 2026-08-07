@@ -131,15 +131,17 @@ func TestCalculateMaxContextTokensDynamic(t *testing.T) {
 	}
 }
 
-func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
-	t.Run("blocks lower priority when higher priority invisible", func(t *testing.T) {
-		// Bug reproduction: when a higher-priority package cannot afford
-		// any visibility level, lower-priority packages must not exceed
-		// its visibility (zero). Without the predecessor constraint in
-		// the minimum visibility allocation, the lower-priority package
-		// gets level 1 while the higher-priority package stays at 0,
-		// violating the construction principle.
-		// See TheoryOfVisibilityAllocation.
+func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
+	// An unaffordable higher-priority package must not blank out the
+	// context for lower-priority packages. The old predecessor
+	// constraint cascaded invisibility: if the first non-focus package in
+	// priority order could not afford its minimum visibility (e.g., its go
+	// doc output exceeded the budget, or go doc failed, making level 1's
+	// sentinel cost 1<<30 unaffordable), every subsequent package was
+	// capped at level 0 and the context used zero tokens of the 32K budget
+	// even though cheaper packages would have fit. See
+	// TheoryOfVisibilityAllocation.
+	t.Run("allocates lower priority when higher priority unaffordable", func(t *testing.T) {
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
@@ -172,17 +174,18 @@ func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
 			t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
 		}
 		if pkgs[1].Visibility != VisibilityInvisible {
-			t.Fatalf("context should be invisible, got %d", pkgs[1].Visibility)
+			t.Fatalf("context should be invisible (unaffordable), got %d", pkgs[1].Visibility)
 		}
-		if pkgs[2].Visibility != VisibilityInvisible {
-			t.Fatalf("samemodule should be invisible (predecessor constraint), got %d", pkgs[2].Visibility)
+		if pkgs[2].Visibility == VisibilityInvisible {
+			t.Fatalf("samemodule should be visible despite the unaffordable context package, got %d", pkgs[2].Visibility)
 		}
 	})
 
-	t.Run("construction principle holds when affordable", func(t *testing.T) {
+	t.Run("construction principle holds when all packages affordable", func(t *testing.T) {
 		// Verify the construction principle holds when packages can afford
 		// their minimum visibility: higher-priority packages have at least
-		// as much visibility as lower-priority ones.
+		// as much visibility as lower-priority ones. See
+		// TheoryOfVisibilityAllocation.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
@@ -216,6 +219,43 @@ func TestAllocateVisibilityPredecessorConstraint(t *testing.T) {
 		if pkgs[1].Visibility < pkgs[2].Visibility {
 			t.Fatalf("construction principle violated: context (%d) < samemodule (%d)",
 				pkgs[1].Visibility, pkgs[2].Visibility)
+		}
+	})
+
+	t.Run("failed doc falls back to code visibility", func(t *testing.T) {
+		// When go doc fails for a package, the doc is treated as empty
+		// (zero cost, nothing emitted) rather than unaffordable, so the
+		// water-fill can still upgrade the package to level 2 (code) using
+		// the precomputed code costs. See TheoryOfLazyPackageDoc.
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityAll,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			},
+			{
+				PkgPath:             "dep",
+				Category:            CategoryDirectImport,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 1 << 30, 200, 300},
+				TokensByLevel:       [4]int{0, 0, 200, 300},
+			},
+		}
+		computeDoc := func(lp *LogicalPackage) {
+			// Simulate a failed go doc: empty doc, zero cost.
+			lp.DocContent = ""
+			lp.DocTokens = 0
+			lp.BudgetTokensByLevel[VisibilityDoc] = 0
+			lp.TokensByLevel[VisibilityDoc] = 0
+			lp.docComputed = true
+		}
+		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+
+		if pkgs[1].Visibility != VisibilityAll {
+			t.Fatalf("dep should reach level 3 via the failed-doc fallback, got %d", pkgs[1].Visibility)
 		}
 	})
 }
@@ -270,7 +310,14 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		}
 	})
 
-	t.Run("SkipsDocForPackagesNeverAtLevelOne", func(t *testing.T) {
+	t.Run("SkipsDocForPackagesBlockedByPredecessor", func(t *testing.T) {
+		// The water-fill gates the 0→1 (doc) transition on the immediate
+		// predecessor: a package whose predecessor is stuck at level 0 is
+		// never probed, so the go doc subprocess does not run for packages
+		// whose doc could not be shown without violating the priority
+		// ordering. The docComputed guard additionally prevents repeated
+		// probes on later water-fill iterations.
+		// See TheoryOfLazyPackageDoc.
 		var docCalls []string
 		pkgs := []*LogicalPackage{
 			{
@@ -282,12 +329,9 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			},
 			{
 				// Context package whose doc AND code costs exceed the
-				// budget: it stays invisible, capping every subsequent
-				// package at level 0. It is probed once for the 0→1
-				// upgrade — the single unavoidable go doc invocation
-				// needed to learn its real doc cost — and the docComputed
-				// guard prevents repeated probes on later water-fill
-				// iterations.
+				// budget: it stays invisible and is probed exactly once —
+				// the single unavoidable go doc invocation needed to learn
+				// its real doc cost.
 				PkgPath:             "context",
 				Category:            CategoryContext,
 				MinVisibility:       VisibilityCode,
@@ -295,10 +339,18 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				BudgetTokensByLevel: [4]int{0, 60000, 60000, 60000},
 			},
 			{
-				// Capped to level 0 by the predecessor constraint in the
-				// min-visibility pass, and blocked from the 0→1 upgrade
-				// in the water-fill phase: its doc is never needed. The
-				// eager approach would have run go doc for this package.
+				// A second unaffordable context package: its immediate
+				// predecessor is also at level 0, so it is blocked at the
+				// 0→1 gate and its doc is never probed.
+				PkgPath:             "context2",
+				Category:            CategoryContext,
+				MinVisibility:       VisibilityCode,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [4]int{0, 60000, 60000, 60000},
+			},
+			{
+				// Same-module package: affordable at level 1, probed once,
+				// and water-filled all the way to level 3.
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
@@ -317,20 +369,28 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		}
 		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
 
-		// samemodule never reaches level 1 and must never have its doc
-		// computed.
+		// context is probed exactly once; the docComputed guard prevents
+		// repeated go doc invocations on later water-fill iterations.
+		contextProbes := 0
 		for _, p := range docCalls {
-			if p == "samemodule" {
-				t.Fatalf("doc must not be computed for a package capped at level 0: %v", docCalls)
+			if p == "context" {
+				contextProbes++
 			}
 		}
-		// context is probed exactly once; the docComputed guard prevents
-		// repeated go doc invocations on subsequent water-fill iterations.
-		if len(docCalls) != 1 || docCalls[0] != "context" {
+		if contextProbes != 1 {
 			t.Fatalf("expected one doc probe for context, got %v", docCalls)
 		}
-		if pkgs[2].Visibility != VisibilityInvisible {
-			t.Fatalf("expected samemodule invisible (predecessor constraint), got %d", pkgs[2].Visibility)
+		// context2 never reaches level 1 and must never have its doc
+		// computed.
+		for _, p := range docCalls {
+			if p == "context2" {
+				t.Fatalf("doc must not be computed for a package blocked by its predecessor: %v", docCalls)
+			}
+		}
+		// samemodule is probed once and reaches full visibility despite
+		// the unaffordable packages ahead of it.
+		if pkgs[3].Visibility != VisibilityAll {
+			t.Fatalf("expected samemodule at level 3, got %d", pkgs[3].Visibility)
 		}
 	})
 }

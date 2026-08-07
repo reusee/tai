@@ -21,17 +21,28 @@ hundreds of processes for a typical project — even though most packages end
 at level 0 (invisible) or at levels 2/3 (full code), where the doc output is
 never used. The allocation algorithm only requires a package's doc cost when
 it considers placing the package at level 1: in the minimum-visibility
-allocation (MinVisibility == 1, capped by the predecessor constraint) and in
-the water-filling upgrade from level 0 to level 1. At exactly those decision
-points allocateVisibility invokes computeDoc, which runs go doc once, caches
-the result on the package (docComputed, DocContent, DocTokens), and sets the
+allocation (MinVisibility == 1) and in the water-filling upgrade from level
+0 to level 1. At exactly those decision points allocateVisibility invokes
+computeDoc (via computePackageDoc), which runs go doc once, caches the
+result on the package (docComputed, DocContent, DocTokens), and sets the
 level-1 token costs. Until a package's doc is computed, its level-1 budget
 cost carries the sentinel 1<<30, which makes level 1 unaffordable; the
 sentinel is never read by a decision because computeDoc runs first whenever
-level 1 is considered. A failed go doc leaves the sentinel in place, matching
-the eager behavior that treated doc failure as unaffordable. Together this
-preserves the exact allocation and output of the eager version while
-eliminating hundreds of wasted subprocess invocations.
+level 1 is considered.
+
+The water-fill phase gates the 0→1 upgrade on the immediate predecessor: a
+package whose predecessor is still at level 0 is not probed, because its doc
+could not be shown without violating the priority ordering. This keeps the
+number of go doc subprocesses proportional to the number of packages that
+can actually benefit from level 1, rather than the size of the dependency
+graph.
+
+When go doc fails for a package, the doc is treated as empty rather than
+unaffordable: the level-1 cost is zero and the level-1 content is empty
+(nothing is emitted at level 1), and the water-fill can still upgrade the
+package to level 2 (code), whose costs are precomputed. This turns a
+systemic go doc failure into a graceful degradation to code visibility
+instead of making every such package permanently invisible.
 `
 
 const TheoryOfVisibilityAllocation = `
@@ -54,21 +65,36 @@ The visibility allocation uses a water-filling algorithm that upgrades
 packages from their minimum visibility to higher levels as the budget
 allows. Packages are processed in priority order (highest first). Each
 step upgrades the leftmost (highest priority) affordable package by one
-level, subject to the predecessor constraint: a package's visibility
-must not exceed the previous package's visibility in priority order.
-This ensures the construction principle: if package A has higher priority
-than package B, A's visibility is not lower than B's.
+level. A package that cannot afford a level is skipped rather than
+blocking lower-priority packages, so a single unaffordable package
+cannot blank out the entire context: the budget is shared, and every
+package gets an independent chance to reach its minimum visibility.
+
+The minimum-visibility allocation processes packages in priority order
+and gives each package its minimum visibility if it fits in the
+remaining budget; unaffordable packages are left invisible and do not
+affect subsequent packages. Priority still governs the order of
+allocation, so high-priority packages are allocated before the budget
+is exhausted.
+
+The water-fill upgrade phase retains one predecessor gate: the upgrade
+from level 0 to level 1 (package documentation) is blocked when the
+immediately preceding package is at level 0, because that transition
+requires an expensive go doc subprocess probe (see
+TheoryOfLazyPackageDoc). Upgrades to level 2 and 3 use precomputed costs
+and are never gated, so packages behind an unaffordable one can still be
+upgraded all the way to full code. This means the construction
+principle — higher-priority packages have at least as much visibility as
+lower-priority ones — holds when every package is affordable at its
+minimum, and degrades gracefully otherwise: visibility may be
+non-monotonic only in the presence of unaffordable packages.
 
 Focus packages are always at level 3 (all files) and do not count
 against the context budget. Non-focus packages share the context token
-budget. The budget is a hard limit: packages are initially invisible,
-then upgraded to their minimum visibility in priority order as the budget
-allows, subject to the predecessor constraint. A package's minimum
-visibility is capped to the predecessor's level; if the capped minimum
-is zero or unaffordable, the package remains invisible and caps all
-subsequent packages. After minimum visibility allocation, the
-water-filling algorithm upgrades packages further within the remaining
-budget.
+budget, a hard limit: packages are initially invisible, then upgraded
+to their minimum visibility in priority order as the budget allows,
+then upgraded further by the water-filling algorithm within the
+remaining budget.
 `
 
 const TheoryOfRenderedFileCache = `
@@ -153,6 +179,43 @@ func renderPackageDoc(
 		return "", 0, err
 	}
 	return content, tokens, nil
+}
+
+// computePackageDoc computes and caches the go doc output for a logical
+// package. It is the production computeDoc used by allocateVisibility via
+// SimplifyFiles. On success the level-1 budget cost is the doc token count.
+// On failure the doc is treated as empty: level 1 costs nothing and emits
+// nothing, and the water-fill can still upgrade the package to level 2
+// (code), whose costs are precomputed. This prevents a single go doc
+// failure from making the package permanently unaffordable. The docComputed
+// guard makes the call idempotent: each package runs the go doc subprocess
+// at most once. See TheoryOfLazyPackageDoc.
+func computePackageDoc(
+	lp *LogicalPackage,
+	dir string,
+	envs Envs,
+	countTokens func(string) (int, error),
+) {
+	if lp.docComputed {
+		return
+	}
+	content, tokens, err := renderPackageDoc(lp.PkgPath, dir, []string(envs), countTokens)
+	if err != nil {
+		// Treat a failed go doc as an empty doc: zero cost and zero
+		// content, so the package emits nothing at level 1 but can be
+		// water-filled to level 2 (code).
+		// See TheoryOfLazyPackageDoc.
+		lp.DocContent = ""
+		lp.DocTokens = 0
+		lp.BudgetTokensByLevel[VisibilityDoc] = 0
+		lp.TokensByLevel[VisibilityDoc] = 0
+	} else {
+		lp.DocContent = content
+		lp.DocTokens = tokens
+		lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+		lp.TokensByLevel[VisibilityDoc] = tokens
+	}
+	lp.docComputed = true
 }
 
 // renderFileAtLevel renders a single file at the given visibility level
@@ -336,30 +399,22 @@ func allocateVisibility(
 		lp.Visibility = VisibilityInvisible
 	}
 
-	// Allocate minimum visibility in priority order with the predecessor
-	// constraint: a package's visibility must not exceed the previous
-	// package's visibility, enforcing the construction principle that
-	// higher-priority packages have at least as much visibility as
-	// lower-priority ones. If a package cannot afford its (possibly capped)
-	// minimum visibility, it stays invisible and caps all subsequent
-	// packages.
-	predecessorLevel := VisibilityAll
+	// Allocate minimum visibility in priority order. A package that
+	// cannot afford its minimum visibility is left invisible but does
+	// NOT block lower-priority packages: the budget is shared, and every
+	// package gets an independent chance to reach its minimum. This
+	// avoids the cascade where a single unaffordable package (e.g., a
+	// direct dependency whose go doc output exceeds the budget, or whose
+	// go doc fails) blanks out the entire context. Priority still
+	// governs the order of allocation: higher-priority packages are
+	// processed first, so the most important packages are allocated
+	// before the budget is exhausted. See TheoryOfVisibilityAllocation.
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			predecessorLevel = lp.Visibility
 			continue
 		}
 		minVis := lp.MinVisibility
 		if minVis == VisibilityInvisible {
-			predecessorLevel = lp.Visibility
-			continue
-		}
-		// Cap to predecessor level (construction principle)
-		if minVis > predecessorLevel {
-			minVis = predecessorLevel
-		}
-		if minVis == VisibilityInvisible {
-			predecessorLevel = lp.Visibility
 			continue
 		}
 		// Placing the package at level 1 requires its go doc cost; compute
@@ -373,10 +428,6 @@ func allocateVisibility(
 		if cost <= remaining {
 			lp.Visibility = minVis
 			remaining -= cost
-			predecessorLevel = minVis
-		} else {
-			// Can't afford; stays invisible
-			predecessorLevel = lp.Visibility
 		}
 	}
 
@@ -388,8 +439,12 @@ func allocateVisibility(
 
 	// Water-fill: upgrade from high to low priority, one level at a time.
 	// Each iteration finds the leftmost (highest priority) affordable
-	// package and upgrades it by one level. The predecessor constraint
-	// ensures visibility is non-increasing in priority order.
+	// package and upgrades it by one level. The predecessor gate applies
+	// only to the 0→1 (doc) transition, which requires an expensive go
+	// doc probe; upgrades to level 2 and 3 use precomputed costs and may
+	// proceed even when the predecessor is stuck at a lower level, so an
+	// unaffordable package cannot waste the remaining budget.
+	// See TheoryOfVisibilityAllocation.
 	for {
 		upgraded := false
 		predecessorLevel := VisibilityAll
@@ -408,8 +463,13 @@ func allocateVisibility(
 				continue
 			}
 
-			// Predecessor constraint: must not exceed previous package's level
-			if nextLevel > predecessorLevel {
+			// The predecessor gate applies only to the 0→1 (doc)
+			// transition, because that transition requires an expensive
+			// go doc probe. A package whose predecessor is still at
+			// level 0 is not probed: its doc could not be shown without
+			// violating the priority ordering (higher-priority packages
+			// are shown at least as fully). See TheoryOfLazyPackageDoc.
+			if nextLevel == VisibilityDoc && nextLevel > predecessorLevel {
 				predecessorLevel = currentLevel
 				continue
 			}

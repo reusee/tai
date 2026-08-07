@@ -91,35 +91,19 @@ func (Module) SimplifyFiles(
 		}
 
 		// 6. Water-fill: allocate visibility levels within budget. The
-		// computeDoc hook runs go doc for a package exactly when the
-		// allocation considers placing it at level 1, caching the result
-		// so packages that never reach level 1 skip the expensive
-		// subprocess entirely. go doc runs from the load directory (or
-		// workspace root in workspace mode) so it can resolve package
-		// import paths. See TheoryOfLazyPackageDoc in visibility.go.
+		// computeDoc hook delegates to computePackageDoc, which runs go
+		// doc for a package exactly when the allocation considers placing
+		// it at level 1, caching the result so packages that never reach
+		// level 1 skip the expensive subprocess entirely. go doc runs
+		// from the load directory (or workspace root in workspace mode)
+		// so it can resolve package import paths. See
+		// TheoryOfLazyPackageDoc in visibility.go.
 		dir := string(loadDir)
 		if workspace != "" {
 			dir = string(workspace)
 		}
 		computeDoc := func(lp *LogicalPackage) {
-			if lp.docComputed {
-				return
-			}
-			content, tokens, err := renderPackageDoc(lp.PkgPath, dir, []string(envs), countTokens)
-			if err != nil {
-				// A failed go doc makes level 1 unaffordable, matching
-				// the eager behavior. See TheoryOfLazyPackageDoc.
-				lp.DocContent = ""
-				lp.DocTokens = 0
-				lp.BudgetTokensByLevel[VisibilityDoc] = 1 << 30
-				lp.TokensByLevel[VisibilityDoc] = 0
-			} else {
-				lp.DocContent = content
-				lp.DocTokens = tokens
-				lp.BudgetTokensByLevel[VisibilityDoc] = tokens
-				lp.TokensByLevel[VisibilityDoc] = tokens
-			}
-			lp.docComputed = true
+			computePackageDoc(lp, dir, envs, countTokens)
 		}
 		allocateVisibility(logicalPkgs, logger, debug, computeDoc)
 
