@@ -143,6 +143,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.PreservedThinking != nil {
 				merged.PreservedThinking = spec.PreservedThinking
 			}
+			if spec.ZeroDataRetention != nil {
+				merged.ZeroDataRetention = spec.ZeroDataRetention
+			}
 			// Redirect and RandomRedirect are not merged from parent to
 			// child; only the final spec in the path determines whether a
 			// redirect applies.
@@ -215,6 +218,7 @@ func (Module) GetGenerator(
 	newAzure NewAzure,
 	newBedrock NewBedrock,
 	newOpenCodeGo NewOpenCodeGo,
+	confidential ConfidentialMode,
 ) GetGenerator {
 	return func(name string) (Generator, error) {
 
@@ -224,6 +228,9 @@ func (Module) GetGenerator(
 			return nil, err
 		}
 		if resolvedSpec, err := resolveSpec(name, specs); err == nil {
+			if err := confidential.check(resolvedSpec, name); err != nil {
+				return nil, err
+			}
 			switch strings.ToLower(resolvedSpec.Type) {
 			case "open-router", "open_router", "openrouter":
 				return newOpenRouter(resolvedSpec), nil
@@ -266,31 +273,43 @@ func (Module) GetGenerator(
 		// ollama
 		provider, modelName, ok := strings.Cut(name, ":")
 		if ok && provider == "ollama" {
-			return newOpenAI(Spec{
+			spec := Spec{
 				BaseURL:       "http://127.0.0.1:11434/v1",
 				Model:         modelName,
 				DisableSearch: new(true),
-			}, ""), nil
+			}
+			if err := confidential.check(spec, name); err != nil {
+				return nil, err
+			}
+			return newOpenAI(spec, ""), nil
 		}
 
 		// built-ins
 		switch name {
 
 		case "flash", "gemini-flash":
-			return newGemini(Spec{
+			spec := Spec{
 				Model:             "models/gemini-flash-latest",
 				ContextTokens:     192 * K,
 				MaxGenerateTokens: new(32 * K),
 				Temperature:       new(float32(0.1)),
-			}), nil
+			}
+			if err := confidential.check(spec, name); err != nil {
+				return nil, err
+			}
+			return newGemini(spec), nil
 
 		case "gemini", "pro", "gemini-pro":
-			return newGemini(Spec{
+			spec := Spec{
 				Model:             "models/gemini-pro-latest",
 				ContextTokens:     192 * K,
 				MaxGenerateTokens: new(32 * K),
 				Temperature:       new(float32(0.1)),
-			}), nil
+			}
+			if err := confidential.check(spec, name); err != nil {
+				return nil, err
+			}
+			return newGemini(spec), nil
 
 		}
 

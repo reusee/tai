@@ -66,6 +66,9 @@ no_human?: bool
 // analysis. When enabled, every generation command records its sessions
 // into a single sqlite database file.
 record?: bool
+// confidential_mode restricts model selection to zero-data-retention
+// models when enabled.
+confidential_mode?: bool
 
 // review enables a review loop after generation to review and fix changes.
 review?: bool
@@ -102,7 +105,7 @@ go?: {
 	context_patterns?: [...string]
 
 	// doc_patterns specifies additional Go package paths whose documentation
-	// (go doc -all -cmd -u) is included in the context as reference.
+	// (go doc -all -cmd) is included in the context as reference.
 	doc_patterns?: [...string]
 
 	// no_tests, if true, excludes test files from the context.
@@ -172,6 +175,9 @@ _gen: {
 	no_proxy?: bool
 	// preserved_thinking, if true, sends reasoning thoughts back to the model in subsequent requests.
 	preserved_thinking?: bool
+// zero_data_retention, if true, marks the generator as retaining no input
+	// or output data, permitting its use in confidential mode.
+	zero_data_retention?: bool
 	// extra_arguments allows for provider-specific parameters.
 	extra_arguments?: {[string]: _}
 	// variants defines nested generator configurations that inherit parent fields.

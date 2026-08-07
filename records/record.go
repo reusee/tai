@@ -2,6 +2,7 @@ package records
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -59,9 +60,11 @@ concrete improvements. This closes the self-improvement loop: interactions
 are recorded, analyzed, and the findings inform prompt and tool changes.
 
 Recording is best-effort: database errors are ignored so recording never
-interferes with the generation pipeline. Event details are capped at
-maxDetailBytes so the database does not grow unboundedly from huge system
-prompts or file context delivered in user content.
+interferes with the generation pipeline. Event details are recorded in full:
+nothing is omitted or truncated. The transcript therefore faithfully reflects
+the entire interaction — system prompts, user input, model output, reasoning
+thoughts, tool calls, file attachments (binary content encoded as base64),
+structured blocks, parse errors, and retry feedback.
 `
 
 // DBPath is the path of the interaction sqlite database file. The default
@@ -330,24 +333,38 @@ func (r *Recorder) Block(block blocks.Block) {
 	r.insertEventLocked(r.round, "block_"+kind, blockDetail(block))
 }
 
-// ParseError records a malformed block that could not be parsed.
+// ParseError records a malformed block that could not be parsed. All fields
+// of the parse error — kind, boundary, line, reason, collision hints, and the
+// full block content — are recorded without omission or truncation, so the
+// transcript faithfully reflects what the model emitted even when the block
+// was malformed. See TheoryOfInteractionRecording.
 func (r *Recorder) ParseError(parseErr *blocks.BlockParseError) {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.insertEventLocked(r.round, "parse_error", fmt.Sprintf(
-		"kind=%s boundary=%s\n%s",
-		parseErr.BlockKind, parseErr.Boundary, parseErr.Reason,
-	))
+	var b strings.Builder
+	fmt.Fprintf(&b, "kind=%s boundary=%s", parseErr.BlockKind, parseErr.Boundary)
+	if parseErr.Line > 0 {
+		fmt.Fprintf(&b, " line=%d", parseErr.Line)
+	}
+	if parseErr.Reason != "" {
+		fmt.Fprintf(&b, "\nreason: %s", parseErr.Reason)
+	}
+	if len(parseErr.Hints) > 0 {
+		b.WriteString("\nhints:\n" + strings.Join(parseErr.Hints, "\n"))
+	}
+	if parseErr.Content != "" {
+		b.WriteString("\ncontent:\n" + parseErr.Content)
+	}
+	r.insertEventLocked(r.round, "parse_error", b.String())
 }
 
 func (r *Recorder) insertEventLocked(round int, typ, detail string) {
 	if r.db == nil || r.sessionID == 0 {
 		return
 	}
-	detail = limitDetail(detail)
 	if detail == "" && typ != "round_start" {
 		return
 	}
@@ -388,7 +405,11 @@ func contentDetail(content *generators.Content) string {
 		case generators.FileURL:
 			parts = append(parts, "[file] "+string(p))
 		case generators.FileContent:
-			parts = append(parts, fmt.Sprintf("[file content] %s (%d bytes)", p.MimeType, len(p.Content)))
+			// The full attachment content is recorded so no information
+			// from the interaction is lost. Binary content is encoded as
+			// base64 to keep the text transcript parseable.
+			parts = append(parts, fmt.Sprintf("[file content: %s, base64]\n%s",
+				p.MimeType, base64.StdEncoding.EncodeToString(p.Content)))
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -414,24 +435,6 @@ func blockDetail(block blocks.Block) string {
 		b.WriteString(block.Body)
 	}
 	return b.String()
-}
-
-// maxDetailBytes caps the size of a single event detail so the database
-// does not grow unboundedly from huge system prompts or file context
-// delivered in user content.
-const maxDetailBytes = 100 * 1024
-
-// limitDetail truncates a detail string to maxDetailBytes, cutting on a
-// UTF-8 rune boundary and appending a truncation marker.
-func limitDetail(detail string) string {
-	if len(detail) <= maxDetailBytes {
-		return detail
-	}
-	cut := maxDetailBytes
-	for cut > 0 && detail[cut]&0xC0 == 0x80 {
-		cut--
-	}
-	return detail[:cut] + "\n...[truncated]..."
 }
 
 // RecordSession starts recording a session for the given command and returns

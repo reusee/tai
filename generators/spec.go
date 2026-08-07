@@ -1,7 +1,7 @@
 package generators
 
 const TheoryOfSpec = `
-Spec merging uses pointer values for optional booleans (DisableSearch, DisableTools, IsOpenRouter, IsAzure, NoProxy, PreservedThinking)
+Spec merging uses pointer values for optional booleans (DisableSearch, DisableTools, IsOpenRouter, IsAzure, NoProxy, PreservedThinking, ZeroDataRetention)
 to distinguish between "explicitly set to false" and "not provided". This allows a child spec to disable a feature
 that a parent spec enabled.
 Variants allow hierarchical organization of specs where child specs are nested under their parent.
@@ -20,6 +20,9 @@ PreservedThinking controls whether reasoning thoughts from previous model respon
 server in subsequent requests. When not set or false, thoughts are stripped from outgoing requests to avoid
 sending reasoning content back to the model. When true, thoughts are included in the request so the model
 can build on prior reasoning context.
+ZeroDataRetention marks a generator whose provider retains no input or output data. It is consumed by
+confidential mode (see TheoryOfConfidentialMode), which rejects any generator that does not set the field
+when enabled. Like the other optional booleans, it is not merged from parent to child unless explicitly set.
 `
 
 type Spec struct {
@@ -46,5 +49,6 @@ type Spec struct {
 	RandomRedirect    []string       `json:"random_redirect,omitempty"`
 	NoProxy           *bool          `json:"no_proxy,omitempty"`
 	PreservedThinking *bool          `json:"preserved_thinking,omitempty"`
+	ZeroDataRetention *bool          `json:"zero_data_retention,omitempty"`
 	Variants          []Spec         `json:"variants,omitempty"`
 }

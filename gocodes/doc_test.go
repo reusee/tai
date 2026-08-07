@@ -137,3 +137,42 @@ func TestCodeProviderDocErrorSurfaces(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderPackageDocWithoutUnexported(t *testing.T) {
+	// renderPackageDoc invokes go doc without the -u flag, so unexported
+	// symbols must not appear in the rendered documentation. With -u the
+	// output roughly doubles for most packages without adding API-level
+	// reference value.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/docpkg\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte(`// Package docpkg demonstrates documentation.
+package docpkg
+
+// Foo returns 42.
+func Foo() int { return 42 }
+
+// helper does something unexported.
+func helper() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	content, _, err := renderPackageDoc(
+		"example.com/docpkg",
+		root,
+		withModModEnv(os.Environ()),
+		generators.DeepseekTokenCounterFn,
+	)
+	if err != nil {
+		t.Fatalf("renderPackageDoc failed: %v", err)
+	}
+	if !strings.Contains(content, "Foo") {
+		t.Fatalf("documentation must include the exported symbol Foo:\n%s", content)
+	}
+	if strings.Contains(content, "helper") {
+		t.Fatalf("documentation must not include unexported symbols (the -u flag is removed):\n%s", content)
+	}
+}

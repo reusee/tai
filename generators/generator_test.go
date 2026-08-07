@@ -2,6 +2,7 @@ package generators
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1146,6 +1147,64 @@ func TestResolveSpecMaxThinkingTokens(t *testing.T) {
 	})
 }
 
+func TestResolveSpecZeroDataRetention(t *testing.T) {
+	t.Run("inherited from parent", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				ZeroDataRetention: new(true),
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.ZeroDataRetention == nil || !*s.ZeroDataRetention {
+			t.Errorf("expected ZeroDataRetention true, got %v", s.ZeroDataRetention)
+		}
+	})
+
+	t.Run("overridden by child", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name:              "base",
+				Type:              "gemini",
+				ZeroDataRetention: new(true),
+				Variants: []Spec{
+					{
+						Name:              "child",
+						ZeroDataRetention: new(false),
+					},
+				},
+			},
+		}
+		s, err := resolveSpec("base/child", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.ZeroDataRetention == nil || *s.ZeroDataRetention {
+			t.Errorf("expected ZeroDataRetention false, got %v", s.ZeroDataRetention)
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		localRoots := []Spec{
+			{
+				Name: "base",
+				Type: "gemini",
+			},
+		}
+		s, err := resolveSpec("base", localRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.ZeroDataRetention != nil {
+			t.Errorf("expected nil ZeroDataRetention, got %v", s.ZeroDataRetention)
+		}
+	})
+}
+
 func TestResolveSpecPreservedThinking(t *testing.T) {
 	t.Run("inherited from parent", func(t *testing.T) {
 		localRoots := []Spec{
@@ -1200,6 +1259,88 @@ func TestResolveSpecPreservedThinking(t *testing.T) {
 		}
 		if s.PreservedThinking != nil {
 			t.Errorf("expected nil PreservedThinking, got %v", s.PreservedThinking)
+		}
+	})
+}
+
+func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.cue")
+	configContent := `generators: [
+  {
+    name: "zdr"
+    type: "gemini"
+    model: "models/zdr-model"
+    zero_data_retention: true
+  },
+  {
+    name: "plain"
+    type: "gemini"
+    model: "models/plain-model"
+  },
+]
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confidential mode: only the zero-data-retention generator is
+	// usable; built-in shortcuts and the ollama shorthand are rejected.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	).Fork(
+		func() configs.Loader {
+			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
+		},
+		func() ConfidentialMode { return true },
+	).Call(func(get GetGenerator) {
+		gen, err := get("zdr")
+		if err != nil {
+			t.Fatalf("zero-data-retention model should be allowed: %v", err)
+		}
+		if gen == nil {
+			t.Fatal("expected non-nil generator")
+		}
+
+		_, err = get("plain")
+		if err == nil {
+			t.Fatal("non-zero-data-retention model must be rejected in confidential mode")
+		}
+		if !strings.Contains(err.Error(), "confidential mode") {
+			t.Fatalf("expected confidential mode error, got: %v", err)
+		}
+
+		_, err = get("flash")
+		if err == nil {
+			t.Fatal("built-in model must be rejected in confidential mode")
+		}
+		if !strings.Contains(err.Error(), "confidential mode") {
+			t.Fatalf("expected confidential mode error, got: %v", err)
+		}
+
+		_, err = get("ollama:llama3")
+		if err == nil {
+			t.Fatal("ollama model must be rejected in confidential mode")
+		}
+		if !strings.Contains(err.Error(), "confidential mode") {
+			t.Fatalf("expected confidential mode error, got: %v", err)
+		}
+	})
+
+	// Sanity: without confidential mode, the plain model is usable.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	).Fork(
+		func() configs.Loader {
+			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
+		},
+	).Call(func(get GetGenerator) {
+		if _, err := get("plain"); err != nil {
+			t.Fatalf("non-confidential mode should allow plain model: %v", err)
 		}
 	})
 }

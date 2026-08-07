@@ -12,12 +12,14 @@ import (
 
 const TheoryOfDocPatterns = `
 The -doc flag includes the documentation of a Go package in the model context
-as reference. Each package path is rendered with go doc -all -cmd -u and
+as reference. Each package path is rendered with go doc -all -cmd and
 wrapped with "begin of context package" markers so the model can identify the
-documentation reference boundary. This gives the model precise API-level
-reference material for packages that may not be loaded as project files — for
-example, an external package being integrated — or for project packages whose
-full source would consume too much of the context budget.
+documentation reference boundary. The invocation deliberately omits the -u
+flag so the reference stays focused on exported symbols. This gives the model
+precise API-level reference material for packages that may not be loaded as
+project files — for example, an external package being integrated — or for
+project packages whose full source would consume too much of the context
+budget.
 
 Doc parts are appended in CodeProvider.Parts after extra files, as part of the
 volatile suffix: project files form the stable prefix for LLM prefix caching,
@@ -39,10 +41,10 @@ arguments (e.g., -pkg patterns).
 
 var _ configs.Config = DocPatterns(nil)
 
-// DocPatterns lists Go package paths whose documentation (go doc -all -cmd
-// -u) is included in the model context as reference. The -doc flag adds a
-// package path; the "go.doc_patterns" config path provides a list of package
-// paths. See TheoryOfDocPatterns.
+// DocPatterns lists Go package paths whose documentation (go doc -all
+// -cmd) is included in the model context as reference. The -doc flag adds
+// a package path; the "go.doc_patterns" config path provides a list of
+// package paths. See TheoryOfDocPatterns.
 type DocPatterns []string
 
 func (Module) DocPatterns() DocPatterns {
@@ -53,7 +55,7 @@ var _ flags.Flag = DocPatterns(nil)
 
 func (d DocPatterns) Keys() map[string]string {
 	return map[string]string{
-		"-doc": "Add a package whose documentation (go doc -all -cmd -u) is included in the context",
+		"-doc": "Add a package whose documentation (go doc -all -cmd) is included in the context",
 	}
 }
 

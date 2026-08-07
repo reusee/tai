@@ -79,7 +79,7 @@ tai next -file main.go chat "fix the nil pointer dereference in the init functio
 
 ## Configuration
 
-Configuration is loaded from CUE files (`tai.cue` or `.tai.cue`) in the working directory, user config directory, and `/etc`. Command-line flags override config file values.
+Configuration is loaded from CUE files (`tai.cue` or `.tai.cue`) in the working directory, at the root of the Go module (when the working directory is inside a Go module), in the user config directory, and in `/etc`. Command-line flags override config file values.
 
 Example `tai.cue`:
 
@@ -110,7 +110,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-model` | Set the model name |
 | `-fast-model` | Set the fast model for summarization |
 | `-file` | Add a file to the context |
-| `-doc` | Add a package whose documentation (go doc -all -cmd -u) is included in the context |
+| `-doc` | Add a package whose documentation (go doc -all -cmd) is included in the context |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |
@@ -121,6 +121,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-include-std` | Include standard library packages |
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |
 | `-summarize-thoughts` | Enable periodic summarization of thoughts |
+| `-confidential` | Restrict model selection to zero-data-retention models |
 
 ## Architecture
 

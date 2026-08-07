@@ -2,6 +2,7 @@ package records
 
 import (
 	"bytes"
+	"encoding/base64"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,6 +114,82 @@ func TestRecorderBlockAndParseErrorEvents(t *testing.T) {
 	})
 }
 
+func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
+	// The record process must capture every piece of information about a
+	// malformed block — kind, boundary, line, reason, collision hints, and the
+	// full block content — without omission or truncation. The block content
+	// here exceeds the parse-error message truncation limit
+	// (maxParseErrorContentLength in blocks/block.go), so its presence in full
+	// proves the recorder does not truncate. See TheoryOfInteractionRecording.
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.RoundStart()
+		largeBody := strings.Repeat("x", 200*1024)
+		content := "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n" + largeBody
+		recorder.ParseError(&blocks.BlockParseError{
+			BlockKind: "change",
+			Boundary:  "徕珑龘",
+			Line:      1,
+			Reason:    "has no matching closing line",
+			Content:   content,
+			Hints:     []string{"line 3: \"徕珑龘 extra\""},
+		})
+		recorder.RoundSuccess(nil)
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The full block content, the line number, and the collision hints
+		// must be present in the transcript without truncation.
+		if !strings.Contains(text, content) {
+			t.Fatal("parse error content must be recorded in full without truncation")
+		}
+		if !strings.Contains(text, "line=1") {
+			t.Fatal("parse error line must be recorded")
+		}
+		if !strings.Contains(text, "line 3: \"徕珑龘 extra\"") {
+			t.Fatal("parse error hints must be recorded in full")
+		}
+	})
+}
+
+func TestRecorderRecordsFullDetailWithoutTruncation(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.RoundStart()
+		// Larger than the previous 100KB cap: the content must be
+		// recorded in full without truncation.
+		largeText := strings.Repeat("a", 200*1024)
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text(largeText)},
+		})
+		recorder.RoundSuccess(nil)
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, largeText) {
+			t.Fatal("content must be recorded in full without truncation")
+		}
+		if strings.Contains(text, "truncated") {
+			t.Fatal("recorded detail must not contain a truncation marker")
+		}
+	})
+}
+
 func TestRecorderDisabledWritesNothing(t *testing.T) {
 	withRecorder(t, false, func(recorder *Recorder) {
 		if recorder.Enabled() {
@@ -133,6 +210,39 @@ func TestRecorderDisabledWritesNothing(t *testing.T) {
 		}
 		if count != 0 {
 			t.Fatalf("disabled recorder must not create sessions, got %d", count)
+		}
+	})
+}
+
+func TestRecorderRecordsFileContent(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.RoundStart()
+		content := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+		recorder.Content(&generators.Content{
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.FileContent{Content: content, MimeType: "image/png"},
+			},
+		})
+		recorder.RoundSuccess(nil)
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"[file content: image/png, base64]",
+			base64.StdEncoding.EncodeToString(content),
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("transcript missing %q:\n%s", want, text)
+			}
 		}
 	})
 }
@@ -215,26 +325,6 @@ func TestLatestSessionID(t *testing.T) {
 			t.Fatalf("expected 1, got %d", id)
 		}
 	})
-}
-
-func TestLimitDetail(t *testing.T) {
-	if got := limitDetail("short"); got != "short" {
-		t.Fatalf("got %q", got)
-	}
-	long := strings.Repeat("a", maxDetailBytes+100)
-	got := limitDetail(long)
-	if len(got) > maxDetailBytes+len("\n...[truncated]...") {
-		t.Fatalf("truncated length %d exceeds cap", len(got))
-	}
-	if !strings.HasSuffix(got, "...[truncated]...") {
-		t.Fatalf("missing truncation marker: %q", got[len(got)-20:])
-	}
-
-	// Multi-byte runes must not be split mid-rune.
-	chinese := strings.Repeat("世界", maxDetailBytes)
-	if got := limitDetail(chinese); !strings.HasPrefix(got, "世") {
-		t.Fatal("truncated content should be valid UTF-8")
-	}
 }
 
 func TestSessionNotFound(t *testing.T) {

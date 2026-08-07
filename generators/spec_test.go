@@ -90,6 +90,34 @@ func TestSpecPreservedThinkingJSON(t *testing.T) {
 	}
 }
 
+func TestSpecZeroDataRetentionJSON(t *testing.T) {
+	spec := Spec{
+		Name:              "test",
+		Type:              "gemini",
+		ZeroDataRetention: new(true),
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := raw["zero_data_retention"]; !ok || v != true {
+		t.Errorf("zero_data_retention not found or wrong: %v", raw)
+	}
+
+	// round trip
+	var restored Spec
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.ZeroDataRetention == nil || !*restored.ZeroDataRetention {
+		t.Errorf("ZeroDataRetention not restored correctly: %+v", restored)
+	}
+}
+
 func TestSpecRandomRedirectJSON(t *testing.T) {
 	spec := Spec{
 		Name:           "test",

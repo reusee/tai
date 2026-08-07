@@ -15,7 +15,7 @@ import (
 const TheoryOfLazyPackageDoc = `
 Package documentation (go doc output) is computed lazily, only for packages
 that actually reach visibility level 1. The eager approach ran go doc -all
--cmd -u for every non-focus package in the dependency graph during
+-cmd for every non-focus package in the dependency graph during
 precomputeTokenCounts, spawning one Go toolchain subprocess per package —
 hundreds of processes for a typical project — even though most packages end
 at level 0 (invisible) or at levels 2/3 (full code), where the doc output is
@@ -148,17 +148,20 @@ func shouldIncludeFile(f *File, level VisibilityLevel) bool {
 	return false
 }
 
-// renderPackageDoc runs `go doc -all -cmd -u` for the package and wraps
+// renderPackageDoc runs `go doc -all -cmd` for the package and wraps
 // the output with context package markers. Level 1 documentation is
 // per-package, not per-file. If go doc fails, the caller treats the
 // package as unaffordable at level 1 (cost set to 1<<30).
+// The -u flag is deliberately omitted: including unexported symbols
+// roughly doubles the doc output for most packages without adding
+// API-level reference value.
 func renderPackageDoc(
 	pkgPath string,
 	dir string,
 	envs []string,
 	countTokens func(string) (int, error),
 ) (content string, tokens int, err error) {
-	cmd := exec.Command("go", "doc", "-all", "-cmd", "-u", pkgPath)
+	cmd := exec.Command("go", "doc", "-all", "-cmd", pkgPath)
 	cmd.Dir = dir
 	cmd.Env = envs
 	output, err := cmd.Output()
