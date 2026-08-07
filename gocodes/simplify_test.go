@@ -1,6 +1,8 @@
 package gocodes
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -409,6 +411,67 @@ func TestMatchPattern(t *testing.T) {
 				t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.path, tt.pattern, got, tt.match)
 			}
 		})
+	}
+}
+
+func TestLogTokenComposition(t *testing.T) {
+	// The context token composition log must report focus package
+	// tokens, the dynamic context budget, and how the context packages
+	// consume that budget by visibility level. See TheoryOfTokenComposition.
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:       "focus",
+			Category:      CategoryFocus,
+			Visibility:    VisibilityAll,
+			TokensByLevel: [4]int{0, 0, 0, 500},
+		},
+		{
+			PkgPath:       "docpkg",
+			Category:      CategorySameModule,
+			Visibility:    VisibilityDoc,
+			TokensByLevel: [4]int{0, 100, 300, 400},
+		},
+		{
+			PkgPath:       "codepkg",
+			Category:      CategoryContext,
+			Visibility:    VisibilityCode,
+			TokensByLevel: [4]int{0, 50, 200, 300},
+		},
+		{
+			PkgPath:       "fullpkg",
+			Category:      CategorySameModule,
+			Visibility:    VisibilityAll,
+			TokensByLevel: [4]int{0, 10, 20, 600},
+		},
+		{
+			PkgPath:       "hiddenpkg",
+			Category:      CategoryStdLib,
+			Visibility:    VisibilityInvisible,
+			TokensByLevel: [4]int{0, 30, 40, 50},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
+	logTokenComposition(logger, pkgs)
+	output := buf.String()
+
+	for _, want := range []string{
+		`msg="context token composition"`,
+		`"focus tokens"=500`,
+		`"context budget"=32768`,
+		`"context tokens"=900`,
+		`"doc packages"=1`,
+		`"code packages"=1`,
+		`"full packages"=1`,
+		`"invisible packages"=1`,
+		`"doc tokens"=100`,
+		`"code tokens"=200`,
+		`"full tokens"=600`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in composition log, got: %s", want, output)
+		}
 	}
 }
 

@@ -56,6 +56,12 @@ func (c CodeProvider) Parts(
 	err error,
 ) {
 	var totalTokens int
+	// Accumulate the token composition of the final prompt as parts are
+	// added: focus project files, context project files, extra files from
+	// -file patterns, and package documentation from -doc patterns. The
+	// composition is logged at the end so the user can see where the
+	// context tokens are spent. See TheoryOfTokenComposition.
+	var focusTokens, contextTokens, extraTokens, docTokens int
 
 	files, err := c.GetFiles()()
 	if err != nil {
@@ -263,6 +269,11 @@ func (c CodeProvider) Parts(
 			c.Logger().Info("final file", "path", file.Path, "tokens", file.Confirmed.NumTokens)
 		}
 		totalTokens += file.Confirmed.NumTokens
+		if file.PackageIsRoot {
+			focusTokens += file.Confirmed.NumTokens
+		} else {
+			contextTokens += file.Confirmed.NumTokens
+		}
 		parts = append(parts, generators.Text(file.Confirmed.Content))
 	}
 
@@ -286,6 +297,7 @@ func (c CodeProvider) Parts(
 			c.Logger().Info("extra context file", "path", pp.path, "tokens", pp.tokens)
 		}
 		totalTokens += pp.tokens
+		extraTokens += pp.tokens
 		parts = append(parts, pp.part)
 	}
 
@@ -320,6 +332,7 @@ func (c CodeProvider) Parts(
 				break
 			}
 			totalTokens += tokens
+			docTokens += tokens
 			parts = append(parts, generators.Text(content))
 			if c.ShowTokenCounts() {
 				c.Logger().Info("package doc", "path", pkgPath, "tokens", tokens)
@@ -327,9 +340,19 @@ func (c CodeProvider) Parts(
 		}
 	}
 
-	if c.ShowTokenCounts() {
-		c.Logger().Info("total tokens", "tokens", totalTokens)
-	}
+	// Log the assembled token composition: focus project files, context
+	// project files, extra files, and package documentation. Together
+	// with the allocation composition logged by SimplifyFiles, this shows
+	// where every token in the final prompt comes from. Per-file logs
+	// remain gated by -show-token-counts; this summary is always shown.
+	// See TheoryOfTokenComposition.
+	c.Logger().Info("token composition",
+		"focus", focusTokens,
+		"context", contextTokens,
+		"extra", extraTokens,
+		"doc", docTokens,
+		"total", totalTokens,
+	)
 
 	return
 }

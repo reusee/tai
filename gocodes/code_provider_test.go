@@ -1,6 +1,7 @@
 package gocodes
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -443,4 +445,60 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 			t.Fatal("expected focus file outside writable directories to be included with read-only marker")
 		}
 	})
+}
+
+func TestPartsTokenCompositionLog(t *testing.T) {
+	// The assembled token composition must appear in the logs: focus
+	// project files, context project files, extra files, and package
+	// documentation. This makes the context token budget observable
+	// without enabling per-file token logs. See TheoryOfTokenComposition.
+	root := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nimport \"test/dep\"\n\nfunc main() { dep.Foo() }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	depDir := filepath.Join(root, "dep")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "dep.go"), []byte("package dep\n\n// Foo does something.\nfunc Foo() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+		func() logs.Writer { return logs.Writer(&buf) },
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		_, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	output := buf.String()
+	if !strings.Contains(output, `msg="token composition"`) {
+		t.Fatalf("expected token composition log, got: %s", output)
+	}
+	for _, want := range []string{
+		" focus=",
+		" context=",
+		" extra=",
+		" doc=",
+		" total=",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected key %q in token composition log, got: %s", want, output)
+		}
+	}
 }

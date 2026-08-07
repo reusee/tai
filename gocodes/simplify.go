@@ -30,6 +30,20 @@ files first and volatile focus files last, maximizing the common prefix
 between consecutive requests for LLM prefix caching.
 `
 
+const TheoryOfTokenComposition = `
+Token composition logging makes the context token budget observable. The
+SimplifyFiles step logs the allocation view: focus package tokens, the dynamic
+context budget derived from them, and how the context packages consume that
+budget by visibility level (doc-only packages at level 1, code-only packages
+at level 2, full packages at level 3). The CodeProvider.Parts step logs the
+assembly view: how the final prompt token total is composed of focus project
+files, context project files, extra files from -file patterns, and package
+documentation from -doc patterns. Together these logs let the user see at a
+glance whether the token budget is dominated by focus files, context files,
+or user-requested additions, and whether the dynamic context budget is
+under- or over-allocated. See TheoryOfVisibilityAllocation.
+`
+
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
 
 func (Module) SimplifyFiles(
@@ -108,6 +122,12 @@ func (Module) SimplifyFiles(
 			lp.docComputed = true
 		}
 		allocateVisibility(logicalPkgs, logger, debug, computeDoc)
+
+		// Log the context token composition: focus package tokens, the
+		// dynamic context budget derived from them, and how the context
+		// packages consume that budget by visibility level.
+		// See TheoryOfTokenComposition.
+		logTokenComposition(logger, logicalPkgs)
 
 		// 7. Collect output files at their assigned visibility levels
 		var result []*File
@@ -273,6 +293,48 @@ func compareFilesForOutput(a, b *File) int {
 		return 1
 	}
 	return 0
+}
+
+// logTokenComposition logs the context token composition after visibility
+// allocation: focus package tokens, the dynamic context budget derived from
+// them, and how the context packages consume that budget by visibility level.
+// The composition makes it possible to see at a glance whether the context
+// budget is dominated by doc-only, code-only, or full packages, and how many
+// packages are invisible. See TheoryOfTokenComposition.
+func logTokenComposition(
+	logger logs.Logger,
+	logicalPkgs []*LogicalPackage,
+) {
+	focusTokens := 0
+	for _, lp := range logicalPkgs {
+		if lp.Category == CategoryFocus {
+			focusTokens += lp.TokensByLevel[VisibilityAll]
+		}
+	}
+	var contextTokensByLevel [4]int
+	var contextPackagesByLevel [4]int
+	for _, lp := range logicalPkgs {
+		if lp.Category == CategoryFocus {
+			continue
+		}
+		contextTokensByLevel[lp.Visibility] += lp.TokensByLevel[lp.Visibility]
+		contextPackagesByLevel[lp.Visibility]++
+	}
+	contextTokens := contextTokensByLevel[VisibilityDoc] +
+		contextTokensByLevel[VisibilityCode] +
+		contextTokensByLevel[VisibilityAll]
+	logger.Info("context token composition",
+		"focus tokens", focusTokens,
+		"context budget", calculateMaxContextTokens(focusTokens),
+		"context tokens", contextTokens,
+		"doc packages", contextPackagesByLevel[VisibilityDoc],
+		"code packages", contextPackagesByLevel[VisibilityCode],
+		"full packages", contextPackagesByLevel[VisibilityAll],
+		"invisible packages", contextPackagesByLevel[VisibilityInvisible],
+		"doc tokens", contextTokensByLevel[VisibilityDoc],
+		"code tokens", contextTokensByLevel[VisibilityCode],
+		"full tokens", contextTokensByLevel[VisibilityAll],
+	)
 }
 
 // matchPattern reports whether the relative path matches the glob pattern,
