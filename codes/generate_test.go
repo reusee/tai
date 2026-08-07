@@ -292,6 +292,25 @@ func TestReviewModelsFlagAndConfig(t *testing.T) {
 	}
 }
 
+func TestBuildUserPromptText(t *testing.T) {
+	// buildUserPromptText must concatenate only Text parts, in order,
+	// ignoring non-text parts, and produce exactly the string that repeated
+	// += over the Text parts would produce. See buildUserPromptText.
+	parts := []generators.Part{
+		generators.Text("``` begin of file a.go\n"),
+		generators.Thought("reasoning is not user prompt context"),
+		generators.Text("package a\n"),
+		generators.Text("``` end of file a.go\n"),
+	}
+	want := "``` begin of file a.go\npackage a\n``` end of file a.go\n"
+	if got := buildUserPromptText(parts); got != want {
+		t.Fatalf("buildUserPromptText() = %q, want %q", got, want)
+	}
+	if got := buildUserPromptText(nil); got != "" {
+		t.Fatalf("buildUserPromptText(nil) = %q, want empty", got)
+	}
+}
+
 // reviewMockGenerator satisfies generators.Generator for review loop tests.
 // See TestRunReviewSkipsWhenNoDiffs and TestRunReviewRunsWhenDiffsExist.
 type reviewMockGenerator struct{}

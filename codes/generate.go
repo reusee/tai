@@ -191,6 +191,21 @@ func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, erro
 	return count(string(data))
 }
 
+// buildUserPromptText concatenates the Text parts of the user prompt parts
+// into a single string for token counting. It uses strings.Builder so the
+// accumulation is linear in the total context size: repeated += over
+// hundreds of file context parts would copy the accumulated string on every
+// iteration, which is quadratic for large contexts.
+func buildUserPromptText(parts []generators.Part) string {
+	var b strings.Builder
+	for _, part := range parts {
+		if text, ok := part.(generators.Text); ok {
+			b.WriteString(string(text))
+		}
+	}
+	return b.String()
+}
+
 const TheoryOfRoundStatistics = `
 Round statistics are collected per round to provide visibility into token
 usage and duration. Each round produces a RoundStat entry with:
@@ -691,13 +706,12 @@ func (Module) GenerateWithResultWithStats(
 		// Component user prompt parts are appended after code provider parts.
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
 
-		var userPromptText generators.Text
-		for _, part := range userPromptParts {
-			if text, ok := part.(generators.Text); ok {
-				userPromptText += text
-			}
-		}
-		userPromptTokens, err := generator.CountTokens(string(userPromptText))
+		// Concatenate the text parts with strings.Builder for token counting.
+		// Repeated += over the file context parts is quadratic in the total
+		// context size: each iteration copies the accumulated string. The
+		// builder accumulates linearly. See buildUserPromptText.
+		userPromptText := buildUserPromptText(userPromptParts)
+		userPromptTokens, err := generator.CountTokens(userPromptText)
 		if err != nil {
 			return loops.Result{}, nil, err
 		}

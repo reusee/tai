@@ -136,7 +136,23 @@ func (s *ParserState) AppendContent(content *generators.Content) (generators.Sta
 		}, nil
 	}
 
-	newBuf := slices.Clone(s.buf)
+	// Build the new parse buffer in a single exact-capacity allocation.
+	// The previous buffer is never mutated after construction, so copying
+	// its bytes once into the new allocation preserves the immutability of
+	// previously returned states. slices.Clone followed by append would
+	// copy the buffer twice per chunk: Clone yields a slice with cap == len,
+	// so the first append reallocates and copies again.
+	incomingLen := 0
+	for _, part := range content.Parts {
+		if _, ok := part.(generators.Thought); ok {
+			continue
+		}
+		if text, ok := part.(generators.Text); ok {
+			incomingLen += len(text)
+		}
+	}
+	newBuf := make([]byte, 0, len(s.buf)+incomingLen)
+	newBuf = append(newBuf, s.buf...)
 	for _, part := range content.Parts {
 		// Thoughts are model reasoning, not block output. They may
 		// contain illustrative block markers that must not be parsed
