@@ -110,6 +110,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-model` | Set the model name |
 | `-fast-model` | Set the fast model for summarization |
 | `-file` | Add a file to the context |
+| `-doc` | Add a package whose documentation (go doc -all -cmd -u) is included in the context |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |

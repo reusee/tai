@@ -22,6 +22,9 @@ type CodeProvider struct {
 	AnyTexts        dscope.Inject[anytexts.CodeProvider]
 	LoadDir         dscope.Inject[LoadDir]
 	ShowTokenCounts dscope.Inject[ShowTokenCounts]
+	Envs            dscope.Inject[Envs]
+	Workspace       dscope.Inject[Workspace]
+	DocPatterns     dscope.Inject[DocPatterns]
 }
 
 var _ codetypes.CodeProvider = CodeProvider{}
@@ -284,6 +287,44 @@ func (c CodeProvider) Parts(
 		}
 		totalTokens += pp.tokens
 		parts = append(parts, pp.part)
+	}
+
+	// Add package documentation for -doc patterns after extra files so
+	// project files remain the stable prefix for LLM prefix caching; doc
+	// content varies by request and belongs to the volatile suffix. Like
+	// extra files, documentation is truncated from the end when the token
+	// budget is exhausted, so packages included in smaller-budget requests
+	// appear at the same positions in larger-budget requests. The rendering
+	// reuses renderPackageDoc (also used for level-1 package visibility),
+	// keeping the marker format and the go doc invocation consistent across
+	// the codebase. A failed go doc for a user-specified package aborts
+	// context assembly, matching the fail-fast behavior of other
+	// user-provided loader arguments. See TheoryOfDocPatterns.
+	if docPatterns := c.DocPatterns(); len(docPatterns) > 0 {
+		dir := string(c.LoadDir())
+		if workspace := c.Workspace(); workspace != "" {
+			dir = string(workspace)
+		}
+		envs := c.Envs()
+		for _, pkgPath := range docPatterns {
+			// Stop once the budget is exhausted rather than running the
+			// remaining go doc subprocesses whose output would not be added.
+			if maxTokens > 0 && totalTokens >= maxTokens {
+				break
+			}
+			content, tokens, err := renderPackageDoc(pkgPath, dir, []string(envs), countTokens)
+			if err != nil {
+				return nil, fmt.Errorf("go doc %s: %w", pkgPath, err)
+			}
+			if maxTokens > 0 && totalTokens+tokens > maxTokens {
+				break
+			}
+			totalTokens += tokens
+			parts = append(parts, generators.Text(content))
+			if c.ShowTokenCounts() {
+				c.Logger().Info("package doc", "path", pkgPath, "tokens", tokens)
+			}
+		}
 	}
 
 	if c.ShowTokenCounts() {

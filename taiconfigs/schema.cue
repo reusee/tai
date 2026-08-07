@@ -101,6 +101,10 @@ go?: {
 	// context_patterns specifies additional patterns for context packages.
 	context_patterns?: [...string]
 
+	// doc_patterns specifies additional Go package paths whose documentation
+	// (go doc -all -cmd -u) is included in the context as reference.
+	doc_patterns?: [...string]
+
 	// no_tests, if true, excludes test files from the context.
 	no_tests?: bool
 
