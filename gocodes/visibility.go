@@ -35,6 +35,21 @@ eliminating hundreds of wasted subprocess invocations.
 `
 
 const TheoryOfVisibilityAllocation = `
+The context token budget for non-focus packages is dynamic: it is derived
+from the total token count of the focus packages so that large
+repositories receive a proportionally larger context budget. The budget
+is focusTokens / 2, rounded to the nearest multiple of
+contextTokenBudgetUnit (32K), with a floor at one unit. A repository
+whose focus packages total 64K tokens gets a 32K context budget; a 200K
+focus package gets a 96K budget. This scaling prevents a large focus
+package from starving its dependencies and supporting packages, which
+would degrade the model's ability to reason about cross-package
+interactions. Small projects stay at the 32K floor, matching the
+original fixed-budget behavior. The computation is deterministic:
+identical focus packages always produce an identical budget, so context
+files are simplified to the same level across requests with the same
+focus, preserving the LLM prefix cache.
+
 The visibility allocation uses a water-filling algorithm that upgrades
 packages from their minimum visibility to higher levels as the budget
 allows. Packages are processed in priority order (highest first). Each
@@ -45,9 +60,9 @@ This ensures the construction principle: if package A has higher priority
 than package B, A's visibility is not lower than B's.
 
 Focus packages are always at level 3 (all files) and do not count
-against the 32K context budget. Non-focus packages share the 32K budget.
-The budget is a hard limit: packages are initially invisible, then
-upgraded to their minimum visibility in priority order as the budget
+against the context budget. Non-focus packages share the context token
+budget. The budget is a hard limit: packages are initially invisible,
+then upgraded to their minimum visibility in priority order as the budget
 allows, subject to the predecessor constraint. A package's minimum
 visibility is capped to the predecessor's level; if the capped minimum
 is zero or unaffordable, the package remains invisible and caps all
@@ -67,14 +82,30 @@ result across levels, eliminating duplicate disk reads and tokenizer work
 per package.
 `
 
-const maximumContextTokenBudget = 32 << 10
+// contextTokenBudgetUnit is the base unit of the dynamic context token
+// budget: it is both the floor (minimum budget) and the alignment
+// multiple. The budget for context (non-focus) packages is
+// focusTokens / 2 rounded to the nearest multiple of this unit, with a
+// floor at one unit. See TheoryOfVisibilityAllocation.
+const contextTokenBudgetUnit = 32 << 10
 
-// calculateMaxContextTokens returns the fixed token budget for context
-// (non-focus) files. The budget is constant to ensure context files are
-// simplified to the same level every request, preserving the LLM prefix
-// cache.
-func calculateMaxContextTokens() int {
-	return maximumContextTokenBudget
+// calculateMaxContextTokens computes the dynamic token budget for context
+// (non-focus) files from the total token count of the focus packages: the
+// budget is focusTokens / 2, rounded to the nearest multiple of
+// contextTokenBudgetUnit, with a floor at one unit. The computation is
+// deterministic — identical focus packages always produce an identical
+// budget — so context files are simplified to the same level across
+// requests with the same focus, preserving the LLM prefix cache. Large
+// repositories with big focus packages receive proportionally larger
+// budgets so that context packages are not starved. See
+// TheoryOfVisibilityAllocation.
+func calculateMaxContextTokens(focusTokens int) int {
+	half := focusTokens / 2
+	rounded := ((half + contextTokenBudgetUnit/2) / contextTokenBudgetUnit) * contextTokenBudgetUnit
+	if rounded < contextTokenBudgetUnit {
+		rounded = contextTokenBudgetUnit
+	}
+	return rounded
 }
 
 // shouldIncludeFile reports whether a file should be included at the
@@ -280,9 +311,24 @@ func allocateVisibility(
 		}
 	}
 
-	// Start all non-focus packages at invisible, then upgrade to min visibility
-	// in priority order as budget allows.
-	remaining := maximumContextTokenBudget
+	// The context token budget is dynamic: it is derived from the total
+	// token count of the focus packages (focusTokens / 2, rounded to the
+	// nearest multiple of contextTokenBudgetUnit, floored at one unit),
+	// so large repositories with big focus packages receive
+	// proportionally larger budgets for context packages. The
+	// computation is deterministic — identical focus packages produce an
+	// identical budget — preserving the LLM prefix cache. See
+	// TheoryOfVisibilityAllocation.
+	focusTokens := 0
+	for _, lp := range logicalPkgs {
+		if lp.Category == CategoryFocus {
+			focusTokens += lp.TokensByLevel[VisibilityAll]
+		}
+	}
+	remaining := calculateMaxContextTokens(focusTokens)
+
+	// Start all non-focus packages at invisible, then upgrade to min
+	// visibility in priority order as budget allows.
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			continue

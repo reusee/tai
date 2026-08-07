@@ -105,13 +105,27 @@ module test
 
 }
 
-func TestCalculateMaxContextTokensCapsAt32K(t *testing.T) {
-	// The function returns a fixed constant (maximumContextTokenBudget) regardless of input.
-	for _, focus := range []int{0, 12 << 10, 60 << 10, 128 << 10} {
-		got := calculateMaxContextTokens()
-		want := maximumContextTokenBudget
-		if got != want {
-			t.Errorf("for focus %d: expected %d, got %d", focus, want, got)
+func TestCalculateMaxContextTokensDynamic(t *testing.T) {
+	// The context token budget scales with focus package size: focus
+	// tokens / 2, rounded to the nearest multiple of
+	// contextTokenBudgetUnit, with a floor at one unit. See
+	// TheoryOfVisibilityAllocation.
+	tests := []struct {
+		focusTokens int
+		want        int
+	}{
+		{0, contextTokenBudgetUnit},        // half=0 → rounds to 0 → floor at one unit
+		{12 << 10, contextTokenBudgetUnit}, // half=6K → rounds to 0 → floor at one unit
+		{60 << 10, contextTokenBudgetUnit}, // half=30K → rounds to 32K
+		{64 << 10, contextTokenBudgetUnit}, // half=32K → exactly 32K
+		{100 << 10, 64 << 10},              // half=50K → rounds to 64K
+		{128 << 10, 64 << 10},              // half=64K → exactly 64K
+		{200 << 10, 96 << 10},              // half=100K → rounds to 96K
+	}
+	for _, tt := range tests {
+		got := calculateMaxContextTokens(tt.focusTokens)
+		if got != tt.want {
+			t.Errorf("for focus %d: expected %d, got %d", tt.focusTokens, tt.want, got)
 		}
 	}
 }
@@ -398,7 +412,7 @@ func TestMatchPattern(t *testing.T) {
 	}
 }
 
-func TestSimplifyContextBudgetFixed(t *testing.T) {
+func TestSimplifyContextBudget(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -452,9 +466,11 @@ func Foo() {
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,
 	) {
-		// Simplification stops when contextTokens <= maxContextTokens
-		// (32K), so small context files are never simplified, preserving
-		// the LLM prefix cache.
+		// Simplification stops when the context fits within the dynamic
+		// context token budget, so small context files are never
+		// simplified, preserving the LLM prefix cache. With the small
+		// focus package in this test, the budget is the 32K floor.
+		// See TheoryOfVisibilityAllocation.
 		parts, err := provider.Parts(1, countTokens, nil)
 		if err != nil {
 			t.Fatalf("Parts returned error: %v", err)

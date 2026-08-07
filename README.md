@@ -166,7 +166,7 @@ Block kinds: `change`, `shell`, `go-test`, `continue`, `summary`, `request-conte
 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
-3. Context files are simplified (comments stripped, function bodies deleted) to fit a fixed 32K token budget
+3. Context files are simplified (comments stripped, function bodies deleted) to fit a dynamic token budget derived from focus package size: focusTokens / 2, rounded to the nearest 32K multiple, floored at 32K
 4. Focus files (root package) are appended last
 5. Extra files from `-file` patterns are appended after focus files
 
