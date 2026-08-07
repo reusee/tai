@@ -38,6 +38,20 @@ a fully deterministic order independent of modification times, maximizing cache 
 Modification time is a final tiebreaker.
 `
 
+const TheoryOfFileLoadingPerformance = `
+Go file reading and parsing in Files is parallelized to reduce wall-clock
+latency on multi-core machines: each file in the dependency graph is read
+and parsed independently, with a bounded worker pool so file descriptors
+are not exhausted on large trees. token.FileSet methods are synchronized
+(Go 1.9+), so a shared fset can be passed to parser.ParseFile from multiple
+goroutines safely. Results are collected in an indexed slice that preserves
+the deterministic input order.
+
+The raw content of every Go file is cached in File.Content at load time.
+The simplification pipeline renders files from this cached content instead
+of re-reading from disk, so each file is read exactly once per run.
+`
+
 type File struct {
 	Path                    string
 	IsGoFile                bool
@@ -187,41 +201,73 @@ func (Module) Files(
 			return cmp.Compare(a.path, b.path)
 		})
 
-		for _, entry := range allGoFiles {
-			pkg := entry.pkg
+		// Read and parse Go files in parallel to reduce wall-clock latency on
+		// multi-core machines. Results are collected in an indexed slice that
+		// preserves the deterministic input order; the final sort establishes
+		// the canonical output order regardless of completion order.
+		// token.FileSet methods are synchronized (Go 1.9+), so a shared fset
+		// can be passed to parser.ParseFile from multiple goroutines.
+		// Raw content is cached in File.Content so the simplification
+		// pipeline renders from memory instead of re-reading from disk.
+		// See TheoryOfFileLoadingPerformance.
+		goFileResults := make([]*File, len(allGoFiles))
+		var goWg sync.WaitGroup
+		goSem := make(chan struct{}, 16) // bounded concurrency for I/O-bound work
 
-			path := entry.path
-			f := &File{
-				Path:     path,
-				IsGoFile: true,
-			}
-			if info, err := os.Stat(path); err == nil {
-				f.ModTime = info.ModTime()
-			}
+		for i, entry := range allGoFiles {
+			goWg.Add(1)
+			goSem <- struct{}{}
+			go func(i int, entry goFileEntry) {
+				defer goWg.Done()
+				defer func() { <-goSem }()
 
-			// Parse the file individually.
-			src, err := os.ReadFile(path)
-			if err != nil {
-				logger.Warn("cannot read go file", "path", path, "error", err)
-				continue
-			}
-			astFile, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-			if err != nil {
-				logger.Warn("cannot parse go file", "path", path, "error", err)
-				continue
-			}
-			f.TokenFile = fset.File(astFile.Pos())
-			f.AstFile = astFile
+				pkg := entry.pkg
 
-			f.Package = pkg
-			f.PackageIsRoot = rootPkgSet[pkg]
-			f.PackageDistanceFromRoot = 0 // overwritten by simplify.go
-			f.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
-			f.Module = pkg.Module
-			f.ModuleIsRoot = pkg.Module != nil && rootModulePaths[pkg.Module.Path]
-			f.ModuleIsNil = pkg.Module == nil
+				path := entry.path
+				f := &File{
+					Path:     path,
+					IsGoFile: true,
+				}
+				if info, err := os.Stat(path); err == nil {
+					f.ModTime = info.ModTime()
+				}
 
-			files = append(files, f)
+				// Parse the file individually.
+				src, err := os.ReadFile(path)
+				if err != nil {
+					logger.Warn("cannot read go file", "path", path, "error", err)
+					return
+				}
+				astFile, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+				if err != nil {
+					logger.Warn("cannot parse go file", "path", path, "error", err)
+					return
+				}
+				f.TokenFile = fset.File(astFile.Pos())
+				f.AstFile = astFile
+
+				f.Package = pkg
+				f.PackageIsRoot = rootPkgSet[pkg]
+				f.PackageDistanceFromRoot = 0 // overwritten by simplify.go
+				f.PackagePathDepth = len(strings.Split(pkg.PkgPath, "/"))
+				f.Module = pkg.Module
+				f.ModuleIsRoot = pkg.Module != nil && rootModulePaths[pkg.Module.Path]
+				f.ModuleIsNil = pkg.Module == nil
+
+				// Cache the raw content so renderFileAtLevel does not
+				// re-read the file from disk. See
+				// TheoryOfFileLoadingPerformance.
+				f.Content = src
+
+				goFileResults[i] = f
+			}(i, entry)
+		}
+		goWg.Wait()
+
+		for _, f := range goFileResults {
+			if f != nil {
+				files = append(files, f)
+			}
 		}
 
 		// collect non-Go files

@@ -34,6 +34,17 @@ water-filling algorithm upgrades packages further within the remaining
 budget.
 `
 
+const TheoryOfRenderedFileCache = `
+The rendered content of a file (including the begin/end markers) does not
+depend on the visibility level; levels 2 and 3 differ only in which files
+are included. Level 3 includes every file, and level 2 includes only
+non-test Go files, so the level-3 file set is a superset of level 2's, and
+a file's render is identical at both levels. precomputeTokenCounts
+therefore renders and token-counts each file exactly once and reuses the
+result across levels, eliminating duplicate disk reads and tokenizer work
+per package.
+`
+
 const maximumContextTokenBudget = 32 << 10
 
 // calculateMaxContextTokens returns the fixed token budget for context
@@ -121,11 +132,6 @@ func renderFileAtLevel(
 	return content, tokens, nil
 }
 
-// precomputeTokenCounts concurrently renders each logical package at each
-// visibility level and stores the results. See TheoryOfVisibilityAllocation.
-//
-// Level 1 uses go doc -all -cmd -u for per-package documentation.
-// Levels 2 and 3 use raw file content from disk.
 func precomputeTokenCounts(
 	logicalPkgs []*LogicalPackage,
 	countTokens func(string) (int, error),
@@ -177,6 +183,34 @@ func precomputeTokenCounts(
 			}
 
 			// Levels 2 and 3: per-file rendering with raw disk content.
+			// Render and token-count each file exactly once, then reuse the
+			// result across levels. Level 3 includes every file and level 2
+			// includes only non-test Go files, but the rendered content of a
+			// file does not depend on the level, so rendering it twice would
+			// duplicate I/O and tokenizer work. See
+			// TheoryOfRenderedFileCache.
+			fileRenders := make(map[*File]renderedFile, len(lp.Files))
+			for _, f := range lp.Files {
+				if !shouldIncludeFile(f, VisibilityAll) {
+					continue
+				}
+				content, tokens, err := renderFileAtLevel(f, countTokens)
+				if err != nil {
+					errOnce.Do(func() {
+						select {
+						case errCh <- err:
+						default:
+						}
+					})
+					return
+				}
+				fileRenders[f] = renderedFile{
+					file:    f,
+					content: content,
+					tokens:  tokens,
+				}
+			}
+
 			for level := VisibilityAll; level >= VisibilityCode; level-- {
 				var files []renderedFile
 				var allTokens int
@@ -186,24 +220,14 @@ func precomputeTokenCounts(
 					if !shouldIncludeFile(f, level) {
 						continue
 					}
-					content, tokens, err := renderFileAtLevel(f, countTokens)
-					if err != nil {
-						errOnce.Do(func() {
-							select {
-							case errCh <- err:
-							default:
-							}
-						})
-						return
+					rf, ok := fileRenders[f]
+					if !ok {
+						continue
 					}
-					files = append(files, renderedFile{
-						file:    f,
-						content: content,
-						tokens:  tokens,
-					})
-					allTokens += tokens
+					files = append(files, rf)
+					allTokens += rf.tokens
 					if !f.DoNotSimplify {
-						budgetTokens += tokens
+						budgetTokens += rf.tokens
 					}
 				}
 

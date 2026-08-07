@@ -1,6 +1,7 @@
 package gocodes
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,6 +114,51 @@ func TestFiles(t *testing.T) {
 
 	})
 
+}
+
+func TestFilesGoFileContentCached(t *testing.T) {
+	// Go file content must be cached at load time so the simplification
+	// pipeline renders from memory instead of re-reading every file from
+	// disk per visibility level. See TheoryOfFileLoadingPerformance.
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+
+	dir := filepath.Join(testdataDir, "main")
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(dir)
+		},
+	).Call(func(
+		getFiles GetFiles,
+	) {
+		files, err := getFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mainFile *File
+		for _, f := range files {
+			if f.Path == filepath.Join(dir, "main.go") {
+				mainFile = f
+				break
+			}
+		}
+		if mainFile == nil {
+			t.Fatal("main.go not found")
+		}
+		if len(mainFile.Content) == 0 {
+			t.Fatal("main.go Content should be populated at load time")
+		}
+		disk, err := os.ReadFile(mainFile.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(mainFile.Content, disk) {
+			t.Fatal("main.go Content should match the file on disk")
+		}
+	})
 }
 
 func TestDependencyModuleNotMarkedAsRootModule(t *testing.T) {
