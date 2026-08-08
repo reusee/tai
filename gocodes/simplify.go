@@ -49,6 +49,7 @@ type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (
 func (Module) SimplifyFiles(
 	getRootPackages GetRootPackages,
 	getContextPackages GetContextPackages,
+	getGitChangeCounts GetGitChangeCounts,
 	logger logs.Logger,
 	debug Debug,
 	loadDir LoadDir,
@@ -75,6 +76,31 @@ func (Module) SimplifyFiles(
 
 		// 2. Categorize each logical package
 		categorizePackages(logicalPkgs, rootPkgs, contextPkgs)
+
+		// 2.5. Compute recent git change counts for focus packages. A
+		// focus package's change count is the sum over its files of the
+		// commits within recentChangeWindow that touched the file.
+		// compareFilesForOutput sorts focus files by ascending count, so
+		// the most-changed packages sit at the very end of the focus
+		// block, preserving the LLM prefix cache when volatile files
+		// change. Counts are zero outside a git repository, falling back
+		// to the alphabetical package-path ordering. See
+		// TheoryOfGitChangeOrdering.
+		gitChangeCounts, err := getGitChangeCounts()
+		if err != nil {
+			return nil, err
+		}
+		for _, lp := range logicalPkgs {
+			if lp.Category != CategoryFocus {
+				continue
+			}
+			for _, f := range lp.Files {
+				lp.ChangeCount += gitChangeCounts[f.Path]
+			}
+			for _, f := range lp.Files {
+				f.ChangeCount = lp.ChangeCount
+			}
+		}
 
 		// 3. Compute distances via BFS from focus packages
 		computeDistances(logicalPkgs)
@@ -175,6 +201,7 @@ func (Module) SimplifyFiles(
 					ModuleIsRoot:            moduleIsRoot,
 					ModuleIsNil:             moduleIsNil,
 					LogicalPkgPath:          lp.PkgPath,
+					ChangeCount:             lp.ChangeCount,
 					Confirmed: &Transformed{
 						What:      "visibility level 1 (go doc)",
 						Content:   []byte(lp.DocContent),
@@ -216,8 +243,6 @@ func (Module) SimplifyFiles(
 	}
 }
 
-// compareFilesForOutput implements the output ordering for prefix cache
-// optimization. See TheoryOfFileOrdering in files.go.
 func compareFilesForOutput(a, b *File) int {
 	// root module last — outermost grouping so that all non-root-module
 	// files (dependencies, stdlib) form the stable prefix
@@ -241,6 +266,18 @@ func compareFilesForOutput(a, b *File) int {
 		return -1
 	} else if a.PackageIsRoot && !b.PackageIsRoot {
 		return 1
+	}
+
+	// focus files: fewer recent git changes first, so the most-changed
+	// packages form the volatile suffix of the focus block. When a
+	// volatile focus file changes, the preceding stable focus and context
+	// content keeps its position, maximizing LLM prefix cache reuse. All
+	// files of a logical package share the package's change count, so the
+	// package-path and file-path keys below apply as tiebreakers. Counts
+	// are zero outside a git repository, falling back to alphabetical
+	// package ordering. See TheoryOfGitChangeOrdering.
+	if a.PackageIsRoot && b.PackageIsRoot && a.ChangeCount != b.ChangeCount {
+		return cmp.Compare(a.ChangeCount, b.ChangeCount)
 	}
 
 	// go files last

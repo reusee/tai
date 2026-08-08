@@ -76,8 +76,6 @@ type renderedFile struct {
 	tokens  int
 }
 
-// LogicalPackage represents a merged package combining the main package
-// with its test variants. See TheoryOfLogicalPackages.
 type LogicalPackage struct {
 	PkgPath     string
 	Packages    []*packages.Package
@@ -90,6 +88,7 @@ type LogicalPackage struct {
 	Distance      int
 	MinVisibility VisibilityLevel
 	Visibility    VisibilityLevel
+	ChangeCount   int
 
 	// Pre-computed rendered files and token counts at each visibility level.
 	RenderedFiles [4][]renderedFile

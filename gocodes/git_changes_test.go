@@ -1,0 +1,228 @@
+package gocodes
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
+)
+
+// initGitRepo initializes a git repository in dir with a fixed identity
+// and returns a helper that runs git commands in the repository. The test
+// is skipped when git is unavailable.
+func initGitRepo(t *testing.T, dir string) func(args ...string) {
+	t.Helper()
+	if err := exec.Command("git", "init", "-q", dir).Run(); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("config", "user.name", "test")
+	git("config", "user.email", "test@example.com")
+	return git
+}
+
+func TestCountGitChanges(t *testing.T) {
+	dir := t.TempDir()
+	git := initGitRepo(t, dir)
+	write := func(relPath, content string) {
+		t.Helper()
+		fullPath := filepath.Join(dir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(relPath string) {
+		t.Helper()
+		git("add", relPath)
+		git("commit", "-q", "-m", "update "+relPath)
+	}
+
+	// a/a.go is touched by three commits, b/b.go by one; the third
+	// package c is unrelated. The counts must be per file within
+	// recentChangeWindow, resolved against the repository root.
+	write("a/a.go", "package a\n")
+	commit("a/a.go")
+	write("b/b.go", "package b\n")
+	commit("b/b.go")
+	write("a/a.go", "package a\n\nfunc Foo() {}\n")
+	commit("a/a.go")
+	write("a/a.go", "package a\n\nfunc Foo() { println(1) }\n")
+	commit("a/a.go")
+	write("c/c.go", "package c\n")
+	commit("c/c.go")
+
+	counts, err := countGitChanges(dir, os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := counts[filepath.Join(dir, "a", "a.go")]; got != 3 {
+		t.Fatalf("a/a.go change count = %d, want 3", got)
+	}
+	if got := counts[filepath.Join(dir, "b", "b.go")]; got != 1 {
+		t.Fatalf("b/b.go change count = %d, want 1", got)
+	}
+	// Untracked files are absent from the map.
+	write("d/d.go", "package d\n")
+	if got := counts[filepath.Join(dir, "d", "d.go")]; got != 0 {
+		t.Fatalf("untracked d/d.go change count = %d, want 0", got)
+	}
+}
+
+func TestCountGitChangesNotARepo(t *testing.T) {
+	// countGitChanges must report an error outside a git repository; the
+	// provider degrades to zero counts instead, keeping focus package
+	// ordering alphabetical. See TheoryOfGitChangeOrdering.
+	dir := t.TempDir()
+	if _, err := countGitChanges(dir, os.Environ()); err == nil {
+		t.Fatal("expected an error for a directory outside a git repository")
+	}
+}
+
+func TestCompareFilesForOutputChangeCount(t *testing.T) {
+	// Within the focus block, files are ordered by ascending recent git
+	// change count so the most-changed packages sit at the very end,
+	// preserving the LLM prefix cache when volatile files change. See
+	// TheoryOfGitChangeOrdering.
+	makeFile := func(path string, changeCount int) *File {
+		return &File{
+			Path:                    path,
+			IsGoFile:                true,
+			ModuleIsRoot:            true,
+			PackageIsRoot:           true,
+			PackageDistanceFromRoot: 0,
+			PackagePathDepth:        1,
+			LogicalPkgPath:          "example.com/pkg",
+			ChangeCount:             changeCount,
+		}
+	}
+
+	files := []*File{
+		makeFile("/repo/b.go", 1),
+		makeFile("/repo/c.go", 3),
+		makeFile("/repo/a.go", 2),
+	}
+	slices.SortStableFunc(files, compareFilesForOutput)
+	want := []string{"/repo/b.go", "/repo/a.go", "/repo/c.go"}
+	for i, f := range files {
+		if f.Path != want[i] {
+			t.Fatalf("position %d: got %s, want %s (order %v)", i, f.Path, want[i], pathsOf(files))
+		}
+	}
+
+	// Equal change counts fall back to file-path ordering.
+	files = []*File{
+		makeFile("/repo/z.go", 1),
+		makeFile("/repo/a.go", 1),
+	}
+	slices.SortStableFunc(files, compareFilesForOutput)
+	if files[0].Path != "/repo/a.go" || files[1].Path != "/repo/z.go" {
+		t.Fatalf("equal change counts should fall back to path ordering, got %v", pathsOf(files))
+	}
+}
+
+func pathsOf(files []*File) []string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths
+}
+
+func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
+	// Focus packages with more recent git changes appear after focus
+	// packages with fewer changes, so volatile content forms the tail of
+	// the context and the stable prefix is preserved for LLM prefix
+	// caching. Alphabetically, example.com/changes/a precedes
+	// example.com/changes/b; the git change counts must override that.
+	// See TheoryOfGitChangeOrdering.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	git := initGitRepo(t, root)
+	write := func(relPath, content string) {
+		t.Helper()
+		fullPath := filepath.Join(root, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(relPath string) {
+		t.Helper()
+		git("add", relPath)
+		git("commit", "-q", "-m", "update "+relPath)
+	}
+
+	write("go.mod", "module example.com/changes\n\ngo 1.21\n")
+	commit("go.mod")
+
+	// Package a accumulates three commits while package b gets one.
+	write("a/a.go", "package a\n")
+	commit("a/a.go")
+	write("a/a.go", "package a\n\nfunc Foo() {}\n")
+	commit("a/a.go")
+	write("a/a.go", "package a\n\nfunc Foo() { println(1) }\n")
+	commit("a/a.go")
+	write("b/b.go", "package b\n")
+	commit("b/b.go")
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+	scope.Fork(
+		func() LoadDir { return LoadDir(root) },
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatalf("Parts failed: %v", err)
+		}
+		posA, posB := -1, -1
+		for i, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "a", "a.go")) {
+				posA = i
+			}
+			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "b", "b.go")) {
+				posB = i
+			}
+		}
+		if posA == -1 || posB == -1 {
+			t.Fatalf("a/a.go or b/b.go not found in parts (posA=%d posB=%d)", posA, posB)
+		}
+		if posA <= posB {
+			t.Fatalf("a/a.go (3 commits) must appear after b/b.go (1 commit), got posA=%d posB=%d", posA, posB)
+		}
+	})
+}
