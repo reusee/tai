@@ -31,11 +31,13 @@ focus files (root package), so that editing a focus file does not shift the posi
 of any context file. The inner tiers (go vs non-go, distance, package depth, package
 path) further organize files within each group for deterministic ordering.
 
-In the output ordering, focus (root package) files are additionally grouped
-by recent git activity: packages whose files were touched by more commits in
-the recent window (see TheoryOfGitChangeOrdering) sort later, so the most
-volatile focus content sits at the very end and stable focus content keeps
-its position in the LLM prefix cache.
+In the output ordering, root-module files are further ordered by recent
+git activity within the context/focus grouping (see
+TheoryOfGitChangeOrdering): the change-count key is compared after the
+root-package grouping, so the most-changed context packages settle at the
+end of the context block and the most-changed focus packages settle at
+the very end of the root-module block, keeping stable content in its
+position in the LLM prefix cache.
 
 When only focus files change, all preceding context and dependency files remain
 identical, allowing LLM prefix caching to reuse cached key-value states for unchanged

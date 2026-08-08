@@ -151,16 +151,21 @@ func TestCountGitChangesUsesCommitCountWindow(t *testing.T) {
 }
 
 func TestCompareFilesForOutputChangeCount(t *testing.T) {
-	// Within the focus block, files are ordered by ascending recent git
-	// change count so the most-changed packages sit at the very end,
-	// preserving the LLM prefix cache when volatile files change. See
+	// Within the root-module block, files are ordered by ascending recent
+	// git change count so the most-changed packages sit at the very end,
+	// preserving the LLM prefix cache when volatile files change. The
+	// change-count key applies to all root-module files — context
+	// (non-root) packages as well as focus packages — but it is compared
+	// after the root-package grouping, so context files always precede
+	// focus files. Counts are zero outside a git repository, falling back
+	// to the deterministic package ordering. See
 	// TheoryOfGitChangeOrdering.
-	makeFile := func(path string, changeCount int) *File {
+	makeFile := func(path string, changeCount int, isRoot bool) *File {
 		return &File{
 			Path:                    path,
 			IsGoFile:                true,
 			ModuleIsRoot:            true,
-			PackageIsRoot:           true,
+			PackageIsRoot:           isRoot,
 			PackageDistanceFromRoot: 0,
 			PackagePathDepth:        1,
 			LogicalPkgPath:          "example.com/pkg",
@@ -169,9 +174,9 @@ func TestCompareFilesForOutputChangeCount(t *testing.T) {
 	}
 
 	files := []*File{
-		makeFile("/repo/b.go", 1),
-		makeFile("/repo/c.go", 3),
-		makeFile("/repo/a.go", 2),
+		makeFile("/repo/b.go", 1, true),
+		makeFile("/repo/c.go", 3, true),
+		makeFile("/repo/a.go", 2, true),
 	}
 	slices.SortStableFunc(files, compareFilesForOutput)
 	want := []string{"/repo/b.go", "/repo/a.go", "/repo/c.go"}
@@ -183,12 +188,38 @@ func TestCompareFilesForOutputChangeCount(t *testing.T) {
 
 	// Equal change counts fall back to file-path ordering.
 	files = []*File{
-		makeFile("/repo/z.go", 1),
-		makeFile("/repo/a.go", 1),
+		makeFile("/repo/z.go", 1, true),
+		makeFile("/repo/a.go", 1, true),
 	}
 	slices.SortStableFunc(files, compareFilesForOutput)
 	if files[0].Path != "/repo/a.go" || files[1].Path != "/repo/z.go" {
 		t.Fatalf("equal change counts should fall back to path ordering, got %v", pathsOf(files))
+	}
+
+	// Context files in the root module are ordered by change count too:
+	// the key applies to all root-module files, so a context package
+	// with more recent changes sorts later within the context block.
+	// Alphabetically example.com/actx precedes example.com/bctx; the
+	// change counts must override that.
+	ctxFiles := []*File{
+		makeFile("/repo/actx.go", 3, false),
+		makeFile("/repo/bctx.go", 1, false),
+	}
+	slices.SortStableFunc(ctxFiles, compareFilesForOutput)
+	if ctxFiles[0].Path != "/repo/bctx.go" || ctxFiles[1].Path != "/repo/actx.go" {
+		t.Fatalf("context files should be ordered by change count, got %v", pathsOf(ctxFiles))
+	}
+
+	// Context files always precede focus files regardless of change
+	// count: the root-package grouping is compared before the
+	// change-count key.
+	mixed := []*File{
+		makeFile("/repo/focus.go", 0, true),
+		makeFile("/repo/ctx.go", 100, false),
+	}
+	slices.SortStableFunc(mixed, compareFilesForOutput)
+	if mixed[0].Path != "/repo/ctx.go" || mixed[1].Path != "/repo/focus.go" {
+		t.Fatalf("context files must precede focus files, got %v", pathsOf(mixed))
 	}
 }
 
@@ -273,6 +304,97 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 		}
 		if posA <= posB {
 			t.Fatalf("a/a.go (3 commits) must appear after b/b.go (1 commit), got posA=%d posB=%d", posA, posB)
+		}
+	})
+}
+
+func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
+	// Context files in the root module are ordered by recent git activity
+	// just like focus files: the change-count key applies to all
+	// root-module files, so volatile context content settles at the end of
+	// the context block instead of sitting in the stable prefix region.
+	// Alphabetically, example.com/mod/actx precedes example.com/mod/bctx;
+	// the git change counts must override that. See
+	// TheoryOfGitChangeOrdering.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	git := initGitRepo(t, root)
+	write := func(relPath, content string) {
+		t.Helper()
+		fullPath := filepath.Join(root, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(relPath string) {
+		t.Helper()
+		git("add", relPath)
+		git("commit", "-q", "-m", "update "+relPath)
+	}
+
+	write("go.mod", "module example.com/mod\n\ngo 1.21\n")
+	commit("go.mod")
+
+	// Package actx accumulates three commits while bctx gets one.
+	write("actx/actx.go", "package actx\n")
+	commit("actx/actx.go")
+	write("actx/actx.go", "package actx\n\nfunc Foo() {}\n")
+	commit("actx/actx.go")
+	write("actx/actx.go", "package actx\n\nfunc Foo() { println(1) }\n")
+	commit("actx/actx.go")
+	write("bctx/bctx.go", "package bctx\n")
+	commit("bctx/bctx.go")
+
+	// The focus package lives in the same module; actx and bctx are
+	// loaded as context packages and are not root packages.
+	write("focus/focus.go", "package focus\n")
+	commit("focus/focus.go")
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+	scope.Fork(
+		func() LoadDir { return LoadDir(root) },
+		func() LoadPatterns { return LoadPatterns{"./focus/..."} },
+		func() ContextPatterns { return ContextPatterns{"./actx", "./bctx"} },
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatalf("Parts failed: %v", err)
+		}
+		posActx, posBctx, posFocus := -1, -1, -1
+		for i, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if strings.Contains(s, "begin of context file "+filepath.Join(root, "actx", "actx.go")) {
+				posActx = i
+			}
+			if strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
+				posBctx = i
+			}
+			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "focus", "focus.go")) {
+				posFocus = i
+			}
+		}
+		if posActx == -1 || posBctx == -1 || posFocus == -1 {
+			t.Fatalf("context or focus files not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
+		}
+		if posBctx >= posActx {
+			t.Fatalf("bctx (1 commit) must appear before actx (3 commits), got posBctx=%d posActx=%d", posBctx, posActx)
+		}
+		if posActx >= posFocus {
+			t.Fatalf("context files must appear before the focus file, got posActx=%d posFocus=%d", posActx, posFocus)
 		}
 	})
 }
