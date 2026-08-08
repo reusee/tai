@@ -168,7 +168,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			},
 		}
 
-		allocateVisibility(pkgs, logs.Logger{}, false, nil)
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil); err != nil {
+			t.Fatal(err)
+		}
 
 		if pkgs[0].Visibility != VisibilityAll {
 			t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
@@ -210,7 +212,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			},
 		}
 
-		allocateVisibility(pkgs, logs.Logger{}, false, nil)
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil); err != nil {
+			t.Fatal(err)
+		}
 
 		if pkgs[0].Visibility < pkgs[1].Visibility {
 			t.Fatalf("construction principle violated: focus (%d) < context (%d)",
@@ -252,7 +256,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 0
 			lp.docComputed = true
 		}
-		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+			t.Fatal(err)
+		}
 
 		if pkgs[1].Visibility != VisibilityAll {
 			t.Fatalf("dep should reach level 3 via the failed-doc fallback, got %d", pkgs[1].Visibility)
@@ -300,7 +306,9 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 100
 			lp.docComputed = true
 		}
-		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+			t.Fatal(err)
+		}
 
 		if len(docCalls) != 1 || docCalls[0] != "samemodule" {
 			t.Fatalf("expected doc computed once for samemodule, got %v", docCalls)
@@ -367,7 +375,9 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			// allocation behaves as if the doc were pre-computed.
 			lp.docComputed = true
 		}
-		allocateVisibility(pkgs, logs.Logger{}, false, computeDoc)
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+			t.Fatal(err)
+		}
 
 		// context is probed exactly once; the docComputed guard prevents
 		// repeated go doc invocations on later water-fill iterations.
@@ -393,6 +403,68 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			t.Fatalf("expected samemodule at level 3, got %d", pkgs[3].Visibility)
 		}
 	})
+}
+
+func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
+	// File token costs (rendered content and token counts at visibility
+	// levels 2 and 3) are computed lazily, driven by the visibility
+	// allocation: only packages the allocation actually probes run the
+	// tokenizer. Focus and context packages are always probed (focus
+	// determines the context budget, context's minimum visibility is
+	// level 2), but a package that receives no visibility — here, an
+	// other-module package whose doc and code costs exceed the budget —
+	// must never have its costs computed. See TheoryOfLazyVisibilityCosts.
+	var costCalls []string
+	computed := make(map[string]bool)
+	computeCosts := func(lp *LogicalPackage) error {
+		if computed[lp.PkgPath] {
+			return nil
+		}
+		computed[lp.PkgPath] = true
+		costCalls = append(costCalls, lp.PkgPath)
+		return nil
+	}
+
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:             "focus",
+			Category:            CategoryFocus,
+			MinVisibility:       VisibilityAll,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+			TokensByLevel:       [4]int{0, 0, 0, 100},
+		},
+		{
+			PkgPath:             "context",
+			Category:            CategoryContext,
+			MinVisibility:       VisibilityCode,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [4]int{0, 0, 100, 1 << 30},
+			TokensByLevel:       [4]int{0, 0, 100, 1 << 30},
+		},
+		{
+			PkgPath:             "othermodule",
+			Category:            CategoryOtherModule,
+			MinVisibility:       VisibilityInvisible,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [4]int{0, 1 << 30, 1 << 30, 1 << 30},
+			TokensByLevel:       [4]int{0, 1 << 30, 1 << 30, 1 << 30},
+		},
+	}
+
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeCosts); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(costCalls) != 2 || costCalls[0] != "focus" || costCalls[1] != "context" {
+		t.Fatalf("expected costs computed for focus and context only, got %v", costCalls)
+	}
+	if pkgs[1].Visibility != VisibilityCode {
+		t.Fatalf("expected context at level 2, got %d", pkgs[1].Visibility)
+	}
+	if pkgs[2].Visibility != VisibilityInvisible {
+		t.Fatalf("expected othermodule invisible, got %d", pkgs[2].Visibility)
+	}
 }
 
 func TestMatchPattern(t *testing.T) {

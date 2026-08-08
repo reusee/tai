@@ -112,6 +112,17 @@ type LogicalPackage struct {
 	// See TheoryOfLazyPackageDoc in visibility.go.
 	docComputed bool
 
+	// costsComputed reports whether RenderedFiles, TokensByLevel, and
+	// BudgetTokensByLevel for visibility levels 2 and 3 have been populated
+	// for this package; costsErr records a failure so the computation is
+	// attempted at most once. Costs are computed lazily, driven by the
+	// visibility allocation: focus and context packages are precomputed
+	// eagerly, while every other package is computed on demand only when
+	// probed. Packages that receive no visibility never run the tokenizer.
+	// See TheoryOfLazyVisibilityCosts in visibility.go.
+	costsComputed bool
+	costsErr      error
+
 	rootPkgSet    bool
 	contextPkgSet bool
 }

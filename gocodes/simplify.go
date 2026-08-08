@@ -112,9 +112,12 @@ func (Module) SimplifyFiles(
 		sortPackagesByPriority(logicalPkgs)
 
 		// 5. Pre-compute per-file token counts at visibility levels 2 and 3
-		// concurrently. Level 1 (package documentation) costs are computed
-		// lazily during allocation, only for packages that reach level 1.
-		// See TheoryOfLazyPackageDoc in visibility.go.
+		// for the packages whose costs the allocation requires up front,
+		// concurrently: focus packages, context packages, and any package
+		// containing DoNotSimplify files. All other packages have their
+		// costs computed lazily only when the allocation probes them;
+		// packages that receive no visibility never run the tokenizer.
+		// See TheoryOfLazyVisibilityCosts in visibility.go.
 		if err := precomputeTokenCounts(logicalPkgs, countTokens); err != nil {
 			return nil, err
 		}
@@ -123,18 +126,32 @@ func (Module) SimplifyFiles(
 		// computeDoc hook delegates to computePackageDoc, which runs go
 		// doc for a package exactly when the allocation considers placing
 		// it at level 1, caching the result so packages that never reach
-		// level 1 skip the expensive subprocess entirely. go doc runs
-		// from the load directory (or workspace root in workspace mode)
-		// so it can resolve package import paths. See
-		// TheoryOfLazyPackageDoc in visibility.go.
+		// level 1 skip the expensive subprocess entirely. The
+		// minimum-visibility allocation probes every package whose
+		// minimum visibility includes documentation, so those probes are
+		// launched concurrently by prefetchPackageDocs first, hiding the
+		// subprocess latency; the hook's calls then short-circuit via the
+		// docComputed guard. go doc runs from the load directory (or
+		// workspace root in workspace mode) so it can resolve package
+		// import paths. The computeCosts hook delegates to
+		// computePackageCosts, which renders and token-counts a package's
+		// files only when the allocation probes it. See
+		// TheoryOfLazyPackageDoc and TheoryOfLazyVisibilityCosts in
+		// visibility.go.
 		dir := string(loadDir)
 		if workspace != "" {
 			dir = string(workspace)
 		}
+		prefetchPackageDocs(logicalPkgs, dir, envs, countTokens)
 		computeDoc := func(lp *LogicalPackage) {
 			computePackageDoc(lp, dir, envs, countTokens)
 		}
-		allocateVisibility(logicalPkgs, logger, debug, computeDoc)
+		computeCosts := func(lp *LogicalPackage) error {
+			return computePackageCosts(lp, countTokens)
+		}
+		if err := allocateVisibility(logicalPkgs, logger, debug, computeDoc, computeCosts); err != nil {
+			return nil, err
+		}
 
 		// Log the context token composition: focus package tokens, the
 		// dynamic context budget derived from them, and how the context
