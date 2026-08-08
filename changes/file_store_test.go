@@ -3,8 +3,10 @@ package changes
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
@@ -705,6 +707,144 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 			t.Fatalf("disk should contain New:\n%s", string(got))
 		}
 	})
+}
+
+func TestRootStoreWriteConflictDetection(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	writeTimes := NewFileWriteTimes()
+	store := NewRootStoreWithWriteTimes(root, writeTimes)
+
+	// First write: no baseline, succeeds and records the post-write mtime.
+	if err := store.WriteFile("a.txt", []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(dir, "a.txt")
+	recorded, ok := writeTimes.Get(key)
+	if !ok {
+		t.Fatal("expected a recorded write time after the first write")
+	}
+	info, err := root.Stat("a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(recorded) {
+		t.Fatalf("recorded time %v does not match file mtime %v", recorded, info.ModTime())
+	}
+
+	// Simulate an external modification with a clearly different mtime.
+	future := info.ModTime().Add(10 * time.Second)
+	if err := os.Chtimes(filepath.Join(dir, "a.txt"), future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	// A write after external modification must be rejected.
+	err = store.WriteFile("a.txt", []byte("v2"), 0644)
+	if err == nil {
+		t.Fatal("expected a write conflict error for an externally modified file")
+	}
+	if !strings.Contains(err.Error(), "write conflict") {
+		t.Fatalf("expected write conflict error, got: %v", err)
+	}
+
+	// Files without a recorded time are written unconditionally.
+	if err := store.WriteFile("b.txt", []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRootStoreWriteConflictDetectionRepeatedWrites(t *testing.T) {
+	// Multiple applies to the same file must update the recorded last
+	// write time so the next write still matches. See
+	// TheoryOfWriteConflictDetection.
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	writeTimes := NewFileWriteTimes()
+	store := NewRootStoreWithWriteTimes(root, writeTimes)
+
+	path := "a.txt"
+	key := filepath.Join(dir, path)
+	if err := store.WriteFile(path, []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := writeTimes.Get(key)
+	if !ok {
+		t.Fatal("expected a recorded time after the first write")
+	}
+	// Sleep across a full second so the second write's mtime differs even
+	// on filesystems with coarse (1s) mtime granularity.
+	time.Sleep(1100 * time.Millisecond)
+	if err := store.WriteFile(path, []byte("v2"), 0644); err != nil {
+		t.Fatalf("repeated write must succeed: %v", err)
+	}
+	second, ok := writeTimes.Get(key)
+	if !ok {
+		t.Fatal("expected a recorded time after the second write")
+	}
+	if second.Equal(first) {
+		t.Fatalf("expected the recorded write time to be updated after the second write, got %v then %v", first, second)
+	}
+	info, err := root.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(second) {
+		t.Fatalf("recorded time %v does not match file mtime %v", second, info.ModTime())
+	}
+}
+
+func TestRootStoreWriteConflictTrackingRenameRemove(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	writeTimes := NewFileWriteTimes()
+	store := NewRootStoreWithWriteTimes(root, writeTimes)
+
+	if err := store.WriteFile("old.txt", []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := writeTimes.Get(filepath.Join(dir, "old.txt")); !ok {
+		t.Fatal("expected a recorded time for old.txt")
+	}
+
+	// Rename transfers the tracked time to the new path.
+	if err := store.Rename("old.txt", "sub/new.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := writeTimes.Get(filepath.Join(dir, "old.txt")); ok {
+		t.Fatal("recorded time must be dropped for the renamed-away path")
+	}
+	if _, ok := writeTimes.Get(filepath.Join(dir, "sub", "new.txt")); !ok {
+		t.Fatal("recorded time must be transferred to the new path")
+	}
+
+	// Remove drops the tracked time.
+	if err := store.Remove("sub/new.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := writeTimes.Get(filepath.Join(dir, "sub", "new.txt")); ok {
+		t.Fatal("recorded time must be dropped after removal")
+	}
+
+	// After removal, a fresh write to the same path has no baseline and
+	// succeeds.
+	if err := store.WriteFile("sub/new.txt", []byte("v2"), 0644); err != nil {
+		t.Fatalf("write after removal must succeed: %v", err)
+	}
 }
 
 // TestFormatFileDiffsContextLimited verifies that FormatFileDiffs renders

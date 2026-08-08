@@ -7,9 +7,40 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/reusee/tai/pathutil"
 )
+
+const TheoryOfWriteConflictDetection = `
+Write conflict detection tracks the last modification time of every file
+this process has written to disk, so that a later write can verify the file
+has not been modified externally since. The tracker is shared by all root
+stores in the process via a dscope-provided pointer; the check runs at the
+point of a real disk write (rootStore.WriteFile), which is the single
+convergence point for direct writes (patch, next) and for
+MemoryStore.Flush after a successful round.
+
+A write compares the file's current mtime against the recorded last-write
+time. A mismatch means the file was very likely modified externally — by
+an editor, another tai process, or a git operation — and writing could
+overwrite the external change, so the write is rejected with a write
+conflict error. A file with no recorded time has no baseline and is
+written unconditionally, recording the post-write mtime. Repeated writes
+to the same file compare against the newly recorded time and update it,
+so a session that applies several changes to one file stays consistent.
+
+Rename preserves the tracked time because rename preserves the file's
+mtime. Remove drops the tracker entry so a later recreation of the path
+is treated as a fresh file with no baseline.
+
+mtime is an optimistic-lock heuristic, not a strong guarantee: a file
+modified and restored to the exact same mtime evades detection, and
+coarse-granularity filesystems may report the same time for distinct
+writes. Within those limits the tracker surfaces the common case of a
+file touched by another process between two of our writes.
+`
 
 const TheoryOfInMemoryApply = `
 In-memory apply buffers change block modifications in a MemoryStore during
@@ -40,18 +71,67 @@ type FileStore interface {
 	isFileStore()
 }
 
-// rootStore wraps *os.Root to implement FileStore for direct disk access.
-// Directory creation is handled inside WriteFile and Rename so that
-// ApplyChangeBlockStore does not need a separate MkdirAll method on the
-// interface. See TheoryOfInMemoryApply.
 type rootStore struct {
-	root *os.Root
+	root       *os.Root
+	writeTimes *FileWriteTimes
 }
 
 // NewRootStore creates a FileStore backed by the given *os.Root for
 // direct disk access.
 func NewRootStore(root *os.Root) FileStore {
 	return rootStore{root: root}
+}
+
+// NewRootStoreWithWriteTimes creates a FileStore backed by the given
+// *os.Root for direct disk access, with write conflict detection enabled:
+// every WriteFile verifies that the file has not been modified externally
+// since the last write recorded in writeTimes. See
+// TheoryOfWriteConflictDetection.
+func NewRootStoreWithWriteTimes(root *os.Root, writeTimes *FileWriteTimes) FileStore {
+	return rootStore{root: root, writeTimes: writeTimes}
+}
+
+// FileWriteTimes tracks the last modification time observed for each file
+// that this process has written to disk. All root stores in a dscope scope
+// share one tracker, so consecutive writes to the same file — whether
+// direct (patch, next) or through MemoryStore.Flush — compare against a
+// consistent baseline. The provider is re-evaluated on dscope.Reset, so
+// independent sessions (e.g., goal loops) start with a fresh tracker: each
+// session loads the current filesystem state, and conflict detection
+// covers writes within one session. All methods are safe for concurrent
+// use. See TheoryOfWriteConflictDetection.
+type FileWriteTimes struct {
+	mu    sync.Mutex
+	times map[string]time.Time
+}
+
+// NewFileWriteTimes creates an empty write-time tracker.
+func NewFileWriteTimes() *FileWriteTimes {
+	return &FileWriteTimes{
+		times: make(map[string]time.Time),
+	}
+}
+
+// Get returns the last recorded write time for path.
+func (f *FileWriteTimes) Get(path string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.times[path]
+	return t, ok
+}
+
+// Set records the write time for path, replacing any previous value.
+func (f *FileWriteTimes) Set(path string, t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.times[path] = t
+}
+
+// Delete drops the record for path.
+func (f *FileWriteTimes) Delete(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.times, path)
 }
 
 func (s rootStore) isFileStore() {}
@@ -61,16 +141,94 @@ func (s rootStore) ReadFile(path string) ([]byte, error) {
 }
 
 func (s rootStore) WriteFile(path string, content []byte, perm os.FileMode) error {
+	if err := s.checkWriteConflict(s.trackedPath(path), path); err != nil {
+		return err
+	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := pathutil.RootMkdirAll(s.root, dir, 0755); err != nil {
 			return err
 		}
 	}
-	return s.root.WriteFile(path, content, perm)
+	if err := s.root.WriteFile(path, content, perm); err != nil {
+		return err
+	}
+	s.recordWriteTime(s.trackedPath(path), path)
+	return nil
+}
+
+// checkWriteConflict verifies that the file at statPath has not been
+// modified externally since the last time this process wrote it. key is
+// the canonical (absolute) path used for tracker lookups; statPath is the
+// root-relative path used to stat the actual file within the root. A file
+// with no recorded write time has no baseline and the write proceeds. A
+// recorded time that differs from the file's current mtime means the file
+// was likely touched by another process since our last write; writing
+// could overwrite the external change, so the write is rejected. See
+// TheoryOfWriteConflictDetection.
+func (s rootStore) checkWriteConflict(key, statPath string) error {
+	if s.writeTimes == nil {
+		return nil
+	}
+	last, ok := s.writeTimes.Get(key)
+	if !ok {
+		return nil
+	}
+	info, err := s.root.Stat(statPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("write conflict: %s was deleted by another process since last write at %v", statPath, last)
+		}
+		return err
+	}
+	if !info.ModTime().Equal(last) {
+		return fmt.Errorf("write conflict: %s was modified by another process since last write at %v (current mtime %v)", statPath, last, info.ModTime())
+	}
+	return nil
+}
+
+// recordWriteTime records the post-write mtime of statPath as the baseline
+// for future write conflict checks. Recording the actual filesystem mtime
+// (not time.Now) keeps the comparison precise: the recorded value is
+// exactly what the next check will read. See
+// TheoryOfWriteConflictDetection.
+func (s rootStore) recordWriteTime(key, statPath string) {
+	if s.writeTimes == nil {
+		return
+	}
+	if info, err := s.root.Stat(statPath); err == nil {
+		s.writeTimes.Set(key, info.ModTime())
+	}
+}
+
+// trackedPath returns the canonical key used for write-time tracking: an
+// absolute, cleaned path. Two roots that happen to use the same relative
+// path (e.g., "test.go" in different directories) refer to different
+// files, so the tracker must key by absolute path to avoid false
+// conflicts between them. See TheoryOfWriteConflictDetection.
+func (s rootStore) trackedPath(path string) string {
+	full := path
+	if !filepath.IsAbs(full) {
+		rootPath := s.root.Name()
+		if !filepath.IsAbs(rootPath) {
+			if abs, err := filepath.Abs(rootPath); err == nil {
+				rootPath = abs
+			}
+		}
+		full = filepath.Join(rootPath, path)
+	}
+	return filepath.Clean(full)
 }
 
 func (s rootStore) Remove(path string) error {
-	return s.root.Remove(path)
+	if err := s.root.Remove(path); err != nil {
+		return err
+	}
+	// A removed path can no longer conflict; a later recreation is a
+	// fresh file with no baseline. See TheoryOfWriteConflictDetection.
+	if s.writeTimes != nil {
+		s.writeTimes.Delete(s.trackedPath(path))
+	}
+	return nil
 }
 
 func (s rootStore) Rename(oldPath, newPath string) error {
@@ -79,7 +237,20 @@ func (s rootStore) Rename(oldPath, newPath string) error {
 			return err
 		}
 	}
-	return s.root.Rename(oldPath, newPath)
+	if err := s.root.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	// Rename preserves the file's mtime, so the tracked write time moves
+	// with the file and the old path's record is dropped. See
+	// TheoryOfWriteConflictDetection.
+	if s.writeTimes != nil {
+		oldKey := s.trackedPath(oldPath)
+		if t, ok := s.writeTimes.Get(oldKey); ok {
+			s.writeTimes.Delete(oldKey)
+			s.writeTimes.Set(s.trackedPath(newPath), t)
+		}
+	}
+	return nil
 }
 
 // memoryFile tracks the in-memory state of a file in MemoryStore.

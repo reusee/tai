@@ -627,6 +627,7 @@ func (Module) GenerateWithResultWithStats(
 	apply flags.Apply,
 	loopRun loops.Run,
 	recorder *records.Recorder,
+	writeTimes *changes.FileWriteTimes,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
@@ -640,8 +641,12 @@ func (Module) GenerateWithResultWithStats(
 
 		// MemoryStore buffers change block modifications in memory during
 		// streaming, deferring disk writes until the round succeeds.
-		// See TheoryOfStreamingApply and changes.TheoryOfInMemoryApply.
-		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
+		// The underlying root store enables write conflict detection: a
+		// file modified externally since the last write is rejected at
+		// flush time. See TheoryOfStreamingApply,
+		// changes.TheoryOfInMemoryApply and
+		// changes.TheoryOfWriteConflictDetection.
+		memStore := changes.NewMemoryStore(changes.NewRootStoreWithWriteTimes(root, writeTimes))
 
 		// generator
 		generator, err := getDefaultGenerator()

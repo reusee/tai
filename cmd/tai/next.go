@@ -98,6 +98,7 @@ var NextCommand = Command{
 		buildChangeBlockHandler changes.BuildChangeBlockHandler,
 		loopRun loops.Run,
 		recorder *records.Recorder,
+		writeTimes *changes.FileWriteTimes,
 	) {
 		ctx := context.Background()
 
@@ -109,8 +110,11 @@ var NextCommand = Command{
 
 		// MemoryStore buffers change block modifications in memory during
 		// generation, deferring disk writes until the round succeeds.
-		// See changes.TheoryOfInMemoryApply.
-		memStore := changes.NewMemoryStore(changes.NewRootStore(root))
+		// The underlying root store enables write conflict detection: a
+		// file modified externally since the last write is rejected at
+		// flush time. See changes.TheoryOfInMemoryApply and
+		// changes.TheoryOfWriteConflictDetection.
+		memStore := changes.NewMemoryStore(changes.NewRootStoreWithWriteTimes(root, writeTimes))
 
 		// generate
 		logger.Info("generate", "model", generator.Spec().Model)

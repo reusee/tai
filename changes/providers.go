@@ -44,6 +44,16 @@ ApplyChangeBlocksStore, ApplyDiffFile, and BuildChangeBlockHandler.
 // via dscope and call with only runtime parameters. WriteErrorLog is never
 // in the signature; it is captured at provider resolution time.
 
+// FileWriteTimes provider: the process-wide write-time tracker shared by
+// every root store created through the dscope graph. A scope's providers
+// are re-evaluated on dscope.Reset, so independent sessions (e.g., goal
+// loops) start with a fresh tracker: each session loads the current
+// filesystem state, and conflict detection covers writes within one
+// session. See TheoryOfWriteConflictDetection.
+func (Module) FileWriteTimes() *FileWriteTimes {
+	return NewFileWriteTimes()
+}
+
 // ApplyChangeBlock applies a change block to the given root.
 type ApplyChangeBlock func(root *os.Root, h ChangeBlock) error
 
@@ -450,13 +460,14 @@ func (Module) ApplyChangeBlockStore(
 	}
 }
 
-// ApplyChangeBlock provider: wraps root in a rootStore and delegates to
-// ApplyChangeBlockStore.
+// ApplyChangeBlock provider: wraps root in a rootStore with write conflict
+// detection and delegates to ApplyChangeBlockStore.
 func (Module) ApplyChangeBlock(
 	applyChangeBlockStore ApplyChangeBlockStore,
+	writeTimes *FileWriteTimes,
 ) ApplyChangeBlock {
 	return func(root *os.Root, h ChangeBlock) error {
-		return applyChangeBlockStore(NewRootStore(root), h)
+		return applyChangeBlockStore(NewRootStoreWithWriteTimes(root, writeTimes), h)
 	}
 }
 
@@ -479,13 +490,14 @@ func (Module) ApplyChangeBlocksStore(
 	}
 }
 
-// ApplyChangeBlocks provider: wraps root in a rootStore and delegates to
-// ApplyChangeBlocksStore.
+// ApplyChangeBlocks provider: wraps root in a rootStore with write conflict
+// detection and delegates to ApplyChangeBlocksStore.
 func (Module) ApplyChangeBlocks(
 	applyChangeBlocksStore ApplyChangeBlocksStore,
+	writeTimes *FileWriteTimes,
 ) ApplyChangeBlocks {
 	return func(bs []blocks.Block, root *os.Root) error {
-		return applyChangeBlocksStore(bs, NewRootStore(root))
+		return applyChangeBlocksStore(bs, NewRootStoreWithWriteTimes(root, writeTimes))
 	}
 }
 

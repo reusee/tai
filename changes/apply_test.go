@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestApplyChangeBlockAddBeforeConstSpec(t *testing.T) {
@@ -1412,5 +1413,60 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 			}
 		})
 
+	})
+}
+
+func TestApplyChangeBlockDetectsExternalModification(t *testing.T) {
+	newTestScope(t).Call(func(applyChangeBlock ApplyChangeBlock) {
+		dir := t.TempDir()
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+
+		original := "package x\n\nfunc Old() {}\n"
+		if err := root.WriteFile("test.go", []byte(original), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// First apply succeeds and records the post-write time.
+		h1 := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "Old",
+			FilePath: "test.go",
+			Body:     "func New() {}",
+		}
+		if err := applyChangeBlock(root, h1); err != nil {
+			t.Fatalf("first apply failed: %v", err)
+		}
+
+		// Simulate an external modification: touch the file so its mtime
+		// differs from the recorded post-write time. A 10-second jump is
+		// unambiguous even on coarse-granularity filesystems.
+		info, err := root.Stat("test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		future := info.ModTime().Add(10 * time.Second)
+		if err := os.Chtimes(filepath.Join(dir, "test.go"), future, future); err != nil {
+			t.Fatal(err)
+		}
+
+		// A second apply must be rejected because the file was modified
+		// externally since the last write.
+		h2 := ChangeBlock{
+			Op:       "MODIFY",
+			Target:   "New",
+			FilePath: "test.go",
+			Body:     "func New() {}",
+		}
+		err = applyChangeBlock(root, h2)
+		if err == nil {
+			t.Fatal("expected a write conflict error for an externally modified file")
+		}
+		if !strings.Contains(err.Error(), "write conflict") {
+			t.Fatalf("expected write conflict error, got: %v", err)
+		}
 	})
 }
