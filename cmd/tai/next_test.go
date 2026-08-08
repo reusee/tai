@@ -334,3 +334,42 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		}
 	})
 }
+
+func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {
+	// The ignore section derives from a map, and maps.Keys iteration order
+	// is non-deterministic. The SystemPrompt must sort ignore items so the
+	// system prompt is byte-identical across runs with equal configuration,
+	// preserving the LLM prefix cache. This test fails (with high
+	// probability) when the sort is removed. See TheoryOfPrefixCaching in
+	// generators/state_func_map.go.
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() flags.Files {
+			// A pattern that matches nothing, so HasFiles is false and no
+			// change-block prompt is included; the test only checks the
+			// ignore section ordering.
+			return flags.Files{"/nonexistent-prefix-cache-test": true}
+		},
+		func() flags.Ignore {
+			return flags.Ignore{"bbb": true, "aaa": true, "ccc": true}
+		},
+	).Call(func(systemPrompt SystemPrompt) {
+		s := string(systemPrompt)
+		sectionStart := strings.Index(s, "忽略这些方面：")
+		if sectionStart == -1 {
+			t.Fatal("ignore section not found in system prompt")
+		}
+		section := s[sectionStart:]
+		aaaIdx := strings.Index(section, "\n- aaa\n")
+		bbbIdx := strings.Index(section, "\n- bbb\n")
+		cccIdx := strings.Index(section, "\n- ccc\n")
+		if aaaIdx == -1 || bbbIdx == -1 || cccIdx == -1 {
+			t.Fatalf("ignore items not found in system prompt: %s", s)
+		}
+		if !(aaaIdx < bbbIdx && bbbIdx < cccIdx) {
+			t.Fatalf("ignore items must be sorted for prompt determinism: %s", s)
+		}
+	})
+}

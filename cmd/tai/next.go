@@ -71,7 +71,15 @@ func (Module) SystemPrompt(
 		}
 	}
 
+	// Ignore items are sorted for prompt determinism: the ignore set is
+	// stored in a map, and maps.Keys iteration order is non-deterministic.
+	// Without sorting, the ignore section of the system prompt would differ
+	// byte-wise across runs with equal configuration, invalidating the LLM
+	// prefix cache from the first ignore line onward. Focus items keep
+	// their user-specified order because they come from a list. See
+	// TheoryOfPrefixCaching in generators/state_func_map.go.
 	ignore := slices.Collect(maps.Keys(flagIgnore))
+	slices.Sort(ignore)
 	if len(ignore) > 0 {
 		ret += "\n\n忽略这些方面：\n"
 		for _, what := range ignore {
