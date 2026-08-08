@@ -79,12 +79,12 @@ func (Module) SimplifyFiles(
 
 		// 2.5. Compute recent git change counts for focus packages. A
 		// focus package's change count is the sum over its files of the
-		// commits within recentChangeWindow that touched the file.
-		// compareFilesForOutput sorts focus files by ascending count, so
-		// the most-changed packages sit at the very end of the focus
-		// block, preserving the LLM prefix cache when volatile files
-		// change. Counts are zero outside a git repository, falling back
-		// to the alphabetical package-path ordering. See
+		// commits within the most recent recentChangeCommitCount commits
+		// that touched the file. compareFilesForOutput sorts focus files
+		// by ascending count, so the most-changed packages sit at the very
+		// end of the focus block, preserving the LLM prefix cache when
+		// volatile files change. Counts are zero outside a git repository,
+		// falling back to the alphabetical package-path ordering. See
 		// TheoryOfGitChangeOrdering.
 		gitChangeCounts, err := getGitChangeCounts()
 		if err != nil {

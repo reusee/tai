@@ -1,6 +1,7 @@
 package gocodes
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,8 +61,9 @@ func TestCountGitChanges(t *testing.T) {
 	}
 
 	// a/a.go is touched by three commits, b/b.go by one; the third
-	// package c is unrelated. The counts must be per file within
-	// recentChangeWindow, resolved against the repository root.
+	// package c is unrelated. The counts must be per file within the
+	// most recent recentChangeCommitCount commits, resolved against the
+	// repository root.
 	write("a/a.go", "package a\n")
 	commit("a/a.go")
 	write("b/b.go", "package b\n")
@@ -73,7 +75,7 @@ func TestCountGitChanges(t *testing.T) {
 	write("c/c.go", "package c\n")
 	commit("c/c.go")
 
-	counts, err := countGitChanges(dir, os.Environ())
+	counts, err := countGitChanges(dir, os.Environ(), recentChangeCommitCount)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +97,56 @@ func TestCountGitChangesNotARepo(t *testing.T) {
 	// provider degrades to zero counts instead, keeping focus package
 	// ordering alphabetical. See TheoryOfGitChangeOrdering.
 	dir := t.TempDir()
-	if _, err := countGitChanges(dir, os.Environ()); err == nil {
+	if _, err := countGitChanges(dir, os.Environ(), recentChangeCommitCount); err == nil {
 		t.Fatal("expected an error for a directory outside a git repository")
+	}
+}
+
+func TestCountGitChangesUsesCommitCountWindow(t *testing.T) {
+	// The evaluation range is the most recent commits, not a time window:
+	// a fixed time window (e.g., the last three days) can contain no
+	// commits, producing all-zero change counts and losing the ordering
+	// signal. A commit-count window always yields a meaningful range as
+	// long as the repository has any commits. A file touched only by
+	// commits older than the window must not be counted; a file touched
+	// within the window is counted. See TheoryOfGitChangeOrdering.
+	dir := t.TempDir()
+	git := initGitRepo(t, dir)
+
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(name string) {
+		t.Helper()
+		git("add", name)
+		git("commit", "-q", "-m", "update "+name)
+	}
+
+	const window = 5
+	// Three commits touch old.txt before the window; with a commit-count
+	// evaluation range they must not be counted.
+	for i := 0; i < 3; i++ {
+		write("old.txt", fmt.Sprintf("old %d\n", i))
+		commit("old.txt")
+	}
+	// Five commits touch new.txt within the window (one per commit).
+	for i := 0; i < window; i++ {
+		write("new.txt", fmt.Sprintf("new %d\n", i))
+		commit("new.txt")
+	}
+
+	counts, err := countGitChanges(dir, os.Environ(), window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := counts[filepath.Join(dir, "old.txt")]; got != 0 {
+		t.Fatalf("old.txt change count = %d, want 0 (outside the recent %d commits)", got, window)
+	}
+	if got := counts[filepath.Join(dir, "new.txt")]; got != window {
+		t.Fatalf("new.txt change count = %d, want %d", got, window)
 	}
 }
 

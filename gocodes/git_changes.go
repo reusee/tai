@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/reusee/tai/logs"
 )
@@ -14,18 +13,24 @@ import (
 const TheoryOfGitChangeOrdering = `
 Focus packages are ordered by recent git activity to maximize LLM prefix
 cache reuse. A logical focus package's change count is the sum over its
-files of the commits within recentChangeWindow (three days) that touched
-the file. The counts are gathered with a single git log --name-only
-invocation, preceded by git rev-parse --show-toplevel to resolve
-repository-relative paths to absolute paths; counts are keyed by absolute
-file path. During simplification, each focus package accumulates the
-counts of its files, and compareFilesForOutput sorts focus files by
-ascending change count, so the most-changed packages sit at the very end
-of the focus block. When a volatile focus file changes, the preceding
-stable focus and context content keeps its exact position, preserving the
-cached prefix. Within a package, all files share the package's change
-count, so the existing ordering keys (file path, etc.) apply unchanged as
-tiebreakers.
+files of the commits within the most recent recentChangeCommitCount (50)
+commits that touched the file. The counts are gathered with a single
+git log --max-count=N --name-only invocation, preceded by git rev-parse
+--show-toplevel to resolve repository-relative paths to absolute paths;
+counts are keyed by absolute file path. During simplification, each focus
+package accumulates the counts of its files, and compareFilesForOutput
+sorts focus files by ascending change count, so the most-changed packages
+sit at the very end of the focus block. When a volatile focus file
+changes, the preceding stable focus and context content keeps its exact
+position, preserving the cached prefix. Within a package, all files share
+the package's change count, so the existing ordering keys (file path,
+etc.) apply unchanged as tiebreakers.
+
+The commit-count window replaces an earlier time-based window (three
+days): a fixed time window can be empty when no commits happen within it,
+producing all-zero counts and losing the ordering signal. The most recent
+recentChangeCommitCount commits always form a meaningful evaluation range
+as long as the repository has any commits.
 
 The ordering applies to focus (root) packages only: context files form
 the stable prefix region and keep their deterministic ordering, so focus
@@ -39,17 +44,22 @@ are all zero and focus packages keep the alphabetical package-path
 ordering.
 `
 
-// recentChangeWindow is the time window over which git change counts are
-// accumulated for focus package ordering. Commits older than this window
-// do not influence the ordering: the heuristic assumes that packages
-// touched recently are more likely to change again in the near future.
-// See TheoryOfGitChangeOrdering.
-const recentChangeWindow = 3 * 24 * time.Hour
+// recentChangeCommitCount is the number of most recent commits over which
+// git change counts are accumulated for focus package ordering. Commits
+// beyond this count do not influence the ordering: the heuristic assumes
+// that packages touched by the most recent commits are more likely to
+// change again in the near future. A commit count is used instead of a
+// time window (previously three days) so the evaluation range is always
+// meaningful: a fixed time window can contain no commits, yielding
+// all-zero counts and losing the ordering signal. See
+// TheoryOfGitChangeOrdering.
+const recentChangeCommitCount = 50
 
 // GetGitChangeCounts returns a map from absolute file path to the number
-// of commits within recentChangeWindow that touched the file. The map is
-// computed once per process and is empty when the working directory is
-// not inside a git repository. See TheoryOfGitChangeOrdering.
+// of commits within the most recent recentChangeCommitCount commits that
+// touched the file. The map is computed once per process and is empty
+// when the working directory is not inside a git repository. See
+// TheoryOfGitChangeOrdering.
 type GetGitChangeCounts func() (map[string]int, error)
 
 func (Module) GitChangeCounts(
@@ -63,7 +73,7 @@ func (Module) GitChangeCounts(
 		if workspace != "" {
 			dir = string(workspace)
 		}
-		counts, err := countGitChanges(dir, []string(envs))
+		counts, err := countGitChanges(dir, []string(envs), recentChangeCommitCount)
 		if err != nil {
 			// Not a git repository, or git log failed: degrade to zero
 			// counts so focus packages keep the alphabetical package-path
@@ -76,13 +86,13 @@ func (Module) GitChangeCounts(
 }
 
 // countGitChanges returns a map from absolute file path to the number of
-// commits within recentChangeWindow that touched the file. Git reports
-// paths relative to the repository root, so one git rev-parse
-// --show-toplevel call resolves them to absolute paths, letting callers
-// look up counts directly by file path. An error is returned when dir is
-// not inside a git repository or the git commands fail; callers degrade
-// to zero counts. See TheoryOfGitChangeOrdering.
-func countGitChanges(dir string, envs []string) (map[string]int, error) {
+// commits within the most recent maxCommits commits that touched the
+// file. Git reports paths relative to the repository root, so one git
+// rev-parse --show-toplevel call resolves them to absolute paths, letting
+// callers look up counts directly by file path. An error is returned when
+// dir is not inside a git repository or the git commands fail; callers
+// degrade to zero counts. See TheoryOfGitChangeOrdering.
+func countGitChanges(dir string, envs []string, maxCommits int) (map[string]int, error) {
 	rootCmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	rootCmd.Dir = dir
 	rootCmd.Env = envs
@@ -92,8 +102,7 @@ func countGitChanges(dir string, envs []string) (map[string]int, error) {
 	}
 	repoRoot := strings.TrimSpace(string(rootOut))
 
-	since := fmt.Sprintf("--since=%d days ago", int(recentChangeWindow/(24*time.Hour)))
-	cmd := exec.Command("git", "log", since, "--name-only", "--pretty=format:")
+	cmd := exec.Command("git", "log", fmt.Sprintf("--max-count=%d", maxCommits), "--name-only", "--pretty=format:")
 	cmd.Dir = dir
 	cmd.Env = envs
 	out, err := cmd.Output()
