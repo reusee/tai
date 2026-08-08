@@ -36,7 +36,10 @@ type Review bool
 
 // ReviewModels lists the models used for review, in order. Each model runs
 // a separate review generation session with a fresh scope. When empty, the
-// default generator is used once. See TheoryOfReviewLoop.
+// model selected by the -model flag is reused: the resolved generator's
+// Spec is not reusable because built-in shortcuts (flash, gemini, ...) and
+// the ollama shorthand do not set Spec.Name, and their Spec.Model values
+// are not resolvable model names. See TheoryOfReviewLoop.
 type ReviewModels []string
 
 func (Module) ReviewModels() ReviewModels {

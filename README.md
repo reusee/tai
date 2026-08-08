@@ -6,7 +6,7 @@
 
 This is the opposite of the mainstream agentic pattern where context grows through dialogue. Growing context through dialogue wastes tokens on conversation overhead and produces non-deterministic results. Single-shot construction is deterministic: the same files and the same task always produce the same input to the model.
 
-**Prefix cache stability.** The system treats the LLM prefix cache as a first-class performance concern. Files are sorted in three tiers — non-root-module files first, root-module context files second, root-module focus files last — so that editing a focus file never shifts the position of any context file. Function declarations are globally sorted by name. Required schema fields are alphabetized. Context simplification uses a fixed token budget so that context files are simplified to the same level every request. When focus files change, all preceding content remains byte-identical and fully cacheable. Dynamic content — the current time, the memory profile, the user input, and the goal loop feedback — is placed at the end of its prompt so that static sections remain in the cached prefix.
+**Prefix cache stability.** The system treats the LLM prefix cache as a first-class performance concern. Files are sorted in three tiers — non-root-module files first, root-module context files second, root-module focus files last — so that editing a focus file never shifts the position of any context file. Function declarations are globally sorted by name. Required schema fields are alphabetized. Context simplification uses a deterministic token budget derived from the focus package size, so context files are simplified to the same level for identical focus content across requests. When focus files change, all preceding content remains byte-identical and fully cacheable. Dynamic content — the current time, the memory profile, the user input, and the goal loop feedback — is placed at the end of its prompt so that static sections remain in the cached prefix.
 
 **Software as theory.** The codebase carries its design rationale in `Theory` constants — global string variables with descriptive names like `TheoryOfContextPhilosophy`, `TheoryOfInMemoryApply`, `TheoryOfPrefixCaching`. These constants document why decisions were made, not just what the code does. They evolve incrementally alongside the code. The theory is the project's primary competitive advantage: a deep, documented mental model that guides every change.
 
@@ -37,6 +37,7 @@ go install github.com/reusee/tai/cmd/tai@latest
 | `tai goal <description>` | Work toward a goal through multiple independent loops |
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |
 | `tai ping` | Test whether a model is reachable |
+| `tai record` | List, show, and analyze recorded interaction sessions |
 
 ## Usage Examples
 
@@ -118,7 +119,8 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
 | `-no-human` | Disable interactive chat for unattended operation |
-| `-include-std` | Include standard library packages |
+| `-record` | Record interaction sessions for self-improvement analysis |
+| `-review` | Run a review loop after generation to review and fix changes |
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |
 | `-summarize-thoughts` | Enable periodic summarization of thoughts |
 | `-confidential` | Restrict model selection to zero-data-retention models |
@@ -148,6 +150,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `logs` | Structured logging |
 | `debugs` | Debug tap (Starlark REPL) |
 | `memories` | Per-model user profile persistence |
+| `records` | Interaction recording and self-improvement analysis |
 
 ### Block Format
 
@@ -167,7 +170,7 @@ Block kinds: `change`, `shell`, `go-test`, `continue`, `summary`, `request-conte
 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
-3. Context files are simplified (comments stripped, function bodies deleted) to fit a dynamic token budget derived from focus package size: focusTokens / 2, rounded to the nearest 32K multiple, floored at 32K
+3. Context packages are assigned a package-level visibility (invisible, package documentation, code without tests, or full content) to fit a dynamic token budget derived from focus package size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
 4. Focus files (root package) are appended last
 5. Extra files from `-file` patterns are appended after focus files
 

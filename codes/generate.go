@@ -102,12 +102,16 @@ type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (lo
 // review is opt-in and does not recursively trigger itself. Each review
 // session opens a fresh scope (via dscope.Reset) so the model reads the
 // latest filesystem state, and replaces Chats with the review instruction
-// plus the session diffs. See TheoryOfReviewLoop.
+// plus the session diffs. When ReviewModels is empty, the model from the
+// -model flag is reused: the resolved generator's Spec is not reusable
+// here because built-in shortcuts (flash, gemini, ...) and the ollama
+// shorthand do not set Spec.Name, and their Spec.Model values are not
+// resolvable model names. See TheoryOfReviewLoop.
 func (Module) RunReview(
 	reset dscope.Reset,
 	review Review,
 	reviewModels ReviewModels,
-	getDefaultGenerator generators.GetDefaultGenerator,
+	modelName flags.ModelName,
 ) RunReview {
 	return func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		if !bool(review) || len(diffs) == 0 {
@@ -116,30 +120,21 @@ func (Module) RunReview(
 
 		models := append([]string{}, reviewModels...)
 		if len(models) == 0 {
-			generator, err := getDefaultGenerator()
-			if err != nil {
-				return err
-			}
-			name := generator.Spec().Name
-			if name == "" {
-				name = generator.Spec().Model
-			}
-			if name != "" {
-				models = append(models, name)
-			}
+			models = append(models, string(modelName))
 		}
 
 		prompt := buildReviewPrompt(diffs)
 		for _, model := range models {
+			if model == "" {
+				continue
+			}
 			scope := reset()
 			scope = scope.Fork(func() flags.Chats {
 				return flags.Chats([]string{prompt})
 			})
-			if model != "" {
-				scope = scope.Fork(func() flags.ModelName {
-					return flags.ModelName(model)
-				})
-			}
+			scope = scope.Fork(func() flags.ModelName {
+				return flags.ModelName(model)
+			})
 			var reviewErr error
 			scope.Call(func(generateWithResultWithStats GenerateWithResultWithStats) {
 				_, _, reviewErr = generateWithResultWithStats(ctx, output)
@@ -168,8 +163,8 @@ type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Resul
 // RunReview runs one or more review generation sessions after the main
 // generation completes. Each review session uses a fresh scope (latest
 // filesystem context) and a review model from ReviewModels, in order.
-// When ReviewModels is empty, the default generator is used once. The
-// diffs are passed to the model through Chats so they appear in the user
+// When ReviewModels is empty, the model from the -model flag is reused.
+// The diffs are passed to the model through Chats so they appear in the user
 // prompt. See TheoryOfReviewLoop.
 type RunReview func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error
 
@@ -941,7 +936,13 @@ func (Module) GenerateWithResultWithStats(
 		}
 
 		// Session diffs are attached to the result for the review loop.
-		// See TheoryOfReviewLoop.
+		// On error, the failed round's in-memory changes were never flushed
+		// to disk; resetting the store keeps the diffs limited to changes
+		// actually written, so the review loop never sees phantom changes.
+		// See TheoryOfReviewLoop and changes.TheoryOfInMemoryApply.
+		if err != nil {
+			memStore.Reset()
+		}
 		result.Diffs = memStore.Diffs()
 
 		return result, roundStats, err

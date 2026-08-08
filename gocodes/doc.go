@@ -72,10 +72,13 @@ func (d DocPatterns) ConfigPaths() []string {
 }
 
 func (d DocPatterns) HandleConfig(path string, values []*cue.Value) (any, error) {
-	var patterns []string
-	if err := values[0].Decode(&patterns); err != nil {
-		return nil, err
+	ret := slices.Clone(d)
+	for _, v := range values {
+		var patterns []string
+		if err := v.Decode(&patterns); err != nil {
+			return nil, err
+		}
+		ret = append(ret, patterns...)
 	}
-	ret := DocPatterns(patterns)
 	return &ret, nil
 }

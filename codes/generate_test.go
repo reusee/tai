@@ -11,6 +11,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 )
@@ -311,22 +312,6 @@ func TestBuildUserPromptText(t *testing.T) {
 	}
 }
 
-// reviewMockGenerator satisfies generators.Generator for review loop tests.
-// See TestRunReviewSkipsWhenNoDiffs and TestRunReviewRunsWhenDiffsExist.
-type reviewMockGenerator struct{}
-
-func (reviewMockGenerator) Spec() generators.Spec {
-	return generators.Spec{Model: "test-model"}
-}
-
-func (reviewMockGenerator) CountTokens(string) (int, error) {
-	return 0, nil
-}
-
-func (reviewMockGenerator) Generate(context.Context, generators.State, *generators.GenerateOptions) (generators.State, error) {
-	return nil, nil
-}
-
 func TestRunReviewSkipsWhenNoDiffs(t *testing.T) {
 	// When no change blocks were produced (empty diffs), the review loop
 	// must not initiate a generation session, even when the -review flag
@@ -346,10 +331,7 @@ func TestRunReviewSkipsWhenNoDiffs(t *testing.T) {
 		fakeReset,
 		true,
 		nil,
-		func() (generators.Generator, error) {
-			generationInitiated = true
-			return reviewMockGenerator{}, nil
-		},
+		flags.ModelName("test-model"),
 	)
 
 	// nil diffs (the actual case when no change blocks were applied).
@@ -390,9 +372,7 @@ func TestRunReviewRunsWhenDiffsExist(t *testing.T) {
 		fakeReset,
 		true,
 		nil,
-		func() (generators.Generator, error) {
-			return reviewMockGenerator{}, nil
-		},
+		flags.ModelName("test-model"),
 	)
 	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{
 		{
@@ -407,5 +387,53 @@ func TestRunReviewRunsWhenDiffsExist(t *testing.T) {
 	}
 	if !generationInitiated {
 		t.Fatal("review loop must initiate generation when diffs exist")
+	}
+}
+
+func TestRunReviewUsesModelFlagValue(t *testing.T) {
+	// When no -review-model is configured, the review loop must reuse the
+	// model name from the -model flag, not the resolved generator's Spec.
+	// Built-in shortcuts (flash, gemini, ...) and the ollama shorthand do
+	// not set Spec.Name, and their Spec.Model values are not resolvable
+	// model names, so deriving the review model from the Spec produced
+	// "invalid model" errors. See TheoryOfReviewLoop.
+	var reviewModel string
+	fakeReset := dscope.Reset(func() dscope.Scope {
+		return dscope.New(
+			// dscope validates provider dependencies at registration
+			// time, so the fake scope must provide flags.ModelName
+			// before the GenerateWithResultWithStats provider that
+			// depends on it. RunReview forks its chosen model value
+			// over this placeholder.
+			func() flags.ModelName { return "" },
+			func(modelName flags.ModelName) GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
+					reviewModel = string(modelName)
+					return loops.Result{}, nil, nil
+				}
+			},
+		)
+	})
+
+	var m Module
+	runReview := m.RunReview(
+		fakeReset,
+		true,
+		nil,
+		flags.ModelName("gemini-flash"),
+	)
+	if err := runReview(context.Background(), io.Discard, []changes.FileDiff{
+		{
+			Path:           "test.go",
+			Original:       []byte("old content"),
+			OriginalExists: true,
+			Current:        []byte("new content"),
+			CurrentExists:  true,
+		},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reviewModel != "gemini-flash" {
+		t.Fatalf("review must use the -model flag value, got %q", reviewModel)
 	}
 }

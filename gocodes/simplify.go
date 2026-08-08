@@ -13,12 +13,13 @@ import (
 const TheoryOfSimplification = `
 Simplification uses package-level visibility levels (0-3) instead of
 file-level transforms. Each package is assigned a visibility level based
-on its priority (category, distance, path) and the 32K context budget.
+on its priority (category, distance, path) and the dynamic context budget
+(see TheoryOfVisibilityAllocation in visibility.go).
 Level 0: invisible (deleted). Level 1: package documentation via
-go doc -all -cmd -u (per-package output, not per-file). Level 2: full
-Go code without test files (raw file content from disk). Level 3: all
-files including tests, non-Go files, and embed files (raw file content
-from disk).
+go doc -all -cmd (per-package output, not per-file; the -u flag is
+deliberately omitted so the reference stays focused on exported symbols).
+Level 2: full Go code without test files (raw file content). Level 3: all
+files including tests, non-Go files, and embed files (raw file content).
 
 The water-filling algorithm upgrades packages from their minimum visibility
 to higher levels as the budget allows, processing packages in priority order.
