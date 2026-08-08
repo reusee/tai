@@ -1,6 +1,7 @@
 package changes
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -622,18 +623,55 @@ func (s *MemoryStore) captureOriginal(path string) {
 }
 
 // Diffs returns the accumulated session changes as FileDiff entries,
-// comparing the pre-session original state against the current in-memory
-// state. Paths are sorted for deterministic ordering. See
-// TheoryOfReviewLoop in codes/generate.go.
+// comparing the pre-session original state against the current state.
+// Paths are sorted for deterministic ordering. A path modified in an
+// earlier round and flushed to disk is no longer in s.files (OnRoundStart
+// clears it), but its original is retained in s.originals; the current
+// state is read from the underlying store so the diff reflects the full
+// session delta. No-op diffs (current state matches the original, e.g., a
+// change applied in a failed round and rolled back by Reset) are skipped.
+// See TheoryOfReviewLoop in codes/generate.go.
 func (s *MemoryStore) Diffs() []FileDiff {
-	paths := slices.Collect(maps.Keys(s.files))
+	// Collect paths from both the current in-memory files and the session
+	// originals. A path modified in an earlier round and flushed to disk
+	// is no longer in s.files (OnRoundStart clears it), but its original
+	// is retained in s.originals; the current state is read from the
+	// underlying store so the diff reflects the full session delta.
+	pathSet := make(map[string]bool)
+	for path := range s.files {
+		pathSet[path] = true
+	}
+	for path := range s.originals {
+		pathSet[path] = true
+	}
+	paths := slices.Collect(maps.Keys(pathSet))
 	slices.Sort(paths)
 	var diffs []FileDiff
 	for _, path := range paths {
-		mf := s.files[path]
+		mf, ok := s.files[path]
+		if !ok {
+			// Path was modified in an earlier round and flushed to disk.
+			// Read the current state from the underlying store.
+			content, err := s.underlying.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					mf = &memoryFile{exists: false}
+				} else {
+					continue
+				}
+			} else {
+				mf = &memoryFile{content: content, exists: true}
+			}
+		}
 		orig := s.originals[path]
 		if orig == nil {
 			orig = &memoryFile{}
+		}
+		// Skip no-op diffs: a path whose current state matches its
+		// original (e.g., a change applied in a failed round and rolled
+		// back by Reset) is not a session change.
+		if bytes.Equal(orig.content, mf.content) && orig.exists == mf.exists {
+			continue
 		}
 		diffs = append(diffs, FileDiff{
 			Path:           path,

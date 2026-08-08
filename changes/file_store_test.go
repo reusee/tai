@@ -555,6 +555,90 @@ func TestMemoryStoreDiffsPersistAcrossReset(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDiffsIncludeFlushedRounds(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "old content"
+	if err := root.WriteFile("a.txt", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMemoryStore(NewRootStore(root))
+
+	// Round 1: modify a.txt and flush to disk, as OnRoundSuccess does.
+	if err := store.WriteFile("a.txt", []byte("round 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Round 2 starts: OnRoundStart resets the store, clearing s.files
+	// but retaining s.originals.
+	store.Reset()
+
+	// Round 2: modify b.txt.
+	if err := store.WriteFile("b.txt", []byte("round 2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Diffs must include both round 1's a.txt change (read from the
+	// underlying store, since a.txt is no longer in s.files) and round
+	// 2's b.txt change. Without the fix, Diffs only iterates s.files and
+	// misses a.txt entirely.
+	diffs := store.Diffs()
+	if len(diffs) != 2 {
+		t.Fatalf("expected 2 diffs, got %d: %+v", len(diffs), diffs)
+	}
+	// Paths are sorted: a.txt, b.txt
+	if diffs[0].Path != "a.txt" || diffs[1].Path != "b.txt" {
+		t.Fatalf("unexpected diff order: %v, %v", diffs[0].Path, diffs[1].Path)
+	}
+	if string(diffs[0].Original) != original {
+		t.Fatalf("a.txt original mismatch: %q", string(diffs[0].Original))
+	}
+	if string(diffs[0].Current) != "round 1" {
+		t.Fatalf("a.txt current should be the flushed round-1 content, got %q", string(diffs[0].Current))
+	}
+	if diffs[1].OriginalExists || !diffs[1].CurrentExists {
+		t.Fatal("b.txt should be a new file")
+	}
+}
+
+func TestMemoryStoreDiffsSkipNoOp(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	original := "old content"
+	if err := root.WriteFile("a.txt", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMemoryStore(NewRootStore(root))
+
+	// A change applied in a failed round and rolled back by Reset must
+	// not appear in Diffs: the current state (read from the underlying
+	// store) matches the original, so the diff is a no-op.
+	if err := store.WriteFile("a.txt", []byte("failed change"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store.Reset()
+
+	diffs := store.Diffs()
+	if len(diffs) != 0 {
+		t.Fatalf("expected 0 diffs for rolled-back changes, got %d: %+v", len(diffs), diffs)
+	}
+}
+
 func TestRootStoreWriteFileCreatesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
