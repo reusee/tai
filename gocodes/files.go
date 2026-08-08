@@ -22,8 +22,10 @@ import (
 
 const TheoryOfFileOrdering = `
 Files are sorted in three tiers to maximize LLM prefix cache reuse. The outermost
-tier separates by module: non-root-module files (dependencies, stdlib) appear first,
-forming the stable prefix that changes least frequently across requests. The middle
+tier separates by module: non-root-module files (dependencies; standard library
+packages appear only when explicitly requested via -pkg or -ctx, see
+TheoryOfStdLibExclusion) appear first, forming the stable prefix that changes
+least frequently across requests. The middle
 tier separates root-module files by package: context files (non-root packages) precede
 focus files (root package), so that editing a focus file does not shift the position
 of any context file. The inner tiers (go vs non-go, distance, package depth, package
@@ -56,6 +58,22 @@ the deterministic input order.
 The raw content of every Go file is cached in File.Content at load time.
 The simplification pipeline renders files from this cached content instead
 of re-reading from disk, so each file is read exactly once per run.
+`
+
+const TheoryOfStdLibExclusion = `
+Standard library packages are excluded from the context by default: the model
+already knows the standard library, so its source would only consume tokens
+from the context budget without adding information. Exclusion happens at file
+collection time in GetFiles: the import walk skips every package whose Module
+is nil — the go/packages marker for standard library packages — so stdlib
+files are never read, parsed, token-counted, or rendered. This keeps the cost
+of context assembly proportional to the project's own code and its non-stdlib
+dependencies.
+
+Standard library packages explicitly requested via -pkg or -ctx remain
+available: root and context packages are added to the collected set directly,
+bypassing the import walk, so -pkg fmt includes fmt as a focus package even
+though its transitive standard library dependencies are still excluded.
 `
 
 type File struct {
@@ -117,14 +135,25 @@ func (Module) Files(
 		}
 
 		// Collect all packages from the dependency graph by walking imports.
-		// No distance limit; the visibility system in visibility.go determines
-		// which packages are visible based on the 32K context budget.
-		// See TheoryOfLightweightPackageLoading in packages.go.
+		// Standard library packages (Module == nil) are skipped so their
+		// files never enter the file set: the model already knows the
+		// standard library, and its source would only consume context
+		// budget. Packages explicitly requested via -pkg or -ctx are added
+		// directly below as root/context packages and bypass this skip.
+		// No distance limit; the visibility system in visibility.go
+		// determines which packages are visible based on the 32K context
+		// budget. See TheoryOfStdLibExclusion and
+		// TheoryOfLightweightPackageLoading in packages.go.
 		allPkgsSet := make(map[*packages.Package]bool)
 		var walkImports func(pkg *packages.Package)
 		walkImports = func(pkg *packages.Package) {
 			for _, imp := range pkg.Imports {
 				if imp == nil || allPkgsSet[imp] {
+					continue
+				}
+				if imp.Module == nil {
+					// Standard library package: excluded by default.
+					// See TheoryOfStdLibExclusion.
 					continue
 				}
 				allPkgsSet[imp] = true
@@ -183,8 +212,9 @@ func (Module) Files(
 		}
 
 		// Discover Go files from pkg.goFiles and parse individually.
-		// All packages in the dependency graph are included; the visibility
-		// system determines which are visible based on the 32K context budget.
+		// All non-standard-library packages in the dependency graph are
+		// included; the visibility system determines which are visible
+		// based on the 32K context budget.
 		// See TheoryOfLightweightPackageLoading in packages.go.
 		seenFilePaths := make(map[string]bool)
 		type goFileEntry struct {
@@ -472,9 +502,9 @@ func (Module) Files(
 		// See TheoryOfFileOrdering.
 		slices.SortStableFunc(files, func(a, b *File) int {
 			// root module last — outermost grouping so that all non-root-module
-			// files (dependencies, stdlib) form the stable prefix, maximizing
-			// prefix cache reuse across requests that change only root-module
-			// files.
+			// files (dependencies, and stdlib when explicitly requested) form
+			// the stable prefix, maximizing prefix cache reuse across requests
+			// that change only root-module files.
 			if !a.ModuleIsRoot && b.ModuleIsRoot {
 				return -1
 			} else if a.ModuleIsRoot && !b.ModuleIsRoot {

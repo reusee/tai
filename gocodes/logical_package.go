@@ -22,7 +22,9 @@ Package categorization determines the minimum visibility and priority:
 - Same-module non-focus packages: level 1
 - Direct imports of focus packages: level 1
 - Other module packages: level 0
-- Standard library: level 0
+- Standard library: excluded at collection time, so it never forms a logical
+  package unless explicitly requested via -pkg or -ctx (in which case it is
+  categorized as focus or context). See TheoryOfStdLibExclusion in files.go.
 
 Priority ordering: category (higher first), distance (shorter first),
 package path (ascending). The water-filling algorithm upgrades packages

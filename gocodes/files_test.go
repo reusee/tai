@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
 
@@ -247,6 +250,117 @@ func Foo() {
 		}
 		if depFile.ModuleIsRoot {
 			t.Fatal("dependency module must not be marked as root module")
+		}
+	})
+}
+
+func TestStdLibExcludedByDefault(t *testing.T) {
+	// Standard library packages are excluded from the context by default:
+	// the model already knows the standard library, so its source would
+	// only consume tokens from the context budget without adding
+	// information. The exclusion happens at collection time in GetFiles:
+	// the import walk skips packages whose Module is nil (the go/packages
+	// marker for standard library), so stdlib files are never parsed,
+	// token-counted, or rendered. Explicitly requesting a standard library
+	// package via -pkg adds it as a focus package, because explicit user
+	// intent overrides the default exclusion; its transitive standard
+	// library dependencies remain excluded. See TheoryOfStdLibExclusion.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/stdlibtest\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// main.go imports fmt and strings from the standard library; neither
+	// must appear in the file set or in the assembled context parts.
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(`package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+func main() {
+	fmt.Println(strings.ToUpper("hello"))
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	)
+
+	// Normalize the GOROOT path so the marker check works when GOROOT is
+	// reached through a symlink.
+	goroot := runtime.GOROOT()
+	if resolved, err := filepath.EvalSymlinks(goroot); err == nil {
+		goroot = resolved
+	}
+	gorootSrc := filepath.Join(goroot, "src") + string(filepath.Separator)
+
+	scope.Fork(
+		func() LoadDir { return LoadDir(root) },
+	).Call(func(
+		getFiles GetFiles,
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		files, err := getFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if f.Package != nil && f.Package.Module == nil {
+				t.Fatalf("standard library file %s must not be collected by default", f.Path)
+			}
+		}
+
+		parts, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if strings.Contains(s, "begin of focus file "+gorootSrc) ||
+				strings.Contains(s, "begin of context file "+gorootSrc) {
+				t.Fatalf("standard library file must not appear in context parts:\n%s", s)
+			}
+		}
+	})
+
+	// Explicitly requesting a standard library package via -pkg includes it
+	// as a focus package: explicit user intent overrides the default
+	// exclusion, while its transitive standard library dependencies remain
+	// excluded. See TheoryOfStdLibExclusion.
+	scope.Fork(
+		func() LoadDir { return LoadDir(root) },
+		func() LoadPatterns { return LoadPatterns{"./...", "fmt"} },
+	).Call(func(
+		getFiles GetFiles,
+	) {
+		files, err := getFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fmtFile *File
+		for _, f := range files {
+			if f.Package != nil && f.Package.PkgPath == "fmt" {
+				fmtFile = f
+				break
+			}
+		}
+		if fmtFile == nil {
+			t.Fatal("explicitly requested standard library package fmt must be included")
+		}
+		if !fmtFile.PackageIsRoot {
+			t.Fatal("explicitly requested standard library package must be a root package")
 		}
 	})
 }
