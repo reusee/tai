@@ -78,6 +78,18 @@ func (b *elementBase) applyCommonSpec(spec any) bool {
 		b.styles = append(b.styles, SameStyle.SetBG(Color(spec)))
 	case Bold:
 		b.styles = append(b.styles, SameStyle.SetBold(bool(spec)))
+	case Blink:
+		b.styles = append(b.styles, SameStyle.SetBlink(bool(spec)))
+	case Dim:
+		b.styles = append(b.styles, SameStyle.SetDim(bool(spec)))
+	case Italic:
+		b.styles = append(b.styles, SameStyle.SetItalic(bool(spec)))
+	case Reverse:
+		b.styles = append(b.styles, SameStyle.SetReverse(bool(spec)))
+	case Overline:
+		b.styles = append(b.styles, SameStyle.SetOverline(bool(spec)))
+	case StrikeThrough:
+		b.styles = append(b.styles, SameStyle.SetStrikeThrough(bool(spec)))
 	case Underline:
 		b.styles = append(b.styles, SameStyle.SetUnderline(bool(spec)))
 	default:

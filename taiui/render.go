@@ -47,6 +47,8 @@ func renderElement(e Element, box Box, style Style, draw drawFunc) {
 		renderText(e, box, style, draw)
 	case _VerticalScroll:
 		renderVerticalScroll(e, box, style, draw)
+	case _Flex:
+		renderFlex(e, box, style, draw)
 	case _FrameBuffer:
 		renderFrameBuffer(e, box, style, draw)
 	default:

@@ -58,14 +58,6 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 	if l == 0 {
 		return
 	}
-	marks := make([]bool, l)
-	marked := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
-		idx := (y-box.Top)*box.Width() + (x - box.Left)
-		if idx >= 0 && idx < len(marks) {
-			marks[idx] = true
-		}
-		draw(x, y, mainc, combc, st)
-	})
 
 	childBox := Box{
 		Top:    box.Top + r.margin[0] + r.padding[0],
@@ -73,13 +65,34 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		Right:  box.Right - r.margin[1] - r.padding[1],
 		Bottom: box.Bottom - r.margin[2] - r.padding[2],
 	}
+	if !r.fill {
+		for _, child := range r.children {
+			renderElement(child, childBox, style, draw)
+		}
+		return
+	}
+
+	// With fill, track the cells children occupy so the background paints
+	// only the gaps. A wide grapheme cluster occupies its trailing columns
+	// too; fill must not paint over them.
+	marks := make([]bool, l)
+	options := displayWidthOptions()
+	marked := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
+		idx := (y-box.Top)*box.Width() + (x - box.Left)
+		if idx >= 0 && idx < len(marks) {
+			marks[idx] = true
+			for i := 1; i < clusterWidth(options, mainc, combc); i++ {
+				if idx+i < len(marks) {
+					marks[idx+i] = true
+				}
+			}
+		}
+		draw(x, y, mainc, combc, st)
+	})
 	for _, child := range r.children {
 		renderElement(child, childBox, style, marked)
 	}
 
-	if !r.fill {
-		return
-	}
 	for y := box.Top + r.margin[0]; y < box.Bottom-r.margin[2]; y++ {
 		for x := box.Left + r.margin[3]; x < box.Right-r.margin[1]; x++ {
 			idx := (y-box.Top)*box.Width() + (x - box.Left)

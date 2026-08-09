@@ -23,6 +23,24 @@ func (fn StyleFunc) SetBold(b bool) StyleFunc {
 func (fn StyleFunc) SetUnderline(b bool) StyleFunc {
 	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Underline) }
 }
+func (fn StyleFunc) SetItalic(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Italic) }
+}
+func (fn StyleFunc) SetStrikeThrough(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.StrikeThrough) }
+}
+func (fn StyleFunc) SetDim(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Dim) }
+}
+func (fn StyleFunc) SetReverse(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Reverse) }
+}
+func (fn StyleFunc) SetBlink(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Blink) }
+}
+func (fn StyleFunc) SetOverline(b bool) StyleFunc {
+	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Overline) }
+}
 func (fn StyleFunc) And(f2 StyleFunc) StyleFunc {
 	return func(s Style) Style { return f2(fn(s)) }
 }
@@ -33,6 +51,24 @@ var (
 	HexColor = color.NewHexColor
 	RGBColor = color.NewRGBColor
 )
+
+// Toggle specs for the remaining VT attributes. Like Bold and Underline,
+// each is a bool spec accepted by every element.
+type (
+	Blink         bool
+	Dim           bool
+	Italic        bool
+	Overline      bool
+	Reverse       bool
+	StrikeThrough bool
+)
+
+func (Blink) spec()         {}
+func (Dim) spec()           {}
+func (Italic) spec()        {}
+func (Overline) spec()      {}
+func (Reverse) spec()       {}
+func (StrikeThrough) spec() {}
 
 func towards128(x, n int32) (int32, int32) {
 	if x > 128 {

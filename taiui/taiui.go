@@ -30,13 +30,26 @@ taiui theory: UI = pure Element value derived from state.
   grids can render (character terminals, web views, native UIs). Frame.Equal
   lets a screen detect an unchanged frame and skip repainting.
 - Rect provides box-model layout (margin + padding) with optional fill.
+  Fill paints a background in the box cells that no child occupies, so
+  children render over it and wide grapheme clusters keep their trailing
+  columns.
+- Row and Column provide flex layout along their axis: each child receives
+  a share of the box proportional to its Weighted weight (default 1),
+  tiling the content area without overlaps or gaps; the last child absorbs
+  rounding. The box model and fill behave as in Rect, with fill covering
+  the padding ring around the tiled content.
 - Text provides aligned multi-line rendering with per-position StyleFunc
   support. Lines are segmented into grapheme clusters (uax29): a cluster
   renders as one cell carrying its base and combining runes, and advances
   by its display width, so combining sequences and ZWJ emoji occupy their
-  real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes.
+  real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes. With
+  Wrap, lines word-wrap to the box width: breaks fall at space runs,
+  words wider than the box hard-break at cluster boundaries, and a cluster
+  never splits across lines.
 - VerticalScroll renders a child into a virtually unbounded column and
-  crops to the visible window, with crop-count indicators.
+  crops to the visible window, clamping the view to the content extent.
+  Crop-count indicators at the window edges, and an optional Scrollbar
+  thumb at the right edge, communicate the view position.
 - FrameBuffer renders offscreen content: the content is data state, and
   rendering is a pure read of it.
 - The exported API is a minimal facade: spec types, constructors, and

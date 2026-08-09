@@ -30,3 +30,14 @@ func displayWidthOptions() displaywidth.Options {
 	}
 	return displaywidth.Options{}
 }
+
+// clusterWidth returns the display width of the grapheme cluster formed by
+// mainc and its combining runes. Combining runes can change the width (an
+// emoji variation selector widens its base), so the whole cluster is
+// measured.
+func clusterWidth(options displaywidth.Options, mainc rune, combc []rune) int {
+	if len(combc) == 0 {
+		return options.Rune(mainc)
+	}
+	return options.String(string(mainc) + string(combc))
+}

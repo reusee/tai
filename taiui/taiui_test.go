@@ -1,8 +1,10 @@
 package taiui
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 	"github.com/reusee/dscope"
 )
@@ -35,6 +37,18 @@ func (s *fakeScreen) lastCell(x, y int) FrameCell {
 
 func newRootScope(root Root) Scope {
 	return dscope.New(func() Root { return root })
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRender(t *testing.T) {
@@ -283,5 +297,297 @@ func TestVerticalScrollCombc(t *testing.T) {
 	cell := screen.lastCell(0, 1)
 	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
 		t.Fatalf("scroll dropped combining runes: %+v", cell)
+	}
+}
+
+func TestWrapLine(t *testing.T) {
+	options := displaywidth.Options{}
+	if got := wrapLine("hello", 10, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("short line: got %q", got)
+	}
+	if got := wrapLine("hello", 5, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("exact fit: got %q", got)
+	}
+	if got := wrapLine("hello world", 8, options); !sameStrings(got, []string{"hello", "world"}) {
+		t.Fatalf("space break: got %q", got)
+	}
+	if got := wrapLine("", 10, options); !sameStrings(got, []string{""}) {
+		t.Fatalf("empty line: got %q", got)
+	}
+	if got := wrapLine("hello", 0, options); len(got) != 0 {
+		t.Fatalf("zero width: got %q", got)
+	}
+}
+
+func TestWrapLineCluster(t *testing.T) {
+	options := displaywidth.Options{}
+	// Wide clusters hard-break at cluster boundaries: cluster(2) + 'x'(1)
+	// fits in 3 columns, then 'y' overflows to the next line.
+	got := wrapLine("\U0001F469\u200d\U0001F4BBxy", 3, options)
+	if !sameStrings(got, []string{"\U0001F469\u200d\U0001F4BBx", "y"}) {
+		t.Fatalf("cluster break: got %q", got)
+	}
+	// A cluster wider than the box occupies its own line.
+	got = wrapLine("\U0001F469\u200d\U0001F4BB", 1, options)
+	if !sameStrings(got, []string{"\U0001F469\u200d\U0001F4BB"}) {
+		t.Fatalf("wide cluster alone: got %q", got)
+	}
+}
+
+func TestTextWrapRender(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 8},
+		Text("one two three", Wrap(true)),
+	)})
+	Render(scope, screen)
+	// "one two three" (13 wide) wraps in an 8-wide box: "one two" on row 0,
+	// "three" on row 1.
+	if r := screen.cell(0, 0); r != 'o' {
+		t.Fatalf("expected 'o' at (0,0), got %v", r)
+	}
+	if r := screen.cell(4, 0); r != 't' {
+		t.Fatalf("expected 't' at (4,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != 't' {
+		t.Fatalf("expected 't' at (0,1), got %v", r)
+	}
+}
+
+func TestTextWrapHardBreak(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
+		Text("abcdefgh", Wrap(true)),
+	)})
+	Render(scope, screen)
+	// "abcdefgh" is one 8-wide word in a 4-wide box: it hard-breaks into
+	// "abcd" and "efgh".
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 'd' {
+		t.Fatalf("expected 'd' at (3,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != 'e' {
+		t.Fatalf("expected 'e' at (0,1), got %v", r)
+	}
+	if r := screen.cell(3, 1); r != 'h' {
+		t.Fatalf("expected 'h' at (3,1), got %v", r)
+	}
+}
+
+func TestFlexColumn(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Column(
+		Rect(Fill(true), Text("a")),
+		Rect(Fill(true), Text("b")),
+	)})
+	Render(scope, screen)
+	// Two equal children split the 25-row box: the first occupies rows
+	// 0..11, the second rows 12..24.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 11); r != ' ' {
+		t.Fatalf("expected filled ' ' at (0,11), got %v", r)
+	}
+	if r := screen.cell(0, 12); r != 'b' {
+		t.Fatalf("expected 'b' at (0,12), got %v", r)
+	}
+}
+
+func TestFlexRow(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Rect(Fill(true), Text("a")),
+		Rect(Fill(true), Text("b")),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(39, 0); r != ' ' {
+		t.Fatalf("expected filled ' ' at (39,0), got %v", r)
+	}
+	if r := screen.cell(40, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (40,0), got %v", r)
+	}
+}
+
+func TestFlexWeighted(t *testing.T) {
+	screen := newFakeScreen(90, 25)
+	scope := newRootScope(Root{Element: Row(
+		Rect(Fill(true), Text("a")),
+		Weighted(2, Rect(Fill(true), Text("b"))),
+	)})
+	Render(scope, screen)
+	// Weights 1 and 2 divide the 90 columns into 30 and 60.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(29, 0); r != ' ' {
+		t.Fatalf("expected filled ' ' at (29,0), got %v", r)
+	}
+	if r := screen.cell(30, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (30,0), got %v", r)
+	}
+}
+
+func TestFlexRounding(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Rect(Fill(true), Text("a")),
+		Rect(Fill(true), Text("b")),
+		Rect(Fill(true), Text("c")),
+	)})
+	Render(scope, screen)
+	// 80 / 3 = 26, so the first and second children get 26 columns and
+	// the last child absorbs the remaining 28.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(25, 0); r != ' ' {
+		t.Fatalf("expected filled ' ' at (25,0), got %v", r)
+	}
+	if r := screen.cell(26, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (26,0), got %v", r)
+	}
+	if r := screen.cell(52, 0); r != 'c' {
+		t.Fatalf("expected 'c' at (52,0), got %v", r)
+	}
+}
+
+func TestFlexBoxModel(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Margin(1),
+		Padding(1),
+		Fill(true),
+		Rect(Fill(true), Text("a")),
+		Rect(Fill(true), Text("b")),
+	)})
+	Render(scope, screen)
+	// The Row's margin and padding shrink the content area to x 2..77.
+	// The children split it evenly: first covers x 2..39, second x 40..77;
+	// the padding ring is filled, the outer margin stays unset.
+	if r := screen.cell(2, 2); r != 'a' {
+		t.Fatalf("expected 'a' at (2,2), got %v", r)
+	}
+	if r := screen.cell(40, 2); r != 'b' {
+		t.Fatalf("expected 'b' at (40,2), got %v", r)
+	}
+	if r := screen.cell(1, 1); r != ' ' {
+		t.Fatalf("expected filled padding ring at (1,1), got %v", r)
+	}
+	if r := screen.cell(0, 0); r != 0 {
+		t.Fatalf("expected unset outer margin at (0,0), got %v", r)
+	}
+}
+
+func TestStyleHelpers(t *testing.T) {
+	if style := SameStyle.SetItalic(true)(vt.BaseStyle); style.Attr()&vt.Italic == 0 {
+		t.Fatal("SetItalic(true) did not set italic")
+	}
+	if style := SameStyle.SetStrikeThrough(true)(vt.BaseStyle); style.Attr()&vt.StrikeThrough == 0 {
+		t.Fatal("SetStrikeThrough(true) did not set strike-through")
+	}
+	if style := SameStyle.SetDim(true)(vt.BaseStyle); style.Attr()&vt.Dim == 0 {
+		t.Fatal("SetDim(true) did not set dim")
+	}
+	if style := SameStyle.SetReverse(true)(vt.BaseStyle); style.Attr()&vt.Reverse == 0 {
+		t.Fatal("SetReverse(true) did not set reverse")
+	}
+	if style := SameStyle.SetBlink(true)(vt.BaseStyle); style.Attr()&vt.Blink == 0 {
+		t.Fatal("SetBlink(true) did not set blink")
+	}
+	if style := SameStyle.SetOverline(true)(vt.BaseStyle); style.Attr()&vt.Overline == 0 {
+		t.Fatal("SetOverline(true) did not set overline")
+	}
+	if style := SameStyle.SetBold(true).SetBold(false)(vt.BaseStyle); style.Attr()&vt.Bold != 0 {
+		t.Fatal("SetBold(false) did not clear bold")
+	}
+}
+
+func TestStyleSpecsRender(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a", Italic(true), Reverse(true))})
+	Render(scope, screen)
+	cell := screen.lastCell(0, 0)
+	if cell.Style.Attr()&vt.Italic == 0 {
+		t.Fatal("Italic(true) spec had no effect")
+	}
+	if cell.Style.Attr()&vt.Reverse == 0 {
+		t.Fatal("Reverse(true) spec had no effect")
+	}
+}
+
+func TestVerticalScrollEndClamp(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 1; i <= 19; i++ {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(Text(lines), 1000),
+	)})
+	Render(scope, screen)
+	// The view clamps to the content end: rows show lines 16..19. The top
+	// crop indicator " 15.. " covers the first columns of row 0.
+	if r := screen.cell(0, 0); r != ' ' {
+		t.Fatalf("expected top crop indicator at (0,0), got %v", r)
+	}
+	if r := screen.cell(6, 0); r != '6' {
+		t.Fatalf("expected line 16 visible after the crop indicator, got %v", r)
+	}
+	if r := screen.cell(0, 3); r != 'l' {
+		t.Fatalf("expected line 19 at row 3, got %v", r)
+	}
+	if r := screen.cell(6, 3); r != '9' {
+		t.Fatalf("expected line 19 at (6,3), got %v", r)
+	}
+}
+
+func TestVerticalScrollScrollbar(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 0; i < 40; i++ {
+		lines = append(lines, fmt.Sprintf("s%02d", i))
+	}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		VerticalScroll(Text(lines), 0, Scrollbar(true)),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(79, 0); r != '█' {
+		t.Fatalf("expected scrollbar thumb at (79,0), got %v", r)
+	}
+}
+
+func TestVerticalScrollNoScrollbarWhenFits(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		VerticalScroll(Text("a", "b", "c"), 0, Scrollbar(true)),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(79, 0); r != 0 {
+		t.Fatalf("expected no scrollbar thumb when content fits, got %v", r)
+	}
+}
+
+func TestRectFillWideCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(Fill(true), Text("\U0001F469\u200d\U0001F4BB"))})
+	Render(scope, screen)
+	// The wide cluster occupies two columns; fill must not paint the
+	// trailing column.
+	cell := screen.lastCell(1, 0)
+	if cell.Set {
+		t.Fatal("fill painted over the wide cluster's trailing column")
+	}
+	if cell := screen.lastCell(0, 0); cell.Rune != '\U0001F469' {
+		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
 	}
 }
