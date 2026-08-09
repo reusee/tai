@@ -30,6 +30,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	maxY := box.Top
 	type Cell struct {
 		Rune  rune
+		Combc []rune
 		Style Style
 	}
 	cells := make(map[int]map[int]Cell)
@@ -42,7 +43,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 			line = make(map[int]Cell)
 			cells[y] = line
 		}
-		line[x] = Cell{Rune: mainc, Style: st}
+		line[x] = Cell{Rune: mainc, Combc: combc, Style: st}
 	})
 	renderElement(v.child, elemBox, style, sub)
 	fromY := max(box.Top+v.offset-box.Height()/2, box.Top)
@@ -50,7 +51,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	for i := 0; i < box.Height(); i++ {
 		y := fromY + i
 		for x, cell := range cells[y] {
-			draw(x, y-numTopCrop, cell.Rune, nil, cell.Style)
+			draw(x, y-numTopCrop, cell.Rune, cell.Combc, cell.Style)
 		}
 	}
 	numBottomCrop := maxY - (fromY + box.Height()) + 1

@@ -4,6 +4,7 @@ import "sync"
 
 type frameBufferCell struct {
 	rune  rune
+	combc []rune
 	style Style
 }
 
@@ -35,7 +36,7 @@ func (c *FrameBufferContent) SetContent(x, y int, mainc rune, combc []rune, styl
 	if x < 0 || x >= c.width || y < 0 || y >= c.height {
 		return
 	}
-	c.cells[y*c.width+x] = &frameBufferCell{rune: mainc, style: style}
+	c.cells[y*c.width+x] = &frameBufferCell{rune: mainc, combc: combc, style: style}
 }
 
 var _ Element = _FrameBuffer{}
@@ -68,7 +69,7 @@ func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc) {
 			if cell == nil {
 				continue
 			}
-			draw(box.Left+x, box.Top+y, cell.rune, nil, cell.style)
+			draw(box.Left+x, box.Top+y, cell.rune, cell.combc, cell.style)
 		}
 	}
 }

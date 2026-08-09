@@ -27,10 +27,14 @@ taiui theory: UI = pure Element value derived from state.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
   Elements never call screen methods; any backend able to present cell
-  grids can render (character terminals, web views, native UIs).
+  grids can render (character terminals, web views, native UIs). Frame.Equal
+  lets a screen detect an unchanged frame and skip repainting.
 - Rect provides box-model layout (margin + padding) with optional fill.
-- Text provides aligned multi-line rendering with per-rune StyleFunc
-  support.
+- Text provides aligned multi-line rendering with per-position StyleFunc
+  support. Lines are segmented into grapheme clusters (uax29): a cluster
+  renders as one cell carrying its base and combining runes, and advances
+  by its display width, so combining sequences and ZWJ emoji occupy their
+  real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes.
 - VerticalScroll renders a child into a virtually unbounded column and
   crops to the visible window, with crop-count indicators.
 - FrameBuffer renders offscreen content: the content is data state, and
@@ -95,10 +99,10 @@ type Frame struct {
 // FrameCell is one cell of a Frame. Cells that no element drew have Set
 // false; screens render them as blank with the default style.
 type FrameCell struct {
-	Rune  rune
-	Combc []rune
-	Style Style
-	Set   bool
+	Rune  rune   // Rune is the base rune of the grapheme cluster in this cell.
+	Combc []rune // Combc are the combining runes that follow Rune within the cluster.
+	Style Style  // Style styles the cell.
+	Set   bool   // Set reports whether an element drew this cell.
 }
 
 func newFrame(width, height int) Frame {
@@ -119,6 +123,44 @@ func (f *Frame) setCell(x, y int, mainc rune, combc []rune, style Style) {
 		Style: style,
 		Set:   true,
 	}
+}
+
+// Equal reports whether f and o hold identical cells. Screens use it to
+// skip presenting an unchanged frame, mirroring change-based rendering in
+// terminal libraries.
+func (f Frame) Equal(o Frame) bool {
+	if len(f.Cells) != len(o.Cells) {
+		return false
+	}
+	for i := range f.Cells {
+		a := f.Cells[i]
+		b := o.Cells[i]
+		if a.Rune == b.Rune && a.Set == b.Set &&
+			sameStyle(a.Style, b.Style) && sameCombc(a.Combc, b.Combc) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func sameStyle(a, b Style) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(b)
+}
+
+func sameCombc(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Screen is a render target. Screens are independent of the scope and of the

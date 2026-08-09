@@ -7,6 +7,7 @@ go 1.26.1
 require (
 	cuelang.org/go v0.17.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/clipperhouse/displaywidth v0.11.0
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/gdamore/tcell v1.4.1
 	github.com/gdamore/tcell/v3 v3.4.1
@@ -33,7 +34,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chzyer/readline v1.5.1 // indirect
-	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.3 // indirect

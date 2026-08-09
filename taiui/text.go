@@ -1,7 +1,12 @@
 package taiui
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
+// OffsetStyleFunc styles a text position by its rune offset within the
+// line. Offsets count runes, including the combining runes of clusters.
 type OffsetStyleFunc func(int) StyleFunc
 
 var _ Element = _Text{}
@@ -60,37 +65,42 @@ func renderText(t _Text, box Box, style Style, draw drawFunc) {
 	box = t.effectiveBox(box)
 	style = t.styled(style)
 
+	options := displayWidthOptions()
 	maxY := box.Bottom - t.padding[2]
 	for i, line := range t.lines {
-		runes := []rune(line)
-		var left int
-		switch t.align {
-		case AlignLeft:
-			left = box.Left + t.padding[3]
-		case AlignRight:
-			left = box.Right - t.padding[1] - RunesDisplayWidth(runes)
-		case AlignCenter:
-			left = (box.Left+box.Right)/2 - RunesDisplayWidth(runes)/2
-		}
-		for left < box.Left && len(runes) > 0 {
-			r := runes[0]
-			runes = runes[1:]
-			left += RuneDisplayWidth(r)
-		}
 		y := box.Top + t.padding[0] + i
-		for runeIdx, r := range runes {
+		if y >= maxY {
+			break
+		}
+		left := box.Left + t.padding[3]
+		switch t.align {
+		case AlignRight:
+			left = box.Right - t.padding[1] - options.String(line)
+		case AlignCenter:
+			left = (box.Left+box.Right)/2 - options.String(line)/2
+		}
+		runeIdx := 0
+		g := options.StringGraphemes(line)
+		for g.Next() {
+			cluster := g.Value()
+			width := g.Width()
+			clusterRunes := strings.Count(cluster, "") - 1
+			if left < box.Left {
+				left += width
+				runeIdx += clusterRunes
+				continue
+			}
 			if left >= box.Right {
 				break
 			}
-			if y > maxY {
-				continue
-			}
+			mainc, combc := splitCluster(cluster)
 			s := style
 			if t.offsetStyleFunc != nil {
 				s = t.offsetStyleFunc(runeIdx)(s)
 			}
-			draw(left, y, r, nil, s)
-			left += RuneDisplayWidth(r)
+			draw(left, y, mainc, combc, s)
+			left += width
+			runeIdx += clusterRunes
 		}
 		if t.fill {
 			for left < box.Right {
@@ -99,4 +109,19 @@ func renderText(t _Text, box Box, style Style, draw drawFunc) {
 			}
 		}
 	}
+}
+
+// splitCluster separates a grapheme cluster into its base rune and the
+// combining runes that follow it.
+func splitCluster(cluster string) (rune, []rune) {
+	var base rune
+	var combc []rune
+	for i, r := range cluster {
+		if i == 0 {
+			base = r
+		} else {
+			combc = append(combc, r)
+		}
+	}
+	return base, combc
 }

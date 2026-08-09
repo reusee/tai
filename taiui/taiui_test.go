@@ -28,6 +28,11 @@ func (s *fakeScreen) cell(x, y int) rune {
 	return frame.Cells[y*frame.Width+x].Rune
 }
 
+func (s *fakeScreen) lastCell(x, y int) FrameCell {
+	frame := s.frames[len(s.frames)-1]
+	return frame.Cells[y*frame.Width+x]
+}
+
 func newRootScope(root Root) Scope {
 	return dscope.New(func() Root { return root })
 }
@@ -163,5 +168,120 @@ func TestVerticalScroll(t *testing.T) {
 	}
 	if r := screen.cell(0, 1); r != ' ' {
 		t.Fatalf("expected bottom crop indicator at row 1, got %v", r)
+	}
+}
+
+func TestTextCombiningCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("e\u0301x")})
+	Render(scope, screen)
+
+	// e + combining acute is one grapheme cluster: one cell carrying the
+	// base rune and its combining rune, advancing by one column.
+	cell := screen.lastCell(0, 0)
+	if cell.Rune != 'e' {
+		t.Fatalf("expected 'e' as cluster base, got %v", cell.Rune)
+	}
+	if !sameCombc(cell.Combc, []rune{'\u0301'}) {
+		t.Fatalf("expected combining acute, got %v", cell.Combc)
+	}
+	if r := screen.cell(1, 0); r != 'x' {
+		t.Fatalf("expected 'x' one column after the cluster, got %v", r)
+	}
+}
+
+func TestTextZWJEmojiCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("x\U0001F469\u200d\U0001F4BBy")})
+	Render(scope, screen)
+
+	// Woman + ZWJ + laptop is one grapheme cluster; the ZWJ and laptop are
+	// combining runes of the cluster, and the cluster spans two columns.
+	cell := screen.lastCell(1, 0)
+	if cell.Rune != '\U0001F469' {
+		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
+	}
+	if !sameCombc(cell.Combc, []rune{'\u200d', '\U0001F4BB'}) {
+		t.Fatalf("expected ZWJ and laptop combining runes, got %v", cell.Combc)
+	}
+	if r := screen.cell(2, 0); r != 0 {
+		t.Fatalf("expected the wide cluster's second column blank, got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 'y' {
+		t.Fatalf("expected 'y' after the wide cluster, got %v", r)
+	}
+}
+
+func TestAmbiguousRunewidthEnv(t *testing.T) {
+	scope := newRootScope(Root{Element: Text("\u00A1x")})
+
+	t.Setenv("RUNEWIDTH_EASTASIAN", "")
+	s1 := newFakeScreen(80, 25)
+	Render(scope, s1)
+	if r := s1.cell(1, 0); r != 'x' {
+		t.Fatalf("expected ambiguous rune narrow by default, got %v at col 1", r)
+	}
+
+	t.Setenv("RUNEWIDTH_EASTASIAN", "1")
+	s2 := newFakeScreen(80, 25)
+	Render(scope, s2)
+	if r := s2.cell(1, 0); r != 0 {
+		t.Fatalf("expected wide ambiguous rune to skip col 1, got %v", r)
+	}
+	if r := s2.cell(2, 0); r != 'x' {
+		t.Fatalf("expected 'x' at col 2 with wide ambiguous rune, got %v", r)
+	}
+}
+
+func TestFrameBufferCombc(t *testing.T) {
+	content := NewFrameBufferContent(5, 5)
+	content.SetContent(0, 0, 'e', []rune{'\u0301'}, vt.BaseStyle)
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	Render(scope, screen)
+
+	cell := screen.lastCell(0, 0)
+	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
+		t.Fatalf("framebuffer dropped combining runes: %+v", cell)
+	}
+}
+
+func TestFrameEqual(t *testing.T) {
+	a := newFrame(2, 2)
+	b := newFrame(2, 2)
+	if !a.Equal(b) {
+		t.Fatal("empty frames should be equal")
+	}
+
+	a.setCell(0, 0, 'x', nil, vt.BaseStyle)
+	if a.Equal(b) {
+		t.Fatal("frames with different set cells should differ")
+	}
+	b.setCell(0, 0, 'x', nil, vt.BaseStyle)
+	if !a.Equal(b) {
+		t.Fatal("frames with same set cells should be equal")
+	}
+
+	b.setCell(0, 0, 'x', []rune{'\u0301'}, vt.BaseStyle)
+	if a.Equal(b) {
+		t.Fatal("frames with different combining runes should differ")
+	}
+	b.setCell(0, 0, 'x', nil, vt.BaseStyle.WithAttr(vt.Bold))
+	if a.Equal(b) {
+		t.Fatal("frames with different styles should differ")
+	}
+}
+
+func TestVerticalScrollCombc(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(Text("a", "e\u0301"), 0),
+	)})
+	Render(scope, screen)
+
+	cell := screen.lastCell(0, 1)
+	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
+		t.Fatalf("scroll dropped combining runes: %+v", cell)
 	}
 }
