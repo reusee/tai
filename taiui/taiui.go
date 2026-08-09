@@ -5,39 +5,50 @@ import (
 )
 
 const TheoryOfTaiUI = `
-taiui theory: UI = RenderFunc(State).
-- The UI is a pure function of the state; State is the set of values in the
-  dscope Scope. All element dependencies (RenderFunc parameters and spec
-  providers) are resolved from the scope, so the rendered UI is fully
-  determined by the state.
-- Elements are values of distinct types in the same dependency graph as the
-  state. A state change recomputes every dependent element definition through
-  the scope's machinery, so updates propagate automatically; there is no
-  per-element imperative update protocol.
-- Rendering is idempotent recomputation: rendering the element tree against
-  the scope holding the new state yields the updated UI.
-- RenderAll performs BFS: each element's RenderFunc is invoked through
-  scope.Call, collecting returned child Elements until exhausted.
-- Spec lists (values or functions) are resolved via scope; functions always act
-  as injectable initializers, whether or not they are anonymous.
+taiui theory: UI = pure Element value derived from state.
+- The scope stores state only: data state plus the root UI state (a Root
+  value wrapping the root element). Render context (boxes, styles, draw
+  callbacks) is never stored in the scope; screens are never bound in the
+  scope.
+- A state change is a scope fork: providers re-evaluate, the root element
+  changes, and the next render reflects the change. There is no imperative
+  element-update protocol.
+- Elements are pure values: constructors resolve spec lists at construction
+  time, and zero-argument function specs are evaluated eagerly. Dynamics
+  that depend on state are expressed as providers in the scope that build
+  the element tree.
+- Rendering resolves the root from the scope, interprets the element tree
+  into a Frame (a styled cell grid), and presents the frame to each screen.
+  Elements never call screen methods; any backend able to present cell
+  grids can render (character terminals, web views, native UIs).
 - Rect provides box-model layout (margin + padding) with optional fill.
-- Text provides aligned multi-line rendering with per-rune StyleFunc support.
-- Style composition uses StyleFunc chaining over a base vt.Style.
-- FrameBuffer renders offscreen content into the layout-supplied box. The
-  content is a data value, i.e. state: the application builds and mutates it,
-  and rendering is a pure read of it. Updating a framebuffer is therefore
-  updating state, never an imperative element-update call.
-- The exported API is a minimal facade: spec types, constructors, and style
-  helpers only; every concept has exactly one way to express it.
+- Text provides aligned multi-line rendering with per-rune StyleFunc
+  support.
+- VerticalScroll renders a child into a virtually unbounded column and
+  crops to the visible window, with crop-count indicators.
+- FrameBuffer renders offscreen content: the content is data state, and
+  rendering is a pure read of it.
+- The exported API is a minimal facade: spec types, constructors, and
+  style helpers only.
 `
 
 type Scope = dscope.Scope
 
+// Element is a pure, screen-independent description of UI state.
+// Implementations are data values: they describe what to render and never
+// interact with a screen or a scope.
 type Element interface {
-	RenderFunc() any
+	element()
 }
 
-type SetContent func(x int, y int, mainc rune, combc []rune, style Style)
+// Root is the root UI state in the scope: a wrapper around the root UI
+// element. The scope must provide exactly one Root value; Render resolves it
+// and renders its element to each screen. When the scope is forked with new
+// state, the Root provider re-evaluates, so the next Render reflects the
+// change.
+type Root struct {
+	Element Element
+}
 
 type Box struct {
 	Top    int
@@ -64,3 +75,50 @@ type (
 	Underline bool
 	Fill      bool
 )
+
+// Frame is the render output: a styled cell grid. Rendering interprets the
+// element tree into a frame, and screens present frames.
+type Frame struct {
+	Width  int
+	Height int
+	Cells  []FrameCell
+}
+
+// FrameCell is one cell of a Frame. Cells that no element drew have Set
+// false; screens render them as blank with the default style.
+type FrameCell struct {
+	Rune  rune
+	Combc []rune
+	Style Style
+	Set   bool
+}
+
+func newFrame(width, height int) Frame {
+	return Frame{
+		Width:  width,
+		Height: height,
+		Cells:  make([]FrameCell, width*height),
+	}
+}
+
+func (f *Frame) setCell(x, y int, mainc rune, combc []rune, style Style) {
+	if x < 0 || x >= f.Width || y < 0 || y >= f.Height {
+		return
+	}
+	f.Cells[y*f.Width+x] = FrameCell{
+		Rune:  mainc,
+		Combc: combc,
+		Style: style,
+		Set:   true,
+	}
+}
+
+// Screen is a render target. Screens are independent of the scope and of the
+// element model: rendering produces a Frame, and the screen presents it. Any
+// backend able to present styled cell grids can be a Screen: a character
+// terminal, a web view, or a native widget grid.
+type Screen interface {
+	Width() int
+	Height() int
+	Present(Frame)
+}

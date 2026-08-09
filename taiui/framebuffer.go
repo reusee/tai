@@ -27,47 +27,48 @@ func NewFrameBufferContent(width, height int) *FrameBufferContent {
 	}
 }
 
-// SetContent writes a cell into the content, using content-local coordinates.
+// SetContent writes a cell into the content, using content-local
+// coordinates. Writes outside the content bounds are ignored.
 func (c *FrameBufferContent) SetContent(x, y int, mainc rune, combc []rune, style Style) {
 	c.Lock()
 	defer c.Unlock()
-	i := y*c.width + x
-	if i >= 0 && i < len(c.cells) {
-		c.cells[i] = &frameBufferCell{rune: mainc, style: style}
+	if x < 0 || x >= c.width || y < 0 || y >= c.height {
+		return
 	}
+	c.cells[y*c.width+x] = &frameBufferCell{rune: mainc, style: style}
 }
 
 var _ Element = _FrameBuffer{}
 
+// _FrameBuffer renders framebuffer content into the box supplied by the
+// layout. It is a pure value: the content is data state, and rendering is a
+// pure read of it.
 type _FrameBuffer struct {
 	content *FrameBufferContent
 }
 
-// FrameBuffer renders framebuffer content into the box supplied by the
-// layout. The content is state: the rendered output is a pure function of the
-// content value, and placement is the layout's decision.
 func FrameBuffer(content *FrameBufferContent) _FrameBuffer {
 	return _FrameBuffer{content: content}
 }
 
-func (f _FrameBuffer) RenderFunc() any {
-	return func(box Box, setContent SetContent) {
-		content := f.content
-		if content == nil {
-			return
-		}
-		content.RLock()
-		defer content.RUnlock()
-		width := min(content.width, box.Width())
-		height := min(content.height, box.Height())
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				cell := content.cells[y*content.width+x]
-				if cell == nil {
-					continue
-				}
-				setContent(box.Left+x, box.Top+y, cell.rune, nil, cell.style)
+func (_FrameBuffer) element() {}
+
+func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc) {
+	content := f.content
+	if content == nil {
+		return
+	}
+	content.RLock()
+	defer content.RUnlock()
+	width := min(content.width, box.Width())
+	height := min(content.height, box.Height())
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			cell := content.cells[y*content.width+x]
+			if cell == nil {
+				continue
 			}
+			draw(box.Left+x, box.Top+y, cell.rune, nil, cell.style)
 		}
 	}
 }
