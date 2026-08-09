@@ -40,15 +40,13 @@ sees reasoning content on screen.
 
 Shell and Continue Blocks:
 Shell blocks allow the model to execute shell commands and receive the output
-as part of the next generation round. This enables autonomous testing, build
+as part of the next generation round, enabling autonomous testing, build
 verification, and codebase exploration. Shell block execution is disabled by
-default for safety; the -shell flag enables it.
-
-Continue blocks allow the model to self-drive multi-turn generation by emitting
-a continue block when the task is not yet complete. The system parses the
-continue block, extracts its body as the next user message, and automatically
-starts a new generation round. This enables the model to produce arbitrarily
-long outputs by chaining multiple rounds.
+default for safety; the -shell flag enables it. Continue blocks allow the
+model to self-drive multi-turn generation by emitting a continue block when
+the task is not yet complete: the system parses the continue block, extracts
+its body as the next user message, and automatically starts a new generation
+round, so the model can produce arbitrarily long outputs by chaining rounds.
 
 All block kinds are wired through the Component mechanism (see
 TheoryOfAIComponents), which couples each block kind's system prompt with its

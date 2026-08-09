@@ -5,17 +5,16 @@ import (
 )
 
 const TheoryOfXMLTokenizing = `
-Streaming XML tag tokenization parses XML opening, closing, and self-closing
-tags from potentially incomplete input. The tokenizer tracks quote state
-(single and double quotes) so that '>' characters inside attribute values do
-not prematurely terminate the tag. A tag is complete only when the
-terminating '>' is found outside any quoted value; otherwise the input is
-incomplete and the caller must wait for more data before retrying. This is
-essential for streaming block headers where attribute values may contain '>'
-(e.g., file paths or descriptions with comparison operators). XML entities
-(&amp;, &lt;, &gt;, &quot;, &apos;) in attribute values are unescaped to
-produce the final value. The tokenizer performs structural parsing only; it
-does not validate against any XML schema or DTD.
+Streaming XML tag tokenization parses XML opening, closing, and self-closing tags
+from potentially incomplete input. The tokenizer tracks quote state (single and
+double quotes) so that '>' characters inside attribute values do not prematurely
+terminate the tag. A tag is complete only when the terminating '>' is found outside
+any quoted value; otherwise the input is incomplete and the caller must wait for
+more data before retrying. This is essential for streaming block headers where
+attribute values may contain '>' (e.g., file paths or descriptions with comparison
+operators). XML entities (&amp;, &lt;, &gt;, &quot;, &apos;) in attribute values are
+unescaped to produce the final value. The tokenizer performs structural parsing
+only; it does not validate against any XML schema or DTD.
 `
 
 // xmlTagKind enumerates the types of XML tags the tokenizer can produce.

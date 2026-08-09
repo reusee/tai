@@ -28,17 +28,16 @@ todo.md: every interaction of the tai command can be recorded in detail into
 a single sqlite database file, and recorded sessions can be fed back to the
 model for analysis and improvement.
 
-Recording is centralized in the unified generation loop (loops.Run), which
-is used by every generation command (ai, next, go, any, goal), so one
+Recording is centralized in the unified generation loop (loops.Run), which is
+used by every generation command (ai, next, go, any, goal), so one
 instrumentation point covers them all. The loop implements the
 loops.InteractionRecorder contract: it reports the session's system prompt
 and initial contents, wraps the state so every content append is captured
 (user input, model output, reasoning thoughts, tool calls, retry feedback),
 reports every structured block parsed from the model output (change, shell,
 go-test, continue, summary, done), and reports malformed blocks via
-ParseError. Round lifecycle events — RoundStart, RoundSuccess,
-RoundTruncated, RoundError — delimit one generation pass through the phase
-chain.
+ParseError. Round lifecycle events — RoundStart, RoundSuccess, RoundTruncated,
+RoundError — delimit one generation pass through the phase chain.
 
 Recording is enabled by the -record flag (or the "record" config path) and
 disabled by -no-record. When disabled, the Recorder still opens the database

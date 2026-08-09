@@ -12,36 +12,46 @@ import (
 )
 
 const TheoryOfChangeBlockApplication = `
-Change block application translates parsed change blocks into byte-level edits on source files.
-When an ADD operation targets a spec nested inside a multi-spec declaration block (e.g.,
-const or var groups), the insertion point redirects to the parent block boundary to avoid
-producing invalid code inside the parentheses. The inserted body must remain a complete,
-self-contained declaration so the resulting source is valid Go.
-When the body lacks a declaration keyword (e.g., "foo = 1" instead of "const foo = 1"),
-getBodyInfo parses it by prepending the keyword, and ApplyChangeBlockStore strips the full
-prefix. For ADD_BEFORE and ADD_AFTER operations, the keyword must be re-added after
-findTargetRange returns, because the body is inserted as a standalone declaration outside
-the target's syntactic context. MODIFY operations handle the keyword separately inside
+Change block application translates parsed change blocks into byte-level edits
+on source files. When an ADD operation targets a spec nested inside a
+multi-spec declaration block (e.g., const or var groups), the insertion point
+redirects to the parent block boundary to avoid producing invalid code inside
+the parentheses. The inserted body must remain a complete, self-contained
+declaration so the resulting source is valid Go.
+
+When the body lacks a declaration keyword (e.g., "foo = 1" instead of "const
+foo = 1"), getBodyInfo parses it by prepending the keyword, and
+ApplyChangeBlockStore strips the full prefix. For ADD_BEFORE and ADD_AFTER
+operations, the keyword must be re-added after findTargetRange returns,
+because the body is inserted as a standalone declaration outside the target's
+syntactic context. MODIFY operations handle the keyword separately inside
 findTargetRange and are unaffected.
-WRITE bypasses declaration-level parsing and replaces the entire file content. Go files
-are still processed through goimports to keep imports synchronized after full replacement.
-DELETE with target * removes the entire file from the working tree, bypassing
-declaration-level parsing. This works for both Go and non-Go files. If the file does not
-exist, the operation is a no-op, consistent with the DELETE declaration behavior that
-returns nil when the target is not found.
-Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are rejected for Go files
-at the application layer because the model cannot reliably reproduce whitespace in find
-strings; structural operations must be used instead. See TheoryOfTextLevelOperations.
-Final output normalization ensures every written file ends with exactly one trailing
-newline, matching the convention enforced by go fmt.
-After building the modified Go source, parseAndFormat parses it immediately to catch
-syntax errors before goimports, which may report formatting-aware errors that obscure
-the root cause. On parse or goimports failure, an XML error log is written to the
-current directory recording the original source, change block, modified content, and
-error. See TheoryOfErrorLogging.
-Package detection (hasPackage) skips leading comments, including build constraint
-comments such as //go:build and // +build, to determine whether the source already
-contains a package clause.
+
+WRITE bypasses declaration-level parsing and replaces the entire file content.
+Go files are still processed through goimports to keep imports synchronized
+after full replacement. DELETE with target * removes the entire file from the
+working tree, bypassing declaration-level parsing. This works for both Go and
+non-Go files. If the file does not exist, the operation is a no-op, consistent
+with the DELETE declaration behavior that returns nil when the target is not
+found.
+
+Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are rejected for
+Go files at the application layer because the model cannot reliably reproduce
+whitespace in find strings; structural operations must be used instead. See
+TheoryOfTextLevelOperations.
+
+Final output normalization ensures every written file ends with exactly one
+trailing newline, matching the convention enforced by go fmt.
+
+After building the modified Go source, parseAndFormat parses it immediately to
+catch syntax errors before goimports, which may report formatting-aware errors
+that obscure the root cause. On parse or goimports failure, an XML error log
+is written to the current directory recording the original source, change
+block, modified content, and error. See TheoryOfErrorLogging.
+
+Package detection (hasPackage) skips leading comments, including build
+constraint comments such as //go:build and // +build, to determine whether the
+source already contains a package clause.
 `
 
 type BodyInfo struct {

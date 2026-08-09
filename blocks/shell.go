@@ -12,35 +12,30 @@ import (
 )
 
 const TheoryOfShellBlocks = `
-Shell blocks allow the model to execute shell commands and receive the output
-as part of the next generation round. This enables the model to run tests,
-check build status, explore the codebase, and verify its own changes without
-human intervention. Each shell block's command is executed in a subprocess
-with a timeout, and both stdout and stderr are captured and returned to the
-model as user content. The working directory is the project root.
-Shell block execution is disabled by default for safety; the -shell flag
-enables it. When enabled, the system prompt includes shell block instructions
-so the model knows how to emit shell blocks, and the generation loop executes
-any shell blocks found in model output, feeding results back as user content
-for the next round.
+Shell blocks execute shell commands in a subprocess with a timeout, capture both
+stdout and stderr, and return them as user content in the next generation round.
+The working directory is the project root. This enables the model to run tests,
+check build status, explore the codebase, and verify its own changes without human
+intervention. Execution is disabled by default for safety; the -shell flag enables
+it and adds the shell block instructions to the system prompt.
 
-The turn-based semantics are critical: shell output is delivered only in the
-next generation round, never in the response that contains the shell blocks.
-The model may emit multiple shell blocks in one response, but only when their
-commands are independent of one another: every shell block in a response
-executes only after the response ends, so no shell block can use the output
-of another shell block from the same response. Content that depends on shell
-output — whether a change block or a request-context block — must never be
-emitted in the same response as the shell blocks it depends on: the model
-would act on results it has not yet received, creating pointless loops. After
-the last shell block, the model should end the response with a summary block
-and wait for the results before emitting dependent content. The system prompt
-and restate prompt (ShellBlockSystemPrompt, ShellBlockRestatePrompt) state
-these rules explicitly so the model waits for the results before proceeding.
+The turn-based semantics are critical: shell output is delivered only in the NEXT
+round, never in the response that contains the shell blocks. The model may emit
+multiple shell blocks in one response, but only when their commands are independent
+of one another: every shell block in a response executes only after the response
+ends, so no shell block can use the output of another shell block from the same
+response. Content that depends on shell output — whether a change block or a
+request-context block — must never be emitted in the same response as the shell
+blocks it depends on: the model would act on results it has not yet received,
+creating pointless loops. After the last shell block, the model should end the
+response with a summary block and wait for the results before emitting dependent
+content. The system prompt and restate prompt (ShellBlockSystemPrompt,
+ShellBlockRestatePrompt) state these rules explicitly so the model waits for the
+results before proceeding.
 
 Shell command validation is handled by the security package
-(security.ValidateShellCommand), which enforces a command allowlist via
-AST-level parsing. See security.TheoryOfShellSecurity for the security model.
+(security.ValidateShellCommand), which enforces a command allowlist via AST-level
+parsing. See security.TheoryOfShellSecurity for the security model.
 `
 
 const ShellBlockSystemPrompt = `

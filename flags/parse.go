@@ -15,19 +15,15 @@ var flagType = reflect.TypeFor[Flag]()
 
 const TheoryOfFlagParsing = `
 Flag types are discovered from the initial scope and keyed by their Flag.Keys
-identifiers for argument matching. Each key maps to a human-readable description
-used in usage output.
-
-Duplicate key detection prevents two flag types from registering the same key.
-Each iteration resolves the current flag value from the live scope, enabling
-accumulating flags to observe values produced by earlier iterations within the
-same parse pass.
-
-A flag's Handle method receives the matched key so flags with multiple keys can
-distinguish invocations, and transforms remaining args into a new def passed
-directly to scope.Fork.
-
-Help keys (-help, --help, -h) are checked before the main parse loop.
+identifiers for argument matching; each key maps to a human-readable
+description used in usage output. Duplicate key detection prevents two flag
+types from registering the same key. Each iteration resolves the current flag
+value from the live scope, enabling accumulating flags to observe values
+produced by earlier iterations within the same parse pass. A flag's Handle
+method receives the matched key so flags with multiple keys can distinguish
+invocations, and transforms remaining args into a new def passed directly to
+scope.Fork. Help keys (-help, --help, -h) are checked before the main parse
+loop.
 `
 
 // ErrHelp is returned by Parse when a help flag (-help, --help, or -h) is

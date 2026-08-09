@@ -31,10 +31,9 @@ conflict error. A file with no recorded time has no baseline and is
 written unconditionally, recording the post-write mtime. Repeated writes
 to the same file compare against the newly recorded time and update it,
 so a session that applies several changes to one file stays consistent.
-
 Rename preserves the tracked time because rename preserves the file's
-mtime. Remove drops the tracker entry so a later recreation of the path
-is treated as a fresh file with no baseline.
+mtime; Remove drops the entry so a later recreation of the path is a
+fresh file with no baseline.
 
 mtime is an optimistic-lock heuristic, not a strong guarantee: a file
 modified and restored to the exact same mtime evades detection, and
@@ -46,15 +45,16 @@ file touched by another process between two of our writes.
 const TheoryOfInMemoryApply = `
 In-memory apply buffers change block modifications in a MemoryStore during
 streaming, deferring disk writes until the round succeeds. This achieves two
-goals simultaneously: (1) early error detection — a change block that fails
-to apply (invalid target, malformed code) stops generation immediately, and
-(2) filesystem consistency on retry — when a round is retried (no completion
-block), the MemoryStore is reset, discarding all changes without touching the
-disk. Only after a round succeeds are the in-memory changes flushed to disk
-in a single batch, so the disk is never left in a partially modified state
-by an interrupted round. Subsequent change blocks targeting the same file
-within a round use the in-memory content as the base, not the disk content,
-so multi-block edits to the same file are applied correctly within the round.
+goals simultaneously: early error detection — a change block that fails to
+apply (invalid target, malformed code) stops generation immediately — and
+filesystem consistency on retry — when a round is retried (no completion
+block), the MemoryStore is reset, discarding all changes without touching
+the disk. Only after a round succeeds are the in-memory changes flushed to
+disk in a single batch, so the disk is never left in a partially modified
+state by an interrupted round. Subsequent change blocks targeting the same
+file within a round use the in-memory content as the base, not the disk
+content, so multi-block edits to the same file are applied correctly within
+the round.
 `
 
 // FileStore abstracts file operations for change block application.
@@ -300,9 +300,9 @@ context with unchanged lines when a large file has small localized changes,
 wasting the review budget and diluting attention. Each changed region
 therefore carries a bounded window of unchanged context lines around it,
 matching the familiar git diff -U30 output, and hunks whose windows overlap
-are merged like git does. The window size is set by diffContextLines in
-this file. New and deleted files are exempt: every line is new or removed,
-so the full content is shown, exactly as git diff does for such files.
+are merged like git does. The window size is set by diffContextLines in this
+file. New and deleted files are exempt: every line is new or removed, so the
+full content is shown, exactly as git diff does for such files.
 `
 
 // diffContextLines is the number of unchanged context lines shown around

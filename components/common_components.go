@@ -26,9 +26,9 @@ across all generation commands.
 
 The shell component is bounded by maxShellRounds and the continue component by
 maxContinueRounds. Both produce output that is fed back to the model, so a
-model that keeps emitting blocks of either kind would otherwise loop forever
-in unattended operation. The bounds are deliberately generous — shell commands
-are often part of legitimate iterative workflows, and continue blocks are the
+model that keeps emitting blocks of either kind would otherwise loop forever in
+unattended operation. The bounds are deliberately generous — shell commands are
+often part of legitimate iterative workflows, and continue blocks are the
 transport for multi-round task decomposition (plan mode) — so normal use is
 unaffected while a runaway model is stopped with a clear error. Exceeding a
 bound aborts the run; the goal command surfaces the error per loop and starts

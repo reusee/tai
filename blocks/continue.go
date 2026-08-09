@@ -5,21 +5,19 @@ import (
 )
 
 const TheoryOfContinueBlocks = `
-Continue blocks are a generic self-prompting mechanism. When a response ends
-with a continue block, the system extracts the block body, feeds it back
-verbatim as the next user message, and automatically starts a new generation
-round. By chaining rounds this way, the model can produce arbitrarily long
-outputs without hitting the single-request generation limit. Summary blocks
-and continue blocks can coexist in the same response: the summary block marks
-the round as complete, and the continue block prompts the next round's input.
-When both are present, the summary block must appear before the continue block,
-and the continue block must be the last block in the response.
+Continue blocks are a generic self-prompting mechanism: when a response ends
+with a continue block, the system extracts the block body, feeds it back verbatim
+as the next user message, and automatically starts a new generation round.
+Chained rounds let the model produce arbitrarily long outputs without hitting the
+single-request generation limit. Summary and continue blocks coexist in one
+response — the summary marks the round complete, the continue prompts the next
+round's input — with the summary before the continue and the continue last.
 
-The mechanism is orthogonal to the conventions layered on top of it. The body
-is opaque to the mechanism: it carries no meaning beyond being fed back as
-user input. Task lists, planning rounds, and decomposition strategies are
-extensions that use continue blocks as their transport; they define what the
-body contains, but they do not define the mechanism.
+The mechanism is orthogonal to the conventions layered on top of it: the body is
+opaque to the mechanism, carrying no meaning beyond being fed back as user input.
+Task lists, planning rounds, and decomposition strategies are extensions that use
+continue blocks as transport; they define what the body contains, not the
+mechanism.
 `
 
 const ContinueBlockSystemPrompt = `

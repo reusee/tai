@@ -23,12 +23,12 @@ const TheoryOfTextLevelOperations = `
 Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) enable partial
 edits to non-Go text files without structural parsing. They use a find
 attribute to locate a unique string anchor in the file and apply the edit
-relative to that anchor. The find string must appear exactly once in the
-file; if it appears zero or multiple times, the operation fails with an
-error, and the model must either choose a more specific (longer) find string
-or fall back to WRITE for full-file replacement.
+relative to that anchor. The find string must appear exactly once; if it
+appears zero or multiple times, the operation fails with an error, and the
+model must either choose a more specific (longer) find string or fall back to
+WRITE for full-file replacement.
 
-REPLACE substitutes the found string with the block body. An empty body
+REPLACE substitutes the found string with the block body; an empty body
 effectively deletes the found text. INSERT_BEFORE inserts the body before the
 found anchor; INSERT_AFTER inserts it after.
 

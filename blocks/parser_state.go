@@ -9,13 +9,17 @@ import (
 
 const TheoryOfParserState = `
 ParserState is a State decorator that incrementally parses heredoc-delimited blocks
-from streamed model output. It sits between the generator and the downstream consumer,
-intercepting text parts appended by the model to extract structured blocks (e.g., change
-and finish blocks) without losing non-block prose. Parsed blocks are passed to a
-BlockHandler callback that is responsible for all block management — processing,
-storing, or discarding blocks. ParserState itself does not store blocks. This ensures
-that all state modifications happen exclusively through the State interface methods
-(AppendContent, Flush), with no extra methods that bypass the immutable state chain.
+from streamed model output. It sits between the generator and the downstream
+consumer, intercepting text parts appended by the model to extract structured blocks
+(e.g., change and finish blocks) without losing non-block prose. Only Text parts are
+collected into the parse buffer; Thought parts (model reasoning) are explicitly
+excluded because they may contain illustrative block markers that are not actual
+block output, and parsing them would produce spurious blocks. Parsed blocks are
+passed to a BlockHandler callback that is responsible for all block management —
+processing, storing, or discarding blocks. ParserState itself does not store blocks.
+This ensures that all state modifications happen exclusively through the State
+interface methods (AppendContent, Flush), with no extra methods that bypass the
+immutable state chain.
 
 ParserState is an immutable data structure: AppendContent and Flush return a new
 *ParserState rather than mutating in place. This preserves snapshot integrity for
@@ -25,69 +29,63 @@ caller (via the handler closure), rollback consistency is achieved by resetting 
 external block collection alongside other external state (e.g., MemoryStore) in the
 retry callback.
 
-Only Text parts are collected into the parse buffer; Thought parts (model reasoning) are
-explicitly excluded because they may contain illustrative block markers that are not actual
-block output, and parsing them would produce spurious blocks.
-
-The parser is incremental: each AppendContent call appends new text to the buffer and
-re-attempts to parse complete blocks. A block is only complete when a matching
+The parser is incremental: each AppendContent call appends new text to the buffer
+and re-attempts to parse complete blocks. A block is only complete when a matching
 DELIMITER closing line is found. A line that does not match the delimiter is treated
 as body content and does not close the block. If no matching closing line is found,
 the block is unclosed (incomplete) and left in the buffer for the next AppendContent
-call, because streaming output may arrive in fragments. Text preceding the first block
-marker is prose and is discarded once a block is found, because ParserState's purpose is
-block extraction, not prose preservation.
+call, because streaming output may arrive in fragments. Text preceding the first
+block marker is prose and is discarded once a block is found, because ParserState's
+purpose is block extraction, not prose preservation.
 
-At Flush, an unclosed block (opening marker with no matching closing line) is collected
-as a parse error (see TheoryOfParseErrorCollection) rather than treated as a fatal error,
-because the caller can feed the error back to the model for self-correction. Complete
-blocks remaining in the buffer are discarded (not stored), because the handler is
-responsible for block management and should have been called during AppendContent. Any
-remaining unparseable fragments are discarded so content appended after Flush (e.g., from
-a subsequent generation cycle) is never combined with pre-Flush content within the same
-block. Delimiters are parsed as the text between << and the first whitespace or <
-character; this ensures the delimiter is extracted correctly regardless of what follows
-it on the opening line.
+At Flush, an unclosed block (opening marker with no matching closing line) is
+collected as a parse error (see TheoryOfParseErrorCollection) rather than treated as
+a fatal error, because the caller can feed the error back to the model for
+self-correction. Complete blocks remaining in the buffer are discarded (not stored),
+because the handler is responsible for block management and should have been called
+during AppendContent. Any remaining unparseable fragments are discarded so content
+appended after Flush (e.g., from a subsequent generation cycle) is never combined
+with pre-Flush content within the same block. Delimiters are parsed as the text
+between << and the first whitespace or < character; this ensures the delimiter is
+extracted correctly regardless of what follows it on the opening line.
 `
 
 const TheoryOfParseErrorCollection = `
-Parse errors — blocks whose opening tag is malformed or whose closing
-delimiter is missing or malformed — are collected during streaming rather
-than treated as fatal generation errors. A block that cannot be parsed is
-malformed or truncated model output, not a system failure: the model may
-correct it given the right feedback. Collecting the error with the block
-kind, boundary, line number, partial content, and collision hints and
-feeding it back as user content in the next round gives the model a
-concrete target for self-correction, while successfully parsed blocks
-continue to be processed normally. A line with a valid three-character Han
-delimiter followed by an invalid or incomplete XML opening tag is a
-malformed block, not prose: the delimiter marks the line as an intended
-block opening, so the model must be told what went wrong rather than having
-its intended block silently dropped. Complete blocks that follow a malformed
-block in the same buffer are not reachable during AppendContent, because the
-parser stops at the first malformed block; Flush handles them so valid
-blocks are never lost because a preceding block was malformed. This
-self-healing capability is especially important in unattended tasks where no
-human is available to intervene. The correction budget is cumulative per
-run: the loop (see TheoryOfLoops) feeds parse errors back only for a bounded
-number of rounds since the last clean round, and the feedback states the
-attempt number so the model knows when it is on its final attempt. When the
-budget is exhausted, feedback stops and the uncorrected parse errors are
-surfaced via loops.Result.ParseErrors, so a persistently malformed model
-cannot restart the correction cycle indefinitely and unattended callers can
+Parse errors — blocks whose opening tag is malformed or whose closing delimiter is
+missing or malformed — are collected during streaming rather than treated as fatal
+generation errors. A block that cannot be parsed is malformed or truncated model
+output, not a system failure: the model may correct it given the right feedback.
+Collecting the error with the block kind, boundary, line number, partial content,
+and collision hints and feeding it back as user content in the next round gives the
+model a concrete target for self-correction, while successfully parsed blocks
+continue to be processed normally. A line with a valid three-character Han delimiter
+followed by an invalid or incomplete XML opening tag is a malformed block, not
+prose: the delimiter marks the line as an intended block opening, so the model must
+be told what went wrong rather than having its intended block silently dropped.
+Complete blocks that follow a malformed block in the same buffer are not reachable
+during AppendContent, because the parser stops at the first malformed block; Flush
+handles them so valid blocks are never lost because a preceding block was malformed.
+This self-healing capability is especially important in unattended tasks where no
+human is available to intervene.
+
+The correction budget is cumulative per run: the loop (see TheoryOfLoops) feeds
+parse errors back only for a bounded number of rounds since the last clean round,
+and the feedback states the attempt number so the model knows when it is on its
+final attempt. When the budget is exhausted, feedback stops and the uncorrected
+parse errors are surfaced via loops.Result.ParseErrors, so a persistently malformed
+model cannot restart the correction cycle indefinitely and unattended callers can
 detect silent change loss.
 
-The partial content included in the error message is truncated when the block
-body is large: a malformed block can contain an arbitrarily large body (e.g.,
-a model emitting a large file before being cut off), and including the full
-body would make the error message enormous, wasting context in the
-self-correction round. The truncated message keeps the head — the opening
-marker, which identifies the block — and the tail — where the content ended,
-where the closing marker was expected — so the model still has a concrete
-target for correction. The error also carries the 1-based line number of the
-opening marker, so the model can locate the malformed block in its own
-output even when the content is truncated. The full content remains available
-in BlockParseError.Content for programmatic inspection; only the formatted
+The partial content included in the error message is truncated when the block body
+is large: a malformed block can contain an arbitrarily large body (e.g., a model
+emitting a large file before being cut off), and including the full body would make
+the error message enormous, wasting context in the self-correction round. The
+truncated message keeps the head — the opening marker, which identifies the block —
+and the tail — where the content ended, where the closing marker was expected — so
+the model still has a concrete target for correction. The error also carries the
+1-based line number of the opening marker, so the model can locate the malformed
+block in its own output even when the content is truncated. The full content remains
+available in BlockParseError.Content for programmatic inspection; only the formatted
 error string is truncated.
 `
 

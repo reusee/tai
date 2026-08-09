@@ -17,31 +17,32 @@ import (
 )
 
 const TheoryOfRequestContext = `
-The request-context block allows the model to request additional context during
-a generation cycle. When the model needs more information (e.g., file contents or
-network resources), it emits a request-context block containing one or more XML
-tags describing the desired context. The generate loop detects these blocks via
-ParserState, fetches the requested data, appends it as user content, and initiates
-another generation request. This block is strictly read-only: it must not produce
-any side effects such as writing files or making state-changing API calls. The
-order of XML tags within the block determines the order of context parts in the
-appended user message. File path handling permits absolute paths as explicit
-references while rejecting relative paths that escape the current directory via
-parent-directory traversal, balancing flexibility with a basic sanity check.
-Absolute file paths are resolved relative to the root directory when within it,
-or read directly from the filesystem when outside it, so the model can reference
-files in system directories like /tmp.
-The fetch tag supports optional HTTP headers (user-agent, referer, cookie) so the
-model can access resources that require them, but remains read-only (HTTP GET).
-The glob tag lists files matching a pattern without reading their contents,
-allowing the model to discover files before requesting their content. It applies
-the same path sanity check as the file tag. Glob patterns are resolved relative
-to the root directory so that doublestar.FilepathGlob searches within the root's
-tree rather than the process's current working directory. The glob tag supports
-** (globstar) patterns for recursive directory traversal via doublestar. When **
-appears as a complete path segment, it matches zero or more directories.
-Only request-context blocks are consumed from ParserState during context processing;
-blocks of other kinds are preserved so they remain available after the context is provided.
+The request-context block lets the model request additional context during a
+generation cycle: it emits XML tags describing the desired context; the generate
+loop detects the block via ParserState, fetches the requested data, appends it as
+user content, and initiates another generation request. The block is strictly
+read-only: it must not produce any side effects such as writing files or making
+state-changing API calls. The order of XML tags within the block determines the
+order of context parts in the appended user message.
+
+The file tag permits absolute paths as explicit references while rejecting relative
+paths that escape the current directory via parent-directory traversal, balancing
+flexibility with a basic sanity check. Absolute paths are resolved relative to the
+root directory when within it, or read directly from the filesystem when outside
+it, so the model can reference files in system directories like /tmp. The fetch tag
+supports optional HTTP headers (user-agent, referer, cookie) so the model can access
+resources that require them, but remains read-only (HTTP GET). The glob tag lists
+files matching a pattern without reading their contents, allowing the model to
+discover files before requesting their content; it applies the same path sanity
+check as the file tag. Glob patterns are resolved relative to the root directory so
+that doublestar.FilepathGlob searches within the root's tree rather than the
+process's current working directory. The glob tag supports ** (globstar) patterns
+for recursive directory traversal via doublestar; when ** appears as a complete
+path segment, it matches zero or more directories.
+
+Only request-context blocks are consumed from ParserState during context
+processing; blocks of other kinds are preserved so they remain available after the
+context is provided.
 `
 
 const RequestContextSystemPrompt = `

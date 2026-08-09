@@ -24,97 +24,82 @@ import (
 // theories to prevent suggestions that rely on long-conversation patterns.
 const TheoryOfContextPhilosophy = `
 The system provides all context the model needs in a single generation
-request, rather than discovering it through multi-turn conversation. This
-single-shot approach sets the system apart from mainstream agentic agents
-that grow context through dialogue.
+request, not through multi-turn conversation. This single-shot approach sets
+it apart from agentic agents that grow context via dialogue.
 
-Upfront context construction: file contents, dependency graphs, system
-prompts, and task instructions are assembled before the first generation
-call. Pruning removes irrelevant files. Simplification strips function bodies
-and comments from non-focus packages. Token budgeting caps total input size.
-The model then reasons over the complete picture and produces changes ready
-for human review.
+Upfront construction: file contents, dependency graphs, system prompts, and
+task instructions are assembled before the first call. Pruning removes
+irrelevant files; simplification strips function bodies and comments from
+non-focus packages; token budgeting caps input size. The model reasons over
+the complete picture into changes ready for human review.
 
 Architectural constraints:
 
-- No long conversations. The system does not accumulate dialogue across
-  tasks. Each invocation builds fresh context from the filesystem state.
-  The ai command's interactive mode lets the user type messages across
-  turns, but each turn sends the full accumulated context to the model,
-  not a compressed fragment.
+- No long conversations. The system accumulates no dialogue across tasks;
+  each invocation builds fresh context from the filesystem state. The ai
+  command's interactive mode lets the user type messages across turns, but
+  each turn sends the full accumulated context, not a compressed fragment.
 
-- No conversation compression. The system never summarizes old dialogue to
-  free token budget. Context is managed solely through pruning, AST-level
+- No conversation compression. Old dialogue is never summarized to free
+  token budget; context is managed solely by pruning, AST-level
   simplification, and deterministic file ordering. Retry summarization
   (TheoryOfSummaryCompletionRetry in codes/generate.go) condenses truncated
-  output for one-shot error recovery; it does not persist as compressed
-  history. Thought summarization (TheoryOfThoughtsSummarize in
-  states/summarizer.go) writes to the user's screen for readability; it
-  never feeds back into the model as compressed context.
+  output for one-shot error recovery, not persistent history. Thought
+  summarization (TheoryOfThoughtsSummarize in states/summarizer.go) writes
+  to the user's screen for readability; it never feeds back as compressed
+  context.
 
 - No iterative discovery. The CodeProvider pipeline delivers all file and
-  code context upfront. The request-context block exists for external
-  resources unavailable at construction time (network fetches, glob
-  expansion), not as a substitute for upfront context.
+  code context upfront. Request-context blocks serve external resources
+  unavailable at construction time (network fetches, glob expansion), not
+  as a substitute for upfront context.
 
 - Multi-round generation is task decomposition, not conversation. Continue
-  blocks split large tasks into bounded rounds. Shell and go-test blocks
-  run autonomous verification. The generation loop executes tasks; it is
-  not a chatbot.
+  blocks split large tasks into bounded rounds; shell and go-test blocks run
+  autonomous verification. The loop executes tasks; it is not a chatbot.
 
-Features that assume a long-conversation model — growing context through
-dialogue, summarizing old turns to free budget, treating conversation
-history as a knowledge base — violate this philosophy and are out of scope.
+Features assuming a long-conversation model — dialogue-grown context, turns
+summarized to free budget, conversation history as knowledge base — violate
+this philosophy and are out of scope.
 `
 
 const TheoryOfLoops = `
 The loops package unifies the generation loop pattern across all generation
-commands (codes, ai, next). The core pattern is:
+commands (codes, ai, next). The core pattern:
 1. Wrap state with ParserState to collect blocks during streaming
 2. Execute the phase chain until done
 3. Unwrap ParserState to get the final state and collected blocks
 4. Process collected blocks through components (if any)
 5. Repeat until no components trigger or MaxRounds is reached
 
-The loop is designed around the concept of "rounds" and "retries":
-- A round is one pass through the phase chain, producing a set of blocks.
-- A retry is a re-execution of the phase chain within the same round, triggered
-  by a missing completion (no summary block) or an error after content output.
+A round is one pass through the phase chain, producing a set of blocks. A retry is
+a re-execution of the phase chain within the same round, triggered by a missing
+completion (no summary block) or an error after content output. Retries count as
+loops in round statistics.
 
-Retries are treated as loops in round statistics. When a round is truncated
-(no summary block or abnormal finish reason) and will be retried, the retry
-process (SummarizeIncomplete) produces both a summary of the truncated output
-and a continue block whose content is the essence of the truncated output.
-The summary is recorded as the truncated round's summary via
-OnRoundTruncated, so the truncated round appears as a separate loop in round
-statistics. The continue block's content is fed to the retry round as user
-input, framing the retry as a continuation consistent with the model's own
-continue block mechanism. The content is the summarizer's extraction of the
-truncated thinking's valuable conclusions — discoveries, decisions, and
-facts — so the retry round adopts them instead of re-deriving them, reducing
-the thinking it needs and lowering the chance of truncating again. See
+Retry on missing completion: a round without a summary block, or with an abnormal
+finish reason (e.g., "length" from max-token truncation), was truncated mid-stream
+— the generation limit hit before the model emitted its closing summary block, or
+the model emitted a summary and continued until cut off. The round is retried from
+the original pre-generation State. The retry process (SummarizeIncomplete)
+produces both a summary of the truncated output and a continue block whose content
+is the summarizer's extraction of the truncated thinking's valuable conclusions —
+discoveries, decisions, facts. The summary is recorded via OnRoundTruncated, so
+the truncated round appears as a separate loop in round statistics; the continue
+block's content is fed to the retry round as user input, framing the retry as a
+continuation consistent with the model's own continue block mechanism, letting the
+retry round adopt those conclusions instead of re-deriving them — reducing the
+thinking needed and lowering the chance of truncating again. See
 TheoryOfIncompleteOutputSummarization in codes/generate.go.
 
-Retry on missing completion:
-- When a round ends without a summary block, or when the finish reason
-  indicates abnormal termination (e.g., "length" from max-token truncation),
-  the model's output was likely truncated mid-stream — the generation limit
-  was reached before the model could emit its closing summary block, or the
-  model emitted a summary but continued generating and was cut off. In both
-  cases, the round is retried from the original pre-generation State.
-- The retry feedback states the current attempt number so the model knows
-  how much retry budget remains. See TheoryOfLoops.
+Retry on error: an error after content output retries from the state that includes
+the partial output, appending the error context and a summary of the partial output
+as user content. Errors before any content output do not retry.
 
-Retry on error:
-- When an error occurs after the model has output content, the loop retries
-  from the state that includes the partial output. The error context and a
-  summary of the partial output are appended as user content.
-- Errors that occur before any content is output do not trigger retry.
-
-Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3")
-so the model knows how much retry budget remains and can prioritize correcting
-the error. This is especially important in unattended operation, where no human
-can intervene when the budget is exhausted.
+Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3") so
+the model knows how much budget remains and can prioritize correcting the error —
+critical in unattended operation, where no human can intervene once the budget is
+exhausted.
 `
 
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"

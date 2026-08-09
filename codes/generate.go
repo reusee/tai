@@ -28,36 +28,32 @@ import (
 )
 
 const TheoryOfStreamingApply = `
-Change blocks are applied to an in-memory store (MemoryStore) as they are parsed
-from streamed model output, rather than directly to disk. This enables early
-error detection: if a change block fails to apply (e.g., invalid target,
-malformed code), the BlockHandler returns a *changes.ApplyError so the retry
-loop can provide change-block-specific guidance — the retry discards all change
-blocks from the failed attempt, so the model re-emits every intended change
-block — and routes the error through OnPhaseError like any other phase error.
-OnPhaseError summarizes any partial model output (thoughts or body text) before
-the retry (see TheoryOfSummaryRetryOnError). The MemoryStore is reset by the
-OnRoundStart callback on each retry, discarding the failed changes. When retries
-are exhausted, generation stops. The in-memory store also ensures filesystem
-consistency on retry: when a round is retried (missing completion block, a
-phase error, or an apply error), the MemoryStore is reset, discarding all
-changes without touching the disk. Only after a round succeeds are the
-in-memory changes flushed to disk in a single batch, so the disk is never left
-in a partially modified state by an interrupted round. Subsequent change
-blocks targeting the same file within a round use the in-memory content as the
-base, not the disk content, so multi-block edits to the same file are applied
-correctly within the round. The streaming apply is implemented via a
-BlockHandler callback on ParserState: when a complete change block is parsed
-during AppendContent, the handler applies it via changes.ApplyChangeBlockStore
-to the MemoryStore. The handler is built by changes.BuildChangeBlockHandler,
-sharing the change-application logic with the next command. Non-change blocks
-are collected by the handler into an external slice for post-phase processing
-by ProcessComponents. During Flush, the handler is not called for unclosed
-blocks, because they are incomplete (e.g., from truncated output) and applying
-them would cause errors. Successfully applied change blocks are consumed by
-the handler (not collected), so ProcessComponents finds no change blocks to
-re-apply. When the apply flag is disabled, no handler is set and all blocks
-are collected, preserving the no-apply behavior.
+Change blocks are applied to an in-memory MemoryStore as they are parsed from
+streamed model output, rather than directly to disk. The in-memory semantics —
+early error detection, reset on retry, single-batch flush on round success, and
+in-memory content as the base for subsequent same-file edits — are documented in
+changes.TheoryOfInMemoryApply.
+
+The streaming-specific mechanism is a BlockHandler callback on ParserState: when a
+complete change block is parsed during AppendContent, the handler applies it via
+changes.ApplyChangeBlockStore to the MemoryStore. The handler is built by
+changes.BuildChangeBlockHandler, sharing the change-application logic with the next
+command. If a change block fails to apply, the handler returns a *changes.ApplyError
+so the retry loop provides change-block-specific guidance — the retry discards all
+change blocks from the failed attempt, so the model must re-emit every intended
+change block — and routes the error through OnPhaseError like any other phase error,
+which summarizes partial model output before the retry (see
+TheoryOfSummaryRetryOnError). The MemoryStore is reset by the OnRoundStart callback
+on each retry, discarding failed changes; when retries are exhausted, generation
+stops.
+
+Non-change blocks are collected by the handler into an external slice for
+post-phase processing by ProcessComponents. Successfully applied change blocks are
+consumed by the handler (not collected), so ProcessComponents finds no change
+blocks to re-apply. During Flush the handler is not called for unclosed blocks —
+they are incomplete (e.g., truncated output) and applying them would produce
+errors. When the apply flag is disabled, no handler is set and all blocks are
+collected, preserving the no-apply behavior.
 `
 
 const maxRequestContextRounds = 5
@@ -67,25 +63,24 @@ const maxGoTestRounds = 10
 const maxRetriesForMissingSummary = 3
 
 const TheoryOfReviewLoop = `
-The review loop runs after the main generation loop (or after the goal
-command completes) when the -review flag is enabled. The review loop is
-skipped when the session produced no applied changes — an empty diff set.
-Without this, enabling -review on a session where the model emitted no
-change blocks (or changes were not applied, e.g., with -no-apply) would
-still initiate a wasteful review generation over an empty diff. The diff
-set is derived from the in-memory store's session originals, so it is
-empty exactly when no change blocks were applied to the working tree (see
-changes.TheoryOfInMemoryApply). When diffs exist, the review loop opens a
-fresh dscope scope so the latest filesystem state is loaded as context — the
-same reset mechanism the goal command uses per loop — and runs one
-generation session per configured review model, sequentially. Each review
-session replaces the original chat input with a review instruction
-("审核并修正这些改动") followed by the unified diff of all changes made
-through the MemoryStore during the main generation session. The review
-model works from an independent context and corrects potential errors in
-the changes, improving accuracy. Session originals are retained across
-round resets so the diff always reflects the full session delta, not only
-the last round. See changes.TheoryOfInMemoryApply.
+The review loop runs after the main generation loop (or after the goal command
+completes) when the -review flag is enabled. It is skipped when the session
+produced no applied changes — an empty diff set. Without this, enabling -review on
+a session where the model emitted no change blocks (or changes were not applied,
+e.g., with -no-apply) would still initiate a wasteful review generation over an
+empty diff. The diff set is derived from the in-memory store's session originals,
+so it is empty exactly when no change blocks were applied to the working tree (see
+changes.TheoryOfInMemoryApply). Session originals are retained across round resets
+so the diff always reflects the full session delta, not only the last round.
+
+When diffs exist, the review loop opens a fresh dscope scope so the latest
+filesystem state is loaded as context — the same reset mechanism the goal command
+uses per loop — and runs one generation session per configured review model,
+sequentially. Each review session replaces the original chat input with a review
+instruction ("审核并修正这些改动") followed by the unified diff of all changes made
+through the MemoryStore during the main generation session. The review model works
+from an independent context and corrects potential errors in the changes,
+improving accuracy.
 `
 
 type Generate func(ctx context.Context, output io.Writer) error
@@ -202,20 +197,16 @@ func buildUserPromptText(parts []generators.Part) string {
 }
 
 const TheoryOfRoundStatistics = `
-Round statistics are collected per round to provide visibility into token
-usage and duration. Each round produces a RoundStat entry with:
-- Round number (1-based)
-- Prompt tokens, completion tokens, thought tokens, cached tokens
-- Duration (from OnRoundStart to OnRoundSuccess)
-- Summary (from summary blocks in the round)
-
+Round statistics are collected per round to provide visibility into token usage
+and duration. Each round produces a RoundStat entry with the 1-based round number;
+prompt, completion, thought, and cached token counts; the duration (from
+OnRoundStart to OnRoundSuccess); and the summary from the round's summary blocks.
 Truncated rounds (no summary block) that are retried are recorded via
-OnRoundTruncated with the summary synthesized by the retry process, so they
-appear as separate loops in the statistics. The retry round itself is
-recorded by OnRoundSuccess when it completes successfully.
-
-The statistics are printed at the end of the session via a deferred call,
-so they are shown even when the session ends early due to an error.
+OnRoundTruncated with the summary synthesized by the retry process, so they appear
+as separate loops in the statistics; the retry round itself is recorded by
+OnRoundSuccess when it completes successfully. The statistics are printed at the
+end of the session via a deferred call, so they are shown even when the session
+ends early due to an error.
 `
 
 // RoundStat records per-round token usage (prompt, completion, thoughts,
@@ -483,95 +474,89 @@ func summarizeRetryState(
 }
 
 const TheoryOfSummaryCompletionRetry = `
-The summary block serves as the completion signal for each generation round.
-When a round ends without a summary block, or when the finish reason indicates
-abnormal termination (e.g., "length" from max-token truncation), the model's
-output was likely truncated mid-stream — the generation limit was reached
-before the model could emit its closing summary block, or the model emitted a
-summary but continued generating and was cut off. In both cases, the round is
-retried from the original pre-generation State. State immutability (see
-TheoryOfStateImmutability) is the foundation for this retry: the pre-generation
-State is unaffected by the failed attempt, so retrying starts from a clean
-snapshot rather than corrupted partial state. The retry count is bounded to
-prevent infinite loops when a model consistently truncates. Change blocks from
-a truncated attempt are NOT applied: the retry discards the partial output
-entirely and regenerates from the pre-round state, avoiding incomplete or
-malformed change blocks. This is distinct from the generator-level retry (see
-TheoryOfRetry and TheoryOfGenerateRetry) which handles transient API errors;
-this retry handles successful-but-incomplete output.
+The summary block serves as the completion signal for each generation round. When
+a round ends without a summary block, or when the finish reason indicates abnormal
+termination (e.g., "length" from max-token truncation), the model's output was
+likely truncated mid-stream — the generation limit was reached before the model
+could emit its closing summary block, or the model emitted a summary but continued
+generating and was cut off. In both cases, the round is retried from the original
+pre-generation State. State immutability (see TheoryOfStateImmutability in
+generators/state.go) is the foundation for this retry: the pre-generation State is
+unaffected by the failed attempt, so retrying starts from a clean snapshot rather
+than corrupted partial state. The retry count is bounded to prevent infinite loops
+when a model consistently truncates. Change blocks from a truncated attempt are
+NOT applied: the retry discards the partial output entirely and regenerates from
+the pre-round state, avoiding incomplete or malformed change blocks. This is
+distinct from the generator-level retry (see TheoryOfRetry in generators/gemini.go
+and TheoryOfGenerateRetry in phases/generate.go), which handles transient API
+errors; this retry handles successful-but-incomplete output.
 
 Completion is detected by checking the externally collected blocks for summary
 kind and the finish reason in the state for abnormal termination. A round is
-considered complete only when a summary block is present AND the finish reason
-is not abnormal (e.g., not "length"). Because blocks are collected by the
-BlockHandler during AppendContent (not stored in ParserState), the check is a
-simple scan of the collected slice. The finish reason is extracted from
-RoleLog content appended by the generator. On retry, the collected blocks are
-reset alongside the MemoryStore in the onPhaseStart callback, ensuring both
-external states are consistent with the rolled-back State. See
-TheoryOfParserState in blocks/parser_state.go.
+considered complete only when a summary block is present AND the finish reason is
+not abnormal. Because blocks are collected by the BlockHandler during AppendContent
+(not stored in ParserState), the check is a simple scan of the collected slice. The
+finish reason is extracted from RoleLog content appended by the generator. On
+retry, the collected blocks are reset alongside the MemoryStore in the onPhaseStart
+callback, ensuring both external states are consistent with the rolled-back State
+(see TheoryOfParserState in blocks/parser_state.go).
 
 This retry is transient error recovery for truncated output. The summarized
-content does not persist as compressed history. Each retry regenerates from
-the original context, supplemented by the conclusions extracted from the
-truncated thinking (see TheoryOfIncompleteOutputSummarization), not from
-accumulated dialogue. See TheoryOfContextPhilosophy in loops/run.go.
+content does not persist as compressed history. Each retry regenerates from the
+original context, supplemented by the conclusions extracted from the truncated
+thinking (see TheoryOfIncompleteOutputSummarization), not from accumulated
+dialogue. See TheoryOfContextPhilosophy in loops/run.go.
 `
 
 const TheoryOfIncompleteOutputSummarization = `
-When a round is truncated (no summary block) or errors after producing
-partial output, the incomplete output is summarized before retrying. The
-retry process has two tasks: producing a summary of the truncated output
-(recorded as the truncated round's summary in round statistics) and
-producing the content fed to the retry round as user input, framed as a
-continue block. The summary provides context for the retry; the continue
-block carries what the retry round should adopt.
+When a round is truncated (no summary block) or errors after producing partial
+output, the incomplete output is summarized before retrying. The retry process has
+two tasks: producing a summary of the truncated output (recorded as the truncated
+round's summary in round statistics) and producing the content fed to the retry
+round as user input, framed as a continue block. The summary provides context for
+the retry; the continue block carries what the retry round should adopt.
 
-Truncation most often happens when the model thinks too long. The
-truncated reasoning is not wasted: it has already produced valuable
-results — discoveries, decisions, and facts. Discarding these results and
-letting the retry round re-derive them from scratch would spend the
-thinking budget a second time, risking the same truncation. The retry
-summarization therefore extracts the thinking results from the truncated
-output — the conclusions, not the reasoning that led to them — and
-carries them into the continue block fed to the retry round. The
-extraction prioritizes the most valuable content: important discoveries
-and insights, important decisions, important facts about the codebase or
-task, the state of completed work, and the next steps the model was about
-to take. The retry round adopts these pre-established conclusions and
-continues from where the model left off, so it needs less thinking than
-the truncated attempt.
+Truncation most often happens when the model thinks too long. The truncated
+reasoning is not wasted: it has already produced valuable results — discoveries,
+decisions, and facts. Discarding these results and letting the retry round
+re-derive them from scratch would spend the thinking budget a second time, risking
+the same truncation. The retry summarization therefore extracts the thinking
+results from the truncated output — the conclusions, not the reasoning that led to
+them — and carries them into the continue block fed to the retry round. The
+extraction prioritizes the most valuable content: important discoveries and
+insights, important decisions, important facts about the codebase or task, the
+state of completed work, and the next steps the model was about to take. The retry
+round adopts these pre-established conclusions and continues from where the model
+left off, so it needs less thinking than the truncated attempt.
 
-The same extraction serves both retry paths: missing-completion retries
-(truncated output) and error retries (partial output followed by an
-error). See TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
+The same extraction serves both retry paths: missing-completion retries (truncated
+output) and error retries (partial output followed by an error). See
+TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
-The summarization uses a fast model to minimize latency. The summary is
-appended as user content with a system note explaining the retry.
+The summarization uses a fast model to minimize latency. The summary is appended
+as user content with a system note explaining the retry.
 `
 
 const TheoryOfSummaryRetryOnError = `
-Generation errors that occur after the model has already produced partial
-output (thoughts or body text) are retried with a summarized version of that
-output. Summarizing condenses the partial output into a compact user message
-that preserves context while freeing budget, and changes the input so the retry
-produces a different response. All generation-phase errors — including missing
-completion and change-block apply errors — are routed through the same
-OnPhaseError retry path with summarization, ensuring consistent retry behavior
-regardless of the error type.
+Generation errors that occur after the model has already produced partial output
+(thoughts or body text) are retried with a summarized version of that output.
+Summarizing condenses the partial output into a compact user message that
+preserves context while freeing budget, and changes the input so the retry produces
+a different response. All generation-phase errors — including missing completion
+and change-block apply errors — are routed through the same OnPhaseError retry path
+with summarization, ensuring consistent retry behavior regardless of the error
+type.
 
-The summarization extracts the valuable content of the partial output —
-the discoveries, decisions, and facts the model had already established —
-and presents them to the retry round. The retry therefore continues from
-the model's conclusions instead of re-deriving them, reducing the thinking
-it needs and lowering the chance of failing again. The extraction is the
-same one used for truncated output; see
+The summarization extracts the valuable content of the partial output — the
+discoveries, decisions, and facts the model had already established — and presents
+them to the retry round. The retry therefore continues from the model's conclusions
+instead of re-deriving them, reducing the thinking it needs and lowering the chance
+of failing again. The extraction is the same one used for truncated output; see
 TheoryOfIncompleteOutputSummarization.
 
-This summarization is transient error recovery. The condensed content is
-injected into one retry request and does not persist as compressed history.
-The system does not compress conversation. See TheoryOfContextPhilosophy in
-loops/run.go.
+This summarization is transient error recovery. The condensed content is injected
+into one retry request and does not persist as compressed history. The system does
+not compress conversation. See TheoryOfContextPhilosophy in loops/run.go.
 `
 
 // Generate wraps GenerateWithResult, discarding the loops.Result so existing

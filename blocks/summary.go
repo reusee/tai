@@ -1,24 +1,22 @@
 package blocks
 
 const TheoryOfSummaryBlocks = `
-Summary blocks serve a dual purpose: they provide a brief description of each
-generation round's content (including reasoning and actions taken) and act as
-the completion signal that tells the system a round has ended normally. One
-summary block is emitted per round, after all other blocks except any continue
-block. When a continue block is present, the summary block appears before it.
-The body is a markdown
-bullet list using the "-" format; each item is a single short, concise phrase
-so the user can quickly scan what was done and thought without reading dense
-paragraphs or long sentences. The summaries are collected after generation
-ends and displayed alongside the round statistics, providing a human-readable
-narrative of the generation session without interfering with block processing
-or state management. Summary blocks are always enabled because they have no
-side effects and provide value in every session: they help the user understand
-what the model did and thought in each round without reading the full output.
-The summary block also serves as the round completion signal: when a round
-ends without a summary block, the system assumes the output was truncated and
-retries the round. When no changes were made, the summary block body should be
-"No changes were needed." so the model still signals normal completion.
+Summary blocks serve two purposes: they provide a brief description of each
+generation round's content (including reasoning and actions taken) and act as the
+completion signal that tells the system a round has ended normally. One summary
+block is emitted per round, after all other blocks except any continue block; when
+a continue block is present, the summary block appears before it. The body is a
+markdown bullet list using the "-" format; each item is a single short, concise
+phrase so the user can quickly scan what was done and thought without reading dense
+paragraphs or long sentences. Summaries are collected after generation ends and
+displayed alongside the round statistics, providing a human-readable narrative of
+the session without interfering with block processing or state management. Summary
+blocks are always enabled because they have no side effects and help the user
+understand what the model did and thought in each round without reading the full
+output. As the round completion signal, a missing summary block causes the system
+to assume the output was truncated and retry the round. When no changes were made,
+the summary block body should be "No changes were needed." so the model still
+signals normal completion.
 `
 
 const SummaryBlockSystemPrompt = `

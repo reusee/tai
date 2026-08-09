@@ -20,7 +20,7 @@ definitions, arithmetic commands, test clauses, declarations) are rejected as
 unnecessary for read-only diagnostic operations.
 
 The validator checks each statement's redirections for output operators (>,
->>, <>, >&, >|, >>|, >&|, >>&, >>&|). Input-only redirections
+>>, <>, >&, >|, >|, >>|, >&|, >>&, >>&|). Input-only redirections
 (<, <<, <&) are permitted.
 
 Command substitutions ($(cmd) and <(cmd)/>(cmd)) are recursively validated: the

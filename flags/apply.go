@@ -9,15 +9,16 @@ import (
 const TheoryOfImmediateApply = `
 Immediate apply enables change blocks parsed from streamed model output to be
 applied to the working tree as soon as they are parsed during streaming, rather
-than buffering all output and applying after the full generation session finishes.
-This reuses the ParserState decorator (shared with dynamic context) to intercept
-change blocks from model output. ParserState is activated when either dynamic
-context or immediate apply is enabled, because both features parse structured
-blocks from streamed output. An apply error aborts generation immediately so the
-user can inspect the partial state and the failing change block rather than continuing
-to produce changes that build on a broken foundation. The streaming apply
-mechanism is implemented via a BlockHandler callback on ParserState; see
-TheoryOfStreamingApply in generate.go for details.
+than buffering all output and applying after the full generation session
+finishes. This reuses the ParserState decorator (shared with dynamic context)
+to intercept change blocks from model output; ParserState is activated when
+either dynamic context or immediate apply is enabled, because both features
+parse structured blocks from streamed output. An apply error aborts generation
+immediately so the user can inspect the partial state and the failing change
+block rather than continuing to produce changes that build on a broken
+foundation. The streaming apply mechanism is implemented via a BlockHandler
+callback on ParserState; see TheoryOfStreamingApply in generate.go.
+
 Immediate apply is enabled by default; the -no-apply flag disables it so change
 blocks are not applied to the working tree during generation.
 `

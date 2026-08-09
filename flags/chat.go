@@ -11,14 +11,13 @@ import (
 
 const TheoryOfStdinFlag = `
 The -stdin flag adds the content of standard input to the chat messages
-(Chats). It is implemented as an additional key on the Chats flag type
-itself, alongside "chat". This composes correctly with chat flags
-regardless of argument order: each Handle invocation reads the current
-Chats value from the scope (which includes all previously parsed chat
-and stdin flags), appends its contribution, and forks an updated
-pointer. Standard input is read at flag parse time, so the content is
-captured exactly once. If standard input is a terminal, no content is
-read and the current Chats value is forked unchanged.
+(Chats). It is implemented as an additional key on the Chats flag type itself,
+alongside "chat". This composes correctly with chat flags regardless of
+argument order: each Handle invocation reads the current Chats value from the
+scope (which includes all previously parsed chat and stdin flags), appends its
+contribution, and forks an updated pointer. Standard input is read at flag
+parse time, so the content is captured exactly once. If standard input is a
+terminal, no content is read and the current Chats value is forked unchanged.
 `
 
 type Chats []string

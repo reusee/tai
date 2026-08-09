@@ -20,21 +20,21 @@ import (
 const TheoryOfNextCommand = `
 The "next" subcommand identifies and executes the most valuable next step to
 advance the user's goal. It uses the prompts.NextStep system prompt as its
-base, augmented with the change block prompt when Go files are
-detected in the input, plus optional extra, focus, and ignore directives.
-Unlike the "ai" subcommand which supports multi-turn conversation with
-memory, shell, and continue blocks, "next" performs a single generation
-round: it builds the system prompt and user prompt from file context, runs
-one generate-chat phase chain, and writes the result to stdout. This makes
-it the simplest entry point for autonomous, single-shot task execution.
+base, augmented with the change block prompt when Go files are detected in the
+input, plus optional extra, focus, and ignore directives. Unlike the "ai"
+subcommand which supports multi-turn conversation with memory, shell, and
+continue blocks, "next" performs a single generation round: it builds the
+system prompt and user prompt from file context, runs one generate-chat phase
+chain, and writes the result to stdout. This makes it the simplest entry point
+for autonomous, single-shot task execution.
 
 Change blocks emitted by the model are applied to the working tree via a
 ParserState block handler that writes to an in-memory MemoryStore during
 streaming, then flushes to disk after the generation round succeeds. This
 reuses the same in-memory apply mechanism as the codes module (see
-changes.TheoryOfInMemoryApply), ensuring early error detection — a
-malformed change block triggers a retry via changes.ApplyError, resetting
-the MemoryStore to discard failed changes — while preserving filesystem
+changes.TheoryOfInMemoryApply), ensuring early error detection — a malformed
+change block triggers a retry via changes.ApplyError, resetting the
+MemoryStore to discard failed changes — while preserving filesystem
 consistency on failure. The handler is built by
 changes.BuildChangeBlockHandler, sharing the change-application logic with
 the codes module. The -no-apply flag disables change block application,

@@ -13,76 +13,70 @@ import (
 )
 
 const TheoryOfGoTestBlocks = `
-Go-test blocks allow the model to run Go tests and receive the output as part
-of a generation cycle. After making code changes, the model emits a go-test
-block to verify correctness. The system runs go test with the specified
-arguments and feeds both stdout and stderr back as user content. If tests
-fail, the error output is returned so the model can debug and fix the issues
-in subsequent rounds. This enables autonomous test-driven development: the
-model writes code, runs tests, reads failures, and iterates until all tests
-pass.
+Go-test blocks allow the model to run Go tests and receive the output as part of
+a generation cycle. After making code changes, the model emits a go-test block to
+verify correctness. The system runs go test with the specified arguments and feeds
+both stdout and stderr back as user content. If tests fail, the error output is
+returned so the model can debug and fix the issues in subsequent rounds. This
+enables autonomous test-driven development: the model writes code, runs tests,
+reads failures, and iterates until all tests pass.
 
-The go-test block is Go-specific: it only makes sense in Go projects with
-a go.mod file. The system prompt instructs the model to use go-test blocks
-only when working with Go code. In non-Go projects, the model should rely on
-shell blocks for command execution instead.
+The go-test block is Go-specific: it only makes sense in Go projects with a go.mod
+file. The system prompt instructs the model to use go-test blocks only when working
+with Go code. In non-Go projects, the model should rely on shell blocks for command
+execution instead.
 
-The block body contains optional arguments passed to go test, one argument
-per line. If the body is empty, all tests in the current directory tree
-(./...) are run. Each non-empty line is passed as a separate argument to
-go test via exec.Command, bypassing the shell entirely. This avoids shell
-injection vulnerabilities that could arise from passing model-generated
-content through sh -c.
+The block body contains optional arguments passed to go test, one argument per
+line. If the body is empty, all tests in the current directory tree (./...) are
+run. Each non-empty line is passed as a separate argument to go test via
+exec.Command, bypassing the shell entirely. This avoids shell injection
+vulnerabilities that could arise from passing model-generated content through sh -c.
 
-The model does not know the current working directory, so relative path
-arguments (e.g., ./pkg/...) are error-prone: the model may guess the wrong
-relative path and test the wrong package or no package at all. The test
-output includes the working directory so the model can construct correct
-absolute paths (e.g., /home/user/project/pkg/...) for subsequent runs.
-When the model does not yet know the working directory, it should use an
-empty body to run all tests (./...), which does not require knowing the
-directory. After the first test run, the working directory is available in
-the output and the model should switch to absolute paths for specific
-package tests.
+The model does not know the current working directory, so relative path arguments
+(e.g., ./pkg/...) are error-prone: the model may guess the wrong relative path and
+test the wrong package or no package at all. The test output includes the working
+directory so the model can construct correct absolute paths (e.g.,
+/home/user/project/pkg/...) for subsequent runs. When the model does not yet know
+the working directory, it should use an empty body to run all tests (./...), which
+does not require knowing the directory. After the first test run, the working
+directory is available in the output and the model should switch to absolute paths
+for specific package tests.
 
 Test commands should target the specific test functions the model modified or
-added, rather than running an entire package. Precise -run patterns (e.g.,
--run TestFoo or -run TestBar/subcase) produce faster, more focused feedback
-and avoid noise from unrelated test failures. The model should only fall back
-to package-level or ./... runs when it needs a broad sanity check or does not
-yet know which tests are relevant. After modifying or adding a test function,
-the go-test block should name that function in the -run argument so the
-verification is directly tied to the change.
+added, rather than running an entire package. Precise -run patterns (e.g., -run
+TestFoo or -run TestBar/subcase) produce faster, more focused feedback and avoid
+noise from unrelated test failures. The model should only fall back to package-level
+or ./... runs when it needs a broad sanity check or does not yet know which tests
+are relevant. After modifying or adding a test function, the go-test block should
+name that function in the -run argument so the verification is directly tied to the
+change.
 
-The go-test block is not a completion signal. The summary and finish blocks
-are completion signals for each round (see TheoryOfSummaryCompletionRetry in
-codes/generate.go). When the model emits a go-test block, it must still emit
-a summary block in the same round to describe what was done, including the
-test verification. Without a summary or finish block, the system assumes the
-output was truncated and retries the round unnecessarily. This applies to
-every round, including debug rounds where tests fail and the go-test component
-produces Parts that trigger a new round. When tests pass, the go-test
-component does not produce Parts; the test output is not fed back to the
-model, and other mechanisms (e.g., continue blocks) determine whether another
-round follows.
+The go-test block is not a completion signal. The summary and finish blocks are
+completion signals for each round (see TheoryOfSummaryCompletionRetry in
+codes/generate.go). When the model emits a go-test block, it must still emit a
+summary block in the same round to describe what was done, including the test
+verification. Without a summary or finish block, the system assumes the output was
+truncated and retries the round unnecessarily. This applies to every round,
+including debug rounds where tests fail and the go-test component produces Parts
+that trigger a new round. When tests pass, the go-test component does not produce
+Parts; the test output is not fed back to the model, and other mechanisms (e.g.,
+continue blocks) determine whether another round follows.
 
-ProcessGoTestBlocks enforces the pass/fail asymmetry at the implementation
-level: it only collects output parts when a test run fails, so the model
-receives stdout and stderr exclusively when there are failures to debug and
-fix. When all tests pass, no parts are returned, the caller has nothing to
-append to the state, and no new round is triggered by the go-test component
-alone.
+ProcessGoTestBlocks enforces the pass/fail asymmetry at the implementation level:
+it only collects output parts when a test run fails, so the model receives stdout
+and stderr exclusively when there are failures to debug and fix. When all tests
+pass, no parts are returned, the caller has nothing to append to the state, and no
+new round is triggered by the go-test component alone.
 
-When tests pass but another component (e.g., continue) triggers a new round,
-the go-test component provides BackgroundParts — a pass confirmation message
-— that ProcessComponents includes in the combined output alongside the
-triggering component's parts. This ensures the model knows the tests passed
-and does not re-emit go-test blocks in subsequent rounds, preventing
-unnecessary test reruns. BackgroundParts are discarded when no component
-triggers a new round, since there is no next round to carry them. This
-preserves the pass/fail asymmetry at the function level (ProcessGoTestBlocks
-still returns no parts on pass) while ensuring the model is informed of pass
-results when they are relevant to the next round.
+When tests pass but another component (e.g., continue) triggers a new round, the
+go-test component provides BackgroundParts — a pass confirmation message — that
+ProcessComponents includes in the combined output alongside the triggering
+component's parts. This ensures the model knows the tests passed and does not
+re-emit go-test blocks in subsequent rounds, preventing unnecessary test reruns.
+BackgroundParts are discarded when no component triggers a new round, since there
+is no next round to carry them. This preserves the pass/fail asymmetry at the
+function level (ProcessGoTestBlocks still returns no parts on pass) while ensuring
+the model is informed of pass results when they are relevant to the next round.
 `
 
 const GoTestBlockSystemPrompt = `

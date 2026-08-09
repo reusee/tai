@@ -24,21 +24,20 @@ mixes reasoning with answer text) arrives, all accumulated thoughts — includin
 any thoughts in that same content — are flushed immediately before the content
 is propagated to upstream, regardless of interval or paragraph boundaries,
 ensuring the summary appears before the main text output rather than after it.
-The flush is triggered by the presence of non-thought parts, so a mixed
-content with both Thought and Text parts correctly flushes before the text
-is printed. A separate, typically cheaper and faster generator is used for
-summarization to minimize latency and cost. The
-GetDefaultSummarizer provider wires the default fast model (obtained via
-GetDefaultFastModel) into a Summarizer. On Flush, any remaining accumulated
-thoughts are summarized before propagating the flush upstream. The
-summarization system prompt is designed to extract only the most important
-points and direction of reasoning, not to reproduce the full thought content.
-The summary is formatted as a bullet list of at most 2 key points, each item
-being a single concise sentence. The Summarize method prompts the summarization
-model to wrap its output in a boundary-delimited summary block and parses the
-block body via blocks.ParseFirstBlock, ensuring the returned text contains only
-the clean bullet-list summary without model preamble or trailing prose; if no
-block is found the raw text is returned as a fallback.
+The flush is triggered by the presence of non-thought parts, so a mixed content
+with both Thought and Text parts correctly flushes before the text is printed.
+A separate, typically cheaper and faster generator is used for summarization to
+minimize latency and cost. The GetDefaultSummarizer provider wires the default
+fast model (obtained via GetDefaultFastModel) into a Summarizer. On Flush, any
+remaining accumulated thoughts are summarized before propagating the flush
+upstream. The summarization system prompt is designed to extract only the most
+important points and direction of reasoning, not to reproduce the full thought
+content. The summary is formatted as a bullet list of at most 2 key points,
+each item being a single concise sentence. The Summarize method prompts the
+summarization model to wrap its output in a boundary-delimited summary block
+and parses the block body via blocks.ParseFirstBlock, ensuring the returned
+text contains only the clean bullet-list summary without model preamble or
+trailing prose; if no block is found the raw text is returned as a fallback.
 
 Thought summarization serves user readability, not context compression.
 Summaries go to the output writer for the human reader; they are never fed

@@ -21,10 +21,10 @@ const TheoryOfDscopeProvidedApplyFunctions = `
 All apply functions are dscope-provided function types. WriteErrorLog is never
 passed as a parameter; it is captured from the dscope scope at provider
 resolution time. This follows the core dscope principle: static dependencies
-(WriteErrorLog, resolved once from the scope and unchanged during execution) are
-provided via dscope, not passed as parameters. Only dynamic parameters (runtime
-values like the target store/root and change block content) are passed as
-function arguments.
+(WriteErrorLog, resolved once from the scope and unchanged during execution)
+are provided via dscope, not passed as parameters. Only dynamic parameters
+(runtime values like the target store/root and change block content) are
+passed as function arguments.
 
 The public types (ApplyChangeBlock, ApplyChangeBlockStore, ApplyChangeBlocks,
 ApplyChangeBlocksStore, ApplyDiffFile, BuildChangeBlockHandler) are

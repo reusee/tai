@@ -17,19 +17,20 @@ generalizes beyond block processing: a Component can contribute a system prompt
 section, a restate/reminder prompt, user prompt parts, define a block kind for
 parsing, process blocks of that kind, or any combination thereof.
 
-A Component with a Process function is processed in the main generation loop;
-a Component without one (prompt-only or informational) contributes its
+A Component with a Process function is processed in the main generation loop; a
+Component without one (prompt-only or informational) contributes its
 PromptSection to the system prompt but is not invoked during output processing.
 A Component can also contribute UserPromptParts, which are prepended to the
 user's input similar to how CodeProvider.Parts provides context. ComponentSet is
-an ordered collection of Components that provides PromptSections (concatenating
-all system prompt contributions), RestatePrompts (concatenating all restate/reminder
-prompt contributions), UserPromptParts (concatenating all user prompt parts, with
-restate prompts appended as the last element so critical format reminders are
-the last content the model reads before generating), and Processable (returning
-the subset with Process functions for the generation loop). Restate prompts are
-placed at the end of the user prompt, not the system prompt, so critical format
-reminders are the last thing the model reads before generating.
+an ordered collection of Components that provides PromptSections
+(concatenating all system prompt contributions), RestatePrompts (concatenating
+all restate/reminder prompt contributions), UserPromptParts (concatenating all
+user prompt parts, with restate prompts appended as the last element so
+critical format reminders are the last content the model reads before
+generating), and Processable (returning the subset with Process functions for
+the generation loop). Restate prompts are placed at the end of the user prompt,
+not the system prompt, so critical format reminders are the last thing the
+model reads before generating.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
@@ -45,9 +46,9 @@ should reach the model only when a subsequent round exists. Components like
 go-test produce BackgroundParts (e.g., a pass confirmation) without triggering
 a round themselves; ProcessComponents collects them and prepends them to the
 combined output when another component triggers a new round. When no component
-triggers, BackgroundParts are discarded because there is no next round to
-carry them. This prevents loops where the model re-emits blocks (e.g.,
-go-test) because it never learned the previous invocation's result.
+triggers, BackgroundParts are discarded because there is no next round to carry
+them. This prevents loops where the model re-emits blocks (e.g., go-test)
+because it never learned the previous invocation's result.
 
 The mechanism makes the coupling between prompt and processing explicit and
 machine-checkable. The system prompt assembly, user prompt assembly, and output

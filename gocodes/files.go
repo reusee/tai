@@ -21,31 +21,31 @@ import (
 )
 
 const TheoryOfFileOrdering = `
-Files are sorted in three tiers to maximize LLM prefix cache reuse. The outermost
-tier separates by module: non-root-module files (dependencies; standard library
-packages appear only when explicitly requested via -pkg or -ctx, see
-TheoryOfStdLibExclusion) appear first, forming the stable prefix that changes
-least frequently across requests. The middle
-tier separates root-module files by package: context files (non-root packages) precede
-focus files (root package), so that editing a focus file does not shift the position
-of any context file. The inner tiers (go vs non-go, distance, package depth, package
-path) further organize files within each group for deterministic ordering.
+Files are sorted in three tiers to maximize LLM prefix cache reuse. The
+outermost tier separates by module: non-root-module files (dependencies;
+standard library appears only when explicitly requested via -pkg or -ctx,
+see TheoryOfStdLibExclusion) appear first, forming the stable prefix that
+changes least frequently across requests. The middle tier separates
+root-module files by package: context files (non-root packages) precede
+focus files (root package), so that editing a focus file does not shift the
+position of any context file. The inner tiers (go vs non-go, distance,
+package depth, package path) further organize files within each group for
+deterministic ordering.
 
-In the output ordering, root-module files are further ordered by recent
-git activity within the context/focus grouping (see
-TheoryOfGitChangeOrdering): the change-count key is compared after the
-root-package grouping, so the most-changed context packages settle at the
-end of the context block and the most-changed focus packages settle at
-the very end of the root-module block, keeping stable content in its
-position in the LLM prefix cache.
+In the output ordering, root-module files are further ordered by recent git
+activity within the context/focus grouping (see TheoryOfGitChangeOrdering):
+the change-count key is compared after the root-package grouping, so the
+most-changed context packages settle at the end of the context block and the
+most-changed focus packages settle at the very end of the root-module block,
+keeping stable content in its position in the LLM prefix cache.
 
-When only focus files change, all preceding context and dependency files remain
-identical, allowing LLM prefix caching to reuse cached key-value states for unchanged
-content.
+When only focus files change, all preceding context and dependency files
+remain identical, allowing LLM prefix caching to reuse cached key-value
+states for unchanged content.
 
-Within each priority group, files are ordered by their path as the primary key for
-a fully deterministic order independent of modification times, maximizing cache reuse.
-Modification time is a final tiebreaker.
+Within each priority group, files are ordered by their path as the primary
+key for a fully deterministic order independent of modification times,
+maximizing cache reuse. Modification time is a final tiebreaker.
 `
 
 const TheoryOfFileLoadingPerformance = `

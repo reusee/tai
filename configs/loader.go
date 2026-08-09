@@ -11,24 +11,22 @@ import (
 )
 
 const TheoryOfConfigGlobals = `
-Config globals inject Go values into the CUE evaluation context so config
-files can reference them by path (e.g., prompts.fiction resolves to a Go
-string injected under the "prompts" key). This bridges Go's compile-time
-constants with CUE's configuration language, allowing config files to stay
-in sync with Go-defined prompts, templates, and other values without
-duplication.
+Config globals inject Go values into the CUE evaluation context so config files
+can reference them by path (e.g., prompts.fiction resolves to a Go string
+injected under the "prompts" key). This bridges Go's compile-time constants
+with CUE's configuration language, allowing config files to stay in sync with
+Go-defined prompts, templates, and other values without duplication.
 
-Globals are marshaled to JSON (valid CUE) and compiled as a CUE value.
-This value is passed as the cue.Scope option when compiling each config
-file, making the globals' fields available as the enclosing scope for
-reference resolution. References like prompts.fiction resolve against the
-globals during compilation, and the resulting value includes both the
-globals' fields and the file's fields.
+Globals are marshaled to JSON (valid CUE) and compiled as a CUE value. This
+value is passed as the cue.Scope option when compiling each config file, making
+the globals' fields available as the enclosing scope for reference resolution.
+References like prompts.fiction resolve against the globals during compilation,
+and the resulting value includes both the globals' fields and the file's fields.
 
 Globals are also embedded inside the close() schema so the closed schema
-accepts them as known fields. The closed schema still rejects fields that
-are neither in the schema nor in the globals, preserving typo detection
-for user-defined config fields.
+accepts them as known fields. The closed schema still rejects fields that are
+neither in the schema nor in the globals, preserving typo detection for
+user-defined config fields.
 
 When no globals are provided, the file content is compiled directly with
 CompileBytes.

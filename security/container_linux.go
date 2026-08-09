@@ -14,34 +14,34 @@ import (
 
 const TheoryOfContainerIsolation = `
 The tai command runs in a Linux user namespace (CLONE_NEWUSER, CLONE_NEWNS,
-CLONE_NEWPID, CLONE_NEWUTS, and CLONE_NEWIPC) to isolate filesystem access,
+CLONE_NEWPID, CLONE_NEWUTS, CLONE_NEWIPC) to isolate filesystem access,
 preventing AI-driven code generation from writing outside the intended project
 boundary. Network namespace is deliberately omitted because the AI pipeline
 requires network access to call model APIs. The process re-executes itself in
-the new namespace on first launch; the inContainerEnv environment variable marks
-that the process is already containerized, ensuring re-execution happens only
-once. On non-Linux platforms, container isolation is a no-op and the command
-runs directly.
+the new namespace on first launch; the inContainerEnv environment variable
+marks that the process is already containerized, ensuring re-execution happens
+only once. On non-Linux platforms, container isolation is a no-op and the
+command runs directly.
 
 Filesystem hardening enforces a read-only-everything policy with targeted
-writable exceptions. All mount points are remounted read-only, then the current
-working directory is bind-mounted onto itself read-write, creating a writable
-enclave for project file modifications. Go toolchain directories (GOCACHE,
-GOMODCACHE, GOPATH/pkg) are resolved before namespace creation and individually
-bind-mounted read-write so the Go toolchain can function (build cache, module
-downloads, package objects). The user config directory is also resolved before
-namespace creation and bind-mounted read-write so the memory system
-(ai-memory.json) and chat history (ai-chat-history.json) can persist data across
-sessions. A fresh tmpfs is mounted on /tmp for isolated temporary file storage,
-and on /dev/shm for isolated shared memory; these tmpfs mounts carry no explicit
-size limit by default (the kernel caps tmpfs at half of physical RAM), so large
-temporary files created by tests or builds do not trigger false ENOSPC errors,
-though an explicit limit can still be imposed via environment variables when
-tighter control is desired. /proc is remounted to show only namespace-local
-processes, /sys is made read-only, and sensitive /proc paths are masked with
-bind-mounted /dev/null. The NO_NEW_PRIVS prctl flag prevents privilege
-escalation through exec, complementing the user namespace's capability
-restrictions.
+writable exceptions. All mount points are remounted read-only, then the
+current working directory is bind-mounted onto itself read-write, creating a
+writable enclave for project file modifications. Go toolchain directories
+(GOCACHE, GOMODCACHE, GOPATH/pkg) are resolved before namespace creation and
+individually bind-mounted read-write so the Go toolchain can function (build
+cache, module downloads, package objects). The user config directory is also
+resolved before namespace creation and bind-mounted read-write so the memory
+system (ai-memory.json) and chat history (ai-chat-history.json) can persist
+data across sessions. A fresh tmpfs is mounted on /tmp for isolated temporary
+file storage, and on /dev/shm for isolated shared memory; these tmpfs mounts
+carry no explicit size limit by default (the kernel caps tmpfs at half of
+physical RAM), so large temporary files created by tests or builds do not
+trigger false ENOSPC errors, though an explicit limit can still be imposed via
+environment variables when tighter control is desired. /proc is remounted to
+show only namespace-local processes, /sys is made read-only, and sensitive
+/proc paths are masked with bind-mounted /dev/null. The NO_NEW_PRIVS prctl
+flag prevents privilege escalation through exec, complementing the user
+namespace's capability restrictions.
 `
 
 // disableContainerEnv allows bypassing containerization entirely for debugging
