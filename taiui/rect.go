@@ -4,50 +4,55 @@ import "fmt"
 
 var _ Element = _Rect{}
 
-// _Rect is a box with box-model layout and children. It is a pure value: the
-// renderer interprets it, and it never touches a screen or a scope.
-type _Rect struct{ uiDesc }
+// _Rect is a box with box-model layout and children. It is a pure value:
+// specs are interpreted at construction into typed fields, and rendering
+// reads those fields.
+type _Rect struct {
+	elementBase
+	children []Element
+	margin   [4]int
+	padding  [4]int
+}
 
+// Rect creates a box element from specs. Specs are interpreted immediately;
+// unknown specs panic here, at construction.
 func Rect(specs ...any) _Rect {
-	return _Rect{uiDesc: newUIDesc(specs)}
+	r := &_Rect{}
+	buildElement(r, specs)
+	return *r
 }
 
 func (_Rect) element() {}
 
-func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
-	var children []Element
-	var marginTop, marginRight, marginBottom, marginLeft int
-	var paddingTop, paddingRight, paddingBottom, paddingLeft int
-	fill := false
-
-	r.iterSpecs(func(v any) {
-		if s, ok := applyStyleSpec(style, v); ok {
-			style = s
+// applySpec interprets one spec value into _Rect fields.
+func (r *_Rect) applySpec(spec any) {
+	if spec == nil {
+		return
+	}
+	switch v := spec.(type) {
+	case Specs:
+		for _, s := range v {
+			r.applySpec(s)
+		}
+	case Element:
+		if v != nil {
+			r.children = append(r.children, v)
+		}
+	case _Margin:
+		r.margin = applyBoxModel(v)
+	case _Padding:
+		r.padding = applyBoxModel(v)
+	default:
+		if r.applyCommonSpec(v) {
 			return
 		}
-		switch v := v.(type) {
-		case Box:
-			box = v
-		case Fill:
-			fill = bool(v)
-		case Element:
-			if v != nil {
-				children = append(children, v)
-			}
-		case []Element:
-			for _, e := range v {
-				if e != nil {
-					children = append(children, e)
-				}
-			}
-		case _Margin:
-			marginTop, marginRight, marginBottom, marginLeft = applyMargin(v)
-		case _Padding:
-			paddingTop, paddingRight, paddingBottom, paddingLeft = applyPadding(v)
-		default:
-			panic(fmt.Errorf("unknown spec %#v", v))
-		}
-	})
+		panic(fmt.Errorf("unknown spec %#v", v))
+	}
+}
+
+func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
+	box = r.effectiveBox(box)
+	style = r.styled(style)
 
 	l := box.Width() * box.Height()
 	if l == 0 {
@@ -63,22 +68,23 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 	})
 
 	childBox := Box{
-		Top:    box.Top + marginTop + paddingTop,
-		Left:   box.Left + marginLeft + paddingLeft,
-		Right:  box.Right - marginRight - paddingRight,
-		Bottom: box.Bottom - marginBottom - paddingBottom,
+		Top:    box.Top + r.margin[0] + r.padding[0],
+		Left:   box.Left + r.margin[3] + r.padding[3],
+		Right:  box.Right - r.margin[1] - r.padding[1],
+		Bottom: box.Bottom - r.margin[2] - r.padding[2],
 	}
-	for _, child := range children {
+	for _, child := range r.children {
 		renderElement(child, childBox, style, marked)
 	}
 
-	if fill {
-		for y := box.Top + marginTop; y < box.Bottom-marginBottom; y++ {
-			for x := box.Left + marginLeft; x < box.Right-marginRight; x++ {
-				idx := (y-box.Top)*box.Width() + (x - box.Left)
-				if !marks[idx] {
-					draw(x, y, ' ', nil, style)
-				}
+	if !r.fill {
+		return
+	}
+	for y := box.Top + r.margin[0]; y < box.Bottom-r.margin[2]; y++ {
+		for x := box.Left + r.margin[3]; x < box.Right-r.margin[1]; x++ {
+			idx := (y-box.Top)*box.Width() + (x - box.Left)
+			if !marks[idx] {
+				draw(x, y, ' ', nil, style)
 			}
 		}
 	}

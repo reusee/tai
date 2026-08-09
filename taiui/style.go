@@ -70,21 +70,3 @@ func DarkerOrLighterStyle(style Style, n int32) Style {
 		WithFg(color.NewRGBColor(r, g, b)).
 		WithBg(color.NewRGBColor(r2, g2, b2))
 }
-
-func applyStyleSpec(style Style, v any) (Style, bool) {
-	switch v := v.(type) {
-	case FGColor:
-		return style.WithFg(Color(v)), true
-	case BGColor:
-		return style.WithBg(Color(v)), true
-	case Style:
-		return v, true
-	case StyleFunc:
-		return v(style), true
-	case Bold:
-		return withAttrOn(style, bool(v), vt.Bold), true
-	case Underline:
-		return withAttrOn(style, bool(v), vt.Underline), true
-	}
-	return style, false
-}

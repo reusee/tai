@@ -14,9 +14,16 @@ taiui theory: UI = pure Element value derived from state.
   changes, and the next render reflects the change. There is no imperative
   element-update protocol.
 - Elements are pure values: constructors resolve spec lists at construction
-  time, and zero-argument function specs are evaluated eagerly. Dynamics
-  that depend on state are expressed as providers in the scope that build
-  the element tree.
+  time. Zero-argument function specs are evaluated eagerly, and each spec is
+  interpreted immediately into typed element fields, so rendering reads
+  plain data and never parses specs. Unknown specs fail at construction.
+  Dynamics that depend on state are expressed as providers in the scope
+  that build the element tree.
+- The Spec language is a marker-interface protocol for element
+  construction: style and layout specs, Specs groups, and elements
+  themselves all implement Spec, so spec lists compose and nest. Bare
+  strings are a shorthand for text lines only and are not Specs. If and Alt
+  compose conditionally.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
   Elements never call screen methods; any backend able to present cell
@@ -38,6 +45,7 @@ type Scope = dscope.Scope
 // Implementations are data values: they describe what to render and never
 // interact with a screen or a scope.
 type Element interface {
+	Spec
 	element()
 }
 
