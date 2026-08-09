@@ -68,13 +68,22 @@ func TestNestedRect(t *testing.T) {
 func TestFrameBuffer(t *testing.T) {
 	scope, screen := newTestScreen()
 
-	fb := NewFrameBuffer(Box{0, 0, 10, 10})
-	fb.SetContent(0, 0, 'X', nil, vt.BaseStyle)
+	content := NewFrameBufferContent(10, 10)
+	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
 
-	RenderAll(scope, fb)
+	RenderAll(scope, FrameBuffer(content))
 
 	if r, ok := screen.cells[[2]int{0, 0}]; !ok || r != 'X' {
 		t.Fatalf("expected 'X' at cell 0, got %v", r)
+	}
+
+	// Framebuffer content is state: mutating it and re-rendering yields the
+	// updated UI without any imperative element-update call.
+	content.SetContent(0, 0, 'Y', nil, vt.BaseStyle)
+	RenderAll(scope, FrameBuffer(content))
+
+	if r, ok := screen.cells[[2]int{0, 0}]; !ok || r != 'Y' {
+		t.Fatalf("expected 'Y' at cell 0 after content change, got %v", r)
 	}
 }
 
@@ -97,5 +106,23 @@ func TestNamedFunctionSpec(t *testing.T) {
 
 	if r, ok := screen.cells[[2]int{0, 0}]; !ok || r != 'n' {
 		t.Fatalf("expected 'n' at cell 0, got %v", r)
+	}
+}
+
+func TestVerticalScrollRendersReturnedElements(t *testing.T) {
+	scope, screen := newTestScreen()
+
+	RenderAll(scope, Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
+		VerticalScroll(ElementFunc(func() Element {
+			return Text("a", "b", "c")
+		}), 0),
+	))
+
+	if r, ok := screen.cells[[2]int{0, 0}]; !ok || r != 'a' {
+		t.Fatalf("expected 'a' at cell 0, got %v", r)
+	}
+	if r, ok := screen.cells[[2]int{0, 1}]; !ok || r != ' ' {
+		t.Fatalf("expected bottom crop indicator at row 1, got %v", r)
 	}
 }

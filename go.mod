@@ -9,6 +9,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/gdamore/tcell v1.4.1
+	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260802013350-035b6d086c24
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
@@ -42,7 +43,6 @@ require (
 	github.com/emicklei/proto v1.14.3 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
-	github.com/gdamore/tcell/v3 v3.4.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect

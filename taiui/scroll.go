@@ -48,7 +48,7 @@ func (v _VerticalScroll) RenderFunc() any {
 			}
 			line[x] = Cell{Rune: mainc, Style: st}
 		})
-		scope.Fork(&elemBox, &set).Call(v.element.RenderFunc())
+		RenderAll(scope.Fork(&elemBox, &set), v.element)
 		fromY := max(box.Top+v.offset-box.Height()/2, box.Top)
 		numTopCrop := fromY - box.Top
 		for i := 0; i < box.Height(); i++ {
