@@ -11,7 +11,7 @@ require (
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260802013350-035b6d086c24
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
-	github.com/reusee/prompts v0.0.0-20260802144136-07da8b916373
+	github.com/reusee/prompts v0.0.0-20260809031259-ad2eec4587e8
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.8.0
 	github.com/systemd/slog-journal v0.1.2
@@ -46,8 +46,10 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
+	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
