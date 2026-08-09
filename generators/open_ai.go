@@ -141,6 +141,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		MaxCompletionTokens: maxCompletionTokens,
 		Temperature:         temperature,
 	}
+	if o.spec.Provider != nil {
+		req.Provider = o.spec.Provider
+	}
 	reasoningEffort := o.spec.ReasoningEffort
 	if flagEffort := string(o.Effort()); flagEffort != "" {
 		reasoningEffort = flagEffort
@@ -645,6 +648,7 @@ type ChatCompletionRequest struct {
 	MaxCompletionTokens *int                    `json:"max_completion_tokens,omitempty"`
 	Temperature         *float32                `json:"temperature,omitempty"`
 	Tools               []Tool                  `json:"tools,omitempty"`
+	Provider            *Provider               `json:"provider,omitempty"`
 	ResponseFormat      *ResponseFormat         `json:"response_format,omitempty"`
 }
 

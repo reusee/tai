@@ -146,6 +146,9 @@ func resolveSpec(name string, roots []Spec) (Spec, error) {
 			if spec.ZeroDataRetention != nil {
 				merged.ZeroDataRetention = spec.ZeroDataRetention
 			}
+			if spec.Provider != nil {
+				merged.Provider = merged.Provider.merge(spec.Provider)
+			}
 			// Redirect and RandomRedirect are not merged from parent to
 			// child; only the final spec in the path determines whether a
 			// redirect applies.

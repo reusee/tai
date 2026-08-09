@@ -23,6 +23,12 @@ can build on prior reasoning context.
 ZeroDataRetention marks a generator whose provider retains no input or output data. It is consumed by
 confidential mode (see TheoryOfConfidentialMode), which rejects any generator that does not set the field
 when enabled. Like the other optional booleans, it is not merged from parent to child unless explicitly set.
+
+Provider holds routing preferences forwarded to OpenRouter in the request
+body. It mirrors the OpenRouter "provider" parameter (see
+TheoryOfProviderRouting). It is merged field-wise from parent to child:
+a child's provider fields override the parent's, and unset child fields
+preserve the parent's values.
 `
 
 type Spec struct {
@@ -50,5 +56,6 @@ type Spec struct {
 	NoProxy           *bool          `json:"no_proxy,omitempty"`
 	PreservedThinking *bool          `json:"preserved_thinking,omitempty"`
 	ZeroDataRetention *bool          `json:"zero_data_retention,omitempty"`
+	Provider          *Provider      `json:"provider,omitempty"`
 	Variants          []Spec         `json:"variants,omitempty"`
 }
