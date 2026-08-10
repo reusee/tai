@@ -1,4 +1,5 @@
-package main
+// taiui/screen.go
+package taiui
 
 import (
 	"bufio"
@@ -11,12 +12,11 @@ import (
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/tai/taiui"
 )
 
-const TheoryOfANSScreen = `
-taiuidemo ANSI screen theory:
-- The presenter renders a Frame to the terminal by repainting whole dirty
+const TheoryOfTerminalScreen = `
+taiui terminal screen theory:
+- TerminalScreen renders a Frame to a terminal by repainting whole dirty
   rows, never individual cells: a wide grapheme cluster leaves its trailing
   columns as unset cells, so a run-level repaint could leave a stale
   half-glyph when a wide cluster moves away.
@@ -30,16 +30,16 @@ taiuidemo ANSI screen theory:
   is scanned once, not twice.
 - Frames with no dirty rows and an unchanged cursor are skipped entirely,
   and the first frame repaints the whole screen.
-- The presenter reuses a dirty-rows buffer across presents, so a frame
+- The screen reuses a dirty-rows buffer across presents, so a frame
   comparison allocates nothing.
-- The presenter retains the last presented frame for damage comparison.
+- The screen retains the last presented frame for damage comparison.
   It does not implement FrameReleaser, so the renderer allocates a fresh
   frame per pass and never reuses the retained frame's cells.
-- The presenter derives the display-width options per present and measures
-  clusters with taiui.ClusterWidth, so the terminal cursor advances by the
+- The screen derives the display-width options per present and measures
+  clusters with ClusterWidth, so the terminal cursor advances by the
   same columns the renderer allocated even if the environment changes
   between renders.
-- The presenter positions the terminal cursor at the Frame's recorded
+- The screen positions the terminal cursor at the Frame's recorded
   cursor position when the frame carries one, so a text input's cursor
   tracks the rendered text.
 - Every SGR sequence starts with the reset parameter: a style is the
@@ -48,30 +48,46 @@ taiuidemo ANSI screen theory:
   would keep the attribute and bleed the line into any following cell
   that shares the same background.
 - SGR sequences are memoized by the style's SGR-relevant fields (the
-  attribute bits and the three colors): the demo's style set is small
-  and bounded, so the cache stays small, and the presenter is
+  attribute bits and the three colors): a screen's style set is small
+  and bounded, so the cache stays small, and the screen is
   single-threaded, so a plain map needs no locking.
 `
 
-type ansiScreen struct {
+// TerminalScreen renders Frames to a terminal via ANSI escape sequences.
+// It repaints whole dirty rows, so a wide grapheme cluster's trailing
+// columns never leave a stale half-glyph when the cluster moves away.
+type TerminalScreen struct {
 	w         io.Writer
 	width     int
 	height    int
-	last      taiui.Frame
+	last      Frame
 	bw        *bufio.Writer
 	dirtyRows []int
+	sgrCache  map[sgrKey]string
 }
 
-func (s *ansiScreen) Width() int  { return s.width }
-func (s *ansiScreen) Height() int { return s.height }
+// NewTerminalScreen creates a terminal screen that renders to w with the
+// given dimensions.
+func NewTerminalScreen(w io.Writer, width, height int) *TerminalScreen {
+	return &TerminalScreen{
+		w:        w,
+		width:    width,
+		height:   height,
+		sgrCache: make(map[sgrKey]string, 32),
+	}
+}
 
-func (s *ansiScreen) resize(width, height int) {
+func (s *TerminalScreen) Width() int  { return s.width }
+func (s *TerminalScreen) Height() int { return s.height }
+
+// Resize changes the screen dimensions and clears the terminal.
+func (s *TerminalScreen) Resize(width, height int) {
 	s.width, s.height = width, height
-	s.last = taiui.Frame{}
+	s.last = Frame{}
 	io.WriteString(s.w, "\x1b[2J\x1b[H")
 }
 
-func (s *ansiScreen) Present(frame taiui.Frame) {
+func (s *TerminalScreen) Present(frame Frame) {
 	// Whole rows are repainted, not just the dirty runs: a wide
 	// cluster's trailing columns are never set cells, so a run-based
 	// repaint could leave a stale half-glyph when a wide cluster moves
@@ -105,14 +121,14 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 	// The options are derived per present, so the terminal cursor advances
 	// by the same columns the renderer allocated even if the environment
 	// changes between renders.
-	options := taiui.DisplayWidthOptions()
+	options := DisplayWidthOptions()
 	if s.bw == nil {
 		s.bw = bufio.NewWriter(s.w)
 	}
 	bw := s.bw
 	for _, y := range dirtyRows {
 		writeCursorPos(bw, 0, y)
-		paintRow(bw, &frame, y, options)
+		s.paintRow(bw, &frame, y, options)
 	}
 	if frame.CursorSet {
 		// The cursor position is written to the buffered writer, so it
@@ -143,7 +159,7 @@ func writeCursorPos(w io.Writer, x, y int) {
 // never allocates a fresh string.
 var spaces = strings.Repeat(" ", 64)
 
-func paintRow(w io.Writer, frame *taiui.Frame, y int, options displaywidth.Options) {
+func (s *TerminalScreen) paintRow(w io.Writer, frame *Frame, y int, options displaywidth.Options) {
 	row := frame.Cells[y*frame.Width : (y+1)*frame.Width]
 	// Locate the first set cell in a single scan; a row with none is
 	// cleared with the erase-line sequence in a single write instead of
@@ -160,7 +176,7 @@ func paintRow(w io.Writer, frame *taiui.Frame, y int, options displaywidth.Optio
 		io.WriteString(w, "\x1b[0m\x1b[2K")
 		return
 	}
-	var lastStyle taiui.Style
+	var lastStyle Style
 	// The unset run before the first set cell is batched into one write.
 	// It never reaches the row end, so no erase is needed here.
 	if firstSet > 0 {
@@ -188,11 +204,11 @@ func paintRow(w io.Writer, frame *taiui.Frame, y int, options displaywidth.Optio
 			continue
 		}
 		if lastStyle == nil || !lastStyle.Equal(cell.Style) {
-			io.WriteString(w, sgr(cell.Style))
+			io.WriteString(w, s.sgr(cell.Style))
 			lastStyle = cell.Style
 		}
 		writeCluster(w, cell.Rune, cell.Combc)
-		if cw := taiui.ClusterWidth(options, cell.Rune, cell.Combc); cw > 1 {
+		if cw := ClusterWidth(options, cell.Rune, cell.Combc); cw > 1 {
 			x += cw - 1
 		}
 	}
@@ -215,19 +231,14 @@ func writeUnsetRun(w io.Writer, n int) {
 // depends only on the attribute bits and the three colors.
 type sgrKey struct {
 	attr vt.Attr
-	fg   color.Color
-	bg   color.Color
-	uc   color.Color
+	fg   Color
+	bg   Color
+	uc   Color
 }
-
-// sgrCache memoizes SGR sequences by their key. The demo's style set is
-// small and bounded, so the cache stays small; the presenter is
-// single-threaded, so a plain map needs no locking.
-var sgrCache = make(map[sgrKey]string, 32)
 
 // sgr renders a style as SGR parameters, memoized by the style's
 // SGR-relevant fields (the attribute bits and the three colors).
-func sgr(style taiui.Style) string {
+func (s *TerminalScreen) sgr(style Style) string {
 	if style == nil {
 		return "\x1b[0m"
 	}
@@ -237,12 +248,15 @@ func sgr(style taiui.Style) string {
 		bg:   style.Bg(),
 		uc:   style.Uc(),
 	}
-	if s, ok := sgrCache[key]; ok {
-		return s
+	if s.sgrCache == nil {
+		s.sgrCache = make(map[sgrKey]string, 32)
 	}
-	s := buildSGR(key.attr, key.fg, key.bg, key.uc)
-	sgrCache[key] = s
-	return s
+	if seq, ok := s.sgrCache[key]; ok {
+		return seq
+	}
+	seq := buildSGR(key.attr, key.fg, key.bg, key.uc)
+	s.sgrCache[key] = seq
+	return seq
 }
 
 // buildSGR renders the SGR-relevant style fields as SGR parameters.
@@ -250,7 +264,7 @@ func sgr(style taiui.Style) string {
 // complete terminal state, so an attribute absent from it must be
 // cleared, or a plain cell after an underlined or overlined run would
 // keep the previous attribute and bleed the line into neighboring cells.
-func buildSGR(attr vt.Attr, fg, bg, uc color.Color) string {
+func buildSGR(attr vt.Attr, fg, bg, uc Color) string {
 	var parts []string
 	if attr&vt.Bold != 0 {
 		parts = append(parts, "1")
@@ -310,7 +324,7 @@ func buildSGR(attr vt.Attr, fg, bg, uc color.Color) string {
 
 // colorSGR renders one color as an SGR parameter: true color for RGB
 // values, 256-color palette index otherwise.
-func colorSGR(c color.Color, prefix string) string {
+func colorSGR(c Color, prefix string) string {
 	if c&color.IsRGB != 0 {
 		r, g, b := c.RGB()
 		return fmt.Sprintf("%s;2;%d;%d;%d", prefix, r, g, b)
@@ -332,4 +346,19 @@ func writeCluster(w io.Writer, mainc rune, combc []rune) {
 		b = utf8.AppendRune(b, r)
 	}
 	w.Write(b)
+}
+
+// DiscardScreen is a Screen that discards every presented frame and
+// returns its cells to the pool. It is useful for benchmarks and for
+// rendering to no visible target.
+type DiscardScreen struct{}
+
+func (DiscardScreen) Width() int    { return 1 }
+func (DiscardScreen) Height() int   { return 1 }
+func (DiscardScreen) Present(Frame) {}
+
+// ReleaseFrame returns the discarded frame's cells to the pool: the
+// screen renders and discards, so the cells are never retained.
+func (DiscardScreen) ReleaseFrame(frame Frame) {
+	ReleaseFrame(frame)
 }

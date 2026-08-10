@@ -18,18 +18,6 @@ const (
 	fbHeight = 3
 )
 
-type discardScreen struct{}
-
-func (discardScreen) Width() int          { return 1 }
-func (discardScreen) Height() int         { return 1 }
-func (discardScreen) Present(taiui.Frame) {}
-
-// ReleaseFrame returns the discarded frame's cells to the pool: the
-// screen renders and discards, so the cells are never retained.
-func (discardScreen) ReleaseFrame(frame taiui.Frame) {
-	taiui.ReleaseFrame(frame)
-}
-
 func main() {
 	t, err := tty.NewStdIoTty()
 	if err != nil {
@@ -58,7 +46,7 @@ func main() {
 		width, height = ws.Width, ws.Height
 	}
 
-	screen := &ansiScreen{w: t, width: width, height: height}
+	screen := taiui.NewTerminalScreen(t, width, height)
 
 	// The key-handled state (scroll, toggle, w1 weight, modal, rotation)
 	// lives inside the HandleKey provider: it injects the current values
@@ -105,7 +93,7 @@ func main() {
 	// The initial render presents the first frame; subsequent renders
 	// happen only when a case below changes state, so a key press that
 	// changes nothing skips the render entirely.
-	taiui.Render(scope, screen, discardScreen{})
+	taiui.Render(scope, screen, taiui.DiscardScreen{})
 	for {
 		select {
 		case key := <-keyCh:
@@ -124,29 +112,29 @@ func main() {
 			// stack stays flat.
 			if len(changed) > 0 {
 				scope = forkState(changed...)
-				taiui.Render(scope, screen, discardScreen{})
+				taiui.Render(scope, screen, taiui.DiscardScreen{})
 			}
 		case <-tick.C:
 			// The ball is derived from the frame counter: forking the frame
 			// state rebuilds the framebuffer content declaratively.
 			frame++
 			scope = forkState(func() Frame { return Frame(frame) })
-			taiui.Render(scope, screen, discardScreen{})
+			taiui.Render(scope, screen, taiui.DiscardScreen{})
 		case <-clock.C:
 			now = time.Now()
 			scope = forkState(func() Now { return Now(now) })
-			taiui.Render(scope, screen, discardScreen{})
+			taiui.Render(scope, screen, taiui.DiscardScreen{})
 		case <-resizeCh:
 			if ws, err := t.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
 				width, height = ws.Width, ws.Height
-				screen.resize(width, height)
+				screen.Resize(width, height)
 				// Both changed providers are forked in one layer, so the
 				// scope stack stays flat.
 				scope = forkState(
 					func() Width { return Width(width) },
 					func() Height { return Height(height) },
 				)
-				taiui.Render(scope, screen, discardScreen{})
+				taiui.Render(scope, screen, taiui.DiscardScreen{})
 			}
 		case <-sigCh:
 			return
