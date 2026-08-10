@@ -9,8 +9,14 @@ import (
 
 type Style = vt.Style
 
+// StyleFunc transforms a Style into another Style. It is the unit of the
+// style chain: elements hold an ordered list of StyleFuncs applied at
+// render time, and the StyleFunc methods compose new functions onto an
+// existing chain.
 type StyleFunc func(Style) Style
 
+// SameStyle is the identity style function: it returns its input
+// unchanged. It is the zero point for composing style chains.
 var SameStyle = StyleFunc(func(s Style) Style { return s })
 
 func (fn StyleFunc) SetFG(c Color) StyleFunc {
@@ -92,6 +98,10 @@ const (
 	DottedUnderline
 	DashedUnderline
 )
+
+// HexColor and RGBColor build colors from their components: HexColor takes
+// a 24-bit RGB value, and RGBColor takes separate red, green, and blue
+// bytes.
 
 var (
 	HexColor = color.NewHexColor

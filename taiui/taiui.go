@@ -32,9 +32,10 @@ taiui theory: UI = pure Element value derived from state.
   because a screen may retain the frame it presented. Elements never call
   screen methods; any backend able to present cell grids can render
   (character terminals, web views, native UIs). Frame.Equal lets a screen
-  detect an unchanged frame and skip repainting; Frame.Dirty reports the
-  runs of changed cells so a screen can repaint only the damaged regions,
-  mirroring change-based rendering in terminal libraries.
+  detect an unchanged frame and skip repainting, and Frame.Dirty reports
+  the runs of changed cells so a screen can repaint only the damaged
+  regions; both compare only frames of equal dimensions, mirroring
+  change-based rendering in terminal libraries.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -70,8 +71,9 @@ taiui theory: UI = pure Element value derived from state.
   is not drawn, so content never spills onto the screen. It accepts the
   common specs: a Box override, the style chain, and Fill, which paints
   the visible window's unoccupied cells. Crop-count indicators at the
-  window edges, and an optional Scrollbar thumb at the right edge, draw
-  over the fill.
+  window edges draw over the fill, clipped to the window's content area
+  so they never paint the scrollbar column; the Scrollbar thumb at the
+  right edge draws last.
 - FrameBuffer renders offscreen content: the content is data state, and
   rendering is a pure read of it. Rendering snapshots the visible cells
   under the read lock, then draws outside the lock, so a concurrent
@@ -108,20 +110,30 @@ type Box struct {
 	Right  int
 }
 
-func (b Box) Width() int  { return max(b.Right-b.Left, 0) }
+// Width returns the box's horizontal extent, clamped to non-negative.
+func (b Box) Width() int { return max(b.Right-b.Left, 0) }
+
+// Height returns the box's vertical extent, clamped to non-negative.
 func (b Box) Height() int { return max(b.Bottom-b.Top, 0) }
 
 // UnderlineColor sets the color of the underline. It is visible only when
 // the underline is on.
 type UnderlineColor Color
 
+// Align selects the horizontal alignment of a Text element.
 type Align uint8
+
+// AlignLeft, AlignRight, and AlignCenter are the alignment values for
+// Text elements.
 
 const (
 	AlignLeft Align = iota
 	AlignRight
 	AlignCenter
 )
+
+// BGColor, FGColor, Bold, Underline, and Fill are style and layout specs
+// accepted by every element: they set the named property on the element.
 
 type (
 	BGColor   Color
@@ -176,9 +188,9 @@ func frameCellEqual(a, b FrameCell) bool {
 
 // Equal reports whether f and o hold identical cells. Screens use it to
 // skip presenting an unchanged frame, mirroring change-based rendering in
-// terminal libraries.
+// terminal libraries. Frames of different sizes are never equal.
 func (f Frame) Equal(o Frame) bool {
-	if len(f.Cells) != len(o.Cells) {
+	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
 		return false
 	}
 	for i := range f.Cells {

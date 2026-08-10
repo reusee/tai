@@ -170,12 +170,18 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	if numTopCrop > 0 {
 		s := withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold)
 		for i, r := range fmt.Sprintf(" %d.. ", numTopCrop) {
+			if box.Left+i >= clipRight {
+				break
+			}
 			draw(box.Left+i, box.Top, r, nil, s)
 		}
 	}
 	if numBottomCrop > 0 {
 		s := withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold)
 		for i, r := range fmt.Sprintf(" %d.. ", numBottomCrop) {
+			if box.Left+i >= clipRight {
+				break
+			}
 			draw(box.Left+i, box.Bottom-1, r, nil, s)
 		}
 	}

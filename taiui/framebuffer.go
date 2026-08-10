@@ -48,6 +48,9 @@ type _FrameBuffer struct {
 	content *FrameBufferContent
 }
 
+// FrameBuffer wraps framebuffer content into an element that renders the
+// content into the box supplied by the layout. The content is data state:
+// mutating it and re-rendering shows the update without any element call.
 func FrameBuffer(content *FrameBufferContent) _FrameBuffer {
 	return _FrameBuffer{content: content}
 }

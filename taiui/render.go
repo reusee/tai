@@ -61,10 +61,18 @@ func renderElement(e Element, box Box, style Style, draw drawFunc, options displ
 
 type _Margin []int
 
+// Margin sets the box margin of a box-model element. It takes one to four
+// values, following the CSS convention: one applies to all sides, two set
+// vertical and horizontal, three set top, horizontal, and bottom, and four
+// set top, right, bottom, and left.
 func Margin(spec ...int) _Margin { return _Margin(spec) }
 
 type _Padding []int
 
+// Padding sets the box padding of a box-model element. It takes one to
+// four values, following the CSS convention: one applies to all sides, two
+// set vertical and horizontal, three set top, horizontal, and bottom, and
+// four set top, right, bottom, and left.
 func Padding(spec ...int) _Padding { return _Padding(spec) }
 
 // applyBoxModel maps a 0..4 element margin or padding list to the

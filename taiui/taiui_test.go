@@ -287,6 +287,14 @@ func TestFrameEqual(t *testing.T) {
 	}
 }
 
+func TestFrameEqualSizeMismatch(t *testing.T) {
+	a := newFrame(2, 3) // 6 cells
+	b := newFrame(3, 2) // also 6 cells
+	if a.Equal(b) {
+		t.Fatal("frames of different dimensions must not be equal")
+	}
+}
+
 func TestFrameDirty(t *testing.T) {
 	a := newFrame(4, 3)
 	b := newFrame(4, 3)
@@ -548,6 +556,58 @@ func TestBoxModelDegenerate(t *testing.T) {
 	}
 	if r := screen.cell(1, 1); r != '┘' {
 		t.Fatalf("expected bottom-right corner at (1,1), got %v", r)
+	}
+}
+
+func TestVerticalScrollCropClippedToScrollbar(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	lines := make([]string, 2000)
+	for i := range lines {
+		lines[i] = "x"
+	}
+	scope := newRootScope(Root{Element: VerticalScroll(
+		Text(lines),
+		2000,
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 3},
+		Scrollbar(true),
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// The top crop indicator " 1996.. " is wider than the window's
+	// content area; it must be clipped at the scrollbar column, so the
+	// scrollbar column keeps the fill background instead of a digit.
+	if r := screen.cell(2, 0); r != ' ' {
+		t.Fatalf("expected crop clipped at the scrollbar column, got %v", r)
+	}
+	if r := screen.cell(2, 3); r != '█' {
+		t.Fatalf("expected scrollbar thumb at (2,3), got %v", r)
+	}
+}
+
+func TestBorderStyleOverridesChain(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		FGColor(HexColor(0x0000ff)),
+		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// The border style applies after the element's style chain, so the
+	// border overrides the chain's foreground while the content keeps it.
+	cell := screen.lastCell(0, 0)
+	if cell.Rune != '┌' {
+		t.Fatalf("expected top-left corner at (0,0), got %v", cell.Rune)
+	}
+	if r, _, _ := cell.Style.Fg().RGB(); r != 0xff {
+		t.Fatalf("expected red border, got %#x", r)
+	}
+	cell = screen.lastCell(1, 1)
+	if cell.Rune != 'a' {
+		t.Fatalf("expected 'a' at (1,1), got %v", cell.Rune)
+	}
+	if r, g, b := cell.Style.Fg().RGB(); !(r == 0 && g == 0 && b == 0xff) {
+		t.Fatalf("expected blue content, got %#x %#x %#x", r, g, b)
 	}
 }
 

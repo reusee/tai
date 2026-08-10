@@ -43,7 +43,8 @@ type Specs []Spec
 
 func (Specs) spec() {}
 
-// If composes specs conditionally.
+// If composes specs conditionally: it returns a group of the given specs
+// when cond is true, and no specs otherwise.
 func If(cond bool, specs ...Spec) Spec {
 	if cond {
 		return Specs(specs)
@@ -51,7 +52,8 @@ func If(cond bool, specs ...Spec) Spec {
 	return nil
 }
 
-// Alt selects one of two specs.
+// Alt selects one of two specs: it returns ifTrue when cond is true, and
+// ifFalse otherwise.
 func Alt(cond bool, ifTrue, ifFalse Spec) Spec {
 	if cond {
 		return ifTrue
