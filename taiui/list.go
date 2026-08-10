@@ -16,6 +16,10 @@ taiui list theory:
   are never processed. This is O(window) per render, unlike a
   VerticalScroll of a Column of Text, which renders the whole
   content into a virtual column.
+- Each visible item is rendered directly as a single line: list
+  items are always single-line, left-aligned texts, so the general
+  text pipeline's alignment, padding, wrap, and line-slice machinery
+  is unnecessary overhead.
 - The selected item is styled with the ListStyle applied to the
   element's style chain. The ListStyle spec is a StyleFunc, so it
   composes with the chain.
@@ -103,23 +107,19 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	}
 
 	// Render only the visible items. Each item is a single-line Text
-	// with fill, so the row is fully painted and the selected row
-	// shows the selected style's background across the whole row.
+	// rendered directly, so the selected row is fully painted with
+	// the selected style's background.
 	for i := fromY; i < min(fromY+box.Height(), contentHeight); i++ {
 		itemStyle := style
 		if i == selected && l.selectedStyle != nil {
 			itemStyle = l.selectedStyle(style)
 		}
-		t := _Text{
-			elementBase: elementBase{fill: l.fill || i == selected},
-			lines:       l.items[i : i+1],
-		}
-		renderText(t, Box{
+		renderListLine(l.items[i], Box{
 			Top:    box.Top + i - fromY,
 			Left:   box.Left,
 			Bottom: box.Top + i - fromY + 1,
 			Right:  box.Right,
-		}, itemStyle, draw, cursor, options)
+		}, itemStyle, l.fill || i == selected, draw, options)
 	}
 
 	// Fill paints the rows below the last item when the content is
@@ -129,6 +129,48 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 			for x := box.Left; x < box.Right; x++ {
 				draw(x, y, ' ', nil, style)
 			}
+		}
+	}
+}
+
+// renderListLine renders one single-line list item directly, avoiding
+// the per-item _Text construction and line-slice pool operations of
+// renderText. The item is left-aligned at the box's left edge; fill
+// paints the cells the text does not occupy, including the tab gaps.
+func renderListLine(line string, box Box, style Style, fill bool, draw drawFunc, options displaywidth.Options) {
+	x := box.Left
+	g := options.StringGraphemes(line)
+	for g.Next() {
+		cluster := g.Value()
+		if cluster == "\t" {
+			// A tab advances to the next tab stop relative to the
+			// content area's left edge; the skipped cells are painted
+			// when fill is on.
+			tabStop := nextTabStop(x, box.Left, 8)
+			if tabStop > box.Right {
+				tabStop = box.Right
+			}
+			if fill {
+				for ; x < tabStop; x++ {
+					draw(x, box.Top, ' ', nil, style)
+				}
+			}
+			x = tabStop
+			continue
+		}
+		width := g.Width()
+		// A cluster that would extend past the right edge is not
+		// drawn, so text never spills beyond the box.
+		if x >= box.Right || x+width > box.Right {
+			break
+		}
+		mainc, combc := splitCluster(cluster)
+		draw(x, box.Top, mainc, combc, style)
+		x += width
+	}
+	if fill {
+		for ; x < box.Right; x++ {
+			draw(x, box.Top, ' ', nil, style)
 		}
 	}
 }

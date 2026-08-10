@@ -9,6 +9,22 @@ import (
 	"github.com/clipperhouse/displaywidth"
 )
 
+const TheoryOfTextRendering = `
+taiui text rendering theory:
+- Text rendering optimizes the common case: plain left-aligned,
+  top-aligned, non-wrapped, non-filled text, with an optional end cursor,
+  is the hottest path in the library, so it renders directly, avoiding
+  the general pipeline's line-slice pool and per-line alignment and fill
+  overhead.
+- The fast path is a strict subset of the general path: it applies only
+  when the general path would produce identical output, so the two paths
+  never diverge.
+- Wrapping is bounded by the visible line count: the render path passes
+  the remaining rows to wrapLineLimited, so a long line in a small box
+  never wraps beyond the rows the box can show, and pathological inputs
+  cannot accumulate unbounded wrapped lines.
+`
+
 // OffsetStyleFunc styles a text position by its rune offset within the
 // physical line (a wrapped line restarts the offset). Offsets count runes,
 // including the combining runes of clusters.
@@ -104,9 +120,79 @@ var textLinesPool = sync.Pool{
 	New: func() any { return make([]string, 0, 64) },
 }
 
+// renderTextFastPath renders the common case directly: plain
+// left-aligned, top-aligned, non-wrapped, non-filled text with an
+// optional end cursor, and no offset style or padding. It avoids the
+// line-slice pool and the per-line alignment and fill overhead of the
+// general path. It returns false when the text does not match the
+// fast-path conditions.
+func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) bool {
+	if t.wrap || t.fill || t.offsetStyleFunc != nil ||
+		t.align != AlignLeft || t.valign != VAlignTop ||
+		t.padding != [4]int{} || t.cursorAt >= 0 {
+		return false
+	}
+	if box.Width() <= 0 || box.Height() <= 0 {
+		return false
+	}
+	tabWidth := t.tabWidth
+	if tabWidth <= 0 {
+		tabWidth = 8
+	}
+	y := box.Top
+	var x int
+	for _, ln := range t.lines {
+		if y >= box.Bottom {
+			break
+		}
+		x = box.Left
+		g := options.StringGraphemes(ln)
+		for g.Next() {
+			cluster := g.Value()
+			if cluster == "\t" {
+				// The tab stop is clamped to the box's right edge,
+				// matching the general path: a tab never advances past
+				// the content area.
+				tabStop := nextTabStop(x, box.Left, tabWidth)
+				if tabStop > box.Right {
+					tabStop = box.Right
+				}
+				x = tabStop
+				continue
+			}
+			width := g.Width()
+			if x >= box.Right || x+width > box.Right {
+				break
+			}
+			mainc, combc := splitCluster(cluster)
+			draw(x, y, mainc, combc, style)
+			x += width
+		}
+		y++
+	}
+	if t.cursor {
+		if len(t.lines) > 0 {
+			// The cursor is the position after the last drawn cluster of
+			// the last line, clamped to the box's right edge: a tab can
+			// advance past it, and the general path clamps the same way.
+			if x > box.Right {
+				x = box.Right
+			}
+			cursor(x, y-1)
+		} else {
+			cursor(box.Left, box.Top)
+		}
+	}
+	return true
+}
+
 func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	box = t.effectiveBox(box)
 	style = t.styled(style)
+
+	if renderTextFastPath(t, box, style, draw, cursor, options) {
+		return
+	}
 
 	tabWidth := t.tabWidth
 	if tabWidth <= 0 {
@@ -139,13 +225,12 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	defer func() { textLinesPool.Put(lines) }()
 	for _, line := range t.lines {
 		if t.wrap {
-			wrapped := wrapLine(line, wrapWidth, options)
-			for _, ln := range wrapped {
-				if len(lines) >= maxLines {
-					break
-				}
-				lines = append(lines, ln)
-			}
+			// The limit is the remaining visible line count: a long
+			// line in a small box never wraps beyond the rows the box
+			// can show, so pathological inputs cannot accumulate
+			// unbounded wrapped lines.
+			wrapped := wrapLineLimited(line, wrapWidth, maxLines-len(lines), options)
+			lines = append(lines, wrapped...)
 		} else {
 			if len(lines) >= maxLines {
 				break
@@ -329,8 +414,19 @@ taiui cursor theory:
   change and repositions without repainting cells.
 `
 
+// wrapLine wraps a line to the given width. It is the unlimited form of
+// wrapLineLimited, used by tests and callers that need the full wrapped
+// result.
 func wrapLine(line string, width int, options displaywidth.Options) []string {
-	if width <= 0 {
+	return wrapLineLimited(line, width, -1, options)
+}
+
+// wrapLineLimited wraps a line to the given width, producing at most
+// limit lines. A negative limit is unlimited. The render path passes the
+// remaining visible line count, so a long line in a small box never wraps
+// beyond the rows the box can show.
+func wrapLineLimited(line string, width, limit int, options displaywidth.Options) []string {
+	if width <= 0 || limit == 0 {
 		return nil
 	}
 	if line == "" {
@@ -351,24 +447,36 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 
 	// Single pass over the grapheme clusters: words are packed onto the
 	// current line as they complete, so no word list is built. A word
-	// wider than the box is packed in chunks as it grows.
+	// wider than the box is packed in chunks as it grows. The limit
+	// bounds the produced lines, so a long line in a small box never
+	// wraps beyond the visible count.
 	var lines []string
 	var cur []string
 	curWidth := 0
 	var word []string
 	wordWidth := 0
 
+	// flushLine appends the current line and reports whether more lines
+	// may be produced.
+	flushLine := func() bool {
+		lines = append(lines, strings.Join(cur, ""))
+		cur = cur[:0]
+		curWidth = 0
+		return limit < 0 || len(lines) < limit
+	}
+
 	// packWord appends the current word to the current line, wrapping
 	// first if the word would not fit. The word's backing array is
-	// reused for the next word.
-	packWord := func() {
+	// reused for the next word. It reports whether more lines may be
+	// produced.
+	packWord := func() bool {
 		if len(word) == 0 {
-			return
+			return true
 		}
 		if len(cur) > 0 && curWidth+1+wordWidth > width {
-			lines = append(lines, strings.Join(cur, ""))
-			cur = cur[:0]
-			curWidth = 0
+			if !flushLine() {
+				return false
+			}
 		}
 		if len(cur) > 0 {
 			cur = append(cur, " ")
@@ -378,25 +486,32 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 		curWidth += wordWidth
 		word = word[:0]
 		wordWidth = 0
+		return true
 	}
 
 	g := options.StringGraphemes(line)
 	for g.Next() {
 		cluster := g.Value()
 		if cluster == " " || cluster == "\t" {
-			packWord()
+			if !packWord() {
+				return lines
+			}
 			continue
 		}
 		w := g.Width()
 		if wordWidth+w > width && len(word) > 0 {
 			// The word exceeds the box: pack the word so far, then
 			// start a new word with the current cluster.
-			packWord()
+			if !packWord() {
+				return lines
+			}
 		}
 		word = append(word, cluster)
 		wordWidth += w
 	}
-	packWord()
+	if !packWord() {
+		return lines
+	}
 	if len(cur) > 0 || len(lines) == 0 {
 		lines = append(lines, strings.Join(cur, ""))
 	}

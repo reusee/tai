@@ -3,7 +3,6 @@ package taiui
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -29,7 +28,9 @@ taiui terminal screen theory:
   the unset run before it is batched in one write, so a row with content
   is scanned once, not twice.
 - Frames with no dirty rows and an unchanged cursor are skipped entirely,
-  and the first frame repaints the whole screen.
+  and the first frame repaints the whole screen. The cursor position is
+  written only when it changed, so a repaint with a stationary cursor
+  does not rewrite the position.
 - The screen reuses a dirty-rows buffer across presents, so a frame
   comparison allocates nothing.
 - The screen retains the last presented frame for damage comparison.
@@ -130,9 +131,11 @@ func (s *TerminalScreen) Present(frame Frame) {
 		writeCursorPos(bw, 0, y)
 		s.paintRow(bw, &frame, y, options)
 	}
-	if frame.CursorSet {
+	if frame.CursorSet && (!s.last.CursorSet || frame.CursorX != s.last.CursorX || frame.CursorY != s.last.CursorY) {
 		// The cursor position is written to the buffered writer, so it
-		// is flushed with the rows in one write.
+		// is flushed with the rows in one write. It is written only when
+		// it changed: a repaint with a stationary cursor does not
+		// rewrite the position.
 		writeCursorPos(bw, frame.CursorX, frame.CursorY)
 	}
 	bw.Flush()
@@ -259,77 +262,91 @@ func (s *TerminalScreen) sgr(style Style) string {
 	return seq
 }
 
+// appendColorSGR appends one color as an SGR parameter: true color for
+// RGB values, 256-color palette index otherwise.
+func appendColorSGR(b []byte, c Color, prefix string) []byte {
+	b = append(b, ';')
+	b = append(b, prefix...)
+	if c&color.IsRGB != 0 {
+		r, g, bl := c.RGB()
+		b = append(b, ';', '2', ';')
+		b = strconv.AppendInt(b, int64(r), 10)
+		b = append(b, ';')
+		b = strconv.AppendInt(b, int64(g), 10)
+		b = append(b, ';')
+		b = strconv.AppendInt(b, int64(bl), 10)
+		return b
+	}
+	b = append(b, ';', '5', ';')
+	b = strconv.AppendInt(b, int64(c&0xff), 10)
+	return b
+}
+
 // buildSGR renders the SGR-relevant style fields as SGR parameters.
 // Every sequence starts with the reset parameter: a style describes the
 // complete terminal state, so an attribute absent from it must be
 // cleared, or a plain cell after an underlined or overlined run would
 // keep the previous attribute and bleed the line into neighboring cells.
 func buildSGR(attr vt.Attr, fg, bg, uc Color) string {
-	var parts []string
+	// The stack buffer covers the worst case: every attribute plus three
+	// true-color parameters, so a style never allocates.
+	var buf [96]byte
+	s := append(buf[:0], '\x1b', '[', '0')
 	if attr&vt.Bold != 0 {
-		parts = append(parts, "1")
+		s = append(s, ';', '1')
 	}
 	if attr&vt.Dim != 0 {
-		parts = append(parts, "2")
+		s = append(s, ';', '2')
 	}
 	if attr&vt.Italic != 0 {
-		parts = append(parts, "3")
+		s = append(s, ';', '3')
 	}
 	switch u := attr & vt.UnderlineMask; u {
 	case vt.PlainUnderline:
-		parts = append(parts, "4")
+		s = append(s, ';', '4')
 	case vt.DoubleUnderline:
-		parts = append(parts, "4:2")
+		s = append(s, ';', '4', ':', '2')
 	case vt.CurlyUnderline:
-		parts = append(parts, "4:3")
+		s = append(s, ';', '4', ':', '3')
 	case vt.DottedUnderline:
-		parts = append(parts, "4:4")
+		s = append(s, ';', '4', ':', '4')
 	case vt.DashedUnderline:
-		parts = append(parts, "4:5")
+		s = append(s, ';', '4', ':', '5')
 	}
 	if attr&vt.Blink != 0 {
-		parts = append(parts, "5")
+		s = append(s, ';', '5')
 	}
 	if attr&vt.Reverse != 0 {
-		parts = append(parts, "7")
+		s = append(s, ';', '7')
 	}
 	if attr&vt.StrikeThrough != 0 {
-		parts = append(parts, "9")
+		s = append(s, ';', '9')
 	}
 	if attr&vt.Overline != 0 {
-		parts = append(parts, "53")
+		s = append(s, ';', '5', '3')
 	}
 	// An unset color is a valid-but-colorless sentinel in the vt style;
 	// RGB() reports it as -1, so only real colors emit SGR parameters.
 	if c := fg; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
-			parts = append(parts, colorSGR(c, "38"))
+			s = appendColorSGR(s, c, "38")
 		}
 	}
 	if c := bg; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
-			parts = append(parts, colorSGR(c, "48"))
+			s = appendColorSGR(s, c, "48")
 		}
 	}
 	if c := uc; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
-			parts = append(parts, colorSGR(c, "58"))
+			s = appendColorSGR(s, c, "58")
 		}
 	}
-	if len(parts) == 0 {
+	if len(s) == 3 {
 		return "\x1b[0m"
 	}
-	return "\x1b[0;" + strings.Join(parts, ";") + "m"
-}
-
-// colorSGR renders one color as an SGR parameter: true color for RGB
-// values, 256-color palette index otherwise.
-func colorSGR(c Color, prefix string) string {
-	if c&color.IsRGB != 0 {
-		r, g, b := c.RGB()
-		return fmt.Sprintf("%s;2;%d;%d;%d", prefix, r, g, b)
-	}
-	return fmt.Sprintf("%s;5;%d", prefix, int(c&0xff))
+	s = append(s, 'm')
+	return string(s)
 }
 
 func writeCluster(w io.Writer, mainc rune, combc []rune) {

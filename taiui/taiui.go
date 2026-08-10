@@ -102,6 +102,10 @@ taiui theory: UI = pure Element value derived from state.
   window edges draw over the fill, clipped to the window's content area
   so they never paint the scrollbar column; the Scrollbar thumb at the
   right edge draws last.
+- The scroll collects only the cells near the expected window: the
+  collection range spans at most three window heights, and a second pass
+  re-collects the window cells when the view falls outside the range, so
+  a tall virtual column never accumulates cells for rows outside it.
 - List renders a vertical list of single-line items with a selected
   index. The selected item is highlighted with the ListStyle spec.
   The view scrolls to keep the selected item visible, clamped to the

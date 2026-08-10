@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
 )
 
@@ -55,6 +56,16 @@ func TestTerminalScreenSgrCache(t *testing.T) {
 	key := sgrKey{attr: style.Attr(), fg: style.Fg(), bg: style.Bg(), uc: style.Uc()}
 	if cached, ok := s.sgrCache[key]; !ok || cached != seq1 {
 		t.Fatalf("expected SGR cached for style, got %q", seq1)
+	}
+}
+
+func TestTerminalScreenSgrPaletteColor(t *testing.T) {
+	// A palette color emits the 256-color parameter, not true color.
+	s := NewTerminalScreen(&strings.Builder{}, 80, 24)
+	style := vt.BaseStyle.WithFg(color.PaletteColor(196))
+	seq := s.sgr(style)
+	if !strings.Contains(seq, "38;5;196") {
+		t.Fatalf("expected palette color parameter, got %q", seq)
 	}
 }
 
@@ -137,6 +148,33 @@ func TestTerminalScreenPresentRepositionsCursorOnly(t *testing.T) {
 	s.Present(frame)
 	if !strings.Contains(sb.String(), "\x1b[4;6H") {
 		t.Fatalf("expected cursor reposition, got %q", sb.String())
+	}
+}
+
+func TestTerminalScreenPresentSkipsUnchangedCursor(t *testing.T) {
+	var sb strings.Builder
+	s := NewTerminalScreen(&sb, 80, 24)
+	frame := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
+	frame.CursorSet = true
+	frame.CursorX = 5
+	frame.CursorY = 3
+	s.Present(frame)
+	sb.Reset()
+	// A dirty row with an unchanged cursor: the row is repainted, but the
+	// cursor position is not rewritten. The second frame is a fresh
+	// allocation: the screen retains the first frame's cells, so mutating
+	// the first frame would corrupt the retained baseline.
+	frame2 := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
+	frame2.CursorSet = true
+	frame2.CursorX = 5
+	frame2.CursorY = 3
+	frame2.Cells[0] = FrameCell{Rune: 'x', Style: vt.BaseStyle, Set: true}
+	s.Present(frame2)
+	if strings.Contains(sb.String(), "\x1b[4;6H") {
+		t.Fatalf("expected unchanged cursor not rewritten, got %q", sb.String())
+	}
+	if !strings.Contains(sb.String(), "\x1b[1;1H") {
+		t.Fatalf("expected dirty row repainted, got %q", sb.String())
 	}
 }
 

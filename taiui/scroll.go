@@ -101,28 +101,6 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		Bottom: box.Top + maxScrollContentHeight,
 	}
 	maxY := box.Top
-	// Cells are collected into one flat slice in draw order, so a later
-	// draw of the same cell wins when the replay below walks the slice in
-	// order. The slice is pooled: a scroll renders its whole child into
-	// the virtual column, so the collected cells can be far larger than
-	// the visible window, and pooling avoids an allocation per render.
-	cells := scrollCellsPool.Get().([]scrollCell)
-	if cap(cells) < box.Width()*box.Height()/4 {
-		cells = make([]scrollCell, 0, box.Width()*box.Height()/4)
-	}
-	cells = cells[:0]
-	defer func() {
-		scrollCellsPool.Put(cells)
-	}()
-	sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
-		if y > maxY {
-			maxY = y
-		}
-		if y < box.Top {
-			return
-		}
-		cells = append(cells, scrollCell{X: x, Y: y, Rune: mainc, Combc: combc, Style: st})
-	})
 	// Cursor requests from the child are in content coordinates; they are
 	// transformed to window coordinates after the view window is computed.
 	// Only the last request matters, mirroring the last-draw-wins rule for
@@ -133,7 +111,54 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		cursorX, cursorY = x, y
 		cursorSet = true
 	}
-	renderElement(v.child, elemBox, style, sub, subCursor, options)
+
+	// The collection range is centered on the expected window: for tall
+	// content the window is within the range, so one pass suffices; for
+	// short content with a large offset the range may miss it, and a
+	// second pass re-collects the window cells. The range spans at most
+	// three window heights, so a tall virtual column never accumulates
+	// cells for rows outside it.
+	collectFrom := box.Top + v.offset - box.Height()
+	if collectFrom < box.Top {
+		collectFrom = box.Top
+	}
+	collectTo := box.Top + v.offset + 2*box.Height()
+	if collectTo > box.Top+maxScrollContentHeight {
+		collectTo = box.Top + maxScrollContentHeight
+	}
+
+	// Cells are collected into one flat slice in draw order, so a later
+	// draw of the same cell wins when the replay below walks the slice in
+	// order. The slice is pooled: a scroll renders its child into the
+	// virtual column, and pooling avoids an allocation per render.
+	cells := scrollCellsPool.Get().([]scrollCell)
+	if cap(cells) < box.Width()*box.Height()/4 {
+		cells = make([]scrollCell, 0, box.Width()*box.Height()/4)
+	}
+	cells = cells[:0]
+	defer func() {
+		scrollCellsPool.Put(cells)
+	}()
+
+	// collect renders the child and stores the cells in the given row
+	// range. maxY tracks the true content extent across passes, so the
+	// view window and the crop counts are computed from the full content
+	// even when the stored cells are a sub-range.
+	collect := func(from, to int) {
+		cells = cells[:0]
+		sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
+			if y > maxY {
+				maxY = y
+			}
+			if y < from || y >= to {
+				return
+			}
+			cells = append(cells, scrollCell{X: x, Y: y, Rune: mainc, Combc: combc, Style: st})
+		})
+		renderElement(v.child, elemBox, style, sub, subCursor, options)
+	}
+
+	collect(collectFrom, collectTo)
 
 	// Clamp the view window to the content extent: it never starts before
 	// the box top, nor past the last visible content row.
@@ -145,6 +170,13 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	}
 	if fromY > maxFromY {
 		fromY = maxFromY
+	}
+
+	// When the window falls outside the collected range (short content
+	// with a large offset), re-collect the window cells. The window is
+	// known now, so the new range covers it exactly.
+	if fromY < collectFrom || fromY+box.Height() > collectTo {
+		collect(fromY, fromY+box.Height())
 	}
 
 	clipRight := box.Right

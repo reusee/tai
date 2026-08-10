@@ -2,6 +2,7 @@ package taiui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/clipperhouse/displaywidth"
@@ -205,6 +206,24 @@ func TestVerticalScroll(t *testing.T) {
 	}
 	if r := screen.cell(0, 1); r != ' ' {
 		t.Fatalf("expected bottom crop indicator at row 1, got %v", r)
+	}
+}
+
+func TestVerticalScrollOffsetBeyondShortContent(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(Text("a", "b", "c"), 1000),
+	)})
+	Render(scope, screen)
+	// The offset is far beyond the content: the first collection range
+	// misses the window, and a second pass re-collects the window cells.
+	// The view clamps to the content start, showing "a" at row 0.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != 'c' {
+		t.Fatalf("expected 'c' at (0,2), got %v", r)
 	}
 }
 
@@ -435,6 +454,31 @@ func TestWrapLine(t *testing.T) {
 	}
 }
 
+func TestWrapLineLimit(t *testing.T) {
+	options := displaywidth.Options{}
+	// The limit bounds the produced lines: a long line in a small box
+	// never wraps beyond the rows the box can show.
+	if got := wrapLineLimited("hello world", 8, 1, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("limit 1: got %q", got)
+	}
+	if got := wrapLineLimited("hello world", 8, 2, options); !sameStrings(got, []string{"hello", "world"}) {
+		t.Fatalf("limit 2: got %q", got)
+	}
+	// A limit of 0 produces no lines.
+	if got := wrapLineLimited("hello", 10, 0, options); len(got) != 0 {
+		t.Fatalf("limit 0: got %q", got)
+	}
+	// A negative limit is unlimited, matching wrapLine.
+	if got := wrapLineLimited("hello world", 8, -1, options); !sameStrings(got, []string{"hello", "world"}) {
+		t.Fatalf("unlimited: got %q", got)
+	}
+	// A long line in a small box stops at the limit.
+	long := strings.Repeat("word ", 100)
+	if got := wrapLineLimited(long, 5, 3, options); len(got) != 3 {
+		t.Fatalf("long line limit 3: got %d lines", len(got))
+	}
+}
+
 func TestWrapLineCluster(t *testing.T) {
 	options := displaywidth.Options{}
 	// Wide clusters hard-break at cluster boundaries: cluster(2) + 'x'(1)
@@ -504,6 +548,54 @@ func TestTextTabExpansion(t *testing.T) {
 	}
 	if cell := screen.lastCell(1, 0); cell.Set {
 		t.Fatalf("expected unset tab gap at (1,0), got %+v", cell)
+	}
+}
+
+func TestTextFastPathMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same output as the general path for
+	// the conditions it handles. A no-op offset style forces the general
+	// path without changing the output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB"} {
+		fast := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text)}), fast)
+
+		general := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+			t.Fatalf("fast path output differs from general path for %q", text)
+		}
+	}
+}
+
+func TestTextFastPathEmptyBoxCursor(t *testing.T) {
+	// An empty box override with a cursor: the fast path must not set a
+	// cursor, matching the general path's early return.
+	fast := newFakeScreen(80, 25)
+	Render(newRootScope(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10})}), fast)
+
+	general := newFakeScreen(80, 25)
+	Render(newRootScope(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10}, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+	if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+		t.Fatal("fast path empty-box cursor output differs from general path")
+	}
+}
+
+func TestTextFastPathCursorMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same cursor position as the general
+	// path for the conditions it handles. A no-op offset style forces the
+	// general path without changing the output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
+		fast := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Cursor(true))}), fast)
+
+		general := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+			t.Fatalf("fast path cursor output differs from general path for %q", text)
+		}
 	}
 }
 
@@ -2341,4 +2433,39 @@ func TestList(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestListItemRendering(t *testing.T) {
+	// A tab in a list item advances to the next tab stop (default 8);
+	// the skipped cells are painted because the selected row is filled.
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: List([]string{"a\tb"}, 0)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled tab gap at (1,0), got %+v", cell)
+	}
+	if r := screen.cell(8, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (8,0), got %v", r)
+	}
+
+	// A wide cluster occupies two columns: the trailing column is
+	// blank and the next rune follows it.
+	screen2 := newFakeScreen(80, 25)
+	scope2 := newRootScope(Root{Element: List([]string{"x\U0001F469\u200d\U0001F4BBy"}, 0)})
+	Render(scope2, screen2)
+	if r := screen2.cell(0, 0); r != 'x' {
+		t.Fatalf("expected 'x' at (0,0), got %v", r)
+	}
+	if r := screen2.cell(1, 0); r != '\U0001F469' {
+		t.Fatalf("expected woman emoji at (1,0), got %v", r)
+	}
+	if r := screen2.cell(2, 0); r != 0 {
+		t.Fatalf("expected trailing column blank, got %v", r)
+	}
+	if r := screen2.cell(3, 0); r != 'y' {
+		t.Fatalf("expected 'y' at (3,0), got %v", r)
+	}
 }
