@@ -6,90 +6,90 @@ import (
 	"github.com/clipperhouse/displaywidth"
 )
 
-type frameBufferCell struct {
+type canvasCell struct {
 	rune  rune
 	combc []rune
 	style Style
 	set   bool
 }
 
-// placedCell is one set cell of a framebuffer snapshot, with its
+// placedCell is one set cell of a canvas snapshot, with its
 // position in the render box.
 type placedCell struct {
 	x, y int
-	cell frameBufferCell
+	cell canvasCell
 }
 
-// placedCellPool pools the snapshot slices of framebuffer renders.
-// A framebuffer snapshots its visible set cells under the read lock;
+// placedCellPool pools the snapshot slices of canvas renders.
+// A canvas snapshots its visible set cells under the read lock;
 // pooling avoids an allocation per render.
 var placedCellPool = sync.Pool{
 	New: func() any { return make([]placedCell, 0, 64) },
 }
 
-// FrameBufferContent is offscreen framebuffer content. It is state: an
+// CanvasContent is offscreen canvas content. It is state: an
 // ordinary data value that the application builds and mutates. The
-// FrameBuffer element reads it purely during rendering, so updating a
-// framebuffer is updating state, never an imperative element-update call.
-type FrameBufferContent struct {
+// Canvas element reads it purely during rendering, so updating a
+// canvas is updating state, never an imperative element-update call.
+type CanvasContent struct {
 	sync.RWMutex
 	width  int
 	height int
-	cells  []frameBufferCell
+	cells  []canvasCell
 }
 
-// NewFrameBufferContent creates empty framebuffer content of the given size.
-func NewFrameBufferContent(width, height int) *FrameBufferContent {
-	return &FrameBufferContent{
+// NewCanvasContent creates empty canvas content of the given size.
+func NewCanvasContent(width, height int) *CanvasContent {
+	return &CanvasContent{
 		width:  width,
 		height: height,
-		cells:  make([]frameBufferCell, width*height),
+		cells:  make([]canvasCell, width*height),
 	}
 }
 
 // SetContent writes a cell into the content, using content-local
 // coordinates. Writes outside the content bounds are ignored. The cell
 // is stored by value, so a write allocates nothing.
-func (c *FrameBufferContent) SetContent(x, y int, mainc rune, combc []rune, style Style) {
+func (c *CanvasContent) SetContent(x, y int, mainc rune, combc []rune, style Style) {
 	c.Lock()
 	defer c.Unlock()
 	if x < 0 || x >= c.width || y < 0 || y >= c.height {
 		return
 	}
-	c.cells[y*c.width+x] = frameBufferCell{rune: mainc, combc: combc, style: style, set: true}
+	c.cells[y*c.width+x] = canvasCell{rune: mainc, combc: combc, style: style, set: true}
 }
 
 // Clear resets every cell to a blank cell with the given style, in a
 // single locked operation. Clearing a large canvas with Clear is faster
 // than clearing cell by cell with SetContent, which locks per cell.
 // Cells are written by value, so a clear allocates nothing.
-func (c *FrameBufferContent) Clear(style Style) {
+func (c *CanvasContent) Clear(style Style) {
 	c.Lock()
 	defer c.Unlock()
 	for i := range c.cells {
-		c.cells[i] = frameBufferCell{rune: ' ', style: style, set: true}
+		c.cells[i] = canvasCell{rune: ' ', style: style, set: true}
 	}
 }
 
-var _ Element = _FrameBuffer{}
+var _ Element = _Canvas{}
 
-// _FrameBuffer renders framebuffer content into the box supplied by the
+// _Canvas renders canvas content into the box supplied by the
 // layout. It is a pure value: the content is data state, and rendering is a
 // pure read of it.
-type _FrameBuffer struct {
-	content *FrameBufferContent
+type _Canvas struct {
+	content *CanvasContent
 }
 
-// FrameBuffer wraps framebuffer content into an element that renders the
+// Canvas wraps canvas content into an element that renders the
 // content into the box supplied by the layout. The content is data state:
 // mutating it and re-rendering shows the update without any element call.
-func FrameBuffer(content *FrameBufferContent) _FrameBuffer {
-	return _FrameBuffer{content: content}
+func Canvas(content *CanvasContent) _Canvas {
+	return _Canvas{content: content}
 }
 
-func (_FrameBuffer) element() {}
+func (_Canvas) element() {}
 
-func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
+func renderCanvas(f _Canvas, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	content := f.content
 	if content == nil {
 		return

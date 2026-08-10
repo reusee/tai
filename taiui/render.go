@@ -56,8 +56,8 @@ func renderElement(e Element, box Box, style Style, draw drawFunc, cursor cursor
 		renderVerticalScroll(e, box, style, draw, cursor, options)
 	case _Flex:
 		renderFlex(e, box, style, draw, cursor, options)
-	case _FrameBuffer:
-		renderFrameBuffer(e, box, style, draw, cursor, options)
+	case _Canvas:
+		renderCanvas(e, box, style, draw, cursor, options)
 	case _Overlay:
 		renderOverlay(e, box, style, draw, cursor, options)
 	case _List:

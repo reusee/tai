@@ -36,7 +36,7 @@ taiuidemo provider theory:
   the providers that carry the new state, so the event loop forks only the
   changed pieces. The key-handled state lives in the handler's closure,
   and dscope re-creates the handler whenever a state provider changes.
-- The framebuffer content is derived state: the FrameBufferContent method
+- The canvas content is derived state: the CanvasContent method
   builds it from the frame counter, so the ball is a pure function of
   state and the event loop never mutates the content in place.
 - The Root method composes the component providers; it is the only
@@ -279,16 +279,16 @@ func (a *App) PanelBox(t Toggle, w1 W1Weight) PanelBox {
 	return PanelBox(panelBox(t, w1))
 }
 
-func (a *App) PanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
+func (a *App) PanelDynamic(frame Frame, toggle Toggle, fb *taiui.CanvasContent) PanelDynamic {
 	return PanelDynamic(panelDynamic(frame, toggle, fb))
 }
 
-// FrameBufferContent derives the framebuffer content from the frame
+// CanvasContent derives the canvas content from the frame
 // counter: the ball position is a pure function of state, so the content
 // is rebuilt by dscope when the frame changes, and the event loop never
 // mutates it in place.
-func (a *App) FrameBufferContent(frame Frame) *taiui.FrameBufferContent {
-	fb := taiui.NewFrameBufferContent(fbWidth, fbHeight)
+func (a *App) CanvasContent(frame Frame) *taiui.CanvasContent {
+	fb := taiui.NewCanvasContent(fbWidth, fbHeight)
 	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
 	bx := bounce(int(frame*2), fbWidth-1)
 	by := bounce(int(frame), fbHeight-1)
@@ -441,15 +441,15 @@ func scrollLines() []string {
 	return lines
 }
 
-func panelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) taiui.Element {
+func panelDynamic(frame Frame, toggle Toggle, fb *taiui.CanvasContent) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x141414)),
 		taiui.Column(
-			taiui.Weighted(1, panelTitle("State \u00b7 FrameBuffer")),
-			taiui.Weighted(3, taiui.FrameBuffer(fb)),
+			taiui.Weighted(1, panelTitle("State \u00b7 Canvas")),
+			taiui.Weighted(3, taiui.Canvas(fb)),
 			taiui.Weighted(2, taiui.Text(
 				fmt.Sprintf("frame %d \u00b7 toggle %v", int64(frame), bool(toggle)),
 				taiui.Fill(true),

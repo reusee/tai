@@ -33,7 +33,7 @@ func (_Padding) spec()        {}
 func (_Rect) spec()           {}
 func (_Text) spec()           {}
 func (_VerticalScroll) spec() {}
-func (_FrameBuffer) spec()    {}
+func (_Canvas) spec()         {}
 
 func (_Overlay) spec() {}
 

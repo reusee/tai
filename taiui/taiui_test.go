@@ -80,18 +80,18 @@ func TestNestedRect(t *testing.T) {
 	}
 }
 
-func TestFrameBuffer(t *testing.T) {
+func TestCanvas(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	content := NewFrameBufferContent(10, 10)
+	content := NewCanvasContent(10, 10)
 	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
-	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	scope := newRootScope(Root{Element: Canvas(content)})
 	Render(scope, screen)
 
 	if r := screen.cell(0, 0); r != 'X' {
 		t.Fatalf("expected 'X' at cell 0, got %v", r)
 	}
 
-	// Framebuffer content is state: mutating it and re-rendering yields the
+	// Canvas content is state: mutating it and re-rendering yields the
 	// updated UI without any element-update call.
 	content.SetContent(0, 0, 'Y', nil, vt.BaseStyle)
 	Render(scope, screen)
@@ -101,8 +101,8 @@ func TestFrameBuffer(t *testing.T) {
 	}
 }
 
-func TestFrameBufferContentBounds(t *testing.T) {
-	content := NewFrameBufferContent(10, 10)
+func TestCanvasContentBounds(t *testing.T) {
+	content := NewCanvasContent(10, 10)
 	// Writes outside the content bounds are ignored and must not corrupt
 	// in-bounds cells.
 	content.SetContent(-1, 0, 'X', nil, vt.BaseStyle)
@@ -111,7 +111,7 @@ func TestFrameBufferContentBounds(t *testing.T) {
 	content.SetContent(0, 10, 'X', nil, vt.BaseStyle)
 
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	scope := newRootScope(Root{Element: Canvas(content)})
 	Render(scope, screen)
 
 	// Every write was out of bounds, so all cells are blank.
@@ -123,12 +123,12 @@ func TestFrameBufferContentBounds(t *testing.T) {
 	}
 }
 
-func TestFrameBufferClear(t *testing.T) {
-	content := NewFrameBufferContent(10, 10)
+func TestCanvasClear(t *testing.T) {
+	content := NewCanvasContent(10, 10)
 	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
 	content.Clear(vt.BaseStyle.WithBg(HexColor(0x101010)))
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	scope := newRootScope(Root{Element: Canvas(content)})
 	Render(scope, screen)
 	// Clear resets every cell to a blank cell with the given style.
 	cell := screen.lastCell(0, 0)
@@ -270,26 +270,26 @@ func TestAmbiguousRunewidthEnv(t *testing.T) {
 	}
 }
 
-func TestFrameBufferCombc(t *testing.T) {
-	content := NewFrameBufferContent(5, 5)
+func TestCanvasCombc(t *testing.T) {
+	content := NewCanvasContent(5, 5)
 	content.SetContent(0, 0, 'e', []rune{'\u0301'}, vt.BaseStyle)
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	scope := newRootScope(Root{Element: Canvas(content)})
 	Render(scope, screen)
 
 	cell := screen.lastCell(0, 0)
 	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
-		t.Fatalf("framebuffer dropped combining runes: %+v", cell)
+		t.Fatalf("canvas dropped combining runes: %+v", cell)
 	}
 }
 
-func TestFrameBufferClipWideCluster(t *testing.T) {
+func TestCanvasClipWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	content := NewFrameBufferContent(4, 1)
+	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
 	scope := newRootScope(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 1, Right: 3},
-		FrameBuffer(content),
+		Canvas(content),
 	)})
 	Render(scope, screen)
 	// The wide cluster at the box's right edge would extend past it; it
@@ -300,13 +300,13 @@ func TestFrameBufferClipWideCluster(t *testing.T) {
 	}
 }
 
-func TestFrameBufferWideClusterFits(t *testing.T) {
+func TestCanvasWideClusterFits(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	content := NewFrameBufferContent(4, 1)
+	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
 	scope := newRootScope(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 1, Right: 5},
-		FrameBuffer(content),
+		Canvas(content),
 	)})
 	Render(scope, screen)
 	// The wide cluster fits within the box: it is drawn at its base
@@ -319,12 +319,12 @@ func TestFrameBufferWideClusterFits(t *testing.T) {
 	}
 }
 
-func TestFrameBufferWideClusterTrailingCell(t *testing.T) {
+func TestCanvasWideClusterTrailingCell(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	content := NewFrameBufferContent(4, 1)
+	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
 	content.SetContent(3, 0, 'x', nil, vt.BaseStyle)
-	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	scope := newRootScope(Root{Element: Canvas(content)})
 	Render(scope, screen)
 	// The wide cluster at (2,0) covers its trailing column (3,0); the
 	// cell at (3,0) is part of the cluster's visual space and must not
@@ -1542,10 +1542,10 @@ func TestVerticalScrollClipLeft(t *testing.T) {
 
 func TestVerticalScrollClipRightWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	content := NewFrameBufferContent(4, 2)
+	content := NewCanvasContent(4, 2)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
 	scope := newRootScope(Root{Element: VerticalScroll(
-		FrameBuffer(content),
+		Canvas(content),
 		0,
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 3},
 	)})
