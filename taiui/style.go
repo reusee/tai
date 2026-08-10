@@ -126,11 +126,11 @@ func (Overline) spec()      {}
 func (Reverse) spec()       {}
 func (StrikeThrough) spec() {}
 
-func towards128(x, n int32) (int32, int32) {
+func towards128(x, n int32) int32 {
 	if x > 128 {
-		return x - n, -n
+		return x - n
 	}
-	return x + n, n
+	return x + n
 }
 
 func withAttrOn(style Style, on bool, attr vt.Attr) Style {
@@ -150,15 +150,15 @@ func DarkerOrLighterStyle(style Style, n int32) Style {
 	r, g, b := fg.RGB()
 	r2, g2, b2 := bg.RGB()
 	if r2 >= 0 {
-		r2, _ = towards128(r2, n)
-		g2, _ = towards128(g2, n)
-		b2, _ = towards128(b2, n)
+		r2 = towards128(r2, n)
+		g2 = towards128(g2, n)
+		b2 = towards128(b2, n)
 		bg = color.NewRGBColor(r2, g2, b2)
 	}
 	if r >= 0 && r == g && g == b {
-		r, _ = towards128(r, n)
-		g, _ = towards128(g, n)
-		b, _ = towards128(b, n)
+		r = towards128(r, n)
+		g = towards128(g, n)
+		b = towards128(b, n)
 		fg = color.NewRGBColor(r, g, b)
 	}
 	return style.WithFg(fg).WithBg(bg)

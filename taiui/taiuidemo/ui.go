@@ -195,6 +195,7 @@ func panelBox(t Toggle, w1 W1Weight) taiui.Element {
 			taiui.Weighted(5, taiui.Rect(
 				taiui.Margin(1),
 				taiui.Border(true),
+				taiui.BorderType(taiui.BorderRounded),
 				bigBoxBorder(t), // zero-arg function spec
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x181818)),

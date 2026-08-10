@@ -10,6 +10,10 @@ taiui theory: UI = pure Element value derived from state.
   value wrapping the root element). Render context (boxes, styles, draw
   callbacks) is never stored in the scope; screens are never bound in the
   scope.
+- NewBaseScope creates a base scope that always provides a Root value:
+  a default empty root (rendering an empty frame) unless a definition
+  overrides it, so Render never panics on a scope created by
+  NewBaseScope.
 - A state change is a scope fork: providers re-evaluate, the root element
   changes, and the next render reflects the change. There is no imperative
   element-update protocol.
@@ -53,16 +57,22 @@ taiui theory: UI = pure Element value derived from state.
   rounding. The box model and fill behave as in Rect, with fill covering
   the cells no child occupied: the ring around the tiled content, or the
   whole outer box when there are no children.
-- Text provides aligned multi-line rendering with per-position StyleFunc
-  support. Lines are segmented into grapheme clusters (uax29): a cluster
-  renders as one cell carrying its base and combining runes, and advances
-  by its display width, so combining sequences and ZWJ emoji occupy their
-  real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes. With
-  Wrap, lines word-wrap to the box width: breaks fall at space runs,
-  words wider than the box hard-break at cluster boundaries, and a cluster
-  never splits across lines. Left, right, and center alignment are
-  relative to the padded content area; a centered line rounds with the
-  conventional (width-len)/2 rule, placing the extra column on the right.
+- Text provides multi-line rendering with horizontal and vertical
+  alignment and per-position StyleFunc support. Lines are segmented into
+  grapheme clusters (uax29): a cluster renders as one cell carrying its
+  base and combining runes, and advances by its display width, so
+  combining sequences and ZWJ emoji occupy their real columns. Width
+  honors RUNEWIDTH_EASTASIAN for ambiguous runes. A tab advances to the
+  next tab stop (TabWidth, default 8) relative to the content area's left
+  edge, painting the skipped cells when fill is on; in wrapped text, tabs
+  break like spaces. With Wrap, lines word-wrap to the box width: breaks
+  fall at space runs, words wider than the box hard-break at cluster
+  boundaries, and a cluster never splits across lines. Left, right, and
+  center alignment are relative to the padded content area; a centered
+  line rounds with the conventional (width-len)/2 rule, placing the extra
+  column on the right. Top, middle, and bottom vertical alignment are
+  relative to the padded content area; a middle-aligned block rounds with
+  the conventional (top+bottom-len)/2 rule, placing the extra row below.
   Alignments apply per physical line, so wrapped lines align
   independently. Fill paints the content cells the text does not occupy,
   including the residual gaps left by clusters clipped at either edge.
@@ -79,9 +89,10 @@ taiui theory: UI = pure Element value derived from state.
   so they never paint the scrollbar column; the Scrollbar thumb at the
   right edge draws last.
 - FrameBuffer renders offscreen content: the content is data state, and
-  rendering is a pure read of it. Rendering snapshots the visible cells
-  under the read lock, then draws outside the lock, so a concurrent
-  writer is blocked only for the snapshot, never for the draw.
+  rendering is a pure read of it. Cells are stored by value, so a write
+  allocates nothing. Rendering snapshots the visible cells under the
+  read lock, then draws outside the lock, so a concurrent writer is
+  blocked only for the snapshot, never for the draw.
 - The exported API is a minimal facade: spec types, constructors, and
   style helpers only. Color specs cover the foreground, the background,
   and the underline color; attr and underline-style specs cover the VT
@@ -89,6 +100,15 @@ taiui theory: UI = pure Element value derived from state.
 `
 
 type Scope = dscope.Scope
+
+// NewBaseScope creates a base scope with the given definitions. The
+// scope always provides a Root value: a default empty root (rendering
+// an empty frame) unless a definition overrides it, so Render never
+// panics on a scope created by NewBaseScope.
+func NewBaseScope(defs ...any) Scope {
+	base := dscope.New(func() Root { return Root{} })
+	return base.Fork(defs...)
+}
 
 // Element is a pure, screen-independent description of UI state.
 // Implementations are data values: they describe what to render and never
@@ -134,6 +154,18 @@ const (
 	AlignLeft Align = iota
 	AlignRight
 	AlignCenter
+)
+
+// VAlign selects the vertical alignment of a Text element.
+type VAlign uint8
+
+// VAlignTop, VAlignMiddle, and VAlignBottom are the vertical alignment
+// values for Text elements.
+
+const (
+	VAlignTop VAlign = iota
+	VAlignMiddle
+	VAlignBottom
 )
 
 // BGColor, FGColor, Bold, Underline, and Fill are style and layout specs

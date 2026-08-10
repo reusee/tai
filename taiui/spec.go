@@ -14,8 +14,10 @@ type Spec interface {
 
 // Spec marker methods are grouped here: they are part of the Spec protocol,
 // not of the declaring type's own design.
-func (Box) spec()     {}
-func (Align) spec()   {}
+func (Box) spec()   {}
+func (Align) spec() {}
+
+func (VAlign) spec()  {}
 func (BGColor) spec() {}
 func (FGColor) spec() {}
 
@@ -34,6 +36,8 @@ func (_VerticalScroll) spec() {}
 func (_FrameBuffer) spec()    {}
 
 func (Border) spec() {}
+
+func (BorderType) spec() {}
 
 func (BorderStyle) spec() {}
 

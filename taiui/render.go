@@ -16,7 +16,7 @@ import (
 // with no UI clears every screen.
 func Render(scope Scope, screens ...Screen) {
 	root := dscope.Get[Root](scope)
-	options := displayWidthOptions()
+	options := DisplayWidthOptions()
 	for _, screen := range screens {
 		width := screen.Width()
 		height := screen.Height()

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -22,24 +21,19 @@ taiuidemo ANSI screen theory:
   half-glyph when a wide cluster moves away.
 - Frames that Equal the last presented frame are skipped entirely, and the
   first frame repaints the whole screen.
-- The presenter measures clusters with the same display-width options the
-  renderer derived, so the terminal cursor advances by the same columns the
-  renderer allocated.
+- The presenter derives the display-width options per present, so the
+  terminal cursor advances by the same columns the renderer allocated
+  even if the environment changes between renders.
 - Every SGR sequence starts with the reset parameter: a style is the
   complete terminal state, so an attribute absent from it is cleared.
   Without the reset, a plain cell after an underlined or overlined run
   would keep the attribute and bleed the line into any following cell
   that shares the same background.
+- SGR sequences are memoized by the style's SGR-relevant fields (the
+  attribute bits and the three colors): the demo's style set is small
+  and bounded, so the cache stays small, and the presenter is
+  single-threaded, so a plain map needs no locking.
 `
-
-// presentOptions mirrors the taiui RUNEWIDTH_EASTASIAN toggle so the
-// presenter measures clusters with the same widths the renderer used.
-var presentOptions = func() displaywidth.Options {
-	if rw := strings.ToLower(os.Getenv("RUNEWIDTH_EASTASIAN")); rw == "1" || rw == "true" || rw == "yes" {
-		return displaywidth.Options{EastAsianWidth: true}
-	}
-	return displaywidth.Options{}
-}()
 
 // ansiScreen presents frames to a terminal by writing ANSI escape
 // sequences. It repaints only the rows that Frame.Dirty reports, and
@@ -80,13 +74,17 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 			rowDirty[y] = true
 		}
 	}
+	// The options are derived per present, so the terminal cursor advances
+	// by the same columns the renderer allocated even if the environment
+	// changes between renders.
+	options := taiui.DisplayWidthOptions()
 	bw := bufio.NewWriter(s.w)
 	for y := 0; y < frame.Height; y++ {
 		if !rowDirty[y] {
 			continue
 		}
 		fmt.Fprintf(bw, "\x1b[%d;1H", y+1)
-		paintRow(bw, &frame, y)
+		paintRow(bw, &frame, y, options)
 	}
 	bw.Flush()
 	s.last = &frame
@@ -96,7 +94,7 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 // style; unset cells are blanked with the default style. A wide cluster's
 // trailing columns are skipped, because the base cell already advanced the
 // terminal cursor past them.
-func paintRow(w io.Writer, frame *taiui.Frame, y int) {
+func paintRow(w io.Writer, frame *taiui.Frame, y int, options displaywidth.Options) {
 	var lastStyle taiui.Style
 	for x := 0; x < frame.Width; x++ {
 		cell := frame.Cells[y*frame.Width+x]
@@ -113,7 +111,7 @@ func paintRow(w io.Writer, frame *taiui.Frame, y int) {
 			lastStyle = cell.Style
 		}
 		writeCluster(w, cell.Rune, cell.Combc)
-		if cw := clusterWidth(cell); cw > 1 {
+		if cw := clusterWidth(cell, options); cw > 1 {
 			x += cw - 1
 		}
 	}
@@ -122,17 +120,47 @@ func paintRow(w io.Writer, frame *taiui.Frame, y int) {
 	}
 }
 
-// sgr renders a style as SGR parameters. Every sequence starts with the
-// reset parameter: a style describes the complete terminal state, so an
-// attribute absent from it must be cleared, or a plain cell after an
-// underlined or overlined run would keep the previous attribute and bleed
-// the line into neighboring cells.
+// sgrKey is the canonical key for the SGR output of a style: the sequence
+// depends only on the attribute bits and the three colors.
+type sgrKey struct {
+	attr vt.Attr
+	fg   color.Color
+	bg   color.Color
+	uc   color.Color
+}
+
+// sgrCache memoizes SGR sequences by their key. The demo's style set is
+// small and bounded, so the cache stays small; the presenter is
+// single-threaded, so a plain map needs no locking.
+var sgrCache = map[sgrKey]string{}
+
+// sgr renders a style as SGR parameters, memoized by the style's
+// SGR-relevant fields (the attribute bits and the three colors).
 func sgr(style taiui.Style) string {
 	if style == nil {
 		return "\x1b[0m"
 	}
+	key := sgrKey{
+		attr: style.Attr(),
+		fg:   style.Fg(),
+		bg:   style.Bg(),
+		uc:   style.Uc(),
+	}
+	if s, ok := sgrCache[key]; ok {
+		return s
+	}
+	s := buildSGR(key.attr, key.fg, key.bg, key.uc)
+	sgrCache[key] = s
+	return s
+}
+
+// buildSGR renders the SGR-relevant style fields as SGR parameters.
+// Every sequence starts with the reset parameter: a style describes the
+// complete terminal state, so an attribute absent from it must be
+// cleared, or a plain cell after an underlined or overlined run would
+// keep the previous attribute and bleed the line into neighboring cells.
+func buildSGR(attr vt.Attr, fg, bg, uc color.Color) string {
 	var parts []string
-	attr := style.Attr()
 	if attr&vt.Bold != 0 {
 		parts = append(parts, "1")
 	}
@@ -168,17 +196,17 @@ func sgr(style taiui.Style) string {
 	}
 	// An unset color is a valid-but-colorless sentinel in the vt style;
 	// RGB() reports it as -1, so only real colors emit SGR parameters.
-	if c := style.Fg(); c.Valid() {
+	if c := fg; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
 			parts = append(parts, colorSGR(c, "38"))
 		}
 	}
-	if c := style.Bg(); c.Valid() {
+	if c := bg; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
 			parts = append(parts, colorSGR(c, "48"))
 		}
 	}
-	if c := style.Uc(); c.Valid() {
+	if c := uc; c.Valid() {
 		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
 			parts = append(parts, colorSGR(c, "58"))
 		}
@@ -209,9 +237,9 @@ func writeCluster(w io.Writer, mainc rune, combc []rune) {
 	w.Write(b)
 }
 
-func clusterWidth(cell taiui.FrameCell) int {
+func clusterWidth(cell taiui.FrameCell, options displaywidth.Options) int {
 	if len(cell.Combc) == 0 {
-		return presentOptions.Rune(cell.Rune)
+		return options.Rune(cell.Rune)
 	}
 	var buf [8]byte
 	b := buf[:0]
@@ -219,5 +247,5 @@ func clusterWidth(cell taiui.FrameCell) int {
 	for _, r := range cell.Combc {
 		b = utf8.AppendRune(b, r)
 	}
-	return presentOptions.Bytes(b)
+	return options.Bytes(b)
 }

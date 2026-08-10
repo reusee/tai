@@ -6,6 +6,7 @@ type frameBufferCell struct {
 	rune  rune
 	combc []rune
 	style Style
+	set   bool
 }
 
 // FrameBufferContent is offscreen framebuffer content. It is state: an
@@ -16,7 +17,7 @@ type FrameBufferContent struct {
 	sync.RWMutex
 	width  int
 	height int
-	cells  []*frameBufferCell
+	cells  []frameBufferCell
 }
 
 // NewFrameBufferContent creates empty framebuffer content of the given size.
@@ -24,19 +25,20 @@ func NewFrameBufferContent(width, height int) *FrameBufferContent {
 	return &FrameBufferContent{
 		width:  width,
 		height: height,
-		cells:  make([]*frameBufferCell, width*height),
+		cells:  make([]frameBufferCell, width*height),
 	}
 }
 
 // SetContent writes a cell into the content, using content-local
-// coordinates. Writes outside the content bounds are ignored.
+// coordinates. Writes outside the content bounds are ignored. The cell
+// is stored by value, so a write allocates nothing.
 func (c *FrameBufferContent) SetContent(x, y int, mainc rune, combc []rune, style Style) {
 	c.Lock()
 	defer c.Unlock()
 	if x < 0 || x >= c.width || y < 0 || y >= c.height {
 		return
 	}
-	c.cells[y*c.width+x] = &frameBufferCell{rune: mainc, combc: combc, style: style}
+	c.cells[y*c.width+x] = frameBufferCell{rune: mainc, combc: combc, style: style, set: true}
 }
 
 var _ Element = _FrameBuffer{}
@@ -64,20 +66,20 @@ func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc) {
 	}
 	// Snapshot the visible cells under the read lock, then draw outside
 	// the lock: a concurrent writer is blocked only for the snapshot,
-	// never for the draw. Cells are immutable once placed, so the
-	// snapshot stays consistent.
+	// never for the draw. Cells are stored by value, so the snapshot
+	// copies each cell and stays consistent.
 	content.RLock()
 	width := min(content.width, box.Width())
 	height := min(content.height, box.Height())
 	type placedCell struct {
 		x, y int
-		cell *frameBufferCell
+		cell frameBufferCell
 	}
 	placed := make([]placedCell, 0, width*height/4)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			cell := content.cells[y*content.width+x]
-			if cell == nil {
+			if !cell.set {
 				continue
 			}
 			placed = append(placed, placedCell{x: box.Left + x, y: box.Top + y, cell: cell})

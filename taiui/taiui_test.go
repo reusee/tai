@@ -374,6 +374,54 @@ func TestWrapLineCluster(t *testing.T) {
 	}
 }
 
+func TestWrapLineTab(t *testing.T) {
+	options := displaywidth.Options{}
+	// A tab is whitespace: it acts as a break point and is dropped.
+	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a b"}) {
+		t.Fatalf("tab break: got %q", got)
+	}
+}
+
+func TestTextTabWidth(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\tb", TabWidth(4))})
+	Render(scope, screen)
+	// TabWidth(4) places 'b' at col 4.
+	if r := screen.cell(4, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (4,0), got %v", r)
+	}
+}
+
+func TestTextTabExpansionFill(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\tb", Fill(true))})
+	Render(scope, screen)
+	// With fill, the tab's skipped cells are painted with the background.
+	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled tab gap at (1,0), got %+v", cell)
+	}
+	if r := screen.cell(8, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (8,0), got %v", r)
+	}
+}
+
+func TestTextTabExpansion(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\tb")})
+	Render(scope, screen)
+	// A tab advances to the next tab stop (default 8): 'a' at col 0,
+	// 'b' at col 8. The skipped cells are unset without fill.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(8, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (8,0), got %v", r)
+	}
+	if cell := screen.lastCell(1, 0); cell.Set {
+		t.Fatalf("expected unset tab gap at (1,0), got %+v", cell)
+	}
+}
+
 func TestTextWrapRender(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -528,6 +576,95 @@ func TestTextAlignCenterPadding(t *testing.T) {
 	}
 	if r := screen.cell(35, 0); r != 0 {
 		t.Fatalf("expected col 35 blank, got %v", r)
+	}
+}
+
+func TestTextVAlignMiddle(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		Text("a", "b", "c", "d", VAlignMiddle),
+	)})
+	Render(scope, screen)
+	// 4 lines in a 10-row box: middle alignment places them at rows 3..6,
+	// with 3 blank rows above and below.
+	if r := screen.cell(0, 2); r != 0 {
+		t.Fatalf("expected row 2 blank, got %v", r)
+	}
+	if r := screen.cell(0, 3); r != 'a' {
+		t.Fatalf("expected 'a' at (0,3), got %v", r)
+	}
+	if r := screen.cell(0, 6); r != 'd' {
+		t.Fatalf("expected 'd' at (0,6), got %v", r)
+	}
+	if r := screen.cell(0, 7); r != 0 {
+		t.Fatalf("expected row 7 blank, got %v", r)
+	}
+}
+
+func TestTextVAlignBottom(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		Text("a", "b", "c", "d", VAlignBottom),
+	)})
+	Render(scope, screen)
+	// 4 lines in a 10-row box: bottom alignment places them at rows 6..9.
+	if r := screen.cell(0, 5); r != 0 {
+		t.Fatalf("expected row 5 blank, got %v", r)
+	}
+	if r := screen.cell(0, 6); r != 'a' {
+		t.Fatalf("expected 'a' at (0,6), got %v", r)
+	}
+	if r := screen.cell(0, 9); r != 'd' {
+		t.Fatalf("expected 'd' at (0,9), got %v", r)
+	}
+}
+
+func TestTextVAlignMiddlePadding(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		Padding(1, 0, 1, 0),
+		Text("a", "b", VAlignMiddle),
+	)})
+	Render(scope, screen)
+	// The padded content area is rows 1..8 (8 rows); 2 lines center at
+	// rows 4..5, with 3 blank rows above and below.
+	if r := screen.cell(0, 3); r != 0 {
+		t.Fatalf("expected row 3 blank, got %v", r)
+	}
+	if r := screen.cell(0, 4); r != 'a' {
+		t.Fatalf("expected 'a' at (0,4), got %v", r)
+	}
+	if r := screen.cell(0, 5); r != 'b' {
+		t.Fatalf("expected 'b' at (0,5), got %v", r)
+	}
+	if r := screen.cell(0, 6); r != 0 {
+		t.Fatalf("expected row 6 blank, got %v", r)
+	}
+}
+
+func TestTextVAlignMiddleWrap(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 8},
+		Text("one two three four", Wrap(true), VAlignMiddle),
+	)})
+	Render(scope, screen)
+	// "one two three four" wraps to 3 lines in an 8-wide box; middle
+	// alignment places them at rows 3..5 of the 10-row box.
+	if r := screen.cell(0, 2); r != 0 {
+		t.Fatalf("expected row 2 blank, got %v", r)
+	}
+	if r := screen.cell(0, 3); r != 'o' {
+		t.Fatalf("expected 'o' at (0,3), got %v", r)
+	}
+	if r := screen.cell(0, 5); r != 'f' {
+		t.Fatalf("expected 'f' at (0,5), got %v", r)
+	}
+	if r := screen.cell(0, 6); r != 0 {
+		t.Fatalf("expected row 6 blank, got %v", r)
 	}
 }
 
@@ -1153,6 +1290,66 @@ func TestBorderStyle(t *testing.T) {
 	}
 }
 
+func TestBorderRounded(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		BorderType(BorderRounded),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != '╭' {
+		t.Fatalf("expected rounded top-left corner, got %v", r)
+	}
+	if r := screen.cell(79, 0); r != '╮' {
+		t.Fatalf("expected rounded top-right corner, got %v", r)
+	}
+	if r := screen.cell(0, 24); r != '╰' {
+		t.Fatalf("expected rounded bottom-left corner, got %v", r)
+	}
+	if r := screen.cell(79, 24); r != '╯' {
+		t.Fatalf("expected rounded bottom-right corner, got %v", r)
+	}
+}
+
+func TestBorderDouble(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		BorderType(BorderDouble),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != '╔' {
+		t.Fatalf("expected double top-left corner, got %v", r)
+	}
+	if r := screen.cell(1, 0); r != '═' {
+		t.Fatalf("expected double top edge, got %v", r)
+	}
+	if r := screen.cell(0, 1); r != '║' {
+		t.Fatalf("expected double left edge, got %v", r)
+	}
+}
+
+func TestBorderThick(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		BorderType(BorderThick),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != '┏' {
+		t.Fatalf("expected thick top-left corner, got %v", r)
+	}
+	if r := screen.cell(1, 0); r != '━' {
+		t.Fatalf("expected thick top edge, got %v", r)
+	}
+	if r := screen.cell(0, 1); r != '┃' {
+		t.Fatalf("expected thick left edge, got %v", r)
+	}
+}
+
 func TestRenderNilRoot(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: nil})
@@ -1164,6 +1361,25 @@ func TestRenderNilRoot(t *testing.T) {
 	}
 	if len(screen.frames) != 1 {
 		t.Fatalf("expected one frame presented, got %d", len(screen.frames))
+	}
+}
+
+func TestNewBaseScope(t *testing.T) {
+	// A base scope always provides Root: without a Root definition,
+	// Render renders an empty frame instead of panicking.
+	screen := newFakeScreen(80, 25)
+	scope := NewBaseScope()
+	Render(scope, screen)
+	if cell := screen.lastCell(0, 0); cell.Set {
+		t.Fatal("expected blank cell for default root")
+	}
+
+	// A Root definition overrides the default.
+	screen2 := newFakeScreen(80, 25)
+	scope2 := NewBaseScope(func() Root { return Root{Element: Text("a")} })
+	Render(scope2, screen2)
+	if r := screen2.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at cell 0, got %v", r)
 	}
 }
 

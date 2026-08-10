@@ -18,19 +18,23 @@ taiui display width theory:
 - The RUNEWIDTH_EASTASIAN environment variable toggles the width of
   ambiguous East Asian runes: 1 when unset, 2 when set to 1, true, or
   yes. This preserves the historical tcell convention for CJK terminals.
-- Width options are derived from the environment once per Render pass and
-  threaded through the element tree, so the environment is scanned once
-  per pass rather than once per element. There are no caches: an
-  environment change takes effect on the next Render, and a measurement
-  is a table walk.
+- DisplayWidthOptions derives the options from the environment. Render
+  calls it once per pass and threads the options through the element
+  tree, so the environment is scanned once per pass rather than once per
+  element. Screens that measure clusters independently (such as the demo
+  presenter) call it per present to stay in sync with the renderer. There
+  are no caches: an environment change takes effect on the next call,
+  and a measurement is a table walk.
 `
 
-// displayWidthOptions returns the display-width options derived from the
+// DisplayWidthOptions returns the display-width options derived from the
 // user's environment, mirroring the tcell RUNEWIDTH_EASTASIAN toggle.
 // Render derives the options once per pass and threads them through the
 // element tree, so the environment is scanned once per frame rather than
-// once per element.
-func displayWidthOptions() displaywidth.Options {
+// once per element. Screens that measure clusters independently (such as
+// the demo presenter) call it per present to stay in sync with the
+// renderer.
+func DisplayWidthOptions() displaywidth.Options {
 	if rw := strings.ToLower(os.Getenv("RUNEWIDTH_EASTASIAN")); rw == "1" || rw == "true" || rw == "yes" {
 		return displaywidth.Options{EastAsianWidth: true}
 	}

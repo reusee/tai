@@ -15,24 +15,24 @@ type OffsetStyleFunc func(int) StyleFunc
 
 var _ Element = _Text{}
 
-// _Text is an aligned multi-line text block with optional word wrapping.
-// It is a pure value: specs are interpreted at construction into typed
-// fields, and rendering reads those fields.
 type _Text struct {
 	elementBase
 	lines           []string
 	align           Align
+	valign          VAlign
 	padding         [4]int
 	offsetStyleFunc OffsetStyleFunc
 	wrap            bool
+	tabWidth        int
 }
 
 // Text creates a text element from specs. Bare strings and []string values
 // are accepted as shorthands for lines; all other specs are interpreted as
-// element specs. Wrap enables word wrapping to the box width. Unknown specs
-// panic here, at construction.
+// element specs. Wrap enables word wrapping to the box width; VAlign
+// selects the vertical alignment. Unknown specs panic here, at
+// construction.
 func Text(specs ...any) _Text {
-	t := &_Text{}
+	t := &_Text{tabWidth: 8}
 	buildElement(t, specs)
 	return *t
 }
@@ -41,7 +41,8 @@ func (_Text) element() {}
 
 func (Wrap) spec() {}
 
-// applySpec interprets one spec value into _Text fields.
+func (TabWidth) spec() {}
+
 func (t *_Text) applySpec(spec any) {
 	if spec == nil {
 		return
@@ -57,12 +58,16 @@ func (t *_Text) applySpec(spec any) {
 		t.lines = append(t.lines, v...)
 	case Align:
 		t.align = v
+	case VAlign:
+		t.valign = v
 	case _Padding:
 		t.padding = applyBoxModel(v)
 	case OffsetStyleFunc:
 		t.offsetStyleFunc = v
 	case Wrap:
 		t.wrap = bool(v)
+	case TabWidth:
+		t.tabWidth = int(v)
 	default:
 		if t.applyCommonSpec(v) {
 			return
@@ -82,83 +87,129 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 	box = t.effectiveBox(box)
 	style = t.styled(style)
 
+	tabWidth := t.tabWidth
+	if tabWidth <= 0 {
+		tabWidth = 8
+	}
+
 	contentLeft := box.Left + t.padding[3]
 	wrapWidth := box.Width() - t.padding[1] - t.padding[3]
 	right := box.Right - t.padding[1]
 	maxY := box.Bottom - t.padding[2]
-	y := box.Top + t.padding[0]
+	topY := box.Top + t.padding[0]
+
+	// Compute the wrapped lines first, bounded by the content height, so
+	// vertical alignment can place the block before rendering. The box is
+	// full when the bound is reached; remaining lines are never processed.
+	maxLines := maxY - topY
+	if maxLines <= 0 {
+		return
+	}
+	var lines []string
 	for _, line := range t.lines {
-		lines := []string{line}
+		wrapped := []string{line}
 		if t.wrap {
-			lines = wrapLine(line, wrapWidth, options)
+			wrapped = wrapLine(line, wrapWidth, options)
 		}
-		for _, ln := range lines {
-			if y >= maxY {
-				// The box is full; remaining lines are never processed.
-				return
+		for _, ln := range wrapped {
+			if len(lines) >= maxLines {
+				break
 			}
-			left := contentLeft
-			switch t.align {
-			case AlignRight:
-				left = right - options.String(ln)
-			case AlignCenter:
-				// Centering is relative to the padded content area and
-				// rounds with the conventional (width-len)/2 rule, so an
-				// odd-width line places the extra column on the right.
-				left = (contentLeft + right - options.String(ln)) / 2
+			lines = append(lines, ln)
+		}
+		if len(lines) >= maxLines {
+			break
+		}
+	}
+
+	// Vertical alignment is relative to the padded content area.
+	y := topY
+	switch t.valign {
+	case VAlignMiddle:
+		y = (topY + maxY - len(lines)) / 2
+	case VAlignBottom:
+		y = maxY - len(lines)
+	}
+
+	for _, ln := range lines {
+		left := contentLeft
+		switch t.align {
+		case AlignRight:
+			left = right - options.String(ln)
+		case AlignCenter:
+			// Centering is relative to the padded content area and
+			// rounds with the conventional (width-len)/2 rule, so an
+			// odd-width line places the extra column on the right.
+			left = (contentLeft + right - options.String(ln)) / 2
+		}
+		if t.fill {
+			// A line is fully painted regardless of alignment: the
+			// leading gap is filled before the text draws over it.
+			for x := contentLeft; x < left; x++ {
+				draw(x, y, ' ', nil, style)
 			}
-			if t.fill {
-				// A line is fully painted regardless of alignment: the
-				// leading gap is filled before the text draws over it.
-				for x := contentLeft; x < left; x++ {
-					draw(x, y, ' ', nil, style)
+		}
+		runeIdx := 0
+		edge := contentLeft
+		g := options.StringGraphemes(ln)
+		for g.Next() {
+			cluster := g.Value()
+			if cluster == "\t" {
+				// A tab advances to the next tab stop relative to the
+				// content area's left edge; the skipped cells are
+				// painted when fill is on.
+				tabStop := nextTabStop(left, contentLeft, tabWidth)
+				if tabStop > right {
+					tabStop = right
 				}
-			}
-			runeIdx := 0
-			edge := contentLeft
-			g := options.StringGraphemes(ln)
-			for g.Next() {
-				cluster := g.Value()
-				width := g.Width()
-				clusterRunes := utf8.RuneCountInString(cluster)
-				// Clusters are clipped to the content area: a cluster
-				// starting before it is skipped, and a cluster that would
-				// extend past its right edge is not drawn, so text never
-				// spills beyond the box.
-				if left < contentLeft {
-					left += width
-					runeIdx += clusterRunes
-					if t.fill && left > edge {
-						// A skipped cluster spanned the content left
-						// edge, leaving a residual gap; fill paints it so
-						// the line background stays complete.
-						for edge < left && edge < right {
-							draw(edge, y, ' ', nil, style)
-							edge++
-						}
+				if t.fill {
+					for x := max(left, contentLeft); x < tabStop; x++ {
+						draw(x, y, ' ', nil, style)
 					}
-					continue
 				}
-				if left >= right || left+width > right {
-					break
-				}
-				mainc, combc := splitCluster(cluster)
-				s := style
-				if t.offsetStyleFunc != nil {
-					s = t.offsetStyleFunc(runeIdx)(s)
-				}
-				draw(left, y, mainc, combc, s)
+				left = tabStop
+				runeIdx++
+				continue
+			}
+			width := g.Width()
+			clusterRunes := utf8.RuneCountInString(cluster)
+			// Clusters are clipped to the content area: a cluster
+			// starting before it is skipped, and a cluster that would
+			// extend past its right edge is not drawn, so text never
+			// spills beyond the box.
+			if left < contentLeft {
 				left += width
 				runeIdx += clusterRunes
-			}
-			if t.fill {
-				for left < right {
-					draw(left, y, ' ', nil, style)
-					left++
+				if t.fill && left > edge {
+					// A skipped cluster spanned the content left
+					// edge, leaving a residual gap; fill paints it so
+					// the line background stays complete.
+					for edge < left && edge < right {
+						draw(edge, y, ' ', nil, style)
+						edge++
+					}
 				}
+				continue
 			}
-			y++
+			if left >= right || left+width > right {
+				break
+			}
+			mainc, combc := splitCluster(cluster)
+			s := style
+			if t.offsetStyleFunc != nil {
+				s = t.offsetStyleFunc(runeIdx)(s)
+			}
+			draw(left, y, mainc, combc, s)
+			left += width
+			runeIdx += clusterRunes
 		}
+		if t.fill {
+			for left < right {
+				draw(left, y, ' ', nil, style)
+				left++
+			}
+		}
+		y++
 	}
 }
 
@@ -182,6 +233,10 @@ func splitCluster(cluster string) (rune, []rune) {
 // cluster boundaries.
 type Wrap bool
 
+// TabWidth sets the tab stop interval for Text. The default is 8,
+// matching the terminal convention.
+type TabWidth int
+
 // word is a whitespace-free run of grapheme clusters, with the display
 // width of each cluster.
 type word struct {
@@ -202,7 +257,7 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 		return []string{""}
 	}
 
-	// Split the line into words at space clusters.
+	// Split the line into words at whitespace clusters.
 	var words []word
 	{
 		g := options.StringGraphemes(line)
@@ -223,7 +278,7 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 		}
 		for g.Next() {
 			cluster := g.Value()
-			if cluster == " " {
+			if cluster == " " || cluster == "\t" {
 				flushWord()
 				continue
 			}
@@ -264,6 +319,18 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 		lines = append(lines, strings.Join(cur, ""))
 	}
 	return lines
+}
+
+// nextTabStop returns the column of the next tab stop strictly after x,
+// relative to the content area's left edge. Floor division handles
+// negative offsets (clipped text) so a tab advances to the correct stop.
+func nextTabStop(x, contentLeft, tabWidth int) int {
+	offset := x - contentLeft
+	q := offset / tabWidth
+	if offset < 0 && offset%tabWidth != 0 {
+		q-- // Go division truncates toward zero; adjust to floor.
+	}
+	return contentLeft + (q+1)*tabWidth
 }
 
 // breakWord chunks the clusters of a word into lines no wider than width.

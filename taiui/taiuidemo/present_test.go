@@ -38,6 +38,22 @@ func TestSgrUnderlineColor(t *testing.T) {
 	}
 }
 
+func TestSgrCache(t *testing.T) {
+	// The SGR cache stores the computed sequence by its key, so a later
+	// call with the same style returns the cached string without
+	// rebuilding it.
+	style := vt.BaseStyle.WithBg(taiui.HexColor(0x123456))
+	seq1 := sgr(style)
+	seq2 := sgr(style)
+	if seq1 != seq2 {
+		t.Fatalf("expected identical SGR for identical style, got %q and %q", seq1, seq2)
+	}
+	key := sgrKey{attr: style.Attr(), fg: style.Fg(), bg: style.Bg(), uc: style.Uc()}
+	if cached, ok := sgrCache[key]; !ok || cached != seq1 {
+		t.Fatalf("expected SGR cached for style, got %q", seq1)
+	}
+}
+
 func TestHandleKeyScrollClamp(t *testing.T) {
 	scroll := 0
 	toggle := true
