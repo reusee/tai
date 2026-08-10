@@ -23,8 +23,9 @@ taiui theory: UI = pure Element value derived from state.
 - The Spec language is a marker-interface protocol for element
   construction: style and layout specs, Specs groups, and elements
   themselves all implement Spec, so spec lists compose and nest. Bare
-  strings are a shorthand for text lines only and are not Specs. If and Alt
-  compose conditionally.
+  strings are a shorthand for text lines only and are not Specs; a string
+  is split into lines at newline boundaries, with CRLF normalized to LF.
+  If and Alt compose conditionally.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
   A nil root element renders an empty frame, clearing every screen. Each
@@ -42,9 +43,10 @@ taiui theory: UI = pure Element value derived from state.
   background in the box cells that no child occupies, so children render
   over it and wide grapheme clusters keep their trailing columns. The
   border draws independently of fill and stays visible without a painted
-  background. A content box whose border and padding exceed the box
-  dimensions has negative size; rendering treats it as empty and never
-  leaves the element box.
+  background, clipped to the element box so a negative margin never
+  paints border glyphs outside it. A content box whose border and padding
+  exceed the box dimensions has negative size; rendering treats it as
+  empty and never leaves the element box.
 - Row and Column provide flex layout along their axis: each child receives
   a share of the box proportional to its Weighted weight (default 1),
   tiling the content area without overlaps or gaps; the last child absorbs
@@ -64,6 +66,8 @@ taiui theory: UI = pure Element value derived from state.
   Alignments apply per physical line, so wrapped lines align
   independently. Fill paints the content cells the text does not occupy,
   including the residual gaps left by clusters clipped at either edge.
+  Rendering stops at the box's last row; lines beyond it are never
+  processed.
 - VerticalScroll renders a child into a virtually unbounded column and
   crops to the visible window, clamping the view to the content extent.
   Content is clipped to the window on both edges: cells drawn outside the

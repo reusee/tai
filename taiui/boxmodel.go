@@ -1,7 +1,5 @@
 package taiui
 
-// TheoryOfBoxModel documents the design rationale for the box model shared
-// by the box-model elements.
 const TheoryOfBoxModel = `
 taiui box model theory:
 - The box-model elements (Rect, Row, Column) share one margin/border/
@@ -12,7 +10,8 @@ taiui box model theory:
   content box, so the margin ring stays unpainted and the padding and
   border rings show the element background.
 - The border draws independently of fill: a border is visible even when
-  no background is painted.
+  no background is painted. The border ring is clipped to the element
+  box, so a negative margin can never paint border glyphs outside it.
 - Text is not a box-model element: it keeps its padding-only inset and
   line-fill semantics, so a bordered text block is a Text inside a Rect.
 `
@@ -93,10 +92,10 @@ const (
 	borderBottomRightCorner = '┘'
 )
 
-// drawBorder draws the border ring at the inner edge of the outer box. It
-// is a no-op when the border is disabled or the outer box is too small to
-// hold a ring.
-func (m *boxModel) drawBorder(outer Box, style Style, draw drawFunc) {
+// drawBorder draws the border ring at the inner edge of the outer box,
+// clipped to the element box. It is a no-op when the border is disabled
+// or the outer box is too small to hold a ring.
+func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc) {
 	if !m.border {
 		return
 	}
@@ -108,16 +107,45 @@ func (m *boxModel) drawBorder(outer Box, style Style, draw drawFunc) {
 	}
 	top, left := outer.Top, outer.Left
 	bottom, right := outer.Bottom-1, outer.Right-1
-	draw(left, top, borderTopLeftCorner, nil, style)
-	draw(right, top, borderTopRightCorner, nil, style)
-	draw(left, bottom, borderBottomLeftCorner, nil, style)
-	draw(right, bottom, borderBottomRightCorner, nil, style)
-	for x := left + 1; x < right; x++ {
-		draw(x, top, borderHorizontal, nil, style)
-		draw(x, bottom, borderHorizontal, nil, style)
+	// The ring is clipped to the element box: a negative margin pushes
+	// the outer box past the element box, and no border glyph may paint
+	// outside it. A ring cell is a corner only where both its edges are
+	// visible; a clipped ring end gets the edge glyph.
+	topVisible := top >= box.Top && top < box.Bottom
+	bottomVisible := bottom >= box.Top && bottom < box.Bottom
+	leftVisible := left >= box.Left && left < box.Right
+	rightVisible := right >= box.Left && right < box.Right
+
+	if topVisible && leftVisible {
+		draw(left, top, borderTopLeftCorner, nil, style)
 	}
-	for y := top + 1; y < bottom; y++ {
-		draw(left, y, borderVertical, nil, style)
-		draw(right, y, borderVertical, nil, style)
+	if topVisible && rightVisible {
+		draw(right, top, borderTopRightCorner, nil, style)
+	}
+	if bottomVisible && leftVisible {
+		draw(left, bottom, borderBottomLeftCorner, nil, style)
+	}
+	if bottomVisible && rightVisible {
+		draw(right, bottom, borderBottomRightCorner, nil, style)
+	}
+	if topVisible {
+		for x := max(left+1, box.Left); x <= min(right-1, box.Right-1); x++ {
+			draw(x, top, borderHorizontal, nil, style)
+		}
+	}
+	if bottomVisible {
+		for x := max(left+1, box.Left); x <= min(right-1, box.Right-1); x++ {
+			draw(x, bottom, borderHorizontal, nil, style)
+		}
+	}
+	if leftVisible {
+		for y := max(top+1, box.Top); y <= min(bottom-1, box.Bottom-1); y++ {
+			draw(left, y, borderVertical, nil, style)
+		}
+	}
+	if rightVisible {
+		for y := max(top+1, box.Top); y <= min(bottom-1, box.Bottom-1); y++ {
+			draw(right, y, borderVertical, nil, style)
+		}
 	}
 }

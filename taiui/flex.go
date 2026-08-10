@@ -118,7 +118,7 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 				draw(x, y, ' ', nil, style)
 			}
 		}
-		f.boxModel.drawBorder(outer, style, draw)
+		f.boxModel.drawBorder(outer, box, style, draw)
 		return
 	}
 
@@ -184,5 +184,5 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 			}
 		}
 	}
-	f.boxModel.drawBorder(outer, style, draw)
+	f.boxModel.drawBorder(outer, box, style, draw)
 }

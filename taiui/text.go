@@ -52,7 +52,7 @@ func (t *_Text) applySpec(spec any) {
 			t.applySpec(s)
 		}
 	case string:
-		t.lines = append(t.lines, v)
+		t.lines = append(t.lines, splitLines(v)...)
 	case []string:
 		t.lines = append(t.lines, v...)
 	case Align:
@@ -71,6 +71,13 @@ func (t *_Text) applySpec(spec any) {
 	}
 }
 
+// splitLines splits a text string into lines at newline boundaries,
+// normalizing CRLF to LF so a carriage return never reaches a cell.
+func splitLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Split(s, "\n")
+}
+
 func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	box = t.effectiveBox(box)
 	style = t.styled(style)
@@ -87,7 +94,8 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 		}
 		for _, ln := range lines {
 			if y >= maxY {
-				break
+				// The box is full; remaining lines are never processed.
+				return
 			}
 			left := contentLeft
 			switch t.align {

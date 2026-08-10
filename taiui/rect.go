@@ -67,7 +67,7 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 		for _, child := range r.children {
 			renderElement(child, content, style, draw, options)
 		}
-		r.boxModel.drawBorder(outer, style, draw)
+		r.boxModel.drawBorder(outer, box, style, draw)
 		return
 	}
 
@@ -79,7 +79,7 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 				draw(x, y, ' ', nil, style)
 			}
 		}
-		r.boxModel.drawBorder(outer, style, draw)
+		r.boxModel.drawBorder(outer, box, style, draw)
 		return
 	}
 
@@ -112,5 +112,5 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 			}
 		}
 	}
-	r.boxModel.drawBorder(outer, style, draw)
+	r.boxModel.drawBorder(outer, box, style, draw)
 }

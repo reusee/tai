@@ -1259,3 +1259,108 @@ func TestVerticalScrollClipRightWideCluster(t *testing.T) {
 		t.Fatalf("expected no spill past the window, got %v", r)
 	}
 }
+
+func TestTextNewlineSplit(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\nb")})
+	Render(scope, screen)
+	// A bare string with embedded newlines is split into lines at
+	// construction, so each line renders on its own row.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != 'b' {
+		t.Fatalf("expected 'b' at (0,1), got %v", r)
+	}
+}
+
+func TestTextCRLFNormalized(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\r\nb")})
+	Render(scope, screen)
+	// CRLF is normalized to LF: the carriage return never reaches a
+	// cell, and the second line starts on its own row.
+	if cell := screen.lastCell(1, 0); cell.Set {
+		t.Fatalf("expected no carriage return cell at (1,0), got %+v", cell)
+	}
+	if r := screen.cell(0, 1); r != 'b' {
+		t.Fatalf("expected 'b' at (0,1), got %v", r)
+	}
+}
+
+func TestTextBoxFullStopsEarly(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 0; i < 1000; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
+		Text(lines, Wrap(true)),
+	)})
+	Render(scope, screen)
+	// The box holds two rows; rendering stops there and the remaining
+	// lines are never processed.
+	if r := screen.cell(0, 0); r != 'l' {
+		t.Fatalf("expected first line at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != 'l' {
+		t.Fatalf("expected second line at (0,1), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != 0 {
+		t.Fatalf("expected nothing below the box, got %v", r)
+	}
+}
+
+func TestBorderNegativeMarginClipped(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 3},
+		Border(true),
+		Margin(-1, 0, 0, 0),
+	)})
+	Render(scope, screen)
+	// The negative top margin pushes the top ring outside the element
+	// box. The remaining ring is clipped to the box: the left and right
+	// edges start at the box top, and the top edge and its corners are
+	// gone.
+	if r := screen.cell(0, 0); r != '│' {
+		t.Fatalf("expected clipped left edge at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 0); r != 0 {
+		t.Fatalf("expected clipped top edge at (1,0), got %v", r)
+	}
+	if r := screen.cell(2, 0); r != '│' {
+		t.Fatalf("expected clipped right edge at (2,0), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != '└' {
+		t.Fatalf("expected bottom-left corner at (0,2), got %v", r)
+	}
+	if r := screen.cell(1, 2); r != '─' {
+		t.Fatalf("expected bottom edge at (1,2), got %v", r)
+	}
+	if r := screen.cell(2, 2); r != '┘' {
+		t.Fatalf("expected bottom-right corner at (2,2), got %v", r)
+	}
+}
+
+func TestBorderNegativeMarginFullyClipped(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
+		Border(true),
+		Margin(-10),
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// The negative margin pushes the whole ring outside the element box:
+	// no border glyph is drawn, and fill covers the box.
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			cell := screen.lastCell(x, y)
+			if !cell.Set || cell.Rune != ' ' {
+				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
+			}
+		}
+	}
+}
