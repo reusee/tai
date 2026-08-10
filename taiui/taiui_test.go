@@ -599,6 +599,79 @@ func TestTextFastPathCursorMatchesGeneralPath(t *testing.T) {
 	}
 }
 
+func TestTextFastPathCursorAtMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same cursor-at-offset position as
+	// the general path for the conditions it handles. A no-op offset
+	// style forces the general path without changing the output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
+		for _, offset := range []int{0, 1, 2, 10} {
+			fast := newFakeScreen(80, 25)
+			Render(newRootScope(Root{Element: Text(text, CursorAt(offset))}), fast)
+
+			general := newFakeScreen(80, 25)
+			Render(newRootScope(Root{Element: Text(text, CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+				t.Fatalf("fast path cursor-at output differs from general path for %q at offset %d", text, offset)
+			}
+		}
+	}
+}
+
+func TestTextFastPathFillMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same output as the general path for
+	// the conditions it handles, including fill. A no-op offset style
+	// forces the general path without changing the output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
+		fast := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Fill(true))}), fast)
+
+		general := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Fill(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+			t.Fatalf("fast path fill output differs from general path for %q", text)
+		}
+	}
+}
+
+func TestTextFastPathFillCursorMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same cursor position as the general
+	// path for the conditions it handles, including fill. A no-op offset
+	// style forces the general path without changing the output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
+		fast := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Fill(true), Cursor(true))}), fast)
+
+		general := newFakeScreen(80, 25)
+		Render(newRootScope(Root{Element: Text(text, Fill(true), Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+			t.Fatalf("fast path fill cursor output differs from general path for %q", text)
+		}
+	}
+}
+
+func TestTextFastPathFillCursorAtMatchesGeneralPath(t *testing.T) {
+	// The fast path must produce the same cursor-at-offset position as
+	// the general path for the conditions it handles, including fill. A
+	// no-op offset style forces the general path without changing the
+	// output.
+	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
+		for _, offset := range []int{0, 1, 2, 10} {
+			fast := newFakeScreen(80, 25)
+			Render(newRootScope(Root{Element: Text(text, Fill(true), CursorAt(offset))}), fast)
+
+			general := newFakeScreen(80, 25)
+			Render(newRootScope(Root{Element: Text(text, Fill(true), CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+
+			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
+				t.Fatalf("fast path fill cursor-at output differs from general path for %q at offset %d", text, offset)
+			}
+		}
+	}
+}
+
 func TestTextWrapRender(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -1605,6 +1678,56 @@ func TestFlexFillNoChildren(t *testing.T) {
 	}
 }
 
+func TestFlexFillRingEmpty(t *testing.T) {
+	// A Row with fill and no box model has an empty ring: the fill is a
+	// no-op, so the marks tracking and the fill loop are skipped. The
+	// children tile the content area; the Row's fill does not paint the
+	// content area, which is the children's responsibility.
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Fill(true),
+		Text("a"),
+		Text("b"),
+	)})
+	Render(scope, screen)
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(40, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (40,0), got %v", r)
+	}
+	// The Row's fill does not paint the content area: the cells after the
+	// text are unset, not filled.
+	if cell := screen.lastCell(1, 0); cell.Set {
+		t.Fatal("expected no fill from the Row in the content area")
+	}
+}
+
+func TestFlexFillRingNonEmpty(t *testing.T) {
+	// A Row with fill and padding has a non-empty ring: the fill paints
+	// the padding ring cells the children did not occupy.
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Fill(true),
+		Padding(1),
+		Text("a"),
+		Text("b"),
+	)})
+	Render(scope, screen)
+	// The padding ring is filled.
+	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled padding at (0,0), got %+v", cell)
+	}
+	// The content starts after the padding.
+	if r := screen.cell(1, 1); r != 'a' {
+		t.Fatalf("expected 'a' at (1,1), got %v", r)
+	}
+	// The Row's fill does not paint the content area.
+	if cell := screen.lastCell(2, 1); cell.Set {
+		t.Fatal("expected no fill from the Row in the content area")
+	}
+}
+
 func TestVerticalScrollClipLeft(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -2108,6 +2231,25 @@ func TestWrapLineFastPathSpaces(t *testing.T) {
 	// collapses them.
 	if got := wrapLine("a  b", 10, options); !sameStrings(got, []string{"a b"}) {
 		t.Fatalf("double space: got %q", got)
+	}
+}
+
+func TestWrapLineLimitedIterAppends(t *testing.T) {
+	options := displaywidth.Options{}
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	// The helper appends to the caller-provided slice, so a render pass
+	// reuses the pooled line slice across lines.
+	out := []string{"existing"}
+	got := wrapLineLimitedIter("hello world", 8, 2, options, iter, out)
+	if !sameStrings(got, []string{"existing", "hello", "world"}) {
+		t.Fatalf("expected appended lines, got %q", got)
+	}
+	// The limit bounds the appended lines, not the total.
+	out = []string{"existing"}
+	got = wrapLineLimitedIter("hello world", 8, 1, options, iter, out)
+	if !sameStrings(got, []string{"existing", "hello"}) {
+		t.Fatalf("expected limit-bounded append, got %q", got)
 	}
 }
 

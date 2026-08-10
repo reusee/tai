@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/clipperhouse/uax29/v2/graphemes"
 )
 
 const TheoryOfList = `
@@ -19,7 +20,8 @@ taiui list theory:
 - Each visible item is rendered directly as a single line: list
   items are always single-line, left-aligned texts, so the general
   text pipeline's alignment, padding, wrap, and line-slice machinery
-  is unnecessary overhead.
+  is unnecessary overhead. The visible items share one pooled
+  grapheme iterator, so a list render allocates nothing per item.
 - The selected item is styled with the ListStyle applied to the
   element's style chain. The ListStyle spec is a StyleFunc, so it
   composes with the chain.
@@ -106,6 +108,11 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		fromY = maxFromY
 	}
 
+	// The visible items share one pooled grapheme iterator, so a list
+	// render allocates nothing per item.
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+
 	// Render only the visible items. Each item is a single-line Text
 	// rendered directly, so the selected row is fully painted with
 	// the selected style's background.
@@ -119,7 +126,7 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 			Left:   box.Left,
 			Bottom: box.Top + i - fromY + 1,
 			Right:  box.Right,
-		}, itemStyle, l.fill || i == selected, draw, options)
+		}, itemStyle, l.fill || i == selected, draw, options, iter)
 	}
 
 	// Fill paints the rows below the last item when the content is
@@ -133,15 +140,11 @@ func renderList(l _List, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	}
 }
 
-// renderListLine renders one single-line list item directly, avoiding
-// the per-item _Text construction and line-slice pool operations of
-// renderText. The item is left-aligned at the box's left edge; fill
-// paints the cells the text does not occupy, including the tab gaps.
-func renderListLine(line string, box Box, style Style, fill bool, draw drawFunc, options displaywidth.Options) {
+func renderListLine(line string, box Box, style Style, fill bool, draw drawFunc, options displaywidth.Options, iter *graphemes.Iterator[string]) {
 	x := box.Left
-	g := options.StringGraphemes(line)
-	for g.Next() {
-		cluster := g.Value()
+	iter.SetText(line)
+	for iter.Next() {
+		cluster := iter.Value()
 		if cluster == "\t" {
 			// A tab advances to the next tab stop relative to the
 			// content area's left edge; the skipped cells are painted
@@ -158,13 +161,12 @@ func renderListLine(line string, box Box, style Style, fill bool, draw drawFunc,
 			x = tabStop
 			continue
 		}
-		width := g.Width()
+		mainc, combc, width := splitClusterWidth(options, cluster)
 		// A cluster that would extend past the right edge is not
 		// drawn, so text never spills beyond the box.
 		if x >= box.Right || x+width > box.Right {
 			break
 		}
-		mainc, combc := splitCluster(cluster)
 		draw(x, box.Top, mainc, combc, style)
 		x += width
 	}

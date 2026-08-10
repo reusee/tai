@@ -128,9 +128,21 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	var marks []bool
 	marked := draw
 	if f.fill {
-		marks = getMarks(box.Width() * box.Height())
-		defer putMarks(marks)
-		marked = markedDraw(draw, marks, box, options)
+		// The fill paints only the ring around the tiled content area.
+		// When the fill range (the outer box clipped to the element box)
+		// lies fully within the content box, the ring is empty and the
+		// fill is a no-op: the marks tracking and the fill loop are
+		// skipped entirely.
+		fillTop := max(outer.Top, box.Top)
+		fillLeft := max(outer.Left, box.Left)
+		fillBottom := min(outer.Bottom, box.Bottom)
+		fillRight := min(outer.Right, box.Right)
+		if fillTop < content.Top || fillLeft < content.Left ||
+			fillBottom > content.Bottom || fillRight > content.Right {
+			marks = getMarks(box.Width() * box.Height())
+			defer putMarks(marks)
+			marked = markedDraw(draw, marks, box, options)
+		}
 	}
 
 	if total > 0 {
@@ -156,7 +168,7 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		}
 	}
 
-	if f.fill {
+	if marks != nil {
 		// The content area is fully tiled by the children; fill only the
 		// ring formed by the margins, border, and padding that no child
 		// occupied, clipped to the element box so a negative margin cannot

@@ -179,15 +179,19 @@ func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc, option
 		// The title is centered on the top edge and replaces the border
 		// glyphs it covers. It is clipped to the visible edge range, so
 		// a title wider than the edge never paints the corners or spills
-		// past the element box.
-		titleX := (left + right - options.String(m.title)) / 2
+		// past the element box. The title is measured and drawn with the
+		// pooled grapheme iterator, so a titled border allocates nothing
+		// for the title.
+		iter := getGraphemeIter()
+		defer putGraphemeIter(iter)
+		titleX := (left + right - lineWidth(options, m.title, iter)) / 2
 		edgeLeft := max(left+1, box.Left)
 		edgeRight := min(right-1, box.Right-1)
 		x := titleX
-		g := options.StringGraphemes(m.title)
-		for g.Next() {
-			cluster := g.Value()
-			w := g.Width()
+		iter.SetText(m.title)
+		for iter.Next() {
+			cluster := iter.Value()
+			w := clusterWidth(options, cluster)
 			if x >= edgeLeft && x+w-1 <= edgeRight {
 				mainc, combc := splitCluster(cluster)
 				draw(x, top, mainc, combc, style)

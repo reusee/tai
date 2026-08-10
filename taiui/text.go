@@ -7,18 +7,38 @@ import (
 	"unicode/utf8"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/clipperhouse/uax29/v2/graphemes"
 )
 
 const TheoryOfTextRendering = `
 taiui text rendering theory:
 - Text rendering optimizes the common case: plain left-aligned,
-  top-aligned, non-wrapped, non-filled text, with an optional end cursor,
-  is the hottest path in the library, so it renders directly, avoiding
-  the general pipeline's line-slice pool and per-line alignment and fill
-  overhead.
+  top-aligned, non-wrapped text, with an optional fill, end cursor, or
+  cursor-at-offset, is the hottest path in the library, so it renders
+  directly, avoiding the general pipeline's line-slice pool and
+  per-line alignment overhead.
 - The fast path is a strict subset of the general path: it applies only
   when the general path would produce identical output, so the two paths
   never diverge.
+- Non-wrapped text renders the text's lines directly as a sub-slice,
+  so no line slice is built and the pool is untouched; only wrapped
+  text builds a line slice.
+- Grapheme iterators are pooled: the text pipeline resets a pooled
+  uax29 iterator per line instead of allocating a fresh iterator per
+  call, so a per-line iteration allocates nothing. The wrap and cursor
+  helpers accept a caller-provided iterator, so a render pass shares one
+  pooled iterator across the line loop, wrapping, and cursor placement.
+- Wrap working slices are pooled: the wrap helper's word and line
+  slices are pooled across calls, so a wrapped render pass allocates
+  only the joined line strings. The helper appends to a caller-provided
+  line slice, so the fast path appends the line directly without an
+  intermediate slice.
+- A cluster is split and measured in one step: splitClusterWidth
+  decodes the base rune once and measures the cluster, so the common
+  single-rune cluster pays one decode instead of two. A single-rune
+  cluster is measured with options.Rune; a multi-rune cluster
+  (combining sequences, ZWJ emoji) is measured with options.String,
+  which allocates only for the rare multi-rune clusters.
 - Wrapping is bounded by the visible line count: the render path passes
   the remaining rows to wrapLineLimited, so a long line in a small box
   never wraps beyond the rows the box can show, and pathological inputs
@@ -120,16 +140,72 @@ var textLinesPool = sync.Pool{
 	New: func() any { return make([]string, 0, 64) },
 }
 
-// renderTextFastPath renders the common case directly: plain
-// left-aligned, top-aligned, non-wrapped, non-filled text with an
-// optional end cursor, and no offset style or padding. It avoids the
-// line-slice pool and the per-line alignment and fill overhead of the
-// general path. It returns false when the text does not match the
-// fast-path conditions.
-func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) bool {
-	if t.wrap || t.fill || t.offsetStyleFunc != nil ||
+// graphemeIterPool pools the uax29 grapheme iterators of the text
+// pipeline. options.StringGraphemes allocates a fresh iterator per
+// call; pooling the iterator and resetting it with SetText avoids the
+// allocation for the per-line iterations of text rendering, wrapping,
+// and cursor placement.
+var graphemeIterPool = sync.Pool{
+	New: func() any { return graphemes.FromString("") },
+}
+
+// getGraphemeIter returns a grapheme iterator from the pool.
+func getGraphemeIter() *graphemes.Iterator[string] {
+	return graphemeIterPool.Get().(*graphemes.Iterator[string])
+}
+
+// putGraphemeIter returns a grapheme iterator to the pool.
+func putGraphemeIter(iter *graphemes.Iterator[string]) {
+	graphemeIterPool.Put(iter)
+}
+
+// wrapBuffers holds the reusable working slices of a wrap call.
+type wrapBuffers struct {
+	cur  []string
+	word []string
+}
+
+// wrapBuffersPool pools the working slices of wrapLineLimitedIter. A
+// wrap call allocates two string slices sized to the box width; pooling
+// them avoids the allocation for the per-line wrap calls of a render
+// pass.
+var wrapBuffersPool = sync.Pool{
+	New: func() any {
+		return &wrapBuffers{
+			cur:  make([]string, 0, 80),
+			word: make([]string, 0, 80),
+		}
+	},
+}
+
+// clusterWidth returns the display width of a grapheme cluster under
+// the given options. A single-rune cluster is measured with
+// options.Rune; a multi-rune cluster (combining sequences, ZWJ emoji)
+// is measured with options.String, which allocates only for the rare
+// multi-rune clusters.
+func clusterWidth(options displaywidth.Options, cluster string) int {
+	r, size := utf8.DecodeRuneInString(cluster)
+	if size == len(cluster) {
+		return options.Rune(r)
+	}
+	return options.String(cluster)
+}
+
+// lineWidth returns the display width of a line under the given
+// options, iterating its grapheme clusters with the pooled iterator.
+func lineWidth(options displaywidth.Options, line string, iter *graphemes.Iterator[string]) int {
+	iter.SetText(line)
+	width := 0
+	for iter.Next() {
+		width += clusterWidth(options, iter.Value())
+	}
+	return width
+}
+
+func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options, iter *graphemes.Iterator[string]) bool {
+	if t.wrap || t.offsetStyleFunc != nil ||
 		t.align != AlignLeft || t.valign != VAlignTop ||
-		t.padding != [4]int{} || t.cursorAt >= 0 {
+		t.padding != [4]int{} {
 		return false
 	}
 	if box.Width() <= 0 || box.Height() <= 0 {
@@ -141,44 +217,65 @@ func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cur
 	}
 	y := box.Top
 	var x int
+	lastLine := ""
 	for _, ln := range t.lines {
 		if y >= box.Bottom {
 			break
 		}
+		lastLine = ln
 		x = box.Left
-		g := options.StringGraphemes(ln)
-		for g.Next() {
-			cluster := g.Value()
+		iter.SetText(ln)
+		for iter.Next() {
+			cluster := iter.Value()
 			if cluster == "\t" {
 				// The tab stop is clamped to the box's right edge,
 				// matching the general path: a tab never advances past
-				// the content area.
+				// the content area. With fill, the skipped cells are
+				// painted, matching the general path.
 				tabStop := nextTabStop(x, box.Left, tabWidth)
 				if tabStop > box.Right {
 					tabStop = box.Right
 				}
+				if t.fill {
+					for fx := x; fx < tabStop; fx++ {
+						draw(fx, y, ' ', nil, style)
+					}
+				}
 				x = tabStop
 				continue
 			}
-			width := g.Width()
+			mainc, combc, width := splitClusterWidth(options, cluster)
 			if x >= box.Right || x+width > box.Right {
 				break
 			}
-			mainc, combc := splitCluster(cluster)
 			draw(x, y, mainc, combc, style)
 			x += width
+		}
+		if t.fill {
+			// The rest of the line is painted, matching the general
+			// path's line-fill semantics. The cursor position is the
+			// text end, not the line end, so x is left unchanged.
+			for fx := x; fx < box.Right; fx++ {
+				draw(fx, y, ' ', nil, style)
+			}
 		}
 		y++
 	}
 	if t.cursor {
 		if len(t.lines) > 0 {
-			// The cursor is the position after the last drawn cluster of
-			// the last line, clamped to the box's right edge: a tab can
-			// advance past it, and the general path clamps the same way.
-			if x > box.Right {
-				x = box.Right
+			if t.cursorAt >= 0 {
+				// CursorAt places the cursor at a rune offset within the
+				// last visible line, matching the general path.
+				cursor(textCursorXIter(lastLine, t.cursorAt, box.Left, box.Left, box.Right, tabWidth, options, iter), y-1)
+			} else {
+				// The cursor is the position after the last drawn cluster of
+				// the last line, clamped to the box's right edge: a tab can
+				// advance past it, and the general path clamps the same way.
+				if x > box.Right {
+					x = box.Right
+				}
+				cursor(x, y-1)
 			}
-			cursor(x, y-1)
 		} else {
 			cursor(box.Left, box.Top)
 		}
@@ -190,7 +287,10 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	box = t.effectiveBox(box)
 	style = t.styled(style)
 
-	if renderTextFastPath(t, box, style, draw, cursor, options) {
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+
+	if renderTextFastPath(t, box, style, draw, cursor, options, iter) {
 		return
 	}
 
@@ -205,43 +305,37 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	maxY := box.Bottom - t.padding[2]
 	topY := box.Top + t.padding[0]
 
-	// Compute the wrapped lines first, bounded by the content height, so
-	// vertical alignment can place the block before rendering. The box is
-	// full when the bound is reached; remaining lines are never processed.
+	// The box is full when the bound is reached; remaining lines are
+	// never processed.
 	maxLines := maxY - topY
 	if maxLines <= 0 {
 		return
 	}
-	// The lines are pre-sized to the content height so the common case
-	// (the text fits the box) appends without growing the slice. The
-	// slice is pooled: a Text renders its lines into a fresh slice per
-	// pass, and pooling avoids the allocation for the common
-	// screen-sized texts.
-	lines := textLinesPool.Get().([]string)
-	lines = lines[:0]
-	if cap(lines) < min(len(t.lines), maxLines) {
-		lines = make([]string, 0, min(len(t.lines), maxLines))
-	}
-	defer func() { textLinesPool.Put(lines) }()
-	for _, line := range t.lines {
-		if t.wrap {
+	// The wrapped lines are computed first, bounded by the content
+	// height, so vertical alignment can place the block before
+	// rendering. Non-wrapped lines are iterated directly as a sub-slice
+	// of the text's lines, so no line slice is built and the pool is
+	// untouched; only wrapped text builds a line slice.
+	var lines []string
+	if t.wrap {
+		lines = textLinesPool.Get().([]string)
+		lines = lines[:0]
+		if cap(lines) < min(len(t.lines), maxLines) {
+			lines = make([]string, 0, min(len(t.lines), maxLines))
+		}
+		defer func() { textLinesPool.Put(lines) }()
+		for _, line := range t.lines {
 			// The limit is the remaining visible line count: a long
 			// line in a small box never wraps beyond the rows the box
 			// can show, so pathological inputs cannot accumulate
 			// unbounded wrapped lines.
-			wrapped := wrapLineLimited(line, wrapWidth, maxLines-len(lines), options)
-			lines = append(lines, wrapped...)
-		} else {
+			lines = wrapLineLimitedIter(line, wrapWidth, maxLines-len(lines), options, iter, lines)
 			if len(lines) >= maxLines {
 				break
 			}
-			// Unwrapped lines append directly, so a line never allocates
-			// a one-element wrapper slice.
-			lines = append(lines, line)
 		}
-		if len(lines) >= maxLines {
-			break
-		}
+	} else {
+		lines = t.lines[:min(len(t.lines), maxLines)]
 	}
 
 	// Vertical alignment is relative to the padded content area.
@@ -259,12 +353,12 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		left = contentLeft
 		switch t.align {
 		case AlignRight:
-			left = right - options.String(ln)
+			left = right - lineWidth(options, ln, iter)
 		case AlignCenter:
 			// Centering is relative to the padded content area and
 			// rounds with the conventional (width-len)/2 rule, so an
 			// odd-width line places the extra column on the right.
-			left = (contentLeft + right - options.String(ln)) / 2
+			left = (contentLeft + right - lineWidth(options, ln, iter)) / 2
 		}
 		lastLineStart = left
 		if t.fill {
@@ -276,9 +370,9 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		}
 		runeIdx := 0
 		edge := contentLeft
-		g := options.StringGraphemes(ln)
-		for g.Next() {
-			cluster := g.Value()
+		iter.SetText(ln)
+		for iter.Next() {
+			cluster := iter.Value()
 			if cluster == "\t" {
 				// A tab advances to the next tab stop relative to the
 				// content area's left edge; the skipped cells are
@@ -296,7 +390,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 				runeIdx++
 				continue
 			}
-			width := g.Width()
+			mainc, combc, width := splitClusterWidth(options, cluster)
 			clusterRunes := utf8.RuneCountInString(cluster)
 			// Clusters are clipped to the content area: a cluster
 			// starting before it is skipped, and a cluster that would
@@ -319,7 +413,6 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 			if left >= right || left+width > right {
 				break
 			}
-			mainc, combc := splitCluster(cluster)
 			s := style
 			if t.offsetStyleFunc != nil {
 				s = t.offsetStyleFunc(runeIdx)(s)
@@ -345,7 +438,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 				// CursorAt places the cursor at a rune offset within the
 				// last line: the line start plus the width of the text
 				// before the offset, with tabs expanded to tab stops.
-				cursor(textCursorX(lines[len(lines)-1], t.cursorAt, lastLineStart, contentLeft, right, tabWidth, options), y-1)
+				cursor(textCursorXIter(lines[len(lines)-1], t.cursorAt, lastLineStart, contentLeft, right, tabWidth, options, iter), y-1)
 			} else {
 				if left > right {
 					left = right
@@ -359,18 +452,35 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 }
 
 // splitCluster separates a grapheme cluster into its base rune and the
-// combining runes that follow it.
+// combining runes that follow it. A single-rune cluster decodes the
+// base directly and returns no combining runes.
 func splitCluster(cluster string) (rune, []rune) {
-	var base rune
+	base, size := utf8.DecodeRuneInString(cluster)
+	if size == len(cluster) {
+		return base, nil
+	}
 	var combc []rune
-	for i, r := range cluster {
-		if i == 0 {
-			base = r
-		} else {
-			combc = append(combc, r)
-		}
+	for _, r := range cluster[size:] {
+		combc = append(combc, r)
 	}
 	return base, combc
+}
+
+// splitClusterWidth splits a grapheme cluster into its base rune and
+// combining runes, and returns the cluster's display width, in one
+// pass: the base rune is decoded once and the width is measured from
+// the same bytes, so the common single-rune cluster pays one decode
+// instead of two.
+func splitClusterWidth(options displaywidth.Options, cluster string) (rune, []rune, int) {
+	base, size := utf8.DecodeRuneInString(cluster)
+	if size == len(cluster) {
+		return base, nil, options.Rune(base)
+	}
+	var combc []rune
+	for _, r := range cluster[size:] {
+		combc = append(combc, r)
+	}
+	return base, combc, options.String(cluster)
 }
 
 // Wrap toggles word wrapping for Text: lines are wrapped to the box width,
@@ -421,19 +531,25 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 	return wrapLineLimited(line, width, -1, options)
 }
 
-// wrapLineLimited wraps a line to the given width, producing at most
-// limit lines. A negative limit is unlimited. The render path passes the
-// remaining visible line count, so a long line in a small box never wraps
-// beyond the rows the box can show.
 func wrapLineLimited(line string, width, limit int, options displaywidth.Options) []string {
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	return wrapLineLimitedIter(line, width, limit, options, iter, nil)
+}
+
+// wrapLineLimitedIter is wrapLineLimited with a caller-provided
+// grapheme iterator and line slice, so a render pass shares one pooled
+// iterator across the line loop and the wrap calls, and appends the
+// wrapped lines directly to the caller's line slice.
+func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Options, iter *graphemes.Iterator[string], out []string) []string {
 	if width <= 0 || limit == 0 {
-		return nil
+		return out
 	}
 	if line == "" {
-		return []string{""}
+		return append(out, "")
 	}
 	// Fast path: a line with no tabs, no leading or trailing spaces, and
-	// no consecutive spaces that fits the box is returned as-is. The
+	// no consecutive spaces that fits the box is appended as-is. The
 	// slow path would join the same words with single spaces, so the
 	// output is identical; skipping the word-splitting allocations is
 	// the win.
@@ -441,19 +557,35 @@ func wrapLineLimited(line string, width, limit int, options displaywidth.Options
 		!strings.HasPrefix(line, " ") &&
 		!strings.HasSuffix(line, " ") &&
 		!strings.Contains(line, "  ") &&
-		options.String(line) <= width {
-		return []string{line}
+		lineWidth(options, line, iter) <= width {
+		return append(out, line)
 	}
 
 	// Single pass over the grapheme clusters: words are packed onto the
 	// current line as they complete, so no word list is built. A word
 	// wider than the box is packed in chunks as it grows. The limit
-	// bounds the produced lines, so a long line in a small box never
+	// bounds the appended lines, so a long line in a small box never
 	// wraps beyond the visible count.
-	var lines []string
-	var cur []string
+	// The working slices are pooled: each cluster occupies at least one
+	// column, so the box width is a sufficient initial capacity, and the
+	// common cases append without growing.
+	bufs := wrapBuffersPool.Get().(*wrapBuffers)
+	cur := bufs.cur[:0]
+	if cap(cur) < width {
+		cur = make([]string, 0, width)
+	}
+	word := bufs.word[:0]
+	if cap(word) < width {
+		word = make([]string, 0, width)
+	}
+	defer func() {
+		bufs.cur = cur
+		bufs.word = word
+		wrapBuffersPool.Put(bufs)
+	}()
+	startLen := len(out)
+	lines := out
 	curWidth := 0
-	var word []string
 	wordWidth := 0
 
 	// flushLine appends the current line and reports whether more lines
@@ -462,7 +594,7 @@ func wrapLineLimited(line string, width, limit int, options displaywidth.Options
 		lines = append(lines, strings.Join(cur, ""))
 		cur = cur[:0]
 		curWidth = 0
-		return limit < 0 || len(lines) < limit
+		return limit < 0 || len(lines)-startLen < limit
 	}
 
 	// packWord appends the current word to the current line, wrapping
@@ -489,16 +621,16 @@ func wrapLineLimited(line string, width, limit int, options displaywidth.Options
 		return true
 	}
 
-	g := options.StringGraphemes(line)
-	for g.Next() {
-		cluster := g.Value()
+	iter.SetText(line)
+	for iter.Next() {
+		cluster := iter.Value()
 		if cluster == " " || cluster == "\t" {
 			if !packWord() {
 				return lines
 			}
 			continue
 		}
-		w := g.Width()
+		w := clusterWidth(options, cluster)
 		if wordWidth+w > width && len(word) > 0 {
 			// The word exceeds the box: pack the word so far, then
 			// start a new word with the current cluster.
@@ -512,7 +644,7 @@ func wrapLineLimited(line string, width, limit int, options displaywidth.Options
 	if !packWord() {
 		return lines
 	}
-	if len(cur) > 0 || len(lines) == 0 {
+	if len(cur) > 0 || len(lines) == startLen {
 		lines = append(lines, strings.Join(cur, ""))
 	}
 	return lines
@@ -530,11 +662,20 @@ func nextTabStop(x, contentLeft, tabWidth int) int {
 	return contentLeft + (q+1)*tabWidth
 }
 
-// textCursorX computes the x position of a cursor at the given rune
-// offset within a line: the line start plus the width of the text before
-// the offset, with tabs expanded to tab stops, clamped to the content
-// area.
+// textCursorX returns the x position of the cursor at the given rune
+// offset within a line: the line start plus the width of the text
+// before the offset, with tabs expanded to tab stops, clamped to the
+// content area.
 func textCursorX(line string, offset, lineLeft, contentLeft, right, tabWidth int, options displaywidth.Options) int {
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	return textCursorXIter(line, offset, lineLeft, contentLeft, right, tabWidth, options, iter)
+}
+
+// textCursorXIter is textCursorX with a caller-provided grapheme
+// iterator, so a render pass shares one pooled iterator across the
+// line loop and the cursor placement.
+func textCursorXIter(line string, offset, lineLeft, contentLeft, right, tabWidth int, options displaywidth.Options, iter *graphemes.Iterator[string]) int {
 	if offset < 0 {
 		offset = 0
 	}
@@ -543,9 +684,9 @@ func textCursorX(line string, offset, lineLeft, contentLeft, right, tabWidth int
 	}
 	x := lineLeft
 	runeIdx := 0
-	g := options.StringGraphemes(line)
-	for g.Next() {
-		cluster := g.Value()
+	iter.SetText(line)
+	for iter.Next() {
+		cluster := iter.Value()
 		clusterRunes := utf8.RuneCountInString(cluster)
 		if runeIdx+clusterRunes > offset {
 			break
@@ -553,7 +694,7 @@ func textCursorX(line string, offset, lineLeft, contentLeft, right, tabWidth int
 		if cluster == "\t" {
 			x = nextTabStop(x, contentLeft, tabWidth)
 		} else {
-			x += g.Width()
+			x += clusterWidth(options, cluster)
 		}
 		runeIdx += clusterRunes
 	}

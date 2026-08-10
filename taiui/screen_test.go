@@ -162,8 +162,7 @@ func TestTerminalScreenPresentSkipsUnchangedCursor(t *testing.T) {
 	sb.Reset()
 	// A dirty row with an unchanged cursor: the row is repainted, but the
 	// cursor position is not rewritten. The second frame is a fresh
-	// allocation: the screen retains the first frame's cells, so mutating
-	// the first frame would corrupt the retained baseline.
+	// allocation, matching the renderer's per-pass frame allocation.
 	frame2 := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
 	frame2.CursorSet = true
 	frame2.CursorX = 5
@@ -204,15 +203,32 @@ func TestTerminalScreenRetainsFrame(t *testing.T) {
 	frame := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
 	frame.Cells[0] = FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
 	s.Present(frame)
-	// The screen retains the presented frame for the next damage
-	// comparison. It does not implement FrameReleaser, so the renderer
-	// allocates a fresh frame per pass and never reuses the retained
-	// frame's cells.
+	// The screen retains a copy of the presented frame for the next
+	// damage comparison, and implements FrameReleaser so the renderer
+	// reuses the pooled cells.
 	if !s.last.Equal(frame) {
 		t.Fatal("expected screen to retain the presented frame")
 	}
-	if _, ok := any(s).(FrameReleaser); ok {
-		t.Fatal("expected TerminalScreen not to implement FrameReleaser")
+	if _, ok := any(s).(FrameReleaser); !ok {
+		t.Fatal("expected TerminalScreen to implement FrameReleaser")
+	}
+}
+
+func TestTerminalScreenRetainsPartialFrame(t *testing.T) {
+	var sb strings.Builder
+	s := NewTerminalScreen(&sb, 80, 24)
+	frame := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
+	frame.Cells[0] = FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
+	s.Present(frame)
+	// A partial update: only cell (1,0) changes. The retained frame must
+	// match the presented frame after the partial repaint, so the next
+	// damage comparison sees the full state.
+	frame2 := Frame{Width: 80, Height: 24, Cells: make([]FrameCell, 80*24)}
+	frame2.Cells[0] = FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
+	frame2.Cells[1] = FrameCell{Rune: 'b', Style: vt.BaseStyle, Set: true}
+	s.Present(frame2)
+	if !s.last.Equal(frame2) {
+		t.Fatal("expected retained frame to match the presented frame after a partial update")
 	}
 }
 

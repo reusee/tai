@@ -33,9 +33,11 @@ taiui terminal screen theory:
   does not rewrite the position.
 - The screen reuses a dirty-rows buffer across presents, so a frame
   comparison allocates nothing.
-- The screen retains the last presented frame for damage comparison.
-  It does not implement FrameReleaser, so the renderer allocates a fresh
-  frame per pass and never reuses the retained frame's cells.
+- The screen retains a copy of the last presented frame for damage
+  comparison. It implements FrameReleaser: Present copies the presented
+  frame's cells into a retained buffer, and ReleaseFrame returns the
+  frame's cells to the pool, so the renderer reuses the pooled cells
+  and the per-pass frame allocation is eliminated.
 - The screen derives the display-width options per present and measures
   clusters with ClusterWidth, so the terminal cursor advances by the
   same columns the renderer allocated even if the environment changes
@@ -52,6 +54,17 @@ taiui terminal screen theory:
   attribute bits and the three colors): a screen's style set is small
   and bounded, so the cache stays small, and the screen is
   single-threaded, so a plain map needs no locking.
+`
+
+const TheoryOfTerminalScreenRetention = `
+taiui terminal screen retention theory:
+- The retained frame copy is updated only for the dirty rows: rows not
+  in dirtyRows are already identical to the retained frame, so a partial
+  repaint copies O(dirty) cells instead of the whole screen.
+- The per-row style comparison checks pointer identity before the Equal
+  method: a render pass shares style values, so most style changes are
+  detected by pointer comparison, and Equal is called only for distinct
+  style values.
 `
 
 // TerminalScreen renders Frames to a terminal via ANSI escape sequences.
@@ -139,10 +152,34 @@ func (s *TerminalScreen) Present(frame Frame) {
 		writeCursorPos(bw, frame.CursorX, frame.CursorY)
 	}
 	bw.Flush()
-	// Retain the frame for the next damage comparison. The screen does
-	// not implement FrameReleaser, so the renderer allocates a fresh
-	// frame per pass and never reuses the retained frame's cells.
-	s.last = frame
+	// Retain a copy of the frame for the next damage comparison. The
+	// retained buffer is reused across presents, so the per-pass frame
+	// allocation is eliminated; ReleaseFrame returns the frame's cells
+	// to the pool. Rows not in dirtyRows are already identical to the
+	// retained frame, so only the dirty rows are copied: a partial
+	// repaint copies O(dirty) cells instead of the whole screen.
+	if s.last.Width != frame.Width || s.last.Height != frame.Height {
+		s.last = Frame{
+			Width:  frame.Width,
+			Height: frame.Height,
+			Cells:  make([]FrameCell, len(frame.Cells)),
+		}
+		copy(s.last.Cells, frame.Cells)
+	} else {
+		for _, y := range dirtyRows {
+			copy(s.last.Cells[y*frame.Width:(y+1)*frame.Width], frame.Cells[y*frame.Width:(y+1)*frame.Width])
+		}
+	}
+	s.last.CursorSet = frame.CursorSet
+	s.last.CursorX = frame.CursorX
+	s.last.CursorY = frame.CursorY
+}
+
+// ReleaseFrame returns the presented frame's cells to the pool. The
+// screen retains its own copy of the frame, so the cells are never
+// referenced after Present returns.
+func (s *TerminalScreen) ReleaseFrame(frame Frame) {
+	ReleaseFrame(frame)
 }
 
 // writeCursorPos writes a cursor-position sequence to w without
@@ -206,7 +243,11 @@ func (s *TerminalScreen) paintRow(w io.Writer, frame *Frame, y int, options disp
 			}
 			continue
 		}
-		if lastStyle == nil || !lastStyle.Equal(cell.Style) {
+		// The style comparison checks pointer identity first: a render
+		// pass shares style values, so most style changes are detected
+		// by pointer comparison, and Equal is called only for distinct
+		// style values.
+		if lastStyle == nil || (lastStyle != cell.Style && !lastStyle.Equal(cell.Style)) {
 			io.WriteString(w, s.sgr(cell.Style))
 			lastStyle = cell.Style
 		}

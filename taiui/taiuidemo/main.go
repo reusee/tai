@@ -165,6 +165,13 @@ func readKeys(r io.Reader, ch chan<- string) {
 				// Arrow keys arrive as ESC [ A/B/C/D; other sequences
 				// are ignored. Wait for the full three-byte sequence.
 				if len(pending) < 3 {
+					if len(pending) == 2 && pending[1] != '[' {
+						// ESC followed by a non-sequence byte: the ESC
+						// is not part of an arrow sequence, so discard
+						// it and process the rest.
+						pending = pending[1:]
+						continue
+					}
 					break
 				}
 				seq := pending[:3]

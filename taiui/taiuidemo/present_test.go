@@ -144,13 +144,28 @@ func TestReadKeys(t *testing.T) {
 
 func TestReadKeysLoneEsc(t *testing.T) {
 	ch := make(chan string, 8)
-	go readKeys(strings.NewReader("\x1bq"), ch)
-	// A lone ESC followed by a non-sequence byte is discarded: the
+	go readKeys(strings.NewReader("\x1b"), ch)
+	// A lone ESC that never grows into a sequence is discarded: the
 	// incomplete sequence never resolves to a key.
 	select {
 	case k := <-ch:
 		t.Fatalf("expected no key, got %q", k)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestReadKeysEscThenKey(t *testing.T) {
+	ch := make(chan string, 8)
+	go readKeys(strings.NewReader("\x1bq"), ch)
+	// ESC followed by a non-sequence byte: the ESC is discarded and the
+	// following key is processed, so 'q' quits the demo.
+	select {
+	case k := <-ch:
+		if k != "quit" {
+			t.Fatalf("expected quit, got %q", k)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for quit")
 	}
 }
 

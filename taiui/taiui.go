@@ -65,7 +65,9 @@ taiui theory: UI = pure Element value derived from state.
   tiling the content area without overlaps or gaps; the last child absorbs
   rounding. The box model and fill behave as in Rect, with fill covering
   the cells no child occupied: the ring around the tiled content, or the
-  whole outer box when there are no children.
+  whole outer box when there are no children. When the ring is empty (no
+  margin, border, or padding), the fill is a no-op and the marks tracking
+  is skipped entirely.
 - Overlay stacks children in order, each into the full box; later
   children draw over earlier ones. Fill paints the background in the
   cells no child occupied, matching Rect's fill semantics. Overlay
@@ -133,6 +135,16 @@ taiui theory: UI = pure Element value derived from state.
   style helpers only. Color specs cover the foreground, the background,
   and the underline color; attr and underline-style specs cover the VT
   attribute set and its underline variants.
+`
+
+const TheoryOfCellComparison = `
+taiui cell comparison theory:
+- Cell comparison is optimized for the common case: the Set flag and the
+  rune are compared before the style and combining runes, so the majority
+  of cells (unset) short-circuit on the cheap fields.
+- Styles are compared by pointer identity first: a render pass shares
+  style values, so most style comparisons are pointer equality, and the
+  Equal method is called only for distinct style values.
 `
 
 type Scope = dscope.Scope
@@ -387,6 +399,13 @@ func (f Frame) DirtyRowsInto(o Frame, buf []int) []int {
 func sameStyle(a, b Style) bool {
 	if a == nil || b == nil {
 		return a == b
+	}
+	// The vt style is a pointer, so interface equality is pointer
+	// identity; a render pass shares style values, so most comparisons
+	// short-circuit here. Equal is called only for distinct style
+	// values.
+	if a == b {
+		return true
 	}
 	return a.Equal(b)
 }
