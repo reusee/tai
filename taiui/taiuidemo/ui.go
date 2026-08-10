@@ -54,6 +54,10 @@ type W1Weight int
 // over the main UI. The m key toggles it.
 type Modal bool
 
+// Rotation is the clockwise rotation of the four panel contents: the tab
+// key advances it, moving each panel one position clockwise.
+type Rotation int
+
 // Component providers: each panel is its own provider type, so dscope can
 // cache it independently and recompute it only when its dependencies change.
 type Header taiui.Element
@@ -67,6 +71,7 @@ func rootProvider(
 	w Width,
 	h Height,
 	modal Modal,
+	rotation Rotation,
 	hdr Header,
 	ftr Footer,
 	pt PanelText,
@@ -88,16 +93,20 @@ func rootProvider(
 			),
 		)}
 	}
+	// The four panels are arranged in clockwise order (top-left,
+	// top-right, bottom-right, bottom-left) and rotated by the rotation
+	// state, so the tab key moves each panel one position clockwise.
+	rotated := rotatePanels(pt, pb, pd, ps, rotation)
 	root := taiui.Root{Element: taiui.Column(
 		taiui.Weighted(1, taiui.Element(hdr)),
 		taiui.Weighted(22, taiui.Row(
 			taiui.Weighted(1, taiui.Column(
-				taiui.Weighted(1, taiui.Element(pt)),
-				taiui.Weighted(1, taiui.Element(ps)),
+				taiui.Weighted(1, rotated[0]),
+				taiui.Weighted(1, rotated[3]),
 			)),
 			taiui.Weighted(1, taiui.Column(
-				taiui.Weighted(1, taiui.Element(pb)),
-				taiui.Weighted(1, taiui.Element(pd)),
+				taiui.Weighted(1, rotated[1]),
+				taiui.Weighted(1, rotated[2]),
 			)),
 		)),
 		taiui.Weighted(1, taiui.Element(ftr)),
@@ -122,6 +131,30 @@ func rootProvider(
 		)
 	}
 	return root
+}
+
+// rotatePanels arranges the four panels for the given clockwise rotation.
+// The panels are given in clockwise order (top-left, top-right,
+// bottom-right, bottom-left); position p shows the panel originally at
+// (p - rotation) mod 4.
+func rotatePanels(pt PanelText, pb PanelBox, pd PanelDynamic, ps PanelScroll, rotation Rotation) [4]taiui.Element {
+	panels := [...]taiui.Element{
+		taiui.Element(pt),
+		taiui.Element(pb),
+		taiui.Element(pd),
+		taiui.Element(ps),
+	}
+	var rotated [4]taiui.Element
+	for p := 0; p < 4; p++ {
+		rotated[p] = panels[rotatedPanelIndex(p, int(rotation))]
+	}
+	return rotated
+}
+
+// rotatedPanelIndex returns the index (in clockwise order) of the panel
+// shown at position p under the given clockwise rotation.
+func rotatedPanelIndex(p, rotation int) int {
+	return (p - rotation%4 + 4) % 4
 }
 
 func provideHeader(t Toggle, now Now) Header {
@@ -180,7 +213,7 @@ func header(t Toggle, now Now) taiui.Element {
 
 func footer() taiui.Element {
 	return taiui.Text(
-		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 m modal \u00b7 q quit ",
+		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 m modal \u00b7 tab rotate \u00b7 q quit ",
 		taiui.Dim(true),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x181818)),

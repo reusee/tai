@@ -62,7 +62,8 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	toggle := true
 	w1Weight := 1
 	modal := false
-	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, "up")
+	rotation := 0
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "up")
 	if quit {
 		t.Fatal("up must not quit the demo")
 	}
@@ -72,7 +73,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 0 {
 		t.Fatalf("expected no provider for clamped up, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "down")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "down")
 	if quit {
 		t.Fatal("down must not quit the demo")
 	}
@@ -82,7 +83,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after down, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "space")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "space")
 	if quit {
 		t.Fatal("space must not quit the demo")
 	}
@@ -92,7 +93,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after space, got %d", len(changed))
 	}
-	_, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "quit")
+	_, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "quit")
 	if !quit {
 		t.Fatal("quit must stop the demo")
 	}
@@ -103,7 +104,8 @@ func TestHandleKeyW1Weight(t *testing.T) {
 	toggle := true
 	w1Weight := 1
 	modal := false
-	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, "left")
+	rotation := 0
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "left")
 	if quit {
 		t.Fatal("left must not quit the demo")
 	}
@@ -113,7 +115,7 @@ func TestHandleKeyW1Weight(t *testing.T) {
 	if len(changed) != 0 {
 		t.Fatalf("expected no provider for clamped left, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "right")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "right")
 	if quit {
 		t.Fatal("right must not quit the demo")
 	}
@@ -124,12 +126,12 @@ func TestHandleKeyW1Weight(t *testing.T) {
 		t.Fatalf("expected one provider after right, got %d", len(changed))
 	}
 	for i := 0; i < maxW1Weight; i++ {
-		handleKey(&scroll, &toggle, &w1Weight, &modal, "right")
+		handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "right")
 	}
 	if w1Weight != maxW1Weight {
 		t.Fatalf("expected w1 weight clamped at %d, got %d", maxW1Weight, w1Weight)
 	}
-	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "right")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "right")
 	if quit {
 		t.Fatal("right must not quit the demo")
 	}
@@ -143,7 +145,8 @@ func TestHandleKeyModal(t *testing.T) {
 	toggle := true
 	w1Weight := 1
 	modal := false
-	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, "modal")
+	rotation := 0
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
@@ -153,7 +156,7 @@ func TestHandleKeyModal(t *testing.T) {
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after modal, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, "modal")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
@@ -162,6 +165,48 @@ func TestHandleKeyModal(t *testing.T) {
 	}
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after modal, got %d", len(changed))
+	}
+}
+
+func TestHandleKeyRotation(t *testing.T) {
+	scroll := 0
+	toggle := true
+	w1Weight := 1
+	modal := false
+	rotation := 0
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "tab")
+	if quit {
+		t.Fatal("tab must not quit the demo")
+	}
+	if rotation != 1 {
+		t.Fatalf("expected rotation 1 after tab, got %d", rotation)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("expected one provider after tab, got %d", len(changed))
+	}
+	for i := 0; i < 3; i++ {
+		handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, "tab")
+	}
+	if rotation != 0 {
+		t.Fatalf("expected rotation wrapped to 0, got %d", rotation)
+	}
+}
+
+func TestRotatedPanelIndex(t *testing.T) {
+	// Position p shows the panel originally at (p - rotation) mod 4, in
+	// clockwise order: 0 top-left, 1 top-right, 2 bottom-right,
+	// 3 bottom-left.
+	cases := []struct{ p, rotation, want int }{
+		{0, 0, 0}, {1, 0, 1}, {2, 0, 2}, {3, 0, 3},
+		{0, 1, 3}, {1, 1, 0}, {2, 1, 1}, {3, 1, 2},
+		{0, 2, 2}, {1, 2, 3}, {2, 2, 0}, {3, 2, 1},
+		{0, 3, 1}, {1, 3, 2}, {2, 3, 3}, {3, 3, 0},
+		{0, 4, 0}, // four presses return to the original arrangement
+	}
+	for _, c := range cases {
+		if got := rotatedPanelIndex(c.p, c.rotation); got != c.want {
+			t.Fatalf("rotatedPanelIndex(%d, %d) = %d, want %d", c.p, c.rotation, got, c.want)
+		}
 	}
 }
 
@@ -254,9 +299,9 @@ func TestWriteCursorPos(t *testing.T) {
 
 func TestReadKeys(t *testing.T) {
 	ch := make(chan string, 8)
-	go readKeys(strings.NewReader("\x1b[Aqm \x1b[B"), ch)
+	go readKeys(strings.NewReader("\x1b[Aqm \t\x1b[B"), ch)
 	var got []string
-	for len(got) < 5 {
+	for len(got) < 6 {
 		select {
 		case k := <-ch:
 			got = append(got, k)
@@ -264,7 +309,7 @@ func TestReadKeys(t *testing.T) {
 			t.Fatal("timeout waiting for keys")
 		}
 	}
-	want := []string{"up", "quit", "modal", "space", "down"}
+	want := []string{"up", "quit", "modal", "space", "tab", "down"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}

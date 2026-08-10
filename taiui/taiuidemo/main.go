@@ -67,6 +67,7 @@ func main() {
 	toggle := true
 	w1Weight := 1
 	modal := false
+	rotation := 0
 	frame := int64(0)
 	now := time.Now()
 
@@ -77,6 +78,7 @@ func main() {
 		func() Toggle { return Toggle(toggle) },
 		func() W1Weight { return W1Weight(w1Weight) },
 		func() Modal { return Modal(modal) },
+		func() Rotation { return Rotation(rotation) },
 		func() Frame { return Frame(frame) },
 		func() Now { return Now(now) },
 		provideFrameBufferContent,
@@ -116,7 +118,7 @@ func main() {
 	for {
 		select {
 		case key := <-keyCh:
-			changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, key)
+			changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, key)
 			if quit {
 				return
 			}
@@ -161,7 +163,7 @@ func main() {
 // right arrow keys; the weight must stay positive for Weighted.
 const maxW1Weight = 10
 
-func handleKey(scroll *int, toggle *bool, w1Weight *int, modal *bool, key string) (changed []any, quit bool) {
+func handleKey(scroll *int, toggle *bool, w1Weight *int, modal *bool, rotation *int, key string) (changed []any, quit bool) {
 	switch key {
 	case "up":
 		// The scroll offset never goes negative: the view clamps at the
@@ -193,6 +195,11 @@ func handleKey(scroll *int, toggle *bool, w1Weight *int, modal *bool, key string
 		// Overlay stacks it over the main UI.
 		*modal = !*modal
 		changed = append(changed, func() Modal { return Modal(*modal) })
+	case "tab":
+		// The rotation cycles 0..3, so four presses return to the
+		// original arrangement.
+		*rotation = (*rotation + 1) % 4
+		changed = append(changed, func() Rotation { return Rotation(*rotation) })
 	case "quit":
 		return nil, true
 	}
@@ -247,6 +254,8 @@ func readKeys(r io.Reader, ch chan<- string) {
 				ch <- "space"
 			case 'm', 'M':
 				ch <- "modal"
+			case '\t':
+				ch <- "tab"
 			}
 			pending = pending[1:]
 		}
