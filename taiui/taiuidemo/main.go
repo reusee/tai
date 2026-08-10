@@ -16,15 +16,24 @@ import (
 const (
 	fbWidth  = 30
 	fbHeight = 3
+
+	// maxScopeDepth bounds the dscope layer chain. The event loop forks a
+	// new layer on every state change; without compaction the chain would
+	// grow without bound and every resolution would walk it.
+	maxScopeDepth = 64
 )
 
-// discardScreen renders and discards: it shows that Render accepts any
-// number of screens. A real application might present to several terminals.
 type discardScreen struct{}
 
 func (discardScreen) Width() int          { return 1 }
 func (discardScreen) Height() int         { return 1 }
 func (discardScreen) Present(taiui.Frame) {}
+
+// ReleaseFrame returns the discarded frame's cells to the pool: the
+// screen renders and discards, so the cells are never retained.
+func (discardScreen) ReleaseFrame(frame taiui.Frame) {
+	taiui.ReleaseFrame(frame)
+}
 
 func main() {
 	t, err := tty.NewStdIoTty()
@@ -66,6 +75,7 @@ func main() {
 	scroll := 0
 	toggle := true
 	w1Weight := 1
+	modal := false
 	frame := int64(0)
 	now := time.Now()
 
@@ -75,6 +85,7 @@ func main() {
 		func() Scroll { return Scroll(scroll) },
 		func() Toggle { return Toggle(toggle) },
 		func() W1Weight { return W1Weight(w1Weight) },
+		func() Modal { return Modal(modal) },
 		func() Frame { return Frame(frame) },
 		func() Now { return Now(now) },
 		func() *taiui.FrameBufferContent { return fb },
@@ -87,6 +98,14 @@ func main() {
 		rootProvider,
 	)
 	scope := base
+
+	// forkState forks the current scope with the given providers; see
+	// forkScope for the collapse behavior.
+	forks := 0
+	forkState := func(defs ...any) taiui.Scope {
+		scope, forks = forkScope(scope, forks, base, width, height, scroll, toggle, w1Weight, modal, frame, now, defs...)
+		return scope
+	}
 
 	resizeCh := make(chan bool, 4)
 	t.NotifyResize(resizeCh)
@@ -102,11 +121,14 @@ func main() {
 	clock := time.NewTicker(time.Second)
 	defer clock.Stop()
 
+	// The initial render presents the first frame; subsequent renders
+	// happen only when a case below changes state, so a key press that
+	// changes nothing skips the render entirely.
+	taiui.Render(scope, screen, discardScreen{})
 	for {
-		taiui.Render(scope, screen, discardScreen{})
 		select {
 		case key := <-keyCh:
-			changed, quit := handleKey(&scroll, &toggle, &w1Weight, key)
+			changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, key)
 			if quit {
 				return
 			}
@@ -116,25 +138,29 @@ func main() {
 			// All changed providers are forked in one layer, so the scope
 			// stack stays flat.
 			if len(changed) > 0 {
-				scope = scope.Fork(changed...)
+				scope = forkState(changed...)
+				taiui.Render(scope, screen, discardScreen{})
 			}
 		case <-tick.C:
 			frame++
 			drawBall(fb, frame)
-			scope = scope.Fork(func() Frame { return Frame(frame) })
+			scope = forkState(func() Frame { return Frame(frame) })
+			taiui.Render(scope, screen, discardScreen{})
 		case <-clock.C:
 			now = time.Now()
-			scope = scope.Fork(func() Now { return Now(now) })
+			scope = forkState(func() Now { return Now(now) })
+			taiui.Render(scope, screen, discardScreen{})
 		case <-resizeCh:
 			if ws, err := t.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
 				width, height = ws.Width, ws.Height
 				screen.resize(width, height)
 				// Both changed providers are forked in one layer, so the
 				// scope stack stays flat.
-				scope = scope.Fork(
+				scope = forkState(
 					func() Width { return Width(width) },
 					func() Height { return Height(height) },
 				)
+				taiui.Render(scope, screen, discardScreen{})
 			}
 		case <-sigCh:
 			return
@@ -142,14 +168,42 @@ func main() {
 	}
 }
 
+// collapseScope returns a scope forked from base with all current state,
+// collapsing the layer chain so resolutions stay O(1).
+func collapseScope(base taiui.Scope, width, height, scroll int, toggle bool, w1Weight int, modal bool, frame int64, now time.Time) taiui.Scope {
+	return base.Fork(
+		func() Width { return Width(width) },
+		func() Height { return Height(height) },
+		func() Scroll { return Scroll(scroll) },
+		func() Toggle { return Toggle(toggle) },
+		func() W1Weight { return W1Weight(w1Weight) },
+		func() Modal { return Modal(modal) },
+		func() Frame { return Frame(frame) },
+		func() Now { return Now(now) },
+	)
+}
+
+// forkScope forks the scope with the given providers, collapsing the
+// layer chain to the base scope every maxScopeDepth forks so
+// resolutions stay O(1). The collapse re-forks all current state,
+// recomputing the components once; that is cheap compared to the
+// unbounded walk it prevents. The defs are applied on top of the
+// collapsed scope, so no provider is ever dropped.
+func forkScope(scope taiui.Scope, forks int, base taiui.Scope, width, height, scroll int, toggle bool, w1Weight int, modal bool, frame int64, now time.Time, defs ...any) (taiui.Scope, int) {
+	forks++
+	if forks < maxScopeDepth {
+		return scope.Fork(defs...), forks
+	}
+	scope = collapseScope(base, width, height, scroll, toggle, w1Weight, modal, frame, now)
+	scope = scope.Fork(defs...)
+	return scope, 0
+}
+
 // maxW1Weight bounds the w1 flex weight adjustable with the left and
 // right arrow keys; the weight must stay positive for Weighted.
 const maxW1Weight = 10
 
-// handleKey applies one key event to the demo state. It returns the
-// providers for the state pieces that changed, and whether the key
-// requests quitting the demo.
-func handleKey(scroll *int, toggle *bool, w1Weight *int, key string) (changed []any, quit bool) {
+func handleKey(scroll *int, toggle *bool, w1Weight *int, modal *bool, key string) (changed []any, quit bool) {
 	switch key {
 	case "up":
 		// The scroll offset never goes negative: the view clamps at the
@@ -176,6 +230,11 @@ func handleKey(scroll *int, toggle *bool, w1Weight *int, key string) (changed []
 	case "space":
 		*toggle = !*toggle
 		changed = append(changed, func() Toggle { return Toggle(*toggle) })
+	case "modal":
+		// The modal is part of the element tree, derived from state: an
+		// Overlay stacks it over the main UI.
+		*modal = !*modal
+		changed = append(changed, func() Modal { return Modal(*modal) })
 	case "quit":
 		return nil, true
 	}
@@ -228,6 +287,8 @@ func readKeys(r io.Reader, ch chan<- string) {
 				ch <- "quit"
 			case ' ':
 				ch <- "space"
+			case 'm', 'M':
+				ch <- "modal"
 			}
 			pending = pending[1:]
 		}

@@ -3,6 +3,7 @@ package taiui
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/clipperhouse/displaywidth"
@@ -25,17 +26,20 @@ type _Text struct {
 	wrap            bool
 	tabWidth        int
 	cursor          bool
+	cursorAt        int
 }
 
-// Text creates a text element from specs. Bare strings and []string values
-// are accepted as shorthands for lines; all other specs are interpreted as
-// element specs. Wrap enables word wrapping to the box width; VAlign
-// selects the vertical alignment. Unknown specs panic here, at
-// construction.
 func Text(specs ...any) _Text {
-	t := &_Text{tabWidth: 8}
+	t := &_Text{tabWidth: 8, cursorAt: -1}
 	buildElement(t, specs)
 	return *t
+}
+
+// Input creates a single-line text input: a Text with the cursor at the
+// given rune offset within the text. The text and cursor are state; the
+// application updates them via scope forks and handles key events.
+func Input(text string, cursor int, specs ...any) _Text {
+	return Text(append([]any{text, CursorAt(cursor)}, specs...)...)
 }
 
 func (_Text) element() {}
@@ -45,6 +49,8 @@ func (Wrap) spec() {}
 func (TabWidth) spec() {}
 
 func (Cursor) spec() {}
+
+func (CursorAt) spec() {}
 
 func (t *_Text) applySpec(spec any) {
 	if spec == nil {
@@ -73,6 +79,9 @@ func (t *_Text) applySpec(spec any) {
 		t.tabWidth = int(v)
 	case Cursor:
 		t.cursor = bool(v)
+	case CursorAt:
+		t.cursor = true
+		t.cursorAt = int(v)
 	default:
 		if t.applyCommonSpec(v) {
 			return
@@ -86,6 +95,13 @@ func (t *_Text) applySpec(spec any) {
 func splitLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.Split(s, "\n")
+}
+
+// textLinesPool pools the wrapped-line slices of Text renders. A Text
+// renders its lines into a fresh slice per pass; pooling avoids the
+// allocation for the common screen-sized texts.
+var textLinesPool = sync.Pool{
+	New: func() any { return make([]string, 0, 64) },
 }
 
 func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
@@ -110,17 +126,33 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	if maxLines <= 0 {
 		return
 	}
-	var lines []string
+	// The lines are pre-sized to the content height so the common case
+	// (the text fits the box) appends without growing the slice. The
+	// slice is pooled: a Text renders its lines into a fresh slice per
+	// pass, and pooling avoids the allocation for the common
+	// screen-sized texts.
+	lines := textLinesPool.Get().([]string)
+	lines = lines[:0]
+	if cap(lines) < min(len(t.lines), maxLines) {
+		lines = make([]string, 0, min(len(t.lines), maxLines))
+	}
+	defer func() { textLinesPool.Put(lines) }()
 	for _, line := range t.lines {
-		wrapped := []string{line}
 		if t.wrap {
-			wrapped = wrapLine(line, wrapWidth, options)
-		}
-		for _, ln := range wrapped {
+			wrapped := wrapLine(line, wrapWidth, options)
+			for _, ln := range wrapped {
+				if len(lines) >= maxLines {
+					break
+				}
+				lines = append(lines, ln)
+			}
+		} else {
 			if len(lines) >= maxLines {
 				break
 			}
-			lines = append(lines, ln)
+			// Unwrapped lines append directly, so a line never allocates
+			// a one-element wrapper slice.
+			lines = append(lines, line)
 		}
 		if len(lines) >= maxLines {
 			break
@@ -137,6 +169,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	}
 
 	left := contentLeft
+	lastLineStart := contentLeft
 	for _, ln := range lines {
 		left = contentLeft
 		switch t.align {
@@ -148,6 +181,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 			// odd-width line places the extra column on the right.
 			left = (contentLeft + right - options.String(ln)) / 2
 		}
+		lastLineStart = left
 		if t.fill {
 			// A line is fully painted regardless of alignment: the
 			// leading gap is filled before the text draws over it.
@@ -222,10 +256,17 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 		// last line. An empty text places it at the content start; a
 		// clipped line places it at the clip position.
 		if len(lines) > 0 {
-			if left > right {
-				left = right
+			if t.cursorAt >= 0 {
+				// CursorAt places the cursor at a rune offset within the
+				// last line: the line start plus the width of the text
+				// before the offset, with tabs expanded to tab stops.
+				cursor(textCursorX(lines[len(lines)-1], t.cursorAt, lastLineStart, contentLeft, right, tabWidth, options), y-1)
+			} else {
+				if left > right {
+					left = right
+				}
+				cursor(left, y-1)
 			}
-			cursor(left, y-1)
 		} else {
 			cursor(contentLeft, y)
 		}
@@ -262,6 +303,12 @@ type TabWidth int
 // content start; a clipped line places it at the clip position.
 type Cursor bool
 
+// CursorAt places the terminal cursor at a rune offset within the last
+// line of the text. The offset counts runes, including the combining
+// runes of clusters, and is clamped to the line's rune count. It implies
+// Cursor(true).
+type CursorAt int
+
 const TheoryOfCursor = `
 taiui cursor theory:
 - The cursor is part of the render output: a Text with the Cursor spec
@@ -270,20 +317,17 @@ taiui cursor theory:
   position.
 - An empty text places the cursor at the content start; a clipped line
   places it at the clip position.
+- CursorAt places the cursor at a rune offset within the last line,
+  clamped to the line's rune count. The x position is the line start
+  plus the width of the text before the offset, with tabs expanded to
+  tab stops, clamped to the content area. Input is a Text with a cursor
+  at an application-tracked offset.
 - Inside a VerticalScroll, the cursor is transformed from content
   coordinates to window coordinates, so a cursor in a scrolled text input
   tracks the visible position.
 - Frame.Equal compares the cursor state, so a screen detects a cursor-only
   change and repositions without repainting cells.
 `
-
-// word is a whitespace-free run of grapheme clusters, with the display
-// width of each cluster.
-type word struct {
-	clusters []string
-	widths   []int
-	width    int
-}
 
 func wrapLine(line string, width int, options displaywidth.Options) []string {
 	if width <= 0 {
@@ -292,70 +336,67 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 	if line == "" {
 		return []string{""}
 	}
-	// Fast path: a line with no whitespace that fits the box is returned
-	// as-is, skipping the word-splitting allocations.
-	if !strings.ContainsAny(line, " \t") && options.String(line) <= width {
+	// Fast path: a line with no tabs, no leading or trailing spaces, and
+	// no consecutive spaces that fits the box is returned as-is. The
+	// slow path would join the same words with single spaces, so the
+	// output is identical; skipping the word-splitting allocations is
+	// the win.
+	if !strings.Contains(line, "\t") &&
+		!strings.HasPrefix(line, " ") &&
+		!strings.HasSuffix(line, " ") &&
+		!strings.Contains(line, "  ") &&
+		options.String(line) <= width {
 		return []string{line}
 	}
 
-	// Split the line into words at whitespace clusters.
-	var words []word
-	{
-		g := options.StringGraphemes(line)
-		var clusters []string
-		var widths []int
-		wordWidth := 0
-		flushWord := func() {
-			if len(clusters) > 0 {
-				words = append(words, word{
-					clusters: clusters,
-					widths:   widths,
-					width:    wordWidth,
-				})
-				clusters = nil
-				widths = nil
-				wordWidth = 0
-			}
-		}
-		for g.Next() {
-			cluster := g.Value()
-			if cluster == " " || cluster == "\t" {
-				flushWord()
-				continue
-			}
-			w := g.Width()
-			clusters = append(clusters, cluster)
-			widths = append(widths, w)
-			wordWidth += w
-		}
-		flushWord()
-	}
-
+	// Single pass over the grapheme clusters: words are packed onto the
+	// current line as they complete, so no word list is built. A word
+	// wider than the box is packed in chunks as it grows.
 	var lines []string
-	cur := []string(nil)
+	var cur []string
 	curWidth := 0
-	for _, w := range words {
-		if w.width > width {
-			if len(cur) > 0 {
-				lines = append(lines, strings.Join(cur, ""))
-				cur = nil
-				curWidth = 0
-			}
-			lines = append(lines, breakWord(w, width)...)
-			continue
+	var word []string
+	wordWidth := 0
+
+	// packWord appends the current word to the current line, wrapping
+	// first if the word would not fit. The word's backing array is
+	// reused for the next word.
+	packWord := func() {
+		if len(word) == 0 {
+			return
 		}
-		if len(cur) > 0 && curWidth+1+w.width > width {
+		if len(cur) > 0 && curWidth+1+wordWidth > width {
 			lines = append(lines, strings.Join(cur, ""))
-			cur = nil
+			cur = cur[:0]
 			curWidth = 0
 		}
 		if len(cur) > 0 {
 			cur = append(cur, " ")
 			curWidth++
 		}
-		cur = append(cur, w.clusters...)
-		curWidth += w.width
+		cur = append(cur, word...)
+		curWidth += wordWidth
+		word = word[:0]
+		wordWidth = 0
 	}
+
+	g := options.StringGraphemes(line)
+	for g.Next() {
+		cluster := g.Value()
+		if cluster == " " || cluster == "\t" {
+			packWord()
+			continue
+		}
+		w := g.Width()
+		if wordWidth+w > width && len(word) > 0 {
+			// The word exceeds the box: pack the word so far, then
+			// start a new word with the current cluster.
+			packWord()
+		}
+		word = append(word, cluster)
+		wordWidth += w
+	}
+	packWord()
 	if len(cur) > 0 || len(lines) == 0 {
 		lines = append(lines, strings.Join(cur, ""))
 	}
@@ -374,24 +415,38 @@ func nextTabStop(x, contentLeft, tabWidth int) int {
 	return contentLeft + (q+1)*tabWidth
 }
 
-// breakWord chunks the clusters of a word into lines no wider than width.
-// A cluster wider than width occupies its own line.
-func breakWord(w word, width int) []string {
-	var lines []string
-	cur := []string(nil)
-	curWidth := 0
-	for i, cluster := range w.clusters {
-		clusterWidth := w.widths[i]
-		if curWidth+clusterWidth > width && len(cur) > 0 {
-			lines = append(lines, strings.Join(cur, ""))
-			cur = nil
-			curWidth = 0
+// textCursorX computes the x position of a cursor at the given rune
+// offset within a line: the line start plus the width of the text before
+// the offset, with tabs expanded to tab stops, clamped to the content
+// area.
+func textCursorX(line string, offset, lineLeft, contentLeft, right, tabWidth int, options displaywidth.Options) int {
+	if offset < 0 {
+		offset = 0
+	}
+	if n := utf8.RuneCountInString(line); offset > n {
+		offset = n
+	}
+	x := lineLeft
+	runeIdx := 0
+	g := options.StringGraphemes(line)
+	for g.Next() {
+		cluster := g.Value()
+		clusterRunes := utf8.RuneCountInString(cluster)
+		if runeIdx+clusterRunes > offset {
+			break
 		}
-		cur = append(cur, cluster)
-		curWidth += clusterWidth
+		if cluster == "\t" {
+			x = nextTabStop(x, contentLeft, tabWidth)
+		} else {
+			x += g.Width()
+		}
+		runeIdx += clusterRunes
 	}
-	if len(cur) > 0 {
-		lines = append(lines, strings.Join(cur, ""))
+	if x < contentLeft {
+		x = contentLeft
 	}
-	return lines
+	if x > right {
+		x = right
+	}
+	return x
 }

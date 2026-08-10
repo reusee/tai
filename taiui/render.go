@@ -21,6 +21,9 @@ func Render(scope Scope, screens ...Screen) {
 		box := Box{Top: 0, Left: 0, Bottom: height, Right: width}
 		renderElement(root.Element, box, vt.BaseStyle, frame.setCell, frame.setCursor, options)
 		screen.Present(frame)
+		if releaser, ok := screen.(FrameReleaser); ok {
+			releaser.ReleaseFrame(frame)
+		}
 	}
 }
 
@@ -54,22 +57,22 @@ func renderElement(e Element, box Box, style Style, draw drawFunc, cursor cursor
 	case _Flex:
 		renderFlex(e, box, style, draw, cursor, options)
 	case _FrameBuffer:
-		renderFrameBuffer(e, box, style, draw, cursor)
+		renderFrameBuffer(e, box, style, draw, cursor, options)
+	case _Overlay:
+		renderOverlay(e, box, style, draw, cursor, options)
+	case _List:
+		renderList(e, box, style, draw, cursor, options)
 	default:
 		panic(fmt.Errorf("unknown element %#v", e))
 	}
 }
 
-// markedDraw wraps a draw target to record the cells it draws into marks,
-// including the trailing columns of wide grapheme clusters, so a fill pass
-// can paint only the cells no child occupied. The marks slice is indexed by
-// (y-box.Top)*box.Width() + (x-box.Left); cells outside the box are ignored.
 func markedDraw(draw drawFunc, marks []bool, box Box, options displaywidth.Options) drawFunc {
 	return drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		idx := (y-box.Top)*box.Width() + (x - box.Left)
 		if idx >= 0 && idx < len(marks) {
 			marks[idx] = true
-			for i := 1; i < clusterWidth(options, mainc, combc); i++ {
+			for i := 1; i < ClusterWidth(options, mainc, combc); i++ {
 				// The trailing columns stay within the cluster's row.
 				if (x-box.Left)+i < box.Width() {
 					marks[idx+i] = true

@@ -2,6 +2,8 @@ package taiui
 
 import (
 	"fmt"
+	"strconv"
+	"sync"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
@@ -16,11 +18,22 @@ var _ Element = _VerticalScroll{}
 // approaches the bound.
 const maxScrollContentHeight = 1 << 14
 
+// scrollCellsPool pools the content-cell slices of VerticalScroll
+// renders. A scroll renders its whole child into a virtual column, so
+// the collected cells can be far larger than the visible window;
+// pooling avoids an allocation per render.
+var scrollCellsPool = sync.Pool{
+	New: func() any {
+		return make([]scrollCell, 0, 64)
+	},
+}
+
 // scrollCell is one content cell collected while rendering the child of a
 // VerticalScroll. Cells are appended in draw order, so replaying them in
-// order makes the last draw of a cell win.
+// order makes the last draw of a cell win. Y is the content row, used to
+// map the cell into the visible window during replay.
 type scrollCell struct {
-	X     int
+	X, Y  int
 	Rune  rune
 	Combc []rune
 	Style Style
@@ -88,31 +101,37 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		Bottom: box.Top + maxScrollContentHeight,
 	}
 	maxY := box.Top
-	// The slice is pre-sized to the window height, the common case where
-	// the content is not taller than the window; taller content grows the
-	// slice. Rows are indexed by y-box.Top, so the replay loop below
-	// walks the window rows directly.
-	cells := make([][]scrollCell, max(box.Height(), 1))
+	// Cells are collected into one flat slice in draw order, so a later
+	// draw of the same cell wins when the replay below walks the slice in
+	// order. The slice is pooled: a scroll renders its whole child into
+	// the virtual column, so the collected cells can be far larger than
+	// the visible window, and pooling avoids an allocation per render.
+	cells := scrollCellsPool.Get().([]scrollCell)
+	if cap(cells) < box.Width()*box.Height()/4 {
+		cells = make([]scrollCell, 0, box.Width()*box.Height()/4)
+	}
+	cells = cells[:0]
+	defer func() {
+		scrollCellsPool.Put(cells)
+	}()
 	sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		if y > maxY {
 			maxY = y
 		}
-		idx := y - box.Top
-		if idx < 0 {
+		if y < box.Top {
 			return
 		}
-		for len(cells) <= idx {
-			cells = append(cells, nil)
-		}
-		// Cells are appended in draw order, so a later draw of the same
-		// cell wins when the blit below replays the draws in order.
-		cells[idx] = append(cells[idx], scrollCell{X: x, Rune: mainc, Combc: combc, Style: st})
+		cells = append(cells, scrollCell{X: x, Y: y, Rune: mainc, Combc: combc, Style: st})
 	})
 	// Cursor requests from the child are in content coordinates; they are
 	// transformed to window coordinates after the view window is computed.
-	var cursorRequests []struct{ x, y int }
+	// Only the last request matters, mirroring the last-draw-wins rule for
+	// cells, so a single value replaces a slice.
+	var cursorX, cursorY int
+	cursorSet := false
 	subCursor := func(x, y int) {
-		cursorRequests = append(cursorRequests, struct{ x, y int }{x, y})
+		cursorX, cursorY = x, y
+		cursorSet = true
 	}
 	renderElement(v.child, elemBox, style, sub, subCursor, options)
 
@@ -139,42 +158,39 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	// its trailing columns too; fill must not paint over them.
 	var marks []bool
 	if v.fill {
-		marks = make([]bool, box.Width()*box.Height())
+		marks = getMarks(box.Width() * box.Height())
+		defer putMarks(marks)
 	}
-	numTopCrop := fromY - box.Top
-	for i := 0; i < box.Height(); i++ {
-		y := fromY + i
-		rowIdx := y - box.Top
-		if rowIdx < 0 || rowIdx >= len(cells) {
+	for _, cell := range cells {
+		// Cells outside the window are clipped on both edges: a child
+		// with a Box override or a negative margin may draw beyond the
+		// window, and none of it may bleed onto the screen.
+		wy := cell.Y - fromY
+		if wy < 0 || wy >= box.Height() {
 			continue
 		}
-		for _, cell := range cells[rowIdx] {
-			// Cells outside the window are clipped on both edges: a child
-			// with a Box override or a negative margin may draw beyond the
-			// window, and none of it may bleed onto the screen.
-			if cell.X < box.Left || cell.X >= clipRight {
-				continue
-			}
-			w := clusterWidth(options, cell.Rune, cell.Combc)
-			// A cluster that would extend past the right edge is not
-			// drawn, so content never spills beyond the window.
-			if cell.X+w > clipRight {
-				continue
-			}
-			if marks != nil {
-				idx := i*box.Width() + (cell.X - box.Left)
-				if idx >= 0 && idx < len(marks) {
-					marks[idx] = true
-					for j := 1; j < w; j++ {
-						// The trailing columns stay within the cluster's row.
-						if (cell.X-box.Left)+j < box.Width() {
-							marks[idx+j] = true
-						}
+		if cell.X < box.Left || cell.X >= clipRight {
+			continue
+		}
+		w := ClusterWidth(options, cell.Rune, cell.Combc)
+		// A cluster that would extend past the right edge is not
+		// drawn, so content never spills beyond the window.
+		if cell.X+w > clipRight {
+			continue
+		}
+		if marks != nil {
+			idx := wy*box.Width() + (cell.X - box.Left)
+			if idx >= 0 && idx < len(marks) {
+				marks[idx] = true
+				for j := 1; j < w; j++ {
+					// The trailing columns stay within the cluster's row.
+					if (cell.X-box.Left)+j < box.Width() {
+						marks[idx+j] = true
 					}
 				}
 			}
-			draw(cell.X, y-numTopCrop, cell.Rune, cell.Combc, cell.Style)
 		}
+		draw(cell.X, box.Top+wy, cell.Rune, cell.Combc, cell.Style)
 	}
 	if marks != nil {
 		for i := 0; i < box.Height(); i++ {
@@ -185,24 +201,13 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 			}
 		}
 	}
+	numTopCrop := fromY - box.Top
 	numBottomCrop := maxY - (fromY + box.Height()) + 1
 	if numTopCrop > 0 {
-		s := withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold)
-		for i, r := range fmt.Sprintf(" %d.. ", numTopCrop) {
-			if box.Left+i >= clipRight {
-				break
-			}
-			draw(box.Left+i, box.Top, r, nil, s)
-		}
+		drawCropIndicator(draw, box.Left, box.Top, clipRight, numTopCrop, withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold))
 	}
 	if numBottomCrop > 0 {
-		s := withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold)
-		for i, r := range fmt.Sprintf(" %d.. ", numBottomCrop) {
-			if box.Left+i >= clipRight {
-				break
-			}
-			draw(box.Left+i, box.Bottom-1, r, nil, s)
-		}
+		drawCropIndicator(draw, box.Left, box.Bottom-1, clipRight, numBottomCrop, withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold))
 	}
 	if showScrollbar {
 		// The thumb position maps the visible window onto the track.
@@ -213,13 +218,28 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 			draw(box.Right-1, box.Top+thumbY+i, '█', nil, s)
 		}
 	}
-	if len(cursorRequests) > 0 {
-		// The last cursor request wins, mirroring the last-draw-wins rule
-		// for cells. The content coordinate is mapped to the window.
-		last := cursorRequests[len(cursorRequests)-1]
-		wy := last.y - fromY + box.Top
-		if last.x >= box.Left && last.x < clipRight && wy >= box.Top && wy < box.Bottom {
-			cursor(last.x, wy)
+	if cursorSet {
+		// The content coordinate is mapped to the window.
+		wy := cursorY - fromY + box.Top
+		if cursorX >= box.Left && cursorX < clipRight && wy >= box.Top && wy < box.Bottom {
+			cursor(cursorX, wy)
 		}
+	}
+}
+
+// drawCropIndicator draws a " N.. " crop indicator at the given row,
+// clipped to the window's content area so it never paints the scrollbar
+// column. The indicator is ASCII, so the stack buffer is written byte by
+// byte without allocating.
+func drawCropIndicator(draw drawFunc, x, y, clipRight, n int, style Style) {
+	var buf [16]byte
+	b := append(buf[:0], ' ')
+	b = strconv.AppendInt(b, int64(n), 10)
+	b = append(b, '.', '.', ' ')
+	for i, c := range b {
+		if x+i >= clipRight {
+			break
+		}
+		draw(x+i, y, rune(c), nil, style)
 	}
 }

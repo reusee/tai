@@ -1,6 +1,8 @@
 package taiui
 
 import (
+	"sync"
+
 	"github.com/reusee/dscope"
 )
 
@@ -33,16 +35,17 @@ taiui theory: UI = pure Element value derived from state.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
   A nil root element renders an empty frame, clearing every screen. Each
-  render pass allocates a fresh frame per screen; frames are never reused,
-  because a screen may retain the frame it presented. Elements never call
-  screen methods; any backend able to present cell grids can render
-  (character terminals, web views, native UIs). Frame.Equal lets a screen
-  detect an unchanged frame and skip repainting, and Frame.Dirty reports
-  the runs of changed cells so a screen can repaint only the damaged
-  regions; both compare only frames of equal dimensions, mirroring
-  change-based rendering in terminal libraries. An element with an empty
-  box is skipped entirely: no child is rendered and no cursor is
-  recorded, because there is no visible area to draw into.
+  render pass allocates a fresh frame per screen; frames are never reused
+  unless the screen opts in via FrameReleaser, because a screen may retain
+  the frame it presented. A screen that implements FrameReleaser returns
+  the frame's cells to an internal pool after Present and must not retain
+  the frame. Frame.Equal lets a screen detect an unchanged frame and skip
+  repainting, and Frame.Dirty reports the runs of changed cells so a
+  screen can repaint only the damaged regions; both compare only frames
+  of equal dimensions, mirroring change-based rendering in terminal
+  libraries. An element with an empty box is skipped entirely: no child is
+  rendered and no cursor is recorded, because there is no visible area to
+  draw into.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -61,6 +64,11 @@ taiui theory: UI = pure Element value derived from state.
   rounding. The box model and fill behave as in Rect, with fill covering
   the cells no child occupied: the ring around the tiled content, or the
   whole outer box when there are no children.
+- Overlay stacks children in order, each into the full box; later
+  children draw over earlier ones. Fill paints the background in the
+  cells no child occupied, matching Rect's fill semantics. Overlay
+  enables modals and popups: the application derives the overlay from
+  state, so a modal is part of the element tree, not a separate layer.
 - Text provides multi-line rendering with horizontal and vertical
   alignment and per-position StyleFunc support. Lines are segmented into
   grapheme clusters (uax29): a cluster renders as one cell carrying its
@@ -92,11 +100,22 @@ taiui theory: UI = pure Element value derived from state.
   window edges draw over the fill, clipped to the window's content area
   so they never paint the scrollbar column; the Scrollbar thumb at the
   right edge draws last.
+- List renders a vertical list of single-line items with a selected
+  index. The selected item is highlighted with the ListStyle spec.
+  The view scrolls to keep the selected item visible, clamped to the
+  content extent. List renders only the visible items, so it is
+  O(window) per render, unlike a VerticalScroll of a Column of Text,
+  which renders the whole content into a virtual column.
 - FrameBuffer renders offscreen content: the content is data state, and
   rendering is a pure read of it. Cells are stored by value, so a write
   allocates nothing. Rendering snapshots the visible cells under the
   read lock, then draws outside the lock, so a concurrent writer is
-  blocked only for the snapshot, never for the draw.
+  blocked only for the snapshot, never for the draw. A wide cluster
+  covers its trailing columns: a cell in those columns is part of the
+  cluster's visual space and is not drawn, so a stale cell left by a
+  moved cluster never corrupts the display. A wide cluster that would
+  extend past the box's right edge is not drawn, matching Text and
+  VerticalScroll: content never spills past its box.
 - The cursor is part of the render output: a Text with the Cursor spec
   records the position after the last drawn cluster of the last line in
   the Frame. Screens position the terminal cursor at the recorded
@@ -224,11 +243,33 @@ type FrameCell struct {
 }
 
 func newFrame(width, height int) Frame {
+	cells := frameCellPool.Get().([]FrameCell)
+	if cap(cells) < width*height {
+		cells = make([]FrameCell, width*height)
+	}
+	cells = cells[:width*height]
+	clear(cells)
 	return Frame{
 		Width:  width,
 		Height: height,
-		Cells:  make([]FrameCell, width*height),
+		Cells:  cells,
 	}
+}
+
+// frameCellPool pools the cell slices of frames presented to screens
+// that implement FrameReleaser. The pool reduces GC pressure for
+// high-frequency rendering; screens that do not opt in keep the
+// fresh-frame behavior.
+var frameCellPool = sync.Pool{
+	New: func() any {
+		return make([]FrameCell, 0, 80*24)
+	},
+}
+
+// ReleaseFrame returns a frame's cells to the internal pool. It is
+// intended for use by a Screen's ReleaseFrame method.
+func ReleaseFrame(f Frame) {
+	frameCellPool.Put(f.Cells)
 }
 
 func (f *Frame) setCell(x, y int, mainc rune, combc []rune, style Style) {
@@ -352,8 +393,19 @@ func sameCombc(a, b []rune) bool {
 // element model: rendering produces a Frame, and the screen presents it. Any
 // backend able to present styled cell grids can be a Screen: a character
 // terminal, a web view, or a native widget grid.
+//
+// A Screen that does not retain the presented frame may implement
+// FrameReleaser to return the frame's cells to an internal pool.
 type Screen interface {
 	Width() int
 	Height() int
 	Present(Frame)
+}
+
+// FrameReleaser is an optional interface a Screen may implement to return
+// a presented frame's cells to an internal pool. A screen that implements
+// it must not retain the frame after Present returns; the cells may be
+// reused by the next render pass.
+type FrameReleaser interface {
+	ReleaseFrame(Frame)
 }

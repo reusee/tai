@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v3/vt"
@@ -25,7 +23,13 @@ taiuidemo provider theory:
 - The event loop forks the current scope with only the providers that
   changed. Forking from the current scope preserves the cached results of
   unchanged providers; forking from the base scope would discard them and
-  recompute everything.
+  recompute everything. The layer chain is collapsed to the base scope
+  every maxScopeDepth forks, so resolutions stay O(1); the collapse
+  re-forks all current state and recomputes the components once, which is
+  cheap compared to the unbounded walk it prevents. The changed providers
+  are applied on top of the collapsed scope, so no provider is ever
+  dropped. The event loop renders only when state changed, so a key press
+  that changes nothing skips the render entirely.
 - The root provider composes the component providers; it is the only
   provider that depends on all of them, so it is recomputed on every state
   change, but the components themselves are recomputed only when their own
@@ -45,6 +49,10 @@ type Now time.Time
 // and right arrow keys adjust it, changing the w1:w2 ratio.
 type W1Weight int
 
+// Modal is the demo's modal state: when true, an Overlay stacks a modal
+// over the main UI. The m key toggles it.
+type Modal bool
+
 // Component providers: each panel is its own provider type, so dscope can
 // cache it independently and recompute it only when its dependencies change.
 type Header taiui.Element
@@ -54,13 +62,10 @@ type PanelScroll taiui.Element
 type PanelBox taiui.Element
 type PanelDynamic taiui.Element
 
-// rootProvider composes the component providers into the root UI. It is the
-// only provider that depends on all components, so it is recomputed on every
-// state change, but the components themselves are recomputed only when their
-// own dependencies change.
 func rootProvider(
 	w Width,
 	h Height,
+	modal Modal,
 	hdr Header,
 	ftr Footer,
 	pt PanelText,
@@ -82,7 +87,7 @@ func rootProvider(
 			),
 		)}
 	}
-	return taiui.Root{Element: taiui.Column(
+	root := taiui.Root{Element: taiui.Column(
 		taiui.Weighted(1, taiui.Element(hdr)),
 		taiui.Weighted(22, taiui.Row(
 			taiui.Weighted(1, taiui.Column(
@@ -96,6 +101,26 @@ func rootProvider(
 		)),
 		taiui.Weighted(1, taiui.Element(ftr)),
 	)}
+	if bool(modal) {
+		// The modal is part of the element tree, derived from state: an
+		// Overlay stacks it over the main UI, so toggling the modal state
+		// re-renders the overlay without any imperative layer management.
+		root.Element = taiui.Overlay(
+			root.Element,
+			taiui.Rect(
+				taiui.Box{Top: int(h) / 4, Left: int(w) / 4, Bottom: 3 * int(h) / 4, Right: 3 * int(w) / 4},
+				taiui.Border(true),
+				taiui.Fill(true),
+				taiui.BGColor(taiui.HexColor(0x202020)),
+				taiui.Padding(1),
+				taiui.Column(
+					taiui.Weighted(1, taiui.Text("Modal", taiui.Bold(true), taiui.AlignCenter)),
+					taiui.Weighted(1, taiui.Text("m closes", taiui.AlignCenter)),
+				),
+			),
+		)
+	}
+	return root
 }
 
 func provideHeader(t Toggle, now Now) Header {
@@ -141,7 +166,7 @@ func header(t Toggle, now Now) taiui.Element {
 
 func footer() taiui.Element {
 	return taiui.Text(
-		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 q quit ",
+		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 m modal \u00b7 q quit ",
 		taiui.Dim(true),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x181818)),
@@ -303,7 +328,7 @@ func bounce(v, span int) int {
 }
 
 func runeWidthEnv() string {
-	if rw := strings.ToLower(os.Getenv("RUNEWIDTH_EASTASIAN")); rw == "1" || rw == "true" || rw == "yes" {
+	if taiui.DisplayWidthOptions().EastAsianWidth {
 		return "EA=wide"
 	}
 	return "EA=narrow"

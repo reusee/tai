@@ -128,7 +128,8 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	var marks []bool
 	marked := draw
 	if f.fill {
-		marks = make([]bool, box.Width()*box.Height())
+		marks = getMarks(box.Width() * box.Height())
+		defer putMarks(marks)
 		marked = markedDraw(draw, marks, box, options)
 	}
 

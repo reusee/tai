@@ -35,6 +35,10 @@ func (_Text) spec()           {}
 func (_VerticalScroll) spec() {}
 func (_FrameBuffer) spec()    {}
 
+func (_Overlay) spec() {}
+
+func (_List) spec() {}
+
 func (Border) spec() {}
 
 func (BorderType) spec() {}

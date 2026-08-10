@@ -86,7 +86,8 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, cursor cursorFunc,
 	// With fill, track the cells children occupy so the background paints
 	// only the gaps. A wide grapheme cluster occupies its trailing columns
 	// too; fill must not paint over them.
-	marks := make([]bool, l)
+	marks := getMarks(l)
+	defer putMarks(marks)
 	marked := markedDraw(draw, marks, box, options)
 	for _, child := range r.children {
 		renderElement(child, content, style, marked, cursor, options)

@@ -283,6 +283,60 @@ func TestFrameBufferCombc(t *testing.T) {
 	}
 }
 
+func TestFrameBufferClipWideCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	content := NewFrameBufferContent(4, 1)
+	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 1, Right: 3},
+		FrameBuffer(content),
+	)})
+	Render(scope, screen)
+	// The wide cluster at the box's right edge would extend past it; it
+	// must be clipped, so neither its base column nor the spill column
+	// is drawn.
+	if r := screen.cell(2, 0); r != 0 {
+		t.Fatalf("expected clipped wide cluster, got %v", r)
+	}
+}
+
+func TestFrameBufferWideClusterFits(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	content := NewFrameBufferContent(4, 1)
+	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 1, Right: 5},
+		FrameBuffer(content),
+	)})
+	Render(scope, screen)
+	// The wide cluster fits within the box: it is drawn at its base
+	// column, and the trailing column is blank.
+	if r := screen.cell(2, 0); r != '\U0001F469' {
+		t.Fatalf("expected woman emoji at (2,0), got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 0 {
+		t.Fatalf("expected trailing column blank, got %v", r)
+	}
+}
+
+func TestFrameBufferWideClusterTrailingCell(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	content := NewFrameBufferContent(4, 1)
+	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
+	content.SetContent(3, 0, 'x', nil, vt.BaseStyle)
+	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	Render(scope, screen)
+	// The wide cluster at (2,0) covers its trailing column (3,0); the
+	// cell at (3,0) is part of the cluster's visual space and must not
+	// be drawn over it.
+	if r := screen.cell(2, 0); r != '\U0001F469' {
+		t.Fatalf("expected woman emoji at (2,0), got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 0 {
+		t.Fatalf("expected trailing column blank, got %v", r)
+	}
+}
+
 func TestFrameEqual(t *testing.T) {
 	a := newFrame(2, 2)
 	b := newFrame(2, 2)
@@ -393,6 +447,15 @@ func TestWrapLineCluster(t *testing.T) {
 	got = wrapLine("\U0001F469\u200d\U0001F4BB", 1, options)
 	if !sameStrings(got, []string{"\U0001F469\u200d\U0001F4BB"}) {
 		t.Fatalf("wide cluster alone: got %q", got)
+	}
+}
+
+func TestWrapLineWordWiderThanBox(t *testing.T) {
+	options := displaywidth.Options{}
+	// A word wider than the box after a short word: the short word
+	// flushes, then the wide word hard-breaks.
+	if got := wrapLine("ab abcdef", 4, options); !sameStrings(got, []string{"ab", "abcd", "ef"}) {
+		t.Fatalf("wide word after short word: got %q", got)
 	}
 }
 
@@ -558,13 +621,13 @@ func TestTextFillAlignRightClippedGap(t *testing.T) {
 
 func TestClusterWidth(t *testing.T) {
 	options := displaywidth.Options{}
-	if w := clusterWidth(options, 'e', []rune{'\u0301'}); w != 1 {
+	if w := ClusterWidth(options, 'e', []rune{'\u0301'}); w != 1 {
 		t.Fatalf("expected combining cluster width 1, got %d", w)
 	}
-	if w := clusterWidth(options, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}); w != 2 {
+	if w := ClusterWidth(options, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}); w != 2 {
 		t.Fatalf("expected ZWJ cluster width 2, got %d", w)
 	}
-	if w := clusterWidth(options, 'x', nil); w != 1 {
+	if w := ClusterWidth(options, 'x', nil); w != 1 {
 		t.Fatalf("expected plain rune width 1, got %d", w)
 	}
 }
@@ -1691,6 +1754,62 @@ func TestFrameDirtyRows(t *testing.T) {
 	}
 }
 
+func TestFrameCellPool(t *testing.T) {
+	f := newFrame(4, 3)
+	if len(f.Cells) != 12 {
+		t.Fatalf("expected 12 cells, got %d", len(f.Cells))
+	}
+	f.setCell(0, 0, 'x', nil, vt.BaseStyle)
+	ReleaseFrame(f)
+	// The next frame reuses the pooled cells, cleared: a stale set cell
+	// from the previous frame must not survive.
+	g := newFrame(4, 3)
+	if g.Cells[0].Set {
+		t.Fatal("expected reused cells cleared")
+	}
+}
+
+func TestMarksPool(t *testing.T) {
+	marks := getMarks(10)
+	if len(marks) != 10 {
+		t.Fatalf("expected 10 marks, got %d", len(marks))
+	}
+	for i := range marks {
+		if marks[i] {
+			t.Fatalf("expected cleared marks, got true at %d", i)
+		}
+	}
+	marks[3] = true
+	putMarks(marks)
+	marks = getMarks(10)
+	if marks[3] {
+		t.Fatal("expected marks cleared on reuse")
+	}
+}
+
+// releasingScreen is a Screen that does not retain presented frames and
+// returns their cells to the pool, for testing FrameReleaser.
+type releasingScreen struct {
+	fakeScreen
+	released int
+}
+
+func (s *releasingScreen) Present(Frame) {}
+
+func (s *releasingScreen) ReleaseFrame(frame Frame) {
+	ReleaseFrame(frame)
+	s.released++
+}
+
+func TestRenderFrameReleaser(t *testing.T) {
+	screen := &releasingScreen{fakeScreen: *newFakeScreen(80, 25)}
+	scope := newRootScope(Root{Element: Text("a")})
+	Render(scope, screen)
+	if screen.released != 1 {
+		t.Fatalf("expected one release, got %d", screen.released)
+	}
+}
+
 func TestBoxIntersect(t *testing.T) {
 	a := Box{Top: 0, Left: 0, Bottom: 10, Right: 10}
 	b := Box{Top: 5, Left: 5, Bottom: 15, Right: 15}
@@ -1729,6 +1848,30 @@ func TestVerticalScrollCursor(t *testing.T) {
 	}
 	if frame.CursorX != 7 {
 		t.Fatalf("expected cursor at col 7, got %d", frame.CursorX)
+	}
+}
+
+func TestVerticalScrollCursorLastWins(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(
+			Overlay(
+				Text("aaa", Cursor(true)),
+				Text("bbbbb", Cursor(true)),
+			),
+			0,
+		),
+	)})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set")
+	}
+	// The overlay's later child draws over the earlier one; the last
+	// cursor request wins, so the cursor is at the end of "bbbbb".
+	if frame.CursorX != 5 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (5,0), got (%d,%d)", frame.CursorX, frame.CursorY)
 	}
 }
 
@@ -1818,6 +1961,32 @@ func TestWrapLineFastPath(t *testing.T) {
 	}
 }
 
+func TestWrapLineFastPathSpaces(t *testing.T) {
+	options := displaywidth.Options{}
+	// A line with internal spaces that fits the box is returned as-is:
+	// the fast path skips word splitting.
+	if got := wrapLine("hello world", 11, options); !sameStrings(got, []string{"hello world"}) {
+		t.Fatalf("fast path with spaces: got %q", got)
+	}
+	// A line with a tab is not fast-pathed: the tab becomes a space.
+	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a b"}) {
+		t.Fatalf("tab line: got %q", got)
+	}
+	// A line with leading or trailing spaces is not fast-pathed: the
+	// slow path trims them.
+	if got := wrapLine(" hello", 10, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("leading space: got %q", got)
+	}
+	if got := wrapLine("hello ", 10, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("trailing space: got %q", got)
+	}
+	// A line with consecutive spaces is not fast-pathed: the slow path
+	// collapses them.
+	if got := wrapLine("a  b", 10, options); !sameStrings(got, []string{"a b"}) {
+		t.Fatalf("double space: got %q", got)
+	}
+}
+
 func TestVerticalScrollEmptyContent(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -1835,4 +2004,309 @@ func TestVerticalScrollEmptyContent(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestVerticalScrollOverlayLastDrawWins(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(
+			Overlay(
+				Text("aaaa"),
+				Text("bbbb"),
+			),
+			0,
+		),
+	)})
+	Render(scope, screen)
+	// The overlay's later child draws over the earlier one inside the
+	// scroll: the flat cell collection replays in draw order, so the
+	// later draw wins.
+	if r := screen.cell(0, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (0,0), got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (3,0), got %v", r)
+	}
+}
+
+func TestOverlayStacking(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Overlay(
+		Text("a"),
+		Text("b"),
+	)})
+	Render(scope, screen)
+	// Later children draw over earlier ones: 'b' wins at (0,0).
+	if r := screen.cell(0, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (0,0), got %v", r)
+	}
+}
+
+func TestOverlayFill(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Overlay(
+		Fill(true),
+		BGColor(HexColor(0x101010)),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// Fill paints the background in the cells the text does not occupy.
+	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (1,0), got %+v", cell)
+	}
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+}
+
+func TestOverlayFillWideCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Overlay(
+		Fill(true),
+		Text("\U0001F469\u200d\U0001F4BB"),
+	)})
+	Render(scope, screen)
+	// The wide cluster occupies two columns; fill must not paint the
+	// trailing column, matching Rect's fill semantics.
+	cell := screen.lastCell(1, 0)
+	if cell.Set {
+		t.Fatal("fill painted over the wide cluster's trailing column")
+	}
+	if cell := screen.lastCell(0, 0); cell.Rune != '\U0001F469' {
+		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
+	}
+}
+
+func TestOverlayBoxAndStyle(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Overlay(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		FGColor(HexColor(0xff0000)),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// The Box override constrains the overlay, and the style chain
+	// applies to the content.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != 0 {
+		t.Fatalf("expected nothing at (0,2), got %v", r)
+	}
+	if r, g, b := screen.lastCell(0, 0).Style.Fg().RGB(); !(r == 0xff && g == 0 && b == 0) {
+		t.Fatalf("expected red content, got %#x %#x %#x", r, g, b)
+	}
+}
+
+func TestCursorAt(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("abc", CursorAt(1))})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set")
+	}
+	if frame.CursorX != 1 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (1,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+
+	// Offset 0 places the cursor at the start.
+	screen2 := newFakeScreen(80, 25)
+	scope2 := newRootScope(Root{Element: Text("abc", CursorAt(0))})
+	Render(scope2, screen2)
+	frame = screen2.frames[len(screen2.frames)-1]
+	if frame.CursorX != 0 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (0,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+
+	// An offset beyond the line length is clamped to the end.
+	screen3 := newFakeScreen(80, 25)
+	scope3 := newRootScope(Root{Element: Text("abc", CursorAt(10))})
+	Render(scope3, screen3)
+	frame = screen3.frames[len(screen3.frames)-1]
+	if frame.CursorX != 3 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor clamped at (3,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestCursorAtAlignRight(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("abc", AlignRight, CursorAt(1))})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	// "abc" is right-aligned: it starts at col 77. The cursor at offset 1
+	// is at col 78.
+	if frame.CursorX != 78 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (78,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestCursorAtTab(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a\tb", CursorAt(2))})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	// "a\tb" renders 'a' at col 0, 'b' at col 8. The cursor at offset 2
+	// (after the tab) is at col 8, where 'b' is drawn.
+	if frame.CursorX != 8 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (8,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestInput(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Input("hello", 2)})
+	Render(scope, screen)
+	// Input renders the text with the cursor at the given offset.
+	if r := screen.cell(0, 0); r != 'h' {
+		t.Fatalf("expected 'h' at (0,0), got %v", r)
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	if frame.CursorX != 2 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (2,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestList(t *testing.T) {
+	t.Run("Basic", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		scope := newRootScope(Root{Element: List([]string{"a", "b", "c"}, 0)})
+		Render(scope, screen)
+		if r := screen.cell(0, 0); r != 'a' {
+			t.Fatalf("expected 'a' at (0,0), got %v", r)
+		}
+		if r := screen.cell(0, 1); r != 'b' {
+			t.Fatalf("expected 'b' at (0,1), got %v", r)
+		}
+		if r := screen.cell(0, 2); r != 'c' {
+			t.Fatalf("expected 'c' at (0,2), got %v", r)
+		}
+	})
+
+	t.Run("SelectedStyle", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		scope := newRootScope(Root{Element: List(
+			[]string{"a", "b", "c"},
+			1,
+			ListStyle(SameStyle.SetBG(HexColor(0xff0000))),
+		)})
+		Render(scope, screen)
+		// The selected item is highlighted with the ListStyle.
+		cell := screen.lastCell(0, 1)
+		if cell.Rune != 'b' {
+			t.Fatalf("expected 'b' at (0,1), got %v", cell.Rune)
+		}
+		if r, g, b := cell.Style.Bg().RGB(); !(r == 0xff && g == 0 && b == 0) {
+			t.Fatalf("expected red background on selected item, got %#x %#x %#x", r, g, b)
+		}
+		// The selected row is fully painted with the selected style.
+		cell = screen.lastCell(1, 1)
+		if !cell.Set || cell.Rune != ' ' {
+			t.Fatalf("expected filled ' ' at (1,1), got %+v", cell)
+		}
+		if r, g, b := cell.Style.Bg().RGB(); !(r == 0xff && g == 0 && b == 0) {
+			t.Fatalf("expected red background on selected row, got %#x %#x %#x", r, g, b)
+		}
+		// The non-selected items keep the list style.
+		cell = screen.lastCell(0, 0)
+		if r, g, b := cell.Style.Bg().RGB(); r >= 0 || g >= 0 || b >= 0 {
+			t.Fatalf("expected no background on non-selected item, got %#x %#x %#x", r, g, b)
+		}
+	})
+
+	t.Run("ScrollFollow", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		var items []string
+		for i := 0; i < 100; i++ {
+			items = append(items, fmt.Sprintf("item %02d", i))
+		}
+		scope := newRootScope(Root{Element: Rect(
+			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
+			List(items, 50),
+		)})
+		Render(scope, screen)
+		// The view is centered on the selected item (50) in a 5-row box:
+		// rows show items 48..52.
+		if r := screen.cell(0, 0); r != 'i' {
+			t.Fatalf("expected item 48 at (0,0), got %v", r)
+		}
+		if r := screen.cell(6, 0); r != '8' {
+			t.Fatalf("expected item 48 at (6,0), got %v", r)
+		}
+		if r := screen.cell(0, 4); r != 'i' {
+			t.Fatalf("expected item 52 at (0,4), got %v", r)
+		}
+	})
+
+	t.Run("ScrollClamp", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		var items []string
+		for i := 0; i < 10; i++ {
+			items = append(items, fmt.Sprintf("item %02d", i))
+		}
+		scope := newRootScope(Root{Element: Rect(
+			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
+			List(items, 9),
+		)})
+		Render(scope, screen)
+		// The view clamps to the content end: rows show items 5..9.
+		if r := screen.cell(0, 0); r != 'i' {
+			t.Fatalf("expected item 5 at (0,0), got %v", r)
+		}
+		if r := screen.cell(0, 4); r != 'i' {
+			t.Fatalf("expected item 9 at (0,4), got %v", r)
+		}
+	})
+
+	t.Run("SelectedClamp", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		scope := newRootScope(Root{Element: Rect(
+			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
+			List([]string{"a", "b", "c"}, 10),
+		)})
+		Render(scope, screen)
+		// The selected index is clamped to the last item; the view shows
+		// the last items.
+		if r := screen.cell(0, 0); r != 'a' {
+			t.Fatalf("expected 'a' at (0,0), got %v", r)
+		}
+		if r := screen.cell(0, 2); r != 'c' {
+			t.Fatalf("expected 'c' at (0,2), got %v", r)
+		}
+	})
+
+	t.Run("Fill", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		scope := newRootScope(Root{Element: Rect(
+			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
+			List([]string{"a", "b"}, 0, Fill(true)),
+		)})
+		Render(scope, screen)
+		// The rows below the last item are filled.
+		if cell := screen.lastCell(0, 2); !cell.Set || cell.Rune != ' ' {
+			t.Fatalf("expected filled ' ' at (0,2), got %+v", cell)
+		}
+		if cell := screen.lastCell(0, 4); !cell.Set || cell.Rune != ' ' {
+			t.Fatalf("expected filled ' ' at (0,4), got %+v", cell)
+		}
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		screen := newFakeScreen(80, 25)
+		scope := newRootScope(Root{Element: Rect(
+			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
+			List(nil, 0, Fill(true)),
+		)})
+		Render(scope, screen)
+		// An empty list renders no items; fill paints the whole box.
+		for y := 0; y < 5; y++ {
+			for x := 0; x < 80; x++ {
+				cell := screen.lastCell(x, y)
+				if !cell.Set || cell.Rune != ' ' {
+					t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
+				}
+			}
+		}
+	})
 }

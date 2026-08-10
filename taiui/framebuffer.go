@@ -1,12 +1,30 @@
 package taiui
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/clipperhouse/displaywidth"
+)
 
 type frameBufferCell struct {
 	rune  rune
 	combc []rune
 	style Style
 	set   bool
+}
+
+// placedCell is one set cell of a framebuffer snapshot, with its
+// position in the render box.
+type placedCell struct {
+	x, y int
+	cell frameBufferCell
+}
+
+// placedCellPool pools the snapshot slices of framebuffer renders.
+// A framebuffer snapshots its visible set cells under the read lock;
+// pooling avoids an allocation per render.
+var placedCellPool = sync.Pool{
+	New: func() any { return make([]placedCell, 0, 64) },
 }
 
 // FrameBufferContent is offscreen framebuffer content. It is state: an
@@ -71,7 +89,7 @@ func FrameBuffer(content *FrameBufferContent) _FrameBuffer {
 
 func (_FrameBuffer) element() {}
 
-func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, cursor cursorFunc) {
+func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	content := f.content
 	if content == nil {
 		return
@@ -83,11 +101,14 @@ func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, curs
 	content.RLock()
 	width := min(content.width, box.Width())
 	height := min(content.height, box.Height())
-	type placedCell struct {
-		x, y int
-		cell frameBufferCell
+	placed := placedCellPool.Get().([]placedCell)
+	if cap(placed) < width*height/4 {
+		placed = make([]placedCell, 0, width*height/4)
 	}
-	placed := make([]placedCell, 0, width*height/4)
+	placed = placed[:0]
+	defer func() {
+		placedCellPool.Put(placed)
+	}()
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			cell := content.cells[y*content.width+x]
@@ -98,7 +119,30 @@ func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, curs
 		}
 	}
 	content.RUnlock()
+	// The placed cells are in row-major order. A wide cluster covers its
+	// trailing columns; a cell in those columns is part of the cluster's
+	// visual space and must not be drawn over it, so a stale cell left
+	// by a moved cluster never corrupts the display.
+	coveredUntil := -1
+	lastY := -1
 	for _, c := range placed {
+		if c.y != lastY {
+			coveredUntil = -1
+			lastY = c.y
+		}
+		if c.x < coveredUntil {
+			continue
+		}
+		w := ClusterWidth(options, c.cell.rune, c.cell.combc)
+		// A wide cluster that would extend past the box's right edge is
+		// not drawn, matching Text and VerticalScroll: content never
+		// spills past its box.
+		if c.x+w > box.Right {
+			continue
+		}
 		draw(c.x, c.y, c.cell.rune, c.cell.combc, c.cell.style)
+		if c.x+w > coveredUntil {
+			coveredUntil = c.x + w
+		}
 	}
 }

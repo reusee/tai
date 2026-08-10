@@ -25,6 +25,10 @@ taiui display width theory:
   presenter) call it per present to stay in sync with the renderer. There
   are no caches: an environment change takes effect on the next call,
   and a measurement is a table walk.
+- ClusterWidth measures a grapheme cluster (a base rune with its combining
+  runes) under the given options. It is exported for Screen implementations
+  that measure clusters independently (such as the demo presenter) to stay
+  in sync with the renderer.
 `
 
 // DisplayWidthOptions returns the display-width options derived from the
@@ -41,14 +45,18 @@ func DisplayWidthOptions() displaywidth.Options {
 	return displaywidth.Options{}
 }
 
-// clusterWidth returns the display width of the grapheme cluster formed by
+// ClusterWidth returns the display width of the grapheme cluster formed by
 // mainc and its combining runes. Combining runes can change the width (an
 // emoji variation selector widens its base), so the whole cluster is
 // measured. The cluster bytes are built with utf8.AppendRune into a stack
 // buffer: short clusters (a base rune with one or two combining runes)
 // allocate nothing on the heap, and a longer cluster spills into a fresh
 // buffer.
-func clusterWidth(options displaywidth.Options, mainc rune, combc []rune) int {
+//
+// It is exported for Screen implementations that measure clusters
+// independently (such as the demo presenter) to stay in sync with the
+// renderer.
+func ClusterWidth(options displaywidth.Options, mainc rune, combc []rune) int {
 	if len(combc) == 0 {
 		return options.Rune(mainc)
 	}
