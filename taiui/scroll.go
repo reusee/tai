@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 )
 
 var _ Element = _VerticalScroll{}
 
+// _VerticalScroll is a scrollable viewport over a child element. It is a
+// pure value: specs are interpreted at construction into typed fields,
+// and rendering reads those fields.
 type _VerticalScroll struct {
+	elementBase
 	child     Element
 	offset    int
 	scrollbar bool
@@ -18,8 +23,10 @@ type _VerticalScroll struct {
 // VerticalScroll renders the child into a virtually unbounded column and
 // crops to the visible window centered on the content row given by offset.
 // The view is clamped to the content extent, so an offset beyond the end
-// shows the last rows. Scrollbar(true) reserves the rightmost column for a
-// thumb indicating the view position within the content.
+// shows the last rows. It accepts the common specs: a Box override, the
+// style chain, and Fill, which paints the visible window's background.
+// Scrollbar(true) reserves the rightmost column for a thumb indicating the
+// view position within the content.
 func VerticalScroll(e Element, offset int, specs ...any) _VerticalScroll {
 	v := &_VerticalScroll{child: e, offset: offset}
 	buildElement(v, specs)
@@ -45,11 +52,17 @@ func (v *_VerticalScroll) applySpec(spec any) {
 	case Scrollbar:
 		v.scrollbar = bool(spec)
 	default:
+		if v.applyCommonSpec(spec) {
+			return
+		}
 		panic(fmt.Errorf("unknown spec %#v", spec))
 	}
 }
 
 func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc) {
+	box = v.effectiveBox(box)
+	style = v.styled(style)
+
 	elemBox := Box{
 		Left:   box.Left,
 		Right:  box.Right,
@@ -92,6 +105,15 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		clipRight = box.Right - 1
 	}
 
+	// With fill, track the window cells the content occupies so the
+	// background paints only the gaps. A wide grapheme cluster occupies
+	// its trailing columns too; fill must not paint over them.
+	var marks []bool
+	var options displaywidth.Options
+	if v.fill {
+		marks = make([]bool, box.Width()*box.Height())
+		options = displayWidthOptions()
+	}
 	numTopCrop := fromY - box.Top
 	for i := 0; i < box.Height(); i++ {
 		y := fromY + i
@@ -99,7 +121,28 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 			if cell.X >= clipRight {
 				continue
 			}
+			if marks != nil {
+				idx := i*box.Width() + (cell.X - box.Left)
+				if idx >= 0 && idx < len(marks) {
+					marks[idx] = true
+					for j := 1; j < clusterWidth(options, cell.Rune, cell.Combc); j++ {
+						// The trailing columns stay within the cluster's row.
+						if (cell.X-box.Left)+j < box.Width() {
+							marks[idx+j] = true
+						}
+					}
+				}
+			}
 			draw(cell.X, y-numTopCrop, cell.Rune, cell.Combc, cell.Style)
+		}
+	}
+	if marks != nil {
+		for i := 0; i < box.Height(); i++ {
+			for x := box.Left; x < box.Right; x++ {
+				if !marks[i*box.Width()+(x-box.Left)] {
+					draw(x, box.Top+i, ' ', nil, style)
+				}
+			}
 		}
 	}
 	numBottomCrop := maxY - (fromY + box.Height()) + 1

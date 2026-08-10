@@ -287,6 +287,37 @@ func TestFrameEqual(t *testing.T) {
 	}
 }
 
+func TestFrameDirty(t *testing.T) {
+	a := newFrame(4, 3)
+	b := newFrame(4, 3)
+	if dirty := a.Dirty(b); len(dirty) != 0 {
+		t.Fatalf("expected no dirty runs for identical frames, got %v", dirty)
+	}
+
+	b.setCell(1, 0, 'x', nil, vt.BaseStyle)
+	dirty := a.Dirty(b)
+	if len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 1, Bottom: 1, Right: 2}) {
+		t.Fatalf("expected one run at (1,0), got %v", dirty)
+	}
+
+	b.setCell(2, 0, 'y', nil, vt.BaseStyle)
+	dirty = a.Dirty(b)
+	if len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 1, Bottom: 1, Right: 3}) {
+		t.Fatalf("expected adjacent runs merged, got %v", dirty)
+	}
+
+	b.setCell(3, 1, 'z', nil, vt.BaseStyle)
+	dirty = a.Dirty(b)
+	if len(dirty) != 2 {
+		t.Fatalf("expected two runs, got %v", dirty)
+	}
+
+	a = newFrame(3, 4)
+	if dirty := a.Dirty(b); len(dirty) != 1 || dirty[0] != (Box{Top: 0, Left: 0, Bottom: 4, Right: 3}) {
+		t.Fatalf("expected whole-frame run on size mismatch, got %v", dirty)
+	}
+}
+
 func TestVerticalScrollCombc(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -578,6 +609,85 @@ func TestVerticalScrollNoScrollbarWhenFits(t *testing.T) {
 	}
 }
 
+func TestVerticalScrollBoxSpec(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: VerticalScroll(
+		Text("a", "b", "c"),
+		0,
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 80},
+	)})
+	Render(scope, screen)
+	// The Box override constrains the scroll view to 3 rows.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != 'c' {
+		t.Fatalf("expected 'c' at (0,2), got %v", r)
+	}
+	if r := screen.cell(0, 3); r != 0 {
+		t.Fatalf("expected no content at (0,3), got %v", r)
+	}
+}
+
+func TestVerticalScrollStyleSpec(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 1; i <= 19; i++ {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	scope := newRootScope(Root{Element: VerticalScroll(
+		Text(lines),
+		1000,
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		FGColor(HexColor(0xff0000)),
+	)})
+	Render(scope, screen)
+	// The style chain applies to the scroll content.
+	if r, g, b := screen.lastCell(0, 0).Style.Fg().RGB(); !(r == 0xff && g == 0 && b == 0) {
+		t.Fatalf("expected red content, got %#x %#x %#x", r, g, b)
+	}
+}
+
+func TestVerticalScrollFill(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: VerticalScroll(
+		Text("a", "b", "c"),
+		0,
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// Fill paints the visible window cells the content does not occupy.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (1,0), got %+v", cell)
+	}
+	if cell := screen.lastCell(0, 9); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (0,9), got %+v", cell)
+	}
+}
+
+func TestVerticalScrollFillWideCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: VerticalScroll(
+		Text("\U0001F469\u200d\U0001F4BB"),
+		0,
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// The wide cluster occupies two columns; fill must not paint the
+	// trailing column.
+	if cell := screen.lastCell(1, 0); cell.Set {
+		t.Fatal("fill painted over the wide cluster's trailing column")
+	}
+	if cell := screen.lastCell(0, 0); cell.Rune != '\U0001F469' {
+		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
+	}
+}
+
 func TestRectFillWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(Fill(true), Text("\U0001F469\u200d\U0001F4BB"))})
@@ -590,6 +700,69 @@ func TestRectFillWideCluster(t *testing.T) {
 	}
 	if cell := screen.lastCell(0, 0); cell.Rune != '\U0001F469' {
 		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
+	}
+}
+
+func TestRectFillNoChildren(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// A fill-only Rect paints every box cell without marks tracking.
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 4; x++ {
+			cell := screen.lastCell(x, y)
+			if !cell.Set || cell.Rune != ' ' {
+				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
+			}
+		}
+	}
+}
+
+func TestRectFillWideClusterTrailingRow(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 1},
+		Fill(true),
+		Text("\U0001F469\u200d\U0001F4BB"),
+	)})
+	Render(scope, screen)
+	// The wide cluster's trailing columns must not spill the marks into
+	// the next row; row 1 stays fillable.
+	if cell := screen.lastCell(0, 1); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (0,1), got %+v", cell)
+	}
+}
+
+func TestRectFillNegativeMargin(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		Margin(-1),
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// A negative margin pushes the outer box outside the element box; the
+	// fill loop must clip to the element box and not index out of range.
+	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (0,0), got %+v", cell)
+	}
+}
+
+func TestRectFillNegativeMarginChild(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		Margin(-1),
+		Fill(true),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// With children, the marks path must likewise clip its fill loop.
+	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled ' ' at (0,0), got %+v", cell)
 	}
 }
 

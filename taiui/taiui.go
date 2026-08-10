@@ -28,7 +28,9 @@ taiui theory: UI = pure Element value derived from state.
   into a Frame (a styled cell grid), and presents the frame to each screen.
   Elements never call screen methods; any backend able to present cell
   grids can render (character terminals, web views, native UIs). Frame.Equal
-  lets a screen detect an unchanged frame and skip repainting.
+  lets a screen detect an unchanged frame and skip repainting; Frame.Dirty
+  reports the runs of changed cells so a screen can repaint only the
+  damaged regions, mirroring change-based rendering in terminal libraries.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -51,8 +53,10 @@ taiui theory: UI = pure Element value derived from state.
   never splits across lines.
 - VerticalScroll renders a child into a virtually unbounded column and
   crops to the visible window, clamping the view to the content extent.
-  Crop-count indicators at the window edges, and an optional Scrollbar
-  thumb at the right edge, communicate the view position.
+  It accepts the common specs: a Box override, the style chain, and Fill,
+  which paints the visible window's unoccupied cells. Crop-count
+  indicators at the window edges, and an optional Scrollbar thumb at the
+  right edge, draw over the fill.
 - FrameBuffer renders offscreen content: the content is data state, and
   rendering is a pure read of it.
 - The exported API is a minimal facade: spec types, constructors, and
@@ -147,6 +151,12 @@ func (f *Frame) setCell(x, y int, mainc rune, combc []rune, style Style) {
 	}
 }
 
+// frameCellEqual reports whether two cells hold identical content.
+func frameCellEqual(a, b FrameCell) bool {
+	return a.Rune == b.Rune && a.Set == b.Set &&
+		sameStyle(a.Style, b.Style) && sameCombc(a.Combc, b.Combc)
+}
+
 // Equal reports whether f and o hold identical cells. Screens use it to
 // skip presenting an unchanged frame, mirroring change-based rendering in
 // terminal libraries.
@@ -155,15 +165,43 @@ func (f Frame) Equal(o Frame) bool {
 		return false
 	}
 	for i := range f.Cells {
-		a := f.Cells[i]
-		b := o.Cells[i]
-		if a.Rune == b.Rune && a.Set == b.Set &&
-			sameStyle(a.Style, b.Style) && sameCombc(a.Combc, b.Combc) {
-			continue
+		if !frameCellEqual(f.Cells[i], o.Cells[i]) {
+			return false
 		}
-		return false
 	}
 	return true
+}
+
+// Dirty reports the maximal horizontal runs of cells that differ between
+// f and o, in row-major order; each reported Box is one row high. A
+// screen that keeps the last presented frame calls Dirty on the next
+// frame and repaints only the reported runs, mirroring damage-based
+// rendering in terminal libraries.
+func (f Frame) Dirty(o Frame) []Box {
+	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
+		return []Box{{Top: 0, Left: 0, Bottom: f.Height, Right: f.Width}}
+	}
+	var dirty []Box
+	for y := 0; y < f.Height; y++ {
+		start := -1
+		for x := 0; x < f.Width; x++ {
+			idx := y*f.Width + x
+			if frameCellEqual(f.Cells[idx], o.Cells[idx]) {
+				if start >= 0 {
+					dirty = append(dirty, Box{Top: y, Left: start, Bottom: y + 1, Right: x})
+					start = -1
+				}
+				continue
+			}
+			if start < 0 {
+				start = x
+			}
+		}
+		if start >= 0 {
+			dirty = append(dirty, Box{Top: y, Left: start, Bottom: y + 1, Right: f.Width})
+		}
+	}
+	return dirty
 }
 
 func sameStyle(a, b Style) bool {

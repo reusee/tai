@@ -67,6 +67,18 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		return
 	}
 
+	// With no children the whole box is background; paint it directly
+	// without the marks tracking.
+	if len(r.children) == 0 {
+		for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {
+			for x := max(outer.Left, box.Left); x < min(outer.Right, box.Right); x++ {
+				draw(x, y, ' ', nil, style)
+			}
+		}
+		r.boxModel.drawBorder(outer, style, draw)
+		return
+	}
+
 	// With fill, track the cells children occupy so the background paints
 	// only the gaps. A wide grapheme cluster occupies its trailing columns
 	// too; fill must not paint over them.
@@ -77,7 +89,8 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		if idx >= 0 && idx < len(marks) {
 			marks[idx] = true
 			for i := 1; i < clusterWidth(options, mainc, combc); i++ {
-				if idx+i < len(marks) {
+				// The trailing columns stay within the cluster's row.
+				if (x-box.Left)+i < box.Width() {
 					marks[idx+i] = true
 				}
 			}
@@ -88,8 +101,8 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		renderElement(child, content, style, marked)
 	}
 
-	for y := outer.Top; y < outer.Bottom; y++ {
-		for x := outer.Left; x < outer.Right; x++ {
+	for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {
+		for x := max(outer.Left, box.Left); x < min(outer.Right, box.Right); x++ {
 			idx := (y-box.Top)*box.Width() + (x - box.Left)
 			if !marks[idx] {
 				draw(x, y, ' ', nil, style)
