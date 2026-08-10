@@ -65,6 +65,7 @@ func main() {
 	// depend on it.
 	scroll := 0
 	toggle := true
+	w1Weight := 1
 	frame := int64(0)
 	now := time.Now()
 
@@ -73,6 +74,7 @@ func main() {
 		func() Height { return Height(height) },
 		func() Scroll { return Scroll(scroll) },
 		func() Toggle { return Toggle(toggle) },
+		func() W1Weight { return W1Weight(w1Weight) },
 		func() Frame { return Frame(frame) },
 		func() Now { return Now(now) },
 		func() *taiui.FrameBufferContent { return fb },
@@ -104,7 +106,7 @@ func main() {
 		taiui.Render(scope, screen, discardScreen{})
 		select {
 		case key := <-keyCh:
-			changed, quit := handleKey(&scroll, &toggle, key)
+			changed, quit := handleKey(&scroll, &toggle, &w1Weight, key)
 			if quit {
 				return
 			}
@@ -134,10 +136,14 @@ func main() {
 	}
 }
 
+// maxW1Weight bounds the w1 flex weight adjustable with the left and
+// right arrow keys; the weight must stay positive for Weighted.
+const maxW1Weight = 10
+
 // handleKey applies one key event to the demo state. It returns the
 // providers for the state pieces that changed, and whether the key
 // requests quitting the demo.
-func handleKey(scroll *int, toggle *bool, key string) (changed []any, quit bool) {
+func handleKey(scroll *int, toggle *bool, w1Weight *int, key string) (changed []any, quit bool) {
 	switch key {
 	case "up":
 		// The scroll offset never goes negative: the view clamps at the
@@ -149,6 +155,18 @@ func handleKey(scroll *int, toggle *bool, key string) (changed []any, quit bool)
 	case "down":
 		*scroll++
 		changed = append(changed, func() Scroll { return Scroll(*scroll) })
+	case "left":
+		// The w1 weight never drops below 1: Weighted requires a positive
+		// weight, so the w1 box always keeps a share of the row.
+		if *w1Weight > 1 {
+			*w1Weight--
+			changed = append(changed, func() W1Weight { return W1Weight(*w1Weight) })
+		}
+	case "right":
+		if *w1Weight < maxW1Weight {
+			*w1Weight++
+			changed = append(changed, func() W1Weight { return W1Weight(*w1Weight) })
+		}
 	case "space":
 		*toggle = !*toggle
 		changed = append(changed, func() Toggle { return Toggle(*toggle) })

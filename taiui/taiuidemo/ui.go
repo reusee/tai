@@ -41,6 +41,10 @@ type Toggle bool
 type Frame int64
 type Now time.Time
 
+// W1Weight is the flex weight of the w1 box in the Box panel. The left
+// and right arrow keys adjust it, changing the w1:w2 ratio.
+type W1Weight int
+
 // Component providers: each panel is its own provider type, so dscope can
 // cache it independently and recompute it only when its dependencies change.
 type Header taiui.Element
@@ -110,8 +114,8 @@ func providePanelScroll(scroll Scroll) PanelScroll {
 	return PanelScroll(panelScroll(scroll))
 }
 
-func providePanelBox(t Toggle) PanelBox {
-	return PanelBox(panelBox(t))
+func providePanelBox(t Toggle, w1 W1Weight) PanelBox {
+	return PanelBox(panelBox(t, w1))
 }
 
 func providePanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
@@ -137,7 +141,7 @@ func header(t Toggle, now Now) taiui.Element {
 
 func footer() taiui.Element {
 	return taiui.Text(
-		" \u2191/\u2193 scroll \u00b7 space toggle \u00b7 q quit ",
+		" \u2191/\u2193 scroll \u00b7 \u2190/\u2192 w1:w2 \u00b7 space toggle \u00b7 q quit ",
 		taiui.Dim(true),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x181818)),
@@ -180,14 +184,14 @@ func rainbowStyle(offset int) taiui.StyleFunc {
 	return taiui.SameStyle.SetFG(taiui.HexColor(rainbowColors[offset%len(rainbowColors)]))
 }
 
-func panelBox(t Toggle) taiui.Element {
+func panelBox(t Toggle, w1 W1Weight) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x141414)),
 		taiui.Column(
-			taiui.Weighted(1, panelTitle("Box \u00b7 Flex")),
+			taiui.Weighted(1, panelTitle(fmt.Sprintf("Box \u00b7 Flex \u00b7 w1:w2 = %d:2", int(w1)))),
 			taiui.Weighted(5, taiui.Rect(
 				taiui.Margin(1),
 				taiui.Border(true),
@@ -195,7 +199,7 @@ func panelBox(t Toggle) taiui.Element {
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x181818)),
 				taiui.Row(
-					taiui.Weighted(1, fillRect("w1", 0x800000)),
+					taiui.Weighted(int(w1), fillRect("w1", 0x800000)),
 					taiui.Weighted(2, fillRect("w2", 0x008000)),
 				),
 			)),

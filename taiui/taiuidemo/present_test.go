@@ -41,7 +41,8 @@ func TestSgrUnderlineColor(t *testing.T) {
 func TestHandleKeyScrollClamp(t *testing.T) {
 	scroll := 0
 	toggle := true
-	changed, quit := handleKey(&scroll, &toggle, "up")
+	w1Weight := 1
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, "up")
 	if quit {
 		t.Fatal("up must not quit the demo")
 	}
@@ -51,7 +52,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 0 {
 		t.Fatalf("expected no provider for clamped up, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, "down")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, "down")
 	if quit {
 		t.Fatal("down must not quit the demo")
 	}
@@ -61,7 +62,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after down, got %d", len(changed))
 	}
-	changed, quit = handleKey(&scroll, &toggle, "space")
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, "space")
 	if quit {
 		t.Fatal("space must not quit the demo")
 	}
@@ -71,8 +72,47 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if len(changed) != 1 {
 		t.Fatalf("expected one provider after space, got %d", len(changed))
 	}
-	_, quit = handleKey(&scroll, &toggle, "quit")
+	_, quit = handleKey(&scroll, &toggle, &w1Weight, "quit")
 	if !quit {
 		t.Fatal("quit must stop the demo")
+	}
+}
+
+func TestHandleKeyW1Weight(t *testing.T) {
+	scroll := 0
+	toggle := true
+	w1Weight := 1
+	changed, quit := handleKey(&scroll, &toggle, &w1Weight, "left")
+	if quit {
+		t.Fatal("left must not quit the demo")
+	}
+	if w1Weight != 1 {
+		t.Fatalf("expected w1 weight clamped at 1, got %d", w1Weight)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("expected no provider for clamped left, got %d", len(changed))
+	}
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, "right")
+	if quit {
+		t.Fatal("right must not quit the demo")
+	}
+	if w1Weight != 2 {
+		t.Fatalf("expected w1 weight 2 after right, got %d", w1Weight)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("expected one provider after right, got %d", len(changed))
+	}
+	for i := 0; i < maxW1Weight; i++ {
+		handleKey(&scroll, &toggle, &w1Weight, "right")
+	}
+	if w1Weight != maxW1Weight {
+		t.Fatalf("expected w1 weight clamped at %d, got %d", maxW1Weight, w1Weight)
+	}
+	changed, quit = handleKey(&scroll, &toggle, &w1Weight, "right")
+	if quit {
+		t.Fatal("right must not quit the demo")
+	}
+	if len(changed) != 0 {
+		t.Fatalf("expected no provider at upper clamp, got %d", len(changed))
 	}
 }
