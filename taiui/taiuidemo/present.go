@@ -19,11 +19,20 @@ taiuidemo ANSI screen theory:
   rows, never individual cells: a wide grapheme cluster leaves its trailing
   columns as unset cells, so a run-level repaint could leave a stale
   half-glyph when a wide cluster moves away.
+- An entirely unset row is cleared with the erase-line sequence (EL) in a
+  single write instead of one space per cell, and runs of unset cells
+  within a row are batched into one write. A run reaching the row end is
+  erased to the line end so the cursor never wraps at the last column.
+  The reset parameter precedes the erase so the line clears to the
+  default background.
 - Frames that Equal the last presented frame are skipped entirely, and the
   first frame repaints the whole screen.
 - The presenter derives the display-width options per present, so the
   terminal cursor advances by the same columns the renderer allocated
   even if the environment changes between renders.
+- The presenter positions the terminal cursor at the Frame's recorded
+  cursor position when the frame carries one, so a text input's cursor
+  tracks the rendered text.
 - Every SGR sequence starts with the reset parameter: a style is the
   complete terminal state, so an attribute absent from it is cleared.
   Without the reset, a plain cell after an underlined or overlined run
@@ -35,14 +44,12 @@ taiuidemo ANSI screen theory:
   single-threaded, so a plain map needs no locking.
 `
 
-// ansiScreen presents frames to a terminal by writing ANSI escape
-// sequences. It repaints only the rows that Frame.Dirty reports, and
-// skips the frame entirely when Frame.Equal finds no change.
 type ansiScreen struct {
 	w      io.Writer
 	width  int
 	height int
 	last   *taiui.Frame
+	bw     *bufio.Writer
 }
 
 func (s *ansiScreen) Width() int  { return s.width }
@@ -58,52 +65,77 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 	if s.last != nil && frame.Equal(*s.last) {
 		return
 	}
-	var dirty []taiui.Box
-	if s.last == nil {
-		io.WriteString(s.w, "\x1b[2J")
-		dirty = []taiui.Box{{Top: 0, Left: 0, Bottom: frame.Height, Right: frame.Width}}
-	} else {
-		dirty = frame.Dirty(*s.last)
-	}
 	// Whole rows are repainted, not just the dirty runs: a wide cluster's
 	// trailing columns are never set cells, so a run-based repaint could
 	// leave a stale half-glyph when a wide cluster moves away.
-	rowDirty := make([]bool, frame.Height)
-	for _, d := range dirty {
-		for y := d.Top; y < d.Bottom && y < frame.Height; y++ {
-			rowDirty[y] = true
+	var dirtyRows []int
+	if s.last == nil {
+		io.WriteString(s.w, "\x1b[2J")
+		dirtyRows = make([]int, frame.Height)
+		for i := range dirtyRows {
+			dirtyRows[i] = i
 		}
+	} else {
+		dirtyRows = frame.DirtyRows(*s.last)
 	}
 	// The options are derived per present, so the terminal cursor advances
 	// by the same columns the renderer allocated even if the environment
 	// changes between renders.
 	options := taiui.DisplayWidthOptions()
-	bw := bufio.NewWriter(s.w)
-	for y := 0; y < frame.Height; y++ {
-		if !rowDirty[y] {
-			continue
-		}
+	if s.bw == nil {
+		s.bw = bufio.NewWriter(s.w)
+	}
+	bw := s.bw
+	for _, y := range dirtyRows {
 		fmt.Fprintf(bw, "\x1b[%d;1H", y+1)
 		paintRow(bw, &frame, y, options)
 	}
 	bw.Flush()
+	if frame.CursorSet {
+		fmt.Fprintf(s.w, "\x1b[%d;%dH", frame.CursorY+1, frame.CursorX+1)
+	}
 	s.last = &frame
 }
 
-// paintRow writes one full row of cells. Set cells are written with their
-// style; unset cells are blanked with the default style. A wide cluster's
-// trailing columns are skipped, because the base cell already advanced the
-// terminal cursor past them.
 func paintRow(w io.Writer, frame *taiui.Frame, y int, options displaywidth.Options) {
+	row := frame.Cells[y*frame.Width : (y+1)*frame.Width]
+	// Fast path: an entirely unset row is cleared with the erase-line
+	// sequence in a single write instead of one space per cell. The
+	// reset parameter precedes the erase so the line clears to the
+	// default background.
+	allUnset := true
+	for i := range row {
+		if row[i].Set {
+			allUnset = false
+			break
+		}
+	}
+	if allUnset {
+		io.WriteString(w, "\x1b[0m\x1b[2K")
+		return
+	}
 	var lastStyle taiui.Style
 	for x := 0; x < frame.Width; x++ {
-		cell := frame.Cells[y*frame.Width+x]
+		cell := row[x]
 		if !cell.Set {
 			if lastStyle != nil {
 				io.WriteString(w, "\x1b[0m")
 				lastStyle = nil
 			}
-			io.WriteString(w, " ")
+			// Consecutive unset cells are batched into one write. A run
+			// reaching the row end is erased to the line end instead, so
+			// the cursor never wraps at the last column.
+			start := x
+			for x+1 < frame.Width && !row[x+1].Set {
+				x++
+			}
+			if x == frame.Width-1 {
+				io.WriteString(w, "\x1b[K")
+			} else if x == start {
+				io.WriteString(w, " ")
+			} else {
+				io.WriteString(w, strings.Repeat(" ", x-start+1))
+			}
 			continue
 		}
 		if lastStyle == nil || !lastStyle.Equal(cell.Style) {
@@ -132,7 +164,7 @@ type sgrKey struct {
 // sgrCache memoizes SGR sequences by their key. The demo's style set is
 // small and bounded, so the cache stays small; the presenter is
 // single-threaded, so a plain map needs no locking.
-var sgrCache = map[sgrKey]string{}
+var sgrCache = make(map[sgrKey]string, 32)
 
 // sgr renders a style as SGR parameters, memoized by the style's
 // SGR-relevant fields (the attribute bits and the three colors).
@@ -228,6 +260,12 @@ func colorSGR(c color.Color, prefix string) string {
 }
 
 func writeCluster(w io.Writer, mainc rune, combc []rune) {
+	if len(combc) == 0 {
+		var buf [4]byte
+		n := utf8.EncodeRune(buf[:], mainc)
+		w.Write(buf[:n])
+		return
+	}
 	var buf [8]byte
 	b := buf[:0]
 	b = utf8.AppendRune(b, mainc)

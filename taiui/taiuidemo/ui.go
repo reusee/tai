@@ -285,15 +285,8 @@ func panelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) taiu
 	)
 }
 
-// drawBall redraws the framebuffer canvas: each animation tick clears the
-// canvas and places the ball at a position derived from the frame counter.
 func drawBall(fb *taiui.FrameBufferContent, frame int64) {
-	clear := vt.BaseStyle.WithBg(taiui.HexColor(0x101010))
-	for y := 0; y < fbHeight; y++ {
-		for x := 0; x < fbWidth; x++ {
-			fb.SetContent(x, y, ' ', nil, clear)
-		}
-	}
+	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
 	bx := bounce(int(frame*2), fbWidth-1)
 	by := bounce(int(frame), fbHeight-1)
 	fb.SetContent(bx, by, '\u25CF', nil, vt.BaseStyle.WithFg(taiui.HexColor(0xff8800)))

@@ -113,8 +113,10 @@ func main() {
 			// Fork only the providers whose state changed: dscope keeps the
 			// cached results of the unchanged providers, so the next render
 			// recomputes only the components that depend on the change.
-			for _, provider := range changed {
-				scope = scope.Fork(provider)
+			// All changed providers are forked in one layer, so the scope
+			// stack stays flat.
+			if len(changed) > 0 {
+				scope = scope.Fork(changed...)
 			}
 		case <-tick.C:
 			frame++
@@ -127,8 +129,12 @@ func main() {
 			if ws, err := t.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
 				width, height = ws.Width, ws.Height
 				screen.resize(width, height)
-				scope = scope.Fork(func() Width { return Width(width) })
-				scope = scope.Fork(func() Height { return Height(height) })
+				// Both changed providers are forked in one layer, so the
+				// scope stack stays flat.
+				scope = scope.Fork(
+					func() Width { return Width(width) },
+					func() Height { return Height(height) },
+				)
 			}
 		case <-sigCh:
 			return
@@ -177,7 +183,8 @@ func handleKey(scroll *int, toggle *bool, w1Weight *int, key string) (changed []
 }
 
 func readKeys(r io.Reader, ch chan<- string) {
-	var buf [1]byte
+	var buf [64]byte
+	var pending []byte
 	for {
 		n, err := r.Read(buf[:])
 		if err != nil {
@@ -185,40 +192,44 @@ func readKeys(r io.Reader, ch chan<- string) {
 		}
 		if n == 0 {
 			// The tty is in non-blocking raw mode; avoid a busy loop.
+			// An incomplete ESC sequence that never grew is discarded.
+			if len(pending) > 0 && pending[0] == 0x1b && len(pending) < 3 {
+				pending = pending[:0]
+			}
 			time.Sleep(2 * time.Millisecond)
 			continue
 		}
-		b := buf[0]
-		if b == 0x1b {
-			// Collect the two bytes that follow ESC. Arrow keys arrive as
-			// ESC [ A/B/C/D; other sequences are ignored.
-			seq := []byte{b}
-			for len(seq) < 3 {
-				n, err := r.Read(buf[:])
-				if err != nil || n == 0 {
+		pending = append(pending, buf[:n]...)
+		for len(pending) > 0 {
+			if pending[0] == 0x1b {
+				// Arrow keys arrive as ESC [ A/B/C/D; other sequences
+				// are ignored. Wait for the full three-byte sequence.
+				if len(pending) < 3 {
 					break
 				}
-				seq = append(seq, buf[0])
-			}
-			if len(seq) == 3 && seq[1] == '[' {
-				switch seq[2] {
-				case 'A':
-					ch <- "up"
-				case 'B':
-					ch <- "down"
-				case 'C':
-					ch <- "right"
-				case 'D':
-					ch <- "left"
+				seq := pending[:3]
+				if seq[1] == '[' {
+					switch seq[2] {
+					case 'A':
+						ch <- "up"
+					case 'B':
+						ch <- "down"
+					case 'C':
+						ch <- "right"
+					case 'D':
+						ch <- "left"
+					}
 				}
+				pending = pending[3:]
+				continue
 			}
-			continue
-		}
-		switch b {
-		case 'q', 'Q', 0x03:
-			ch <- "quit"
-		case ' ':
-			ch <- "space"
+			switch pending[0] {
+			case 'q', 'Q', 0x03:
+				ch <- "quit"
+			case ' ':
+				ch <- "space"
+			}
+			pending = pending[1:]
 		}
 	}
 }

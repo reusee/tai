@@ -24,6 +24,7 @@ type _Text struct {
 	offsetStyleFunc OffsetStyleFunc
 	wrap            bool
 	tabWidth        int
+	cursor          bool
 }
 
 // Text creates a text element from specs. Bare strings and []string values
@@ -42,6 +43,8 @@ func (_Text) element() {}
 func (Wrap) spec() {}
 
 func (TabWidth) spec() {}
+
+func (Cursor) spec() {}
 
 func (t *_Text) applySpec(spec any) {
 	if spec == nil {
@@ -68,6 +71,8 @@ func (t *_Text) applySpec(spec any) {
 		t.wrap = bool(v)
 	case TabWidth:
 		t.tabWidth = int(v)
+	case Cursor:
+		t.cursor = bool(v)
 	default:
 		if t.applyCommonSpec(v) {
 			return
@@ -83,7 +88,7 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
-func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywidth.Options) {
+func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	box = t.effectiveBox(box)
 	style = t.styled(style)
 
@@ -131,8 +136,9 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 		y = maxY - len(lines)
 	}
 
+	left := contentLeft
 	for _, ln := range lines {
-		left := contentLeft
+		left = contentLeft
 		switch t.align {
 		case AlignRight:
 			left = right - options.String(ln)
@@ -204,12 +210,25 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 			runeIdx += clusterRunes
 		}
 		if t.fill {
-			for left < right {
-				draw(left, y, ' ', nil, style)
-				left++
+			for x := left; x < right; x++ {
+				draw(x, y, ' ', nil, style)
 			}
 		}
 		y++
+	}
+
+	if t.cursor {
+		// The cursor is the position after the last drawn cluster of the
+		// last line. An empty text places it at the content start; a
+		// clipped line places it at the clip position.
+		if len(lines) > 0 {
+			if left > right {
+				left = right
+			}
+			cursor(left, y-1)
+		} else {
+			cursor(contentLeft, y)
+		}
 	}
 }
 
@@ -237,6 +256,27 @@ type Wrap bool
 // matching the terminal convention.
 type TabWidth int
 
+// Cursor places the terminal cursor at the end of the text when true.
+// The cursor position is recorded in the Frame; screens position the
+// terminal cursor accordingly. An empty text places the cursor at the
+// content start; a clipped line places it at the clip position.
+type Cursor bool
+
+const TheoryOfCursor = `
+taiui cursor theory:
+- The cursor is part of the render output: a Text with the Cursor spec
+  records the position after the last drawn cluster of the last line in
+  the Frame. Screens position the terminal cursor at the recorded
+  position.
+- An empty text places the cursor at the content start; a clipped line
+  places it at the clip position.
+- Inside a VerticalScroll, the cursor is transformed from content
+  coordinates to window coordinates, so a cursor in a scrolled text input
+  tracks the visible position.
+- Frame.Equal compares the cursor state, so a screen detects a cursor-only
+  change and repositions without repainting cells.
+`
+
 // word is a whitespace-free run of grapheme clusters, with the display
 // width of each cluster.
 type word struct {
@@ -245,16 +285,17 @@ type word struct {
 	width    int
 }
 
-// wrapLine wraps line to at most width display columns, breaking at space
-// runs (which act as separators and are dropped) and hard-breaking words
-// wider than the box at cluster boundaries. A cluster never splits across
-// lines, so a cluster wider than width occupies its own line.
 func wrapLine(line string, width int, options displaywidth.Options) []string {
 	if width <= 0 {
 		return nil
 	}
 	if line == "" {
 		return []string{""}
+	}
+	// Fast path: a line with no whitespace that fits the box is returned
+	// as-is, skipping the word-splitting allocations.
+	if !strings.ContainsAny(line, " \t") && options.String(line) <= width {
+		return []string{line}
 	}
 
 	// Split the line into words at whitespace clusters.

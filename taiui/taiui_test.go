@@ -123,6 +123,28 @@ func TestFrameBufferContentBounds(t *testing.T) {
 	}
 }
 
+func TestFrameBufferClear(t *testing.T) {
+	content := NewFrameBufferContent(10, 10)
+	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
+	content.Clear(vt.BaseStyle.WithBg(HexColor(0x101010)))
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: FrameBuffer(content)})
+	Render(scope, screen)
+	// Clear resets every cell to a blank cell with the given style.
+	cell := screen.lastCell(0, 0)
+	if !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected cleared cell at (0,0), got %+v", cell)
+	}
+	if r, g, b := cell.Style.Bg().RGB(); !(r == 0x10 && g == 0x10 && b == 0x10) {
+		t.Fatalf("expected clear style background, got %#x %#x %#x", r, g, b)
+	}
+	// A cleared cell far from the origin is also blank with the style.
+	cell = screen.lastCell(9, 9)
+	if !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected cleared cell at (9,9), got %+v", cell)
+	}
+}
+
 func namedBox() Box { return Box{Top: 0, Left: 0, Bottom: 25, Right: 80} }
 
 func TestNamedFunctionSpec(t *testing.T) {
@@ -1573,6 +1595,240 @@ func TestBorderNegativeMarginFullyClipped(t *testing.T) {
 	// no border glyph is drawn, and fill covers the box.
 	for y := 0; y < 4; y++ {
 		for x := 0; x < 4; x++ {
+			cell := screen.lastCell(x, y)
+			if !cell.Set || cell.Rune != ' ' {
+				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
+			}
+		}
+	}
+}
+
+func TestTextCursor(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("ab", Cursor(true))})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set")
+	}
+	if frame.CursorX != 2 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (2,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+
+	// Without the Cursor spec, no cursor is recorded.
+	screen2 := newFakeScreen(80, 25)
+	scope2 := newRootScope(Root{Element: Text("ab")})
+	Render(scope2, screen2)
+	if frame := screen2.frames[len(screen2.frames)-1]; frame.CursorSet {
+		t.Fatal("expected no cursor without Cursor spec")
+	}
+}
+
+func TestTextCursorEmpty(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("", Cursor(true))})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set")
+	}
+	if frame.CursorX != 0 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (0,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestTextCursorClipped(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 3},
+		Text("abcdef", Cursor(true)),
+	)})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set")
+	}
+	// The text is clipped at the right edge: the cursor is at the clip
+	// position, the column after the last visible character.
+	if frame.CursorX != 3 || frame.CursorY != 0 {
+		t.Fatalf("expected cursor at (3,0), got (%d,%d)", frame.CursorX, frame.CursorY)
+	}
+}
+
+func TestFrameEqualCursor(t *testing.T) {
+	a := newFrame(2, 2)
+	b := newFrame(2, 2)
+	a.setCursor(1, 1)
+	if a.Equal(b) {
+		t.Fatal("frames with different cursor states should differ")
+	}
+	b.setCursor(1, 1)
+	if !a.Equal(b) {
+		t.Fatal("frames with same cursor should be equal")
+	}
+	b.setCursor(0, 0)
+	if a.Equal(b) {
+		t.Fatal("frames with different cursor positions should differ")
+	}
+}
+
+func TestFrameDirtyRows(t *testing.T) {
+	a := newFrame(4, 3)
+	b := newFrame(4, 3)
+	if rows := a.DirtyRows(b); len(rows) != 0 {
+		t.Fatalf("expected no dirty rows for identical frames, got %v", rows)
+	}
+	b.setCell(1, 0, 'x', nil, vt.BaseStyle)
+	b.setCell(2, 2, 'y', nil, vt.BaseStyle)
+	rows := a.DirtyRows(b)
+	if len(rows) != 2 || rows[0] != 0 || rows[1] != 2 {
+		t.Fatalf("expected rows [0 2], got %v", rows)
+	}
+	a = newFrame(3, 4)
+	rows = a.DirtyRows(b)
+	if len(rows) != 4 {
+		t.Fatalf("expected all rows on size mismatch, got %v", rows)
+	}
+}
+
+func TestBoxIntersect(t *testing.T) {
+	a := Box{Top: 0, Left: 0, Bottom: 10, Right: 10}
+	b := Box{Top: 5, Left: 5, Bottom: 15, Right: 15}
+	got := a.Intersect(b)
+	want := Box{Top: 5, Left: 5, Bottom: 10, Right: 10}
+	if got != want {
+		t.Fatalf("expected %+v, got %+v", want, got)
+	}
+	// Non-overlapping boxes produce an empty box.
+	c := Box{Top: 20, Left: 20, Bottom: 30, Right: 30}
+	got = a.Intersect(c)
+	if got.Width() != 0 || got.Height() != 0 {
+		t.Fatalf("expected empty intersection, got %+v", got)
+	}
+}
+
+func TestVerticalScrollCursor(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 0; i < 20; i++ {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(Text(lines, Cursor(true)), 1000),
+	)})
+	Render(scope, screen)
+	frame := screen.frames[len(screen.frames)-1]
+	if !frame.CursorSet {
+		t.Fatal("expected cursor set in scroll")
+	}
+	// The view clamps to the content end: the last line (line 19) is at
+	// window row 3, and the cursor is at the end of that line.
+	if frame.CursorY != 3 {
+		t.Fatalf("expected cursor at row 3, got %d", frame.CursorY)
+	}
+	if frame.CursorX != 7 {
+		t.Fatalf("expected cursor at col 7, got %d", frame.CursorX)
+	}
+}
+
+func TestBorderTitle(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		Title("T"),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// The title is centered on the top border, replacing the edge glyph
+	// it covers: 'T' at col 39, with the edge glyphs on both sides.
+	if r := screen.cell(39, 0); r != 'T' {
+		t.Fatalf("expected title 'T' at (39,0), got %v", r)
+	}
+	if r := screen.cell(38, 0); r != '─' {
+		t.Fatalf("expected edge glyph left of the title, got %v", r)
+	}
+	if r := screen.cell(40, 0); r != '─' {
+		t.Fatalf("expected edge glyph right of the title, got %v", r)
+	}
+}
+
+func TestBorderTitleClipped(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 4},
+		Border(true),
+		Title("ABCDE"),
+	)})
+	Render(scope, screen)
+	// The title is wider than the top edge: it is clipped to the visible
+	// edge range, so the corners keep their glyphs and no title rune
+	// spills past the box.
+	if r := screen.cell(0, 0); r != '┌' {
+		t.Fatalf("expected top-left corner at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 0); r != 'C' {
+		t.Fatalf("expected title 'C' at (1,0), got %v", r)
+	}
+	if r := screen.cell(2, 0); r != 'D' {
+		t.Fatalf("expected title 'D' at (2,0), got %v", r)
+	}
+	if r := screen.cell(3, 0); r != '┐' {
+		t.Fatalf("expected top-right corner at (3,0), got %v", r)
+	}
+}
+
+func TestBorderTitleStyle(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
+		Title("T"),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// The title uses the border style, not the element's style chain.
+	cell := screen.lastCell(39, 0)
+	if cell.Rune != 'T' {
+		t.Fatalf("expected title 'T' at (39,0), got %v", cell.Rune)
+	}
+	if r, _, _ := cell.Style.Fg().RGB(); r != 0xff {
+		t.Fatalf("expected red title, got %#x", r)
+	}
+}
+
+func TestWrapLineFastPath(t *testing.T) {
+	options := displaywidth.Options{}
+	// A line with no whitespace that fits the box is returned as-is:
+	// the fast path skips word splitting entirely.
+	if got := wrapLine("hello", 10, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("fast path: got %q", got)
+	}
+	// A line with no whitespace that exactly fits is also returned as-is.
+	if got := wrapLine("hello", 5, options); !sameStrings(got, []string{"hello"}) {
+		t.Fatalf("exact fit fast path: got %q", got)
+	}
+	// A line with no whitespace wider than the box still hard-breaks.
+	if got := wrapLine("hello", 3, options); !sameStrings(got, []string{"hel", "lo"}) {
+		t.Fatalf("hard break: got %q", got)
+	}
+	// A line with whitespace still wraps at the space.
+	if got := wrapLine("hello world", 8, options); !sameStrings(got, []string{"hello", "world"}) {
+		t.Fatalf("space break: got %q", got)
+	}
+}
+
+func TestVerticalScrollEmptyContent(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
+		VerticalScroll(Text(""), 0, Fill(true)),
+	)})
+	Render(scope, screen)
+	// An empty child renders no content: the window is filled with the
+	// background, and no crop indicators or scrollbar appear.
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 80; x++ {
 			cell := screen.lastCell(x, y)
 			if !cell.Set || cell.Rune != ' ' {
 				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)

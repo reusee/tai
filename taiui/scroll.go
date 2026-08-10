@@ -77,7 +77,7 @@ func (v *_VerticalScroll) applySpec(spec any) {
 	}
 }
 
-func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc, options displaywidth.Options) {
+func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	box = v.effectiveBox(box)
 	style = v.styled(style)
 
@@ -88,18 +88,33 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		Bottom: box.Top + maxScrollContentHeight,
 	}
 	maxY := box.Top
-	// The map is pre-sized to the window height, the common case where the
-	// content is not taller than the window; taller content grows the map.
-	cells := make(map[int][]scrollCell, max(box.Height(), 1))
+	// The slice is pre-sized to the window height, the common case where
+	// the content is not taller than the window; taller content grows the
+	// slice. Rows are indexed by y-box.Top, so the replay loop below
+	// walks the window rows directly.
+	cells := make([][]scrollCell, max(box.Height(), 1))
 	sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		if y > maxY {
 			maxY = y
 		}
+		idx := y - box.Top
+		if idx < 0 {
+			return
+		}
+		for len(cells) <= idx {
+			cells = append(cells, nil)
+		}
 		// Cells are appended in draw order, so a later draw of the same
 		// cell wins when the blit below replays the draws in order.
-		cells[y] = append(cells[y], scrollCell{X: x, Rune: mainc, Combc: combc, Style: st})
+		cells[idx] = append(cells[idx], scrollCell{X: x, Rune: mainc, Combc: combc, Style: st})
 	})
-	renderElement(v.child, elemBox, style, sub, options)
+	// Cursor requests from the child are in content coordinates; they are
+	// transformed to window coordinates after the view window is computed.
+	var cursorRequests []struct{ x, y int }
+	subCursor := func(x, y int) {
+		cursorRequests = append(cursorRequests, struct{ x, y int }{x, y})
+	}
+	renderElement(v.child, elemBox, style, sub, subCursor, options)
 
 	// Clamp the view window to the content extent: it never starts before
 	// the box top, nor past the last visible content row.
@@ -129,7 +144,11 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	numTopCrop := fromY - box.Top
 	for i := 0; i < box.Height(); i++ {
 		y := fromY + i
-		for _, cell := range cells[y] {
+		rowIdx := y - box.Top
+		if rowIdx < 0 || rowIdx >= len(cells) {
+			continue
+		}
+		for _, cell := range cells[rowIdx] {
 			// Cells outside the window are clipped on both edges: a child
 			// with a Box override or a negative margin may draw beyond the
 			// window, and none of it may bleed onto the screen.
@@ -192,6 +211,15 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		s := withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold)
 		for i := 0; i < thumbSize; i++ {
 			draw(box.Right-1, box.Top+thumbY+i, '█', nil, s)
+		}
+	}
+	if len(cursorRequests) > 0 {
+		// The last cursor request wins, mirroring the last-draw-wins rule
+		// for cells. The content coordinate is mapped to the window.
+		last := cursorRequests[len(cursorRequests)-1]
+		wy := last.y - fromY + box.Top
+		if last.x >= box.Left && last.x < clipRight && wy >= box.Top && wy < box.Bottom {
+			cursor(last.x, wy)
 		}
 	}
 }

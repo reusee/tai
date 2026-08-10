@@ -40,7 +40,9 @@ taiui theory: UI = pure Element value derived from state.
   detect an unchanged frame and skip repainting, and Frame.Dirty reports
   the runs of changed cells so a screen can repaint only the damaged
   regions; both compare only frames of equal dimensions, mirroring
-  change-based rendering in terminal libraries.
+  change-based rendering in terminal libraries. An element with an empty
+  box is skipped entirely: no child is rendered and no cursor is
+  recorded, because there is no visible area to draw into.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -48,9 +50,11 @@ taiui theory: UI = pure Element value derived from state.
   over it and wide grapheme clusters keep their trailing columns. The
   border draws independently of fill and stays visible without a painted
   background, clipped to the element box so a negative margin never
-  paints border glyphs outside it. A content box whose border and padding
-  exceed the box dimensions has negative size; rendering treats it as
-  empty and never leaves the element box.
+  paints border glyphs outside it. A Title draws in the top border,
+  replacing the covered edge glyphs with the border style and clipped to
+  the visible edge. A content box whose border and padding exceed the
+  box dimensions has negative size; rendering treats it as empty and
+  never leaves the element box.
 - Row and Column provide flex layout along their axis: each child receives
   a share of the box proportional to its Weighted weight (default 1),
   tiling the content area without overlaps or gaps; the last child absorbs
@@ -93,6 +97,13 @@ taiui theory: UI = pure Element value derived from state.
   allocates nothing. Rendering snapshots the visible cells under the
   read lock, then draws outside the lock, so a concurrent writer is
   blocked only for the snapshot, never for the draw.
+- The cursor is part of the render output: a Text with the Cursor spec
+  records the position after the last drawn cluster of the last line in
+  the Frame. Screens position the terminal cursor at the recorded
+  position. Inside a VerticalScroll, the cursor is transformed from
+  content coordinates to window coordinates. Frame.Equal compares the
+  cursor state, so a screen detects a cursor-only change and repositions
+  without repainting cells.
 - The exported API is a minimal facade: spec types, constructors, and
   style helpers only. Color specs cover the foreground, the background,
   and the underline color; attr and underline-style specs cover the VT
@@ -140,6 +151,17 @@ func (b Box) Width() int { return max(b.Right-b.Left, 0) }
 // Height returns the box's vertical extent, clamped to non-negative.
 func (b Box) Height() int { return max(b.Bottom-b.Top, 0) }
 
+// Intersect returns the overlap of b and o. The result may be empty
+// (Width or Height zero) when the boxes do not overlap.
+func (b Box) Intersect(o Box) Box {
+	return Box{
+		Top:    max(b.Top, o.Top),
+		Left:   max(b.Left, o.Left),
+		Bottom: min(b.Bottom, o.Bottom),
+		Right:  min(b.Right, o.Right),
+	}
+}
+
 // UnderlineColor sets the color of the underline. It is visible only when
 // the underline is on.
 type UnderlineColor Color
@@ -179,12 +201,17 @@ type (
 	Fill      bool
 )
 
-// Frame is the render output: a styled cell grid. Rendering interprets the
-// element tree into a frame, and screens present frames.
 type Frame struct {
 	Width  int
 	Height int
 	Cells  []FrameCell
+
+	// CursorSet reports whether an element requested a cursor, and
+	// CursorX and CursorY hold its position. Screens position the
+	// terminal cursor at the recorded position.
+	CursorSet bool
+	CursorX   int
+	CursorY   int
 }
 
 // FrameCell is one cell of a Frame. Cells that no element drew have Set
@@ -216,17 +243,27 @@ func (f *Frame) setCell(x, y int, mainc rune, combc []rune, style Style) {
 	}
 }
 
+// setCursor records a cursor request. Requests outside the frame are
+// ignored, so a clipped element never positions the cursor off-screen.
+func (f *Frame) setCursor(x, y int) {
+	if x < 0 || x >= f.Width || y < 0 || y >= f.Height {
+		return
+	}
+	f.CursorX, f.CursorY = x, y
+	f.CursorSet = true
+}
+
 // frameCellEqual reports whether two cells hold identical content.
 func frameCellEqual(a, b FrameCell) bool {
 	return a.Rune == b.Rune && a.Set == b.Set &&
 		sameStyle(a.Style, b.Style) && sameCombc(a.Combc, b.Combc)
 }
 
-// Equal reports whether f and o hold identical cells. Screens use it to
-// skip presenting an unchanged frame, mirroring change-based rendering in
-// terminal libraries. Frames of different sizes are never equal.
 func (f Frame) Equal(o Frame) bool {
 	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
+		return false
+	}
+	if f.CursorSet != o.CursorSet || f.CursorX != o.CursorX || f.CursorY != o.CursorY {
 		return false
 	}
 	for i := range f.Cells {
@@ -267,6 +304,29 @@ func (f Frame) Dirty(o Frame) []Box {
 		}
 	}
 	return dirty
+}
+
+// DirtyRows reports the row indices that differ between f and o, in
+// ascending order. A screen that repaints whole rows uses it to avoid
+// the run-level detail of Dirty.
+func (f Frame) DirtyRows(o Frame) []int {
+	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
+		rows := make([]int, f.Height)
+		for i := range rows {
+			rows[i] = i
+		}
+		return rows
+	}
+	var rows []int
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			if !frameCellEqual(f.Cells[y*f.Width+x], o.Cells[y*f.Width+x]) {
+				rows = append(rows, y)
+				break
+			}
+		}
+	}
+	return rows
 }
 
 func sameStyle(a, b Style) bool {

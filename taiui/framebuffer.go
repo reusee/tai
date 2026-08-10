@@ -41,6 +41,18 @@ func (c *FrameBufferContent) SetContent(x, y int, mainc rune, combc []rune, styl
 	c.cells[y*c.width+x] = frameBufferCell{rune: mainc, combc: combc, style: style, set: true}
 }
 
+// Clear resets every cell to a blank cell with the given style, in a
+// single locked operation. Clearing a large canvas with Clear is faster
+// than clearing cell by cell with SetContent, which locks per cell.
+// Cells are written by value, so a clear allocates nothing.
+func (c *FrameBufferContent) Clear(style Style) {
+	c.Lock()
+	defer c.Unlock()
+	for i := range c.cells {
+		c.cells[i] = frameBufferCell{rune: ' ', style: style, set: true}
+	}
+}
+
 var _ Element = _FrameBuffer{}
 
 // _FrameBuffer renders framebuffer content into the box supplied by the
@@ -59,7 +71,7 @@ func FrameBuffer(content *FrameBufferContent) _FrameBuffer {
 
 func (_FrameBuffer) element() {}
 
-func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc) {
+func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc, cursor cursorFunc) {
 	content := f.content
 	if content == nil {
 		return

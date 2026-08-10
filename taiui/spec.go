@@ -41,6 +41,8 @@ func (BorderType) spec() {}
 
 func (BorderStyle) spec() {}
 
+func (Title) spec() {}
+
 // Specs is a group of specs. It is itself a Spec, so groups nest and can
 // be placed anywhere a single Spec is accepted.
 type Specs []Spec

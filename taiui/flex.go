@@ -98,7 +98,7 @@ func (f *_Flex) applySpec(spec any) {
 	}
 }
 
-func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywidth.Options) {
+func renderFlex(f _Flex, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	box = f.effectiveBox(box)
 	style = f.styled(style)
 
@@ -118,7 +118,7 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 				draw(x, y, ' ', nil, style)
 			}
 		}
-		f.boxModel.drawBorder(outer, box, style, draw)
+		f.boxModel.drawBorder(outer, box, style, draw, options)
 		return
 	}
 
@@ -129,19 +129,7 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 	marked := draw
 	if f.fill {
 		marks = make([]bool, box.Width()*box.Height())
-		marked = drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
-			idx := (y-box.Top)*box.Width() + (x - box.Left)
-			if idx >= 0 && idx < len(marks) {
-				marks[idx] = true
-				for i := 1; i < clusterWidth(options, mainc, combc); i++ {
-					// The trailing columns stay within the cluster's row.
-					if (x-box.Left)+i < box.Width() {
-						marks[idx+i] = true
-					}
-				}
-			}
-			draw(x, y, mainc, combc, st)
-		})
+		marked = markedDraw(draw, marks, box, options)
 	}
 
 	if total > 0 {
@@ -162,7 +150,7 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 			} else {
 				childBox = Box{Top: pos, Left: content.Left, Bottom: pos + size, Right: content.Right}
 			}
-			renderElement(child, childBox, style, marked, options)
+			renderElement(child, childBox, style, marked, cursor, options)
 			pos += size
 		}
 	}
@@ -184,5 +172,5 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywid
 			}
 		}
 	}
-	f.boxModel.drawBorder(outer, box, style, draw)
+	f.boxModel.drawBorder(outer, box, style, draw, options)
 }

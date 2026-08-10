@@ -52,7 +52,7 @@ func (r *_Rect) applySpec(spec any) {
 	}
 }
 
-func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywidth.Options) {
+func renderRect(r _Rect, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
 	box = r.effectiveBox(box)
 	style = r.styled(style)
 
@@ -65,9 +65,9 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 	content := r.boxModel.contentBox(box)
 	if !r.fill {
 		for _, child := range r.children {
-			renderElement(child, content, style, draw, options)
+			renderElement(child, content, style, draw, cursor, options)
 		}
-		r.boxModel.drawBorder(outer, box, style, draw)
+		r.boxModel.drawBorder(outer, box, style, draw, options)
 		return
 	}
 
@@ -79,7 +79,7 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 				draw(x, y, ' ', nil, style)
 			}
 		}
-		r.boxModel.drawBorder(outer, box, style, draw)
+		r.boxModel.drawBorder(outer, box, style, draw, options)
 		return
 	}
 
@@ -87,21 +87,9 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 	// only the gaps. A wide grapheme cluster occupies its trailing columns
 	// too; fill must not paint over them.
 	marks := make([]bool, l)
-	marked := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
-		idx := (y-box.Top)*box.Width() + (x - box.Left)
-		if idx >= 0 && idx < len(marks) {
-			marks[idx] = true
-			for i := 1; i < clusterWidth(options, mainc, combc); i++ {
-				// The trailing columns stay within the cluster's row.
-				if (x-box.Left)+i < box.Width() {
-					marks[idx+i] = true
-				}
-			}
-		}
-		draw(x, y, mainc, combc, st)
-	})
+	marked := markedDraw(draw, marks, box, options)
 	for _, child := range r.children {
-		renderElement(child, content, style, marked, options)
+		renderElement(child, content, style, marked, cursor, options)
 	}
 
 	for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {
@@ -112,5 +100,5 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywid
 			}
 		}
 	}
-	r.boxModel.drawBorder(outer, box, style, draw)
+	r.boxModel.drawBorder(outer, box, style, draw, options)
 }

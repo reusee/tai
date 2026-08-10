@@ -1,6 +1,10 @@
 package taiui
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/clipperhouse/displaywidth"
+)
 
 const TheoryOfBoxModel = `
 taiui box model theory:
@@ -15,6 +19,10 @@ taiui box model theory:
   no background is painted. BorderType selects the glyph set (single,
   rounded, double, thick). The border ring is clipped to the element
   box, so a negative margin can never paint border glyphs outside it.
+- Title draws in the top border: it replaces the border glyphs it
+  covers, uses the border style, and is clipped to the visible top edge,
+  so a title wider than the edge never paints the corners or spills past
+  the element box.
 - Text is not a box-model element: it keeps its padding-only inset and
   line-fill semantics, so a bordered text block is a Text inside a Rect.
 `
@@ -41,12 +49,18 @@ const (
 // chain; the last BorderStyle spec wins.
 type BorderStyle StyleFunc
 
+// Title sets a title drawn in the top border of a box-model element.
+// The title replaces the border glyphs it covers, uses the border style,
+// and is clipped to the visible top edge.
+type Title string
+
 type boxModel struct {
 	margin      [4]int
 	padding     [4]int
 	border      bool
 	borderType  BorderType
 	borderStyle StyleFunc
+	title       string
 }
 
 // borderGlyphs is the glyph set of one border style: the horizontal and
@@ -78,6 +92,8 @@ func (m *boxModel) applySpec(spec any) bool {
 		m.borderType = v
 	case BorderStyle:
 		m.borderStyle = StyleFunc(v)
+	case Title:
+		m.title = string(v)
 	default:
 		return false
 	}
@@ -120,7 +136,7 @@ const (
 	borderBottomRightCorner = '┘'
 )
 
-func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc) {
+func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	if !m.border {
 		return
 	}
@@ -157,6 +173,26 @@ func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc) {
 	if topVisible {
 		for x := max(left+1, box.Left); x <= min(right-1, box.Right-1); x++ {
 			draw(x, top, glyphs.horizontal, nil, style)
+		}
+	}
+	if m.title != "" && topVisible {
+		// The title is centered on the top edge and replaces the border
+		// glyphs it covers. It is clipped to the visible edge range, so
+		// a title wider than the edge never paints the corners or spills
+		// past the element box.
+		titleX := (left + right - options.String(m.title)) / 2
+		edgeLeft := max(left+1, box.Left)
+		edgeRight := min(right-1, box.Right-1)
+		x := titleX
+		g := options.StringGraphemes(m.title)
+		for g.Next() {
+			cluster := g.Value()
+			w := g.Width()
+			if x >= edgeLeft && x+w-1 <= edgeRight {
+				mainc, combc := splitCluster(cluster)
+				draw(x, top, mainc, combc, style)
+			}
+			x += w
 		}
 	}
 	if bottomVisible {

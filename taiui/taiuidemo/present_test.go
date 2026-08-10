@@ -1,9 +1,12 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 	"github.com/reusee/tai/taiui"
 )
@@ -130,5 +133,84 @@ func TestHandleKeyW1Weight(t *testing.T) {
 	}
 	if len(changed) != 0 {
 		t.Fatalf("expected no provider at upper clamp, got %d", len(changed))
+	}
+}
+
+func TestPaintRowBatchesMiddleUnsetRun(t *testing.T) {
+	frame := &taiui.Frame{
+		Width:  5,
+		Height: 1,
+		Cells:  make([]taiui.FrameCell, 5),
+	}
+	frame.Cells[0] = taiui.FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
+	frame.Cells[4] = taiui.FrameCell{Rune: 'b', Style: vt.BaseStyle, Set: true}
+	var sb strings.Builder
+	paintRow(&sb, frame, 0, displaywidth.Options{})
+	// The row is "a   b": the middle unset run (cells 1-3) is batched
+	// into a single write of three spaces.
+	if !strings.Contains(sb.String(), "   ") {
+		t.Fatalf("expected batched spaces, got %q", sb.String())
+	}
+}
+
+func TestPaintRowTrailingUnsetErase(t *testing.T) {
+	frame := &taiui.Frame{
+		Width:  4,
+		Height: 1,
+		Cells:  make([]taiui.FrameCell, 4),
+	}
+	frame.Cells[0] = taiui.FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
+	var sb strings.Builder
+	paintRow(&sb, frame, 0, displaywidth.Options{})
+	// The row is "a   ": the trailing unset run is erased to the line
+	// end in a single write, so the cursor never wraps at the last
+	// column.
+	if !strings.Contains(sb.String(), "\x1b[K") {
+		t.Fatalf("expected erase-to-end for trailing unset run, got %q", sb.String())
+	}
+}
+
+func TestPaintRowEmptyRowEraseLine(t *testing.T) {
+	frame := &taiui.Frame{
+		Width:  4,
+		Height: 1,
+		Cells:  make([]taiui.FrameCell, 4),
+	}
+	var sb strings.Builder
+	paintRow(&sb, frame, 0, displaywidth.Options{})
+	// An entirely unset row is cleared with the erase-line sequence in a
+	// single write instead of one space per cell.
+	if sb.String() != "\x1b[0m\x1b[2K" {
+		t.Fatalf("expected erase-line for empty row, got %q", sb.String())
+	}
+}
+
+func TestReadKeys(t *testing.T) {
+	ch := make(chan string, 8)
+	go readKeys(strings.NewReader("\x1b[Aq \x1b[B"), ch)
+	var got []string
+	for len(got) < 4 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for keys")
+		}
+	}
+	want := []string{"up", "quit", "space", "down"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestReadKeysLoneEsc(t *testing.T) {
+	ch := make(chan string, 8)
+	go readKeys(strings.NewReader("\x1bq"), ch)
+	// A lone ESC followed by a non-sequence byte is discarded: the
+	// incomplete sequence never resolves to a key.
+	select {
+	case k := <-ch:
+		t.Fatalf("expected no key, got %q", k)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
