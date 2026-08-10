@@ -27,19 +27,23 @@ taiui theory: UI = pure Element value derived from state.
   compose conditionally.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
-  A nil root element renders an empty frame, clearing every screen. Elements
-  never call screen methods; any backend able to present cell grids can
-  render (character terminals, web views, native UIs). Frame.Equal lets a
-  screen detect an unchanged frame and skip repainting; Frame.Dirty reports
-  the runs of changed cells so a screen can repaint only the damaged
-  regions, mirroring change-based rendering in terminal libraries.
+  A nil root element renders an empty frame, clearing every screen. Each
+  render pass allocates a fresh frame per screen; frames are never reused,
+  because a screen may retain the frame it presented. Elements never call
+  screen methods; any backend able to present cell grids can render
+  (character terminals, web views, native UIs). Frame.Equal lets a screen
+  detect an unchanged frame and skip repainting; Frame.Dirty reports the
+  runs of changed cells so a screen can repaint only the damaged regions,
+  mirroring change-based rendering in terminal libraries.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
   background in the box cells that no child occupies, so children render
   over it and wide grapheme clusters keep their trailing columns. The
   border draws independently of fill and stays visible without a painted
-  background.
+  background. A content box whose border and padding exceed the box
+  dimensions has negative size; rendering treats it as empty and never
+  leaves the element box.
 - Row and Column provide flex layout along their axis: each child receives
   a share of the box proportional to its Weighted weight (default 1),
   tiling the content area without overlaps or gaps; the last child absorbs
@@ -53,9 +57,12 @@ taiui theory: UI = pure Element value derived from state.
   real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes. With
   Wrap, lines word-wrap to the box width: breaks fall at space runs,
   words wider than the box hard-break at cluster boundaries, and a cluster
-  never splits across lines. Fill paints the content cells the text does
-  not occupy, including the residual gaps left by clusters clipped at
-  either edge.
+  never splits across lines. Left, right, and center alignment are
+  relative to the padded content area; a centered line rounds with the
+  conventional (width-len)/2 rule, placing the extra column on the right.
+  Alignments apply per physical line, so wrapped lines align
+  independently. Fill paints the content cells the text does not occupy,
+  including the residual gaps left by clusters clipped at either edge.
 - VerticalScroll renders a child into a virtually unbounded column and
   crops to the visible window, clamping the view to the content extent.
   Content is clipped to the window on both edges: cells drawn outside the

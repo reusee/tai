@@ -94,7 +94,10 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 			case AlignRight:
 				left = right - options.String(ln)
 			case AlignCenter:
-				left = (box.Left+box.Right)/2 - options.String(ln)/2
+				// Centering is relative to the padded content area and
+				// rounds with the conventional (width-len)/2 rule, so an
+				// odd-width line places the extra column on the right.
+				left = (contentLeft + right - options.String(ln)) / 2
 			}
 			if t.fill {
 				// A line is fully painted regardless of alignment: the

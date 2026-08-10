@@ -491,6 +491,66 @@ func TestClusterWidth(t *testing.T) {
 	}
 }
 
+func TestTextAlignCenterRounding(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("a", AlignCenter)})
+	Render(scope, screen)
+	// An odd-width line centers with the extra column on the right,
+	// matching the conventional (width-len)/2 rule: col 39 of 80.
+	if r := screen.cell(39, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (39,0), got %v", r)
+	}
+	if r := screen.cell(40, 0); r != 0 {
+		t.Fatalf("expected col 40 blank, got %v", r)
+	}
+}
+
+func TestTextAlignCenterPadding(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
+		Padding(0, 10, 0, 0),
+		Text("a", AlignCenter),
+	)})
+	Render(scope, screen)
+	// Center alignment is relative to the padded content area, which the
+	// right padding shrinks to [0, 70): the 'a' sits at (0+70-1)/2 = 34.
+	if r := screen.cell(34, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (34,0), got %v", r)
+	}
+	if r := screen.cell(35, 0); r != 0 {
+		t.Fatalf("expected col 35 blank, got %v", r)
+	}
+}
+
+func TestBoxModelDegenerate(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		Border(true),
+		Padding(10),
+		Fill(true),
+		Text("x"),
+	)})
+	Render(scope, screen)
+	// Border plus padding exceeds the box: the content box has negative
+	// dimensions. Rendering degenerates safely: the border ring paints
+	// and no content escapes the box.
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			if cell := screen.lastCell(x, y); !cell.Set {
+				t.Fatalf("expected border or fill at (%d,%d), got unset", x, y)
+			}
+		}
+	}
+	if r := screen.cell(0, 0); r != '┌' {
+		t.Fatalf("expected top-left corner at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 1); r != '┘' {
+		t.Fatalf("expected bottom-right corner at (1,1), got %v", r)
+	}
+}
+
 func TestFlexColumn(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Column(
