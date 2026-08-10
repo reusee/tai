@@ -26,11 +26,12 @@ taiui theory: UI = pure Element value derived from state.
   compose conditionally.
 - Rendering resolves the root from the scope, interprets the element tree
   into a Frame (a styled cell grid), and presents the frame to each screen.
-  Elements never call screen methods; any backend able to present cell
-  grids can render (character terminals, web views, native UIs). Frame.Equal
-  lets a screen detect an unchanged frame and skip repainting; Frame.Dirty
-  reports the runs of changed cells so a screen can repaint only the
-  damaged regions, mirroring change-based rendering in terminal libraries.
+  A nil root element renders an empty frame, clearing every screen. Elements
+  never call screen methods; any backend able to present cell grids can
+  render (character terminals, web views, native UIs). Frame.Equal lets a
+  screen detect an unchanged frame and skip repainting; Frame.Dirty reports
+  the runs of changed cells so a screen can repaint only the damaged
+  regions, mirroring change-based rendering in terminal libraries.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -42,7 +43,8 @@ taiui theory: UI = pure Element value derived from state.
   a share of the box proportional to its Weighted weight (default 1),
   tiling the content area without overlaps or gaps; the last child absorbs
   rounding. The box model and fill behave as in Rect, with fill covering
-  the ring around the tiled content.
+  the cells no child occupied: the ring around the tiled content, or the
+  whole outer box when there are no children.
 - Text provides aligned multi-line rendering with per-position StyleFunc
   support. Lines are segmented into grapheme clusters (uax29): a cluster
   renders as one cell carrying its base and combining runes, and advances

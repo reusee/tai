@@ -137,9 +137,6 @@ func buildElement(e specApplier, specs []any) {
 	}
 }
 
-// resolveSpecs resolves each spec: zero-argument functions are evaluated
-// eagerly and their results processed as specs; any other value is kept
-// as-is. Functions taking arguments (e.g. StyleFunc) are kept as-is.
 func resolveSpecs(specs []any) []any {
 	var out []any
 	for _, spec := range specs {
@@ -152,7 +149,12 @@ func resolveSpecs(specs []any) []any {
 			continue
 		}
 		if t.Kind() == reflect.Func && t.NumIn() == 0 {
-			res := reflect.ValueOf(spec).Call(nil)
+			v := reflect.ValueOf(spec)
+			if v.IsNil() {
+				// a nil zero-argument function spec is treated like nil
+				continue
+			}
+			res := v.Call(nil)
 			for _, r := range res {
 				out = append(out, resolveSpecs([]any{r.Interface()})...)
 			}

@@ -1,6 +1,10 @@
 package taiui
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/clipperhouse/displaywidth"
+)
 
 var _ Element = _Flex{}
 
@@ -94,7 +98,7 @@ func (f *_Flex) applySpec(spec any) {
 	}
 }
 
-func renderFlex(f _Flex, box Box, style Style, draw drawFunc) {
+func renderFlex(f _Flex, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	box = f.effectiveBox(box)
 	style = f.styled(style)
 
@@ -104,6 +108,40 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc) {
 	total := 0
 	for _, w := range f.weights {
 		total += w
+	}
+
+	// With no children, fill covers the whole outer box, matching Rect's
+	// no-children behavior: there is no tiled content area to leave blank.
+	if f.fill && total == 0 {
+		for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {
+			for x := max(outer.Left, box.Left); x < min(outer.Right, box.Right); x++ {
+				draw(x, y, ' ', nil, style)
+			}
+		}
+		f.boxModel.drawBorder(outer, style, draw)
+		return
+	}
+
+	// With fill, track the cells children occupy so the background paints
+	// only the ring cells no child drew. A wide grapheme cluster occupies
+	// its trailing columns too; fill must not paint over them.
+	var marks []bool
+	marked := draw
+	if f.fill {
+		marks = make([]bool, box.Width()*box.Height())
+		marked = drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
+			idx := (y-box.Top)*box.Width() + (x - box.Left)
+			if idx >= 0 && idx < len(marks) {
+				marks[idx] = true
+				for i := 1; i < clusterWidth(options, mainc, combc); i++ {
+					// The trailing columns stay within the cluster's row.
+					if (x-box.Left)+i < box.Width() {
+						marks[idx+i] = true
+					}
+				}
+			}
+			draw(x, y, mainc, combc, st)
+		})
 	}
 
 	if total > 0 {
@@ -124,20 +162,25 @@ func renderFlex(f _Flex, box Box, style Style, draw drawFunc) {
 			} else {
 				childBox = Box{Top: pos, Left: content.Left, Bottom: pos + size, Right: content.Right}
 			}
-			renderElement(child, childBox, style, draw)
+			renderElement(child, childBox, style, marked, options)
 			pos += size
 		}
 	}
 
 	if f.fill {
 		// The content area is fully tiled by the children; fill only the
-		// ring formed by the margins, border, and padding.
-		for y := outer.Top; y < outer.Bottom; y++ {
-			for x := outer.Left; x < outer.Right; x++ {
+		// ring formed by the margins, border, and padding that no child
+		// occupied, clipped to the element box so a negative margin cannot
+		// paint outside it.
+		for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {
+			for x := max(outer.Left, box.Left); x < min(outer.Right, box.Right); x++ {
 				if x >= content.Left && x < content.Right && y >= content.Top && y < content.Bottom {
 					continue
 				}
-				draw(x, y, ' ', nil, style)
+				idx := (y-box.Top)*box.Width() + (x - box.Left)
+				if !marks[idx] {
+					draw(x, y, ' ', nil, style)
+				}
 			}
 		}
 	}

@@ -2,13 +2,19 @@ package taiui
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 )
 
 var _ Element = _VerticalScroll{}
+
+// maxScrollContentHeight bounds the virtual column a VerticalScroll renders
+// its child into. Box-driven children (Rect, Row, Column) render their whole
+// box, so an unbounded column would make them loop over unbounded space;
+// the bound keeps such rendering finite. Real scrollable content rarely
+// approaches the bound.
+const maxScrollContentHeight = 1 << 14
 
 // _VerticalScroll is a scrollable viewport over a child element. It is a
 // pure value: specs are interpreted at construction into typed fields,
@@ -22,9 +28,11 @@ type _VerticalScroll struct {
 
 // VerticalScroll renders the child into a virtually unbounded column and
 // crops to the visible window centered on the content row given by offset.
-// The view is clamped to the content extent, so an offset beyond the end
-// shows the last rows. It accepts the common specs: a Box override, the
-// style chain, and Fill, which paints the visible window's background.
+// The column is bounded to maxScrollContentHeight rows so box-driven
+// children (Rect, Row, Column) cannot drive unbounded rendering. The view
+// is clamped to the content extent, so an offset beyond the end shows the
+// last rows. It accepts the common specs: a Box override, the style chain,
+// and Fill, which paints the visible window's background.
 // Scrollbar(true) reserves the rightmost column for a thumb indicating the
 // view position within the content.
 func VerticalScroll(e Element, offset int, specs ...any) _VerticalScroll {
@@ -59,7 +67,7 @@ func (v *_VerticalScroll) applySpec(spec any) {
 	}
 }
 
-func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc) {
+func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	box = v.effectiveBox(box)
 	style = v.styled(style)
 
@@ -67,7 +75,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		Left:   box.Left,
 		Right:  box.Right,
 		Top:    box.Top,
-		Bottom: math.MaxInt32,
+		Bottom: box.Top + maxScrollContentHeight,
 	}
 	maxY := box.Top
 	type Cell struct {
@@ -85,7 +93,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		// cell wins when the blit below replays the draws in order.
 		cells[y] = append(cells[y], Cell{X: x, Rune: mainc, Combc: combc, Style: st})
 	})
-	renderElement(v.child, elemBox, style, sub)
+	renderElement(v.child, elemBox, style, sub, options)
 
 	// Clamp the view window to the content extent: it never starts before
 	// the box top, nor past the last visible content row.
@@ -109,10 +117,8 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	// background paints only the gaps. A wide grapheme cluster occupies
 	// its trailing columns too; fill must not paint over them.
 	var marks []bool
-	var options displaywidth.Options
 	if v.fill {
 		marks = make([]bool, box.Width()*box.Height())
-		options = displayWidthOptions()
 	}
 	numTopCrop := fromY - box.Top
 	for i := 0; i < box.Height(); i++ {

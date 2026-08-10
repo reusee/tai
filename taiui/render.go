@@ -3,6 +3,7 @@ package taiui
 import (
 	"fmt"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
 	"github.com/reusee/dscope"
 )
@@ -11,12 +12,11 @@ import (
 // screen. The scope must provide a Root value; each screen receives a Frame
 // sized to that screen. Rendering is idempotent recomputation: forking the
 // scope with new state re-evaluates the root, and the next Render produces
-// the updated UI.
+// the updated UI. A nil root element renders an empty frame, so a state
+// with no UI clears every screen.
 func Render(scope Scope, screens ...Screen) {
 	root := dscope.Get[Root](scope)
-	if root.Element == nil {
-		return
-	}
+	options := displayWidthOptions()
 	for _, screen := range screens {
 		width := screen.Width()
 		height := screen.Height()
@@ -25,7 +25,7 @@ func Render(scope Scope, screens ...Screen) {
 		}
 		frame := newFrame(width, height)
 		box := Box{Top: 0, Left: 0, Bottom: height, Right: width}
-		renderElement(root.Element, box, vt.BaseStyle, frame.setCell)
+		renderElement(root.Element, box, vt.BaseStyle, frame.setCell, options)
 		screen.Present(frame)
 	}
 }
@@ -36,19 +36,22 @@ func Render(scope Scope, screens ...Screen) {
 // the element tree and drives the drawing.
 type drawFunc func(x, y int, mainc rune, combc []rune, style Style)
 
-func renderElement(e Element, box Box, style Style, draw drawFunc) {
+// renderElement dispatches one element to its render function. The options
+// are the display-width options for this render pass, derived once by
+// Render and shared by every element that measures width.
+func renderElement(e Element, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	if e == nil {
 		return
 	}
 	switch e := e.(type) {
 	case _Rect:
-		renderRect(e, box, style, draw)
+		renderRect(e, box, style, draw, options)
 	case _Text:
-		renderText(e, box, style, draw)
+		renderText(e, box, style, draw, options)
 	case _VerticalScroll:
-		renderVerticalScroll(e, box, style, draw)
+		renderVerticalScroll(e, box, style, draw, options)
 	case _Flex:
-		renderFlex(e, box, style, draw)
+		renderFlex(e, box, style, draw, options)
 	case _FrameBuffer:
 		renderFrameBuffer(e, box, style, draw)
 	default:

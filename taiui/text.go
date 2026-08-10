@@ -3,6 +3,7 @@ package taiui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/clipperhouse/displaywidth"
 )
@@ -70,11 +71,11 @@ func (t *_Text) applySpec(spec any) {
 	}
 }
 
-func renderText(t _Text, box Box, style Style, draw drawFunc) {
+func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	box = t.effectiveBox(box)
 	style = t.styled(style)
 
-	options := displayWidthOptions()
+	contentLeft := box.Left + t.padding[3]
 	wrapWidth := box.Width() - t.padding[1] - t.padding[3]
 	right := box.Right - t.padding[1]
 	maxY := box.Bottom - t.padding[2]
@@ -88,25 +89,36 @@ func renderText(t _Text, box Box, style Style, draw drawFunc) {
 			if y >= maxY {
 				break
 			}
-			left := box.Left + t.padding[3]
+			left := contentLeft
 			switch t.align {
 			case AlignRight:
 				left = right - options.String(ln)
 			case AlignCenter:
 				left = (box.Left+box.Right)/2 - options.String(ln)/2
 			}
+			if t.fill {
+				// A line is fully painted regardless of alignment: the
+				// leading gap is filled before the text draws over it.
+				for x := contentLeft; x < left; x++ {
+					draw(x, y, ' ', nil, style)
+				}
+			}
 			runeIdx := 0
 			g := options.StringGraphemes(ln)
 			for g.Next() {
 				cluster := g.Value()
 				width := g.Width()
-				clusterRunes := strings.Count(cluster, "") - 1
-				if left < box.Left {
+				clusterRunes := utf8.RuneCountInString(cluster)
+				// Clusters are clipped to the content area: a cluster
+				// starting before it is skipped, and a cluster that would
+				// extend past its right edge is not drawn, so text never
+				// spills beyond the box.
+				if left < contentLeft {
 					left += width
 					runeIdx += clusterRunes
 					continue
 				}
-				if left >= right {
+				if left >= right || left+width > right {
 					break
 				}
 				mainc, combc := splitCluster(cluster)

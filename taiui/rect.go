@@ -1,6 +1,10 @@
 package taiui
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/clipperhouse/displaywidth"
+)
 
 var _ Element = _Rect{}
 
@@ -48,7 +52,7 @@ func (r *_Rect) applySpec(spec any) {
 	}
 }
 
-func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
+func renderRect(r _Rect, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	box = r.effectiveBox(box)
 	style = r.styled(style)
 
@@ -61,7 +65,7 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 	content := r.boxModel.contentBox(box)
 	if !r.fill {
 		for _, child := range r.children {
-			renderElement(child, content, style, draw)
+			renderElement(child, content, style, draw, options)
 		}
 		r.boxModel.drawBorder(outer, style, draw)
 		return
@@ -83,7 +87,6 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 	// only the gaps. A wide grapheme cluster occupies its trailing columns
 	// too; fill must not paint over them.
 	marks := make([]bool, l)
-	options := displayWidthOptions()
 	marked := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		idx := (y-box.Top)*box.Width() + (x - box.Left)
 		if idx >= 0 && idx < len(marks) {
@@ -98,7 +101,7 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		draw(x, y, mainc, combc, st)
 	})
 	for _, child := range r.children {
-		renderElement(child, content, style, marked)
+		renderElement(child, content, style, marked, options)
 	}
 
 	for y := max(outer.Top, box.Top); y < min(outer.Bottom, box.Bottom); y++ {

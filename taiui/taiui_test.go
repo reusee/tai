@@ -409,6 +409,57 @@ func TestTextWrapHardBreak(t *testing.T) {
 	}
 }
 
+func TestTextFillAligned(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("ab", AlignRight, Fill(true))})
+	Render(scope, screen)
+	// Right-aligned "ab" sits at cols 78-79; fill paints the whole line,
+	// including the leading gap.
+	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled leading gap at (0,0), got %+v", cell)
+	}
+	if r := screen.cell(78, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (78,0), got %v", r)
+	}
+	if r := screen.cell(79, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (79,0), got %v", r)
+	}
+
+	screen2 := newFakeScreen(80, 25)
+	scope2 := newRootScope(Root{Element: Text("ab", AlignCenter, Fill(true))})
+	Render(scope2, screen2)
+	// Center-aligned "ab" sits at cols 39-40; both gaps are filled.
+	if cell := screen2.lastCell(38, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled leading gap at (38,0), got %+v", cell)
+	}
+	if r := screen2.cell(39, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (39,0), got %v", r)
+	}
+	if r := screen2.cell(40, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (40,0), got %v", r)
+	}
+	if cell := screen2.lastCell(41, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled trailing gap at (41,0), got %+v", cell)
+	}
+}
+
+func TestTextClusterClip(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		Text("a\U0001F469\u200d\U0001F4BB"),
+	)})
+	Render(scope, screen)
+	// 'a' fits at col 0; the wide cluster needs cols 1-2 but only col 1
+	// remains, so it is clipped: text never spills past its box.
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 0); r != 0 {
+		t.Fatalf("expected clipped wide cluster, got %v", r)
+	}
+}
+
 func TestFlexColumn(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Column(
@@ -514,6 +565,33 @@ func TestFlexBoxModel(t *testing.T) {
 	}
 	if r := screen.cell(0, 0); r != 0 {
 		t.Fatalf("expected unset outer margin at (0,0), got %v", r)
+	}
+}
+
+func TestFlexFillNegativeMargin(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 6, Right: 6},
+		Margin(1),
+		Padding(1),
+		Fill(true),
+		Row(
+			Margin(-1),
+			Padding(1),
+			Fill(true),
+			FGColor(HexColor(0xff0000)),
+			Rect(Fill(true), Text("a")),
+		),
+	)})
+	Render(scope, screen)
+	// The Row's negative margin pushes its outer box past its own box;
+	// its fill must clip to its box, so the Rect's padding ring keeps the
+	// Rect's fill style instead of the Row's red background.
+	if r := screen.cell(2, 2); r != 'a' {
+		t.Fatalf("expected 'a' at (2,2), got %v", r)
+	}
+	if r, _, _ := screen.lastCell(1, 1).Style.Fg().RGB(); r == 0xff {
+		t.Fatal("row fill leaked past its box")
 	}
 }
 
@@ -921,5 +999,64 @@ func TestBorderStyle(t *testing.T) {
 	}
 	if r, _, _ := cell.Style.Fg().RGB(); r != 0xff {
 		t.Fatalf("expected red border, got %#x", r)
+	}
+}
+
+func TestRenderNilRoot(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: nil})
+	Render(scope, screen)
+	// A nil root element renders an empty frame: the screen is cleared to
+	// blank cells, never showing stale content.
+	if cell := screen.lastCell(0, 0); cell.Set {
+		t.Fatal("expected blank cell for nil root")
+	}
+	if len(screen.frames) != 1 {
+		t.Fatalf("expected one frame presented, got %d", len(screen.frames))
+	}
+}
+
+func TestFlexFillChildOverflow(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
+		Fill(true),
+		BGColor(HexColor(0x00ff00)),
+		Row(
+			Padding(1),
+			Fill(true),
+			BGColor(HexColor(0xff0000)),
+			Rect(
+				Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
+				BGColor(HexColor(0x00ff00)),
+				Fill(true),
+			),
+		),
+	)})
+	Render(scope, screen)
+	// The child Rect's Box override covers the whole element box; the
+	// Row's fill must not paint over the child's cells in the padding ring.
+	if r, g, b := screen.lastCell(1, 0).Style.Bg().RGB(); !(r == 0 && g == 0xff && b == 0) {
+		t.Fatalf("expected child fill to survive in the Row padding ring, got %#x %#x %#x", r, g, b)
+	}
+}
+
+func TestFlexFillNoChildren(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
+		Fill(true),
+	)})
+	Render(scope, screen)
+	// A fill-only Row with no children paints the whole box, matching
+	// Rect's no-children behavior: the empty content area is not left
+	// blank.
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 4; x++ {
+			cell := screen.lastCell(x, y)
+			if !cell.Set || cell.Rune != ' ' {
+				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
+			}
+		}
 	}
 }
