@@ -85,14 +85,7 @@ func main() {
 		taiui.Render(scope, screen, discardScreen{})
 		select {
 		case key := <-keyCh:
-			switch key {
-			case "up":
-				state.Scroll--
-			case "down":
-				state.Scroll++
-			case "space":
-				state.Toggle = !state.Toggle
-			case "quit":
+			if !handleKey(&state, key) {
 				return
 			}
 		case <-tick.C:
@@ -114,6 +107,26 @@ func main() {
 		// shallow.
 		scope = base.Fork(func() State { return state })
 	}
+}
+
+// handleKey applies one key event to the demo state. It returns false
+// when the key requests quitting the demo.
+func handleKey(state *State, key string) bool {
+	switch key {
+	case "up":
+		// The scroll offset never goes negative: the view clamps at the
+		// content start.
+		if state.Scroll > 0 {
+			state.Scroll--
+		}
+	case "down":
+		state.Scroll++
+	case "space":
+		state.Toggle = !state.Toggle
+	case "quit":
+		return false
+	}
+	return true
 }
 
 func readKeys(r io.Reader, ch chan<- string) {

@@ -25,6 +25,11 @@ taiuidemo ANSI screen theory:
 - The presenter measures clusters with the same display-width options the
   renderer derived, so the terminal cursor advances by the same columns the
   renderer allocated.
+- Every SGR sequence starts with the reset parameter: a style is the
+  complete terminal state, so an attribute absent from it is cleared.
+  Without the reset, a plain cell after an underlined or overlined run
+  would keep the attribute and bleed the line into any following cell
+  that shares the same background.
 `
 
 // presentOptions mirrors the taiui RUNEWIDTH_EASTASIAN toggle so the
@@ -117,7 +122,11 @@ func paintRow(w io.Writer, frame *taiui.Frame, y int) {
 	}
 }
 
-// sgr renders a style as SGR parameters.
+// sgr renders a style as SGR parameters. Every sequence starts with the
+// reset parameter: a style describes the complete terminal state, so an
+// attribute absent from it must be cleared, or a plain cell after an
+// underlined or overlined run would keep the previous attribute and bleed
+// the line into neighboring cells.
 func sgr(style taiui.Style) string {
 	if style == nil {
 		return "\x1b[0m"
@@ -169,10 +178,15 @@ func sgr(style taiui.Style) string {
 			parts = append(parts, colorSGR(c, "48"))
 		}
 	}
+	if c := style.Uc(); c.Valid() {
+		if r, g, b := c.RGB(); r >= 0 && g >= 0 && b >= 0 {
+			parts = append(parts, colorSGR(c, "58"))
+		}
+	}
 	if len(parts) == 0 {
 		return "\x1b[0m"
 	}
-	return "\x1b[" + strings.Join(parts, ";") + "m"
+	return "\x1b[0;" + strings.Join(parts, ";") + "m"
 }
 
 // colorSGR renders one color as an SGR parameter: true color for RGB
