@@ -16,6 +16,16 @@ var _ Element = _VerticalScroll{}
 // approaches the bound.
 const maxScrollContentHeight = 1 << 14
 
+// scrollCell is one content cell collected while rendering the child of a
+// VerticalScroll. Cells are appended in draw order, so replaying them in
+// order makes the last draw of a cell win.
+type scrollCell struct {
+	X     int
+	Rune  rune
+	Combc []rune
+	Style Style
+}
+
 // _VerticalScroll is a scrollable viewport over a child element. It is a
 // pure value: specs are interpreted at construction into typed fields,
 // and rendering reads those fields.
@@ -78,20 +88,16 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		Bottom: box.Top + maxScrollContentHeight,
 	}
 	maxY := box.Top
-	type Cell struct {
-		X     int
-		Rune  rune
-		Combc []rune
-		Style Style
-	}
-	cells := make(map[int][]Cell)
+	// The map is pre-sized to the window height, the common case where the
+	// content is not taller than the window; taller content grows the map.
+	cells := make(map[int][]scrollCell, max(box.Height(), 1))
 	sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		if y > maxY {
 			maxY = y
 		}
 		// Cells are appended in draw order, so a later draw of the same
 		// cell wins when the blit below replays the draws in order.
-		cells[y] = append(cells[y], Cell{X: x, Rune: mainc, Combc: combc, Style: st})
+		cells[y] = append(cells[y], scrollCell{X: x, Rune: mainc, Combc: combc, Style: st})
 	})
 	renderElement(v.child, elemBox, style, sub, options)
 
@@ -124,14 +130,23 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	for i := 0; i < box.Height(); i++ {
 		y := fromY + i
 		for _, cell := range cells[y] {
-			if cell.X >= clipRight {
+			// Cells outside the window are clipped on both edges: a child
+			// with a Box override or a negative margin may draw beyond the
+			// window, and none of it may bleed onto the screen.
+			if cell.X < box.Left || cell.X >= clipRight {
+				continue
+			}
+			w := clusterWidth(options, cell.Rune, cell.Combc)
+			// A cluster that would extend past the right edge is not
+			// drawn, so content never spills beyond the window.
+			if cell.X+w > clipRight {
 				continue
 			}
 			if marks != nil {
 				idx := i*box.Width() + (cell.X - box.Left)
 				if idx >= 0 && idx < len(marks) {
 					marks[idx] = true
-					for j := 1; j < clusterWidth(options, cell.Rune, cell.Combc); j++ {
+					for j := 1; j < w; j++ {
 						// The trailing columns stay within the cluster's row.
 						if (cell.X-box.Left)+j < box.Width() {
 							marks[idx+j] = true

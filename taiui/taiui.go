@@ -14,11 +14,12 @@ taiui theory: UI = pure Element value derived from state.
   changes, and the next render reflects the change. There is no imperative
   element-update protocol.
 - Elements are pure values: constructors resolve spec lists at construction
-  time. Zero-argument function specs are evaluated eagerly, and each spec is
-  interpreted immediately into typed element fields, so rendering reads
-  plain data and never parses specs. Unknown specs fail at construction.
-  Dynamics that depend on state are expressed as providers in the scope
-  that build the element tree.
+  time. Zero-argument function specs are evaluated eagerly, and each result
+  is itself resolved as specs, so nested zero-argument functions expand
+  recursively. Each spec is interpreted immediately into typed element
+  fields, so rendering reads plain data and never parses specs. Unknown
+  specs fail at construction. Dynamics that depend on state are expressed
+  as providers in the scope that build the element tree.
 - The Spec language is a marker-interface protocol for element
   construction: style and layout specs, Specs groups, and elements
   themselves all implement Spec, so spec lists compose and nest. Bare
@@ -52,15 +53,22 @@ taiui theory: UI = pure Element value derived from state.
   real columns. Width honors RUNEWIDTH_EASTASIAN for ambiguous runes. With
   Wrap, lines word-wrap to the box width: breaks fall at space runs,
   words wider than the box hard-break at cluster boundaries, and a cluster
-  never splits across lines.
+  never splits across lines. Fill paints the content cells the text does
+  not occupy, including the residual gaps left by clusters clipped at
+  either edge.
 - VerticalScroll renders a child into a virtually unbounded column and
   crops to the visible window, clamping the view to the content extent.
-  It accepts the common specs: a Box override, the style chain, and Fill,
-  which paints the visible window's unoccupied cells. Crop-count
-  indicators at the window edges, and an optional Scrollbar thumb at the
-  right edge, draw over the fill.
+  Content is clipped to the window on both edges: cells drawn outside the
+  window are dropped, and a cluster that would extend past the right edge
+  is not drawn, so content never spills onto the screen. It accepts the
+  common specs: a Box override, the style chain, and Fill, which paints
+  the visible window's unoccupied cells. Crop-count indicators at the
+  window edges, and an optional Scrollbar thumb at the right edge, draw
+  over the fill.
 - FrameBuffer renders offscreen content: the content is data state, and
-  rendering is a pure read of it.
+  rendering is a pure read of it. Rendering snapshots the visible cells
+  under the read lock, then draws outside the lock, so a concurrent
+  writer is blocked only for the snapshot, never for the draw.
 - The exported API is a minimal facade: spec types, constructors, and
   style helpers only. Color specs cover the foreground, the background,
   and the underline color; attr and underline-style specs cover the VT

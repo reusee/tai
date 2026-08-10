@@ -104,6 +104,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 				}
 			}
 			runeIdx := 0
+			edge := contentLeft
 			g := options.StringGraphemes(ln)
 			for g.Next() {
 				cluster := g.Value()
@@ -116,6 +117,15 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, options displaywid
 				if left < contentLeft {
 					left += width
 					runeIdx += clusterRunes
+					if t.fill && left > edge {
+						// A skipped cluster spanned the content left
+						// edge, leaving a residual gap; fill paints it so
+						// the line background stays complete.
+						for edge < left && edge < right {
+							draw(edge, y, ' ', nil, style)
+							edge++
+						}
+					}
 					continue
 				}
 				if left >= right || left+width > right {

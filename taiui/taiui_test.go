@@ -460,6 +460,37 @@ func TestTextClusterClip(t *testing.T) {
 	}
 }
 
+func TestTextFillAlignRightClippedGap(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
+		Text("\U0001F469\u200d\U0001F4BBa", AlignRight, Fill(true)),
+	)})
+	Render(scope, screen)
+	// Right-aligned text wider than the box: the leading wide cluster is
+	// clipped at the left edge, and fill paints the residual gap it
+	// leaves in the content area.
+	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled gap at (0,0), got %+v", cell)
+	}
+	if r := screen.cell(1, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (1,0), got %v", r)
+	}
+}
+
+func TestClusterWidth(t *testing.T) {
+	options := displaywidth.Options{}
+	if w := clusterWidth(options, 'e', []rune{'\u0301'}); w != 1 {
+		t.Fatalf("expected combining cluster width 1, got %d", w)
+	}
+	if w := clusterWidth(options, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}); w != 2 {
+		t.Fatalf("expected ZWJ cluster width 2, got %d", w)
+	}
+	if w := clusterWidth(options, 'x', nil); w != 1 {
+		t.Fatalf("expected plain rune width 1, got %d", w)
+	}
+}
+
 func TestFlexColumn(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Column(
@@ -1058,5 +1089,53 @@ func TestFlexFillNoChildren(t *testing.T) {
 				t.Fatalf("expected filled ' ' at (%d,%d), got %+v", x, y, cell)
 			}
 		}
+	}
+}
+
+func TestVerticalScrollClipLeft(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 5, Bottom: 4, Right: 10},
+		VerticalScroll(
+			Rect(Box{Top: 0, Left: 0, Bottom: 2, Right: 10}, Fill(true)),
+			0,
+		),
+	)})
+	Render(scope, screen)
+	// The child's Box override paints beyond the window's left edge;
+	// the scroll must clip those cells so they never bleed onto the
+	// screen outside the window.
+	if r := screen.cell(4, 0); r != 0 {
+		t.Fatalf("expected no bleed left of the window, got %v", r)
+	}
+	if r := screen.cell(5, 0); r != ' ' {
+		t.Fatalf("expected content inside the window, got %v", r)
+	}
+	if r := screen.cell(4, 1); r != 0 {
+		t.Fatalf("expected no bleed left of the window on row 1, got %v", r)
+	}
+	if r := screen.cell(5, 1); r != ' ' {
+		t.Fatalf("expected content inside the window on row 1, got %v", r)
+	}
+}
+
+func TestVerticalScrollClipRightWideCluster(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	content := NewFrameBufferContent(4, 2)
+	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
+	scope := newRootScope(Root{Element: VerticalScroll(
+		FrameBuffer(content),
+		0,
+		Box{Top: 0, Left: 0, Bottom: 2, Right: 3},
+	)})
+	Render(scope, screen)
+	// The wide cluster at the window's right edge would extend past it;
+	// it must be clipped, so neither its base column nor the spill
+	// column is drawn.
+	if r := screen.cell(2, 0); r != 0 {
+		t.Fatalf("expected clipped wide cluster, got %v", r)
+	}
+	if r := screen.cell(3, 0); r != 0 {
+		t.Fatalf("expected no spill past the window, got %v", r)
 	}
 }

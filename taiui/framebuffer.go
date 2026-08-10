@@ -59,17 +59,29 @@ func renderFrameBuffer(f _FrameBuffer, box Box, style Style, draw drawFunc) {
 	if content == nil {
 		return
 	}
+	// Snapshot the visible cells under the read lock, then draw outside
+	// the lock: a concurrent writer is blocked only for the snapshot,
+	// never for the draw. Cells are immutable once placed, so the
+	// snapshot stays consistent.
 	content.RLock()
-	defer content.RUnlock()
 	width := min(content.width, box.Width())
 	height := min(content.height, box.Height())
+	type placedCell struct {
+		x, y int
+		cell *frameBufferCell
+	}
+	placed := make([]placedCell, 0, width*height/4)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			cell := content.cells[y*content.width+x]
 			if cell == nil {
 				continue
 			}
-			draw(box.Left+x, box.Top+y, cell.rune, cell.combc, cell.style)
+			placed = append(placed, placedCell{x: box.Left + x, y: box.Top + y, cell: cell})
 		}
+	}
+	content.RUnlock()
+	for _, c := range placed {
+		draw(c.x, c.y, c.cell.rune, c.cell.combc, c.cell.style)
 	}
 }
