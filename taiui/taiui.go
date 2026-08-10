@@ -29,15 +29,18 @@ taiui theory: UI = pure Element value derived from state.
   Elements never call screen methods; any backend able to present cell
   grids can render (character terminals, web views, native UIs). Frame.Equal
   lets a screen detect an unchanged frame and skip repainting.
-- Rect provides box-model layout (margin + padding) with optional fill.
-  Fill paints a background in the box cells that no child occupies, so
-  children render over it and wide grapheme clusters keep their trailing
-  columns.
+- Rect provides box-model layout (margin, border, and padding) with
+  optional fill. The border is a one-cell ring between margin and padding
+  that shrinks the content box by one cell per side; Fill paints a
+  background in the box cells that no child occupies, so children render
+  over it and wide grapheme clusters keep their trailing columns. The
+  border draws independently of fill and stays visible without a painted
+  background.
 - Row and Column provide flex layout along their axis: each child receives
   a share of the box proportional to its Weighted weight (default 1),
   tiling the content area without overlaps or gaps; the last child absorbs
   rounding. The box model and fill behave as in Rect, with fill covering
-  the padding ring around the tiled content.
+  the ring around the tiled content.
 - Text provides aligned multi-line rendering with per-position StyleFunc
   support. Lines are segmented into grapheme clusters (uax29): a cluster
   renders as one cell carrying its base and combining runes, and advances
@@ -53,7 +56,9 @@ taiui theory: UI = pure Element value derived from state.
 - FrameBuffer renders offscreen content: the content is data state, and
   rendering is a pure read of it.
 - The exported API is a minimal facade: spec types, constructors, and
-  style helpers only.
+  style helpers only. Color specs cover the foreground, the background,
+  and the underline color; attr and underline-style specs cover the VT
+  attribute set and its underline variants.
 `
 
 type Scope = dscope.Scope
@@ -84,6 +89,10 @@ type Box struct {
 
 func (b Box) Width() int  { return max(b.Right-b.Left, 0) }
 func (b Box) Height() int { return max(b.Bottom-b.Top, 0) }
+
+// UnderlineColor sets the color of the underline. It is visible only when
+// the underline is on.
+type UnderlineColor Color
 
 type Align uint8
 

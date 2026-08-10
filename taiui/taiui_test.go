@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/clipperhouse/displaywidth"
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
 	"github.com/reusee/dscope"
 )
@@ -589,5 +590,163 @@ func TestRectFillWideCluster(t *testing.T) {
 	}
 	if cell := screen.lastCell(0, 0); cell.Rune != '\U0001F469' {
 		t.Fatalf("expected woman emoji as cluster base, got %v", cell.Rune)
+	}
+}
+
+func TestDarkerOrLighterStyle(t *testing.T) {
+	// A monochrome foreground shifts with the background toward the
+	// mid-gray, without wrapping around the color byte boundary.
+	style := vt.BaseStyle.WithFg(HexColor(0xffffff)).WithBg(HexColor(0x000000))
+	got := DarkerOrLighterStyle(style, 15)
+	r, g, b := got.Fg().RGB()
+	if !(r == 0xf0 && g == 0xf0 && b == 0xf0) {
+		t.Fatalf("expected monochrome fg shifted to 0xf0, got %#x %#x %#x", r, g, b)
+	}
+	if r2, g2, b2 := got.Bg().RGB(); !(r2 == 15 && g2 == 15 && b2 == 15) {
+		t.Fatalf("expected bg shifted to 15, got %#x %#x %#x", r2, g2, b2)
+	}
+
+	// A monochrome foreground on a colored background stays monochrome;
+	// the colored background shifts per channel.
+	style = vt.BaseStyle.WithFg(HexColor(0x808080)).WithBg(HexColor(0x440000))
+	got = DarkerOrLighterStyle(style, 15)
+	if r, g, b := got.Fg().RGB(); !(r == 0x8f && g == 0x8f && b == 0x8f) {
+		t.Fatalf("expected monochrome fg to stay monochrome, got %#x %#x %#x", r, g, b)
+	}
+	if r2, g2, b2 := got.Bg().RGB(); !(r2 == 0x53 && g2 == 15 && b2 == 15) {
+		t.Fatalf("expected colored bg shifted per channel, got %#x %#x %#x", r2, g2, b2)
+	}
+
+	// A colored foreground is left untouched.
+	style = vt.BaseStyle.WithFg(HexColor(0xff0000)).WithBg(HexColor(0x000000))
+	got = DarkerOrLighterStyle(style, 15)
+	if r, _, _ := got.Fg().RGB(); r != 0xff {
+		t.Fatalf("expected colored fg untouched, got %#x", r)
+	}
+
+	// An unset foreground is preserved: no concrete RGB color is assigned
+	// to it. (tcell's vt package represents an unset color as a
+	// valid-but-colorless sentinel, so Valid() alone cannot detect it.)
+	style = vt.BaseStyle.WithFg(color.Default).WithBg(HexColor(0x000000))
+	got = DarkerOrLighterStyle(style, 15)
+	if r, g, b := got.Fg().RGB(); r >= 0 || g >= 0 || b >= 0 {
+		t.Fatalf("expected default fg preserved, got %#x %#x %#x", r, g, b)
+	}
+	if r2, g2, b2 := got.Bg().RGB(); !(r2 == 15 && g2 == 15 && b2 == 15) {
+		t.Fatalf("expected bg shifted, got %#x %#x %#x", r2, g2, b2)
+	}
+}
+
+func TestUnderlineColorSpec(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("u", Underline(true), UnderlineColor(HexColor(0xff0000)))})
+	Render(scope, screen)
+	cell := screen.lastCell(0, 0)
+	if cell.Style.Attr()&vt.Underline == 0 {
+		t.Fatal("Underline(true) spec had no effect")
+	}
+	r, g, b := cell.Style.Uc().RGB()
+	if !(r == 0xff && g == 0 && b == 0) {
+		t.Fatalf("expected red underline color, got %#x %#x %#x", r, g, b)
+	}
+}
+
+func TestUnderlineStyleSpec(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Text("u", UnderlineStyle(DoubleUnderline))})
+	Render(scope, screen)
+	cell := screen.lastCell(0, 0)
+	if cell.Style.Attr()&vt.DoubleUnderline != vt.DoubleUnderline {
+		t.Fatalf("expected double underline attr, got %v", cell.Style.Attr())
+	}
+}
+
+func TestBorder(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		Padding(1),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// The border ring sits at the box edges; padding pushes the content
+	// to (2,2).
+	if r := screen.cell(0, 0); r != '┌' {
+		t.Fatalf("expected top-left corner at (0,0), got %v", r)
+	}
+	if r := screen.cell(79, 0); r != '┐' {
+		t.Fatalf("expected top-right corner at (79,0), got %v", r)
+	}
+	if r := screen.cell(0, 24); r != '└' {
+		t.Fatalf("expected bottom-left corner at (0,24), got %v", r)
+	}
+	if r := screen.cell(79, 24); r != '┘' {
+		t.Fatalf("expected bottom-right corner at (79,24), got %v", r)
+	}
+	if r := screen.cell(1, 0); r != '─' {
+		t.Fatalf("expected top edge at (1,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != '│' {
+		t.Fatalf("expected left edge at (0,1), got %v", r)
+	}
+	if r := screen.cell(2, 2); r != 'a' {
+		t.Fatalf("expected 'a' at content (2,2), got %v", r)
+	}
+}
+
+func TestBorderFill(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		Padding(1),
+		Fill(true),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	// Fill paints the padding ring between the border and the content;
+	// the border ring carries the glyphs.
+	if cell := screen.lastCell(1, 1); !cell.Set || cell.Rune != ' ' {
+		t.Fatalf("expected filled padding at (1,1), got %+v", cell)
+	}
+	if r := screen.cell(2, 2); r != 'a' {
+		t.Fatalf("expected 'a' at content (2,2), got %v", r)
+	}
+}
+
+func TestFlexBorder(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Row(
+		Border(true),
+		Rect(Fill(true), Text("a")),
+		Rect(Fill(true), Text("b")),
+	)})
+	Render(scope, screen)
+	// The border shrinks the tiling area to x 1..78; the two equal
+	// children split it into 39 columns each.
+	if r := screen.cell(0, 0); r != '┌' {
+		t.Fatalf("expected top-left corner at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 1); r != 'a' {
+		t.Fatalf("expected 'a' at (1,1), got %v", r)
+	}
+	if r := screen.cell(40, 1); r != 'b' {
+		t.Fatalf("expected 'b' at (40,1), got %v", r)
+	}
+}
+
+func TestBorderStyle(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Border(true),
+		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
+		Text("a"),
+	)})
+	Render(scope, screen)
+	cell := screen.lastCell(0, 0)
+	if cell.Rune != '┌' {
+		t.Fatalf("expected top-left corner, got %v", cell.Rune)
+	}
+	if r, _, _ := cell.Style.Fg().RGB(); r != 0xff {
+		t.Fatalf("expected red border, got %#x", r)
 	}
 }

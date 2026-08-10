@@ -58,21 +58,19 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	}
 	maxY := box.Top
 	type Cell struct {
+		X     int
 		Rune  rune
 		Combc []rune
 		Style Style
 	}
-	cells := make(map[int]map[int]Cell)
+	cells := make(map[int][]Cell)
 	sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
 		if y > maxY {
 			maxY = y
 		}
-		line, ok := cells[y]
-		if !ok {
-			line = make(map[int]Cell)
-			cells[y] = line
-		}
-		line[x] = Cell{Rune: mainc, Combc: combc, Style: st}
+		// Cells are appended in draw order, so a later draw of the same
+		// cell wins when the blit below replays the draws in order.
+		cells[y] = append(cells[y], Cell{X: x, Rune: mainc, Combc: combc, Style: st})
 	})
 	renderElement(v.child, elemBox, style, sub)
 
@@ -97,11 +95,11 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	numTopCrop := fromY - box.Top
 	for i := 0; i < box.Height(); i++ {
 		y := fromY + i
-		for x, cell := range cells[y] {
-			if x >= clipRight {
+		for _, cell := range cells[y] {
+			if cell.X >= clipRight {
 				continue
 			}
-			draw(x, y-numTopCrop, cell.Rune, cell.Combc, cell.Style)
+			draw(cell.X, y-numTopCrop, cell.Rune, cell.Combc, cell.Style)
 		}
 	}
 	numBottomCrop := maxY - (fromY + box.Height()) + 1

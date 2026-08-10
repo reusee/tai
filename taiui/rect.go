@@ -4,14 +4,13 @@ import "fmt"
 
 var _ Element = _Rect{}
 
-// _Rect is a box with box-model layout and children. It is a pure value:
-// specs are interpreted at construction into typed fields, and rendering
-// reads those fields.
+// _Rect is a box with box-model layout (margin, border, padding) and
+// children. It is a pure value: specs are interpreted at construction
+// into typed fields, and rendering reads those fields.
 type _Rect struct {
 	elementBase
 	children []Element
-	margin   [4]int
-	padding  [4]int
+	boxModel boxModel
 }
 
 // Rect creates a box element from specs. Specs are interpreted immediately;
@@ -38,12 +37,11 @@ func (r *_Rect) applySpec(spec any) {
 		if v != nil {
 			r.children = append(r.children, v)
 		}
-	case _Margin:
-		r.margin = applyBoxModel(v)
-	case _Padding:
-		r.padding = applyBoxModel(v)
 	default:
 		if r.applyCommonSpec(v) {
+			return
+		}
+		if r.boxModel.applySpec(v) {
 			return
 		}
 		panic(fmt.Errorf("unknown spec %#v", v))
@@ -59,16 +57,13 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		return
 	}
 
-	childBox := Box{
-		Top:    box.Top + r.margin[0] + r.padding[0],
-		Left:   box.Left + r.margin[3] + r.padding[3],
-		Right:  box.Right - r.margin[1] - r.padding[1],
-		Bottom: box.Bottom - r.margin[2] - r.padding[2],
-	}
+	outer := r.boxModel.outerBox(box)
+	content := r.boxModel.contentBox(box)
 	if !r.fill {
 		for _, child := range r.children {
-			renderElement(child, childBox, style, draw)
+			renderElement(child, content, style, draw)
 		}
+		r.boxModel.drawBorder(outer, style, draw)
 		return
 	}
 
@@ -90,15 +85,16 @@ func renderRect(r _Rect, box Box, style Style, draw drawFunc) {
 		draw(x, y, mainc, combc, st)
 	})
 	for _, child := range r.children {
-		renderElement(child, childBox, style, marked)
+		renderElement(child, content, style, marked)
 	}
 
-	for y := box.Top + r.margin[0]; y < box.Bottom-r.margin[2]; y++ {
-		for x := box.Left + r.margin[3]; x < box.Right-r.margin[1]; x++ {
+	for y := outer.Top; y < outer.Bottom; y++ {
+		for x := outer.Left; x < outer.Right; x++ {
 			idx := (y-box.Top)*box.Width() + (x - box.Left)
 			if !marks[idx] {
 				draw(x, y, ' ', nil, style)
 			}
 		}
 	}
+	r.boxModel.drawBorder(outer, style, draw)
 }

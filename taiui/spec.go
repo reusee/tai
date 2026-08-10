@@ -14,12 +14,16 @@ type Spec interface {
 
 // Spec marker methods are grouped here: they are part of the Spec protocol,
 // not of the declaring type's own design.
-func (Box) spec()             {}
-func (Align) spec()           {}
-func (BGColor) spec()         {}
-func (FGColor) spec()         {}
-func (Bold) spec()            {}
-func (Underline) spec()       {}
+func (Box) spec()     {}
+func (Align) spec()   {}
+func (BGColor) spec() {}
+func (FGColor) spec() {}
+
+func (UnderlineColor) spec() {}
+func (Bold) spec()           {}
+func (Underline) spec()      {}
+
+func (UnderlineStyle) spec()  {}
 func (Fill) spec()            {}
 func (StyleFunc) spec()       {}
 func (_Margin) spec()         {}
@@ -28,6 +32,10 @@ func (_Rect) spec()           {}
 func (_Text) spec()           {}
 func (_VerticalScroll) spec() {}
 func (_FrameBuffer) spec()    {}
+
+func (Border) spec() {}
+
+func (BorderStyle) spec() {}
 
 // Specs is a group of specs. It is itself a Spec, so groups nest and can
 // be placed anywhere a single Spec is accepted.
@@ -60,8 +68,6 @@ type elementBase struct {
 	styles []StyleFunc
 }
 
-// applyCommonSpec handles the specs common to every element. It returns
-// false if the spec is not a common one.
 func (b *elementBase) applyCommonSpec(spec any) bool {
 	switch spec := spec.(type) {
 	case Box:
@@ -76,6 +82,10 @@ func (b *elementBase) applyCommonSpec(spec any) bool {
 		b.styles = append(b.styles, SameStyle.SetFG(Color(spec)))
 	case BGColor:
 		b.styles = append(b.styles, SameStyle.SetBG(Color(spec)))
+	case UnderlineColor:
+		b.styles = append(b.styles, SameStyle.SetUnderlineColor(Color(spec)))
+	case UnderlineStyle:
+		b.styles = append(b.styles, SameStyle.SetUnderlineStyle(spec))
 	case Bold:
 		b.styles = append(b.styles, SameStyle.SetBold(bool(spec)))
 	case Blink:

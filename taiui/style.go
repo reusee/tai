@@ -1,6 +1,8 @@
 package taiui
 
 import (
+	"fmt"
+
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
 )
@@ -17,11 +19,31 @@ func (fn StyleFunc) SetFG(c Color) StyleFunc {
 func (fn StyleFunc) SetBG(c Color) StyleFunc {
 	return func(s Style) Style { return fn(s).WithBg(c) }
 }
+
+// SetUnderlineColor sets the color of the underline. It is visible only
+// when the underline is on.
+func (fn StyleFunc) SetUnderlineColor(c Color) StyleFunc {
+	return func(s Style) Style { return fn(s).WithUc(c) }
+}
 func (fn StyleFunc) SetBold(b bool) StyleFunc {
 	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Bold) }
 }
 func (fn StyleFunc) SetUnderline(b bool) StyleFunc {
 	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Underline) }
+}
+
+// SetUnderlineStyle selects the underline variant. Selecting a style also
+// turns the underline on; the VT underline mask holds the variant.
+func (fn StyleFunc) SetUnderlineStyle(style UnderlineStyle) StyleFunc {
+	if style < 0 || int(style) >= len(underlineStyles) {
+		panic(fmt.Errorf("taiui: bad underline style %d", style))
+	}
+	return func(s Style) Style {
+		s = fn(s)
+		attr := s.Attr() &^ vt.UnderlineMask
+		attr |= underlineStyles[style]
+		return s.WithAttr(attr)
+	}
 }
 func (fn StyleFunc) SetItalic(b bool) StyleFunc {
 	return func(s Style) Style { return withAttrOn(fn(s), b, vt.Italic) }
@@ -45,7 +67,31 @@ func (fn StyleFunc) And(f2 StyleFunc) StyleFunc {
 	return func(s Style) Style { return f2(fn(s)) }
 }
 
+// underlineStyles maps the UnderlineStyle values to their VT underline
+// attributes.
+var underlineStyles = [...]vt.Attr{
+	vt.PlainUnderline,
+	vt.DoubleUnderline,
+	vt.CurlyUnderline,
+	vt.DottedUnderline,
+	vt.DashedUnderline,
+}
+
 type Color = color.Color
+
+// UnderlineStyle selects the variant drawn by the underline. Selecting a
+// style also turns the underline on; the variant alone has no effect.
+type UnderlineStyle int
+
+// The underline variants, in the same order as the VT underline style
+// bits (vt.UnderlineMask).
+const (
+	PlainUnderline UnderlineStyle = iota
+	DoubleUnderline
+	CurlyUnderline
+	DottedUnderline
+	DashedUnderline
+)
 
 var (
 	HexColor = color.NewHexColor
@@ -84,25 +130,26 @@ func withAttrOn(style Style, on bool, attr vt.Attr) Style {
 	return style.WithAttr(style.Attr() &^ attr)
 }
 
+// DarkerOrLighterStyle returns a style whose background, and any
+// monochrome foreground, are shifted by n toward the mid-gray 128: on a
+// dark theme both become lighter, on a light theme both darker. Colored
+// foregrounds and unset colors are preserved.
 func DarkerOrLighterStyle(style Style, n int32) Style {
 	fg := style.Fg()
 	bg := style.Bg()
 	r, g, b := fg.RGB()
-	mono := r == g && g == b
 	r2, g2, b2 := bg.RGB()
-	r2, d := towards128(r2, n)
-	if mono {
-		r += d
+	if r2 >= 0 {
+		r2, _ = towards128(r2, n)
+		g2, _ = towards128(g2, n)
+		b2, _ = towards128(b2, n)
+		bg = color.NewRGBColor(r2, g2, b2)
 	}
-	g2, d = towards128(g2, n)
-	if mono {
-		g += d
+	if r >= 0 && r == g && g == b {
+		r, _ = towards128(r, n)
+		g, _ = towards128(g, n)
+		b, _ = towards128(b, n)
+		fg = color.NewRGBColor(r, g, b)
 	}
-	b2, d = towards128(b2, n)
-	if mono {
-		b += d
-	}
-	return style.
-		WithFg(color.NewRGBColor(r, g, b)).
-		WithBg(color.NewRGBColor(r2, g2, b2))
+	return style.WithFg(fg).WithBg(bg)
 }
