@@ -15,58 +15,119 @@ const (
 	minHeight = 24
 )
 
-// State is the demo's mutable state. A state change is a scope fork: the
-// Root provider re-evaluates and the next render reflects the change.
-type State struct {
-	Width  int
-	Height int
-	Scroll int
-	Toggle bool
-	Frame  int64
-	Time   time.Time
-}
+const TheoryOfProviders = `
+taiuidemo provider theory:
+- State and UI are split into providers: each piece of state is its own
+  provider type, and each component is its own provider type. dscope caches
+  each provider result and recomputes only the providers whose dependencies
+  changed, so a state change recomputes exactly the components that depend
+  on it.
+- The event loop forks the current scope with only the providers that
+  changed. Forking from the current scope preserves the cached results of
+  unchanged providers; forking from the base scope would discard them and
+  recompute everything.
+- The root provider composes the component providers; it is the only
+  provider that depends on all of them, so it is recomputed on every state
+  change, but the components themselves are recomputed only when their own
+  dependencies change.
+`
 
-func buildUI(s State, fb *taiui.FrameBufferContent) taiui.Element {
-	if s.Width < minWidth || s.Height < minHeight {
-		return taiui.Rect(
+// State providers: each piece of demo state is its own provider type, so
+// forking one piece recomputes only the components that depend on it.
+type Width int
+type Height int
+type Scroll int
+type Toggle bool
+type Frame int64
+type Now time.Time
+
+// Component providers: each panel is its own provider type, so dscope can
+// cache it independently and recompute it only when its dependencies change.
+type Header taiui.Element
+type Footer taiui.Element
+type PanelText taiui.Element
+type PanelScroll taiui.Element
+type PanelBox taiui.Element
+type PanelDynamic taiui.Element
+
+// rootProvider composes the component providers into the root UI. It is the
+// only provider that depends on all components, so it is recomputed on every
+// state change, but the components themselves are recomputed only when their
+// own dependencies change.
+func rootProvider(
+	w Width,
+	h Height,
+	hdr Header,
+	ftr Footer,
+	pt PanelText,
+	ps PanelScroll,
+	pb PanelBox,
+	pd PanelDynamic,
+) taiui.Root {
+	if int(w) < minWidth || int(h) < minHeight {
+		return taiui.Root{Element: taiui.Rect(
 			// A Box override pins the banner to the middle third of the
 			// screen regardless of the box the parent would assign.
-			taiui.Box{Top: s.Height / 3, Left: 0, Bottom: 2 * s.Height / 3, Right: s.Width},
+			taiui.Box{Top: int(h) / 3, Left: 0, Bottom: 2 * int(h) / 3, Right: int(w)},
 			taiui.Border(true),
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(0x300000)),
 			taiui.Text(
-				fmt.Sprintf("too small: %dx%d, need %dx%d", s.Width, s.Height, minWidth, minHeight),
+				fmt.Sprintf("too small: %dx%d, need %dx%d", int(w), int(h), minWidth, minHeight),
 				taiui.AlignCenter,
 			),
-		)
+		)}
 	}
-	return taiui.Column(
-		taiui.Weighted(1, header(s)),
+	return taiui.Root{Element: taiui.Column(
+		taiui.Weighted(1, taiui.Element(hdr)),
 		taiui.Weighted(22, taiui.Row(
 			taiui.Weighted(1, taiui.Column(
-				taiui.Weighted(1, panelText()),
-				taiui.Weighted(1, panelScroll(s)),
+				taiui.Weighted(1, taiui.Element(pt)),
+				taiui.Weighted(1, taiui.Element(ps)),
 			)),
 			taiui.Weighted(1, taiui.Column(
-				taiui.Weighted(1, panelBox(s)),
-				taiui.Weighted(1, panelDynamic(s, fb)),
+				taiui.Weighted(1, taiui.Element(pb)),
+				taiui.Weighted(1, taiui.Element(pd)),
 			)),
 		)),
-		taiui.Weighted(1, footer()),
-	)
+		taiui.Weighted(1, taiui.Element(ftr)),
+	)}
 }
 
-func header(s State) taiui.Element {
+func provideHeader(t Toggle, now Now) Header {
+	return Header(header(t, now))
+}
+
+func provideFooter() Footer {
+	return Footer(footer())
+}
+
+func providePanelText() PanelText {
+	return PanelText(panelText())
+}
+
+func providePanelScroll(scroll Scroll) PanelScroll {
+	return PanelScroll(panelScroll(scroll))
+}
+
+func providePanelBox(t Toggle) PanelBox {
+	return PanelBox(panelBox(t))
+}
+
+func providePanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
+	return PanelDynamic(panelDynamic(frame, toggle, fb))
+}
+
+func header(t Toggle, now Now) taiui.Element {
 	return taiui.Row(
 		taiui.Weighted(3, taiui.Text(
 			" taiui demo ",
 			taiui.Bold(true),
-			taiui.Alt(s.Toggle, taiui.BGColor(taiui.HexColor(0x303030)), taiui.BGColor(taiui.HexColor(0x202020))),
+			taiui.Alt(bool(t), taiui.BGColor(taiui.HexColor(0x303030)), taiui.BGColor(taiui.HexColor(0x202020))),
 			taiui.Fill(true),
 		)),
 		taiui.Weighted(2, taiui.Text(
-			fmt.Sprintf("%s \u00b7 %s", runeWidthEnv(), s.Time.Format("15:04:05")),
+			fmt.Sprintf("%s \u00b7 %s", runeWidthEnv(), time.Time(now).Format("15:04:05")),
 			taiui.AlignRight,
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(0x202020)),
@@ -119,7 +180,7 @@ func rainbowStyle(offset int) taiui.StyleFunc {
 	return taiui.SameStyle.SetFG(taiui.HexColor(rainbowColors[offset%len(rainbowColors)]))
 }
 
-func panelBox(s State) taiui.Element {
+func panelBox(t Toggle) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
@@ -130,7 +191,7 @@ func panelBox(s State) taiui.Element {
 			taiui.Weighted(5, taiui.Rect(
 				taiui.Margin(1),
 				taiui.Border(true),
-				bigBoxBorder(s), // zero-arg function spec
+				bigBoxBorder(t), // zero-arg function spec
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x181818)),
 				taiui.Row(
@@ -145,9 +206,9 @@ func panelBox(s State) taiui.Element {
 // bigBoxBorder is a zero-argument function spec: element constructors
 // evaluate such specs eagerly at construction, so the border color follows
 // the toggle state on every rebuild.
-func bigBoxBorder(s State) func() taiui.Spec {
+func bigBoxBorder(t Toggle) func() taiui.Spec {
 	return func() taiui.Spec {
-		if s.Toggle {
+		if bool(t) {
 			return taiui.BorderStyle(taiui.SameStyle.SetFG(taiui.HexColor(0xff8800)))
 		}
 		return taiui.BorderStyle(taiui.SameStyle.SetFG(taiui.HexColor(0x0088ff)))
@@ -162,14 +223,14 @@ func fillRect(label string, bg int32) taiui.Element {
 	)
 }
 
-func panelScroll(s State) taiui.Element {
+func panelScroll(scroll Scroll) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x141414)),
 		taiui.Column(
-			taiui.Weighted(1, panelTitle(fmt.Sprintf("Scroll (\u2191\u2193) \u00b7 offset %d", s.Scroll))),
+			taiui.Weighted(1, panelTitle(fmt.Sprintf("Scroll (\u2191\u2193) \u00b7 offset %d", int(scroll)))),
 			taiui.Weighted(5, taiui.VerticalScroll(
 				taiui.Rect(
 					// The right padding keeps wrapped lines clear of the
@@ -177,7 +238,7 @@ func panelScroll(s State) taiui.Element {
 					taiui.Padding(0, 1, 0, 0),
 					taiui.Text(scrollLines(), taiui.Wrap(true)),
 				),
-				s.Scroll,
+				int(scroll),
 				taiui.Scrollbar(true),
 				taiui.Fill(true),
 			)),
@@ -201,7 +262,7 @@ func scrollLines() []string {
 	return lines
 }
 
-func panelDynamic(s State, fb *taiui.FrameBufferContent) taiui.Element {
+func panelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
@@ -211,9 +272,9 @@ func panelDynamic(s State, fb *taiui.FrameBufferContent) taiui.Element {
 			taiui.Weighted(1, panelTitle("State \u00b7 FrameBuffer")),
 			taiui.Weighted(3, taiui.FrameBuffer(fb)),
 			taiui.Weighted(2, taiui.Text(
-				fmt.Sprintf("frame %d \u00b7 toggle %v", s.Frame, s.Toggle),
+				fmt.Sprintf("frame %d \u00b7 toggle %v", int64(frame), bool(toggle)),
 				taiui.Fill(true),
-				taiui.If(s.Toggle, taiui.BGColor(taiui.HexColor(0x103010))),
+				taiui.If(bool(toggle), taiui.BGColor(taiui.HexColor(0x103010))),
 			)),
 		),
 	)

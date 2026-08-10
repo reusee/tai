@@ -60,10 +60,29 @@ func main() {
 	// tick, and the next render reads the updated content purely.
 	fb := taiui.NewFrameBufferContent(fbWidth, fbHeight)
 
-	state := State{Width: width, Height: height, Scroll: 0, Toggle: true, Time: time.Now()}
+	// Each piece of state is an independent variable and an independent
+	// provider, so forking one piece recomputes only the components that
+	// depend on it.
+	scroll := 0
+	toggle := true
+	frame := int64(0)
+	now := time.Now()
+
 	base := dscope.New(
-		func() State { return state },
-		func(s State) taiui.Root { return taiui.Root{Element: buildUI(s, fb)} },
+		func() Width { return Width(width) },
+		func() Height { return Height(height) },
+		func() Scroll { return Scroll(scroll) },
+		func() Toggle { return Toggle(toggle) },
+		func() Frame { return Frame(frame) },
+		func() Now { return Now(now) },
+		func() *taiui.FrameBufferContent { return fb },
+		provideHeader,
+		provideFooter,
+		providePanelText,
+		providePanelScroll,
+		providePanelBox,
+		providePanelDynamic,
+		rootProvider,
 	)
 	scope := base
 
@@ -85,48 +104,58 @@ func main() {
 		taiui.Render(scope, screen, discardScreen{})
 		select {
 		case key := <-keyCh:
-			if !handleKey(&state, key) {
+			changed, quit := handleKey(&scroll, &toggle, key)
+			if quit {
 				return
 			}
+			// Fork only the providers whose state changed: dscope keeps the
+			// cached results of the unchanged providers, so the next render
+			// recomputes only the components that depend on the change.
+			for _, provider := range changed {
+				scope = scope.Fork(provider)
+			}
 		case <-tick.C:
-			state.Frame++
-			drawBall(fb, state.Frame)
+			frame++
+			drawBall(fb, frame)
+			scope = scope.Fork(func() Frame { return Frame(frame) })
 		case <-clock.C:
-			state.Time = time.Now()
+			now = time.Now()
+			scope = scope.Fork(func() Now { return Now(now) })
 		case <-resizeCh:
 			if ws, err := t.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
 				width, height = ws.Width, ws.Height
 				screen.resize(width, height)
-				state.Width, state.Height = width, height
+				scope = scope.Fork(func() Width { return Width(width) })
+				scope = scope.Fork(func() Height { return Height(height) })
 			}
 		case <-sigCh:
 			return
 		}
-		// Forking the base scope with the new State re-evaluates the Root
-		// provider; the old scope is discarded, so the fork chain stays
-		// shallow.
-		scope = base.Fork(func() State { return state })
 	}
 }
 
-// handleKey applies one key event to the demo state. It returns false
-// when the key requests quitting the demo.
-func handleKey(state *State, key string) bool {
+// handleKey applies one key event to the demo state. It returns the
+// providers for the state pieces that changed, and whether the key
+// requests quitting the demo.
+func handleKey(scroll *int, toggle *bool, key string) (changed []any, quit bool) {
 	switch key {
 	case "up":
 		// The scroll offset never goes negative: the view clamps at the
 		// content start.
-		if state.Scroll > 0 {
-			state.Scroll--
+		if *scroll > 0 {
+			*scroll--
+			changed = append(changed, func() Scroll { return Scroll(*scroll) })
 		}
 	case "down":
-		state.Scroll++
+		*scroll++
+		changed = append(changed, func() Scroll { return Scroll(*scroll) })
 	case "space":
-		state.Toggle = !state.Toggle
+		*toggle = !*toggle
+		changed = append(changed, func() Toggle { return Toggle(*toggle) })
 	case "quit":
-		return false
+		return nil, true
 	}
-	return true
+	return changed, false
 }
 
 func readKeys(r io.Reader, ch chan<- string) {

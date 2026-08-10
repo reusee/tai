@@ -39,20 +39,40 @@ func TestSgrUnderlineColor(t *testing.T) {
 }
 
 func TestHandleKeyScrollClamp(t *testing.T) {
-	state := &State{}
-	if !handleKey(state, "up") {
+	scroll := 0
+	toggle := true
+	changed, quit := handleKey(&scroll, &toggle, "up")
+	if quit {
 		t.Fatal("up must not quit the demo")
 	}
-	if state.Scroll != 0 {
-		t.Fatalf("expected scroll clamped at 0, got %d", state.Scroll)
+	if scroll != 0 {
+		t.Fatalf("expected scroll clamped at 0, got %d", scroll)
 	}
-	if !handleKey(state, "down") {
+	if len(changed) != 0 {
+		t.Fatalf("expected no provider for clamped up, got %d", len(changed))
+	}
+	changed, quit = handleKey(&scroll, &toggle, "down")
+	if quit {
 		t.Fatal("down must not quit the demo")
 	}
-	if state.Scroll != 1 {
-		t.Fatalf("expected scroll 1 after down, got %d", state.Scroll)
+	if scroll != 1 {
+		t.Fatalf("expected scroll 1 after down, got %d", scroll)
 	}
-	if handleKey(state, "quit") {
+	if len(changed) != 1 {
+		t.Fatalf("expected one provider after down, got %d", len(changed))
+	}
+	changed, quit = handleKey(&scroll, &toggle, "space")
+	if quit {
+		t.Fatal("space must not quit the demo")
+	}
+	if toggle {
+		t.Fatal("expected toggle flipped by space")
+	}
+	if len(changed) != 1 {
+		t.Fatalf("expected one provider after space, got %d", len(changed))
+	}
+	_, quit = handleKey(&scroll, &toggle, "quit")
+	if !quit {
 		t.Fatal("quit must stop the demo")
 	}
 }
