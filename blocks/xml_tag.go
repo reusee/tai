@@ -300,20 +300,3 @@ func parseXMLOpeningTag(s string) (kind string, attrs map[string]string, ok bool
 	}
 	return token.Kind, token.Attributes, true
 }
-
-// parseXMLClosingTag parses an XML closing tag (</kind>) and returns the
-// element name. Content between the element name and '>' must be whitespace
-// only; any other character causes the tag to be rejected. Trailing content
-// after '>' is ignored. Returns ok=false if the input is not a valid or
-// complete closing tag. Opening and self-closing tags are rejected.
-// See TheoryOfXMLTokenizing.
-func parseXMLClosingTag(s string) (kind string, ok bool) {
-	token, _, ok2 := TokenizeXMLTag(s)
-	if !ok2 {
-		return "", false
-	}
-	if !token.IsClosing() {
-		return "", false
-	}
-	return token.Kind, true
-}

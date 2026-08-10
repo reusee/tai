@@ -322,26 +322,3 @@ func TestParseXMLOpeningTagWrapper(t *testing.T) {
 		t.Fatal("expected incomplete tag to be rejected")
 	}
 }
-
-func TestParseXMLClosingTagWrapper(t *testing.T) {
-	// Verify the wrapper maintains backward compatibility.
-	kind, ok := parseXMLClosingTag(`</change>`)
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if kind != "change" {
-		t.Fatalf("expected kind change, got %s", kind)
-	}
-
-	// Opening tag is rejected.
-	_, ok = parseXMLClosingTag(`<change>`)
-	if ok {
-		t.Fatal("expected opening tag to be rejected")
-	}
-
-	// Incomplete closing tag is rejected.
-	_, ok = parseXMLClosingTag(`</change`)
-	if ok {
-		t.Fatal("expected incomplete closing tag to be rejected")
-	}
-}

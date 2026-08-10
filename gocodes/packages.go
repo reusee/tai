@@ -146,13 +146,6 @@ func (Module) Packages(
 			err = errors.Join(err, errors.Join(errs...))
 		}
 
-		dirs := make(map[string]bool)
-		for _, pkg := range append(rootPkgs, contextPkgs...) {
-			if pkg.Module != nil {
-				dirs[pkg.Module.Dir] = true
-			}
-		}
-
 		logger.Info("packages", "root", len(rootPkgs), "context", len(contextPkgs))
 
 	})
