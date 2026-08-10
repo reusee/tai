@@ -60,27 +60,26 @@ func main() {
 
 	screen := &ansiScreen{w: t, width: width, height: height}
 
-	// Each piece of state is an independent variable and an independent
-	// provider, so forking one piece recomputes only the components that
-	// depend on it.
-	scroll := 0
-	toggle := true
-	w1Weight := 1
-	modal := false
-	rotation := 0
+	// The key-handled state (scroll, toggle, w1 weight, modal, rotation)
+	// lives inside the HandleKey provider: it injects the current values
+	// and returns the providers that carry the new values, so forking one
+	// piece recomputes only the components that depend on it. The frame
+	// counter and the clock are local variables updated by the event loop
+	// below.
 	frame := int64(0)
 	now := time.Now()
 
 	scope := dscope.New(
 		func() Width { return Width(width) },
 		func() Height { return Height(height) },
-		func() Scroll { return Scroll(scroll) },
-		func() Toggle { return Toggle(toggle) },
-		func() W1Weight { return W1Weight(w1Weight) },
-		func() Modal { return Modal(modal) },
-		func() Rotation { return Rotation(rotation) },
+		func() Scroll { return 0 },
+		func() Toggle { return true },
+		func() W1Weight { return 1 },
+		func() Modal { return false },
+		func() Rotation { return 0 },
 		func() Frame { return Frame(frame) },
 		func() Now { return Now(now) },
+		provideHandleKey,
 		provideFrameBufferContent,
 		provideHeader,
 		provideFooter,
@@ -118,7 +117,11 @@ func main() {
 	for {
 		select {
 		case key := <-keyCh:
-			changed, quit := handleKey(&scroll, &toggle, &w1Weight, &modal, &rotation, key)
+			// The key handler is a provider in the scope: it injects the
+			// current state and returns the providers that carry the new
+			// state.
+			handleKey := dscope.Get[HandleKey](scope)
+			changed, quit := handleKey(key)
 			if quit {
 				return
 			}
@@ -163,47 +166,63 @@ func main() {
 // right arrow keys; the weight must stay positive for Weighted.
 const maxW1Weight = 10
 
-func handleKey(scroll *int, toggle *bool, w1Weight *int, modal *bool, rotation *int, key string) (changed []any, quit bool) {
-	switch key {
-	case "up":
-		// The scroll offset never goes negative: the view clamps at the
-		// content start.
-		if *scroll > 0 {
-			*scroll--
-			changed = append(changed, func() Scroll { return Scroll(*scroll) })
+// HandleKey is the key handler provided by the scope: it injects the
+// current state and returns the providers that carry the new state.
+type HandleKey func(key string) (changed []any, quit bool)
+
+// provideHandleKey builds the key handler from the current state. The
+// handler mutates its captured state and returns a provider for each
+// changed piece, so the event loop forks only the changed pieces and
+// dscope recomputes only the components that depend on them.
+func provideHandleKey(
+	scroll Scroll,
+	toggle Toggle,
+	w1Weight W1Weight,
+	modal Modal,
+	rotation Rotation,
+) HandleKey {
+	return func(key string) (changed []any, quit bool) {
+		switch key {
+		case "up":
+			// The scroll offset never goes negative: the view clamps at the
+			// content start.
+			if scroll > 0 {
+				scroll--
+				changed = append(changed, func() Scroll { return scroll })
+			}
+		case "down":
+			scroll++
+			changed = append(changed, func() Scroll { return scroll })
+		case "left":
+			// The w1 weight never drops below 1: Weighted requires a positive
+			// weight, so the w1 box always keeps a share of the row.
+			if w1Weight > 1 {
+				w1Weight--
+				changed = append(changed, func() W1Weight { return w1Weight })
+			}
+		case "right":
+			if w1Weight < maxW1Weight {
+				w1Weight++
+				changed = append(changed, func() W1Weight { return w1Weight })
+			}
+		case "space":
+			toggle = !toggle
+			changed = append(changed, func() Toggle { return toggle })
+		case "modal":
+			// The modal is part of the element tree, derived from state: an
+			// Overlay stacks it over the main UI.
+			modal = !modal
+			changed = append(changed, func() Modal { return modal })
+		case "tab":
+			// The rotation cycles 0..3, so four presses return to the
+			// original arrangement.
+			rotation = (rotation + 1) % 4
+			changed = append(changed, func() Rotation { return rotation })
+		case "quit":
+			return nil, true
 		}
-	case "down":
-		*scroll++
-		changed = append(changed, func() Scroll { return Scroll(*scroll) })
-	case "left":
-		// The w1 weight never drops below 1: Weighted requires a positive
-		// weight, so the w1 box always keeps a share of the row.
-		if *w1Weight > 1 {
-			*w1Weight--
-			changed = append(changed, func() W1Weight { return W1Weight(*w1Weight) })
-		}
-	case "right":
-		if *w1Weight < maxW1Weight {
-			*w1Weight++
-			changed = append(changed, func() W1Weight { return W1Weight(*w1Weight) })
-		}
-	case "space":
-		*toggle = !*toggle
-		changed = append(changed, func() Toggle { return Toggle(*toggle) })
-	case "modal":
-		// The modal is part of the element tree, derived from state: an
-		// Overlay stacks it over the main UI.
-		*modal = !*modal
-		changed = append(changed, func() Modal { return Modal(*modal) })
-	case "tab":
-		// The rotation cycles 0..3, so four presses return to the
-		// original arrangement.
-		*rotation = (*rotation + 1) % 4
-		changed = append(changed, func() Rotation { return Rotation(*rotation) })
-	case "quit":
-		return nil, true
+		return changed, false
 	}
-	return changed, false
 }
 
 func readKeys(r io.Reader, ch chan<- string) {

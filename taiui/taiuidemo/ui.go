@@ -28,6 +28,10 @@ taiuidemo provider theory:
   performs, and resolutions stay O(1). The event loop renders only when
   state changed, so a key press that changes nothing skips the render
   entirely.
+- The key handler is a provider: it injects the current state and returns
+  the providers that carry the new state, so the event loop forks only the
+  changed pieces. The key-handled state lives in the handler's closure,
+  and dscope re-creates the handler whenever a state provider changes.
 - The framebuffer content is derived state: provideFrameBufferContent
   builds it from the frame counter, so the ball is a pure function of
   state and the event loop never mutates the content in place.
