@@ -8,6 +8,7 @@ import (
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -57,22 +58,8 @@ func TestSgrCache(t *testing.T) {
 	}
 }
 
-// changedValue calls the single changed provider and returns its value.
-func changedValue[T any](t *testing.T, changed []any) T {
-	t.Helper()
-	if len(changed) != 1 {
-		t.Fatalf("expected one changed provider, got %d", len(changed))
-	}
-	fn, ok := changed[0].(func() T)
-	if !ok {
-		var zero T
-		t.Fatalf("expected func() %T, got %T", zero, changed[0])
-	}
-	return fn()
-}
-
 func TestHandleKeyScrollClamp(t *testing.T) {
-	handleKey := provideHandleKey(0, true, 1, false, 0)
+	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
 	changed, quit := handleKey("up")
 	if quit {
 		t.Fatal("up must not quit the demo")
@@ -84,14 +71,14 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 	if quit {
 		t.Fatal("down must not quit the demo")
 	}
-	if got := changedValue[Scroll](t, changed); got != 1 {
+	if got := dscope.Get[Scroll](dscope.New(changed...)); got != 1 {
 		t.Fatalf("expected scroll 1 after down, got %d", got)
 	}
 	changed, quit = handleKey("space")
 	if quit {
 		t.Fatal("space must not quit the demo")
 	}
-	if got := changedValue[Toggle](t, changed); got {
+	if got := dscope.Get[Toggle](dscope.New(changed...)); got {
 		t.Fatal("expected toggle flipped by space")
 	}
 	_, quit = handleKey("quit")
@@ -101,7 +88,7 @@ func TestHandleKeyScrollClamp(t *testing.T) {
 }
 
 func TestHandleKeyW1Weight(t *testing.T) {
-	handleKey := provideHandleKey(0, true, 1, false, 0)
+	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
 	changed, quit := handleKey("left")
 	if quit {
 		t.Fatal("left must not quit the demo")
@@ -113,7 +100,7 @@ func TestHandleKeyW1Weight(t *testing.T) {
 	if quit {
 		t.Fatal("right must not quit the demo")
 	}
-	if got := changedValue[W1Weight](t, changed); got != 2 {
+	if got := dscope.Get[W1Weight](dscope.New(changed...)); got != 2 {
 		t.Fatalf("expected w1 weight 2 after right, got %d", got)
 	}
 	for i := 0; i < maxW1Weight; i++ {
@@ -129,30 +116,30 @@ func TestHandleKeyW1Weight(t *testing.T) {
 }
 
 func TestHandleKeyModal(t *testing.T) {
-	handleKey := provideHandleKey(0, true, 1, false, 0)
+	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
 	changed, quit := handleKey("modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
-	if got := changedValue[Modal](t, changed); !got {
+	if got := dscope.Get[Modal](dscope.New(changed...)); !got {
 		t.Fatal("expected modal toggled by m")
 	}
 	changed, quit = handleKey("modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
-	if got := changedValue[Modal](t, changed); got {
+	if got := dscope.Get[Modal](dscope.New(changed...)); got {
 		t.Fatal("expected modal toggled back by m")
 	}
 }
 
 func TestHandleKeyRotation(t *testing.T) {
-	handleKey := provideHandleKey(0, true, 1, false, 0)
+	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
 	changed, quit := handleKey("tab")
 	if quit {
 		t.Fatal("tab must not quit the demo")
 	}
-	if got := changedValue[Rotation](t, changed); got != 1 {
+	if got := dscope.Get[Rotation](dscope.New(changed...)); got != 1 {
 		t.Fatalf("expected rotation 1 after tab, got %d", got)
 	}
 	// Three more presses wrap the rotation back to 0.
@@ -162,7 +149,7 @@ func TestHandleKeyRotation(t *testing.T) {
 			t.Fatal("tab must not quit the demo")
 		}
 	}
-	if got := changedValue[Rotation](t, changed); got != 0 {
+	if got := dscope.Get[Rotation](dscope.New(changed...)); got != 0 {
 		t.Fatalf("expected rotation wrapped to 0, got %d", got)
 	}
 }
@@ -348,4 +335,17 @@ func TestAnsiScreenRetainsFrame(t *testing.T) {
 
 func TestDiscardScreenReleasesFrames(t *testing.T) {
 	var _ taiui.FrameReleaser = discardScreen{}
+}
+
+func TestScopeConstruction(t *testing.T) {
+	// The App's providers depend on the dynamic state (Width, Height,
+	// Frame, Now). dscope validates that every definition's dependencies
+	// are resolvable at fork time, so the App methods must provide the
+	// initial values; the event loop forks the real values later.
+	// Resolving the root exercises every provider's dependency chain.
+	scope := dscope.New(new(App))
+	root := dscope.Get[taiui.Root](scope)
+	if root.Element == nil {
+		t.Fatal("expected a root element")
+	}
 }

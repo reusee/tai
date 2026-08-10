@@ -69,32 +69,24 @@ func main() {
 	frame := int64(0)
 	now := time.Now()
 
-	scope := dscope.New(
-		func() Width { return Width(width) },
-		func() Height { return Height(height) },
-		func() Scroll { return 0 },
-		func() Toggle { return true },
-		func() W1Weight { return 1 },
-		func() Modal { return false },
-		func() Rotation { return 0 },
-		func() Frame { return Frame(frame) },
-		func() Now { return Now(now) },
-		provideHandleKey,
-		provideFrameBufferContent,
-		provideHeader,
-		provideFooter,
-		providePanelText,
-		providePanelScroll,
-		providePanelBox,
-		providePanelDynamic,
-		rootProvider,
-	)
+	// The App provides every provider as a method, so dscope.New(new(App))
+	// creates a scope with all of them. The dynamic state (terminal size,
+	// frame counter, clock) is external: the event loop forks it as
+	// closures over its local variables.
+	scope := dscope.New(new(App))
 
 	// forkState forks the current scope with the given providers.
 	forkState := func(defs ...any) taiui.Scope {
 		scope = scope.Fork(defs...)
 		return scope
 	}
+
+	scope = forkState(
+		func() Width { return Width(width) },
+		func() Height { return Height(height) },
+		func() Frame { return Frame(frame) },
+		func() Now { return Now(now) },
+	)
 
 	resizeCh := make(chan bool, 4)
 	t.NotifyResize(resizeCh)
@@ -159,69 +151,6 @@ func main() {
 		case <-sigCh:
 			return
 		}
-	}
-}
-
-// maxW1Weight bounds the w1 flex weight adjustable with the left and
-// right arrow keys; the weight must stay positive for Weighted.
-const maxW1Weight = 10
-
-// HandleKey is the key handler provided by the scope: it injects the
-// current state and returns the providers that carry the new state.
-type HandleKey func(key string) (changed []any, quit bool)
-
-// provideHandleKey builds the key handler from the current state. The
-// handler mutates its captured state and returns a provider for each
-// changed piece, so the event loop forks only the changed pieces and
-// dscope recomputes only the components that depend on them.
-func provideHandleKey(
-	scroll Scroll,
-	toggle Toggle,
-	w1Weight W1Weight,
-	modal Modal,
-	rotation Rotation,
-) HandleKey {
-	return func(key string) (changed []any, quit bool) {
-		switch key {
-		case "up":
-			// The scroll offset never goes negative: the view clamps at the
-			// content start.
-			if scroll > 0 {
-				scroll--
-				changed = append(changed, func() Scroll { return scroll })
-			}
-		case "down":
-			scroll++
-			changed = append(changed, func() Scroll { return scroll })
-		case "left":
-			// The w1 weight never drops below 1: Weighted requires a positive
-			// weight, so the w1 box always keeps a share of the row.
-			if w1Weight > 1 {
-				w1Weight--
-				changed = append(changed, func() W1Weight { return w1Weight })
-			}
-		case "right":
-			if w1Weight < maxW1Weight {
-				w1Weight++
-				changed = append(changed, func() W1Weight { return w1Weight })
-			}
-		case "space":
-			toggle = !toggle
-			changed = append(changed, func() Toggle { return toggle })
-		case "modal":
-			// The modal is part of the element tree, derived from state: an
-			// Overlay stacks it over the main UI.
-			modal = !modal
-			changed = append(changed, func() Modal { return modal })
-		case "tab":
-			// The rotation cycles 0..3, so four presses return to the
-			// original arrangement.
-			rotation = (rotation + 1) % 4
-			changed = append(changed, func() Rotation { return rotation })
-		case "quit":
-			return nil, true
-		}
-		return changed, false
 	}
 }
 

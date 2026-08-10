@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3/vt"
+	"github.com/reusee/dscope"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -15,6 +16,9 @@ const (
 
 const TheoryOfProviders = `
 taiuidemo provider theory:
+- App is the provider container: every provider is a method on App, so
+  dscope.New(new(App)) creates a scope with all of them. App has no
+  fields; state lives in the scope, and the event loop forks changes.
 - State and UI are split into providers: each piece of state is its own
   provider type, and each component is its own provider type. dscope caches
   each provider result and recomputes only the providers whose dependencies
@@ -32,10 +36,10 @@ taiuidemo provider theory:
   the providers that carry the new state, so the event loop forks only the
   changed pieces. The key-handled state lives in the handler's closure,
   and dscope re-creates the handler whenever a state provider changes.
-- The framebuffer content is derived state: provideFrameBufferContent
+- The framebuffer content is derived state: the FrameBufferContent method
   builds it from the frame counter, so the ball is a pure function of
   state and the event loop never mutates the content in place.
-- The root provider composes the component providers; it is the only
+- The Root method composes the component providers; it is the only
   provider that depends on all of them, so it is recomputed on every state
   change, but the components themselves are recomputed only when their own
   dependencies change.
@@ -62,6 +66,37 @@ type Modal bool
 // key advances it, moving each panel one position clockwise.
 type Rotation int
 
+// App is the provider container: every provider is a method on App, so
+// dscope.New(new(App)) creates a scope with all of them. App has no
+// fields; state lives in the scope, and the event loop forks changes.
+type App struct {
+	dscope.Module
+}
+
+// The static state providers: the key handler forks overrides when the
+// state changes, so these methods provide only the initial values.
+func (a *App) Scroll() Scroll { return 0 }
+
+func (a *App) Toggle() Toggle { return true }
+
+func (a *App) W1Weight() W1Weight { return 1 }
+
+func (a *App) Modal() Modal { return false }
+
+func (a *App) Rotation() Rotation { return 0 }
+
+// The dynamic state (terminal size, frame counter, clock) is external:
+// the event loop forks the real values as closures over its local
+// variables. These methods provide the initial values so the scope is
+// constructible before the first fork.
+func (a *App) Width() Width { return 80 }
+
+func (a *App) Height() Height { return 24 }
+
+func (a *App) Frame() Frame { return 0 }
+
+func (a *App) Now() Now { return Now(time.Now()) }
+
 // Component providers: each panel is its own provider type, so dscope can
 // cache it independently and recompute it only when its dependencies change.
 type Header taiui.Element
@@ -71,7 +106,70 @@ type PanelScroll taiui.Element
 type PanelBox taiui.Element
 type PanelDynamic taiui.Element
 
-func rootProvider(
+// HandleKey is the key handler provided by the scope: it injects the
+// current state and returns the providers that carry the new state.
+type HandleKey func(key string) (changed []any, quit bool)
+
+// maxW1Weight bounds the w1 flex weight adjustable with the left and
+// right arrow keys; the weight must stay positive for Weighted.
+const maxW1Weight = 10
+
+// HandleKey builds the key handler from the current state. The handler
+// mutates its captured state and returns a provider for each changed
+// piece, so the event loop forks only the changed pieces and dscope
+// recomputes only the components that depend on them.
+func (a *App) HandleKey(
+	scroll Scroll,
+	toggle Toggle,
+	w1Weight W1Weight,
+	modal Modal,
+	rotation Rotation,
+) HandleKey {
+	return func(key string) (changed []any, quit bool) {
+		switch key {
+		case "up":
+			// The scroll offset never goes negative: the view clamps at the
+			// content start.
+			if scroll > 0 {
+				scroll--
+				changed = append(changed, func() Scroll { return scroll })
+			}
+		case "down":
+			scroll++
+			changed = append(changed, func() Scroll { return scroll })
+		case "left":
+			// The w1 weight never drops below 1: Weighted requires a positive
+			// weight, so the w1 box always keeps a share of the row.
+			if w1Weight > 1 {
+				w1Weight--
+				changed = append(changed, func() W1Weight { return w1Weight })
+			}
+		case "right":
+			if w1Weight < maxW1Weight {
+				w1Weight++
+				changed = append(changed, func() W1Weight { return w1Weight })
+			}
+		case "space":
+			toggle = !toggle
+			changed = append(changed, func() Toggle { return toggle })
+		case "modal":
+			// The modal is part of the element tree, derived from state: an
+			// Overlay stacks it over the main UI.
+			modal = !modal
+			changed = append(changed, func() Modal { return modal })
+		case "tab":
+			// The rotation cycles 0..3, so four presses return to the
+			// original arrangement.
+			rotation = (rotation + 1) % 4
+			changed = append(changed, func() Rotation { return rotation })
+		case "quit":
+			return nil, true
+		}
+		return changed, false
+	}
+}
+
+func (a *App) Root(
 	w Width,
 	h Height,
 	modal Modal,
@@ -161,35 +259,35 @@ func rotatedPanelIndex(p, rotation int) int {
 	return (p - rotation%4 + 4) % 4
 }
 
-func provideHeader(t Toggle, now Now) Header {
+func (a *App) Header(t Toggle, now Now) Header {
 	return Header(header(t, now))
 }
 
-func provideFooter() Footer {
+func (a *App) Footer() Footer {
 	return Footer(footer())
 }
 
-func providePanelText() PanelText {
+func (a *App) PanelText() PanelText {
 	return PanelText(panelText())
 }
 
-func providePanelScroll(scroll Scroll) PanelScroll {
+func (a *App) PanelScroll(scroll Scroll) PanelScroll {
 	return PanelScroll(panelScroll(scroll))
 }
 
-func providePanelBox(t Toggle, w1 W1Weight) PanelBox {
+func (a *App) PanelBox(t Toggle, w1 W1Weight) PanelBox {
 	return PanelBox(panelBox(t, w1))
 }
 
-func providePanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
+func (a *App) PanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
 	return PanelDynamic(panelDynamic(frame, toggle, fb))
 }
 
-// provideFrameBufferContent derives the framebuffer content from the
-// frame counter: the ball position is a pure function of state, so the
-// content is rebuilt by dscope when the frame changes, and the event
-// loop never mutates it in place.
-func provideFrameBufferContent(frame Frame) *taiui.FrameBufferContent {
+// FrameBufferContent derives the framebuffer content from the frame
+// counter: the ball position is a pure function of state, so the content
+// is rebuilt by dscope when the frame changes, and the event loop never
+// mutates it in place.
+func (a *App) FrameBufferContent(frame Frame) *taiui.FrameBufferContent {
 	fb := taiui.NewFrameBufferContent(fbWidth, fbHeight)
 	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
 	bx := bounce(int(frame*2), fbWidth-1)
