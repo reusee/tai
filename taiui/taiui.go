@@ -43,9 +43,11 @@ taiui theory: UI = pure Element value derived from state.
   repainting, and Frame.Dirty reports the runs of changed cells so a
   screen can repaint only the damaged regions; both compare only frames
   of equal dimensions, mirroring change-based rendering in terminal
-  libraries. An element with an empty box is skipped entirely: no child is
-  rendered and no cursor is recorded, because there is no visible area to
-  draw into.
+  libraries. Frame.DirtyRowsInto appends the differing row indices to a
+  caller buffer, so a screen that repaints whole rows can reuse a buffer
+  across presents and allocate nothing per frame. An element with an empty
+  box is skipped entirely: no child is rendered and no cursor is recorded,
+  because there is no visible area to draw into.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -351,23 +353,31 @@ func (f Frame) Dirty(o Frame) []Box {
 // ascending order. A screen that repaints whole rows uses it to avoid
 // the run-level detail of Dirty.
 func (f Frame) DirtyRows(o Frame) []int {
+	return f.DirtyRowsInto(o, nil)
+}
+
+// DirtyRowsInto appends the row indices that differ between f and o to
+// the provided buffer and returns the extended buffer. A screen that
+// repaints whole rows uses it to avoid the per-call allocation of
+// DirtyRows by reusing a buffer across presents.
+func (f Frame) DirtyRowsInto(o Frame, buf []int) []int {
 	if f.Width != o.Width || f.Height != o.Height || len(f.Cells) != len(o.Cells) {
-		rows := make([]int, f.Height)
-		for i := range rows {
-			rows[i] = i
+		buf = buf[:0]
+		for i := 0; i < f.Height; i++ {
+			buf = append(buf, i)
 		}
-		return rows
+		return buf
 	}
-	var rows []int
+	buf = buf[:0]
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
 			if !frameCellEqual(f.Cells[y*f.Width+x], o.Cells[y*f.Width+x]) {
-				rows = append(rows, y)
+				buf = append(buf, y)
 				break
 			}
 		}
 	}
-	return rows
+	return buf
 }
 
 func sameStyle(a, b Style) bool {

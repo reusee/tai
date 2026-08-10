@@ -30,6 +30,8 @@ taiuidemo ANSI screen theory:
   is scanned once, not twice.
 - Frames with no dirty rows and an unchanged cursor are skipped entirely,
   and the first frame repaints the whole screen.
+- The presenter reuses a dirty-rows buffer across presents, so a frame
+  comparison allocates nothing.
 - The presenter keeps the last presented frame for damage comparison by
   copying the cell slice, so the presented frame can be returned to the
   frame pool by the renderer. The copy is a plain slice copy; the
@@ -54,11 +56,12 @@ taiuidemo ANSI screen theory:
 `
 
 type ansiScreen struct {
-	w      io.Writer
-	width  int
-	height int
-	last   taiui.Frame
-	bw     *bufio.Writer
+	w         io.Writer
+	width     int
+	height    int
+	last      taiui.Frame
+	bw        *bufio.Writer
+	dirtyRows []int
 }
 
 func (s *ansiScreen) Width() int  { return s.width }
@@ -78,12 +81,18 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 	var dirtyRows []int
 	if s.last.Width == 0 {
 		io.WriteString(s.w, "\x1b[2J")
-		dirtyRows = make([]int, frame.Height)
-		for i := range dirtyRows {
-			dirtyRows[i] = i
+		// The dirty-rows buffer is reused across presents, so a frame
+		// comparison allocates nothing.
+		s.dirtyRows = s.dirtyRows[:0]
+		for i := 0; i < frame.Height; i++ {
+			s.dirtyRows = append(s.dirtyRows, i)
 		}
+		dirtyRows = s.dirtyRows
 	} else {
-		dirtyRows = frame.DirtyRows(s.last)
+		// The dirty-rows buffer is reused across presents, so a frame
+		// comparison allocates nothing.
+		s.dirtyRows = frame.DirtyRowsInto(s.last, s.dirtyRows[:0])
+		dirtyRows = s.dirtyRows
 		// A frame with no dirty rows and an unchanged cursor is
 		// identical to the last presented frame: skip the repaint.
 		// DirtyRows alone cannot detect a cursor-only change, so the
@@ -107,10 +116,12 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 		writeCursorPos(bw, 0, y)
 		paintRow(bw, &frame, y, options)
 	}
-	bw.Flush()
 	if frame.CursorSet {
-		writeCursorPos(s.w, frame.CursorX, frame.CursorY)
+		// The cursor position is written to the buffered writer, so it
+		// is flushed with the rows in one write.
+		writeCursorPos(bw, frame.CursorX, frame.CursorY)
 	}
+	bw.Flush()
 	// Retain a copy of the frame for the next damage comparison. The
 	// cells are copied by value, so the presented frame can be returned
 	// to the frame pool by the renderer. The combining-rune slices and
@@ -332,7 +343,7 @@ func writeCluster(w io.Writer, mainc rune, combc []rune) {
 		w.Write(buf[:n])
 		return
 	}
-	var buf [8]byte
+	var buf [16]byte
 	b := buf[:0]
 	b = utf8.AppendRune(b, mainc)
 	for _, r := range combc {

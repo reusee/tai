@@ -1754,6 +1754,38 @@ func TestFrameDirtyRows(t *testing.T) {
 	}
 }
 
+func TestFrameDirtyRowsInto(t *testing.T) {
+	a := newFrame(4, 3)
+	b := newFrame(4, 3)
+	var buf []int
+	if rows := a.DirtyRowsInto(b, buf); len(rows) != 0 {
+		t.Fatalf("expected no dirty rows for identical frames, got %v", rows)
+	}
+	b.setCell(1, 0, 'x', nil, vt.BaseStyle)
+	b.setCell(2, 2, 'y', nil, vt.BaseStyle)
+	buf = a.DirtyRowsInto(b, buf)
+	if len(buf) != 2 || buf[0] != 0 || buf[1] != 2 {
+		t.Fatalf("expected rows [0 2], got %v", buf)
+	}
+	// The buffer is reused: the next call resets it.
+	buf = a.DirtyRowsInto(b, buf)
+	if len(buf) != 2 || buf[0] != 0 || buf[1] != 2 {
+		t.Fatalf("expected reused buffer rows [0 2], got %v", buf)
+	}
+	// A pre-populated buffer is reset.
+	buf = []int{99, 100}
+	buf = a.DirtyRowsInto(b, buf)
+	if len(buf) != 2 || buf[0] != 0 || buf[1] != 2 {
+		t.Fatalf("expected reset buffer rows [0 2], got %v", buf)
+	}
+	// A size mismatch returns all rows.
+	a = newFrame(3, 4)
+	buf = a.DirtyRowsInto(b, buf)
+	if len(buf) != 4 {
+		t.Fatalf("expected all rows on size mismatch, got %v", buf)
+	}
+}
+
 func TestFrameCellPool(t *testing.T) {
 	f := newFrame(4, 3)
 	if len(f.Cells) != 12 {

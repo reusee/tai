@@ -48,10 +48,10 @@ func DisplayWidthOptions() displaywidth.Options {
 // ClusterWidth returns the display width of the grapheme cluster formed by
 // mainc and its combining runes. Combining runes can change the width (an
 // emoji variation selector widens its base), so the whole cluster is
-// measured. The cluster bytes are built with utf8.AppendRune into a stack
-// buffer: short clusters (a base rune with one or two combining runes)
-// allocate nothing on the heap, and a longer cluster spills into a fresh
-// buffer.
+// measured. The cluster bytes are built with utf8.AppendRune into a 16-byte
+// stack buffer: common clusters (a base rune with up to three combining
+// runes, including ZWJ emoji sequences) allocate nothing on the heap, and a
+// longer cluster spills into a fresh buffer.
 //
 // It is exported for Screen implementations that measure clusters
 // independently (such as the demo presenter) to stay in sync with the
@@ -60,7 +60,7 @@ func ClusterWidth(options displaywidth.Options, mainc rune, combc []rune) int {
 	if len(combc) == 0 {
 		return options.Rune(mainc)
 	}
-	var buf [8]byte
+	var buf [16]byte
 	b := buf[:0]
 	b = utf8.AppendRune(b, mainc)
 	for _, r := range combc {
