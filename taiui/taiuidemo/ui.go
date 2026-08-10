@@ -28,6 +28,9 @@ taiuidemo provider theory:
   performs, and resolutions stay O(1). The event loop renders only when
   state changed, so a key press that changes nothing skips the render
   entirely.
+- The framebuffer content is derived state: provideFrameBufferContent
+  builds it from the frame counter, so the ball is a pure function of
+  state and the event loop never mutates the content in place.
 - The root provider composes the component providers; it is the only
   provider that depends on all of them, so it is recomputed on every state
   change, but the components themselves are recomputed only when their own
@@ -143,6 +146,19 @@ func providePanelBox(t Toggle, w1 W1Weight) PanelBox {
 
 func providePanelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) PanelDynamic {
 	return PanelDynamic(panelDynamic(frame, toggle, fb))
+}
+
+// provideFrameBufferContent derives the framebuffer content from the
+// frame counter: the ball position is a pure function of state, so the
+// content is rebuilt by dscope when the frame changes, and the event
+// loop never mutates it in place.
+func provideFrameBufferContent(frame Frame) *taiui.FrameBufferContent {
+	fb := taiui.NewFrameBufferContent(fbWidth, fbHeight)
+	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
+	bx := bounce(int(frame*2), fbWidth-1)
+	by := bounce(int(frame), fbHeight-1)
+	fb.SetContent(bx, by, '\u25CF', nil, vt.BaseStyle.WithFg(taiui.HexColor(0xff8800)))
+	return fb
 }
 
 func header(t Toggle, now Now) taiui.Element {
@@ -306,13 +322,6 @@ func panelDynamic(frame Frame, toggle Toggle, fb *taiui.FrameBufferContent) taiu
 			)),
 		),
 	)
-}
-
-func drawBall(fb *taiui.FrameBufferContent, frame int64) {
-	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
-	bx := bounce(int(frame*2), fbWidth-1)
-	by := bounce(int(frame), fbHeight-1)
-	fb.SetContent(bx, by, '\u25CF', nil, vt.BaseStyle.WithFg(taiui.HexColor(0xff8800)))
 }
 
 // bounce maps a counter onto a 0..span sawtooth, so the ball appears to

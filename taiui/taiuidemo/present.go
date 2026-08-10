@@ -32,11 +32,9 @@ taiuidemo ANSI screen theory:
   and the first frame repaints the whole screen.
 - The presenter reuses a dirty-rows buffer across presents, so a frame
   comparison allocates nothing.
-- The presenter keeps the last presented frame for damage comparison by
-  copying the cell slice, so the presented frame can be returned to the
-  frame pool by the renderer. The copy is a plain slice copy; the
-  combining-rune slices and style values are shared, which is safe
-  because the renderer never mutates a cell after drawing it.
+- The presenter retains the last presented frame for damage comparison.
+  It does not implement FrameReleaser, so the renderer allocates a fresh
+  frame per pass and never reuses the retained frame's cells.
 - The presenter derives the display-width options per present and measures
   clusters with taiui.ClusterWidth, so the terminal cursor advances by the
   same columns the renderer allocated even if the environment changes
@@ -122,26 +120,10 @@ func (s *ansiScreen) Present(frame taiui.Frame) {
 		writeCursorPos(bw, frame.CursorX, frame.CursorY)
 	}
 	bw.Flush()
-	// Retain a copy of the frame for the next damage comparison. The
-	// cells are copied by value, so the presented frame can be returned
-	// to the frame pool by the renderer. The combining-rune slices and
-	// style values are shared with the frame's cells, which is safe
-	// because the renderer never mutates a cell after drawing it.
-	if cap(s.last.Cells) < len(frame.Cells) {
-		s.last.Cells = make([]taiui.FrameCell, len(frame.Cells))
-	} else {
-		s.last.Cells = s.last.Cells[:len(frame.Cells)]
-	}
-	copy(s.last.Cells, frame.Cells)
-	s.last.Width, s.last.Height = frame.Width, frame.Height
-	s.last.CursorSet, s.last.CursorX, s.last.CursorY = frame.CursorSet, frame.CursorX, frame.CursorY
-}
-
-// ReleaseFrame returns the presented frame's cells to the frame pool.
-// The screen keeps its own copy of the frame, so the cells are no longer
-// needed after Present returns.
-func (s *ansiScreen) ReleaseFrame(frame taiui.Frame) {
-	taiui.ReleaseFrame(frame)
+	// Retain the frame for the next damage comparison. The screen does
+	// not implement FrameReleaser, so the renderer allocates a fresh
+	// frame per pass and never reuses the retained frame's cells.
+	s.last = frame
 }
 
 // writeCursorPos writes a cursor-position sequence to w without

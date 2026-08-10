@@ -293,12 +293,37 @@ func TestRuneWidthEnv(t *testing.T) {
 	}
 }
 
-func TestAnsiScreenReleasesFrames(t *testing.T) {
+func TestBounce(t *testing.T) {
+	// bounce maps a counter onto a 0..span sawtooth, so the ball appears
+	// to bounce between the canvas edges.
+	cases := []struct {
+		v, want int
+	}{
+		{0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 2}, {5, 1}, {6, 0},
+	}
+	for _, c := range cases {
+		if got := bounce(c.v, 3); got != c.want {
+			t.Fatalf("bounce(%d, 3) = %d, want %d", c.v, got, c.want)
+		}
+	}
+}
+
+func TestAnsiScreenRetainsFrame(t *testing.T) {
 	var sb strings.Builder
 	s := &ansiScreen{w: &sb, width: 80, height: 24}
-	// The screen keeps its own copy of the presented frame, so it can
-	// return the frame's cells to the pool.
-	var _ taiui.FrameReleaser = s
+	frame := taiui.Frame{Width: 80, Height: 24, Cells: make([]taiui.FrameCell, 80*24)}
+	frame.Cells[0] = taiui.FrameCell{Rune: 'a', Style: vt.BaseStyle, Set: true}
+	s.Present(frame)
+	// The screen retains the presented frame for the next damage
+	// comparison. It does not implement FrameReleaser, so the renderer
+	// allocates a fresh frame per pass and never reuses the retained
+	// frame's cells.
+	if !s.last.Equal(frame) {
+		t.Fatal("expected screen to retain the presented frame")
+	}
+	if _, ok := any(s).(taiui.FrameReleaser); ok {
+		t.Fatal("expected ansiScreen not to implement FrameReleaser")
+	}
 }
 
 func TestDiscardScreenReleasesFrames(t *testing.T) {

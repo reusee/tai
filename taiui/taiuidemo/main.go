@@ -60,10 +60,6 @@ func main() {
 
 	screen := &ansiScreen{w: t, width: width, height: height}
 
-	// The framebuffer is data state: the demo mutates it on each animation
-	// tick, and the next render reads the updated content purely.
-	fb := taiui.NewFrameBufferContent(fbWidth, fbHeight)
-
 	// Each piece of state is an independent variable and an independent
 	// provider, so forking one piece recomputes only the components that
 	// depend on it.
@@ -83,7 +79,7 @@ func main() {
 		func() Modal { return Modal(modal) },
 		func() Frame { return Frame(frame) },
 		func() Now { return Now(now) },
-		func() *taiui.FrameBufferContent { return fb },
+		provideFrameBufferContent,
 		provideHeader,
 		provideFooter,
 		providePanelText,
@@ -93,9 +89,7 @@ func main() {
 		rootProvider,
 	)
 
-	// forkState forks the current scope with the given providers. dscope
-	// compacts the definition chain internally, so the scope stack stays
-	// flat no matter how many forks the event loop performs.
+	// forkState forks the current scope with the given providers.
 	forkState := func(defs ...any) taiui.Scope {
 		scope = scope.Fork(defs...)
 		return scope
@@ -136,8 +130,9 @@ func main() {
 				taiui.Render(scope, screen, discardScreen{})
 			}
 		case <-tick.C:
+			// The ball is derived from the frame counter: forking the frame
+			// state rebuilds the framebuffer content declaratively.
 			frame++
-			drawBall(fb, frame)
 			scope = forkState(func() Frame { return Frame(frame) })
 			taiui.Render(scope, screen, discardScreen{})
 		case <-clock.C:
