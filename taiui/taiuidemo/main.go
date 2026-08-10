@@ -16,11 +16,6 @@ import (
 const (
 	fbWidth  = 30
 	fbHeight = 3
-
-	// maxScopeDepth bounds the dscope layer chain. The event loop forks a
-	// new layer on every state change; without compaction the chain would
-	// grow without bound and every resolution would walk it.
-	maxScopeDepth = 64
 )
 
 type discardScreen struct{}
@@ -79,7 +74,7 @@ func main() {
 	frame := int64(0)
 	now := time.Now()
 
-	base := dscope.New(
+	scope := dscope.New(
 		func() Width { return Width(width) },
 		func() Height { return Height(height) },
 		func() Scroll { return Scroll(scroll) },
@@ -97,13 +92,12 @@ func main() {
 		providePanelDynamic,
 		rootProvider,
 	)
-	scope := base
 
-	// forkState forks the current scope with the given providers; see
-	// forkScope for the collapse behavior.
-	forks := 0
+	// forkState forks the current scope with the given providers. dscope
+	// compacts the definition chain internally, so the scope stack stays
+	// flat no matter how many forks the event loop performs.
 	forkState := func(defs ...any) taiui.Scope {
-		scope, forks = forkScope(scope, forks, base, width, height, scroll, toggle, w1Weight, modal, frame, now, defs...)
+		scope = scope.Fork(defs...)
 		return scope
 	}
 
@@ -166,37 +160,6 @@ func main() {
 			return
 		}
 	}
-}
-
-// collapseScope returns a scope forked from base with all current state,
-// collapsing the layer chain so resolutions stay O(1).
-func collapseScope(base taiui.Scope, width, height, scroll int, toggle bool, w1Weight int, modal bool, frame int64, now time.Time) taiui.Scope {
-	return base.Fork(
-		func() Width { return Width(width) },
-		func() Height { return Height(height) },
-		func() Scroll { return Scroll(scroll) },
-		func() Toggle { return Toggle(toggle) },
-		func() W1Weight { return W1Weight(w1Weight) },
-		func() Modal { return Modal(modal) },
-		func() Frame { return Frame(frame) },
-		func() Now { return Now(now) },
-	)
-}
-
-// forkScope forks the scope with the given providers, collapsing the
-// layer chain to the base scope every maxScopeDepth forks so
-// resolutions stay O(1). The collapse re-forks all current state,
-// recomputing the components once; that is cheap compared to the
-// unbounded walk it prevents. The defs are applied on top of the
-// collapsed scope, so no provider is ever dropped.
-func forkScope(scope taiui.Scope, forks int, base taiui.Scope, width, height, scroll int, toggle bool, w1Weight int, modal bool, frame int64, now time.Time, defs ...any) (taiui.Scope, int) {
-	forks++
-	if forks < maxScopeDepth {
-		return scope.Fork(defs...), forks
-	}
-	scope = collapseScope(base, width, height, scroll, toggle, w1Weight, modal, frame, now)
-	scope = scope.Fork(defs...)
-	return scope, 0
 }
 
 // maxW1Weight bounds the w1 flex weight adjustable with the left and

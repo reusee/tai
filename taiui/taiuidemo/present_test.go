@@ -8,7 +8,6 @@ import (
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/dscope"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -304,69 +303,4 @@ func TestAnsiScreenReleasesFrames(t *testing.T) {
 
 func TestDiscardScreenReleasesFrames(t *testing.T) {
 	var _ taiui.FrameReleaser = discardScreen{}
-}
-
-func TestCollapseScope(t *testing.T) {
-	base := dscope.New(
-		func() Width { return Width(80) },
-		func() Height { return Height(24) },
-		func() Scroll { return Scroll(0) },
-		func() Toggle { return Toggle(false) },
-		func() W1Weight { return W1Weight(1) },
-		func() Modal { return Modal(false) },
-		func() Frame { return Frame(0) },
-		func() Now { return Now(time.Time{}) },
-	)
-	scope := collapseScope(base, 100, 30, 5, true, 3, true, 42, time.Unix(0, 0))
-	if got := dscope.Get[Width](scope); int(got) != 100 {
-		t.Fatalf("expected width 100, got %d", got)
-	}
-	if got := dscope.Get[Height](scope); int(got) != 30 {
-		t.Fatalf("expected height 30, got %d", got)
-	}
-	if got := dscope.Get[Scroll](scope); int(got) != 5 {
-		t.Fatalf("expected scroll 5, got %d", got)
-	}
-	if got := dscope.Get[Toggle](scope); bool(got) != true {
-		t.Fatalf("expected toggle true, got %v", got)
-	}
-	if got := dscope.Get[W1Weight](scope); int(got) != 3 {
-		t.Fatalf("expected w1 weight 3, got %d", got)
-	}
-	if got := dscope.Get[Modal](scope); bool(got) != true {
-		t.Fatalf("expected modal true, got %v", got)
-	}
-	if got := dscope.Get[Frame](scope); int64(got) != 42 {
-		t.Fatalf("expected frame 42, got %d", got)
-	}
-	if got := dscope.Get[Now](scope); !time.Time(got).Equal(time.Unix(0, 0)) {
-		t.Fatalf("expected now epoch, got %v", got)
-	}
-}
-
-func TestForkScopeCollapseAppliesDefs(t *testing.T) {
-	base := dscope.New(
-		func() Width { return Width(80) },
-		func() Height { return Height(24) },
-		func() Scroll { return Scroll(0) },
-		func() Toggle { return Toggle(false) },
-		func() W1Weight { return W1Weight(1) },
-		func() Modal { return Modal(false) },
-		func() Frame { return Frame(0) },
-		func() Now { return Now(time.Time{}) },
-	)
-	scope := base
-	forks := 0
-	for i := 0; i < maxScopeDepth-1; i++ {
-		scope, forks = forkScope(scope, forks, base, 80, 24, i, true, 1, false, int64(i), time.Time{})
-	}
-	// The last fork triggers the collapse; the def is a non-state
-	// provider that must survive the collapse.
-	scope, forks = forkScope(scope, forks, base, 80, 24, 0, true, 1, false, 0, time.Time{}, func() string { return "kept" })
-	if forks != 0 {
-		t.Fatalf("expected forks reset after collapse, got %d", forks)
-	}
-	if got := dscope.Get[string](scope); got != "kept" {
-		t.Fatalf("expected def applied after collapse, got %q", got)
-	}
 }

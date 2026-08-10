@@ -23,13 +23,11 @@ taiuidemo provider theory:
 - The event loop forks the current scope with only the providers that
   changed. Forking from the current scope preserves the cached results of
   unchanged providers; forking from the base scope would discard them and
-  recompute everything. The layer chain is collapsed to the base scope
-  every maxScopeDepth forks, so resolutions stay O(1); the collapse
-  re-forks all current state and recomputes the components once, which is
-  cheap compared to the unbounded walk it prevents. The changed providers
-  are applied on top of the collapsed scope, so no provider is ever
-  dropped. The event loop renders only when state changed, so a key press
-  that changes nothing skips the render entirely.
+  recompute everything. dscope compacts the definition chain internally,
+  so the scope stack stays flat no matter how many forks the event loop
+  performs, and resolutions stay O(1). The event loop renders only when
+  state changed, so a key press that changes nothing skips the render
+  entirely.
 - The root provider composes the component providers; it is the only
   provider that depends on all of them, so it is recomputed on every state
   change, but the components themselves are recomputed only when their own
