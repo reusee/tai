@@ -37,8 +37,14 @@ func main() {
 	}
 
 	command := dscope.Get[Command](scope)
-	if command.Main != nil {
-		scope.Fork(command.Defs...).Call(command.Main)
+	if command.Main == nil {
+		return
 	}
 
+	if bool(dscope.Get[Tui](scope)) {
+		runWithTUI(command, scope)
+		return
+	}
+
+	scope.Fork(command.Defs...).Call(command.Main)
 }

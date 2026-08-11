@@ -103,7 +103,11 @@ taiui theory: UI = pure Element value derived from state.
   the visible window's unoccupied cells. Crop-count indicators at the
   window edges draw over the fill, clipped to the window's content area
   so they never paint the scrollbar column; the Scrollbar thumb at the
-  right edge draws last.
+  right edge draws last. With the Scrollbar spec, the child renders at
+  the visible width (the window width minus the scrollbar column), so
+  wrapped text wraps within the visible area instead of hiding behind
+  the scrollbar; content that fits without a scrollbar re-renders at the
+  full width.
 - The scroll collects only the cells near the expected window: the
   collection range spans at most three window heights, and a second pass
   re-collects the window cells when the view falls outside the range, so

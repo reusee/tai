@@ -227,6 +227,39 @@ func TestVerticalScrollOffsetBeyondShortContent(t *testing.T) {
 	}
 }
 
+func TestVerticalScrollWrapWithScrollbar(t *testing.T) {
+	// When the scrollbar is shown, the child is rendered at the visible
+	// width (the window width minus the scrollbar column), so wrapped
+	// text wraps within the visible area instead of hiding behind the
+	// scrollbar.
+	screen := newFakeScreen(80, 25)
+	lines := []string{"abcdefghij", "abcdefghij", "abcdefghij"}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 4, Right: 5},
+		VerticalScroll(
+			Text(lines, Wrap(true)),
+			0,
+			Scrollbar(true),
+		),
+	)})
+	Render(scope, screen)
+	// Each source line wraps at the visible width (4 columns: 5 minus
+	// the scrollbar column): "abcd", "efgh", "ij". The second visible
+	// line starts with 'e'. Without visible-width rendering, the line
+	// would wrap at 5 columns and the second visible line would start
+	// with 'f', hiding the 'e' behind the scrollbar.
+	if r := screen.cell(0, 1); r != 'e' {
+		t.Fatalf("expected 'e' at (0,1), got %v", r)
+	}
+	if r := screen.cell(3, 1); r != 'h' {
+		t.Fatalf("expected 'h' at (3,1), got %v", r)
+	}
+	// The scrollbar column is reserved: no text appears at column 4.
+	if r := screen.cell(4, 1); r != 0 && r != '█' {
+		t.Fatalf("expected no text in the scrollbar column at (4,1), got %v", r)
+	}
+}
+
 func TestTextCombiningCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Text("e\u0301x")})

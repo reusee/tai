@@ -158,18 +158,45 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		renderElement(v.child, elemBox, style, sub, subCursor, options)
 	}
 
+	// Reserve the scrollbar column from the start: the child renders at
+	// the visible width (the window width minus the scrollbar column), so
+	// wrapped text wraps within the visible area instead of hiding behind
+	// the scrollbar. When the content fits and no scrollbar is needed,
+	// the child is re-rendered at the full width below.
+	if v.scrollbar {
+		elemBox.Right = box.Right - 1
+	}
+
 	collect(collectFrom, collectTo)
 
-	// Clamp the view window to the content extent: it never starts before
-	// the box top, nor past the last visible content row.
-	contentHeight := maxY - box.Top + 1
-	fromY := max(box.Top+v.offset-box.Height()/2, box.Top)
-	maxFromY := maxY - box.Height() + 1
-	if maxFromY < box.Top {
-		maxFromY = box.Top
+	// computeViewWindow clamps the view window to the content extent: it
+	// never starts before the box top, nor past the last visible content
+	// row. It is called after each collection pass, because the content
+	// extent may change when the child is re-rendered at a different width.
+	var contentHeight, fromY, maxFromY int
+	computeViewWindow := func() {
+		contentHeight = maxY - box.Top + 1
+		fromY = max(box.Top+v.offset-box.Height()/2, box.Top)
+		maxFromY = maxY - box.Height() + 1
+		if maxFromY < box.Top {
+			maxFromY = box.Top
+		}
+		if fromY > maxFromY {
+			fromY = maxFromY
+		}
 	}
-	if fromY > maxFromY {
-		fromY = maxFromY
+	computeViewWindow()
+
+	clipRight := box.Right
+	showScrollbar := v.scrollbar && contentHeight > box.Height()
+	if showScrollbar {
+		clipRight = box.Right - 1
+	} else if v.scrollbar {
+		// The content fits without a scrollbar: re-render the child at
+		// the full width so the rightmost column is not wasted.
+		elemBox.Right = box.Right
+		collect(collectFrom, collectTo)
+		computeViewWindow()
 	}
 
 	// When the window falls outside the collected range (short content
@@ -177,12 +204,6 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	// known now, so the new range covers it exactly.
 	if fromY < collectFrom || fromY+box.Height() > collectTo {
 		collect(fromY, fromY+box.Height())
-	}
-
-	clipRight := box.Right
-	showScrollbar := v.scrollbar && contentHeight > box.Height()
-	if showScrollbar {
-		clipRight = box.Right - 1
 	}
 
 	// With fill, track the window cells the content occupies so the
