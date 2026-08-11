@@ -120,10 +120,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	// misses the window and a second pass re-collects the window cells.
 	// The range spans one window height, so a tall virtual column never
 	// accumulates cells for rows outside it.
-	collectFrom := v.offset
-	if collectFrom < box.Top {
-		collectFrom = box.Top
-	}
+	collectFrom := max(box.Top, box.Top+v.offset)
 	collectTo := collectFrom + box.Height()
 	if collectTo > box.Top+maxScrollContentHeight {
 		collectTo = box.Top + maxScrollContentHeight
@@ -178,7 +175,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	var contentHeight, fromY, maxFromY int
 	computeViewWindow := func() {
 		contentHeight = maxY - box.Top + 1
-		fromY = max(box.Top, v.offset)
+		fromY = max(box.Top, box.Top+v.offset)
 		maxFromY = maxY - box.Height() + 1
 		if maxFromY < box.Top {
 			maxFromY = box.Top

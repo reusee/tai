@@ -146,9 +146,10 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	}
 
 	tui := &TUI{}
-	// height 10 gives paneHeight 8; the tail offset is
-	// len(display) - 8 + 1 = len(display) - 7.
-	element := tui.panel("Title", display, len(display)-7, 10, false)
+	// height 10 gives a label strip of 1 row and a pane height of 9; the
+	// tail offset is len(display) - 9.
+	paneHeight := 10 - 10/10
+	element := tui.panel(0, display, scrollClamp(1<<30, len(display), paneHeight), false)
 
 	screen := &panelTestScreen{width: 12, height: 10}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -160,9 +161,10 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	}
 	frame := screen.frames[len(screen.frames)-1]
 	// At the maximum offset the last display line lands on the pane's
-	// bottom row: screen row 8, column 1 (inside the top border).
-	if cell := frame.Cells[8*frame.Width+1]; cell.Rune != 'T' {
-		t.Fatalf("expected THE-END at the pane's bottom row (8,1), got %v", cell.Rune)
+	// last row: screen row 9, column 0 (the label strip occupies row 0,
+	// and the scroll view starts at row 1).
+	if cell := frame.Cells[9*frame.Width+0]; cell.Rune != 'T' {
+		t.Fatalf("expected THE-END at the pane's bottom row (9,0), got %v", cell.Rune)
 	}
 }
 
@@ -186,27 +188,107 @@ func TestReadTUIKeys(t *testing.T) {
 	}
 }
 
+func TestReadTUIKeysTabAndSplit(t *testing.T) {
+	ch := make(chan string, 10)
+	go readTUIKeys(strings.NewReader("123sS"), ch)
+	var got []string
+	for len(got) < 5 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for keys")
+		}
+	}
+	want := []string{"1", "2", "3", "split", "split"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestTUIToggleTabs(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, true, true}
+	tui.focus = 0
+
+	// Closing the focused tab moves the focus to the next open tab.
+	tui.toggleTab(0)
+	if tui.open[0] {
+		t.Fatal("output tab should be closed")
+	}
+	if tui.focus != 1 {
+		t.Fatalf("focus should move to the summary tab, got %d", tui.focus)
+	}
+
+	// Closing a non-focused tab leaves the focus unchanged.
+	tui.toggleTab(2)
+	if tui.open[2] {
+		t.Fatal("logs tab should be closed")
+	}
+	if tui.focus != 1 {
+		t.Fatalf("focus should stay on the summary tab, got %d", tui.focus)
+	}
+
+	// Closing the last open tab clears the focus.
+	tui.toggleTab(1)
+	if tui.open[1] {
+		t.Fatal("summary tab should be closed")
+	}
+	if tui.focus != -1 {
+		t.Fatalf("focus should be -1 when no tab is open, got %d", tui.focus)
+	}
+
+	// Reopening a tab restores the focus to it.
+	tui.toggleTab(2)
+	if !tui.open[2] {
+		t.Fatal("logs tab should be reopened")
+	}
+	if tui.focus != 2 {
+		t.Fatalf("focus should be on the reopened logs tab, got %d", tui.focus)
+	}
+}
+
+func TestTUICycleFocusSkipsClosedTabs(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, true}
+	tui.focus = 0
+	tui.cycleFocus()
+	if tui.focus != 2 {
+		t.Fatalf("focus should skip the closed summary tab and land on logs, got %d", tui.focus)
+	}
+	tui.cycleFocus()
+	if tui.focus != 0 {
+		t.Fatalf("focus should wrap to the output tab, got %d", tui.focus)
+	}
+	tui.open = [3]bool{false, false, false}
+	tui.cycleFocus()
+	if tui.focus != -1 {
+		t.Fatalf("focus should be -1 with no open tabs, got %d", tui.focus)
+	}
+}
+
 func TestScrollClamp(t *testing.T) {
-	// The maximum offset is displayLines - paneHeight + 1: the pane's
-	// scroll box starts one row inside the panel border, so at the
-	// maximum offset the last display line lands on the pane's last row.
-	// An offset beyond the content clamps to the maximum, a negative
+	// The maximum offset is displayLines - paneHeight: at the maximum
+	// offset the last display line lands on the pane's last row. An
+	// offset beyond the content clamps to the maximum, a negative
 	// offset clamps to 0, and the tail sentinel (1<<30) clamps to the
 	// last row. See TheoryOfTUI.
 	if got := scrollClamp(0, 10, 3); got != 0 {
 		t.Fatalf("offset 0 should be unchanged, got %d", got)
 	}
-	if got := scrollClamp(8, 10, 3); got != 8 {
-		t.Fatalf("offset 8 (the max) should be unchanged, got %d", got)
+	if got := scrollClamp(7, 10, 3); got != 7 {
+		t.Fatalf("offset 7 (the max) should be unchanged, got %d", got)
 	}
-	if got := scrollClamp(9, 10, 3); got != 8 {
-		t.Fatalf("offset 9 should clamp to 8, got %d", got)
+	if got := scrollClamp(8, 10, 3); got != 7 {
+		t.Fatalf("offset 8 should clamp to 7, got %d", got)
 	}
-	if got := scrollClamp(100, 10, 3); got != 8 {
-		t.Fatalf("offset 100 should clamp to 8, got %d", got)
+	if got := scrollClamp(100, 10, 3); got != 7 {
+		t.Fatalf("offset 100 should clamp to 7, got %d", got)
 	}
-	if got := scrollClamp(1<<30, 10, 3); got != 8 {
-		t.Fatalf("tail sentinel should clamp to 8, got %d", got)
+	if got := scrollClamp(1<<30, 10, 3); got != 7 {
+		t.Fatalf("tail sentinel should clamp to 7, got %d", got)
 	}
 	if got := scrollClamp(-5, 10, 3); got != 0 {
 		t.Fatalf("negative offset should clamp to 0, got %d", got)
@@ -235,13 +317,13 @@ func (s *panelTestScreen) Present(f taiui.Frame) {
 
 func TestTUIPanelWrapsLongLines(t *testing.T) {
 	// TUI panels receive display lines pre-wrapped at the pane's visible
-	// width (the window width minus the border and scrollbar columns), so
-	// a long source line occupies several display rows. The panel's Text
+	// width (the tab's width minus the scrollbar column), so a long
+	// source line occupies several display rows. The panel's Text
 	// renders the pre-wrapped lines; the first display rows are visible.
 	tui := &TUI{}
 	src := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 1)
-	lines := taiui.WrapLines([]string{src, src, src}, 9)
-	element := tui.panel("Title", lines, 0, 4, false)
+	lines := taiui.WrapLines([]string{src, src, src}, 11)
+	element := tui.panel(0, lines, 0, false)
 
 	screen := &panelTestScreen{width: 12, height: 6}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -252,14 +334,17 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	// The pane is 12 columns wide with a border and a scrollbar; the
-	// visible content area is 9 columns. Each source line wraps into
-	// 9-column display rows: the first display row is "abcdefghi" and
-	// the second is "jklmnopqr".
-	if cell := frame.Cells[1*frame.Width+1]; cell.Rune != 'a' {
-		t.Fatalf("expected 'a' at (1,1), got %v", cell.Rune)
+	// The pane is 12 columns wide with a scrollbar; the visible content
+	// area is 11 columns, so each 26-character source line wraps into
+	// three display rows. The first display row holds the first 11
+	// characters, the second row the next 11.
+	if cell := frame.Cells[0*frame.Width+0]; cell.Rune != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", cell.Rune)
 	}
-	if cell := frame.Cells[2*frame.Width+1]; cell.Rune != 'j' {
-		t.Fatalf("expected 'j' at (1,2), got %v", cell.Rune)
+	if cell := frame.Cells[0*frame.Width+10]; cell.Rune != 'k' {
+		t.Fatalf("expected 'k' at (10,0), got %v", cell.Rune)
+	}
+	if cell := frame.Cells[1*frame.Width+0]; cell.Rune != 'l' {
+		t.Fatalf("expected 'l' at (0,1), got %v", cell.Rune)
 	}
 }

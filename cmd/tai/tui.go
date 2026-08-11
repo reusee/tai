@@ -23,13 +23,24 @@ const (
 )
 
 const TheoryOfTUI = `
-The TUI interface replaces stdout with a three-pane terminal UI: the left
-pane streams the model output, the middle pane collects the bodies of summary
-blocks as they appear in the output stream, and the right pane collects log
-records. Tab cycles the focus among the panes; up/down and page up/down
-scroll the focused pane; home/end jump to the start/end. When the generation
-finishes, the TUI stays open so the output can be browsed, and q quits the
-TUI.
+The TUI interface replaces stdout with a three-tab terminal UI: the Output
+tab streams the model output, the Summary tab collects the bodies of summary
+blocks as they appear in the output stream, and the Logs tab collects log
+records. The keys 1, 2, and 3 toggle each tab on and off (Output, Summary,
+Logs respectively); the available space is divided equally among the open
+tabs. The s key switches between vertical splitting (tabs side by side, a
+vertical split line) and horizontal splitting (tabs stacked, a horizontal
+split line). Tab cycles the focus among the open tabs, skipping closed
+ones; up/down and page up/down scroll the focused pane; home/end jump to
+the start/end. When the generation finishes, the TUI stays open so the
+output can be browsed, and q quits the TUI. When all tabs are closed, a
+hint panel is shown instead of a blank screen.
+
+Tabs are distinguished by alternating gray background shades instead of
+borders: each tab has a base gray (darker for Output, lighter for Logs)
+that lightens when the tab is focused, so the focus is visible without a
+border. A label strip at the top of each tab names it; the focused label
+is bright and bold, the unfocused label gray.
 
 Standard output is replaced by a pipe whose reader copies into the TUI's
 output buffer, so all existing code paths that write to os.Stdout — including
@@ -51,14 +62,13 @@ to know about the TUI.
 
 Scroll extents are derived from the wrapped display lines, not the raw
 source lines: each pane pre-wraps its content with taiui.WrapLines at the
-pane's visible width (one third of the screen minus the border and
-scrollbar columns), exactly as the pane's Text wraps it, so the tail of
-wrapped content is reachable and the scrollbar thumb maps the visible
-window onto the full content. The pane-local offset is clamped by
-scrollClamp to [0, displayLines - paneHeight + 1]; the +1 accounts for the
-scroll box starting one row inside the panel border, so at the maximum
-offset the last display line lands on the pane's last row. The tail
-sentinel (1<<30) used by the end key clamps to that maximum.
+visible width (the tab's width minus the scrollbar column), exactly as the
+pane's Text wraps it, so the tail of wrapped content is reachable and the
+scrollbar thumb maps the visible window onto the full content. The
+pane-local offset is clamped by scrollClamp to [0, displayLines -
+paneHeight]; at the maximum offset the last display line lands on the
+pane's last row. The tail sentinel (1<<30) used by the end key clamps to
+that maximum.
 `
 
 // Tui enables the terminal UI mode.
@@ -77,9 +87,6 @@ func (t Tui) Keys() map[string]string {
 	return map[string]string{"-tui": "Use the TUI interface"}
 }
 
-// tuiState holds the data behind the TUI: the output line buffer, the
-// parsed summary lines, the log line buffer, and the view offsets. It is
-// testable without a terminal.
 type tuiState struct {
 	mu          sync.Mutex
 	lines       []string
@@ -89,11 +96,19 @@ type tuiState struct {
 	logsPartial string // incomplete trailing log line
 	parseBuf    []byte
 
+	// open reports whether each tab is enabled: index 0 is the output
+	// tab, 1 the summary tab, 2 the logs tab. The keys 1, 2, and 3
+	// toggle them. splitVertical reports whether the tabs are laid out
+	// side by side (vertical split line) or stacked (horizontal split
+	// line); the s key toggles it. See TheoryOfTUI.
+	open          [3]bool
+	splitVertical bool
+
 	// view state
 	topLeft  int
 	topRight int
 	topLogs  int
-	focus    int // 0 = output, 1 = summary, 2 = logs
+	focus    int // 0 = output, 1 = summary, 2 = logs, -1 = none open
 	finished bool
 }
 
@@ -238,10 +253,12 @@ func newTUI() (*TUI, error) {
 	}
 	return &TUI{
 		tuiState: tuiState{
-			focus:    0,
-			topLeft:  1 << 30,
-			topRight: 1 << 30,
-			topLogs:  1 << 30,
+			open:          [3]bool{true, true, true},
+			splitVertical: true,
+			focus:         0,
+			topLeft:       1 << 30,
+			topRight:      1 << 30,
+			topLogs:       1 << 30,
 		},
 		tty:      t,
 		screen:   taiui.NewTerminalScreen(t, width, height),
@@ -271,17 +288,16 @@ func (t *TUI) notify() {
 }
 
 // scrollClamp clamps a pane scroll offset against the pane's wrapped
-// display lines. The maximum offset is displayLines - paneHeight + 1, not
-// displayLines - paneHeight: the pane's scroll box starts one row inside
-// the panel border (box.Top = 1), so at the maximum offset the last
-// display line lands on the pane's last row. Offsets beyond the content
-// clamp to the maximum; negative offsets clamp to 0. A large sentinel
-// offset (1<<30) therefore sticks the view to the tail. See TheoryOfTUI.
+// display lines. The maximum offset is displayLines - paneHeight: at the
+// maximum offset the last display line lands on the pane's last row.
+// Offsets beyond the content clamp to the maximum; negative offsets clamp
+// to 0. A large sentinel offset (1<<30) therefore sticks the view to the
+// tail. See TheoryOfTUI.
 func scrollClamp(offset, displayLines, paneHeight int) int {
 	if displayLines <= paneHeight {
 		return 0
 	}
-	maxOffset := displayLines - paneHeight + 1
+	maxOffset := displayLines - paneHeight
 	if offset > maxOffset {
 		offset = maxOffset
 	}
@@ -289,6 +305,47 @@ func scrollClamp(offset, displayLines, paneHeight int) int {
 		offset = 0
 	}
 	return offset
+}
+
+// toggleTab toggles the open state of the tab at the given index
+// (0 = output, 1 = summary, 2 = logs). Closing the focused tab moves the
+// focus to another open tab; reopening a tab after all tabs were closed
+// focuses it. See TheoryOfTUI.
+func (t *TUI) toggleTab(idx int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.open[idx] = !t.open[idx]
+	if t.focus == idx && !t.open[idx] {
+		// The focused tab was closed: move the focus to another open tab.
+		t.cycleFocus()
+		return
+	}
+	if t.focus == -1 && t.open[idx] {
+		// A tab was reopened after all tabs were closed: focus it.
+		t.focus = idx
+	}
+}
+
+// cycleFocus advances the focus to the next open tab after the current
+// one, wrapping around. Closed tabs are skipped. When no tab is open, the
+// focus becomes -1. See TheoryOfTUI.
+func (t *TUI) cycleFocus() {
+	if t.focus >= 0 {
+		for i := 1; i <= 3; i++ {
+			f := (t.focus + i) % 3
+			if t.open[f] {
+				t.focus = f
+				return
+			}
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if t.open[i] {
+			t.focus = i
+			return
+		}
+	}
+	t.focus = -1
 }
 
 func (t *TUI) Stop() error {
@@ -327,16 +384,26 @@ func (t *TUI) Run(gen func()) error {
 			switch key {
 			case "tab":
 				t.mu.Lock()
-				t.focus = (t.focus + 1) % 3
+				t.cycleFocus()
+				t.mu.Unlock()
+			case "1":
+				t.toggleTab(0)
+			case "2":
+				t.toggleTab(1)
+			case "3":
+				t.toggleTab(2)
+			case "split":
+				t.mu.Lock()
+				t.splitVertical = !t.splitVertical
 				t.mu.Unlock()
 			case "up":
 				t.scroll(-1)
 			case "down":
 				t.scroll(1)
 			case "pageup":
-				t.scroll(-max(t.height-2, 1))
+				t.scroll(-max(t.height-1, 1))
 			case "pagedown":
-				t.scroll(max(t.height-2, 1))
+				t.scroll(max(t.height-1, 1))
 			case "home":
 				t.scrollTo(0)
 			case "end":
@@ -407,65 +474,115 @@ func (t *TUI) render() {
 	if height < 1 {
 		height = 1
 	}
-	paneHeight := max(height-2, 1)
-
 	width := t.width
 	if width < 1 {
 		width = 1
 	}
-	// The panes wrap their content at the visible width (one third of the
-	// screen minus the border and scrollbar columns), exactly as the
-	// pane's Text wraps it, so scroll extents are computed from the
-	// wrapped display lines and the tail of wrapped content is reachable.
-	// See TheoryOfTUI.
-	contentWidth := max(width/3-3, 1)
-	outputDisplay := taiui.WrapLines(outputLines, contentWidth)
-	summariesDisplay := taiui.WrapLines(t.summaries, contentWidth)
-	logsDisplay := taiui.WrapLines(logsLines, contentWidth)
 
-	t.topLeft = scrollClamp(t.topLeft, len(outputDisplay), paneHeight)
-	t.topRight = scrollClamp(t.topRight, len(summariesDisplay), paneHeight)
-	t.topLogs = scrollClamp(t.topLogs, len(logsDisplay), paneHeight)
-
-	outputTitle := "Output"
-	if t.finished {
-		outputTitle = "Output (done)"
+	// Open tabs share the available space equally. See TheoryOfTUI.
+	var open []int
+	for i := 0; i < 3; i++ {
+		if t.open[i] {
+			open = append(open, i)
+		}
 	}
 
-	left := t.panel(outputTitle, outputDisplay, t.topLeft, height, t.focus == 0)
-	middle := t.panel("Summary", summariesDisplay, t.topRight, height, t.focus == 1)
-	right := t.panel("Logs", logsDisplay, t.topLogs, height, t.focus == 2)
+	// With no tab open, show a hint instead of a blank screen.
+	if len(open) == 0 {
+		root := taiui.Root{Element: taiui.Rect(
+			taiui.Fill(true),
+			taiui.BGColor(taiui.HexColor(0x101010)),
+			taiui.Text("Press 1/2/3 to open tabs", taiui.AlignCenter, taiui.VAlignMiddle),
+		)}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
+		return
+	}
 
-	root := taiui.Root{Element: taiui.Row(
-		taiui.Weighted(1, left),
-		taiui.Weighted(1, middle),
-		taiui.Weighted(1, right),
-	)}
+	// The label strip consumes one row per ten of the tab's height; the
+	// scroll view spans the rest. See TheoryOfTUI.
+	labelHeight := height / 10
+	paneHeight := max(height-labelHeight, 1)
+
+	// Each tab's width is the screen width divided by the number of open
+	// tabs when the split is vertical (side by side); it is the full
+	// width when the split is horizontal (stacked). The content width
+	// reserves one column for the scrollbar, matching the scroll's
+	// visible-width rendering.
+	tabWidth := width
+	if t.splitVertical {
+		tabWidth = width / len(open)
+	}
+	contentWidth := max(tabWidth-1, 1)
+
+	displays := [3][]string{
+		taiui.WrapLines(outputLines, contentWidth),
+		taiui.WrapLines(t.summaries, contentWidth),
+		taiui.WrapLines(logsLines, contentWidth),
+	}
+	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
+	for _, idx := range open {
+		tops[idx] = scrollClamp(tops[idx], len(displays[idx]), paneHeight)
+	}
+	t.topLeft, t.topRight, t.topLogs = tops[0], tops[1], tops[2]
+
+	var panels []taiui.Element
+	for _, idx := range open {
+		panels = append(panels, t.panel(idx, displays[idx], tops[idx], t.focus == idx))
+	}
+
+	var specs []any
+	for _, p := range panels {
+		specs = append(specs, taiui.Weighted(1, p))
+	}
+	var element taiui.Element
+	if t.splitVertical {
+		element = taiui.Row(specs...)
+	} else {
+		element = taiui.Column(specs...)
+	}
+
+	root := taiui.Root{Element: element}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
 }
 
-// panel renders one pane of the TUI. The lines are already wrapped to
-// the pane's visible width, and top is the pane-local scroll offset: the
-// first display row the pane shows. VerticalScroll's top-based offset
-// semantics apply the offset directly, matching the scrollClamp extents.
-// See TheoryOfTUI.
-func (t *TUI) panel(title string, lines []string, top, height int, focus bool) taiui.Element {
-	borderColor := taiui.HexColor(0x888888)
+// tabNames are the names of the three tabs, drawn in their label strips.
+// tabGray is the base background shade of each tab: darker for the output
+// tab, lighter for the logs tab, so tabs are distinguished by alternating
+// gray shades instead of borders. A focused tab lightens its shade; the
+// label strip is lighter still. See TheoryOfTUI.
+var (
+	tabNames = [...]string{"Output", "Summary", "Logs"}
+	tabGray  = [3]int32{0x181818, 0x2c2c2c, 0x404040}
+)
+
+func (t *TUI) panel(idx int, lines []string, top int, focus bool) taiui.Element {
+	base := tabGray[idx]
 	if focus {
-		borderColor = taiui.HexColor(0xffffff)
+		base += 0x0e
 	}
-	return taiui.Rect(
-		taiui.Border(true),
-		taiui.BorderStyle(taiui.SameStyle.SetFG(borderColor)),
-		taiui.Title(title),
-		taiui.VerticalScroll(
-			// Long lines wrap at the visible width so content is never
-			// hidden behind a pane edge or the scrollbar.
+	label := tabNames[idx]
+	if idx == 0 && t.finished {
+		label = "Output (done)"
+	}
+	labelFg := int32(0x9a9a9a)
+	if focus {
+		labelFg = 0xffffff
+	}
+	return taiui.Column(
+		taiui.Weighted(1, taiui.Text(
+			"  "+label+"  ",
+			taiui.Fill(true),
+			taiui.BGColor(taiui.HexColor(base+0x10)),
+			taiui.Bold(focus),
+			taiui.FGColor(taiui.HexColor(labelFg)),
+		)),
+		taiui.Weighted(9, taiui.VerticalScroll(
 			taiui.Text(lines, taiui.Wrap(true)),
 			top,
 			taiui.Scrollbar(true),
 			taiui.Fill(true),
-		),
+			taiui.BGColor(taiui.HexColor(base)),
+		)),
 	)
 }
 
@@ -545,6 +662,14 @@ func readTUIKeys(r io.Reader, ch chan<- string) {
 				}
 			}
 			switch pending[0] {
+			case '1':
+				ch <- "1"
+			case '2':
+				ch <- "2"
+			case '3':
+				ch <- "3"
+			case 's', 'S':
+				ch <- "split"
 			case 'q', 'Q', 0x03:
 				ch <- "quit"
 			case '\t':
