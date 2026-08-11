@@ -12,7 +12,7 @@ require (
 	github.com/peterh/liner v1.2.2
 	github.com/reusee/dscope v0.0.0-20260810075131-286a468398a7
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
-	github.com/reusee/prompts v0.0.0-20260809031259-ad2eec4587e8
+	github.com/reusee/prompts v0.0.0-20260811022009-e9bef3b2463b
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
 	github.com/samber/slog-multi v1.8.0
 	github.com/systemd/slog-journal v0.1.2
