@@ -48,6 +48,17 @@ Summary extraction reuses the block parser: the TUI writer keeps a parse
 buffer and extracts each complete summary block's body as it streams, so the
 middle pane is updated incrementally without requiring the generation loop
 to know about the TUI.
+
+Scroll extents are derived from the wrapped display lines, not the raw
+source lines: each pane pre-wraps its content with taiui.WrapLines at the
+pane's visible width (one third of the screen minus the border and
+scrollbar columns), exactly as the pane's Text wraps it, so the tail of
+wrapped content is reachable and the scrollbar thumb maps the visible
+window onto the full content. The pane-local offset is clamped by
+scrollClamp to [0, displayLines - paneHeight + 1]; the +1 accounts for the
+scroll box starting one row inside the panel border, so at the maximum
+offset the last display line lands on the pane's last row. The tail
+sentinel (1<<30) used by the end key clamps to that maximum.
 `
 
 // Tui enables the terminal UI mode.
@@ -259,6 +270,27 @@ func (t *TUI) notify() {
 	}
 }
 
+// scrollClamp clamps a pane scroll offset against the pane's wrapped
+// display lines. The maximum offset is displayLines - paneHeight + 1, not
+// displayLines - paneHeight: the pane's scroll box starts one row inside
+// the panel border (box.Top = 1), so at the maximum offset the last
+// display line lands on the pane's last row. Offsets beyond the content
+// clamp to the maximum; negative offsets clamp to 0. A large sentinel
+// offset (1<<30) therefore sticks the view to the tail. See TheoryOfTUI.
+func scrollClamp(offset, displayLines, paneHeight int) int {
+	if displayLines <= paneHeight {
+		return 0
+	}
+	maxOffset := displayLines - paneHeight + 1
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return offset
+}
+
 func (t *TUI) Stop() error {
 	return t.tty.Stop()
 }
@@ -375,48 +407,34 @@ func (t *TUI) render() {
 	if height < 1 {
 		height = 1
 	}
+	paneHeight := max(height-2, 1)
 
-	maxLeft := 0
-	if len(outputLines) > height {
-		maxLeft = len(outputLines) - height
+	width := t.width
+	if width < 1 {
+		width = 1
 	}
-	if t.topLeft > maxLeft {
-		t.topLeft = maxLeft
-	}
-	if t.topLeft < 0 {
-		t.topLeft = 0
-	}
+	// The panes wrap their content at the visible width (one third of the
+	// screen minus the border and scrollbar columns), exactly as the
+	// pane's Text wraps it, so scroll extents are computed from the
+	// wrapped display lines and the tail of wrapped content is reachable.
+	// See TheoryOfTUI.
+	contentWidth := max(width/3-3, 1)
+	outputDisplay := taiui.WrapLines(outputLines, contentWidth)
+	summariesDisplay := taiui.WrapLines(t.summaries, contentWidth)
+	logsDisplay := taiui.WrapLines(logsLines, contentWidth)
 
-	maxRight := 0
-	if len(t.summaries) > height {
-		maxRight = len(t.summaries) - height
-	}
-	if t.topRight > maxRight {
-		t.topRight = maxRight
-	}
-	if t.topRight < 0 {
-		t.topRight = 0
-	}
-
-	maxLogs := 0
-	if len(logsLines) > height {
-		maxLogs = len(logsLines) - height
-	}
-	if t.topLogs > maxLogs {
-		t.topLogs = maxLogs
-	}
-	if t.topLogs < 0 {
-		t.topLogs = 0
-	}
+	t.topLeft = scrollClamp(t.topLeft, len(outputDisplay), paneHeight)
+	t.topRight = scrollClamp(t.topRight, len(summariesDisplay), paneHeight)
+	t.topLogs = scrollClamp(t.topLogs, len(logsDisplay), paneHeight)
 
 	outputTitle := "Output"
 	if t.finished {
 		outputTitle = "Output (done)"
 	}
 
-	left := t.panel(outputTitle, outputLines, t.topLeft, height, t.focus == 0)
-	middle := t.panel("Summary", t.summaries, t.topRight, height, t.focus == 1)
-	right := t.panel("Logs", logsLines, t.topLogs, height, t.focus == 2)
+	left := t.panel(outputTitle, outputDisplay, t.topLeft, height, t.focus == 0)
+	middle := t.panel("Summary", summariesDisplay, t.topRight, height, t.focus == 1)
+	right := t.panel("Logs", logsDisplay, t.topLogs, height, t.focus == 2)
 
 	root := taiui.Root{Element: taiui.Row(
 		taiui.Weighted(1, left),
@@ -426,6 +444,11 @@ func (t *TUI) render() {
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
 }
 
+// panel renders one pane of the TUI. The lines are already wrapped to
+// the pane's visible width, and top is the pane-local scroll offset: the
+// first display row the pane shows. VerticalScroll's top-based offset
+// semantics apply the offset directly, matching the scrollClamp extents.
+// See TheoryOfTUI.
 func (t *TUI) panel(title string, lines []string, top, height int, focus bool) taiui.Element {
 	borderColor := taiui.HexColor(0x888888)
 	if focus {
@@ -439,7 +462,7 @@ func (t *TUI) panel(title string, lines []string, top, height int, focus bool) t
 			// Long lines wrap at the visible width so content is never
 			// hidden behind a pane edge or the scrollbar.
 			taiui.Text(lines, taiui.Wrap(true)),
-			top+height/2,
+			top,
 			taiui.Scrollbar(true),
 			taiui.Fill(true),
 		),

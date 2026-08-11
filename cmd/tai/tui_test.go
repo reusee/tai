@@ -128,6 +128,44 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 	}
 }
 
+func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
+	// The panel must reach the tail of wrapped content: the scroll
+	// offset is clamped against the wrapped display-line count, so at
+	// the maximum offset the last display line lands on the pane's last
+	// row. Under raw-line clamping the tail was unreachable once
+	// wrapping multiplied the display rows. See TheoryOfTUI.
+	var src []string
+	for i := 0; i < 20; i++ {
+		src = append(src, strings.Repeat("x", 20))
+	}
+	src = append(src, "THE-END")
+	display := taiui.WrapLines(src, 9)
+	last := display[len(display)-1]
+	if last != "THE-END" {
+		t.Fatalf("expected the last display line to be THE-END, got %q", last)
+	}
+
+	tui := &TUI{}
+	// height 10 gives paneHeight 8; the tail offset is
+	// len(display) - 8 + 1 = len(display) - 7.
+	element := tui.panel("Title", display, len(display)-7, 10, false)
+
+	screen := &panelTestScreen{width: 12, height: 10}
+	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+		return taiui.Root{Element: element}
+	}), screen)
+
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	// At the maximum offset the last display line lands on the pane's
+	// bottom row: screen row 8, column 1 (inside the top border).
+	if cell := frame.Cells[8*frame.Width+1]; cell.Rune != 'T' {
+		t.Fatalf("expected THE-END at the pane's bottom row (8,1), got %v", cell.Rune)
+	}
+}
+
 func TestReadTUIKeys(t *testing.T) {
 	ch := make(chan string, 10)
 	go readTUIKeys(strings.NewReader("\x1b[Aq\x1b[5~\x1b[6~"), ch)
@@ -148,6 +186,39 @@ func TestReadTUIKeys(t *testing.T) {
 	}
 }
 
+func TestScrollClamp(t *testing.T) {
+	// The maximum offset is displayLines - paneHeight + 1: the pane's
+	// scroll box starts one row inside the panel border, so at the
+	// maximum offset the last display line lands on the pane's last row.
+	// An offset beyond the content clamps to the maximum, a negative
+	// offset clamps to 0, and the tail sentinel (1<<30) clamps to the
+	// last row. See TheoryOfTUI.
+	if got := scrollClamp(0, 10, 3); got != 0 {
+		t.Fatalf("offset 0 should be unchanged, got %d", got)
+	}
+	if got := scrollClamp(8, 10, 3); got != 8 {
+		t.Fatalf("offset 8 (the max) should be unchanged, got %d", got)
+	}
+	if got := scrollClamp(9, 10, 3); got != 8 {
+		t.Fatalf("offset 9 should clamp to 8, got %d", got)
+	}
+	if got := scrollClamp(100, 10, 3); got != 8 {
+		t.Fatalf("offset 100 should clamp to 8, got %d", got)
+	}
+	if got := scrollClamp(1<<30, 10, 3); got != 8 {
+		t.Fatalf("tail sentinel should clamp to 8, got %d", got)
+	}
+	if got := scrollClamp(-5, 10, 3); got != 0 {
+		t.Fatalf("negative offset should clamp to 0, got %d", got)
+	}
+	if got := scrollClamp(0, 2, 3); got != 0 {
+		t.Fatalf("fitted content should clamp to 0, got %d", got)
+	}
+	if got := scrollClamp(1<<30, 2, 3); got != 0 {
+		t.Fatalf("tail sentinel with fitted content should clamp to 0, got %d", got)
+	}
+}
+
 // panelTestScreen records presented frames for TUI panel rendering tests.
 type panelTestScreen struct {
 	width, height int
@@ -163,17 +234,13 @@ func (s *panelTestScreen) Present(f taiui.Frame) {
 }
 
 func TestTUIPanelWrapsLongLines(t *testing.T) {
-	// TUI panels wrap long lines within their visible width so content
-	// is never hidden behind a pane edge or the scrollbar. The panel
-	// text is rendered by VerticalScroll, which renders its child at the
-	// visible width (the window width minus the scrollbar column) when
-	// the scrollbar is shown.
+	// TUI panels receive display lines pre-wrapped at the pane's visible
+	// width (the window width minus the border and scrollbar columns), so
+	// a long source line occupies several display rows. The panel's Text
+	// renders the pre-wrapped lines; the first display rows are visible.
 	tui := &TUI{}
-	lines := []string{
-		"abcdefghijklmnopqrstuvwxyz",
-		"abcdefghijklmnopqrstuvwxyz",
-		"abcdefghijklmnopqrstuvwxyz",
-	}
+	src := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 1)
+	lines := taiui.WrapLines([]string{src, src, src}, 9)
 	element := tui.panel("Title", lines, 0, 4, false)
 
 	screen := &panelTestScreen{width: 12, height: 6}
@@ -186,11 +253,9 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	}
 	frame := screen.frames[len(screen.frames)-1]
 	// The pane is 12 columns wide with a border and a scrollbar; the
-	// visible content area is 9 columns. Each source line wraps at the
-	// visible width: the second visible line starts with 'j'. Without
-	// visible-width wrapping, the line would wrap at the full 10-column
-	// content width and the second visible line would start with 'k',
-	// hiding a column behind the scrollbar.
+	// visible content area is 9 columns. Each source line wraps into
+	// 9-column display rows: the first display row is "abcdefghi" and
+	// the second is "jklmnopqr".
 	if cell := frame.Cells[1*frame.Width+1]; cell.Rune != 'a' {
 		t.Fatalf("expected 'a' at (1,1), got %v", cell.Rune)
 	}

@@ -227,6 +227,36 @@ func TestVerticalScrollOffsetBeyondShortContent(t *testing.T) {
 	}
 }
 
+func TestVerticalScrollOffsetIsFirstVisibleRow(t *testing.T) {
+	// The offset is the first visible content row: offset 10 in a
+	// 6-row window shows "line 11" at the window's first row. Under the
+	// old center-based semantics the view centered on row 10, showing
+	// "line 08" at the first row. The top and bottom crop indicators
+	// cover the first six columns of the first and last rows, so the
+	// line-number digit at column 6 identifies the visible rows: '1'
+	// for line 11 rather than '8' for line 08.
+	screen := newFakeScreen(80, 25)
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 6, Right: 80},
+		VerticalScroll(Text(lines), 10),
+	)})
+	Render(scope, screen)
+	// The first visible content row is line 11; its '1' digit survives
+	// past the top crop indicator.
+	if r := screen.cell(6, 0); r != '1' {
+		t.Fatalf("expected line 11 at (6,0), got %v", r)
+	}
+	// The last visible row is line 16; its '6' digit survives past the
+	// bottom crop indicator.
+	if r := screen.cell(6, 5); r != '6' {
+		t.Fatalf("expected line 16 at (6,5), got %v", r)
+	}
+}
+
 func TestVerticalScrollWrapWithScrollbar(t *testing.T) {
 	// When the scrollbar is shown, the child is rendered at the visible
 	// width (the window width minus the scrollbar column), so wrapped
@@ -2283,6 +2313,18 @@ func TestWrapLineLimitedIterAppends(t *testing.T) {
 	got = wrapLineLimitedIter("hello world", 8, 1, options, iter, out)
 	if !sameStrings(got, []string{"existing", "hello"}) {
 		t.Fatalf("expected limit-bounded append, got %q", got)
+	}
+}
+
+func TestWrapLines(t *testing.T) {
+	// WrapLines wraps each source line to the given width, applying the
+	// same cluster-aware word wrapping Text uses internally, so callers
+	// that pre-wrap content (e.g., a TUI computing scroll extents) stay
+	// consistent with Text's rendering.
+	got := WrapLines([]string{"one two three", "four five six"}, 7)
+	want := []string{"one two", "three", "four", "five", "six"}
+	if !sameStrings(got, want) {
+		t.Fatalf("WrapLines = %q, want %q", got, want)
 	}
 }
 

@@ -14,9 +14,11 @@ var _ Element = _VerticalScroll{}
 // maxScrollContentHeight bounds the virtual column a VerticalScroll renders
 // its child into. Box-driven children (Rect, Row, Column) render their whole
 // box, so an unbounded column would make them loop over unbounded space;
-// the bound keeps such rendering finite. Real scrollable content rarely
-// approaches the bound.
-const maxScrollContentHeight = 1 << 14
+// the bound keeps such rendering finite. The TUI streams the session output
+// (see TheoryOfTUI in cmd/tai/tui.go), whose lines each wrap into several
+// display rows, so the bound must comfortably hold the wrapped display
+// lines of a full session.
+const maxScrollContentHeight = 1 << 17
 
 // scrollCellsPool pools the content-cell slices of VerticalScroll
 // renders. A scroll renders its whole child into a virtual column, so
@@ -50,7 +52,7 @@ type _VerticalScroll struct {
 }
 
 // VerticalScroll renders the child into a virtually unbounded column and
-// crops to the visible window centered on the content row given by offset.
+// crops to the visible window whose first content row is given by offset.
 // The column is bounded to maxScrollContentHeight rows so box-driven
 // children (Rect, Row, Column) cannot drive unbounded rendering. The view
 // is clamped to the content extent, so an offset beyond the end shows the
@@ -112,17 +114,17 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		cursorSet = true
 	}
 
-	// The collection range is centered on the expected window: for tall
-	// content the window is within the range, so one pass suffices; for
-	// short content with a large offset the range may miss it, and a
-	// second pass re-collects the window cells. The range spans at most
-	// three window heights, so a tall virtual column never accumulates
-	// cells for rows outside it.
-	collectFrom := box.Top + v.offset - box.Height()
+	// The collection range covers the expected window: for tall content
+	// the window is within the range, so one pass suffices; for short
+	// content whose offset clamps below the requested offset, the range
+	// misses the window and a second pass re-collects the window cells.
+	// The range spans one window height, so a tall virtual column never
+	// accumulates cells for rows outside it.
+	collectFrom := v.offset
 	if collectFrom < box.Top {
 		collectFrom = box.Top
 	}
-	collectTo := box.Top + v.offset + 2*box.Height()
+	collectTo := collectFrom + box.Height()
 	if collectTo > box.Top+maxScrollContentHeight {
 		collectTo = box.Top + maxScrollContentHeight
 	}
@@ -176,7 +178,7 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 	var contentHeight, fromY, maxFromY int
 	computeViewWindow := func() {
 		contentHeight = maxY - box.Top + 1
-		fromY = max(box.Top+v.offset-box.Height()/2, box.Top)
+		fromY = max(box.Top, v.offset)
 		maxFromY = maxY - box.Height() + 1
 		if maxFromY < box.Top {
 			maxFromY = box.Top

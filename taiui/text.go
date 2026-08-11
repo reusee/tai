@@ -537,6 +537,22 @@ func wrapLineLimited(line string, width, limit int, options displaywidth.Options
 	return wrapLineLimitedIter(line, width, limit, options, iter, nil)
 }
 
+// WrapLines wraps each line to the given width using the current
+// display-width options and returns the wrapped lines. It applies the same
+// wrapping Text uses internally, so callers that pre-wrap content to
+// compute scroll extents (e.g., a TUI) stay consistent with Text's
+// rendering.
+func WrapLines(lines []string, width int) []string {
+	options := DisplayWidthOptions()
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	var out []string
+	for _, line := range lines {
+		out = wrapLineLimitedIter(line, width, -1, options, iter, out)
+	}
+	return out
+}
+
 // wrapLineLimitedIter is wrapLineLimited with a caller-provided
 // grapheme iterator and line slice, so a render pass shares one pooled
 // iterator across the line loop and the wrap calls, and appends the
