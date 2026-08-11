@@ -10,7 +10,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260810075131-286a468398a7
+	github.com/reusee/dscope v0.0.0-20260811023023-5846d01453f6
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/prompts v0.0.0-20260811022009-e9bef3b2463b
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5
