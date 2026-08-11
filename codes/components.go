@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/gocodes"
 )
 
 const TheoryOfCodesComponents = `
@@ -64,6 +65,7 @@ type CodesComponents struct {
 func (Module) CodesComponents(
 	codeProvider codetypes.CodeProvider,
 	extra flags.ExtraSystemPrompt,
+	goExtra gocodes.ExtraSystemPrompt,
 	dynamicContext DynamicContext,
 	apply flags.Apply,
 	plan flags.Plan,
@@ -203,6 +205,20 @@ func (Module) CodesComponents(
 	// Unified under the Component framework so all prompt contributions
 	// are assembled through comps.PromptSections(). See TheoryOfCodesComponents.
 	for _, prompt := range extra {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
+	}
+
+	// Go-specific extra system prompt from configuration
+	// (go.extra_system_prompt): prompt-only Component, appended after the
+	// top-level extra prompts so the go project context is introduced
+	// whenever the codes generation pipeline is active (go, any, goal
+	// commands). The ai command uses AIComponents and is unaffected.
+	// See gocodes.ExtraSystemPrompt.
+	for _, prompt := range goExtra {
 		if prompt != "" {
 			comps = append(comps, components.Component{
 				PromptSection: prompt,

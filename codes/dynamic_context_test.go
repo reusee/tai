@@ -8,6 +8,7 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/modes"
 )
 
@@ -66,6 +67,24 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		}
 		if !strings.Contains(string(prompt), "read-only") {
 			t.Fatal("system prompt must reference read-only files")
+		}
+	})
+}
+
+func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() gocodes.ExtraSystemPrompt {
+			return gocodes.ExtraSystemPrompt{"go-specific system prompt"}
+		},
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		if !strings.Contains(string(prompt), "go-specific system prompt") {
+			t.Fatal("system prompt must include go.extra_system_prompt content")
 		}
 	})
 }

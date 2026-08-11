@@ -116,6 +116,12 @@ go?: {
 
 	// envs provides additional environment variables for the 'go list' command.
 	envs?: [...string]
+// extra_system_prompt provides Go-specific additional instructions to
+	// the AI. Unlike the top-level extra_system_prompt, these are
+	// introduced whenever the codes generation pipeline is active (go,
+	// any, goal commands); the ai command is unaffected.
+	
+	extra_system_prompt?: string | [...string]
 }
 
 // go_envs is a top-level alias for go.envs, providing additional
