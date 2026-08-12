@@ -273,6 +273,79 @@ func TestTuiLogsWriterWritesToLogs(t *testing.T) {
 	}
 }
 
+func TestPlainOutputLinesAlternatesBackgrounds(t *testing.T) {
+	lines := plainOutputLines([]string{"a", "b", "c"}, tabUnfocusBG)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+	for i, line := range lines {
+		want := int32(tabUnfocusBG)
+		if i%2 == 1 {
+			want = logAltBG(tabUnfocusBG)
+		}
+		if line.bgColor != want {
+			t.Fatalf("line %d: expected background %#x, got %#x", i, want, line.bgColor)
+		}
+		if line.color != 0 {
+			t.Fatalf("line %d: expected no foreground color, got %#x", i, line.color)
+		}
+	}
+	if logAltBG(tabUnfocusBG) == tabUnfocusBG {
+		t.Fatal("alternate background must differ from the base")
+	}
+}
+
+func TestLogAltBG(t *testing.T) {
+	// The alternate shade shifts each channel of the base toward the
+	// mid-gray, so it works on both the focused (gray) and unfocused
+	// (dark blue) tab backgrounds.
+	for _, base := range []int32{tabUnfocusBG, tabFocusBG} {
+		r1, g1, b1 := color.NewHexColor(base).RGB()
+		r2, g2, b2 := color.NewHexColor(logAltBG(base)).RGB()
+		if !(r2 > r1 && g2 > g1 && b2 > b1) {
+			t.Fatalf("expected alternate lighter than base %#x, got %#x %#x %#x -> %#x %#x %#x",
+				base, r1, g1, b1, r2, g2, b2)
+		}
+	}
+}
+
+func TestColoredTextAlternatingBackgrounds(t *testing.T) {
+	alt := logAltBG(tabUnfocusBG)
+	lines := []displayLine{
+		{text: "first", bgColor: tabUnfocusBG},
+		{text: "second", bgColor: alt},
+	}
+	element := coloredText(lines, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
+	screen := &panelTestScreen{width: 10, height: 2}
+	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+		return taiui.Root{Element: element}
+	}), screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+
+	// The first row carries the base background across its full width.
+	wantR, wantG, wantB := color.NewHexColor(tabUnfocusBG).RGB()
+	cell := frame.Cells[9] // row 0, rightmost column: a fill cell
+	if !cell.Set {
+		t.Fatal("expected the first row painted with its background")
+	}
+	if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected base background %#x, got %#x %#x %#x", tabUnfocusBG, r, g, b)
+	}
+
+	// The second row carries the alternate background.
+	wantR, wantG, wantB = color.NewHexColor(alt).RGB()
+	cell = frame.Cells[19] // row 1, rightmost column: a fill cell
+	if !cell.Set {
+		t.Fatal("expected the second row painted with its background")
+	}
+	if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected alternate background %#x, got %#x %#x %#x", alt, r, g, b)
+	}
+}
+
 func TestTuiStatePartialLines(t *testing.T) {
 	st := &tuiState{}
 	st.write([]byte("foo"))

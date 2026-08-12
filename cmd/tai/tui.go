@@ -37,7 +37,10 @@ const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
 signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
-— and the Logs tab collects log records. Model output is captured from the
+— and the Logs tab collects log records. The Logs tab renders consecutive
+lines with alternating background shades so entries are visually distinct;
+the two shades derive from the tab's focused or unfocused background, so the
+alternation stays subtle in either state. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -158,18 +161,19 @@ func (s tuiOutputState) Unwrap() generators.State {
 }
 
 type (
-	// outputLine is one source line of the Output or Round tab, with the
-	// display color carried from its content role.
 	outputLine struct {
 		text  string
 		color int32
+		// bgColor is the optional line background; the Logs tab sets it
+		// to alternating shades so consecutive lines are distinct.
+		bgColor int32
 	}
 
-	// displayLine is one wrapped display line, carrying the color of the
-	// source line it came from.
 	displayLine struct {
 		text  string
 		color int32
+		// bgColor carries the source line's background through wrapping.
+		bgColor int32
 	}
 )
 
@@ -502,25 +506,53 @@ func (s *tuiState) outputLinesForRender() []outputLine {
 }
 
 // wrapTabLines wraps each source output line to the given width,
-// carrying the line's color onto every wrapped display line.
+// carrying the line's foreground and background colors onto every
+// wrapped display line.
 func wrapTabLines(lines []outputLine, width int) []displayLine {
 	var out []displayLine
 	for _, line := range lines {
 		for _, text := range taiui.WrapLines([]string{line.text}, width) {
-			out = append(out, displayLine{text: text, color: line.color})
+			out = append(out, displayLine{text: text, color: line.color, bgColor: line.bgColor})
 		}
 	}
 	return out
 }
 
-// plainOutputLines converts plain text lines into uncolored output
-// lines.
-func plainOutputLines(lines []string) []outputLine {
+// plainOutputLines converts plain text lines into output lines with
+// alternating background shades, so consecutive log entries are visually
+// distinct. The base shade is the tab's focused or unfocused background,
+// whichever the Logs tab currently has; odd-numbered lines get the
+// shifted alternate. See logAltBG.
+func plainOutputLines(lines []string, base int32) []outputLine {
 	out := make([]outputLine, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, outputLine{text: line})
+	for i, line := range lines {
+		bg := base
+		if i%2 == 1 {
+			bg = logAltBG(base)
+		}
+		out = append(out, outputLine{text: line, bgColor: bg})
 	}
 	return out
+}
+
+// logAltBGDiff is the per-channel shift of the alternate log line
+// background toward the mid-gray. It is small enough to stay subtle on
+// the dark tab backgrounds and large enough to be visible.
+const logAltBGDiff = 12
+
+// logAltBG returns the alternate shade for odd-numbered log lines: each
+// channel of the base background is shifted toward the mid-gray, so the
+// alternation stays visible on both the focused and unfocused tab
+// backgrounds.
+func logAltBG(base int32) int32 {
+	shift := func(x int32) int32 {
+		if x > 128 {
+			return x - logAltBGDiff
+		}
+		return x + logAltBGDiff
+	}
+	r, g, b := color.NewHexColor(base).RGB()
+	return color.NewRGBColor(shift(r), shift(g), shift(b)).Hex()
 }
 
 func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
@@ -530,7 +562,7 @@ func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
 	var children []any
 	start := 0
 	for i := 1; i <= len(lines); i++ {
-		if i == len(lines) || lines[i].color != lines[start].color {
+		if i == len(lines) || lines[i].color != lines[start].color || lines[i].bgColor != lines[start].bgColor {
 			count := i - start
 			texts := make([]string, 0, count)
 			for j := start; j < i; j++ {
@@ -540,6 +572,13 @@ func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
 			specs := []any{taiui.Box(groupBox), texts}
 			if lines[start].color != 0 {
 				specs = append(specs, taiui.FGColor(color.PaletteColor(int(lines[start].color))))
+			}
+			if lines[start].bgColor != 0 {
+				// A background color fills the whole group box, so a
+				// wrapped log line keeps one background across its
+				// display rows and consecutive lines are distinct.
+				// See plainOutputLines.
+				specs = append(specs, taiui.BGColor(taiui.HexColor(lines[start].bgColor)), taiui.Fill(true))
 			}
 			children = append(children, taiui.Text(specs...))
 			start = i
@@ -1105,10 +1144,19 @@ func (t *TUI) render() {
 	// view; collapsed tabs show a thin strip with the key and title.
 	// The focused tab occupies twice the space of each non-focused tab.
 	// See TheoryOfTUI.
+	//
+	// The logs tab alternates line backgrounds derived from its tab
+	// background, so consecutive log entries are visually distinct. The
+	// base is the focused or unfocused tab background, whichever the
+	// logs tab currently has. See plainOutputLines.
+	logsBase := tabUnfocusBG
+	if t.focus == 2 {
+		logsBase = tabFocusBG
+	}
 	contentByTab := [3][]outputLine{
 		outputLines,
 		t.signals,
-		plainOutputLines(logsLines),
+		plainOutputLines(logsLines, logsBase),
 	}
 	displays := [3][]displayLine{}
 	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
