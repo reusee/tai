@@ -22,14 +22,6 @@ const (
 	maxTUISignals = 2000
 )
 
-// modelRequestHintTimeout is how long after the last TUI output or log
-// write the Output tab title keeps the "generating" hint. The generator
-// logs a record at the start of each request and streams output
-// throughout it, so the hint stays visible while the model works and
-// clears shortly after the output stops. It is a var so tests can shrink
-// the window without waiting out the real interval. See TheoryOfTUI.
-var modelRequestHintTimeout = 5 * time.Second
-
 const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
@@ -98,13 +90,14 @@ type tuiState struct {
 	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none open
 	finished bool
 
-	// lastWrite records the last time output or log content was written
-	// to the TUI. The Output tab title uses it to detect whether the
-	// model is actively generating: the generator logs a record at the
-	// start of each request and streams output throughout it, refreshing
-	// the timestamp continuously, while no content arrives while the
-	// system idles. See TheoryOfTUI.
-	lastWrite time.Time
+	// generating reports whether a generation request is in flight. It
+	// is set when the generator's "generating" log record is observed
+	// and cleared by a finish line ("[Finish: ...]") or by the session
+	// ending. While a request is in flight the Output tab title keeps
+	// the "generating..." hint regardless of how long the model is
+	// silent (e.g., long thinking phases without streamed output).
+	// See TheoryOfTUI.
+	generating bool
 
 	// follow reports whether each tab's view sticks to the latest content.
 	// It starts true; manual scrolling away clears it, and reaching the
@@ -118,9 +111,10 @@ type tuiState struct {
 }
 
 // write appends output, extracts summary blocks, and collects finish
-// lines into the Round tab's signals. It also refreshes the activity
-// timestamp used by the Output tab's generating hint. A closed Output
-// tab opens automatically on the first streamed output. See TheoryOfTUI.
+// lines into the Round tab's signals. A finish line clears the
+// generating hint set by the request-start log, so the Output tab title
+// returns to plain once the request completes. A closed Output tab
+// opens automatically on the first streamed output. See TheoryOfTUI.
 func (s *tuiState) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,16 +127,15 @@ func (s *tuiState) write(p []byte) {
 	// summary block precedes the round's finish line. See TheoryOfTUI.
 	s.parseSummaries(p)
 	s.appendOutput(p)
-	s.lastWrite = time.Now()
 }
 
 // writeLogs appends log output to the logs buffer, splitting it into lines
-// and retaining the incomplete trailing line for the next chunk. It also
-// refreshes the activity timestamp used by the Output tab's generating
-// hint: the generator logs a record at the start of each request, so log
-// activity marks the model as generating before the first output byte
-// arrives. A closed Logs tab opens automatically on the first log record.
-// See TheoryOfTUI.
+// and retaining the incomplete trailing line for the next chunk. The
+// generator logs a record at the start of each request; detecting it
+// marks the request as in flight, so the Output tab's generating hint
+// appears before the first output byte and persists for the whole
+// request — including silent thinking phases. A closed Logs tab opens
+// automatically on the first log record. See TheoryOfTUI.
 func (s *tuiState) writeLogs(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,13 +149,32 @@ func (s *tuiState) writeLogs(p []byte) {
 		if idx < 0 {
 			break
 		}
-		s.logs = append(s.logs, s.logsPartial[:idx])
+		line := s.logsPartial[:idx]
+		s.logs = append(s.logs, line)
+		if isGeneratingLog(line) {
+			s.generating = true
+		}
 		s.logsPartial = s.logsPartial[idx+1:]
 		if len(s.logs) > maxTUILines {
 			s.logs = append([]string(nil), s.logs[len(s.logs)-maxTUILines:]...)
 		}
 	}
-	s.lastWrite = time.Now()
+}
+
+// isGeneratingLog reports whether a log line marks the start of a
+// generation request. The generators package logs a record with message
+// "generating" at the start of every API request, before any output is
+// streamed (see gemini.go and open_ai.go). slog's TextHandler renders
+// the message value bare ("msg=generating") when it contains no spaces
+// and quoted (`msg="generating"`) when it does; both forms are accepted.
+// The value is required to be followed by a space (the next field) or
+// the line end, so a message that merely starts with "generating" is
+// not mistaken for the request-start record. See TheoryOfTUI.
+func isGeneratingLog(line string) bool {
+	return strings.HasSuffix(line, "msg=generating") ||
+		strings.Contains(line, "msg=generating ") ||
+		strings.HasSuffix(line, `msg="generating"`) ||
+		strings.Contains(line, `msg="generating" `)
 }
 
 // autoOpen opens a closed tab when content for it arrives. It never
@@ -182,21 +194,18 @@ func (s *tuiState) autoOpen(idx int) {
 	}
 }
 
-// requesting reports whether the model is actively generating: the
-// session has not finished and output or log content was written to the
-// TUI within the last modelRequestHintTimeout. The generator logs a
-// record at the start of each request and streams output throughout it,
-// refreshing the timestamp continuously, so the hint appears while the
-// model works and clears shortly after the output stops. Callers must
-// hold mu (render does) or be single-threaded. See TheoryOfTUI.
+// requesting reports whether a generation request is in flight: the
+// session has not finished and the request-start log has been observed
+// without a finish line (or the session ending) having cleared it. The
+// hint therefore persists for the whole request — including silent
+// thinking phases without streamed output — and clears when the request
+// returns. Callers must hold mu (render does) or be single-threaded.
+// See TheoryOfTUI.
 func (s *tuiState) requesting() bool {
 	if s.finished {
 		return false
 	}
-	if s.lastWrite.IsZero() {
-		return false
-	}
-	return time.Since(s.lastWrite) < modelRequestHintTimeout
+	return s.generating
 }
 
 // outputTabLabel returns the Output tab's title with the session-state
@@ -244,7 +253,9 @@ func (s *tuiState) appendOutput(p []byte) {
 // no separate buffer; a finish line sharing its stream line with
 // surrounding text is still extracted. A closed Round tab opens
 // automatically on the first finish line, matching the summary block
-// behavior. See TheoryOfTUI.
+// behavior. The finish line also marks the end of the generation
+// request: it clears the Output tab's "generating..." hint. See
+// TheoryOfTUI.
 func (s *tuiState) collectFinishSignals(line string) {
 	search := line
 	for {
@@ -258,6 +269,11 @@ func (s *tuiState) collectFinishSignals(line string) {
 			return
 		}
 		s.autoOpen(1)
+		// The finish line marks the end of the generation request: the
+		// Output tab's "generating..." hint clears once the request has
+		// returned. A new request's "generating" log re-sets it.
+		// See TheoryOfTUI.
+		s.generating = false
 		s.signals = append(s.signals, "[Finish: "+search[:end]+"]")
 		if len(s.signals) > maxTUISignals {
 			s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
@@ -523,6 +539,12 @@ func (t *TUI) Run(gen func()) error {
 			}
 			t.mu.Lock()
 			t.finished = true
+			// The session has ended: no request is in flight, so the
+			// generating hint is cleared with the finished state. A
+			// request that returned without a finish line (e.g., an
+			// error path) must not leave the hint stuck on.
+			// See TheoryOfTUI.
+			t.generating = false
 			t.mu.Unlock()
 			t.notify()
 		}()

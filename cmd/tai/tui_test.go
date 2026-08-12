@@ -44,17 +44,25 @@ func TestTuiStateWriteLogs(t *testing.T) {
 }
 
 func TestTuiStateRequesting(t *testing.T) {
-	// The Output tab's "generating" hint appears while the model is
-	// actively generating and clears in the idle states: a fresh state
-	// with no activity, and a finished session, are never "requesting",
-	// while recent output writes are. See TheoryOfTUI.
+	// The Output tab's "generating" hint appears while a generation
+	// request is in flight and clears when the request returns: a fresh
+	// state with no activity and a finished session are never
+	// "requesting", the request-start log sets the hint, and the finish
+	// line clears it. See TheoryOfTUI.
 	st := &tuiState{}
 	if st.requesting() {
 		t.Fatal("expected not requesting with no activity")
 	}
-	st.write([]byte("model output"))
+	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !st.requesting() {
-		t.Fatal("expected requesting after output write")
+		t.Fatal("expected requesting after the generating log")
+	}
+	// The finish line marks the request as returned: the hint clears
+	// even though the session has not ended (e.g., waiting for the next
+	// round or user input).
+	st.write([]byte("[Finish: stop]\n"))
+	if st.requesting() {
+		t.Fatal("expected not requesting after the finish line")
 	}
 	st.finished = true
 	if st.requesting() {
@@ -75,36 +83,59 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 	}
 }
 
-func TestTuiStateRequestingTimeout(t *testing.T) {
-	// The hint clears modelRequestHintTimeout after the last write, so an
-	// idle session (e.g., waiting for user input in interactive mode)
-	// stops showing "generating". The window is shrunk for the test.
-	// See TheoryOfTUI.
-	old := modelRequestHintTimeout
-	modelRequestHintTimeout = 20 * time.Millisecond
-	defer func() { modelRequestHintTimeout = old }()
-
-	st := &tuiState{}
-	st.write([]byte("model output"))
-	if !st.requesting() {
-		t.Fatal("expected requesting after output write")
+func TestIsGeneratingLog(t *testing.T) {
+	// The request-start log appears as "msg=generating" (bare message)
+	// or `msg="generating"` (quoted message). The detection requires the
+	// value to be followed by a space or the line end, so a log about
+	// "generating" that is not the request-start record (e.g.,
+	// "generating failed") is not mistaken for one. See TheoryOfTUI.
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{`time=2026-01-01T00:00:00+08:00 level=INFO msg=generating name=gemini model=foo`, true},
+		{`level=INFO msg="generating" name=model`, true},
+		{`level=INFO msg=generating`, true},
+		{`level=INFO msg=generatingX name=model`, false},
+		{`level=INFO msg="generating failed" name=model`, false},
+		{`level=INFO msg=applying changes`, false},
 	}
-	time.Sleep(50 * time.Millisecond)
+	for _, tt := range tests {
+		if got := isGeneratingLog(tt.line); got != tt.want {
+			t.Fatalf("isGeneratingLog(%q) = %v, want %v", tt.line, got, tt.want)
+		}
+	}
+}
+
+func TestTuiStateRequestingClearedByFinish(t *testing.T) {
+	// The generating hint reflects the request lifecycle, not a time
+	// window: it persists for the whole request (including silent
+	// thinking phases) and clears when the request returns with a finish
+	// line. Before the fix, the hint was a recency timeout, so it
+	// disappeared after a silence and only reappeared on the next output.
+	// See TheoryOfTUI.
+	st := &tuiState{}
+	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
+	if !st.requesting() {
+		t.Fatal("expected requesting after the generating log")
+	}
+	st.write([]byte("[Finish: stop]\n"))
 	if st.requesting() {
-		t.Fatal("expected not requesting after the hint timeout")
+		t.Fatal("expected not requesting after the finish line")
 	}
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
 	// The Output tab title carries the session-state hint: "generating..."
-	// while the model is actively working, "(done)" after the session
+	// while a generation request is in flight, "(done)" after the session
 	// ends, and the plain title otherwise. The generating hint also
-	// requests the active-request highlight. See TheoryOfTUI.
+	// requests the active-request highlight. The request is marked in
+	// flight by the generator's "generating" log. See TheoryOfTUI.
 	st := &tuiState{}
 	if label, highlight := st.outputTabLabel(); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
 	}
-	st.write([]byte("model output"))
+	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if label, highlight := st.outputTabLabel(); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
@@ -115,9 +146,11 @@ func TestTUIOutputTabLabel(t *testing.T) {
 }
 
 func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
-	// While the model is generating, the Output tab's title is drawn in
-	// tabActiveLabelFg so the in-flight request is visible at a glance. An
-	// idle session keeps the ordinary title color. See TheoryOfTUI.
+	// While a generation request is in flight, the Output tab's title is
+	// drawn in tabActiveLabelFg so the in-flight request is visible at a
+	// glance. An idle session keeps the ordinary title color. The
+	// request is marked in flight by the generator's "generating" log.
+	// See TheoryOfTUI.
 	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
 		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12}, []string{"content"}, 0, focus)
 		screen := &panelTestScreen{width: 12, height: 2}
@@ -131,7 +164,7 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	}
 
 	tui := &TUI{}
-	tui.write([]byte("model output"))
+	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	frame := renderTitle(tui, false)
 	cell := frame.Cells[2] // 'O' of the title at (2,0)
 	if cell.Rune != 'O' {
