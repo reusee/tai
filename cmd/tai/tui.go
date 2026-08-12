@@ -52,29 +52,17 @@ pane the user is reading, and it resumes following the tail; only when
 no tab is focused does the first auto-expanded tab become the focus, so
 keyboard navigation remains usable. The focused tab occupies twice the space
 of each non-focused tab: the expanded tabs share the available space
-proportionally to their weights (2 for the focused tab, 1 for every other,
-total expanded+1), with the last tab absorbing the rounding remainder;
-collapsed tabs take one column (vertical split) or one row (horizontal
-split) each. The s key switches between vertical splitting (tabs side by
-side, a vertical split line) and horizontal splitting (tabs stacked, a
-horizontal split line). Tab cycles the focus among the expanded tabs,
-skipping collapsed ones; up/down and page up/down scroll the focused pane;
-home/end jump to the start/end. When the generation finishes, the TUI stays
-open so the output can be browsed, and q quits the TUI.
-
-Scrollbar: each tab's scroll view shows the scrollbar thumb only while the
-view is scrolled away from the latest content. When the pane follows the
-tail — the view sits at the latest row — the scrollbar is hidden: there is
-nothing left to scroll toward, so the thumb would only add visual noise and
-waste a column. Scrolling away from the tail (up, page up, home) brings the
-scrollbar back; scrolling back to the latest row hides it again.
-
-Focus order: each tab records the time (a monotonically increasing counter)
-of its last focus event — a key press, a Tab cycle, or an auto-expansion
-that took the focus. When a focused tab collapses, the focus moves to the
-expanded tab with the most recent last-focus time; ties (tabs that were
-never focused) break by index order. This returns the focus to the pane the
-user was last reading, rather than jumping to an arbitrary tab.
+proportionally to their weights (2 for the focused tab, 1 for every
+other, total expanded+1), with the last tab absorbing the rounding
+remainder; collapsed tabs take one column (vertical split) or one row
+(horizontal split) each. The s key switches between vertical splitting (tabs
+side by side, a vertical split line) and horizontal splitting (tabs
+stacked, a horizontal split line). The default is horizontal splitting: the
+tabs are stacked vertically, one above the other. Tab cycles the focus among
+the expanded tabs, skipping collapsed ones; up/down and page up/down scroll
+the focused pane; home/end jump to the start/end. When the generation
+finishes, the TUI stays open so the output can be browsed, and q quits the
+TUI.
 `
 
 // Tui enables the terminal UI mode.
@@ -509,11 +497,14 @@ func newTUI() (*TUI, error) {
 			// All tabs are collapsed by default; a tab expands automatically
 			// the first time content for it arrives, without changing the
 			// focus. See TheoryOfTUI.
-			expanded:      [3]bool{false, false, false},
-			hasContent:    [3]bool{false, false, false},
-			lastFocus:     [3]int{-1, -1, -1},
-			focusOrder:    0,
-			splitVertical: true,
+			expanded:   [3]bool{false, false, false},
+			hasContent: [3]bool{false, false, false},
+			lastFocus:  [3]int{-1, -1, -1},
+			focusOrder: 0,
+			// Tabs are stacked vertically by default (horizontal split);
+			// the s key toggles to side-by-side (vertical split).
+			// See TheoryOfTUI.
+			splitVertical: false,
 			focus:         -1,
 			topLeft:       1 << 30,
 			topRight:      1 << 30,
