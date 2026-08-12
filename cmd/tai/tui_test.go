@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -378,5 +379,133 @@ func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 	box = tabPanelBox(true, 0, 2, 80, 40)
 	if paneHeight := max(box.Height()-1, 1); paneHeight != 39 {
 		t.Fatalf("expected a 39-row scroll view, got %d", paneHeight)
+	}
+}
+
+func TestTUISticksToTail(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.follow = [3]bool{true, false, false}
+	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+	tui.width = 80
+	tui.height = 10
+
+	var sb strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	tui.write([]byte(sb.String()))
+	tui.render()
+
+	contentWidth := 79 // 80 minus the scrollbar column
+	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
+	want := len(display) - 9 // 10 rows minus the one-row label strip
+	if want < 0 {
+		want = 0
+	}
+	if tui.topLeft != want {
+		t.Fatalf("expected topLeft %d, got %d", want, tui.topLeft)
+	}
+	if !tui.follow[0] {
+		t.Fatal("expected follow on the output tab")
+	}
+
+	tui.write([]byte("new line\nanother line\n"))
+	tui.render()
+	display = taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
+	want = len(display) - 9
+	if want < 0 {
+		want = 0
+	}
+	if tui.topLeft != want {
+		t.Fatalf("expected topLeft %d after new output, got %d", want, tui.topLeft)
+	}
+	if !tui.follow[0] {
+		t.Fatal("expected follow to persist on the output tab")
+	}
+}
+
+func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.follow = [3]bool{true, false, false}
+	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+	tui.width = 80
+	tui.height = 10
+
+	var sb strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	tui.write([]byte(sb.String()))
+	tui.render()
+
+	contentWidth := 79
+	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
+	initialMax := len(display) - 9
+	if initialMax < 0 {
+		initialMax = 0
+	}
+
+	tui.scroll(-3)
+	if tui.topLeft != initialMax-3 {
+		t.Fatalf("expected topLeft %d after scrolling up, got %d", initialMax-3, tui.topLeft)
+	}
+	if tui.follow[0] {
+		t.Fatal("expected follow cleared after scrolling away")
+	}
+
+	tui.write([]byte("more\n"))
+	tui.render()
+	if tui.topLeft != initialMax-3 {
+		t.Fatalf("expected view to stay at %d while scrolled away, got %d", initialMax-3, tui.topLeft)
+	}
+	if tui.follow[0] {
+		t.Fatal("expected follow to stay cleared while scrolled away")
+	}
+
+	tui.scrollTo(1 << 30)
+	if !tui.follow[0] {
+		t.Fatal("expected follow restored at the end")
+	}
+	tui.write([]byte("tail\n"))
+	tui.render()
+	display = taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
+	want := len(display) - 9
+	if want < 0 {
+		want = 0
+	}
+	if tui.topLeft != want {
+		t.Fatalf("expected topLeft %d after resuming follow, got %d", want, tui.topLeft)
+	}
+	if !tui.follow[0] {
+		t.Fatal("expected follow to persist after resuming")
+	}
+}
+
+func TestTUIDownAtEndKeepsFollow(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.follow = [3]bool{true, false, false}
+	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+	tui.width = 80
+	tui.height = 10
+
+	var sb strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	tui.write([]byte(sb.String()))
+	tui.render()
+
+	tui.scroll(1)
+	if !tui.follow[0] {
+		t.Fatal("down at the latest row must keep following")
+	}
+	if tui.topLeft != tui.maxOffsets[0] {
+		t.Fatalf("expected topLeft at max offset %d, got %d", tui.maxOffsets[0], tui.topLeft)
 	}
 }

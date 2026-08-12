@@ -42,6 +42,13 @@ that lightens when the tab is focused, so the focus is visible without a
 border. A one-row label strip across each tab's top names it; the focused
 label is bright and bold, the unfocused label gray.
 
+Each tab's view follows the latest content while it is at the latest row,
+matching the terminal session convention. A follow flag per tab starts
+true; any manual scroll that leaves the latest row clears it, and a scroll
+that reaches the latest row again sets it. While a tab follows, every
+render sticks its offset to the newest content as output arrives; while it
+does not, the view stays where the user placed it even as content grows.
+
 Standard output is replaced by a pipe whose reader copies into the TUI's
 output buffer, so all existing code paths that write to os.Stdout — including
 file markers, round statistics, and goal loop banners — appear in the TUI as
@@ -120,6 +127,16 @@ type tuiState struct {
 	topLogs  int
 	focus    int // 0 = output, 1 = summary, 2 = logs, -1 = none open
 	finished bool
+
+	// follow reports whether each tab's view sticks to the latest content.
+	// It starts true; manual scrolling away clears it, and reaching the
+	// latest row sets it again. See TheoryOfTUI.
+	follow [3]bool
+
+	// maxOffsets holds the maximum scroll offset of each tab computed at
+	// the last render. scroll and scrollTo use it to decide whether the
+	// user's view is at the latest row.
+	maxOffsets [3]int
 }
 
 // write appends output and extracts summary blocks.
@@ -269,6 +286,7 @@ func newTUI() (*TUI, error) {
 			topLeft:       1 << 30,
 			topRight:      1 << 30,
 			topLogs:       1 << 30,
+			follow:        [3]bool{true, true, true},
 		},
 		tty:      t,
 		screen:   taiui.NewTerminalScreen(t, width, height),
@@ -442,36 +460,54 @@ func (t *TUI) Run(gen func()) error {
 func (t *TUI) scroll(delta int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	var top *int
+	idx := -1
 	switch t.focus {
 	case 0:
-		t.topLeft += delta
-		if t.topLeft < 0 {
-			t.topLeft = 0
-		}
+		top = &t.topLeft
+		idx = 0
 	case 1:
-		t.topRight += delta
-		if t.topRight < 0 {
-			t.topRight = 0
-		}
+		top = &t.topRight
+		idx = 1
 	case 2:
-		t.topLogs += delta
-		if t.topLogs < 0 {
-			t.topLogs = 0
-		}
+		top = &t.topLogs
+		idx = 2
+	default:
+		return
 	}
+	newTop := *top + delta
+	if newTop < 0 {
+		newTop = 0
+	}
+	if newTop > t.maxOffsets[idx] {
+		newTop = t.maxOffsets[idx]
+	}
+	*top = newTop
+	// Reaching the latest row resumes following; scrolling away stops it.
+	// See TheoryOfTUI.
+	t.follow[idx] = newTop >= t.maxOffsets[idx]
 }
 
 func (t *TUI) scrollTo(top int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	idx := -1
 	switch t.focus {
 	case 0:
 		t.topLeft = top
+		idx = 0
 	case 1:
 		t.topRight = top
+		idx = 1
 	case 2:
 		t.topLogs = top
+		idx = 2
+	default:
+		return
 	}
+	// Only a jump to the latest row (the end key reaches it via the sentinel)
+	// resumes following; any other jump stops it. See TheoryOfTUI.
+	t.follow[idx] = top >= t.maxOffsets[idx]
 }
 
 // tabPanelBox computes the panel box of the pos-th open tab when
@@ -560,13 +596,24 @@ func (t *TUI) render() {
 	// split (stacked) each panel is height/N tall, so its scroll view is
 	// far shorter than a full-height pane; clamping against a full-height
 	// pane would stop the scroll before the content tail became visible.
-	// See TheoryOfTUI.
+	// While a tab follows the latest content, its offset is stuck to the
+	// newest row before clamping; a view manually placed at the latest
+	// row resumes following. See TheoryOfTUI.
+	var maxOffsets [3]int
 	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
 	for _, idx := range open {
 		paneHeight := max(panelBoxes[idx].Height()-1, 1)
+		maxOffsets[idx] = max(len(displays[idx])-paneHeight, 0)
+		if t.follow[idx] {
+			tops[idx] = maxOffsets[idx]
+		}
 		tops[idx] = scrollClamp(tops[idx], len(displays[idx]), paneHeight)
+		if tops[idx] == maxOffsets[idx] {
+			t.follow[idx] = true
+		}
 	}
 	t.topLeft, t.topRight, t.topLogs = tops[0], tops[1], tops[2]
+	t.maxOffsets = maxOffsets
 
 	var panels []taiui.Element
 	for _, idx := range open {
