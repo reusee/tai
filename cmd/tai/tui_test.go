@@ -383,16 +383,17 @@ func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
 	}
 }
 
-func TestTuiStateFinishSignalOpensRoundTab(t *testing.T) {
+func TestTuiStateFinishSignalExpandsRoundTab(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.finishReason("stop")
-	if !tui.open[1] {
-		t.Fatal("round tab should auto-open on a finish reason")
+	if !tui.expanded[1] {
+		t.Fatal("round tab should auto-expand on a finish reason")
 	}
 	if tui.focus != 0 {
-		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
 	}
 	if len(tui.signals) != 1 {
 		t.Fatalf("expected the finish signal, got %v", tui.signals)
@@ -532,105 +533,140 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 
 func TestTUINumberKeySemantics(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, true, false}
+	tui.expanded = [3]bool{true, true, false}
+	tui.hasContent = [3]bool{true, true, false}
 	tui.focus = 0
+	tui.lastFocus = [3]int{0, -1, -1}
+	tui.focusOrder = 1
 
-	// Focused tab: pressing its key closes it and moves the focus to
-	// the next open tab.
+	// Focused tab: pressing its key collapses it and moves the focus to
+	// the expanded tab that was last focused. Tab 1 was never focused
+	// (lastFocus -1), so it is the only expanded tab and takes the focus.
 	tui.toggleTab(0)
-	if tui.open[0] {
-		t.Fatal("focused output tab should be closed")
+	if tui.expanded[0] {
+		t.Fatal("focused output tab should be collapsed")
 	}
 	if tui.focus != 1 {
-		t.Fatalf("focus should move to the next open tab, got %d", tui.focus)
+		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.focus)
 	}
 
-	// Closed tab: pressing its key opens it and switches the focus to it.
+	// Collapsed tab: pressing its key expands it and switches the focus to it.
 	tui.toggleTab(2)
-	if !tui.open[2] {
-		t.Fatal("closed logs tab should open")
+	if !tui.expanded[2] {
+		t.Fatal("collapsed logs tab should expand")
 	}
 	if tui.focus != 2 {
 		t.Fatalf("focus should switch to the logs tab, got %d", tui.focus)
 	}
 
-	// Open non-focused tab: pressing its key switches the focus to it
-	// without closing it.
+	// Expanded non-focused tab: pressing its key switches the focus to it
+	// without collapsing it.
 	tui.toggleTab(1)
-	if !tui.open[1] {
-		t.Fatal("open round tab must stay open")
+	if !tui.expanded[1] {
+		t.Fatal("expanded round tab must stay expanded")
 	}
 	if tui.focus != 1 {
 		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
 	}
 
-	// Focused tab again: pressing its key closes it, leaving the other
-	// open tab focused.
+	// Focused tab again: pressing its key collapses it, leaving the other
+	// expanded tab focused. Tab 2 was focused most recently (lastFocus 1),
+	// so the focus returns to it.
 	tui.toggleTab(1)
-	if tui.open[1] {
-		t.Fatal("focused round tab should close")
+	if tui.expanded[1] {
+		t.Fatal("focused round tab should collapse")
 	}
 	if tui.focus != 2 {
-		t.Fatalf("focus should move to the logs tab, got %d", tui.focus)
+		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.focus)
 	}
 
-	// Closing the last open tab clears the focus.
+	// Collapsing the last expanded tab clears the focus.
 	tui.toggleTab(2)
-	if tui.open[2] {
-		t.Fatal("focused logs tab should close")
+	if tui.expanded[2] {
+		t.Fatal("focused logs tab should collapse")
 	}
 	if tui.focus != -1 {
-		t.Fatalf("focus should be -1 when no tab is open, got %d", tui.focus)
+		t.Fatalf("focus should be -1 when no tab is expanded, got %d", tui.focus)
+	}
+}
+
+func TestTuiStateCollapseFocusLastExpanded(t *testing.T) {
+	// When a focused tab collapses, the focus moves to the expanded tab
+	// that was last focused. Tabs that were never focused tie-break by
+	// index order. See TheoryOfTUI.
+	tui := &TUI{}
+	tui.expanded = [3]bool{true, true, true}
+	tui.hasContent = [3]bool{true, true, true}
+	tui.focus = 0
+	tui.lastFocus = [3]int{0, -1, -1}
+	tui.focusOrder = 1
+
+	// Focus tab 2, then tab 1: tab 1 is the most recently focused.
+	tui.toggleTab(2)
+	tui.toggleTab(1)
+	if tui.focus != 1 {
+		t.Fatalf("expected focus on tab 1, got %d", tui.focus)
+	}
+
+	// Collapse tab 1: focus returns to tab 2, the last-focused expanded
+	// tab.
+	tui.toggleTab(1)
+	if tui.expanded[1] {
+		t.Fatal("tab 1 should be collapsed")
+	}
+	if tui.focus != 2 {
+		t.Fatalf("expected focus to return to tab 2, got %d", tui.focus)
 	}
 }
 
 func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, true, false}
+	tui.expanded = [3]bool{true, true, false}
+	tui.hasContent = [3]bool{true, true, false}
 	tui.focus = 0
 	tui.follow = [3]bool{false, true, false}
 
-	// Switching to an already-open non-focused tab keeps its view: the
+	// Switching to an already-expanded non-focused tab keeps its view: the
 	// tab's follow state is untouched, so a scrolled position survives.
 	tui.toggleTab(1)
 	if tui.focus != 1 {
 		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
 	}
 	if !tui.follow[1] {
-		t.Fatal("switching to an open tab must keep its follow state")
+		t.Fatal("switching to an expanded tab must keep its follow state")
 	}
 
-	// Closing and reopening the focused tab resumes following the live
-	// tail.
+	// Collapsing and re-expanding the focused tab resumes following the
+	// live tail.
 	tui.toggleTab(1)
-	if tui.open[1] {
-		t.Fatal("focused round tab should close")
+	if tui.expanded[1] {
+		t.Fatal("focused round tab should collapse")
 	}
 	tui.toggleTab(1)
-	if !tui.open[1] {
-		t.Fatal("closed round tab should reopen")
+	if !tui.expanded[1] {
+		t.Fatal("collapsed round tab should re-expand")
 	}
 	if !tui.follow[1] {
-		t.Fatal("reopening a closed tab must resume following")
+		t.Fatal("re-expanding a collapsed tab must resume following")
 	}
 }
 
-func TestTUICycleFocusSkipsClosedTabs(t *testing.T) {
+func TestTUICycleFocusSkipsCollapsedTabs(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, true}
+	tui.expanded = [3]bool{true, false, true}
 	tui.focus = 0
 	tui.cycleFocus()
 	if tui.focus != 2 {
-		t.Fatalf("focus should skip the closed round tab and land on logs, got %d", tui.focus)
+		t.Fatalf("focus should skip the collapsed round tab and land on logs, got %d", tui.focus)
 	}
 	tui.cycleFocus()
 	if tui.focus != 0 {
 		t.Fatalf("focus should wrap to the output tab, got %d", tui.focus)
 	}
-	tui.open = [3]bool{false, false, false}
+	tui.expanded = [3]bool{false, false, false}
 	tui.cycleFocus()
 	if tui.focus != -1 {
-		t.Fatalf("focus should be -1 with no open tabs, got %d", tui.focus)
+		t.Fatalf("focus should be -1 with no expanded tabs, got %d", tui.focus)
 	}
 }
 
@@ -717,41 +753,36 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 }
 
 func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
-	// The scroll offset clamp must match the actual scroll view height.
-	// In horizontal split (stacked), each panel is height/N tall, so the
-	// scroll view is the panel height minus the one-row label strip. The
-	// old clamp used the full-height pane (height - height/10), which
-	// allowed the offset to reach only len(displays) - 0.9*height —
-	// stopping the scroll before the content tail became visible.
-	// See TheoryOfTUI.
-	//
-	// Stacked layout, 2 tabs on a 40-row screen: each panel is 20 rows,
-	// the label strip is 1 row, so the scroll view is 19 rows and the
-	// tail offset is len(displays) - 19. focusedPos -1 gives every tab
-	// weight 1, so the space is shared equally.
-	box := tabPanelBox(false, 0, -1, 2, 80, 40)
-	paneHeight := max(box.Height()-1, 1)
-	if paneHeight != 19 {
-		t.Fatalf("expected a 19-row scroll view, got %d", paneHeight)
+	// Stacked layout, 2 expanded tabs and 1 collapsed tab on a 40-row
+	// screen: the collapsed tab takes one row at the bottom, and the
+	// expanded tabs share the remaining 39 rows. The scroll offset clamp
+	// must match the actual scroll view height (the panel height minus
+	// the one-row label strip). See TheoryOfTUI.
+	boxes := computeTabBoxes(false, [3]bool{true, true, false}, -1, 80, 40)
+	paneHeight := max(boxes[0].Height()-1, 1)
+	if paneHeight != 18 {
+		t.Fatalf("expected an 18-row scroll view, got %d", paneHeight)
 	}
 	const displayLines = 100
-	if got := scrollClamp(1<<30, displayLines, paneHeight); got != displayLines-19 {
-		t.Fatalf("expected the tail offset %d, got %d", displayLines-19, got)
+	if got := scrollClamp(1<<30, displayLines, paneHeight); got != displayLines-18 {
+		t.Fatalf("expected the tail offset %d, got %d", displayLines-18, got)
 	}
 
 	// Side-by-side layout: the panel spans the full height, so the
 	// scroll view is height - 1.
-	box = tabPanelBox(true, 0, -1, 2, 80, 40)
-	if paneHeight := max(box.Height()-1, 1); paneHeight != 39 {
+	boxes = computeTabBoxes(true, [3]bool{true, true, false}, -1, 80, 40)
+	if paneHeight := max(boxes[0].Height()-1, 1); paneHeight != 39 {
 		t.Fatalf("expected a 39-row scroll view, got %d", paneHeight)
 	}
 }
 
 func TestTUISticksToTail(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.follow = [3]bool{true, false, false}
+	tui.splitVertical = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -762,10 +793,13 @@ func TestTUISticksToTail(t *testing.T) {
 	}
 	tui.write([]byte(sb.String()))
 	tui.render()
-
-	contentWidth := 79 // 80 minus the scrollbar column
+	// The output tab spans the full width (80 columns) minus the
+	// scrollbar column = 79 content columns, and 8 rows (10 minus the two
+	// collapsed tabs' rows). The scroll view is 7 rows (8 minus the
+	// one-row label strip).
+	contentWidth := 79
 	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
-	want := len(display) - 9 // 10 rows minus the one-row label strip
+	want := len(display) - 7
 	if want < 0 {
 		want = 0
 	}
@@ -779,7 +813,7 @@ func TestTUISticksToTail(t *testing.T) {
 	tui.write([]byte("new line\nanother line\n"))
 	tui.render()
 	display = taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
-	want = len(display) - 9
+	want = len(display) - 7
 	if want < 0 {
 		want = 0
 	}
@@ -793,9 +827,11 @@ func TestTUISticksToTail(t *testing.T) {
 
 func TestTUIReopenResumesFollow(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.follow = [3]bool{true, false, false}
+	tui.splitVertical = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -814,33 +850,33 @@ func TestTUIReopenResumesFollow(t *testing.T) {
 		t.Fatal("expected follow false after scrolling away")
 	}
 
-	// Close and reopen the output tab.
+	// Collapse and re-expand the output tab.
 	tui.toggleTab(0)
-	if tui.open[0] {
-		t.Fatal("expected output tab closed")
+	if tui.expanded[0] {
+		t.Fatal("expected output tab collapsed")
 	}
 	if tui.focus != -1 {
-		t.Fatalf("expected focus -1 with no open tabs, got %d", tui.focus)
+		t.Fatalf("expected focus -1 with no expanded tabs, got %d", tui.focus)
 	}
 	tui.toggleTab(0)
-	if !tui.open[0] {
-		t.Fatal("expected output tab reopened")
+	if !tui.expanded[0] {
+		t.Fatal("expected output tab re-expanded")
 	}
 	if tui.focus != 0 {
-		t.Fatalf("expected focus 0 after reopen, got %d", tui.focus)
+		t.Fatalf("expected focus 0 after re-expand, got %d", tui.focus)
 	}
-	// Reopening must resume following the live tail.
+	// Re-expanding must resume following the live tail.
 	if !tui.follow[0] {
-		t.Fatal("expected follow true after reopen")
+		t.Fatal("expected follow true after re-expand")
 	}
 
-	// New content arriving after the reopen must move the view to the
+	// New content arriving after the re-expand must move the view to the
 	// new tail, so the pane shows the latest lines.
 	tui.write([]byte("line 10\nline 11\n"))
 	tui.render()
 	contentWidth := 79 // 80 columns minus the scrollbar column
 	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
-	want := len(display) - 9 // 10 rows minus the one-row label strip
+	want := len(display) - 7 // 8 rows minus the one-row label strip
 	if want < 0 {
 		want = 0
 	}
@@ -854,9 +890,11 @@ func TestTUIReopenResumesFollow(t *testing.T) {
 
 func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.follow = [3]bool{true, false, false}
+	tui.splitVertical = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -870,7 +908,7 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 
 	contentWidth := 79
 	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
-	initialMax := len(display) - 9
+	initialMax := len(display) - 7
 	if initialMax < 0 {
 		initialMax = 0
 	}
@@ -899,7 +937,7 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui.write([]byte("tail\n"))
 	tui.render()
 	display = taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
-	want := len(display) - 9
+	want := len(display) - 7
 	if want < 0 {
 		want = 0
 	}
@@ -913,9 +951,11 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 
 func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.follow = [3]bool{true, false, false}
+	tui.splitVertical = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -937,126 +977,208 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 }
 
 func TestTabPanelBoxWeighted(t *testing.T) {
-	// The focused tab occupies twice the space of each non-focused tab:
-	// with two open tabs on a 90-column screen and total weight 3, the
-	// focused tab gets 2/3 of the width (60) and the other tab 1/3 (30).
-	// The last tab absorbs the rounding remainder. See TheoryOfTUI.
-	box := tabPanelBox(true, 0, 0, 2, 90, 40)
-	if box.Left != 0 || box.Right != 60 || box.Top != 0 || box.Bottom != 40 {
-		t.Fatalf("unexpected focused panel box: %+v", box)
+	// Two expanded tabs and one collapsed tab on a 90-column screen: the
+	// collapsed tab takes one column at the right edge, and the expanded
+	// tabs share the remaining 89 columns. The focused tab has weight 2
+	// and the other weight 1, so the total weight is 3: the focused tab
+	// gets 2/3 of 89 = 59 columns (integer division), the other gets the
+	// remaining 30.
+	boxes := computeTabBoxes(true, [3]bool{true, true, false}, 0, 90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 59 || boxes[0].Top != 0 || boxes[0].Bottom != 40 {
+		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
-	box = tabPanelBox(true, 1, 0, 2, 90, 40)
-	if box.Left != 60 || box.Right != 90 {
-		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	if boxes[1].Left != 59 || boxes[1].Right != 89 {
+		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
+	}
+	if boxes[2].Left != 89 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
 	}
 
 	// Focusing the second tab swaps the proportions.
-	box = tabPanelBox(true, 0, 1, 2, 90, 40)
-	if box.Left != 0 || box.Right != 30 {
-		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	boxes = computeTabBoxes(true, [3]bool{true, true, false}, 1, 90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 29 {
+		t.Fatalf("unexpected non-focused panel box: %+v", boxes[0])
 	}
-	box = tabPanelBox(true, 1, 1, 2, 90, 40)
-	if box.Left != 30 || box.Right != 90 {
-		t.Fatalf("unexpected focused panel box: %+v", box)
+	if boxes[1].Left != 29 || boxes[1].Right != 89 {
+		t.Fatalf("unexpected focused panel box: %+v", boxes[1])
 	}
 
-	// With no focused tab, every open tab has weight 1 and the space is
-	// shared equally: each of two tabs on 90 columns gets 45.
-	box = tabPanelBox(true, 0, -1, 2, 90, 40)
-	if box.Left != 0 || box.Right != 45 {
-		t.Fatalf("unexpected equal-share panel box: %+v", box)
+	// With no focused tab, every expanded tab has weight 1 and the space
+	// is shared equally: each of two expanded tabs on 89 columns gets 44
+	// (integer division), the last absorbs the remainder.
+	boxes = computeTabBoxes(true, [3]bool{true, true, false}, -1, 90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 44 {
+		t.Fatalf("unexpected equal-share panel box: %+v", boxes[0])
 	}
-	box = tabPanelBox(true, 1, -1, 2, 90, 40)
-	if box.Left != 45 || box.Right != 90 {
-		t.Fatalf("unexpected equal-share panel box: %+v", box)
+	if boxes[1].Left != 44 || boxes[1].Right != 89 {
+		t.Fatalf("unexpected equal-share panel box: %+v", boxes[1])
 	}
 
 	// Horizontal split applies the same weights along the height.
-	box = tabPanelBox(false, 0, 0, 2, 80, 45)
-	if box.Top != 0 || box.Bottom != 30 {
-		t.Fatalf("unexpected focused panel box: %+v", box)
+	boxes = computeTabBoxes(false, [3]bool{true, true, false}, 0, 80, 45)
+	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
+		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
-	box = tabPanelBox(false, 1, 0, 2, 80, 45)
-	if box.Top != 30 || box.Bottom != 45 {
-		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	if boxes[1].Top != 29 || boxes[1].Bottom != 44 {
+		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
+	}
+	if boxes[2].Top != 44 || boxes[2].Bottom != 45 {
+		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
 	}
 
-	// Three open tabs with the middle focused: weights [1,2,1] over
+	// Three expanded tabs with the middle focused: weights [1,2,1] over
 	// total 4; the last tab absorbs the rounding remainder.
-	box = tabPanelBox(true, 0, 1, 3, 90, 24)
-	if box.Left != 0 || box.Right != 22 {
-		t.Fatalf("unexpected first panel box: %+v", box)
+	boxes = computeTabBoxes(true, [3]bool{true, true, true}, 1, 90, 24)
+	if boxes[0].Left != 0 || boxes[0].Right != 22 {
+		t.Fatalf("unexpected first panel box: %+v", boxes[0])
 	}
-	box = tabPanelBox(true, 1, 1, 3, 90, 24)
-	if box.Left != 22 || box.Right != 67 {
-		t.Fatalf("unexpected focused middle panel box: %+v", box)
+	if boxes[1].Left != 22 || boxes[1].Right != 67 {
+		t.Fatalf("unexpected focused middle panel box: %+v", boxes[1])
 	}
-	box = tabPanelBox(true, 2, 1, 3, 90, 24)
-	if box.Left != 67 || box.Right != 90 {
-		t.Fatalf("unexpected last panel box: %+v", box)
+	if boxes[2].Left != 67 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected last panel box: %+v", boxes[2])
 	}
 }
 
-func TestTuiStateAutoOpenTabs(t *testing.T) {
+func TestCollapsedPanelRendering(t *testing.T) {
+	// A collapsed tab renders as a thin strip showing the tab's key and
+	// title. In horizontal split the strip is one row tall and the label
+	// is written horizontally; in vertical split the strip is one column
+	// wide and the label is written vertically. See TheoryOfTUI.
+	t.Run("Horizontal", func(t *testing.T) {
+		tui := &TUI{}
+		element := tui.collapsedPanel(0, taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, false)
+		screen := &panelTestScreen{width: 12, height: 1}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+			return taiui.Root{Element: element}
+		}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		// The label "1 Output" is rendered with padding: "  1 Output  ".
+		if cell := frame.Cells[2]; cell.Rune != '1' {
+			t.Fatalf("expected '1' at (2,0), got %v", cell.Rune)
+		}
+		if cell := frame.Cells[4]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (4,0), got %v", cell.Rune)
+		}
+	})
+
+	t.Run("Vertical", func(t *testing.T) {
+		tui := &TUI{}
+		element := tui.collapsedPanel(0, taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, false)
+		screen := &panelTestScreen{width: 1, height: 8}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+			return taiui.Root{Element: element}
+		}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		// The label "1 Output" is written vertically: '1' at row 0, the
+		// space at row 1, 'O' at row 2.
+		if cell := frame.Cells[0]; cell.Rune != '1' {
+			t.Fatalf("expected '1' at (0,0), got %v", cell.Rune)
+		}
+		if cell := frame.Cells[1*frame.Width+0]; cell.Rune != ' ' {
+			t.Fatalf("expected space at (0,1), got %v", cell.Rune)
+		}
+		if cell := frame.Cells[2*frame.Width+0]; cell.Rune != 'O' {
+			t.Fatalf("expected 'O' at (0,2), got %v", cell.Rune)
+		}
+	})
+}
+
+func TestComputeTabBoxesAllCollapsed(t *testing.T) {
+	// When all tabs are collapsed, each takes one column (vertical
+	// split) or one row (horizontal split). See TheoryOfTUI.
+	boxes := computeTabBoxes(true, [3]bool{false, false, false}, -1, 80, 24)
+	for i := 0; i < 3; i++ {
+		if boxes[i].Width() != 1 {
+			t.Fatalf("tab %d: expected 1-column box, got %+v", i, boxes[i])
+		}
+		if boxes[i].Top != 0 || boxes[i].Bottom != 24 {
+			t.Fatalf("tab %d: expected full-height box, got %+v", i, boxes[i])
+		}
+	}
+	if boxes[0].Left != 0 || boxes[1].Left != 1 || boxes[2].Left != 2 {
+		t.Fatalf("unexpected collapsed layout: %+v", boxes)
+	}
+
+	boxes = computeTabBoxes(false, [3]bool{false, false, false}, -1, 80, 24)
+	for i := 0; i < 3; i++ {
+		if boxes[i].Height() != 1 {
+			t.Fatalf("tab %d: expected 1-row box, got %+v", i, boxes[i])
+		}
+		if boxes[i].Left != 0 || boxes[i].Right != 80 {
+			t.Fatalf("tab %d: expected full-width box, got %+v", i, boxes[i])
+		}
+	}
+	if boxes[0].Top != 0 || boxes[1].Top != 1 || boxes[2].Top != 2 {
+		t.Fatalf("unexpected collapsed layout: %+v", boxes)
+	}
+}
+
+func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui := &TUI{}
 	tui.focus = -1
 	tui.write([]byte("model output\n"))
-	if !tui.open[0] {
-		t.Fatal("output tab should auto-open on streamed output")
+	if !tui.expanded[0] {
+		t.Fatal("output tab should auto-expand on streamed output")
 	}
 	if tui.focus != 0 {
 		t.Fatalf("expected focus on the output tab, got %d", tui.focus)
 	}
 
-	// A log record opens the Logs tab without changing the focus.
+	// A log record expands the Logs tab without changing the focus.
 	tui.writeLogs([]byte("msg=\"log record\"\n"))
-	if !tui.open[2] {
-		t.Fatal("logs tab should auto-open on log records")
+	if !tui.expanded[2] {
+		t.Fatal("logs tab should auto-expand on log records")
 	}
 	if tui.focus != 0 {
-		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
 	}
 
-	// A summary block opens the Round tab without changing the focus.
+	// A summary block expands the Round tab without changing the focus.
 	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
-	if !tui.open[1] {
-		t.Fatal("round tab should auto-open on a summary block")
+	if !tui.expanded[1] {
+		t.Fatal("round tab should auto-expand on a summary block")
 	}
 	if tui.focus != 0 {
-		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
 	}
 	if len(tui.signals) != 2 {
 		t.Fatalf("expected the summary signals, got %v", tui.signals)
 	}
 
-	// A non-summary block does not open the Round tab on its own.
+	// A non-summary block does not expand the Round tab on its own.
 	tui2 := &TUI{}
-	tui2.open = [3]bool{true, false, false}
+	tui2.expanded = [3]bool{true, false, false}
+	tui2.hasContent = [3]bool{true, false, false}
 	tui2.focus = 0
 	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
-	if tui2.open[1] {
-		t.Fatal("round tab must not open without a summary block or finish line")
+	if tui2.expanded[1] {
+		t.Fatal("round tab must not expand without a summary block or finish line")
 	}
 }
 
-func TestTuiStateAutoOpenPreservesFocus(t *testing.T) {
-	// Auto-opening must never change an existing focus: a tab popping
-	// open cannot steal attention from the pane the user is reading,
-	// and the auto-opened tab follows the tail. See TheoryOfTUI.
+func TestTuiStateAutoExpandPreservesFocus(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, false, false}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
 	tui.focus = 0
 	tui.writeLogs([]byte("msg=\"log record\"\n"))
-	if !tui.open[2] {
-		t.Fatal("logs tab should auto-open on log records")
+	if !tui.expanded[2] {
+		t.Fatal("logs tab should auto-expand on log records")
 	}
 	if tui.focus != 0 {
 		t.Fatalf("focus must stay on the output tab, got %d", tui.focus)
 	}
 	if !tui.follow[2] {
-		t.Fatal("auto-opened tab should follow the tail")
+		t.Fatal("auto-expanded tab should follow the tail")
 	}
-	// The newly auto-opened tab is immediately navigable: tab cycles
+	// The newly auto-expanded tab is immediately navigable: tab cycles
 	// to it from the current focus.
 	tui.cycleFocus()
 	if tui.focus != 2 {
@@ -1064,19 +1186,40 @@ func TestTuiStateAutoOpenPreservesFocus(t *testing.T) {
 	}
 }
 
-func TestTuiStateEmptyWriteDoesNotOpenTabs(t *testing.T) {
-	// Empty writes carry no content and must not auto-open a tab.
+func TestTuiStateEmptyWriteDoesNotExpandTabs(t *testing.T) {
 	st := &tuiState{}
 	st.focus = -1
 	st.write(nil)
 	st.writeLogs(nil)
 	for i := 0; i < 3; i++ {
-		if st.open[i] {
-			t.Fatalf("tab %d must not open on empty writes", i)
+		if st.expanded[i] {
+			t.Fatalf("tab %d must not expand on empty writes", i)
 		}
 	}
 	if st.focus != -1 {
 		t.Fatalf("expected no focus change on empty writes, got %d", st.focus)
+	}
+}
+
+func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
+	// A collapsed tab expands automatically the first time content for it
+	// arrives, but not on subsequent arrivals after the user collapses
+	// it. See TheoryOfTUI.
+	tui := &TUI{}
+	tui.focus = -1
+	tui.write([]byte("first output\n"))
+	if !tui.expanded[0] {
+		t.Fatal("output tab should auto-expand on first content")
+	}
+	// Collapse the output tab.
+	tui.toggleTab(0)
+	if tui.expanded[0] {
+		t.Fatal("output tab should be collapsed")
+	}
+	// New content must not re-expand it.
+	tui.write([]byte("more output\n"))
+	if tui.expanded[0] {
+		t.Fatal("output tab must not re-expand on subsequent content")
 	}
 }
 

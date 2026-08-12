@@ -36,28 +36,38 @@ state's FinishReason parts via a state decorator passed through
 RunOptions.StateDecorators by runWithTUI; the Round tab never scans rendered
 text for "[Finish: ...]" markers. The keys
 1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
-pressing a focused tab's key closes it and moves the focus to the next open
-tab, while pressing a non-focused or closed tab's key opens it (if closed)
-and takes the focus. Switching to an already-open tab keeps its current view;
-reopening a closed tab resumes following the live tail. All tabs are closed
-by default; a closed tab opens automatically as soon as content for it
-arrives — the Output tab on any streamed output, the Round tab on a parsed
-summary block or a finish reason, the Logs tab on any log record — so the
-interface surfaces panes only when they have something to show. Auto-opening
-never changes an existing focus: a tab popping open cannot steal attention
-from the pane the user is reading, and it resumes following the tail; only
-when no tab is focused does the first auto-opened tab become the focus, so
+pressing a focused tab's key collapses it to a thin strip showing the tab's
+key and title, and moves the focus to the expanded tab that was last focused
+(see the focus-order paragraph below); pressing a non-focused or collapsed
+tab's key expands it (if collapsed) and takes the focus. Switching to an
+already-expanded tab keeps its current view; re-expanding a collapsed tab
+resumes following the live tail. All tabs are collapsed by default; a
+collapsed tab expands automatically the FIRST time content for it arrives —
+the Output tab on any streamed output, the Round tab on a parsed summary
+block or a finish reason, the Logs tab on any log record — so the interface
+surfaces panes only when they have something to show. Subsequent content
+arrivals do not re-expand a tab the user collapsed. Auto-expansion never
+changes an existing focus: a tab popping open cannot steal attention from
+the pane the user is reading, and it resumes following the tail; only when
+no tab is focused does the first auto-expanded tab become the focus, so
 keyboard navigation remains usable. The focused tab occupies twice the space
-of each non-focused tab: the open tabs share the available space
+of each non-focused tab: the expanded tabs share the available space
 proportionally to their weights (2 for the focused tab, 1 for every other,
-total open+1), with the last tab absorbing the rounding remainder. The s key
-switches between vertical splitting (tabs side by side, a vertical split
-line) and horizontal splitting (tabs stacked, a horizontal split line). Tab
-cycles the focus among the open tabs, skipping closed ones; up/down and page
-up/down scroll the focused pane; home/end jump to the start/end. When the
-generation finishes, the TUI stays open so the output can be browsed, and q
-quits the TUI. When all tabs are closed, a hint panel is shown instead of a
-blank screen.
+total expanded+1), with the last tab absorbing the rounding remainder;
+collapsed tabs take one column (vertical split) or one row (horizontal
+split) each. The s key switches between vertical splitting (tabs side by
+side, a vertical split line) and horizontal splitting (tabs stacked, a
+horizontal split line). Tab cycles the focus among the expanded tabs,
+skipping collapsed ones; up/down and page up/down scroll the focused pane;
+home/end jump to the start/end. When the generation finishes, the TUI stays
+open so the output can be browsed, and q quits the TUI.
+
+Focus order: each tab records the time (a monotonically increasing counter)
+of its last focus event — a key press, a Tab cycle, or an auto-expansion
+that took the focus. When a focused tab collapses, the focus moves to the
+expanded tab with the most recent last-focus time; ties (tabs that were
+never focused) break by index order. This returns the focus to the pane the
+user was last reading, rather than jumping to an arbitrary tab.
 `
 
 // Tui enables the terminal UI mode.
@@ -137,21 +147,35 @@ type tuiState struct {
 	logsPartial string // incomplete trailing log line
 	parseBuf    []byte
 
-	// open reports whether each tab is enabled: index 0 is the output
-	// tab, 1 the round tab, 2 the logs tab. The keys 1, 2, and 3
-	// toggle them; a closed tab also opens automatically when content
-	// for it arrives, without changing the focus. splitVertical
+	// expanded reports whether each tab is expanded: index 0 is the
+	// output tab, 1 the round tab, 2 the logs tab. The keys 1, 2, and 3
+	// toggle them; a collapsed tab expands automatically the first time
+	// content for it arrives, without changing the focus. splitVertical
 	// reports whether the tabs are laid out side by side (vertical
 	// split line) or stacked (horizontal split line); the s key toggles
 	// it. See TheoryOfTUI.
-	open          [3]bool
+	expanded [3]bool
+	// hasContent reports whether each tab has ever received content.
+	// Only the first content arrival auto-expands a collapsed tab;
+	// subsequent content does not re-expand a tab the user collapsed.
+	// See TheoryOfTUI.
+	hasContent [3]bool
+	// lastFocus records the focus order of each tab: a monotonically
+	// increasing counter assigned when a tab gains focus. When a tab
+	// collapses, focus moves to the expanded tab with the most recent
+	// lastFocus value; ties (tabs that were never focused) break by
+	// index order. See TheoryOfTUI.
+	lastFocus [3]int
+	// focusOrder is the counter for lastFocus.
+	focusOrder int
+
 	splitVertical bool
 
 	// view state
 	topLeft  int
 	topRight int
 	topLogs  int
-	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none open
+	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none expanded
 	finished bool
 
 	// generating reports whether a generation request is in flight. It
@@ -177,15 +201,15 @@ type tuiState struct {
 // write appends output, extracts summary blocks, and collects finish
 // lines into the Round tab's signals. A finish line clears the
 // generating hint set by the request-start log, so the Output tab title
-// returns to plain once the request completes. A closed Output tab
-// opens automatically on the first streamed output. See TheoryOfTUI.
+// returns to plain once the request completes. A collapsed Output tab
+// expands automatically on the first streamed output. See TheoryOfTUI.
 func (s *tuiState) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(p) == 0 {
 		return
 	}
-	s.autoOpen(0)
+	s.autoExpand(0)
 	// Summary blocks are parsed before finish signals so signals sharing
 	// one stream chunk keep their chronological order: the model's
 	// summary block precedes the round's finish line. See TheoryOfTUI.
@@ -193,13 +217,18 @@ func (s *tuiState) write(p []byte) {
 	s.appendOutput(p)
 }
 
+// finishReason appends a finish line to the Round tab's signals. A
+// finish line clears the generating hint set by the request-start log,
+// so the Output tab title returns to plain once the request completes.
+// A collapsed Round tab expands automatically on the first finish
+// reason. See TheoryOfTUI.
 func (s *tuiState) finishReason(reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if reason == "" {
 		return
 	}
-	s.autoOpen(1)
+	s.autoExpand(1)
 	// The finish reason marks the end of the generation request: the
 	// Output tab's "generating..." hint clears once the request has
 	// returned. A new request's "generating" log re-sets it.
@@ -216,15 +245,15 @@ func (s *tuiState) finishReason(reason string) {
 // generator logs a record at the start of each request; detecting it
 // marks the request as in flight, so the Output tab's generating hint
 // appears before the first output byte and persists for the whole
-// request — including silent thinking phases. A closed Logs tab opens
-// automatically on the first log record. See TheoryOfTUI.
+// request — including silent thinking phases. A collapsed Logs tab
+// expands automatically on the first log record. See TheoryOfTUI.
 func (s *tuiState) writeLogs(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(p) == 0 {
 		return
 	}
-	s.autoOpen(2)
+	s.autoExpand(2)
 	s.logsPartial += string(p)
 	for {
 		idx := strings.IndexByte(s.logsPartial, '\n')
@@ -259,20 +288,32 @@ func isGeneratingLog(line string) bool {
 		strings.Contains(line, `msg="generating" `)
 }
 
-// autoOpen opens a closed tab when content for it arrives. It never
-// changes an existing focus: a tab popping open cannot steal attention
-// from the pane the user is reading, and the pane resumes following the
-// tail. Only when no tab is focused does the first auto-opened tab
-// become the focus, so keyboard navigation remains usable. Callers must
-// hold mu. See TheoryOfTUI.
-func (s *tuiState) autoOpen(idx int) {
-	if idx < 0 || idx > 2 || s.open[idx] {
+// autoExpand expands a collapsed tab the first time content for it
+// arrives. It never changes an existing focus: a tab popping open cannot
+// steal attention from the pane the user is reading, and the pane resumes
+// following the tail. Only when no tab is focused does the first
+// auto-expanded tab become the focus, so keyboard navigation remains
+// usable. Subsequent content arrivals do not re-expand a tab the user
+// collapsed. Callers must hold mu. See TheoryOfTUI.
+func (s *tuiState) autoExpand(idx int) {
+	if idx < 0 || idx > 2 {
 		return
 	}
-	s.open[idx] = true
+	// Only the first content arrival auto-expands a collapsed tab;
+	// subsequent content does not re-expand a tab the user collapsed.
+	if s.hasContent[idx] {
+		return
+	}
+	s.hasContent[idx] = true
+	if s.expanded[idx] {
+		return
+	}
+	s.expanded[idx] = true
 	s.follow[idx] = true
 	if s.focus == -1 {
 		s.focus = idx
+		s.lastFocus[idx] = s.focusOrder
+		s.focusOrder++
 	}
 }
 
@@ -371,10 +412,10 @@ func (s *tuiState) parseSummaries(p []byte) {
 		if block.Kind == "summary" {
 			body := strings.TrimSpace(block.Body)
 			if body != "" {
-				// A closed Round tab opens automatically on the first
+				// A collapsed Round tab expands automatically on the first
 				// summary block; the output text carrying the block
-				// already opened the Output tab. See TheoryOfTUI.
-				s.autoOpen(1)
+				// already expanded the Output tab. See TheoryOfTUI.
+				s.autoExpand(1)
 				for _, line := range strings.Split(body, "\n") {
 					s.signals = append(s.signals, line)
 				}
@@ -458,10 +499,13 @@ func newTUI() (*TUI, error) {
 	}
 	return &TUI{
 		tuiState: tuiState{
-			// All tabs are closed by default; a tab opens automatically
-			// when content for it arrives, without changing the focus.
-			// See TheoryOfTUI.
-			open:          [3]bool{false, false, false},
+			// All tabs are collapsed by default; a tab expands automatically
+			// the first time content for it arrives, without changing the
+			// focus. See TheoryOfTUI.
+			expanded:      [3]bool{false, false, false},
+			hasContent:    [3]bool{false, false, false},
+			lastFocus:     [3]int{-1, -1, -1},
+			focusOrder:    0,
 			splitVertical: true,
 			focus:         -1,
 			topLeft:       1 << 30,
@@ -517,50 +561,78 @@ func scrollClamp(offset, displayLines, paneHeight int) int {
 }
 
 // toggleTab implements the number-key semantics (keys 1, 2, 3): pressing
-// a tab's key toggles its focus. When the tab is focused, it is closed
-// and the focus moves to the next open tab. When it is not focused (or
-// closed), it is opened (if closed) and becomes the focus. Reopening a
-// closed tab resumes following the live tail, even if the user had
-// scrolled away before hiding it; switching to an already-open tab keeps
-// its current view. See TheoryOfTUI.
+// a tab's key toggles its expansion. When the tab is focused, it is
+// collapsed to a thin strip and the focus moves to the expanded tab that
+// was last focused (see focusLastExpanded). When it is not focused (or
+// collapsed), it is expanded (if collapsed) and becomes the focus.
+// Re-expanding a collapsed tab resumes following the live tail, even if
+// the user had scrolled away before collapsing it; switching to an
+// already-expanded tab keeps its current view. See TheoryOfTUI.
 func (t *TUI) toggleTab(idx int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.focus == idx {
-		// A focused tab's key closes it and moves the focus to the next
-		// open tab.
-		t.open[idx] = false
-		t.cycleFocus()
+		// A focused tab's key collapses it and moves the focus to the
+		// expanded tab that was last focused.
+		t.expanded[idx] = false
+		t.focusLastExpanded()
 		return
 	}
-	if !t.open[idx] {
-		// Opening a closed tab resumes following the live tail, even if
-		// the user had scrolled away before hiding it: the pane returns
-		// to the latest content. See TheoryOfTUI.
-		t.open[idx] = true
+	if !t.expanded[idx] {
+		// Expanding a collapsed tab resumes following the live tail, even
+		// if the user had scrolled away before collapsing it: the pane
+		// returns to the latest content. See TheoryOfTUI.
+		t.expanded[idx] = true
 		t.follow[idx] = true
 	}
-	// A non-focused tab's key (open or closed) makes it the focus;
-	// switching to an already-open tab keeps its current view.
+	// A non-focused tab's key (expanded or collapsed) makes it the focus;
+	// switching to an already-expanded tab keeps its current view.
 	t.focus = idx
+	t.lastFocus[idx] = t.focusOrder
+	t.focusOrder++
 }
 
-// cycleFocus advances the focus to the next open tab after the current
-// one, wrapping around. Closed tabs are skipped. When no tab is open, the
+// focusLastExpanded moves the focus to the expanded tab that was last
+// focused, based on the lastFocus order. Tabs that were never focused
+// (lastFocus -1) tie-break by index order. When no tab is expanded, the
 // focus becomes -1. See TheoryOfTUI.
+func (t *TUI) focusLastExpanded() {
+	best := -1
+	bestOrder := -2
+	for i := 0; i < 3; i++ {
+		if !t.expanded[i] {
+			continue
+		}
+		if t.lastFocus[i] > bestOrder {
+			bestOrder = t.lastFocus[i]
+			best = i
+		}
+	}
+	t.focus = best
+}
+
+// cycleFocus advances the focus to the next expanded tab after the
+// current one, wrapping around. Collapsed tabs are skipped. When no tab
+// is expanded, the focus becomes -1. The new focus's lastFocus is
+// updated so a later collapse returns to the most recently focused tab.
+// See TheoryOfTUI.
 func (t *TUI) cycleFocus() {
 	if t.focus >= 0 {
 		for i := 1; i <= 3; i++ {
 			f := (t.focus + i) % 3
-			if t.open[f] {
+			if t.expanded[f] {
 				t.focus = f
+				t.lastFocus[f] = t.focusOrder
+				t.focusOrder++
 				return
 			}
 		}
 	}
 	for i := 0; i < 3; i++ {
-		if t.open[i] {
+		if t.expanded[i] {
 			t.focus = i
+			t.lastFocus[i] = t.focusOrder
+			t.focusOrder++
 			return
 		}
 	}
@@ -707,63 +779,110 @@ func (t *TUI) scrollTo(top int) {
 	t.follow[idx] = top >= t.maxOffsets[idx]
 }
 
-// tabPanelBox computes the panel box of the pos-th open tab when
-// open tabs are laid out on a width x height screen. In vertical split
-// (side by side) each tab spans the full screen height and a share of
-// the width; in horizontal split (stacked) it spans the full width and
-// a share of the height. The shares are proportional to the open tabs'
-// weights: the focused tab (focusedPos) has weight 2 and every other
-// tab weight 1, so the total weight is open+1 and the focused tab
-// occupies twice the space of each non-focused tab; when no tab is
-// focused (focusedPos -1), every tab has weight 1 and the space is
-// shared equally. The last tab absorbs the rounding remainder.
-// The box is computed here — not left to the layout container — so the
-// panel's one-row label strip, the scroll view below it, and the scroll
-// offset clamp in render() are all derived from the exact panel
-// dimensions. See TheoryOfTUI.
-func tabPanelBox(splitVertical bool, pos, focusedPos, open, width, height int) taiui.Box {
-	// The focused tab has weight 2 and every other open tab weight 1, so
-	// the total weight is open+1; without a focused tab every weight is
-	// 1 and the total is open. Sizes are computed with integer division;
-	// the last tab absorbs the rounding remainder.
-	totalWeight := open
-	if focusedPos >= 0 {
-		totalWeight = open + 1
+// computeTabBoxes computes the panel box of each tab. In vertical split
+// (side by side), collapsed tabs take one column each and expanded tabs
+// share the remaining width proportionally to their weights (the focused
+// tab has weight 2, every other expanded tab weight 1); in horizontal
+// split (stacked), collapsed tabs take one row each and expanded tabs
+// share the remaining height. The last expanded tab absorbs the rounding
+// remainder. See TheoryOfTUI.
+func computeTabBoxes(splitVertical bool, expanded [3]bool, focused int, width, height int) [3]taiui.Box {
+	var boxes [3]taiui.Box
+
+	// Count expanded tabs and locate the focused tab's position among
+	// them.
+	expandedCount := 0
+	focusedPos := -1
+	for i := 0; i < 3; i++ {
+		if expanded[i] {
+			if i == focused {
+				focusedPos = expandedCount
+			}
+			expandedCount++
+		}
 	}
+	collapsedCount := 3 - expandedCount
+
+	// The focused tab has weight 2 and every other expanded tab weight 1,
+	// so the total weight is expandedCount+1; without a focused tab every
+	// weight is 1 and the total is expandedCount.
+	totalWeight := expandedCount
+	if focusedPos >= 0 {
+		totalWeight = expandedCount + 1
+	}
+	if totalWeight <= 0 {
+		totalWeight = 1
+	}
+
 	if splitVertical {
+		// Collapsed tabs take one column each; expanded tabs share the
+		// remaining width.
+		expandedWidth := width - collapsedCount
+		if expandedWidth < 0 {
+			expandedWidth = 0
+		}
 		edge := 0
-		for i := 0; i < pos; i++ {
+		pos := 0
+		for i := 0; i < 3; i++ {
+			if !expanded[i] {
+				continue
+			}
 			weight := 1
-			if i == focusedPos {
+			if i == focused {
 				weight = 2
 			}
-			edge += width * weight / totalWeight
+			size := expandedWidth * weight / totalWeight
+			if pos == expandedCount-1 {
+				size = expandedWidth - edge
+			}
+			boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + size}
+			edge += size
+			pos++
 		}
-		if pos == open-1 {
-			return taiui.Box{Top: 0, Left: edge, Bottom: height, Right: width}
+		// Collapsed tabs take one column each at the right edge.
+		for i := 0; i < 3; i++ {
+			if expanded[i] {
+				continue
+			}
+			boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
+			edge++
 		}
-		weight := 1
-		if pos == focusedPos {
-			weight = 2
-		}
-		return taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + width*weight/totalWeight}
+		return boxes
+	}
+
+	// Horizontal split: collapsed tabs take one row each; expanded tabs
+	// share the remaining height.
+	expandedHeight := height - collapsedCount
+	if expandedHeight < 0 {
+		expandedHeight = 0
 	}
 	edge := 0
-	for i := 0; i < pos; i++ {
+	pos := 0
+	for i := 0; i < 3; i++ {
+		if !expanded[i] {
+			continue
+		}
 		weight := 1
-		if i == focusedPos {
+		if i == focused {
 			weight = 2
 		}
-		edge += height * weight / totalWeight
+		size := expandedHeight * weight / totalWeight
+		if pos == expandedCount-1 {
+			size = expandedHeight - edge
+		}
+		boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + size, Right: width}
+		edge += size
+		pos++
 	}
-	if pos == open-1 {
-		return taiui.Box{Top: edge, Left: 0, Bottom: height, Right: width}
+	// Collapsed tabs take one row each at the bottom.
+	for i := 0; i < 3; i++ {
+		if expanded[i] {
+			continue
+		}
+		boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + 1, Right: width}
+		edge++
 	}
-	weight := 1
-	if pos == focusedPos {
-		weight = 2
-	}
-	return taiui.Box{Top: edge, Left: 0, Bottom: edge + height*weight/totalWeight, Right: width}
+	return boxes
 }
 
 func (t *TUI) render() {
@@ -781,77 +900,51 @@ func (t *TUI) render() {
 		width = 1
 	}
 
-	// The focused tab occupies twice the space of each non-focused tab;
-	// the remaining open tabs share the rest proportionally to their
-	// weights. See TheoryOfTUI.
-	var open []int
-	for i := 0; i < 3; i++ {
-		if t.open[i] {
-			open = append(open, i)
-		}
-	}
+	// Compute the panel box of each tab. Collapsed tabs take one column
+	// (vertical split) or one row (horizontal split); expanded tabs share
+	// the remaining space proportionally to their weights. See
+	// computeTabBoxes and TheoryOfTUI.
+	panelBoxes := computeTabBoxes(t.splitVertical, t.expanded, t.focus, width, height)
 
-	// With no tab open, show a hint instead of a blank screen. The hint
-	// uses the unfocused dark blue, so the whole TUI keeps exactly two
-	// background colors. See TheoryOfTUI.
-	if len(open) == 0 {
-		root := taiui.Root{Element: taiui.Rect(
-			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(tabUnfocusBG)),
-			taiui.Text("Press 1/2/3 to open tabs", taiui.AlignCenter, taiui.VAlignMiddle),
-		)}
-		taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
-		return
-	}
-
-	// Compute the panel box of each open tab. The boxes are computed
-	// here — not left to the layout container — so the panel's one-row
-	// label strip, the scroll view below it, and the scroll offset
-	// clamp below are all derived from the exact panel dimensions. The
-	// focused tab has weight 2 and every other open tab weight 1, so
-	// it occupies twice the space of a non-focused tab; the last open
-	// tab absorbs the rounding remainder. See tabPanelBox and
-	// TheoryOfTUI.
-	focusedPos := -1
-	for pos, idx := range open {
-		if idx == t.focus {
-			focusedPos = pos
-			break
-		}
-	}
-	panelBoxes := [3]taiui.Box{}
-	for pos, idx := range open {
-		panelBoxes[idx] = tabPanelBox(t.splitVertical, pos, focusedPos, len(open), width, height)
-	}
-
-	// Each tab's content width reserves one column for its scrollbar,
-	// matching the scroll's visible-width rendering. In the weighted
-	// layout the tabs have different widths — the focused tab is twice
-	// as wide as the others — so each tab's content wraps at its own
-	// width. See TheoryOfTUI.
+	// Render each tab: expanded tabs show the label strip and scroll
+	// view; collapsed tabs show a thin strip with the key and title.
+	// The focused tab occupies twice the space of each non-focused tab.
+	// See TheoryOfTUI.
 	contentByTab := [3][]string{
 		outputLines,
 		t.signals,
 		logsLines,
 	}
 	displays := [3][]string{}
-	for _, idx := range open {
-		tabContentWidth := max(panelBoxes[idx].Width()-1, 1)
-		displays[idx] = taiui.WrapLines(contentByTab[idx], tabContentWidth)
-	}
-
-	// The scroll offset is clamped against the ACTUAL scroll view height
-	// — the panel height minus the one-row label strip. In horizontal
-	// split (stacked) each panel is height/N tall, so its scroll view is
-	// far shorter than a full-height pane; clamping against a full-height
-	// pane would stop the scroll before the content tail became visible.
-	// While a tab follows the latest content, its offset is stuck to the
-	// newest row before clamping; a view manually placed at the latest
-	// row resumes following. See TheoryOfTUI.
-	var maxOffsets [3]int
 	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
-	for _, idx := range open {
-		paneHeight := max(panelBoxes[idx].Height()-1, 1)
+	var maxOffsets [3]int
+	var panels []taiui.Element
+	for idx := 0; idx < 3; idx++ {
+		box := panelBoxes[idx]
+		if box.Width() <= 0 || box.Height() <= 0 {
+			continue
+		}
+		if !t.expanded[idx] {
+			panels = append(panels, t.collapsedPanel(idx, box, t.focus == idx))
+			continue
+		}
+		// Each tab's content width reserves one column for its scrollbar,
+		// matching the scroll's visible-width rendering. In the weighted
+		// layout the tabs have different widths — the focused tab is twice
+		// as wide as the others — so each tab's content wraps at its own
+		// width. See TheoryOfTUI.
+		tabContentWidth := max(box.Width()-1, 1)
+		displays[idx] = taiui.WrapLines(contentByTab[idx], tabContentWidth)
+
+		// The scroll offset is clamped against the ACTUAL scroll view height
+		// — the panel height minus the one-row label strip. In horizontal
+		// split (stacked) each panel is height/N tall, so its scroll view is
+		// far shorter than a full-height pane; clamping against a full-height
+		// pane would stop the scroll before the content tail became visible.
+		// While a tab follows the latest content, its offset is stuck to the
+		// newest row before clamping; a view manually placed at the latest
+		// row resumes following. See TheoryOfTUI.
+		paneHeight := max(box.Height()-1, 1)
 		maxOffsets[idx] = max(len(displays[idx])-paneHeight, 0)
 		if t.follow[idx] {
 			tops[idx] = maxOffsets[idx]
@@ -860,20 +953,11 @@ func (t *TUI) render() {
 		if tops[idx] == maxOffsets[idx] {
 			t.follow[idx] = true
 		}
+		panels = append(panels, t.panel(idx, box, displays[idx], tops[idx], t.focus == idx))
 	}
 	t.topLeft, t.topRight, t.topLogs = tops[0], tops[1], tops[2]
 	t.maxOffsets = maxOffsets
 
-	var panels []taiui.Element
-	for _, idx := range open {
-		panels = append(panels, t.panel(idx, panelBoxes[idx], displays[idx], tops[idx], t.focus == idx))
-	}
-
-	// The panels are overlaid on the root; each panel positions its own
-	// label strip and scroll view at the exact box computed above.
-	// Overlay takes ...any; []taiui.Element is not assignable to []any,
-	// so the slice is converted element-wise.
-	// See TheoryOfTUI.
 	overlaySpecs := make([]any, len(panels))
 	for i, p := range panels {
 		overlaySpecs[i] = p
@@ -945,6 +1029,52 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 			taiui.Scrollbar(true),
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(base)),
+		),
+	)
+}
+
+// collapsedPanel renders a collapsed tab as a thin strip showing the
+// tab's key and title. In vertical split the strip is one column wide
+// and the label is written vertically; in horizontal split the strip is
+// one row tall and the label is written horizontally. The strip uses the
+// same two-background-color scheme as expanded panels: dark gray when
+// focused, dark blue otherwise. See TheoryOfTUI.
+func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
+	base := tabUnfocusBG
+	if focus {
+		base = tabFocusBG
+	}
+	label := fmt.Sprintf("%d %s", idx+1, tabNames[idx])
+	labelFg := int32(0x9a9a9a)
+	if focus {
+		labelFg = 0xffffff
+	}
+	if box.Width() < box.Height() {
+		// Vertical strip: one column, label written vertically.
+		var lines []string
+		for _, r := range label {
+			lines = append(lines, string(r))
+		}
+		return taiui.Rect(
+			taiui.Box(box),
+			taiui.Fill(true),
+			taiui.BGColor(taiui.HexColor(base)),
+			taiui.Text(
+				lines,
+				taiui.Bold(focus),
+				taiui.FGColor(taiui.HexColor(labelFg)),
+			),
+		)
+	}
+	// Horizontal strip: one row, label written horizontally.
+	return taiui.Rect(
+		taiui.Box(box),
+		taiui.Fill(true),
+		taiui.BGColor(taiui.HexColor(base)),
+		taiui.Text(
+			"  "+label+"  ",
+			taiui.Bold(focus),
+			taiui.FGColor(taiui.HexColor(labelFg)),
 		),
 	)
 }
