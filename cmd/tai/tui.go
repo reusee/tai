@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"strings"
 	"sync"
@@ -13,7 +15,9 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -25,31 +29,35 @@ const (
 const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
-signals — the bodies of summary blocks and the finish lines ("[Finish: ...]")
-— as they appear in the output stream, and the Logs tab collects log
-records. The keys 1, 2, and 3 select the corresponding tab (Output, Round,
-Logs respectively): pressing a focused tab's key closes it and moves the
-focus to the next open tab, while pressing a non-focused or closed tab's
-key opens it (if closed) and takes the focus. Switching to an already-open
-tab keeps its current view; reopening a closed tab resumes following the
-live tail. All tabs are closed by default; a closed tab opens
-automatically as soon as content for it arrives — the Output tab on any
-streamed output, the Round tab on a parsed summary block or a finish line,
-the Logs tab on any log record — so the interface surfaces panes only when
-they have something to show. Auto-opening never changes an existing focus: a tab
-popping open cannot steal attention from the pane the user is reading, and
-it resumes following the tail; only when no tab is focused does the first
-auto-opened tab become the focus, so keyboard navigation remains usable.
-The focused tab occupies twice the space of each non-focused tab: the open
-tabs share the available space proportionally to their weights (2 for the
-focused tab, 1 for every other, total open+1), with the last tab absorbing
-the rounding remainder. The s key switches between vertical splitting (tabs
-side by side, a vertical split line) and horizontal splitting (tabs
-stacked, a horizontal split line). Tab cycles the focus among the open
-tabs, skipping closed ones; up/down and page up/down scroll the focused
-pane; home/end jump to the start/end. When the generation finishes, the TUI
-stays open so the output can be browsed, and q quits the TUI. When all tabs
-are closed, a hint panel is shown instead of a blank screen.
+signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
+— and the Logs tab collects log records. Summary bodies are parsed from the
+streamed output, while finish reasons are read directly from the generation
+state's FinishReason parts via a state decorator passed through
+RunOptions.StateDecorators by runWithTUI; the Round tab never scans rendered
+text for "[Finish: ...]" markers. The keys
+1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
+pressing a focused tab's key closes it and moves the focus to the next open
+tab, while pressing a non-focused or closed tab's key opens it (if closed)
+and takes the focus. Switching to an already-open tab keeps its current view;
+reopening a closed tab resumes following the live tail. All tabs are closed
+by default; a closed tab opens automatically as soon as content for it
+arrives — the Output tab on any streamed output, the Round tab on a parsed
+summary block or a finish reason, the Logs tab on any log record — so the
+interface surfaces panes only when they have something to show. Auto-opening
+never changes an existing focus: a tab popping open cannot steal attention
+from the pane the user is reading, and it resumes following the tail; only
+when no tab is focused does the first auto-opened tab become the focus, so
+keyboard navigation remains usable. The focused tab occupies twice the space
+of each non-focused tab: the open tabs share the available space
+proportionally to their weights (2 for the focused tab, 1 for every other,
+total open+1), with the last tab absorbing the rounding remainder. The s key
+switches between vertical splitting (tabs side by side, a vertical split
+line) and horizontal splitting (tabs stacked, a horizontal split line). Tab
+cycles the focus among the open tabs, skipping closed ones; up/down and page
+up/down scroll the focused pane; home/end jump to the start/end. When the
+generation finishes, the TUI stays open so the output can be browsed, and q
+quits the TUI. When all tabs are closed, a hint panel is shown instead of a
+blank screen.
 `
 
 // Tui enables the terminal UI mode.
@@ -66,6 +74,58 @@ func (t Tui) Handle(key string, args []string) (newDef any, remainArgs []string,
 
 func (t Tui) Keys() map[string]string {
 	return map[string]string{"-tui": "Use the TUI interface"}
+}
+
+type stateFinishReason struct {
+	upstream generators.State
+	onFinish func(generators.FinishReason)
+}
+
+func (s stateFinishReason) AppendContent(content *generators.Content) (generators.State, error) {
+	// FinishReason parts are read directly from the generation state,
+	// not scanned from rendered text. See TheoryOfTUI.
+	if s.onFinish != nil {
+		for _, part := range content.Parts {
+			if reason, ok := part.(generators.FinishReason); ok {
+				s.onFinish(reason)
+			}
+		}
+	}
+	newUpstream, err := s.upstream.AppendContent(content)
+	if err != nil {
+		return nil, err
+	}
+	return stateFinishReason{
+		upstream: newUpstream,
+		onFinish: s.onFinish,
+	}, nil
+}
+
+func (s stateFinishReason) Contents() iter.Seq[*generators.Content] {
+	return s.upstream.Contents()
+}
+
+func (s stateFinishReason) Functions() iter.Seq[*generators.Function] {
+	return s.upstream.Functions()
+}
+
+func (s stateFinishReason) SystemPrompt() string {
+	return s.upstream.SystemPrompt()
+}
+
+func (s stateFinishReason) Flush() (generators.State, error) {
+	newUpstream, err := s.upstream.Flush()
+	if err != nil {
+		return nil, err
+	}
+	return stateFinishReason{
+		upstream: newUpstream,
+		onFinish: s.onFinish,
+	}, nil
+}
+
+func (s stateFinishReason) Unwrap() generators.State {
+	return s.upstream
 }
 
 type tuiState struct {
@@ -131,6 +191,24 @@ func (s *tuiState) write(p []byte) {
 	// summary block precedes the round's finish line. See TheoryOfTUI.
 	s.parseSummaries(p)
 	s.appendOutput(p)
+}
+
+func (s *tuiState) finishReason(reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if reason == "" {
+		return
+	}
+	s.autoOpen(1)
+	// The finish reason marks the end of the generation request: the
+	// Output tab's "generating..." hint clears once the request has
+	// returned. A new request's "generating" log re-sets it.
+	// See TheoryOfTUI.
+	s.generating = false
+	s.signals = append(s.signals, "[Finish: "+reason+"]")
+	if len(s.signals) > maxTUISignals {
+		s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+	}
 }
 
 // writeLogs appends log output to the logs buffer, splitting it into lines
@@ -239,50 +317,10 @@ func (s *tuiState) appendOutput(p []byte) {
 		}
 		line := s.partial[:idx]
 		s.lines = append(s.lines, line)
-		s.collectFinishSignals(line)
 		s.partial = s.partial[idx+1:]
 		if len(s.lines) > maxTUILines {
 			s.lines = append([]string(nil), s.lines[len(s.lines)-maxTUILines:]...)
 		}
-	}
-}
-
-// collectFinishSignals extracts "[Finish: ...]" lines from a completed
-// output line and appends them to the Round tab's signals, alongside the
-// summary block bodies collected by parseSummaries. The terminal writer
-// emits a finish line ("[Finish: stop]") when a generation round ends,
-// so the Round tab shows both round completion signals. Extraction runs
-// when a line completes in appendOutput, so a pattern split across
-// stream chunks is reassembled by the partial-line machinery and needs
-// no separate buffer; a finish line sharing its stream line with
-// surrounding text is still extracted. A closed Round tab opens
-// automatically on the first finish line, matching the summary block
-// behavior. The finish line also marks the end of the generation
-// request: it clears the Output tab's "generating..." hint. See
-// TheoryOfTUI.
-func (s *tuiState) collectFinishSignals(line string) {
-	search := line
-	for {
-		idx := strings.Index(search, "[Finish: ")
-		if idx < 0 {
-			return
-		}
-		search = search[idx+len("[Finish: "):]
-		end := strings.IndexByte(search, ']')
-		if end < 0 {
-			return
-		}
-		s.autoOpen(1)
-		// The finish line marks the end of the generation request: the
-		// Output tab's "generating..." hint clears once the request has
-		// returned. A new request's "generating" log re-sets it.
-		// See TheoryOfTUI.
-		s.generating = false
-		s.signals = append(s.signals, "[Finish: "+search[:end]+"]")
-		if len(s.signals) > maxTUISignals {
-			s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
-		}
-		search = search[end+1:]
 	}
 }
 
@@ -1005,6 +1043,25 @@ func readTUIKeys(r io.Reader, ch chan<- string) {
 	}
 }
 
+// withFinishReasonObserver wraps a loops.Run so that FinishReason parts
+// appended to the generation state are forwarded to the TUI's Round tab.
+// The decorator is passed through RunOptions.StateDecorators, so the
+// loop applies it to the generation state before the phase chain runs.
+// See TheoryOfTUI.
+func withFinishReasonObserver(run loops.Run, tui *TUI) loops.Run {
+	return func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
+			return stateFinishReason{
+				upstream: state,
+				onFinish: func(reason generators.FinishReason) {
+					tui.finishReason(string(reason))
+				},
+			}
+		})
+		return run(ctx, opts)
+	}
+}
+
 func runWithTUI(command Command, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
@@ -1030,7 +1087,22 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// In TUI mode, route logs to the logs pane instead of stderr. The
 	// logs.Writer provider is forked to the TUI's logs writer, so every
 	// log record lands in the logs pane and never in the output pipe.
-	scope = scope.Fork(func() logs.Writer { return logs.Writer(tui.LogsWriter()) })
+	//
+	// The state decorator wraps the generation state so FinishReason
+	// parts are read directly from the state and forwarded to the TUI's
+	// Round tab. This replaces the previous text-scanning approach: the
+	// Round tab never scans rendered output for "[Finish: ...]" markers.
+	// The decorator is passed through RunOptions.StateDecorators by
+	// wrapping the loops.Run provider: the original Run is resolved
+	// before the fork, and the wrapper appends the decorator to the
+	// options before delegating. See TheoryOfTUI.
+	originalRun := dscope.Get[loops.Run](scope)
+	scope = scope.Fork(
+		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
+		func() loops.Run {
+			return withFinishReasonObserver(originalRun, tui)
+		},
+	)
 	runErr := tui.Run(func() {
 		scope.Fork(command.Defs...).Call(command.Main)
 	})

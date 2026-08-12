@@ -117,6 +117,14 @@ const maxParseErrorRounds = 3
 
 const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. The continue block below carries the valuable conclusions already reached in the truncated thinking: discoveries, decisions, facts, completed work, and next steps. Adopt these conclusions and continue from where you left off; do not re-derive them, so this round needs less thinking than the truncated attempt.]\n\n"
 
+// StateDecorator wraps a generation state before the loop starts,
+// returning a new state that observes or modifies the original. The
+// decorator is applied after interaction recording, so it sees every
+// subsequent content append. Multiple decorators are applied in order,
+// each wrapping the state produced by the previous one. See
+// loops.RunOptions.StateDecorators.
+type StateDecorator func(generators.State) generators.State
+
 // InteractionRecorder provider: the default is nil, meaning no interaction
 // recording. Commands that want recording pass their recorder explicitly
 // through RunOptions.InteractionRecorder, which takes precedence over the
@@ -182,6 +190,12 @@ type RunOptions struct {
 	// InitialState is the starting state (without ParserState wrapping).
 	// loops.Run wraps it with ParserState internally.
 	InitialState generators.State
+	// StateDecorators wrap the state before the loop starts, in order.
+	// Each decorator receives the state produced by the previous one.
+	// The default is none; commands that need to observe state (e.g., the
+	// TUI observing FinishReason parts) pass their own implementations.
+	// See loops.StateDecorator.
+	StateDecorators []StateDecorator
 	// Components is the component set for block processing between rounds.
 	// When empty, the loop runs a single round (single-shot mode).
 	Components components.ComponentSet
@@ -458,6 +472,16 @@ func (Module) Run(
 		// the recorder is nil or disabled.
 		// See records.TheoryOfInteractionRecording.
 		state, _ = RecordState(rec, state)
+
+		// Apply the state decorators after recording so decorations (e.g.,
+		// observing FinishReason parts for a TUI) see every subsequent
+		// content append. Decorators are applied in order, each wrapping
+		// the state produced by the previous one. See loops.StateDecorator.
+		for _, decorator := range opts.StateDecorators {
+			if decorator != nil {
+				state = decorator(state)
+			}
+		}
 
 		// recordRoundError reports a failed round to the interaction
 		// recorder when recording is active.

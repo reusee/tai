@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -48,7 +51,8 @@ func TestTuiStateRequesting(t *testing.T) {
 	// request is in flight and clears when the request returns: a fresh
 	// state with no activity and a finished session are never
 	// "requesting", the request-start log sets the hint, and the finish
-	// line clears it. See TheoryOfTUI.
+	// reason clears it. Finish reasons are read from the generation
+	// state, not scanned from rendered text. See TheoryOfTUI.
 	st := &tuiState{}
 	if st.requesting() {
 		t.Fatal("expected not requesting with no activity")
@@ -57,12 +61,12 @@ func TestTuiStateRequesting(t *testing.T) {
 	if !st.requesting() {
 		t.Fatal("expected requesting after the generating log")
 	}
-	// The finish line marks the request as returned: the hint clears
+	// The finish reason marks the request as returned: the hint clears
 	// even though the session has not ended (e.g., waiting for the next
 	// round or user input).
-	st.write([]byte("[Finish: stop]\n"))
+	st.finishReason("stop")
 	if st.requesting() {
-		t.Fatal("expected not requesting after the finish line")
+		t.Fatal("expected not requesting after the finish reason")
 	}
 	st.finished = true
 	if st.requesting() {
@@ -111,7 +115,7 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	// The generating hint reflects the request lifecycle, not a time
 	// window: it persists for the whole request (including silent
 	// thinking phases) and clears when the request returns with a finish
-	// line. Before the fix, the hint was a recency timeout, so it
+	// reason. Before the fix, the hint was a recency timeout, so it
 	// disappeared after a silence and only reappeared on the next output.
 	// See TheoryOfTUI.
 	st := &tuiState{}
@@ -119,9 +123,9 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if !st.requesting() {
 		t.Fatal("expected requesting after the generating log")
 	}
-	st.write([]byte("[Finish: stop]\n"))
+	st.finishReason("stop")
 	if st.requesting() {
-		t.Fatal("expected not requesting after the finish line")
+		t.Fatal("expected not requesting after the finish reason")
 	}
 }
 
@@ -355,7 +359,7 @@ func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
 
 func TestTuiStateCollectsFinishSignals(t *testing.T) {
 	st := &tuiState{}
-	st.write([]byte("some output\n[Finish: stop]\n"))
+	st.finishReason("stop")
 	if len(st.signals) != 1 {
 		t.Fatalf("expected 1 finish signal, got %v", st.signals)
 	}
@@ -364,34 +368,13 @@ func TestTuiStateCollectsFinishSignals(t *testing.T) {
 	}
 }
 
-func TestTuiStateCollectsFinishSignalsAcrossChunks(t *testing.T) {
-	// The finish line can split at any byte position across stream
-	// chunks; the partial-line machinery reassembles it before the
-	// signal is collected. See TheoryOfTUI.
-	st := &tuiState{}
-	st.write([]byte("[Fin"))
-	st.write([]byte("ish: len"))
-	st.write([]byte("gth]\n"))
-	if len(st.signals) != 1 || st.signals[0] != "[Finish: length]" {
-		t.Fatalf("unexpected signals: %v", st.signals)
-	}
-}
-
-func TestTuiStateCollectsFinishSignalsEmbedded(t *testing.T) {
-	// A finish line sharing its stream line with surrounding text (e.g.,
-	// preceding prose without a break) is still extracted. See TheoryOfTUI.
-	st := &tuiState{}
-	st.write([]byte("done. [Finish: stop]\n"))
-	if len(st.signals) != 1 || st.signals[0] != "[Finish: stop]" {
-		t.Fatalf("unexpected signals: %v", st.signals)
-	}
-}
-
 func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
 	// The Round tab shows both round completion signals: the summary
-	// block body and the finish line, in stream order. See TheoryOfTUI.
+	// block body and the finish reason, in order. Finish reasons are
+	// read from the generation state. See TheoryOfTUI.
 	st := &tuiState{}
-	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n[Finish: stop]\n"))
+	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	st.finishReason("stop")
 	if len(st.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
@@ -404,9 +387,9 @@ func TestTuiStateFinishSignalOpensRoundTab(t *testing.T) {
 	tui := &TUI{}
 	tui.open = [3]bool{true, false, false}
 	tui.focus = 0
-	tui.write([]byte("[Finish: stop]\n"))
+	tui.finishReason("stop")
 	if !tui.open[1] {
-		t.Fatal("round tab should auto-open on a finish line")
+		t.Fatal("round tab should auto-open on a finish reason")
 	}
 	if tui.focus != 0 {
 		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
@@ -1094,5 +1077,45 @@ func TestTuiStateEmptyWriteDoesNotOpenTabs(t *testing.T) {
 	}
 	if st.focus != -1 {
 		t.Fatalf("expected no focus change on empty writes, got %d", st.focus)
+	}
+}
+
+func TestWithFinishReasonObserver(t *testing.T) {
+	// The TUI's finish-reason observer must be passed through
+	// RunOptions.StateDecorators so the loop applies it to the
+	// generation state. Without the wrapper, the finish reason never
+	// reaches the Round tab. See TheoryOfTUI.
+	tui := &TUI{}
+	var gotOpts loops.RunOptions
+	run := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+		gotOpts = opts
+		return loops.Result{}, nil
+	}
+	wrapped := withFinishReasonObserver(run, tui)
+
+	_, err := wrapped(context.Background(), loops.RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotOpts.StateDecorators) != 1 {
+		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))
+	}
+
+	// Apply the decorator to a state and append a FinishReason part: the
+	// finish reason must be forwarded to the TUI's Round tab.
+	var state generators.State = generators.NewPrompts("", nil)
+	state, err = gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
+		Role: generators.RoleLog,
+		Parts: []generators.Part{
+			generators.FinishReason("stop"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	if len(tui.signals) != 1 || tui.signals[0] != "[Finish: stop]" {
+		t.Fatalf("expected finish reason in round tab, got %v", tui.signals)
 	}
 }

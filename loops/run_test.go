@@ -3,6 +3,7 @@ package loops
 import (
 	"context"
 	"errors"
+	"iter"
 	"strings"
 	"testing"
 
@@ -1526,4 +1527,95 @@ func TestExtractIncompleteOutput(t *testing.T) {
 			t.Fatalf("expected only text parts, got %q", got)
 		}
 	})
+}
+
+func TestRunStateDecorators(t *testing.T) {
+	withRun(t, func(run Run) {
+		var applied []string
+		var observed []string
+		initialState := generators.NewPrompts("", nil)
+		result, err := run(context.Background(), RunOptions{
+			Generator:    nil,
+			InitialState: initialState,
+			Components:   nil,
+			StateDecorators: []StateDecorator{
+				func(state generators.State) generators.State {
+					applied = append(applied, "first")
+					return state
+				},
+				func(state generators.State) generators.State {
+					applied = append(applied, "second")
+					return testObservingState{
+						upstream: state,
+						onAppend: func(content *generators.Content) {
+							for _, part := range content.Parts {
+								if text, ok := part.(generators.Text); ok {
+									observed = append(observed, string(text))
+								}
+							}
+						},
+					}
+				},
+			},
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return appendPhase("hello")
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(applied) != 2 || applied[0] != "first" || applied[1] != "second" {
+			t.Fatalf("expected decorators applied in order, got %v", applied)
+		}
+		if len(observed) != 1 || observed[0] != "hello" {
+			t.Fatalf("expected decorator to observe content, got %v", observed)
+		}
+		// The final state is the decorator's wrapped state: the loop uses
+		// the state returned by the last decorator.
+		if _, ok := generators.As[testObservingState](result.FinalState); !ok {
+			t.Fatal("expected final state to be the decorator's wrapped state")
+		}
+	})
+}
+
+// testObservingState is a State wrapper that records content appends,
+// for testing state decorators.
+type testObservingState struct {
+	upstream generators.State
+	onAppend func(*generators.Content)
+}
+
+func (s testObservingState) AppendContent(content *generators.Content) (generators.State, error) {
+	if s.onAppend != nil {
+		s.onAppend(content)
+	}
+	newUpstream, err := s.upstream.AppendContent(content)
+	if err != nil {
+		return nil, err
+	}
+	return testObservingState{upstream: newUpstream, onAppend: s.onAppend}, nil
+}
+
+func (s testObservingState) Contents() iter.Seq[*generators.Content] {
+	return s.upstream.Contents()
+}
+
+func (s testObservingState) Functions() iter.Seq[*generators.Function] {
+	return s.upstream.Functions()
+}
+
+func (s testObservingState) SystemPrompt() string {
+	return s.upstream.SystemPrompt()
+}
+
+func (s testObservingState) Flush() (generators.State, error) {
+	newUpstream, err := s.upstream.Flush()
+	if err != nil {
+		return nil, err
+	}
+	return testObservingState{upstream: newUpstream, onAppend: s.onAppend}, nil
+}
+
+func (s testObservingState) Unwrap() generators.State {
+	return s.upstream
 }
