@@ -752,6 +752,53 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	}
 }
 
+func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
+	// The scrollbar is hidden while the pane follows the tail: at the
+	// latest position there is nothing left to scroll toward, so the
+	// thumb would only add visual noise and waste a column. Scrolling
+	// away from the tail brings the scrollbar back. See TheoryOfTUI.
+	var lines []string
+	for i := 0; i < 40; i++ {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+
+	renderPanel := func(follow bool) taiui.Frame {
+		tui := &TUI{}
+		tui.follow = [3]bool{follow, false, false}
+		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}, lines, 0, false)
+		screen := &panelTestScreen{width: 80, height: 10}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+			return taiui.Root{Element: element}
+		}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		return screen.frames[len(screen.frames)-1]
+	}
+
+	// While following, no scrollbar thumb appears at the right edge.
+	following := renderPanel(true)
+	rightmost := following.Width - 1
+	for y := 0; y < following.Height; y++ {
+		if cell := following.Cells[y*following.Width+rightmost]; cell.Rune == '█' {
+			t.Fatalf("expected no scrollbar thumb while following, got one at (%d,%d)", rightmost, y)
+		}
+	}
+
+	// When scrolled away from the tail, the scrollbar thumb appears.
+	scrolled := renderPanel(false)
+	foundThumb := false
+	for y := 0; y < scrolled.Height; y++ {
+		if cell := scrolled.Cells[y*scrolled.Width+rightmost]; cell.Rune == '█' {
+			foundThumb = true
+			break
+		}
+	}
+	if !foundThumb {
+		t.Fatal("expected a scrollbar thumb when scrolled away from the tail")
+	}
+}
+
 func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 	// Stacked layout, 2 expanded tabs and 1 collapsed tab on a 40-row
 	// screen: the collapsed tab takes one row at the bottom, and the

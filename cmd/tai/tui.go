@@ -47,8 +47,8 @@ the Output tab on any streamed output, the Round tab on a parsed summary
 block or a finish reason, the Logs tab on any log record — so the interface
 surfaces panes only when they have something to show. Subsequent content
 arrivals do not re-expand a tab the user collapsed. Auto-expansion never
-changes an existing focus: a tab popping open cannot steal attention from
-the pane the user is reading, and it resumes following the tail; only when
+changes an existing focus: a tab popping open cannot steal attention from the
+pane the user is reading, and it resumes following the tail; only when
 no tab is focused does the first auto-expanded tab become the focus, so
 keyboard navigation remains usable. The focused tab occupies twice the space
 of each non-focused tab: the expanded tabs share the available space
@@ -61,6 +61,13 @@ horizontal split line). Tab cycles the focus among the expanded tabs,
 skipping collapsed ones; up/down and page up/down scroll the focused pane;
 home/end jump to the start/end. When the generation finishes, the TUI stays
 open so the output can be browsed, and q quits the TUI.
+
+Scrollbar: each tab's scroll view shows the scrollbar thumb only while the
+view is scrolled away from the latest content. When the pane follows the
+tail — the view sits at the latest row — the scrollbar is hidden: there is
+nothing left to scroll toward, so the thumb would only add visual noise and
+waste a column. Scrolling away from the tail (up, page up, home) brings the
+scrollbar back; scrolling back to the latest row hides it again.
 
 Focus order: each tab records the time (a monotonically increasing counter)
 of its last focus event — a key press, a Tab cycle, or an auto-expansion
@@ -1009,6 +1016,20 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 	headerBox.Bottom = box.Top + 1
 	scrollBox := box
 	scrollBox.Top = box.Top + 1
+
+	// The scrollbar is hidden while the pane follows the tail: at the
+	// latest position there is nothing left to scroll toward, so the
+	// thumb would only add visual noise and waste a column. Scrolling
+	// away from the tail brings the scrollbar back. See TheoryOfTUI.
+	scrollSpecs := []any{
+		taiui.Box(scrollBox),
+		taiui.Fill(true),
+		taiui.BGColor(taiui.HexColor(base)),
+	}
+	if !t.follow[idx] {
+		scrollSpecs = append(scrollSpecs, taiui.Scrollbar(true))
+	}
+
 	return taiui.Overlay(
 		taiui.Text(
 			"  "+label+"  ",
@@ -1021,10 +1042,7 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 		taiui.VerticalScroll(
 			taiui.Text(lines, taiui.Wrap(true)),
 			top,
-			taiui.Box(scrollBox),
-			taiui.Scrollbar(true),
-			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(base)),
+			scrollSpecs...,
 		),
 	)
 }
