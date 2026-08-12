@@ -1402,6 +1402,122 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	}
 }
 
+func TestStripFileContext(t *testing.T) {
+	// File-context blocks are dropped from initial contents so the code
+	// context does not flood the Output tab; the ai command's user-input
+	// markers are stripped so the raw input is displayed. See
+	// TheoryOfTUI.
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "focus file block skipped",
+			text: "``` begin of focus file /repo/main.go\npackage main\n``` end of focus file /repo/main.go\n",
+			want: "",
+		},
+		{
+			name: "context file block skipped",
+			text: "``` begin of context file /repo/dep.go\npackage dep\n``` end of context file /repo/dep.go\n",
+			want: "",
+		},
+		{
+			name: "context package block skipped",
+			text: "``` begin of context package fmt\nPackage fmt ...\n``` end of context package fmt\n",
+			want: "",
+		},
+		{
+			name: "ai file block skipped",
+			text: "``` begin of file /tmp/notes.md\n# Notes\n``` end of file /tmp/notes.md\n",
+			want: "",
+		},
+		{
+			name: "binary file markers skipped",
+			text: "``` begin of file /tmp/img.png (binary, image/png)",
+			want: "",
+		},
+		{
+			name: "user input markers stripped",
+			text: "\n``` begin of user input\nfix the bug\n``` end of user input\n",
+			want: "fix the bug",
+		},
+		{
+			name: "plain text unchanged",
+			text: "and run the tests",
+			want: "and run the tests",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripFileContext(tt.text); got != tt.want {
+				t.Fatalf("stripFileContext(%q) = %q, want %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWithTUIOutputObserverCapturesInitialUserContent(t *testing.T) {
+	// The tuiOutputState layer only observes content appended after it
+	// wraps the state, so the initial contents of the generation state —
+	// the user's chat input — would never reach the Output tab without
+	// being captured when the decorator is applied. File-context blocks
+	// are skipped so the code context does not flood the tab. See
+	// TheoryOfTUI.
+	tui := &TUI{}
+	var gotOpts loops.RunOptions
+	run := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+		gotOpts = opts
+		return loops.Result{}, nil
+	}
+	wrapped := withTUIOutputObserver(run, tui)
+
+	if _, err := wrapped(context.Background(), loops.RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotOpts.StateDecorators) != 1 {
+		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))
+	}
+
+	// The ai command mixes file context and the chat input in one user
+	// content; the codes pipeline appends the chat as a separate
+	// plain-text user content. Both must be captured, and the file
+	// context must not flood the Output tab.
+	initial := generators.NewPrompts("", []*generators.Content{
+		{
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.Text("``` begin of focus file /repo/main.go\npackage main\n``` end of focus file /repo/main.go\n"),
+				generators.Text("\n``` begin of user input\nfix the bug\n``` end of user input\n"),
+			},
+		},
+		{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text("and run the tests")},
+		},
+	})
+	// Applying the decorator captures the initial contents into the TUI.
+	gotOpts.StateDecorators[0](initial)
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	var sb strings.Builder
+	for _, line := range tui.outputLinesForRender() {
+		sb.WriteString(line.text)
+		sb.WriteString("\n")
+	}
+	output := sb.String()
+	if strings.Contains(output, "package main") {
+		t.Fatalf("expected file-context block skipped, got %q", output)
+	}
+	if !strings.Contains(output, "fix the bug") {
+		t.Fatalf("expected user input in the Output tab, got %q", output)
+	}
+	if !strings.Contains(output, "and run the tests") {
+		t.Fatalf("expected plain chat content in the Output tab, got %q", output)
+	}
+}
+
 func TestTUICaptureContentNotifies(t *testing.T) {
 	// Model output captured via the state decorator must notify the
 	// render loop. The decorator appends content directly to the
