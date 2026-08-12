@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	maxTUILines     = 10000
-	maxTUISummaries = 2000
+	maxTUILines   = 10000
+	maxTUISignals = 2000
 )
 
 // modelRequestHintTimeout is how long after the last TUI output or log
@@ -32,14 +32,15 @@ var modelRequestHintTimeout = 5 * time.Second
 
 const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
-tab streams the model output, the Summary tab collects the bodies of summary
-blocks as they appear in the output stream, and the Logs tab collects log
-records. The keys 1, 2, and 3 toggle each tab on and off (Output, Summary,
+tab streams the model output, the Round tab collects the round completion
+signals — the bodies of summary blocks and the finish lines ("[Finish: ...]")
+— as they appear in the output stream, and the Logs tab collects log
+records. The keys 1, 2, and 3 toggle each tab on and off (Output, Round,
 Logs respectively). All tabs are closed by default; a closed tab opens
 automatically as soon as content for it arrives — the Output tab on any
-streamed output, the Summary tab on a parsed summary block, the Logs tab on
-any log record — so the interface surfaces panes only when they have
-something to show. Auto-opening never changes an existing focus: a tab
+streamed output, the Round tab on a parsed summary block or a finish line,
+the Logs tab on any log record — so the interface surfaces panes only when
+they have something to show. Auto-opening never changes an existing focus: a tab
 popping open cannot steal attention from the pane the user is reading, and
 it resumes following the tail; only when no tab is focused does the first
 auto-opened tab become the focus, so keyboard navigation remains usable.
@@ -75,13 +76,13 @@ type tuiState struct {
 	mu          sync.Mutex
 	lines       []string
 	partial     string // incomplete trailing output line
-	summaries   []string
+	signals     []string
 	logs        []string
 	logsPartial string // incomplete trailing log line
 	parseBuf    []byte
 
 	// open reports whether each tab is enabled: index 0 is the output
-	// tab, 1 the summary tab, 2 the logs tab. The keys 1, 2, and 3
+	// tab, 1 the round tab, 2 the logs tab. The keys 1, 2, and 3
 	// toggle them; a closed tab also opens automatically when content
 	// for it arrives, without changing the focus. splitVertical
 	// reports whether the tabs are laid out side by side (vertical
@@ -94,7 +95,7 @@ type tuiState struct {
 	topLeft  int
 	topRight int
 	topLogs  int
-	focus    int // 0 = output, 1 = summary, 2 = logs, -1 = none open
+	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none open
 	finished bool
 
 	// lastWrite records the last time output or log content was written
@@ -116,10 +117,10 @@ type tuiState struct {
 	maxOffsets [3]int
 }
 
-// write appends output and extracts summary blocks. It also refreshes
-// the activity timestamp used by the Output tab's generating hint. A
-// closed Output tab opens automatically on the first streamed output.
-// See TheoryOfTUI.
+// write appends output, extracts summary blocks, and collects finish
+// lines into the Round tab's signals. It also refreshes the activity
+// timestamp used by the Output tab's generating hint. A closed Output
+// tab opens automatically on the first streamed output. See TheoryOfTUI.
 func (s *tuiState) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,8 +128,11 @@ func (s *tuiState) write(p []byte) {
 		return
 	}
 	s.autoOpen(0)
-	s.appendOutput(p)
+	// Summary blocks are parsed before finish signals so signals sharing
+	// one stream chunk keep their chronological order: the model's
+	// summary block precedes the round's finish line. See TheoryOfTUI.
 	s.parseSummaries(p)
+	s.appendOutput(p)
 	s.lastWrite = time.Now()
 }
 
@@ -220,11 +224,45 @@ func (s *tuiState) appendOutput(p []byte) {
 		if idx < 0 {
 			break
 		}
-		s.lines = append(s.lines, s.partial[:idx])
+		line := s.partial[:idx]
+		s.lines = append(s.lines, line)
+		s.collectFinishSignals(line)
 		s.partial = s.partial[idx+1:]
 		if len(s.lines) > maxTUILines {
 			s.lines = append([]string(nil), s.lines[len(s.lines)-maxTUILines:]...)
 		}
+	}
+}
+
+// collectFinishSignals extracts "[Finish: ...]" lines from a completed
+// output line and appends them to the Round tab's signals, alongside the
+// summary block bodies collected by parseSummaries. The terminal writer
+// emits a finish line ("[Finish: stop]") when a generation round ends,
+// so the Round tab shows both round completion signals. Extraction runs
+// when a line completes in appendOutput, so a pattern split across
+// stream chunks is reassembled by the partial-line machinery and needs
+// no separate buffer; a finish line sharing its stream line with
+// surrounding text is still extracted. A closed Round tab opens
+// automatically on the first finish line, matching the summary block
+// behavior. See TheoryOfTUI.
+func (s *tuiState) collectFinishSignals(line string) {
+	search := line
+	for {
+		idx := strings.Index(search, "[Finish: ")
+		if idx < 0 {
+			return
+		}
+		search = search[idx+len("[Finish: "):]
+		end := strings.IndexByte(search, ']')
+		if end < 0 {
+			return
+		}
+		s.autoOpen(1)
+		s.signals = append(s.signals, "[Finish: "+search[:end]+"]")
+		if len(s.signals) > maxTUISignals {
+			s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+		}
+		search = search[end+1:]
 	}
 }
 
@@ -275,16 +313,16 @@ func (s *tuiState) parseSummaries(p []byte) {
 		if block.Kind == "summary" {
 			body := strings.TrimSpace(block.Body)
 			if body != "" {
-				// A closed Summary tab opens automatically on the first
+				// A closed Round tab opens automatically on the first
 				// summary block; the output text carrying the block
 				// already opened the Output tab. See TheoryOfTUI.
 				s.autoOpen(1)
 				for _, line := range strings.Split(body, "\n") {
-					s.summaries = append(s.summaries, line)
+					s.signals = append(s.signals, line)
 				}
-				s.summaries = append(s.summaries, "")
-				if len(s.summaries) > maxTUISummaries {
-					s.summaries = append([]string(nil), s.summaries[len(s.summaries)-maxTUISummaries:]...)
+				s.signals = append(s.signals, "")
+				if len(s.signals) > maxTUISignals {
+					s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 				}
 			}
 		}
@@ -720,7 +758,7 @@ func (t *TUI) render() {
 	// width. See TheoryOfTUI.
 	contentByTab := [3][]string{
 		outputLines,
-		t.summaries,
+		t.signals,
 		logsLines,
 	}
 	displays := [3][]string{}
@@ -772,7 +810,7 @@ func (t *TUI) render() {
 }
 
 var (
-	tabNames = [...]string{"Output", "Summary", "Logs"}
+	tabNames = [...]string{"Output", "Round", "Logs"}
 	// tabUnfocusBG is the dark blue background of every unfocused tab.
 	tabUnfocusBG int32 = 0x0a1428
 	// tabFocusBG is the dark gray background of the focused tab.

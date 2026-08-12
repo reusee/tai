@@ -212,11 +212,11 @@ func TestTuiStatePartialLines(t *testing.T) {
 func TestTuiStateParsesSummaries(t *testing.T) {
 	st := &tuiState{}
 	st.write([]byte("<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n"))
-	if len(st.summaries) != 3 {
-		t.Fatalf("expected 3 summary lines, got %v", st.summaries)
+	if len(st.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
-	if st.summaries[0] != "- one" || st.summaries[1] != "- two" || st.summaries[2] != "" {
-		t.Fatalf("unexpected summaries: %v", st.summaries)
+	if st.signals[0] != "- one" || st.signals[1] != "- two" || st.signals[2] != "" {
+		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
@@ -224,11 +224,11 @@ func TestTuiStateParsesSummariesAcrossChunks(t *testing.T) {
 	st := &tuiState{}
 	st.write([]byte("<<徕珑龘 <summary>\n- one\n- tw"))
 	st.write([]byte("o\n徕珑龘\n"))
-	if len(st.summaries) != 3 {
-		t.Fatalf("expected 3 summary lines, got %v", st.summaries)
+	if len(st.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
-	if st.summaries[0] != "- one" || st.summaries[1] != "- two" {
-		t.Fatalf("unexpected summaries: %v", st.summaries)
+	if st.signals[0] != "- one" || st.signals[1] != "- two" {
+		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
@@ -237,8 +237,8 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 	text := "<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n" +
 		"<<徕珑龘 <summary>\n- s\n徕珑龘\n"
 	st.write([]byte(text))
-	if len(st.summaries) != 2 || st.summaries[0] != "- s" || st.summaries[1] != "" {
-		t.Fatalf("unexpected summaries: %v", st.summaries)
+	if len(st.signals) != 2 || st.signals[0] != "- s" || st.signals[1] != "" {
+		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
@@ -250,11 +250,11 @@ func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
 	st := &tuiState{}
 	st.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
 	st.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-	if len(st.summaries) != 2 {
-		t.Fatalf("expected 2 summary lines, got %v", st.summaries)
+	if len(st.signals) != 2 {
+		t.Fatalf("expected 2 signal lines, got %v", st.signals)
 	}
-	if st.summaries[0] != "- done" || st.summaries[1] != "" {
-		t.Fatalf("unexpected summaries: %v", st.summaries)
+	if st.signals[0] != "- done" || st.signals[1] != "" {
+		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
@@ -288,12 +288,12 @@ func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
 	// for the fragment's own closing line. See TheoryOfTUI.
 	st := &tuiState{}
 	st.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
-	if len(st.summaries) != 0 {
-		t.Fatalf("expected no summaries while the block is incomplete, got %v", st.summaries)
+	if len(st.signals) != 0 {
+		t.Fatalf("expected no signals while the block is incomplete, got %v", st.signals)
 	}
 	st.write([]byte("\n黿鼍爩\n"))
-	if len(st.summaries) != 2 || st.summaries[0] != "- not yet complete" {
-		t.Fatalf("unexpected summaries: %v", st.summaries)
+	if len(st.signals) != 2 || st.signals[0] != "- not yet complete" {
+		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
@@ -306,18 +306,89 @@ func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
 		st := &tuiState{}
 		st.write([]byte("prose\n<<"))
 		st.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.summaries) != 2 || st.summaries[0] != "- done" {
-			t.Fatalf("unexpected summaries: %v", st.summaries)
+		if len(st.signals) != 2 || st.signals[0] != "- done" {
+			t.Fatalf("unexpected signals: %v", st.signals)
 		}
 	})
 	t.Run("SingleLeftChevron", func(t *testing.T) {
 		st := &tuiState{}
 		st.write([]byte("prose\n<"))
 		st.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.summaries) != 2 || st.summaries[0] != "- done" {
-			t.Fatalf("unexpected summaries: %v", st.summaries)
+		if len(st.signals) != 2 || st.signals[0] != "- done" {
+			t.Fatalf("unexpected signals: %v", st.signals)
 		}
 	})
+}
+
+func TestTuiStateCollectsFinishSignals(t *testing.T) {
+	st := &tuiState{}
+	st.write([]byte("some output\n[Finish: stop]\n"))
+	if len(st.signals) != 1 {
+		t.Fatalf("expected 1 finish signal, got %v", st.signals)
+	}
+	if st.signals[0] != "[Finish: stop]" {
+		t.Fatalf("unexpected signal: %q", st.signals[0])
+	}
+}
+
+func TestTuiStateCollectsFinishSignalsAcrossChunks(t *testing.T) {
+	// The finish line can split at any byte position across stream
+	// chunks; the partial-line machinery reassembles it before the
+	// signal is collected. See TheoryOfTUI.
+	st := &tuiState{}
+	st.write([]byte("[Fin"))
+	st.write([]byte("ish: len"))
+	st.write([]byte("gth]\n"))
+	if len(st.signals) != 1 || st.signals[0] != "[Finish: length]" {
+		t.Fatalf("unexpected signals: %v", st.signals)
+	}
+}
+
+func TestTuiStateCollectsFinishSignalsEmbedded(t *testing.T) {
+	// A finish line sharing its stream line with surrounding text (e.g.,
+	// preceding prose without a break) is still extracted. See TheoryOfTUI.
+	st := &tuiState{}
+	st.write([]byte("done. [Finish: stop]\n"))
+	if len(st.signals) != 1 || st.signals[0] != "[Finish: stop]" {
+		t.Fatalf("unexpected signals: %v", st.signals)
+	}
+}
+
+func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
+	// The Round tab shows both round completion signals: the summary
+	// block body and the finish line, in stream order. See TheoryOfTUI.
+	st := &tuiState{}
+	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n[Finish: stop]\n"))
+	if len(st.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", st.signals)
+	}
+	if st.signals[0] != "- done" || st.signals[1] != "" || st.signals[2] != "[Finish: stop]" {
+		t.Fatalf("unexpected signals: %v", st.signals)
+	}
+}
+
+func TestTuiStateFinishSignalOpensRoundTab(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.write([]byte("[Finish: stop]\n"))
+	if !tui.open[1] {
+		t.Fatal("round tab should auto-open on a finish line")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+	}
+	if len(tui.signals) != 1 {
+		t.Fatalf("expected the finish signal, got %v", tui.signals)
+	}
+}
+
+func TestTuiStateRoundTabTitle(t *testing.T) {
+	// The tab shows round completion signals, not only summaries, so its
+	// title is "Round". See TheoryOfTUI.
+	if tabNames[1] != "Round" {
+		t.Fatalf("expected the round tab title, got %q", tabNames[1])
+	}
 }
 
 func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
@@ -491,7 +562,7 @@ func TestTUICycleFocusSkipsClosedTabs(t *testing.T) {
 	tui.focus = 0
 	tui.cycleFocus()
 	if tui.focus != 2 {
-		t.Fatalf("focus should skip the closed summary tab and land on logs, got %d", tui.focus)
+		t.Fatalf("focus should skip the closed round tab and land on logs, got %d", tui.focus)
 	}
 	tui.cycleFocus()
 	if tui.focus != 0 {
@@ -868,11 +939,6 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 }
 
 func TestTuiStateAutoOpenTabs(t *testing.T) {
-	// All tabs are closed by default; a closed tab opens automatically
-	// as soon as content for it arrives. The first auto-opened tab
-	// becomes the focus when nothing is focused, so keyboard navigation
-	// works; subsequent auto-opens keep the established focus.
-	// See TheoryOfTUI.
 	tui := &TUI{}
 	tui.focus = -1
 	tui.write([]byte("model output\n"))
@@ -892,25 +958,25 @@ func TestTuiStateAutoOpenTabs(t *testing.T) {
 		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
 	}
 
-	// A summary block opens the Summary tab without changing the focus.
+	// A summary block opens the Round tab without changing the focus.
 	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
 	if !tui.open[1] {
-		t.Fatal("summary tab should auto-open on a summary block")
+		t.Fatal("round tab should auto-open on a summary block")
 	}
 	if tui.focus != 0 {
 		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
 	}
-	if len(tui.summaries) != 2 {
-		t.Fatalf("expected the summary lines, got %v", tui.summaries)
+	if len(tui.signals) != 2 {
+		t.Fatalf("expected the summary signals, got %v", tui.signals)
 	}
 
-	// A non-summary block does not open the Summary tab on its own.
+	// A non-summary block does not open the Round tab on its own.
 	tui2 := &TUI{}
 	tui2.open = [3]bool{true, false, false}
 	tui2.focus = 0
 	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
 	if tui2.open[1] {
-		t.Fatal("summary tab must not open without a summary block")
+		t.Fatal("round tab must not open without a summary block or finish line")
 	}
 }
 
