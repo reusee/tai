@@ -43,6 +43,119 @@ func TestTuiStateWriteLogs(t *testing.T) {
 	}
 }
 
+func TestTuiStateRequesting(t *testing.T) {
+	// The Output tab's "generating" hint appears while the model is
+	// actively generating and clears in the idle states: a fresh state
+	// with no activity, and a finished session, are never "requesting",
+	// while recent output writes are. See TheoryOfTUI.
+	st := &tuiState{}
+	if st.requesting() {
+		t.Fatal("expected not requesting with no activity")
+	}
+	st.write([]byte("model output"))
+	if !st.requesting() {
+		t.Fatal("expected requesting after output write")
+	}
+	st.finished = true
+	if st.requesting() {
+		t.Fatal("expected not requesting when finished")
+	}
+}
+
+func TestTuiStateRequestingLogsWrite(t *testing.T) {
+	// The generator logs a record at the start of each request (e.g., the
+	// "generating" log in the generators package), so a log write also
+	// marks the model as actively generating — this covers the wait for
+	// the first output byte, before any content has streamed.
+	// See TheoryOfTUI.
+	st := &tuiState{}
+	st.writeLogs([]byte("msg=\"generating\"\n"))
+	if !st.requesting() {
+		t.Fatal("expected requesting after log write")
+	}
+}
+
+func TestTuiStateRequestingTimeout(t *testing.T) {
+	// The hint clears modelRequestHintTimeout after the last write, so an
+	// idle session (e.g., waiting for user input in interactive mode)
+	// stops showing "generating". The window is shrunk for the test.
+	// See TheoryOfTUI.
+	old := modelRequestHintTimeout
+	modelRequestHintTimeout = 20 * time.Millisecond
+	defer func() { modelRequestHintTimeout = old }()
+
+	st := &tuiState{}
+	st.write([]byte("model output"))
+	if !st.requesting() {
+		t.Fatal("expected requesting after output write")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if st.requesting() {
+		t.Fatal("expected not requesting after the hint timeout")
+	}
+}
+
+func TestTUIOutputTabLabel(t *testing.T) {
+	// The Output tab title carries the session-state hint: "generating..."
+	// while the model is actively working, "(done)" after the session
+	// ends, and the plain title otherwise. The generating hint also
+	// requests the active-request highlight. See TheoryOfTUI.
+	st := &tuiState{}
+	if label, highlight := st.outputTabLabel(); label != "Output" || highlight {
+		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
+	}
+	st.write([]byte("model output"))
+	if label, highlight := st.outputTabLabel(); label != "Output (generating...)" || !highlight {
+		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
+	}
+	st.finished = true
+	if label, highlight := st.outputTabLabel(); label != "Output (done)" || highlight {
+		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
+	}
+}
+
+func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
+	// While the model is generating, the Output tab's title is drawn in
+	// tabActiveLabelFg so the in-flight request is visible at a glance. An
+	// idle session keeps the ordinary title color. See TheoryOfTUI.
+	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
+		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12}, []string{"content"}, 0, focus)
+		screen := &panelTestScreen{width: 12, height: 2}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+			return taiui.Root{Element: element}
+		}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		return screen.frames[len(screen.frames)-1]
+	}
+
+	tui := &TUI{}
+	tui.write([]byte("model output"))
+	frame := renderTitle(tui, false)
+	cell := frame.Cells[2] // 'O' of the title at (2,0)
+	if cell.Rune != 'O' {
+		t.Fatalf("expected title 'O' at (2,0), got %v", cell.Rune)
+	}
+	wantR := tabActiveLabelFg >> 16 & 0xff
+	wantG := tabActiveLabelFg >> 8 & 0xff
+	wantB := tabActiveLabelFg & 0xff
+	if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
+		t.Fatalf("expected highlighted title foreground %#06x, got %#x %#x %#x", tabActiveLabelFg, r, g, b)
+	}
+
+	// An idle session shows the plain title without the highlight.
+	idle := &TUI{}
+	idleFrame := renderTitle(idle, false)
+	idleCell := idleFrame.Cells[2]
+	if idleCell.Rune != 'O' {
+		t.Fatalf("expected title 'O' at (2,0), got %v", idleCell.Rune)
+	}
+	if r, g, b := idleCell.Style.Fg().RGB(); r == wantR && g == wantG && b == wantB {
+		t.Fatal("expected the idle title to keep the ordinary foreground color")
+	}
+}
+
 func TestTuiStateLogsPartialLines(t *testing.T) {
 	st := &tuiState{}
 	st.writeLogs([]byte("foo"))

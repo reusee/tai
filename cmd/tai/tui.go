@@ -22,6 +22,14 @@ const (
 	maxTUISummaries = 2000
 )
 
+// modelRequestHintTimeout is how long after the last TUI output or log
+// write the Output tab title keeps the "generating" hint. The generator
+// logs a record at the start of each request and streams output
+// throughout it, so the hint stays visible while the model works and
+// clears shortly after the output stops. It is a var so tests can shrink
+// the window without waiting out the real interval. See TheoryOfTUI.
+var modelRequestHintTimeout = 5 * time.Second
+
 const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Summary tab collects the bodies of summary
@@ -41,6 +49,17 @@ dark blue for every unfocused tab, so the focus is visible without a
 border. The one-row label strip across each tab's top names it; it shares
 the tab's background, with the focused label bright and bold and the
 unfocused label gray.
+
+The Output tab's title carries the session-state hint: "Output
+(generating...)" while the model is actively generating, and "Output
+(done)" after the session ends. The generating state is detected from
+recent TUI activity — the generator logs a record at the start of each
+request, streamed output refreshes the activity timestamp continuously,
+and no content is written while the system idles — so the hint appears
+during requests and clears modelRequestHintTimeout after the last write.
+While the hint is shown, the title uses the bright green tabActiveLabelFg,
+distinct from the focused white and unfocused gray title colors, so an
+in-flight request is visible at a glance.
 
 Each tab's view follows the latest content while it is at the latest row,
 matching the terminal session convention. A follow flag per tab starts
@@ -136,27 +155,41 @@ type tuiState struct {
 	focus    int // 0 = output, 1 = summary, 2 = logs, -1 = none open
 	finished bool
 
+	// lastWrite records the last time output or log content was written
+	// to the TUI. The Output tab title uses it to detect whether the
+	// model is actively generating: the generator logs a record at the
+	// start of each request and streams output throughout it, refreshing
+	// the timestamp continuously, while no content arrives while the
+	// system idles. See TheoryOfTUI.
+	lastWrite time.Time
+
 	// follow reports whether each tab's view sticks to the latest content.
 	// It starts true; manual scrolling away clears it, and reaching the
 	// latest row sets it again. See TheoryOfTUI.
 	follow [3]bool
 
-	// maxOffsets holds the maximum scroll offset of each tab computed at
-	// the last render. scroll and scrollTo use it to decide whether the
-	// user's view is at the latest row.
+	// maxOffsets holds the maximum scroll offset of each tab computed at the
+	// last render. scroll and scrollTo use it to decide whether the user's
+	// view is at the latest row.
 	maxOffsets [3]int
 }
 
-// write appends output and extracts summary blocks.
+// write appends output and extracts summary blocks. It also refreshes
+// the activity timestamp used by the Output tab's generating hint.
 func (s *tuiState) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appendOutput(p)
 	s.parseSummaries(p)
+	s.lastWrite = time.Now()
 }
 
 // writeLogs appends log output to the logs buffer, splitting it into lines
-// and retaining the incomplete trailing line for the next chunk.
+// and retaining the incomplete trailing line for the next chunk. It also
+// refreshes the activity timestamp used by the Output tab's generating
+// hint: the generator logs a record at the start of each request, so log
+// activity marks the model as generating before the first output byte
+// arrives.
 func (s *tuiState) writeLogs(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,6 +205,42 @@ func (s *tuiState) writeLogs(p []byte) {
 			s.logs = append([]string(nil), s.logs[len(s.logs)-maxTUILines:]...)
 		}
 	}
+	s.lastWrite = time.Now()
+}
+
+// requesting reports whether the model is actively generating: the
+// session has not finished and output or log content was written to the
+// TUI within the last modelRequestHintTimeout. The generator logs a
+// record at the start of each request and streams output throughout it,
+// refreshing the timestamp continuously, so the hint appears while the
+// model works and clears shortly after the output stops. Callers must
+// hold mu (render does) or be single-threaded. See TheoryOfTUI.
+func (s *tuiState) requesting() bool {
+	if s.finished {
+		return false
+	}
+	if s.lastWrite.IsZero() {
+		return false
+	}
+	return time.Since(s.lastWrite) < modelRequestHintTimeout
+}
+
+// outputTabLabel returns the Output tab's title with the session-state
+// hint: "Output (generating...)" while the model is actively generating,
+// "Output (done)" after the session ends, and "Output" otherwise. The
+// highlight result reports whether the title should be drawn in
+// tabActiveLabelFg. Callers must hold mu (render does) or be
+// single-threaded. See TheoryOfTUI.
+func (s *tuiState) outputTabLabel() (label string, highlight bool) {
+	label = tabNames[0]
+	switch {
+	case s.finished:
+		label = "Output (done)"
+	case s.requesting():
+		label = "Output (generating...)"
+		highlight = true
+	}
+	return
 }
 
 func (s *tuiState) appendOutput(p []byte) {
@@ -675,16 +744,17 @@ func (t *TUI) render() {
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
 }
 
-// tabNames are the names of the three tabs, drawn in their label strips.
-// The tab backgrounds use exactly two colors: dark gray (tabFocusBG) for
-// the focused tab, dark blue (tabUnfocusBG) for every unfocused tab, so
-// the focus state is the only differentiator. See TheoryOfTUI.
 var (
 	tabNames = [...]string{"Output", "Summary", "Logs"}
 	// tabUnfocusBG is the dark blue background of every unfocused tab.
 	tabUnfocusBG int32 = 0x0a1428
 	// tabFocusBG is the dark gray background of the focused tab.
 	tabFocusBG int32 = 0x2e2e2e
+	// tabActiveLabelFg is the bright green foreground of the Output tab's
+	// title while the model is generating. It is distinct from the
+	// focused (white) and unfocused (gray) title colors, so an in-flight
+	// request is visible at a glance. See TheoryOfTUI.
+	tabActiveLabelFg int32 = 0x00ff00
 )
 
 func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool) taiui.Element {
@@ -697,11 +767,19 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 		base = tabFocusBG
 	}
 	label := tabNames[idx]
-	if idx == 0 && t.finished {
-		label = "Output (done)"
+	highlight := false
+	if idx == 0 {
+		// The Output tab's title carries the session-state hint:
+		// "generating..." while the model is actively working and
+		// "(done)" after the session ends. The generating hint also
+		// switches the title to the active-request highlight color.
+		// See TheoryOfTUI.
+		label, highlight = t.outputTabLabel()
 	}
 	labelFg := int32(0x9a9a9a)
-	if focus {
+	if highlight {
+		labelFg = tabActiveLabelFg
+	} else if focus {
 		labelFg = 0xffffff
 	}
 	// The label strip is pinned to the panel's top row and the scroll
