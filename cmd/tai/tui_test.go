@@ -1116,6 +1116,53 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	}
 }
 
+func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
+	tui := &TUI{}
+	tui.expanded = [3]bool{true, false, false}
+	tui.hasContent = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.follow = [3]bool{false, false, false}
+	tui.splitVertical = false
+	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+	tui.width = 80
+	tui.height = 10
+
+	var sb strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	tui.write([]byte(sb.String()))
+	tui.render()
+	tui.topLeft = 0
+	tui.follow[0] = false
+
+	// Stacked layout with two collapsed tabs: the output panel occupies 8
+	// rows (10 minus 2 one-row collapsed strips), and its scroll view is
+	// 7 rows (panel height minus the one-row label). A page is 6 rows, so
+	// one line of the previous view remains: the previous last row becomes
+	// the new first row.
+	tui.pageScroll(1)
+	if tui.topLeft != 6 {
+		t.Fatalf("expected topLeft 6 after page down, got %d", tui.topLeft)
+	}
+	if tui.follow[0] {
+		t.Fatal("expected follow cleared after page down from the top")
+	}
+
+	tui.pageScroll(-1)
+	if tui.topLeft != 0 {
+		t.Fatalf("expected topLeft 0 after page up, got %d", tui.topLeft)
+	}
+
+	// Page down near the end clamps to the content extent.
+	tui.topLeft = 90
+	tui.follow[0] = false
+	tui.pageScroll(1)
+	if tui.topLeft != tui.maxOffsets[0] {
+		t.Fatalf("expected topLeft clamped to %d, got %d", tui.maxOffsets[0], tui.topLeft)
+	}
+}
+
 func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	tui := &TUI{}
 	tui.expanded = [3]bool{true, false, false}

@@ -977,9 +977,9 @@ func (t *TUI) Run(gen func()) error {
 			case "down":
 				t.scroll(1)
 			case "pageup":
-				t.scroll(-max(t.height-1, 1))
+				t.pageScroll(-1)
 			case "pagedown":
-				t.scroll(max(t.height-1, 1))
+				t.pageScroll(1)
 			case "home":
 				t.scrollTo(0)
 			case "end":
@@ -1037,6 +1037,54 @@ func (t *TUI) scroll(delta int) {
 	*top = newTop
 	// Reaching the latest row resumes following; scrolling away stops it.
 	// See TheoryOfTUI.
+	t.follow[idx] = newTop >= t.maxOffsets[idx]
+}
+
+// pageScroll scrolls the focused pane by one page. The page size is the
+// pane's scroll view height minus one row, so one line of the previous
+// view remains on screen: page down keeps the previous last row at the
+// top, page up keeps the previous first row at the bottom. The page
+// size is derived from the focused pane's actual layout, so in stacked
+// (horizontal split) mode it matches the pane height rather than the
+// full terminal height.
+func (t *TUI) pageScroll(direction int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.focus < 0 || !t.expanded[t.focus] {
+		return
+	}
+	boxes := computeTabBoxes(t.splitVertical, t.expanded, t.focus, t.width, t.height)
+	box := boxes[t.focus]
+	if box.Width() <= 0 || box.Height() <= 0 {
+		return
+	}
+	// The scroll view is the panel box minus the one-row label strip.
+	paneHeight := max(box.Height()-1, 1)
+	delta := direction * (paneHeight - 1)
+
+	var top *int
+	idx := -1
+	switch t.focus {
+	case 0:
+		top = &t.topLeft
+		idx = 0
+	case 1:
+		top = &t.topRight
+		idx = 1
+	case 2:
+		top = &t.topLogs
+		idx = 2
+	default:
+		return
+	}
+	newTop := *top + delta
+	if newTop < 0 {
+		newTop = 0
+	}
+	if newTop > t.maxOffsets[idx] {
+		newTop = t.maxOffsets[idx]
+	}
+	*top = newTop
 	t.follow[idx] = newTop >= t.maxOffsets[idx]
 }
 
