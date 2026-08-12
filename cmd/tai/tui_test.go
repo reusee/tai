@@ -426,6 +426,67 @@ func TestTUISticksToTail(t *testing.T) {
 	}
 }
 
+func TestTUIReopenResumesFollow(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.follow = [3]bool{true, false, false}
+	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+	tui.width = 80
+	tui.height = 10
+
+	var sb strings.Builder
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	tui.write([]byte(sb.String()))
+	tui.render()
+
+	// Simulate the user scrolling away from the tail: follow must clear
+	// and the view must leave the latest row.
+	tui.scroll(-1)
+	if tui.follow[0] {
+		t.Fatal("expected follow false after scrolling away")
+	}
+
+	// Close and reopen the output tab.
+	tui.toggleTab(0)
+	if tui.open[0] {
+		t.Fatal("expected output tab closed")
+	}
+	if tui.focus != -1 {
+		t.Fatalf("expected focus -1 with no open tabs, got %d", tui.focus)
+	}
+	tui.toggleTab(0)
+	if !tui.open[0] {
+		t.Fatal("expected output tab reopened")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("expected focus 0 after reopen, got %d", tui.focus)
+	}
+	// Reopening must resume following the live tail.
+	if !tui.follow[0] {
+		t.Fatal("expected follow true after reopen")
+	}
+
+	// New content arriving after the reopen must move the view to the
+	// new tail, so the pane shows the latest lines.
+	tui.write([]byte("line 10\nline 11\n"))
+	tui.render()
+	contentWidth := 79 // 80 columns minus the scrollbar column
+	display := taiui.WrapLines(tui.outputLinesForRender(), contentWidth)
+	want := len(display) - 9 // 10 rows minus the one-row label strip
+	if want < 0 {
+		want = 0
+	}
+	if tui.topLeft != want {
+		t.Fatalf("expected topLeft %d after new content, got %d", want, tui.topLeft)
+	}
+	if !tui.follow[0] {
+		t.Fatal("expected follow to persist after new content")
+	}
+}
+
 func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui := &TUI{}
 	tui.open = [3]bool{true, false, false}

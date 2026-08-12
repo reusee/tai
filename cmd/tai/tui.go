@@ -48,6 +48,8 @@ true; any manual scroll that leaves the latest row clears it, and a scroll
 that reaches the latest row again sets it. While a tab follows, every
 render sticks its offset to the newest content as output arrives; while it
 does not, the view stays where the user placed it even as content grows.
+Reopening a closed tab resumes following, so a hidden pane always returns
+to the live tail.
 
 Standard output is replaced by a pipe whose reader copies into the TUI's
 output buffer, so all existing code paths that write to os.Stdout — including
@@ -335,21 +337,22 @@ func scrollClamp(offset, displayLines, paneHeight int) int {
 	return offset
 }
 
-// toggleTab toggles the open state of the tab at the given index
-// (0 = output, 1 = summary, 2 = logs). Closing the focused tab moves the
-// focus to another open tab; reopening a tab after all tabs were closed
-// focuses it. See TheoryOfTUI.
 func (t *TUI) toggleTab(idx int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.open[idx] = !t.open[idx]
+	wasOpen := t.open[idx]
+	t.open[idx] = !wasOpen
+	if !wasOpen {
+		// Reopening a closed tab resumes following the live tail, even if
+		// the user had scrolled away before hiding it: the pane returns to
+		// the latest content. See TheoryOfTUI.
+		t.follow[idx] = true
+	}
 	if t.focus == idx && !t.open[idx] {
-		// The focused tab was closed: move the focus to another open tab.
 		t.cycleFocus()
 		return
 	}
 	if t.focus == -1 && t.open[idx] {
-		// A tab was reopened after all tabs were closed: focus it.
 		t.focus = idx
 	}
 }
