@@ -1040,6 +1040,51 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 	}
 }
 
+func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
+	// A collapsed tab must stay in its original position, not be pushed
+	// to the edge. In vertical split, tab 1 (Round) collapsed between
+	// expanded tabs 0 and 2 keeps its middle position as a one-column
+	// strip. See TheoryOfTUI.
+	boxes := computeTabBoxes(true, [3]bool{true, false, true}, 0, 90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 59 {
+		t.Fatalf("unexpected output panel box: %+v", boxes[0])
+	}
+	if boxes[1].Left != 59 || boxes[1].Right != 60 {
+		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
+	}
+	if boxes[2].Left != 60 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
+	}
+
+	// Horizontal split: the collapsed tab stays in its original row
+	// position.
+	boxes = computeTabBoxes(false, [3]bool{true, false, true}, 0, 80, 45)
+	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
+		t.Fatalf("unexpected output panel box: %+v", boxes[0])
+	}
+	if boxes[1].Top != 29 || boxes[1].Bottom != 30 {
+		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
+	}
+	if boxes[2].Top != 30 || boxes[2].Bottom != 45 {
+		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
+	}
+}
+
+func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
+	// Collapsed tabs at the edges stay at the edges, and the expanded
+	// middle tab absorbs the remaining space.
+	boxes := computeTabBoxes(true, [3]bool{false, true, false}, 1, 90, 40)
+	if boxes[0].Left != 0 || boxes[0].Right != 1 {
+		t.Fatalf("unexpected collapsed output panel box: %+v", boxes[0])
+	}
+	if boxes[1].Left != 1 || boxes[1].Right != 89 {
+		t.Fatalf("unexpected expanded round panel box: %+v", boxes[1])
+	}
+	if boxes[2].Left != 89 || boxes[2].Right != 90 {
+		t.Fatalf("unexpected collapsed logs panel box: %+v", boxes[2])
+	}
+}
+
 func TestCollapsedPanelRendering(t *testing.T) {
 	// A collapsed tab renders as a thin strip showing the tab's key and
 	// title. In horizontal split the strip is one row tall and the label

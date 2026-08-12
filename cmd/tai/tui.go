@@ -785,31 +785,26 @@ func (t *TUI) scrollTo(top int) {
 // tab has weight 2, every other expanded tab weight 1); in horizontal
 // split (stacked), collapsed tabs take one row each and expanded tabs
 // share the remaining height. The last expanded tab absorbs the rounding
-// remainder. See TheoryOfTUI.
+// remainder. Tabs are laid out in index order, so a collapsed tab stays
+// in its original position rather than being pushed to the edge.
+// See TheoryOfTUI.
 func computeTabBoxes(splitVertical bool, expanded [3]bool, focused int, width, height int) [3]taiui.Box {
 	var boxes [3]taiui.Box
 
-	// Count expanded tabs and locate the focused tab's position among
-	// them.
-	expandedCount := 0
-	focusedPos := -1
+	// Collect expanded tab indices in order and compute the total weight.
+	var expandedIndices []int
+	totalWeight := 0
 	for i := 0; i < 3; i++ {
 		if expanded[i] {
+			expandedIndices = append(expandedIndices, i)
+			weight := 1
 			if i == focused {
-				focusedPos = expandedCount
+				weight = 2
 			}
-			expandedCount++
+			totalWeight += weight
 		}
 	}
-	collapsedCount := 3 - expandedCount
-
-	// The focused tab has weight 2 and every other expanded tab weight 1,
-	// so the total weight is expandedCount+1; without a focused tab every
-	// weight is 1 and the total is expandedCount.
-	totalWeight := expandedCount
-	if focusedPos >= 0 {
-		totalWeight = expandedCount + 1
-	}
+	collapsedCount := 3 - len(expandedIndices)
 	if totalWeight <= 0 {
 		totalWeight = 1
 	}
@@ -822,30 +817,31 @@ func computeTabBoxes(splitVertical bool, expanded [3]bool, focused int, width, h
 			expandedWidth = 0
 		}
 		edge := 0
-		pos := 0
-		for i := 0; i < 3; i++ {
-			if !expanded[i] {
-				continue
-			}
-			weight := 1
-			if i == focused {
-				weight = 2
-			}
-			size := expandedWidth * weight / totalWeight
-			if pos == expandedCount-1 {
-				size = expandedWidth - edge
-			}
-			boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + size}
-			edge += size
-			pos++
-		}
-		// Collapsed tabs take one column each at the right edge.
+		expandedEdge := 0
+		expandedPos := 0
 		for i := 0; i < 3; i++ {
 			if expanded[i] {
-				continue
+				weight := 1
+				if i == focused {
+					weight = 2
+				}
+				var size int
+				if expandedPos == len(expandedIndices)-1 {
+					// The last expanded tab absorbs the rounding remainder.
+					size = expandedWidth - expandedEdge
+				} else {
+					size = expandedWidth * weight / totalWeight
+				}
+				boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + size}
+				edge += size
+				expandedEdge += size
+				expandedPos++
+			} else {
+				// A collapsed tab stays in its original position, taking
+				// one column.
+				boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
+				edge++
 			}
-			boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
-			edge++
 		}
 		return boxes
 	}
@@ -857,30 +853,30 @@ func computeTabBoxes(splitVertical bool, expanded [3]bool, focused int, width, h
 		expandedHeight = 0
 	}
 	edge := 0
-	pos := 0
-	for i := 0; i < 3; i++ {
-		if !expanded[i] {
-			continue
-		}
-		weight := 1
-		if i == focused {
-			weight = 2
-		}
-		size := expandedHeight * weight / totalWeight
-		if pos == expandedCount-1 {
-			size = expandedHeight - edge
-		}
-		boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + size, Right: width}
-		edge += size
-		pos++
-	}
-	// Collapsed tabs take one row each at the bottom.
+	expandedEdge := 0
+	expandedPos := 0
 	for i := 0; i < 3; i++ {
 		if expanded[i] {
-			continue
+			weight := 1
+			if i == focused {
+				weight = 2
+			}
+			var size int
+			if expandedPos == len(expandedIndices)-1 {
+				size = expandedHeight - expandedEdge
+			} else {
+				size = expandedHeight * weight / totalWeight
+			}
+			boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + size, Right: width}
+			edge += size
+			expandedEdge += size
+			expandedPos++
+		} else {
+			// A collapsed tab stays in its original position, taking one
+			// row.
+			boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + 1, Right: width}
+			edge++
 		}
-		boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + 1, Right: width}
-		edge++
 	}
 	return boxes
 }
