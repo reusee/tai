@@ -35,84 +35,24 @@ The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Summary tab collects the bodies of summary
 blocks as they appear in the output stream, and the Logs tab collects log
 records. The keys 1, 2, and 3 toggle each tab on and off (Output, Summary,
-Logs respectively); the available space is divided equally among the open
-tabs. The s key switches between vertical splitting (tabs side by side, a
-vertical split line) and horizontal splitting (tabs stacked, a horizontal
-split line). Tab cycles the focus among the open tabs, skipping closed
-ones; up/down and page up/down scroll the focused pane; home/end jump to
-the start/end. When the generation finishes, the TUI stays open so the
-output can be browsed, and q quits the TUI. When all tabs are closed, a
-hint panel is shown instead of a blank screen.
-
-Tabs use exactly two background colors: dark gray for the focused tab and
-dark blue for every unfocused tab, so the focus is visible without a
-border. The one-row label strip across each tab's top names it; it shares
-the tab's background, with the focused label bright and bold and the
-unfocused label gray.
-
-The Output tab's title carries the session-state hint: "Output
-(generating...)" while the model is actively generating, and "Output
-(done)" after the session ends. The generating state is detected from
-recent TUI activity — the generator logs a record at the start of each
-request, streamed output refreshes the activity timestamp continuously,
-and no content is written while the system idles — so the hint appears
-during requests and clears modelRequestHintTimeout after the last write.
-While the hint is shown, the title uses the bright green tabActiveLabelFg,
-distinct from the focused white and unfocused gray title colors, so an
-in-flight request is visible at a glance.
-
-Each tab's view follows the latest content while it is at the latest row,
-matching the terminal session convention. A follow flag per tab starts
-true; any manual scroll that leaves the latest row clears it, and a scroll
-that reaches the latest row again sets it. While a tab follows, every
-render sticks its offset to the newest content as output arrives; while it
-does not, the view stays where the user placed it even as content grows.
-Reopening a closed tab resumes following, so a hidden pane always returns
-to the live tail.
-
-Standard output is replaced by a pipe whose reader copies into the TUI's
-output buffer, so all existing code paths that write to os.Stdout — including
-file markers, round statistics, and goal loop banners — appear in the TUI as
-a single stream. The pipe is intentionally not a terminal, so library-level
-terminal detection (e.g. colors in generators.NewOutput) sees a non-terminal
-and suppresses raw ANSI escapes, keeping the TUI buffer free of control
-sequences. The TUI owns its own tty for rendering and input.
-
-Log records are routed to the logs pane by forking the logs.Writer provider
-to a writer that appends to the TUI's logs buffer, so logs are not written
-to stderr in TUI mode. Direct stderr writes from other code paths remain
-captured by the output pipe, matching the stdout stream.
-
-Summary extraction reuses the block parser: the TUI writer keeps a parse
-buffer and extracts each complete summary block's body as it streams, so the
-middle pane is updated incrementally without requiring the generation loop
-to know about the TUI. The parse buffer tolerates dead fragments: an
-unclosed block that never completes — a truncated round, a malformed block,
-or prose that merely resembles an opener — would wedge the buffer and hide
-every later summary, so a fragment is skipped whenever a complete block
-exists beyond its opening line. A block opener split across chunk boundaries
-survives via a retained trailing "<" or "<<" prefix until the next chunk
-completes it.
-
-Scroll extents are derived from the wrapped display lines, not the raw
-source lines: each pane pre-wraps its content with taiui.WrapLines at the
-visible width (the tab's width minus the scrollbar column), exactly as the
-pane's Text wraps it, so the tail of wrapped content is reachable and the
-scrollbar thumb maps the visible window onto the full content. Each tab
-carries a one-row label strip across its top; the scroll view spans the
-remaining rows. The panel boxes are computed from the split geometry
-before rendering — full screen height in vertical split (side by side),
-height/N in horizontal split (stacked), with the last tab absorbing the
-rounding remainder — so the label strip and the scroll offset clamp are
-derived from the exact panel dimensions. The pane-local offset is clamped
-by scrollClamp to [0, displayLines - paneHeight], where paneHeight is the
-ACTUAL scroll view height: the panel height minus the label row. A
-full-height pane height would match the scroll view in vertical split but
-would stop the scroll short in horizontal split — each panel is height/N
-tall, so its scroll view is correspondingly shorter — leaving the content
-tail unreachable. At the maximum offset the last display line lands on the
-scroll view's last row. The tail sentinel (1<<30) used by the end key
-clamps to that maximum.
+Logs respectively). All tabs are closed by default; a closed tab opens
+automatically as soon as content for it arrives — the Output tab on any
+streamed output, the Summary tab on a parsed summary block, the Logs tab on
+any log record — so the interface surfaces panes only when they have
+something to show. Auto-opening never changes an existing focus: a tab
+popping open cannot steal attention from the pane the user is reading, and
+it resumes following the tail; only when no tab is focused does the first
+auto-opened tab become the focus, so keyboard navigation remains usable.
+The focused tab occupies twice the space of each non-focused tab: the open
+tabs share the available space proportionally to their weights (2 for the
+focused tab, 1 for every other, total open+1), with the last tab absorbing
+the rounding remainder. The s key switches between vertical splitting (tabs
+side by side, a vertical split line) and horizontal splitting (tabs
+stacked, a horizontal split line). Tab cycles the focus among the open
+tabs, skipping closed ones; up/down and page up/down scroll the focused
+pane; home/end jump to the start/end. When the generation finishes, the TUI
+stays open so the output can be browsed, and q quits the TUI. When all tabs
+are closed, a hint panel is shown instead of a blank screen.
 `
 
 // Tui enables the terminal UI mode.
@@ -142,9 +82,11 @@ type tuiState struct {
 
 	// open reports whether each tab is enabled: index 0 is the output
 	// tab, 1 the summary tab, 2 the logs tab. The keys 1, 2, and 3
-	// toggle them. splitVertical reports whether the tabs are laid out
-	// side by side (vertical split line) or stacked (horizontal split
-	// line); the s key toggles it. See TheoryOfTUI.
+	// toggle them; a closed tab also opens automatically when content
+	// for it arrives, without changing the focus. splitVertical
+	// reports whether the tabs are laid out side by side (vertical
+	// split line) or stacked (horizontal split line); the s key toggles
+	// it. See TheoryOfTUI.
 	open          [3]bool
 	splitVertical bool
 
@@ -175,10 +117,16 @@ type tuiState struct {
 }
 
 // write appends output and extracts summary blocks. It also refreshes
-// the activity timestamp used by the Output tab's generating hint.
+// the activity timestamp used by the Output tab's generating hint. A
+// closed Output tab opens automatically on the first streamed output.
+// See TheoryOfTUI.
 func (s *tuiState) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(p) == 0 {
+		return
+	}
+	s.autoOpen(0)
 	s.appendOutput(p)
 	s.parseSummaries(p)
 	s.lastWrite = time.Now()
@@ -189,10 +137,15 @@ func (s *tuiState) write(p []byte) {
 // refreshes the activity timestamp used by the Output tab's generating
 // hint: the generator logs a record at the start of each request, so log
 // activity marks the model as generating before the first output byte
-// arrives.
+// arrives. A closed Logs tab opens automatically on the first log record.
+// See TheoryOfTUI.
 func (s *tuiState) writeLogs(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(p) == 0 {
+		return
+	}
+	s.autoOpen(2)
 	s.logsPartial += string(p)
 	for {
 		idx := strings.IndexByte(s.logsPartial, '\n')
@@ -206,6 +159,23 @@ func (s *tuiState) writeLogs(p []byte) {
 		}
 	}
 	s.lastWrite = time.Now()
+}
+
+// autoOpen opens a closed tab when content for it arrives. It never
+// changes an existing focus: a tab popping open cannot steal attention
+// from the pane the user is reading, and the pane resumes following the
+// tail. Only when no tab is focused does the first auto-opened tab
+// become the focus, so keyboard navigation remains usable. Callers must
+// hold mu. See TheoryOfTUI.
+func (s *tuiState) autoOpen(idx int) {
+	if idx < 0 || idx > 2 || s.open[idx] {
+		return
+	}
+	s.open[idx] = true
+	s.follow[idx] = true
+	if s.focus == -1 {
+		s.focus = idx
+	}
 }
 
 // requesting reports whether the model is actively generating: the
@@ -305,6 +275,10 @@ func (s *tuiState) parseSummaries(p []byte) {
 		if block.Kind == "summary" {
 			body := strings.TrimSpace(block.Body)
 			if body != "" {
+				// A closed Summary tab opens automatically on the first
+				// summary block; the output text carrying the block
+				// already opened the Output tab. See TheoryOfTUI.
+				s.autoOpen(1)
 				for _, line := range strings.Split(body, "\n") {
 					s.summaries = append(s.summaries, line)
 				}
@@ -388,13 +362,16 @@ func newTUI() (*TUI, error) {
 	}
 	return &TUI{
 		tuiState: tuiState{
-			open:          [3]bool{true, true, true},
+			// All tabs are closed by default; a tab opens automatically
+			// when content for it arrives, without changing the focus.
+			// See TheoryOfTUI.
+			open:          [3]bool{false, false, false},
 			splitVertical: true,
-			focus:         0,
+			focus:         -1,
 			topLeft:       1 << 30,
 			topRight:      1 << 30,
 			topLogs:       1 << 30,
-			follow:        [3]bool{true, true, true},
+			follow:        [3]bool{false, false, false},
 		},
 		tty:      t,
 		screen:   taiui.NewTerminalScreen(t, width, height),
@@ -623,26 +600,59 @@ func (t *TUI) scrollTo(top int) {
 // open tabs are laid out on a width x height screen. In vertical split
 // (side by side) each tab spans the full screen height and a share of
 // the width; in horizontal split (stacked) it spans the full width and
-// a share of the height. The last tab absorbs the rounding remainder.
+// a share of the height. The shares are proportional to the open tabs'
+// weights: the focused tab (focusedPos) has weight 2 and every other
+// tab weight 1, so the total weight is open+1 and the focused tab
+// occupies twice the space of each non-focused tab; when no tab is
+// focused (focusedPos -1), every tab has weight 1 and the space is
+// shared equally. The last tab absorbs the rounding remainder.
 // The box is computed here — not left to the layout container — so the
 // panel's one-row label strip, the scroll view below it, and the scroll
 // offset clamp in render() are all derived from the exact panel
 // dimensions. See TheoryOfTUI.
-func tabPanelBox(splitVertical bool, pos, open, width, height int) taiui.Box {
+func tabPanelBox(splitVertical bool, pos, focusedPos, open, width, height int) taiui.Box {
+	// The focused tab has weight 2 and every other open tab weight 1, so
+	// the total weight is open+1; without a focused tab every weight is
+	// 1 and the total is open. Sizes are computed with integer division;
+	// the last tab absorbs the rounding remainder.
+	totalWeight := open
+	if focusedPos >= 0 {
+		totalWeight = open + 1
+	}
 	if splitVertical {
-		tabWidth := width / open
-		right := (pos + 1) * tabWidth
-		if pos == open-1 {
-			right = width
+		edge := 0
+		for i := 0; i < pos; i++ {
+			weight := 1
+			if i == focusedPos {
+				weight = 2
+			}
+			edge += width * weight / totalWeight
 		}
-		return taiui.Box{Top: 0, Left: pos * tabWidth, Bottom: height, Right: right}
+		if pos == open-1 {
+			return taiui.Box{Top: 0, Left: edge, Bottom: height, Right: width}
+		}
+		weight := 1
+		if pos == focusedPos {
+			weight = 2
+		}
+		return taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + width*weight/totalWeight}
 	}
-	tabHeight := height / open
-	bottom := (pos + 1) * tabHeight
+	edge := 0
+	for i := 0; i < pos; i++ {
+		weight := 1
+		if i == focusedPos {
+			weight = 2
+		}
+		edge += height * weight / totalWeight
+	}
 	if pos == open-1 {
-		bottom = height
+		return taiui.Box{Top: edge, Left: 0, Bottom: height, Right: width}
 	}
-	return taiui.Box{Top: pos * tabHeight, Left: 0, Bottom: bottom, Right: width}
+	weight := 1
+	if pos == focusedPos {
+		weight = 2
+	}
+	return taiui.Box{Top: edge, Left: 0, Bottom: edge + height*weight/totalWeight, Right: width}
 }
 
 func (t *TUI) render() {
@@ -660,7 +670,9 @@ func (t *TUI) render() {
 		width = 1
 	}
 
-	// Open tabs share the available space equally. See TheoryOfTUI.
+	// The focused tab occupies twice the space of each non-focused tab;
+	// the remaining open tabs share the rest proportionally to their
+	// weights. See TheoryOfTUI.
 	var open []int
 	for i := 0; i < 3; i++ {
 		if t.open[i] {
@@ -684,22 +696,37 @@ func (t *TUI) render() {
 	// Compute the panel box of each open tab. The boxes are computed
 	// here — not left to the layout container — so the panel's one-row
 	// label strip, the scroll view below it, and the scroll offset
-	// clamp below are all derived from the exact panel dimensions.
-	// See tabPanelBox and TheoryOfTUI.
+	// clamp below are all derived from the exact panel dimensions. The
+	// focused tab has weight 2 and every other open tab weight 1, so
+	// it occupies twice the space of a non-focused tab; the last open
+	// tab absorbs the rounding remainder. See tabPanelBox and
+	// TheoryOfTUI.
+	focusedPos := -1
+	for pos, idx := range open {
+		if idx == t.focus {
+			focusedPos = pos
+			break
+		}
+	}
 	panelBoxes := [3]taiui.Box{}
 	for pos, idx := range open {
-		panelBoxes[idx] = tabPanelBox(t.splitVertical, pos, len(open), width, height)
+		panelBoxes[idx] = tabPanelBox(t.splitVertical, pos, focusedPos, len(open), width, height)
 	}
 
-	// The content width reserves one column for the scrollbar, matching
-	// the scroll's visible-width rendering. All open tabs share the same
-	// width except the last, which absorbs the rounding remainder.
-	contentWidth := max(panelBoxes[open[0]].Width()-1, 1)
-
-	displays := [3][]string{
-		taiui.WrapLines(outputLines, contentWidth),
-		taiui.WrapLines(t.summaries, contentWidth),
-		taiui.WrapLines(logsLines, contentWidth),
+	// Each tab's content width reserves one column for its scrollbar,
+	// matching the scroll's visible-width rendering. In the weighted
+	// layout the tabs have different widths — the focused tab is twice
+	// as wide as the others — so each tab's content wraps at its own
+	// width. See TheoryOfTUI.
+	contentByTab := [3][]string{
+		outputLines,
+		t.summaries,
+		logsLines,
+	}
+	displays := [3][]string{}
+	for _, idx := range open {
+		tabContentWidth := max(panelBoxes[idx].Width()-1, 1)
+		displays[idx] = taiui.WrapLines(contentByTab[idx], tabContentWidth)
 	}
 
 	// The scroll offset is clamped against the ACTUAL scroll view height

@@ -573,8 +573,9 @@ func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 	//
 	// Stacked layout, 2 tabs on a 40-row screen: each panel is 20 rows,
 	// the label strip is 1 row, so the scroll view is 19 rows and the
-	// tail offset is len(displays) - 19.
-	box := tabPanelBox(false, 0, 2, 80, 40)
+	// tail offset is len(displays) - 19. focusedPos -1 gives every tab
+	// weight 1, so the space is shared equally.
+	box := tabPanelBox(false, 0, -1, 2, 80, 40)
 	paneHeight := max(box.Height()-1, 1)
 	if paneHeight != 19 {
 		t.Fatalf("expected a 19-row scroll view, got %d", paneHeight)
@@ -586,7 +587,7 @@ func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 
 	// Side-by-side layout: the panel spans the full height, so the
 	// scroll view is height - 1.
-	box = tabPanelBox(true, 0, 2, 80, 40)
+	box = tabPanelBox(true, 0, -1, 2, 80, 40)
 	if paneHeight := max(box.Height()-1, 1); paneHeight != 39 {
 		t.Fatalf("expected a 39-row scroll view, got %d", paneHeight)
 	}
@@ -778,5 +779,154 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	}
 	if tui.topLeft != tui.maxOffsets[0] {
 		t.Fatalf("expected topLeft at max offset %d, got %d", tui.maxOffsets[0], tui.topLeft)
+	}
+}
+
+func TestTabPanelBoxWeighted(t *testing.T) {
+	// The focused tab occupies twice the space of each non-focused tab:
+	// with two open tabs on a 90-column screen and total weight 3, the
+	// focused tab gets 2/3 of the width (60) and the other tab 1/3 (30).
+	// The last tab absorbs the rounding remainder. See TheoryOfTUI.
+	box := tabPanelBox(true, 0, 0, 2, 90, 40)
+	if box.Left != 0 || box.Right != 60 || box.Top != 0 || box.Bottom != 40 {
+		t.Fatalf("unexpected focused panel box: %+v", box)
+	}
+	box = tabPanelBox(true, 1, 0, 2, 90, 40)
+	if box.Left != 60 || box.Right != 90 {
+		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	}
+
+	// Focusing the second tab swaps the proportions.
+	box = tabPanelBox(true, 0, 1, 2, 90, 40)
+	if box.Left != 0 || box.Right != 30 {
+		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	}
+	box = tabPanelBox(true, 1, 1, 2, 90, 40)
+	if box.Left != 30 || box.Right != 90 {
+		t.Fatalf("unexpected focused panel box: %+v", box)
+	}
+
+	// With no focused tab, every open tab has weight 1 and the space is
+	// shared equally: each of two tabs on 90 columns gets 45.
+	box = tabPanelBox(true, 0, -1, 2, 90, 40)
+	if box.Left != 0 || box.Right != 45 {
+		t.Fatalf("unexpected equal-share panel box: %+v", box)
+	}
+	box = tabPanelBox(true, 1, -1, 2, 90, 40)
+	if box.Left != 45 || box.Right != 90 {
+		t.Fatalf("unexpected equal-share panel box: %+v", box)
+	}
+
+	// Horizontal split applies the same weights along the height.
+	box = tabPanelBox(false, 0, 0, 2, 80, 45)
+	if box.Top != 0 || box.Bottom != 30 {
+		t.Fatalf("unexpected focused panel box: %+v", box)
+	}
+	box = tabPanelBox(false, 1, 0, 2, 80, 45)
+	if box.Top != 30 || box.Bottom != 45 {
+		t.Fatalf("unexpected non-focused panel box: %+v", box)
+	}
+
+	// Three open tabs with the middle focused: weights [1,2,1] over
+	// total 4; the last tab absorbs the rounding remainder.
+	box = tabPanelBox(true, 0, 1, 3, 90, 24)
+	if box.Left != 0 || box.Right != 22 {
+		t.Fatalf("unexpected first panel box: %+v", box)
+	}
+	box = tabPanelBox(true, 1, 1, 3, 90, 24)
+	if box.Left != 22 || box.Right != 67 {
+		t.Fatalf("unexpected focused middle panel box: %+v", box)
+	}
+	box = tabPanelBox(true, 2, 1, 3, 90, 24)
+	if box.Left != 67 || box.Right != 90 {
+		t.Fatalf("unexpected last panel box: %+v", box)
+	}
+}
+
+func TestTuiStateAutoOpenTabs(t *testing.T) {
+	// All tabs are closed by default; a closed tab opens automatically
+	// as soon as content for it arrives. The first auto-opened tab
+	// becomes the focus when nothing is focused, so keyboard navigation
+	// works; subsequent auto-opens keep the established focus.
+	// See TheoryOfTUI.
+	tui := &TUI{}
+	tui.focus = -1
+	tui.write([]byte("model output\n"))
+	if !tui.open[0] {
+		t.Fatal("output tab should auto-open on streamed output")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("expected focus on the output tab, got %d", tui.focus)
+	}
+
+	// A log record opens the Logs tab without changing the focus.
+	tui.writeLogs([]byte("msg=\"log record\"\n"))
+	if !tui.open[2] {
+		t.Fatal("logs tab should auto-open on log records")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+	}
+
+	// A summary block opens the Summary tab without changing the focus.
+	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	if !tui.open[1] {
+		t.Fatal("summary tab should auto-open on a summary block")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("auto-open must not change an established focus, got %d", tui.focus)
+	}
+	if len(tui.summaries) != 2 {
+		t.Fatalf("expected the summary lines, got %v", tui.summaries)
+	}
+
+	// A non-summary block does not open the Summary tab on its own.
+	tui2 := &TUI{}
+	tui2.open = [3]bool{true, false, false}
+	tui2.focus = 0
+	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
+	if tui2.open[1] {
+		t.Fatal("summary tab must not open without a summary block")
+	}
+}
+
+func TestTuiStateAutoOpenPreservesFocus(t *testing.T) {
+	// Auto-opening must never change an existing focus: a tab popping
+	// open cannot steal attention from the pane the user is reading,
+	// and the auto-opened tab follows the tail. See TheoryOfTUI.
+	tui := &TUI{}
+	tui.open = [3]bool{true, false, false}
+	tui.focus = 0
+	tui.writeLogs([]byte("msg=\"log record\"\n"))
+	if !tui.open[2] {
+		t.Fatal("logs tab should auto-open on log records")
+	}
+	if tui.focus != 0 {
+		t.Fatalf("focus must stay on the output tab, got %d", tui.focus)
+	}
+	if !tui.follow[2] {
+		t.Fatal("auto-opened tab should follow the tail")
+	}
+	// The newly auto-opened tab is immediately navigable: tab cycles
+	// to it from the current focus.
+	tui.cycleFocus()
+	if tui.focus != 2 {
+		t.Fatalf("expected focus to cycle to the logs tab, got %d", tui.focus)
+	}
+}
+
+func TestTuiStateEmptyWriteDoesNotOpenTabs(t *testing.T) {
+	// Empty writes carry no content and must not auto-open a tab.
+	st := &tuiState{}
+	st.focus = -1
+	st.write(nil)
+	st.writeLogs(nil)
+	for i := 0; i < 3; i++ {
+		if st.open[i] {
+			t.Fatalf("tab %d must not open on empty writes", i)
+		}
+	}
+	if st.focus != -1 {
+		t.Fatalf("expected no focus change on empty writes, got %d", st.focus)
 	}
 }
