@@ -23,6 +23,17 @@ import (
 const (
 	maxTUILines   = 10000
 	maxTUISignals = 2000
+
+	// TUI role colors match the non-TUI output colors in
+	// generators/colors.go: blue for user input, yellow for tool calls
+	// and results, cyan for system messages, red for log records, and
+	// bright magenta for thoughts. Model output keeps the default
+	// foreground, mirroring ColorReset in the non-TUI path.
+	outputColorUser    int32 = 0x0000ff
+	outputColorTool    int32 = 0xffff00
+	outputColorSystem  int32 = 0x00ffff
+	outputColorLog     int32 = 0xff0000
+	outputColorThought int32 = 0xff00ff
 )
 
 const TheoryOfTUI = `
@@ -38,7 +49,11 @@ read directly from the state's FinishReason parts. Summary bodies are
 parsed from the streamed text parts, so the TUI never scans rendered text
 for "[Finish: ...]" markers and never captures model output through a
 stdout pipe; stdout is discarded in TUI mode, while stderr stays visible
-in the Output tab. The keys
+in the Output tab. Content is colored by role, matching the non-TUI output
+colors (see generators/colors.go): user input is blue, tool calls and
+results yellow, system messages cyan, log records red, and thoughts bright
+magenta; model output keeps the default foreground. Colors are carried per
+output line through wrapping, so a wrapped line keeps its role color. The keys
 1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
 pressing a focused tab's key collapses it to a thin strip showing the tab's
 key and title, and moves the focus to the expanded tab that was last focused
@@ -134,13 +149,29 @@ func (s tuiOutputState) Unwrap() generators.State {
 	return s.upstream
 }
 
+type (
+	// outputLine is one source line of the Output or Round tab, with the
+	// display color carried from its content role.
+	outputLine struct {
+		text  string
+		color int32
+	}
+
+	// displayLine is one wrapped display line, carrying the color of the
+	// source line it came from.
+	displayLine struct {
+		text  string
+		color int32
+	}
+)
+
 type tuiState struct {
 	mu          sync.Mutex
-	lines       []string
-	partial     string // incomplete trailing output line
-	signals     []string
+	lines       []outputLine
+	partial     outputLine
+	signals     []outputLine
 	logs        []string
-	logsPartial string // incomplete trailing log line
+	logsPartial string
 	parseBuf    []byte
 
 	// expanded reports whether each tab is expanded: index 0 is the
@@ -202,12 +233,17 @@ type tuiState struct {
 	maxOffsets [3]int
 }
 
-// write appends output, extracts summary blocks, and collects finish
-// lines into the Round tab's signals. A finish line clears the
-// generating hint set by the request-start log, so the Output tab title
-// returns to plain once the request completes. A collapsed Output tab
-// expands automatically on the first streamed output. See TheoryOfTUI.
+// write appends uncolored output (stderr, panics) to the Output tab.
 func (s *tuiState) write(p []byte) {
+	s.writeColored(0, p)
+}
+
+// writeColored appends output with the given display color, extracting
+// summary blocks and collecting finish lines into the Round tab's
+// signals. A collapsed Output tab expands automatically on the first
+// streamed output. The color is carried per line, so wrapped lines keep
+// their role color. See TheoryOfTUI.
+func (s *tuiState) writeColored(color int32, p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(p) == 0 {
@@ -218,7 +254,7 @@ func (s *tuiState) write(p []byte) {
 	// one stream chunk keep their chronological order: the model's
 	// summary block precedes the round's finish line. See TheoryOfTUI.
 	s.parseSummaries(p)
-	s.appendOutput(p)
+	s.appendOutput(color, p)
 }
 
 func (s *tuiState) finishReason(reason string) {
@@ -238,20 +274,17 @@ func (s *tuiState) finishReason(reason string) {
 	// returned. A new request's "generating" log re-sets it.
 	// See TheoryOfTUI.
 	s.generating = false
-	s.signals = append(s.signals, "[Finish: "+reason+"]")
+	s.signals = append(s.signals, outputLine{text: "[Finish: " + reason + "]", color: outputColorLog})
 	if len(s.signals) > maxTUISignals {
-		s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+		s.signals = append([]outputLine(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 	}
 }
 
-// closeThoughtLocked closes an open thought marker in the Output tab,
-// appending the closing " response" line and clearing the open flag.
-// The caller must hold mu. See TheoryOfTUI.
 func (s *tuiState) closeThoughtLocked() {
 	if !s.thoughtOpen {
 		return
 	}
-	s.appendOutput([]byte("\n response\n"))
+	s.appendOutput(outputColorThought, []byte("\n response\n"))
 	s.thoughtOpen = false
 }
 
@@ -364,18 +397,25 @@ func (s *tuiState) outputTabLabel() (label string, highlight bool) {
 	return
 }
 
-func (s *tuiState) appendOutput(p []byte) {
-	s.partial += string(p)
+// appendOutput appends output bytes to the Output tab, splitting them
+// into lines. A line keeps the color of the chunk that started it; a
+// partial line retains its color until the next newline arrives.
+func (s *tuiState) appendOutput(color int32, p []byte) {
+	if s.partial.text == "" {
+		s.partial.color = color
+	}
+	s.partial.text += string(p)
 	for {
-		idx := strings.IndexByte(s.partial, '\n')
+		idx := strings.IndexByte(s.partial.text, '\n')
 		if idx < 0 {
 			break
 		}
-		line := s.partial[:idx]
-		s.lines = append(s.lines, line)
-		s.partial = s.partial[idx+1:]
+		line := s.partial.text[:idx]
+		s.lines = append(s.lines, outputLine{text: line, color: s.partial.color})
+		s.partial.text = s.partial.text[idx+1:]
+		s.partial.color = color
 		if len(s.lines) > maxTUILines {
-			s.lines = append([]string(nil), s.lines[len(s.lines)-maxTUILines:]...)
+			s.lines = append([]outputLine(nil), s.lines[len(s.lines)-maxTUILines:]...)
 		}
 	}
 }
@@ -432,11 +472,11 @@ func (s *tuiState) parseSummaries(p []byte) {
 				// already expanded the Output tab. See TheoryOfTUI.
 				s.autoExpand(1)
 				for _, line := range strings.Split(body, "\n") {
-					s.signals = append(s.signals, line)
+					s.signals = append(s.signals, outputLine{text: line})
 				}
-				s.signals = append(s.signals, "")
+				s.signals = append(s.signals, outputLine{})
 				if len(s.signals) > maxTUISignals {
-					s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+					s.signals = append([]outputLine(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 				}
 			}
 		}
@@ -449,14 +489,65 @@ func (s *tuiState) parseSummaries(p []byte) {
 
 // outputLinesForRender returns the complete output lines, including the
 // partial trailing line.
-func (s *tuiState) outputLinesForRender() []string {
-	if s.partial == "" {
+func (s *tuiState) outputLinesForRender() []outputLine {
+	if s.partial.text == "" {
 		return s.lines
 	}
-	ret := make([]string, 0, len(s.lines)+1)
+	ret := make([]outputLine, 0, len(s.lines)+1)
 	ret = append(ret, s.lines...)
 	ret = append(ret, s.partial)
 	return ret
+}
+
+// wrapTabLines wraps each source output line to the given width,
+// carrying the line's color onto every wrapped display line.
+func wrapTabLines(lines []outputLine, width int) []displayLine {
+	var out []displayLine
+	for _, line := range lines {
+		for _, text := range taiui.WrapLines([]string{line.text}, width) {
+			out = append(out, displayLine{text: text, color: line.color})
+		}
+	}
+	return out
+}
+
+// plainOutputLines converts plain text lines into uncolored output
+// lines.
+func plainOutputLines(lines []string) []outputLine {
+	out := make([]outputLine, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, outputLine{text: line})
+	}
+	return out
+}
+
+// coloredText renders pre-wrapped display lines with their colors. Lines
+// are grouped by consecutive equal colors; each group is a Text
+// positioned exactly over its row range via a Box override, so no gaps
+// appear between groups of different colors.
+func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
+	if len(lines) == 0 {
+		return taiui.Text("")
+	}
+	var children []any
+	start := 0
+	for i := 1; i <= len(lines); i++ {
+		if i == len(lines) || lines[i].color != lines[start].color {
+			count := i - start
+			texts := make([]string, 0, count)
+			for j := start; j < i; j++ {
+				texts = append(texts, lines[j].text)
+			}
+			groupBox := taiui.Box{Top: box.Top + start, Left: box.Left, Bottom: box.Top + i, Right: box.Right}
+			specs := []any{taiui.Box(groupBox), texts}
+			if lines[start].color != 0 {
+				specs = append(specs, taiui.FGColor(taiui.HexColor(lines[start].color)))
+			}
+			children = append(children, taiui.Text(specs...))
+			start = i
+		}
+	}
+	return taiui.Overlay(children...)
 }
 
 // logsLinesForRender returns the complete log lines, including the
@@ -551,45 +642,66 @@ func (t *TUI) LogsWriter() io.Writer {
 	return logsWriter{t}
 }
 
-// captureContent forwards the visible parts of a content to the TUI.
-// Text parts stream to the Output tab; thoughts stream with the
-// thinking/response markers the terminal Output layer uses, keeping a
-// single open marker across chunks until a non-thought part, a finish
-// reason, or the session end closes it; function calls, call results,
-// and errors render as markers; finish reasons go to the Round tab.
-// Internal metadata parts (Usage) are skipped. It is called from the
-// generation goroutine via tuiOutputState.AppendContent, the only
-// goroutine that reads or writes thoughtOpen. See TheoryOfTUI.
+// captureContent forwards the visible parts of a content to the TUI,
+// coloring them by role to match the non-TUI output colors.
+// Text parts stream to the Output tab colored by the content role;
+// thoughts stream with the thinking/response markers the terminal
+// Output layer uses, all colored as thoughts; function calls, call
+// results, and errors render as markers colored by role; finish
+// reasons go to the Round tab colored as log lines. Internal metadata
+// parts (Usage) are skipped. It is called from the generation
+// goroutine via tuiOutputState.AppendContent, the only goroutine that
+// reads or writes thoughtOpen. See TheoryOfTUI.
 func (t *TUI) captureContent(content *generators.Content) {
+	color := roleColor(content.Role)
 	for _, part := range content.Parts {
 		switch p := part.(type) {
 		case generators.Text:
 			t.closeThought()
 			if len(p) > 0 {
-				t.write([]byte(p))
+				t.writeColored(color, []byte(p))
 			}
 		case generators.Thought:
 			if len(p) > 0 {
 				if !t.thoughtOpen {
-					t.write([]byte(" thinking\n"))
+					t.writeColored(outputColorThought, []byte(" thinking\n"))
 					t.thoughtOpen = true
 				}
-				t.write([]byte(p))
+				t.writeColored(outputColorThought, []byte(p))
 			}
 		case generators.FuncCall:
 			t.closeThought()
-			t.write([]byte(fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments)))
+			t.writeColored(color, []byte(fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments)))
 		case generators.CallResult:
 			t.closeThought()
-			t.write([]byte(fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results)))
+			t.writeColored(color, []byte(fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results)))
 		case generators.FinishReason:
 			t.finishReason(string(p))
 		case generators.Error:
 			t.closeThought()
 			if p.Error != nil {
-				t.write([]byte(fmt.Sprintf("[Error: %v]", p.Error)))
+				t.writeColored(color, []byte(fmt.Sprintf("[Error: %v]", p.Error)))
 			}
 		}
+	}
+}
+
+// roleColor maps a content role to the display color used in the TUI,
+// matching the non-TUI output colors in generators/colors.go. Model and
+// assistant content keep the default foreground; user input, tool calls
+// and results, system messages, and log records get their role colors.
+func roleColor(role generators.Role) int32 {
+	switch role {
+	case generators.RoleUser:
+		return outputColorUser
+	case generators.RoleTool:
+		return outputColorTool
+	case generators.RoleSystem:
+		return outputColorSystem
+	case generators.RoleLog:
+		return outputColorLog
+	default:
+		return 0
 	}
 }
 
@@ -977,12 +1089,12 @@ func (t *TUI) render() {
 	// view; collapsed tabs show a thin strip with the key and title.
 	// The focused tab occupies twice the space of each non-focused tab.
 	// See TheoryOfTUI.
-	contentByTab := [3][]string{
+	contentByTab := [3][]outputLine{
 		outputLines,
 		t.signals,
-		logsLines,
+		plainOutputLines(logsLines),
 	}
-	displays := [3][]string{}
+	displays := [3][]displayLine{}
 	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
 	var maxOffsets [3]int
 	var panels []taiui.Element
@@ -1001,7 +1113,7 @@ func (t *TUI) render() {
 		// as wide as the others — so each tab's content wraps at its own
 		// width. See TheoryOfTUI.
 		tabContentWidth := max(box.Width()-1, 1)
-		displays[idx] = taiui.WrapLines(contentByTab[idx], tabContentWidth)
+		displays[idx] = wrapTabLines(contentByTab[idx], tabContentWidth)
 
 		// The scroll offset is clamped against the ACTUAL scroll view height
 		// — the panel height minus the one-row label strip. In horizontal
@@ -1046,7 +1158,7 @@ var (
 	tabActiveLabelFg int32 = 0x00ff00
 )
 
-func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool) taiui.Element {
+func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus bool) taiui.Element {
 	// Exactly two background colors: dark gray for the focused tab, dark
 	// blue for every unfocused tab. The label strip shares the tab's
 	// background; focus is conveyed by the label's foreground and bold
@@ -1104,7 +1216,7 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 			taiui.FGColor(taiui.HexColor(labelFg)),
 		),
 		taiui.VerticalScroll(
-			taiui.Text(lines, taiui.Wrap(true)),
+			coloredText(lines, scrollBox),
 			top,
 			scrollSpecs...,
 		),
