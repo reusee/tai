@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/taiui"
@@ -182,11 +183,9 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	if cell.Rune != 'O' {
 		t.Fatalf("expected title 'O' at (2,0), got %v", cell.Rune)
 	}
-	wantR := tabActiveLabelFg >> 16 & 0xff
-	wantG := tabActiveLabelFg >> 8 & 0xff
-	wantB := tabActiveLabelFg & 0xff
+	wantR, wantG, wantB := color.PaletteColor(int(tabActiveLabelFg)).RGB()
 	if r, g, b := cell.Style.Fg().RGB(); r != wantR || g != wantG || b != wantB {
-		t.Fatalf("expected highlighted title foreground %#06x, got %#x %#x %#x", tabActiveLabelFg, r, g, b)
+		t.Fatalf("expected highlighted title foreground %#x %#x %#x, got %#x %#x %#x", wantR, wantG, wantB, r, g, b)
 	}
 
 	// An idle session shows the plain title without the highlight.
@@ -1602,5 +1601,42 @@ func TestTUIPanelColorsContent(t *testing.T) {
 	}
 	if r, g, b := cell.Style.Fg().RGB(); r >= 0 || g >= 0 || b >= 0 {
 		t.Fatal("expected default foreground for plain line")
+	}
+}
+
+func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
+	// Text colors must use the ANSI 16 palette, never true-color RGB:
+	// the rendered foreground is a PaletteColor, not an RGB color.
+	// Backgrounds are exempt and keep true-color hex values.
+	// See TheoryOfTUI.
+	lines := []displayLine{
+		{text: "u", color: outputColorUser},
+		{text: "t", color: outputColorTool},
+		{text: "s", color: outputColorSystem},
+		{text: "l", color: outputColorLog},
+		{text: "m", color: outputColorThought},
+	}
+	element := coloredText(lines, taiui.Box{Top: 0, Left: 0, Bottom: 5, Right: 40})
+	screen := &panelTestScreen{width: 40, height: 5}
+	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+		return taiui.Root{Element: element}
+	}), screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	want := []int32{outputColorUser, outputColorTool, outputColorSystem, outputColorLog, outputColorThought}
+	for i, c := range want {
+		cell := frame.Cells[i*frame.Width]
+		if !cell.Set {
+			t.Fatalf("expected row %d to be painted", i)
+		}
+		fg := cell.Style.Fg()
+		if fg&color.IsRGB != 0 {
+			t.Fatalf("color %d must be a palette color, not true-color RGB", i)
+		}
+		if got := int(fg & 0xff); got != int(c) {
+			t.Fatalf("color %d: expected ANSI 16 palette index %d, got %d", i, int(c), got)
+		}
 	}
 }

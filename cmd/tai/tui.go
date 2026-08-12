@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
@@ -24,16 +25,11 @@ const (
 	maxTUILines   = 10000
 	maxTUISignals = 2000
 
-	// TUI role colors match the non-TUI output colors in
-	// generators/colors.go: blue for user input, yellow for tool calls
-	// and results, cyan for system messages, red for log records, and
-	// bright magenta for thoughts. Model output keeps the default
-	// foreground, mirroring ColorReset in the non-TUI path.
-	outputColorUser    int32 = 0x0000ff
-	outputColorTool    int32 = 0xffff00
-	outputColorSystem  int32 = 0x00ffff
-	outputColorLog     int32 = 0xff0000
-	outputColorThought int32 = 0xff00ff
+	outputColorUser    int32 = 12
+	outputColorTool    int32 = 11
+	outputColorSystem  int32 = 14
+	outputColorLog     int32 = 9
+	outputColorThought int32 = 13
 )
 
 const TheoryOfTUI = `
@@ -52,8 +48,10 @@ stdout pipe; stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
 results yellow, system messages cyan, log records red, and thoughts bright
-magenta; model output keeps the default foreground. Colors are carried per
-output line through wrapping, so a wrapped line keeps its role color. The keys
+magenta; model output keeps the default foreground. Role colors are ANSI 16
+palette colors, so text uses only the standard 16-color SGR codes; only
+backgrounds use true-color hex values. Colors are carried per output line
+through wrapping, so a wrapped line keeps its role color. The keys
 1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
 pressing a focused tab's key collapses it to a thin strip showing the tab's
 key and title, and moves the focus to the expanded tab that was last focused
@@ -524,10 +522,6 @@ func plainOutputLines(lines []string) []outputLine {
 	return out
 }
 
-// coloredText renders pre-wrapped display lines with their colors. Lines
-// are grouped by consecutive equal colors; each group is a Text
-// positioned exactly over its row range via a Box override, so no gaps
-// appear between groups of different colors.
 func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
 	if len(lines) == 0 {
 		return taiui.Text("")
@@ -544,7 +538,7 @@ func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
 			groupBox := taiui.Box{Top: box.Top + start, Left: box.Left, Bottom: box.Top + i, Right: box.Right}
 			specs := []any{taiui.Box(groupBox), texts}
 			if lines[start].color != 0 {
-				specs = append(specs, taiui.FGColor(taiui.HexColor(lines[start].color)))
+				specs = append(specs, taiui.FGColor(color.PaletteColor(int(lines[start].color))))
 			}
 			children = append(children, taiui.Text(specs...))
 			start = i
@@ -1160,12 +1154,8 @@ var (
 	// tabUnfocusBG is the dark blue background of every unfocused tab.
 	tabUnfocusBG int32 = 0x0a1428
 	// tabFocusBG is the dark gray background of the focused tab.
-	tabFocusBG int32 = 0x2e2e2e
-	// tabActiveLabelFg is the bright green foreground of the Output tab's
-	// title while the model is generating. It is distinct from the
-	// focused (white) and unfocused (gray) title colors, so an in-flight
-	// request is visible at a glance. See TheoryOfTUI.
-	tabActiveLabelFg int32 = 0x00ff00
+	tabFocusBG       int32 = 0x2e2e2e
+	tabActiveLabelFg int32 = 10
 )
 
 func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus bool) taiui.Element {
@@ -1187,11 +1177,11 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus 
 		// See TheoryOfTUI.
 		label, highlight = t.outputTabLabel()
 	}
-	labelFg := int32(0x9a9a9a)
+	labelFg := int32(8) // bright black (gray)
 	if highlight {
 		labelFg = tabActiveLabelFg
 	} else if focus {
-		labelFg = 0xffffff
+		labelFg = 15 // bright white
 	}
 	// The label strip is pinned to the panel's top row and the scroll
 	// view spans the remaining rows. The label is exactly one row, so
@@ -1223,7 +1213,7 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus 
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(base)),
 			taiui.Bold(focus),
-			taiui.FGColor(taiui.HexColor(labelFg)),
+			taiui.FGColor(color.PaletteColor(int(labelFg))),
 		),
 		taiui.VerticalScroll(
 			coloredText(lines, scrollBox),
@@ -1233,21 +1223,15 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus 
 	)
 }
 
-// collapsedPanel renders a collapsed tab as a thin strip showing the
-// tab's key and title. In vertical split the strip is one column wide
-// and the label is written vertically; in horizontal split the strip is
-// one row tall and the label is written horizontally. The strip uses the
-// same two-background-color scheme as expanded panels: dark gray when
-// focused, dark blue otherwise. See TheoryOfTUI.
 func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
 	base := tabUnfocusBG
 	if focus {
 		base = tabFocusBG
 	}
 	label := fmt.Sprintf("%d %s", idx+1, tabNames[idx])
-	labelFg := int32(0x9a9a9a)
+	labelFg := int32(8) // bright black (gray)
 	if focus {
-		labelFg = 0xffffff
+		labelFg = 15 // bright white
 	}
 	if box.Width() < box.Height() {
 		// Vertical strip: one column, label written vertically.
@@ -1262,7 +1246,7 @@ func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
 			taiui.Text(
 				lines,
 				taiui.Bold(focus),
-				taiui.FGColor(taiui.HexColor(labelFg)),
+				taiui.FGColor(color.PaletteColor(int(labelFg))),
 			),
 		)
 	}
@@ -1274,7 +1258,7 @@ func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
 		taiui.Text(
 			"  "+label+"  ",
 			taiui.Bold(focus),
-			taiui.FGColor(taiui.HexColor(labelFg)),
+			taiui.FGColor(color.PaletteColor(int(labelFg))),
 		),
 	)
 }
