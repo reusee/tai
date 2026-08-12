@@ -129,6 +129,60 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 	}
 }
 
+func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
+	// An unclosed fragment from a truncated round must not wedge the
+	// parse buffer: when a complete block exists beyond the fragment's
+	// opening line, the fragment is skipped and the later summary is
+	// still extracted. See TheoryOfTUI.
+	st := &tuiState{}
+	st.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
+	st.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+	if len(st.summaries) != 2 {
+		t.Fatalf("expected 2 summary lines, got %v", st.summaries)
+	}
+	if st.summaries[0] != "- done" || st.summaries[1] != "" {
+		t.Fatalf("unexpected summaries: %v", st.summaries)
+	}
+}
+
+func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
+	// A fragment whose closing line is still streaming must be kept, not
+	// skipped: no complete block exists beyond it, so the parser waits
+	// for the fragment's own closing line. See TheoryOfTUI.
+	st := &tuiState{}
+	st.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
+	if len(st.summaries) != 0 {
+		t.Fatalf("expected no summaries while the block is incomplete, got %v", st.summaries)
+	}
+	st.write([]byte("\n黿鼍爩\n"))
+	if len(st.summaries) != 2 || st.summaries[0] != "- not yet complete" {
+		t.Fatalf("unexpected summaries: %v", st.summaries)
+	}
+}
+
+func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
+	// A block opener split across chunk boundaries at any byte position
+	// must be retained until the next chunk completes it. Without
+	// retention, a "<<" or a lone "<" at the end of a chunk is discarded
+	// and the summary it opens is lost. See TheoryOfTUI.
+	t.Run("PartialDoubleLeftChevrons", func(t *testing.T) {
+		st := &tuiState{}
+		st.write([]byte("prose\n<<"))
+		st.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		if len(st.summaries) != 2 || st.summaries[0] != "- done" {
+			t.Fatalf("unexpected summaries: %v", st.summaries)
+		}
+	})
+	t.Run("SingleLeftChevron", func(t *testing.T) {
+		st := &tuiState{}
+		st.write([]byte("prose\n<"))
+		st.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		if len(st.summaries) != 2 || st.summaries[0] != "- done" {
+			t.Fatalf("unexpected summaries: %v", st.summaries)
+		}
+	})
+}
+
 func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	// The panel must reach the tail of wrapped content: the scroll
 	// offset is clamped against the wrapped display-line count, so at

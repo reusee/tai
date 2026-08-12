@@ -67,7 +67,13 @@ captured by the output pipe, matching the stdout stream.
 Summary extraction reuses the block parser: the TUI writer keeps a parse
 buffer and extracts each complete summary block's body as it streams, so the
 middle pane is updated incrementally without requiring the generation loop
-to know about the TUI.
+to know about the TUI. The parse buffer tolerates dead fragments: an
+unclosed block that never completes — a truncated round, a malformed block,
+or prose that merely resembles an opener — would wedge the buffer and hide
+every later summary, so a fragment is skipped whenever a complete block
+exists beyond its opening line. A block opener split across chunk boundaries
+survives via a retained trailing "<" or "<<" prefix until the next chunk
+completes it.
 
 Scroll extents are derived from the wrapped display lines, not the raw
 source lines: each pane pre-wraps its content with taiui.WrapLines at the
@@ -188,12 +194,43 @@ func (s *tuiState) parseSummaries(p []byte) {
 	for {
 		block, _, end, ok, err := blocks.ParseFirstBlock(s.parseBuf)
 		if err != nil {
-			// incomplete block; wait for more output
-			return
+			// An unclosed or malformed block may still be streaming (its
+			// closing line has not arrived yet), so the buffer is kept while
+			// no complete block exists beyond the fragment's opening line.
+			// When a complete block does exist beyond it, the fragment cannot
+			// be a live block — its closing line would have arrived before
+			// that block's opening marker. Such a fragment is a truncated
+			// round, a malformed block, or prose that merely resembles an
+			// opener; skipping it un-wedges the buffer so summaries emitted
+			// after it are still extracted. See TheoryOfTUI.
+			if end > 0 && end < len(s.parseBuf) {
+				if _, _, _, tailOK, tailErr := blocks.ParseFirstBlock(s.parseBuf[end:]); tailErr == nil && tailOK {
+					s.parseBuf = s.parseBuf[end:]
+					continue
+				}
+			}
+			return // still streaming: wait for more output
 		}
 		if !ok {
-			// no block marker in the buffer
-			s.parseBuf = nil
+			// No block marker in the buffer. A block opener can be split
+			// across chunk boundaries at any byte position, so a trailing
+			// line that could become an opener ("<" or "<<"-prefixed) is
+			// retained until the next chunk completes it; otherwise the
+			// buffer holds only prose and is cleared. See TheoryOfTUI.
+			retain := 0
+			tail := s.parseBuf
+			if i := bytes.LastIndexByte(s.parseBuf, '\n'); i >= 0 {
+				tail = s.parseBuf[i+1:]
+			}
+			if len(tail) == 1 && tail[0] == '<' ||
+				len(tail) >= 2 && tail[0] == '<' && tail[1] == '<' {
+				retain = len(tail)
+			}
+			if retain > 0 {
+				s.parseBuf = s.parseBuf[len(s.parseBuf)-retain:]
+			} else {
+				s.parseBuf = nil
+			}
 			return
 		}
 		if block.Kind == "summary" {
