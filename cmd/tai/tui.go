@@ -36,11 +36,11 @@ the start/end. When the generation finishes, the TUI stays open so the
 output can be browsed, and q quits the TUI. When all tabs are closed, a
 hint panel is shown instead of a blank screen.
 
-Tabs are distinguished by alternating gray background shades instead of
-borders: each tab has a base gray (darker for Output, lighter for Logs)
-that lightens when the tab is focused, so the focus is visible without a
-border. A one-row label strip across each tab's top names it; the focused
-label is bright and bold, the unfocused label gray.
+Tabs use exactly two background colors: dark gray for the focused tab and
+dark blue for every unfocused tab, so the focus is visible without a
+border. The one-row label strip across each tab's top names it; it shares
+the tab's background, with the focused label bright and bold and the
+unfocused label gray.
 
 Each tab's view follows the latest content while it is at the latest row,
 matching the terminal session convention. A follow flag per tab starts
@@ -562,11 +562,13 @@ func (t *TUI) render() {
 		}
 	}
 
-	// With no tab open, show a hint instead of a blank screen.
+	// With no tab open, show a hint instead of a blank screen. The hint
+	// uses the unfocused dark blue, so the whole TUI keeps exactly two
+	// background colors. See TheoryOfTUI.
 	if len(open) == 0 {
 		root := taiui.Root{Element: taiui.Rect(
 			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(0x101010)),
+			taiui.BGColor(taiui.HexColor(tabUnfocusBG)),
 			taiui.Text("Press 1/2/3 to open tabs", taiui.AlignCenter, taiui.VAlignMiddle),
 		)}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
@@ -637,19 +639,25 @@ func (t *TUI) render() {
 }
 
 // tabNames are the names of the three tabs, drawn in their label strips.
-// tabGray is the base background shade of each tab: darker for the output
-// tab, lighter for the logs tab, so tabs are distinguished by alternating
-// gray shades instead of borders. A focused tab lightens its shade; the
-// label strip is lighter still. See TheoryOfTUI.
+// The tab backgrounds use exactly two colors: dark gray (tabFocusBG) for
+// the focused tab, dark blue (tabUnfocusBG) for every unfocused tab, so
+// the focus state is the only differentiator. See TheoryOfTUI.
 var (
 	tabNames = [...]string{"Output", "Summary", "Logs"}
-	tabGray  = [3]int32{0x181818, 0x2c2c2c, 0x404040}
+	// tabUnfocusBG is the dark blue background of every unfocused tab.
+	tabUnfocusBG int32 = 0x0a1428
+	// tabFocusBG is the dark gray background of the focused tab.
+	tabFocusBG int32 = 0x2e2e2e
 )
 
 func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool) taiui.Element {
-	base := tabGray[idx]
+	// Exactly two background colors: dark gray for the focused tab, dark
+	// blue for every unfocused tab. The label strip shares the tab's
+	// background; focus is conveyed by the label's foreground and bold
+	// weight. See TheoryOfTUI.
+	base := tabUnfocusBG
 	if focus {
-		base += 0x0e
+		base = tabFocusBG
 	}
 	label := tabNames[idx]
 	if idx == 0 && t.finished {
@@ -673,7 +681,7 @@ func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool)
 			"  "+label+"  ",
 			taiui.Box(headerBox),
 			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(base+0x10)),
+			taiui.BGColor(taiui.HexColor(base)),
 			taiui.Bold(focus),
 			taiui.FGColor(taiui.HexColor(labelFg)),
 		),

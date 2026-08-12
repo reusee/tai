@@ -169,6 +169,49 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	}
 }
 
+func TestTUIPanelBackgroundColors(t *testing.T) {
+	// The TUI uses exactly two background colors: dark blue for the
+	// unfocused tab and dark gray for the focused tab. The label strip
+	// shares the tab's background, so the focus state is the only
+	// differentiator. See TheoryOfTUI.
+	renderPanel := func(focus bool) taiui.Frame {
+		tui := &TUI{}
+		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12}, []string{"content"}, 0, focus)
+		screen := &panelTestScreen{width: 12, height: 4}
+		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
+			return taiui.Root{Element: element}
+		}), screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		return screen.frames[len(screen.frames)-1]
+	}
+
+	cases := []struct {
+		focus bool
+		want  [3]int32
+	}{
+		{false, [3]int32{0x0a, 0x14, 0x28}}, // dark blue
+		{true, [3]int32{0x2e, 0x2e, 0x2e}},  // dark gray
+	}
+	for _, tc := range cases {
+		frame := renderPanel(tc.focus)
+		// Row 0 is the label strip and row 1 is the scroll content; both
+		// share the tab's background color.
+		for _, y := range []int{0, 1} {
+			cell := frame.Cells[y*frame.Width+0]
+			if !cell.Set {
+				t.Fatalf("focus=%v: expected row %d to be painted", tc.focus, y)
+			}
+			r, g, b := cell.Style.Bg().RGB()
+			if r != tc.want[0] || g != tc.want[1] || b != tc.want[2] {
+				t.Fatalf("focus=%v row %d: expected background %#x %#x %#x, got %#x %#x %#x",
+					tc.focus, y, tc.want[0], tc.want[1], tc.want[2], r, g, b)
+			}
+		}
+	}
+}
+
 func TestReadTUIKeys(t *testing.T) {
 	ch := make(chan string, 10)
 	go readTUIKeys(strings.NewReader("\x1b[Aq\x1b[5~\x1b[6~"), ch)
