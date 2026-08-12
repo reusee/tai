@@ -588,9 +588,17 @@ func TestWrapLineWordWiderThanBox(t *testing.T) {
 
 func TestWrapLineTab(t *testing.T) {
 	options := displaywidth.Options{}
-	// A tab is whitespace: it acts as a break point and is dropped.
-	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a b"}) {
+	// "a\tb" in an 8-column box: 'a' at column 0, the tab advances to
+	// column 8 (outside the box), so 'b' wraps to the next line. The
+	// tab itself is dropped at the wrap boundary, matching the
+	// whitespace-at-boundary rule.
+	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a", "b"}) {
 		t.Fatalf("tab break: got %q", got)
+	}
+	// In a wider box the tab is preserved verbatim and expands to a tab
+	// stop at render time.
+	if got := wrapLine("a\tb", 80, options); !sameStrings(got, []string{"a\tb"}) {
+		t.Fatalf("fitting tab line: got %q", got)
 	}
 }
 
@@ -2315,8 +2323,13 @@ func TestWrapLineFastPathSpaces(t *testing.T) {
 	if got := wrapLine("hello world", 11, options); !sameStrings(got, []string{"hello world"}) {
 		t.Fatalf("fast path with spaces: got %q", got)
 	}
-	// A line with a tab is not fast-pathed: the tab becomes a space.
-	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a b"}) {
+	// A line with a tab that fits the box is returned unchanged: the
+	// tab is preserved and expands to a tab stop at render time.
+	if got := wrapLine("a\tb", 80, options); !sameStrings(got, []string{"a\tb"}) {
+		t.Fatalf("fitting tab line: got %q", got)
+	}
+	// A line with a tab that does not fit wraps at the tab boundary.
+	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a", "b"}) {
 		t.Fatalf("tab line: got %q", got)
 	}
 	// Fitting lines keep their leading and trailing spaces: indentation
@@ -2334,6 +2347,27 @@ func TestWrapLineFastPathSpaces(t *testing.T) {
 	}
 }
 
+func TestWrapLinePreservesTabs(t *testing.T) {
+	options := displaywidth.Options{}
+	// Fitting lines with leading tabs (Go indentation) are preserved
+	// verbatim: the wrap fast path returns a fitting line unchanged, so
+	// indentation never collapses to spaces.
+	if got := wrapLine("\t\tfoo", 80, options); !sameStrings(got, []string{"\t\tfoo"}) {
+		t.Fatalf("wrapLine(\"\\t\\tfoo\", 80) = %q", got)
+	}
+	// A fitting line with tabs anywhere keeps them verbatim.
+	if got := wrapLine("\t\tfoo bar", 80, options); !sameStrings(got, []string{"\t\tfoo bar"}) {
+		t.Fatalf("wrapLine(\"\\t\\tfoo bar\", 80) = %q", got)
+	}
+	// When the indentation would push the first word past the box, the
+	// leading whitespace is dropped and the word hard-breaks from the
+	// left column: the tabs cannot be preserved within the box, and the
+	// word itself fits.
+	if got := wrapLine("\t\tfoo bar", 8, options); !sameStrings(got, []string{"foo bar"}) {
+		t.Fatalf("wrapLine(\"\\t\\tfoo bar\", 8) = %q", got)
+	}
+}
+
 func TestWrapLineLimitedIterAppends(t *testing.T) {
 	options := displaywidth.Options{}
 	iter := getGraphemeIter()
@@ -2341,13 +2375,13 @@ func TestWrapLineLimitedIterAppends(t *testing.T) {
 	// The helper appends to the caller-provided slice, so a render pass
 	// reuses the pooled line slice across lines.
 	out := []string{"existing"}
-	got := wrapLineLimitedIter("hello world", 8, 2, options, iter, out)
+	got := wrapLineLimitedIter("hello world", 8, 2, options, iter, defaultTabWidth, out)
 	if !sameStrings(got, []string{"existing", "hello", "world"}) {
 		t.Fatalf("expected appended lines, got %q", got)
 	}
 	// The limit bounds the appended lines, not the total.
 	out = []string{"existing"}
-	got = wrapLineLimitedIter("hello world", 8, 1, options, iter, out)
+	got = wrapLineLimitedIter("hello world", 8, 1, options, iter, defaultTabWidth, out)
 	if !sameStrings(got, []string{"existing", "hello"}) {
 		t.Fatalf("expected limit-bounded append, got %q", got)
 	}

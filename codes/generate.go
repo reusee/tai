@@ -774,10 +774,18 @@ func (Module) GenerateWithResultWithStats(
 		// as user content and run generation; otherwise there is nothing to do.
 		var hasChats bool
 		if chats := strings.Join(flagChats, "\n"); chats != "" {
+			// Wrap the chat in user-input markers so the TUI can extract
+			// it from the merged user prompt (stripFileContext), matching
+			// the ai command's structure. Without the markers, the chat
+			// is a bare Text part that Prompts.AppendContent may merge
+			// with the preceding file-context or restate-prompt text,
+			// and the TUI cannot distinguish it from context, so the
+			// user's input never appears in the Output tab.
+			// See TheoryOfTUI.
 			state, err = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
-					generators.Text(chats),
+					generators.Text("\n``` begin of user input\n" + chats + "\n``` end of user input\n"),
 				},
 			})
 			if err != nil {

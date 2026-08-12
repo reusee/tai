@@ -1452,21 +1452,29 @@ func captureInitialContents(tui *TUI, state generators.State) {
 
 // stripFileContext returns the displayable portion of a text part from
 // an initial content: file-context blocks are dropped entirely, and the
-// ai command's user-input markers are stripped so the raw input is
-// displayed. Other text is returned unchanged. See TheoryOfTUI.
+// user-input markers are stripped so the raw chat input is displayed.
+// The user-input block is extracted wherever it appears, because
+// Prompts.AppendContent merges adjacent Text parts: a chat message
+// appended after the code context can be glued to a file-context end
+// marker or a restate prompt, and the merged text must still show the
+// chat. Other text is returned unchanged. See TheoryOfTUI.
 func stripFileContext(text string) string {
 	trimmed := strings.TrimSpace(text)
+	// The user-input block may be merged with file context or restate
+	// prompts (Prompts.AppendContent merges adjacent Text parts), so it
+	// is extracted wherever the begin marker appears, not only at the
+	// start.
+	if idx := strings.Index(trimmed, userInputBeginMarker); idx >= 0 {
+		content := trimmed[idx+len(userInputBeginMarker):]
+		if end := strings.Index(content, userInputEndMarker); end >= 0 {
+			content = content[:end]
+		}
+		return strings.TrimSpace(content)
+	}
 	for _, marker := range fileContextMarkers {
 		if strings.HasPrefix(trimmed, marker) {
 			return ""
 		}
-	}
-	if strings.HasPrefix(trimmed, userInputBeginMarker) {
-		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, userInputBeginMarker))
-		if idx := strings.Index(trimmed, userInputEndMarker); idx >= 0 {
-			trimmed = trimmed[:idx]
-		}
-		return strings.TrimSpace(trimmed)
 	}
 	return text
 }

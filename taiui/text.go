@@ -50,6 +50,11 @@ taiui text rendering theory:
   terminal output.
 `
 
+// defaultTabWidth is the tab stop interval used by Text rendering and
+// wrapping when no TabWidth spec is given. It matches the terminal
+// convention of 8 columns per tab stop.
+const defaultTabWidth = 8
+
 // OffsetStyleFunc styles a text position by its rune offset within the
 // physical line (a wrapped line restarts the offset). Offsets count runes,
 // including the combining runes of clusters.
@@ -71,7 +76,7 @@ type _Text struct {
 }
 
 func Text(specs ...any) _Text {
-	t := &_Text{tabWidth: 8, cursorAt: -1}
+	t := &_Text{tabWidth: defaultTabWidth, cursorAt: -1}
 	buildElement(t, specs)
 	return *t
 }
@@ -168,17 +173,15 @@ func putGraphemeIter(iter *graphemes.Iterator[string]) {
 type wrapBuffers struct {
 	cur  []string
 	word []string
+	ws   []string
 }
 
-// wrapBuffersPool pools the working slices of wrapLineLimitedIter. A
-// wrap call allocates two string slices sized to the box width; pooling
-// them avoids the allocation for the per-line wrap calls of a render
-// pass.
 var wrapBuffersPool = sync.Pool{
 	New: func() any {
 		return &wrapBuffers{
 			cur:  make([]string, 0, 80),
 			word: make([]string, 0, 80),
+			ws:   make([]string, 0, 80),
 		}
 	},
 }
@@ -207,6 +210,28 @@ func lineWidth(options displaywidth.Options, line string, iter *graphemes.Iterat
 	return width
 }
 
+// lineWidthWithTabs returns the display width of a line, expanding
+// tabs to tab stops relative to the line's left edge. The wrap fast
+// path uses it so a fitting line with tabs is returned unchanged,
+// preserving its exact spacing; the slow path measures the same widths
+// when deciding wrap boundaries, so both paths agree on tab cost.
+func lineWidthWithTabs(options displaywidth.Options, line string, iter *graphemes.Iterator[string], tabWidth int) int {
+	if tabWidth <= 0 {
+		tabWidth = defaultTabWidth
+	}
+	iter.SetText(line)
+	width := 0
+	for iter.Next() {
+		cluster := iter.Value()
+		if cluster == "\t" {
+			width = nextTabStop(width, 0, tabWidth)
+		} else {
+			width += clusterWidth(options, cluster)
+		}
+	}
+	return width
+}
+
 func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options, iter *graphemes.Iterator[string]) bool {
 	if t.wrap || t.offsetStyleFunc != nil ||
 		t.align != AlignLeft || t.valign != VAlignTop ||
@@ -218,7 +243,7 @@ func renderTextFastPath(t _Text, box Box, style Style, draw drawFunc, cursor cur
 	}
 	tabWidth := t.tabWidth
 	if tabWidth <= 0 {
-		tabWidth = 8
+		tabWidth = defaultTabWidth
 	}
 	y := box.Top
 	var x int
@@ -301,7 +326,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 
 	tabWidth := t.tabWidth
 	if tabWidth <= 0 {
-		tabWidth = 8
+		tabWidth = defaultTabWidth
 	}
 
 	contentLeft := box.Left + t.padding[3]
@@ -334,7 +359,7 @@ func renderText(t _Text, box Box, style Style, draw drawFunc, cursor cursorFunc,
 			// line in a small box never wraps beyond the rows the box
 			// can show, so pathological inputs cannot accumulate
 			// unbounded wrapped lines.
-			lines = wrapLineLimitedIter(line, wrapWidth, maxLines-len(lines), options, iter, lines)
+			lines = wrapLineLimitedIter(line, wrapWidth, maxLines-len(lines), options, iter, tabWidth, lines)
 			if len(lines) >= maxLines {
 				break
 			}
@@ -539,40 +564,38 @@ func wrapLine(line string, width int, options displaywidth.Options) []string {
 func wrapLineLimited(line string, width, limit int, options displaywidth.Options) []string {
 	iter := getGraphemeIter()
 	defer putGraphemeIter(iter)
-	return wrapLineLimitedIter(line, width, limit, options, iter, nil)
+	return wrapLineLimitedIter(line, width, limit, options, iter, defaultTabWidth, nil)
 }
 
-// WrapLines wraps each line to the given width using the current
-// display-width options and returns the wrapped lines. It applies the same
-// wrapping Text uses internally, so callers that pre-wrap content to
-// compute scroll extents (e.g., a TUI) stay consistent with Text's
-// rendering.
 func WrapLines(lines []string, width int) []string {
 	options := DisplayWidthOptions()
 	iter := getGraphemeIter()
 	defer putGraphemeIter(iter)
 	var out []string
 	for _, line := range lines {
-		out = wrapLineLimitedIter(line, width, -1, options, iter, out)
+		out = wrapLineLimitedIter(line, width, -1, options, iter, defaultTabWidth, out)
 	}
 	return out
 }
 
-func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Options, iter *graphemes.Iterator[string], out []string) []string {
+func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Options, iter *graphemes.Iterator[string], tabWidth int, out []string) []string {
 	if width <= 0 || limit == 0 {
 		return out
 	}
 	if line == "" {
 		return append(out, "")
 	}
-	// Fast path: a line without tabs that fits the box is appended
-	// as-is, preserving its exact spacing. Only lines that actually
-	// need wrapping — wider than the box, or containing tabs — take
-	// the slow path, so an indented line is never re-flowed and its
-	// indentation survives. The slow path would preserve the same
-	// spacing anyway; skipping it avoids the word-splitting
-	// allocations.
-	if !strings.Contains(line, "\t") && lineWidth(options, line, iter) <= width {
+	if tabWidth <= 0 {
+		tabWidth = defaultTabWidth
+	}
+	// Fast path: a line that fits the box is appended as-is, preserving
+	// its exact spacing, including tabs (which expand to tab stops at
+	// render time) and indentation. Only lines that actually need
+	// wrapping — wider than the box — take the slow path, so an
+	// indented line is never re-flowed and its indentation survives.
+	// The slow path would preserve the same spacing anyway; skipping it
+	// avoids the word-splitting allocations.
+	if lineWidthWithTabs(options, line, iter, tabWidth) <= width {
 		return append(out, line)
 	}
 
@@ -580,10 +603,10 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 	// current line as they complete, so no word list is built. A word
 	// wider than the box is packed in chunks as it grows. Whitespace is
 	// preserved in the output: indentation and runs of consecutive
-	// spaces are kept, a tab counts as a single space, and only the
-	// whitespace at a wrap boundary is dropped. The limit bounds the
-	// appended lines, so a long line in a small box never wraps beyond
-	// the visible count.
+	// spaces are kept, tabs are kept verbatim and expand to tab stops at
+	// render time, and only the whitespace at a wrap boundary is
+	// dropped. The limit bounds the appended lines, so a long line in a
+	// small box never wraps beyond the visible count.
 	// The working slices are pooled: each cluster occupies at least one
 	// column, so the box width is a sufficient initial capacity, and the
 	// common cases append without growing.
@@ -596,20 +619,20 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 	if cap(word) < width {
 		word = make([]string, 0, width)
 	}
+	ws := bufs.ws[:0]
+	if cap(ws) < width {
+		ws = make([]string, 0, width)
+	}
 	defer func() {
 		bufs.cur = cur
 		bufs.word = word
+		bufs.ws = ws
 		wrapBuffersPool.Put(bufs)
 	}()
 	startLen := len(out)
 	lines := out
 	curWidth := 0
 	wordWidth := 0
-	// pendingSpaces counts the whitespace clusters (spaces and tabs)
-	// seen since the last word. They are committed as single spaces
-	// before the next word, or dropped when they fall at a wrap
-	// boundary.
-	pendingSpaces := 0
 
 	// flushLine appends the current line and reports whether more lines
 	// may be produced.
@@ -620,36 +643,54 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 		return limit < 0 || len(lines)-startLen < limit
 	}
 
-	// packWord appends the pending spaces and the current word to the
-	// current line. When they do not fit, the current line is flushed
-	// first and the pending spaces are dropped: they form the wrap
-	// boundary. Leading indentation that cannot fit alongside the first
-	// word is dropped the same way, so an overflowing word hard-breaks
-	// from the left column. The word's backing array is reused for the
-	// next word. It reports whether more lines may be produced.
+	// packWord appends the pending whitespace and the current word to
+	// the current line. The whitespace width is computed from the
+	// whitespace clusters themselves: a space advances one column, a
+	// tab advances to the next tab stop. The whitespace clusters are
+	// emitted verbatim, so tabs survive in the wrapped output and
+	// expand to tab stops at render time. When the word does not fit,
+	// the current line is flushed first and the pending whitespace is
+	// dropped: it forms the wrap boundary. Leading whitespace that
+	// cannot fit alongside the first word is dropped the same way, so
+	// an overflowing word hard-breaks from the left column. The word's
+	// backing array is reused for the next word. It reports whether
+	// more lines may be produced.
 	packWord := func() bool {
 		if len(word) == 0 {
 			return true
 		}
-		need := pendingSpaces + wordWidth
+		wsWidth := 0
+		x := curWidth
+		for _, c := range ws {
+			if c == "\t" {
+				x = nextTabStop(x, 0, tabWidth)
+			} else {
+				x++
+			}
+		}
+		wsWidth = x - curWidth
+		need := wsWidth + wordWidth
 		if curWidth > 0 && curWidth+need > width {
 			// The word does not fit on the current line: flush it and
-			// drop the pending spaces, which form the wrap boundary.
+			// drop the pending whitespace, which forms the wrap
+			// boundary.
 			if !flushLine() {
 				return false
 			}
-			pendingSpaces = 0
+			ws = ws[:0]
+			wsWidth = 0
 		} else if curWidth == 0 && need > width {
-			// Leading indentation with a word that overflows a fresh
-			// line: drop the indentation so the word hard-breaks from
+			// Leading whitespace with a word that overflows a fresh
+			// line: drop the whitespace so the word hard-breaks from
 			// the left column.
-			pendingSpaces = 0
+			ws = ws[:0]
+			wsWidth = 0
 		}
-		for i := 0; i < pendingSpaces; i++ {
-			cur = append(cur, " ")
+		for _, c := range ws {
+			cur = append(cur, c)
 		}
-		curWidth += pendingSpaces
-		pendingSpaces = 0
+		curWidth += wsWidth
+		ws = ws[:0]
 		cur = append(cur, word...)
 		curWidth += wordWidth
 		word = word[:0]
@@ -664,7 +705,7 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 			if !packWord() {
 				return lines
 			}
-			pendingSpaces++
+			ws = append(ws, cluster)
 			continue
 		}
 		w := clusterWidth(options, cluster)
