@@ -27,8 +27,12 @@ The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
 signals — the bodies of summary blocks and the finish lines ("[Finish: ...]")
 — as they appear in the output stream, and the Logs tab collects log
-records. The keys 1, 2, and 3 toggle each tab on and off (Output, Round,
-Logs respectively). All tabs are closed by default; a closed tab opens
+records. The keys 1, 2, and 3 select the corresponding tab (Output, Round,
+Logs respectively): pressing a focused tab's key closes it and moves the
+focus to the next open tab, while pressing a non-focused or closed tab's
+key opens it (if closed) and takes the focus. Switching to an already-open
+tab keeps its current view; reopening a closed tab resumes following the
+live tail. All tabs are closed by default; a closed tab opens
 automatically as soon as content for it arrives — the Output tab on any
 streamed output, the Round tab on a parsed summary block or a finish line,
 the Logs tab on any log record — so the interface surfaces panes only when
@@ -474,24 +478,33 @@ func scrollClamp(offset, displayLines, paneHeight int) int {
 	return offset
 }
 
+// toggleTab implements the number-key semantics (keys 1, 2, 3): pressing
+// a tab's key toggles its focus. When the tab is focused, it is closed
+// and the focus moves to the next open tab. When it is not focused (or
+// closed), it is opened (if closed) and becomes the focus. Reopening a
+// closed tab resumes following the live tail, even if the user had
+// scrolled away before hiding it; switching to an already-open tab keeps
+// its current view. See TheoryOfTUI.
 func (t *TUI) toggleTab(idx int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	wasOpen := t.open[idx]
-	t.open[idx] = !wasOpen
-	if !wasOpen {
-		// Reopening a closed tab resumes following the live tail, even if
-		// the user had scrolled away before hiding it: the pane returns to
-		// the latest content. See TheoryOfTUI.
-		t.follow[idx] = true
-	}
-	if t.focus == idx && !t.open[idx] {
+	if t.focus == idx {
+		// A focused tab's key closes it and moves the focus to the next
+		// open tab.
+		t.open[idx] = false
 		t.cycleFocus()
 		return
 	}
-	if t.focus == -1 && t.open[idx] {
-		t.focus = idx
+	if !t.open[idx] {
+		// Opening a closed tab resumes following the live tail, even if
+		// the user had scrolled away before hiding it: the pane returns
+		// to the latest content. See TheoryOfTUI.
+		t.open[idx] = true
+		t.follow[idx] = true
 	}
+	// A non-focused tab's key (open or closed) makes it the focus;
+	// switching to an already-open tab keeps its current view.
+	t.focus = idx
 }
 
 // cycleFocus advances the focus to the next open tab after the current

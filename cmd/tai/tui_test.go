@@ -547,45 +547,88 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	}
 }
 
-func TestTUIToggleTabs(t *testing.T) {
+func TestTUINumberKeySemantics(t *testing.T) {
 	tui := &TUI{}
-	tui.open = [3]bool{true, true, true}
+	tui.open = [3]bool{true, true, false}
 	tui.focus = 0
 
-	// Closing the focused tab moves the focus to the next open tab.
+	// Focused tab: pressing its key closes it and moves the focus to
+	// the next open tab.
 	tui.toggleTab(0)
 	if tui.open[0] {
-		t.Fatal("output tab should be closed")
+		t.Fatal("focused output tab should be closed")
 	}
 	if tui.focus != 1 {
-		t.Fatalf("focus should move to the summary tab, got %d", tui.focus)
+		t.Fatalf("focus should move to the next open tab, got %d", tui.focus)
 	}
 
-	// Closing a non-focused tab leaves the focus unchanged.
+	// Closed tab: pressing its key opens it and switches the focus to it.
 	tui.toggleTab(2)
-	if tui.open[2] {
-		t.Fatal("logs tab should be closed")
+	if !tui.open[2] {
+		t.Fatal("closed logs tab should open")
+	}
+	if tui.focus != 2 {
+		t.Fatalf("focus should switch to the logs tab, got %d", tui.focus)
+	}
+
+	// Open non-focused tab: pressing its key switches the focus to it
+	// without closing it.
+	tui.toggleTab(1)
+	if !tui.open[1] {
+		t.Fatal("open round tab must stay open")
 	}
 	if tui.focus != 1 {
-		t.Fatalf("focus should stay on the summary tab, got %d", tui.focus)
+		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
+	}
+
+	// Focused tab again: pressing its key closes it, leaving the other
+	// open tab focused.
+	tui.toggleTab(1)
+	if tui.open[1] {
+		t.Fatal("focused round tab should close")
+	}
+	if tui.focus != 2 {
+		t.Fatalf("focus should move to the logs tab, got %d", tui.focus)
 	}
 
 	// Closing the last open tab clears the focus.
-	tui.toggleTab(1)
-	if tui.open[1] {
-		t.Fatal("summary tab should be closed")
+	tui.toggleTab(2)
+	if tui.open[2] {
+		t.Fatal("focused logs tab should close")
 	}
 	if tui.focus != -1 {
 		t.Fatalf("focus should be -1 when no tab is open, got %d", tui.focus)
 	}
+}
 
-	// Reopening a tab restores the focus to it.
-	tui.toggleTab(2)
-	if !tui.open[2] {
-		t.Fatal("logs tab should be reopened")
+func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
+	tui := &TUI{}
+	tui.open = [3]bool{true, true, false}
+	tui.focus = 0
+	tui.follow = [3]bool{false, true, false}
+
+	// Switching to an already-open non-focused tab keeps its view: the
+	// tab's follow state is untouched, so a scrolled position survives.
+	tui.toggleTab(1)
+	if tui.focus != 1 {
+		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
 	}
-	if tui.focus != 2 {
-		t.Fatalf("focus should be on the reopened logs tab, got %d", tui.focus)
+	if !tui.follow[1] {
+		t.Fatal("switching to an open tab must keep its follow state")
+	}
+
+	// Closing and reopening the focused tab resumes following the live
+	// tail.
+	tui.toggleTab(1)
+	if tui.open[1] {
+		t.Fatal("focused round tab should close")
+	}
+	tui.toggleTab(1)
+	if !tui.open[1] {
+		t.Fatal("closed round tab should reopen")
+	}
+	if !tui.follow[1] {
+		t.Fatal("reopening a closed tab must resume following")
 	}
 }
 
