@@ -1315,18 +1315,18 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 	}
 }
 
-func TestWithFinishReasonObserver(t *testing.T) {
-	// The TUI's finish-reason observer must be passed through
+func TestWithTUIOutputObserver(t *testing.T) {
+	// The TUI's output observer must be passed through
 	// RunOptions.StateDecorators so the loop applies it to the
-	// generation state. Without the wrapper, the finish reason never
-	// reaches the Round tab. See TheoryOfTUI.
+	// generation state. Without the wrapper, the model output and
+	// finish reasons never reach the TUI. See TheoryOfTUI.
 	tui := &TUI{}
 	var gotOpts loops.RunOptions
 	run := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
 		gotOpts = opts
 		return loops.Result{}, nil
 	}
-	wrapped := withFinishReasonObserver(run, tui)
+	wrapped := withTUIOutputObserver(run, tui)
 
 	_, err := wrapped(context.Background(), loops.RunOptions{})
 	if err != nil {
@@ -1336,10 +1336,38 @@ func TestWithFinishReasonObserver(t *testing.T) {
 		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))
 	}
 
-	// Apply the decorator to a state and append a FinishReason part: the
-	// finish reason must be forwarded to the TUI's Round tab.
+	// Apply the decorator to a state and append content: text streams
+	// to the Output tab, thoughts are wrapped in the thinking/response
+	// markers, and finish reasons reach the Round tab.
 	var state generators.State = generators.NewPrompts("", nil)
 	state, err = gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text("model output\n"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Thought("deep thinking\n"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text("answer\n"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = state.AppendContent(&generators.Content{
 		Role: generators.RoleLog,
 		Parts: []generators.Part{
 			generators.FinishReason("stop"),
@@ -1348,8 +1376,15 @@ func TestWithFinishReasonObserver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
+	output := strings.Join(tui.lines, "\n")
+	for _, want := range []string{"model output", "\n thinking\n", "deep thinking", "\n response\n", "answer"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in output, got %q", want, output)
+		}
+	}
 	if len(tui.signals) != 1 || tui.signals[0] != "[Finish: stop]" {
 		t.Fatalf("expected finish reason in round tab, got %v", tui.signals)
 	}

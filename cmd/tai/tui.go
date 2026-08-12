@@ -14,7 +14,6 @@ import (
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/loops"
@@ -30,11 +29,16 @@ const TheoryOfTUI = `
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
 signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
-— and the Logs tab collects log records. Summary bodies are parsed from the
-streamed output, while finish reasons are read directly from the generation
-state's FinishReason parts via a state decorator passed through
-RunOptions.StateDecorators by runWithTUI; the Round tab never scans rendered
-text for "[Finish: ...]" markers. The keys
+— and the Logs tab collects log records. Model output is captured from the
+generation state by the tuiOutputState decorator, passed through
+RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
+tab, thoughts are wrapped in the thinking/response markers the terminal
+Output layer uses, tool calls render as markers, and finish reasons are
+read directly from the state's FinishReason parts. Summary bodies are
+parsed from the streamed text parts, so the TUI never scans rendered text
+for "[Finish: ...]" markers and never captures model output through a
+stdout pipe; stdout is discarded in TUI mode, while stderr stays visible
+in the Output tab. The keys
 1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
 pressing a focused tab's key collapses it to a thin strip showing the tab's
 key and title, and moves the focus to the expanded tab that was last focused
@@ -70,7 +74,7 @@ type Tui bool
 
 func (Module) Tui() Tui { return false }
 
-var _ flags.Flag = Tui(false)
+var _ generators.State = tuiOutputState{}
 
 func (t Tui) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	ret := Tui(true)
@@ -81,55 +85,52 @@ func (t Tui) Keys() map[string]string {
 	return map[string]string{"-tui": "Use the TUI interface"}
 }
 
-type stateFinishReason struct {
+// tuiOutputState is a State decorator that forwards the model's output
+// content to the TUI for display. It observes every content appended to
+// the generation state and extracts the parts the TUI displays: text and
+// thoughts stream to the Output tab (thoughts wrapped in the
+// thinking/response markers the terminal Output layer uses), function
+// calls and results render as markers, errors are shown inline, and
+// finish reasons go to the Round tab. It replaces stateFinishReason:
+// finish reasons are captured here, not by a separate decorator. See
+// TheoryOfTUI.
+type tuiOutputState struct {
 	upstream generators.State
-	onFinish func(generators.FinishReason)
+	tui      *TUI
 }
 
-func (s stateFinishReason) AppendContent(content *generators.Content) (generators.State, error) {
-	// FinishReason parts are read directly from the generation state,
-	// not scanned from rendered text. See TheoryOfTUI.
-	if s.onFinish != nil {
-		for _, part := range content.Parts {
-			if reason, ok := part.(generators.FinishReason); ok {
-				s.onFinish(reason)
-			}
-		}
-	}
+func (s tuiOutputState) AppendContent(content *generators.Content) (generators.State, error) {
+	// Forward the content parts to the TUI before propagating to
+	// upstream, so the display keeps up with the stream.
+	s.tui.captureContent(content)
 	newUpstream, err := s.upstream.AppendContent(content)
 	if err != nil {
 		return nil, err
 	}
-	return stateFinishReason{
-		upstream: newUpstream,
-		onFinish: s.onFinish,
-	}, nil
+	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
 
-func (s stateFinishReason) Contents() iter.Seq[*generators.Content] {
+func (s tuiOutputState) Contents() iter.Seq[*generators.Content] {
 	return s.upstream.Contents()
 }
 
-func (s stateFinishReason) Functions() iter.Seq[*generators.Function] {
+func (s tuiOutputState) Functions() iter.Seq[*generators.Function] {
 	return s.upstream.Functions()
 }
 
-func (s stateFinishReason) SystemPrompt() string {
+func (s tuiOutputState) SystemPrompt() string {
 	return s.upstream.SystemPrompt()
 }
 
-func (s stateFinishReason) Flush() (generators.State, error) {
+func (s tuiOutputState) Flush() (generators.State, error) {
 	newUpstream, err := s.upstream.Flush()
 	if err != nil {
 		return nil, err
 	}
-	return stateFinishReason{
-		upstream: newUpstream,
-		onFinish: s.onFinish,
-	}, nil
+	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
 
-func (s stateFinishReason) Unwrap() generators.State {
+func (s tuiOutputState) Unwrap() generators.State {
 	return s.upstream
 }
 
@@ -182,6 +183,14 @@ type tuiState struct {
 	// See TheoryOfTUI.
 	generating bool
 
+	// thoughtOpen reports whether a " thinking" marker is currently open
+	// in the Output tab. Thoughts streamed in multiple chunks keep a
+	// single open marker until a non-thought part, a finish reason, or
+	// the session end closes it. It is accessed only from the generation
+	// goroutine (captureContent and finishReason), so it is never
+	// accessed concurrently. See TheoryOfTUI.
+	thoughtOpen bool
+
 	// follow reports whether each tab's view sticks to the latest content.
 	// It starts true; manual scrolling away clears it, and reaching the
 	// latest row sets it again. See TheoryOfTUI.
@@ -212,17 +221,17 @@ func (s *tuiState) write(p []byte) {
 	s.appendOutput(p)
 }
 
-// finishReason appends a finish line to the Round tab's signals. A
-// finish line clears the generating hint set by the request-start log,
-// so the Output tab title returns to plain once the request completes.
-// A collapsed Round tab expands automatically on the first finish
-// reason. See TheoryOfTUI.
 func (s *tuiState) finishReason(reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if reason == "" {
 		return
 	}
+	// Close any open thought marker: the finish reason marks the end of
+	// the model's output, so a thought left open by the last streamed
+	// chunk is closed before the finish line is recorded. See
+	// TheoryOfTUI.
+	s.closeThoughtLocked()
 	s.autoExpand(1)
 	// The finish reason marks the end of the generation request: the
 	// Output tab's "generating..." hint clears once the request has
@@ -233,6 +242,17 @@ func (s *tuiState) finishReason(reason string) {
 	if len(s.signals) > maxTUISignals {
 		s.signals = append([]string(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 	}
+}
+
+// closeThoughtLocked closes an open thought marker in the Output tab,
+// appending the closing " response" line and clearing the open flag.
+// The caller must hold mu. See TheoryOfTUI.
+func (s *tuiState) closeThoughtLocked() {
+	if !s.thoughtOpen {
+		return
+	}
+	s.appendOutput([]byte("\n response\n"))
+	s.thoughtOpen = false
 }
 
 // writeLogs appends log output to the logs buffer, splitting it into lines
@@ -531,6 +551,57 @@ func (t *TUI) LogsWriter() io.Writer {
 	return logsWriter{t}
 }
 
+// captureContent forwards the visible parts of a content to the TUI.
+// Text parts stream to the Output tab; thoughts stream with the
+// thinking/response markers the terminal Output layer uses, keeping a
+// single open marker across chunks until a non-thought part, a finish
+// reason, or the session end closes it; function calls, call results,
+// and errors render as markers; finish reasons go to the Round tab.
+// Internal metadata parts (Usage) are skipped. It is called from the
+// generation goroutine via tuiOutputState.AppendContent, the only
+// goroutine that reads or writes thoughtOpen. See TheoryOfTUI.
+func (t *TUI) captureContent(content *generators.Content) {
+	for _, part := range content.Parts {
+		switch p := part.(type) {
+		case generators.Text:
+			t.closeThought()
+			if len(p) > 0 {
+				t.write([]byte(p))
+			}
+		case generators.Thought:
+			if len(p) > 0 {
+				if !t.thoughtOpen {
+					t.write([]byte(" thinking\n"))
+					t.thoughtOpen = true
+				}
+				t.write([]byte(p))
+			}
+		case generators.FuncCall:
+			t.closeThought()
+			t.write([]byte(fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments)))
+		case generators.CallResult:
+			t.closeThought()
+			t.write([]byte(fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results)))
+		case generators.FinishReason:
+			t.finishReason(string(p))
+		case generators.Error:
+			t.closeThought()
+			if p.Error != nil {
+				t.write([]byte(fmt.Sprintf("[Error: %v]", p.Error)))
+			}
+		}
+	}
+}
+
+// closeThought closes an open thought marker in the Output tab. It is
+// called from the generation goroutine (captureContent), which is the
+// only goroutine that reads or writes thoughtOpen. See TheoryOfTUI.
+func (t *TUI) closeThought() {
+	t.mu.Lock()
+	t.closeThoughtLocked()
+	t.mu.Unlock()
+}
+
 func (t *TUI) notify() {
 	select {
 	case t.updateCh <- struct{}{}:
@@ -659,12 +730,14 @@ func (t *TUI) Run(gen func()) error {
 				t.write([]byte(fmt.Sprintf("[panic] %v\n", r)))
 			}
 			t.mu.Lock()
-			t.finished = true
-			// The session has ended: no request is in flight, so the
-			// generating hint is cleared with the finished state. A
-			// request that returned without a finish line (e.g., an
-			// error path) must not leave the hint stuck on.
+			// The session has ended: close any open thought marker so
+			// the Output tab does not end on an unclosed " thinking"
+			// line, then clear the in-flight hint with the finished
+			// state. A request that returned without a finish line
+			// (e.g., an error path) must not leave the hint stuck on.
 			// See TheoryOfTUI.
+			t.closeThoughtLocked()
+			t.finished = true
 			t.generating = false
 			t.mu.Unlock()
 			t.notify()
@@ -1178,19 +1251,19 @@ func readTUIKeys(r io.Reader, ch chan<- string) {
 	}
 }
 
-// withFinishReasonObserver wraps a loops.Run so that FinishReason parts
-// appended to the generation state are forwarded to the TUI's Round tab.
-// The decorator is passed through RunOptions.StateDecorators, so the
-// loop applies it to the generation state before the phase chain runs.
-// See TheoryOfTUI.
-func withFinishReasonObserver(run loops.Run, tui *TUI) loops.Run {
+// withTUIOutputObserver wraps a loops.Run so that model output content
+// appended to the generation state is forwarded to the TUI. The
+// decorator is passed through RunOptions.StateDecorators, so the loop
+// applies it to the generation state before the phase chain runs. It
+// replaces withFinishReasonObserver: output text, thoughts, tool calls,
+// and finish reasons are all captured by the same decorator. See
+// TheoryOfTUI.
+func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
 	return func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
-			return stateFinishReason{
+			return tuiOutputState{
 				upstream: state,
-				onFinish: func(reason generators.FinishReason) {
-					tui.finishReason(string(reason))
-				},
+				tui:      tui,
 			}
 		})
 		return run(ctx, opts)
@@ -1204,47 +1277,64 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		scope.Fork(command.Defs...).Call(command.Main)
 		return
 	}
-	pr, pw, err := os.Pipe()
+	oldOut, oldErr := os.Stdout, os.Stderr
+
+	// The TUI is the display. Model output is captured from the
+	// generation state by the tuiOutputState decorator, and log records
+	// are routed to the Logs pane via the forked logs.Writer. Writes to
+	// stdout would corrupt the TUI rendering, so they are discarded by
+	// redirecting to the null device; writes to stderr (e.g., command
+	// error messages) stay visible in the Output tab via a pipe to the
+	// TUI writer. The stderr pipe is the only remaining pipe: model
+	// output never passes through it. See TheoryOfTUI.
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		_ = tui.Stop()
-		fmt.Fprintf(os.Stderr, "cannot create output pipe: %v; continuing without TUI\n", err)
+		fmt.Fprintf(os.Stderr, "cannot open %s: %v; continuing without TUI\n", os.DevNull, err)
 		scope.Fork(command.Defs...).Call(command.Main)
 		return
 	}
-	oldOut, oldErr := os.Stdout, os.Stderr
-	os.Stdout = pw
+	os.Stdout = devNull
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		_ = devNull.Close()
+		_ = tui.Stop()
+		fmt.Fprintf(os.Stderr, "cannot create stderr pipe: %v; continuing without TUI\n", err)
+		scope.Fork(command.Defs...).Call(command.Main)
+		return
+	}
 	os.Stderr = pw
-	copyDone := make(chan struct{})
+	stderrDone := make(chan struct{})
 	go func() {
-		defer close(copyDone)
+		defer close(stderrDone)
 		_, _ = io.Copy(tui.Writer(), pr)
 	}()
-	// In TUI mode, route logs to the logs pane instead of stderr. The
-	// logs.Writer provider is forked to the TUI's logs writer, so every
-	// log record lands in the logs pane and never in the output pipe.
-	//
-	// The state decorator wraps the generation state so FinishReason
-	// parts are read directly from the state and forwarded to the TUI's
-	// Round tab. This replaces the previous text-scanning approach: the
-	// Round tab never scans rendered output for "[Finish: ...]" markers.
-	// The decorator is passed through RunOptions.StateDecorators by
-	// wrapping the loops.Run provider: the original Run is resolved
-	// before the fork, and the wrapper appends the decorator to the
-	// options before delegating. See TheoryOfTUI.
+
+	// The state decorator wraps the generation state so model output —
+	// text, thoughts, tool calls, finish reasons — is read directly from
+	// the state and forwarded to the TUI. This replaces the previous
+	// stdout-pipe capture and finish-reason observer: the TUI no longer
+	// captures model output through a pipe, and the Round tab never
+	// scans rendered output for "[Finish: ...]" markers. The decorator
+	// is passed through RunOptions.StateDecorators by wrapping the
+	// loops.Run provider: the original Run is resolved before the fork,
+	// and the wrapper appends the decorator to the options before
+	// delegating. See TheoryOfTUI.
 	originalRun := dscope.Get[loops.Run](scope)
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
 		func() loops.Run {
-			return withFinishReasonObserver(originalRun, tui)
+			return withTUIOutputObserver(originalRun, tui)
 		},
 	)
 	runErr := tui.Run(func() {
 		scope.Fork(command.Defs...).Call(command.Main)
 	})
-	_ = pw.Close()
-	<-copyDone
-	_ = pr.Close()
 	os.Stdout, os.Stderr = oldOut, oldErr
+	_ = pw.Close()
+	<-stderrDone
+	_ = pr.Close()
+	_ = devNull.Close()
 	if runErr != nil {
 		fmt.Fprintf(oldErr, "%v\n", runErr)
 		os.Exit(1)
