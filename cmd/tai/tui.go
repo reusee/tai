@@ -79,7 +79,10 @@ side by side, a vertical split line) and horizontal splitting (tabs
 stacked, a horizontal split line). The default is horizontal splitting: the
 tabs are stacked vertically, one above the other. Tab cycles the focus among
 the expanded tabs, skipping collapsed ones; up/down and page up/down scroll
-the focused pane; home/end jump to the start/end. When the generation
+the focused pane; home/end jump to the start/end. Rendering is event-driven:
+every path that appends display content — model output captured by the state
+decorator, stderr pipe writes, and log records — notifies the render loop,
+so streamed output appears live without user input. When the generation
 finishes, the TUI stays open so the output can be browsed, and q quits the
 TUI.
 `
@@ -684,6 +687,13 @@ func (t *TUI) captureContent(content *generators.Content) {
 			}
 		}
 	}
+
+	// Notify the render loop that new output is available. Captured
+	// content appends directly to the display buffers, bypassing the
+	// tuiWriter path that notifies; without a notification the render
+	// loop stays blocked on the update channel and the pane appears
+	// frozen until an input key forces a re-render. See TheoryOfTUI.
+	t.notify()
 }
 
 // roleColor maps a content role to the display color used in the TUI,

@@ -1403,6 +1403,29 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	}
 }
 
+func TestTUICaptureContentNotifies(t *testing.T) {
+	// Model output captured via the state decorator must notify the
+	// render loop. The decorator appends content directly to the
+	// display buffers, bypassing the tuiWriter path that notifies;
+	// without a notification the loop stays blocked on the update
+	// channel and the output pane appears frozen until an input key
+	// forces a re-render. See TheoryOfTUI.
+	tui := &TUI{updateCh: make(chan struct{}, 1)}
+	state := generators.NewPrompts("", nil)
+	s := tuiOutputState{upstream: state, tui: tui}
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("model output\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-tui.updateCh:
+	default:
+		t.Fatal("expected a notification when model output is captured")
+	}
+}
+
 func TestRoleColor(t *testing.T) {
 	cases := []struct {
 		role generators.Role
