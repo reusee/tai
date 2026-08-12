@@ -145,6 +145,18 @@ required up front — are rendered and counted at all. See
 TheoryOfLazyVisibilityCosts.
 `
 
+const TheoryOfGoDocReadonly = `
+go doc runs with -mod=readonly (the go command's default) rather than the
+-mod=mod injected into the load environment for go list. The -mod=mod flag
+allows go list to update go.mod and go.sum when they are out of sync, but
+go doc must not modify go.sum: go mod tidy removes checksums for modules
+that are no longer needed, and go doc would add them back, causing go.sum
+to churn between tidy and doc invocations. With -mod=readonly, go doc
+fails instead of modifying go.sum when a checksum is missing; the failure
+is handled gracefully by the visibility system (fallback to code
+visibility) and surfaces as an error for -doc packages.
+`
+
 // contextTokenBudgetUnit is the base unit of the dynamic context token
 // budget: it is both the floor (minimum budget) and the alignment
 // multiple. The budget for context (non-focus) packages is
@@ -200,7 +212,14 @@ func renderPackageDoc(
 ) (content string, tokens int, err error) {
 	cmd := exec.Command("go", "doc", "-all", "-cmd", pkgPath)
 	cmd.Dir = dir
-	cmd.Env = envs
+	// go doc must not modify go.sum: the load environment injects
+	// -mod=mod (see TheoryOfModModEnv) so go list can update go.mod
+	// when it is out of sync, but go doc would then re-add checksums
+	// that go mod tidy removed, causing go.sum to churn. Stripping
+	// -mod=mod leaves the go command's default -mod=readonly, which
+	// fails instead of writing when a checksum is missing. See
+	// TheoryOfGoDocReadonly.
+	cmd.Env = withoutModModEnv(envs)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", 0, err
