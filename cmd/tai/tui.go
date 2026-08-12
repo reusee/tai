@@ -39,8 +39,8 @@ signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]"
 — and the Logs tab collects log records. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
-tab, thoughts are wrapped in the thinking/response markers the terminal
-Output layer uses, tool calls render as markers, and finish reasons are
+tab, thoughts are colored distinctly and separated from non-thought content
+by a blank line, tool calls render as markers, and finish reasons are
 read directly from the state's FinishReason parts. Initial contents of
 the generation state — the user's chat input and any plain-text content —
 are captured when the decorator is applied, so the user's input appears in
@@ -220,13 +220,20 @@ type tuiState struct {
 	// See TheoryOfTUI.
 	generating bool
 
-	// thoughtOpen reports whether a " thinking" marker is currently open
-	// in the Output tab. Thoughts streamed in multiple chunks keep a
-	// single open marker until a non-thought part, a finish reason, or
-	// the session end closes it. It is accessed only from the generation
-	// goroutine (captureContent and finishReason), so it is never
-	// accessed concurrently. See TheoryOfTUI.
-	thoughtOpen bool
+	// lastOutputRole is the role of the last content written to the
+	// Output tab. It is used with lastWasThought to insert a blank line
+	// separator when the output switches roles or switches between
+	// thinking and non-thinking content. It is only accessed by the
+	// generation goroutine via captureContent, so it is never accessed
+	// concurrently. See TheoryOfTUI.
+	lastOutputRole generators.Role
+	// lastWasThought reports whether the last content written to the
+	// Output tab was a thought. See lastOutputRole.
+	lastWasThought bool
+	// hasOutput reports whether any content has been written to the
+	// Output tab. It is false until the first part is written, so the
+	// first output never gets a leading blank line separator.
+	hasOutput bool
 
 	// follow reports whether each tab's view sticks to the latest content.
 	// It starts true; manual scrolling away clears it, and reaching the
@@ -269,11 +276,6 @@ func (s *tuiState) finishReason(reason string) {
 	if reason == "" {
 		return
 	}
-	// Close any open thought marker: the finish reason marks the end of
-	// the model's output, so a thought left open by the last streamed
-	// chunk is closed before the finish line is recorded. See
-	// TheoryOfTUI.
-	s.closeThoughtLocked()
 	s.autoExpand(1)
 	// The finish reason marks the end of the generation request: the
 	// Output tab's "generating..." hint clears once the request has
@@ -284,14 +286,6 @@ func (s *tuiState) finishReason(reason string) {
 	if len(s.signals) > maxTUISignals {
 		s.signals = append([]outputLine(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 	}
-}
-
-func (s *tuiState) closeThoughtLocked() {
-	if !s.thoughtOpen {
-		return
-	}
-	s.appendOutput(outputColorThought, []byte("\n response\n"))
-	s.thoughtOpen = false
 }
 
 // writeLogs appends log output to the logs buffer, splitting it into lines
@@ -647,42 +641,35 @@ func (t *TUI) LogsWriter() io.Writer {
 // captureContent forwards the visible parts of a content to the TUI,
 // coloring them by role to match the non-TUI output colors.
 // Text parts stream to the Output tab colored by the content role;
-// thoughts stream with the thinking/response markers the terminal
-// Output layer uses, all colored as thoughts; function calls, call
-// results, and errors render as markers colored by role; finish
-// reasons go to the Round tab colored as log lines. Internal metadata
-// parts (Usage) are skipped. It is called from the generation
-// goroutine via tuiOutputState.AppendContent, the only goroutine that
-// reads or writes thoughtOpen. See TheoryOfTUI.
+// thoughts stream colored distinctly, separated from non-thought
+// content by a blank line; function calls, call results, and errors
+// render as markers colored by role; finish reasons go to the Round
+// tab colored as log lines. Internal metadata parts (Usage) are
+// skipped. It is called from the generation goroutine via
+// tuiOutputState.AppendContent, the only goroutine that reads or
+// writes the output-section state (lastOutputRole, lastWasThought,
+// hasOutput). See TheoryOfTUI.
 func (t *TUI) captureContent(content *generators.Content) {
-	color := roleColor(content.Role)
+	role := content.Role
 	for _, part := range content.Parts {
 		switch p := part.(type) {
 		case generators.Text:
-			t.closeThought()
 			if len(p) > 0 {
-				t.writeColored(color, []byte(p))
+				t.writeOutputPart(role, roleColor(role), false, string(p))
 			}
 		case generators.Thought:
 			if len(p) > 0 {
-				if !t.thoughtOpen {
-					t.writeColored(outputColorThought, []byte(" thinking\n"))
-					t.thoughtOpen = true
-				}
-				t.writeColored(outputColorThought, []byte(p))
+				t.writeOutputPart(role, outputColorThought, true, string(p))
 			}
 		case generators.FuncCall:
-			t.closeThought()
-			t.writeColored(color, []byte(fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments)))
+			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments))
 		case generators.CallResult:
-			t.closeThought()
-			t.writeColored(color, []byte(fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results)))
+			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results))
 		case generators.FinishReason:
 			t.finishReason(string(p))
 		case generators.Error:
-			t.closeThought()
 			if p.Error != nil {
-				t.writeColored(color, []byte(fmt.Sprintf("[Error: %v]", p.Error)))
+				t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Error: %v]", p.Error))
 			}
 		}
 	}
@@ -693,6 +680,36 @@ func (t *TUI) captureContent(content *generators.Content) {
 	// loop stays blocked on the update channel and the pane appears
 	// frozen until an input key forces a re-render. See TheoryOfTUI.
 	t.notify()
+}
+
+// writeOutputPart writes one output part to the Output tab, inserting a
+// blank line separator when the output switches roles or switches between
+// thinking and non-thinking content. The section state (hasOutput,
+// lastOutputRole, lastWasThought) is only accessed by the generation
+// goroutine via captureContent, so it is read and written without a lock.
+func (t *TUI) writeOutputPart(role generators.Role, color int32, isThought bool, text string) {
+	if t.hasOutput && (role != t.lastOutputRole || isThought != t.lastWasThought) {
+		t.separateOutput()
+	}
+	t.writeColored(color, []byte(text))
+	t.lastOutputRole = role
+	t.lastWasThought = isThought
+	t.hasOutput = true
+}
+
+// separateOutput writes a blank line separator between different output
+// sections. A single newline creates a blank line when the previous
+// output ended with a newline; otherwise two newlines are needed to
+// produce an empty line. It locks the state because the output buffer is
+// shared with the stderr writer.
+func (t *TUI) separateOutput() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.partial.text == "" {
+		t.appendOutput(0, []byte("\n"))
+	} else {
+		t.appendOutput(0, []byte("\n\n"))
+	}
 }
 
 // roleColor maps a content role to the display color used in the TUI,
@@ -712,15 +729,6 @@ func roleColor(role generators.Role) int32 {
 	default:
 		return 0
 	}
-}
-
-// closeThought closes an open thought marker in the Output tab. It is
-// called from the generation goroutine (captureContent), which is the
-// only goroutine that reads or writes thoughtOpen. See TheoryOfTUI.
-func (t *TUI) closeThought() {
-	t.mu.Lock()
-	t.closeThoughtLocked()
-	t.mu.Unlock()
 }
 
 func (t *TUI) notify() {
@@ -851,13 +859,10 @@ func (t *TUI) Run(gen func()) error {
 				t.write([]byte(fmt.Sprintf("[panic] %v\n", r)))
 			}
 			t.mu.Lock()
-			// The session has ended: close any open thought marker so
-			// the Output tab does not end on an unclosed " thinking"
-			// line, then clear the in-flight hint with the finished
-			// state. A request that returned without a finish line
-			// (e.g., an error path) must not leave the hint stuck on.
-			// See TheoryOfTUI.
-			t.closeThoughtLocked()
+			// The session has ended: clear the in-flight hint with the
+			// finished state. A request that returned without a finish
+			// line (e.g., an error path) must not leave the hint stuck
+			// on. See TheoryOfTUI.
 			t.finished = true
 			t.generating = false
 			t.mu.Unlock()

@@ -1344,8 +1344,8 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	}
 
 	// Apply the decorator to a state and append content: text streams
-	// to the Output tab, thoughts are wrapped in the thinking/response
-	// markers, and finish reasons reach the Round tab.
+	// to the Output tab, thoughts are separated by blank lines and
+	// colored distinctly, and finish reasons reach the Round tab.
 	var state generators.State = generators.NewPrompts("", nil)
 	state, err = gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
 		Role: generators.RoleModel,
@@ -1392,10 +1392,18 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		sb.WriteString("\n")
 	}
 	output := sb.String()
-	for _, want := range []string{"model output", "\n thinking\n", "deep thinking", "\n response\n", "answer"} {
+	// The thought is separated from the surrounding text by blank lines,
+	// with no "thinking"/"response" labels.
+	for _, want := range []string{"model output", "deep thinking", "answer"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in output, got %q", want, output)
 		}
+	}
+	if !strings.Contains(output, "deep thinking\n\nanswer") {
+		t.Fatalf("expected a blank line between the thought and the answer, got %q", output)
+	}
+	if strings.Contains(output, "\n thinking\n") || strings.Contains(output, "\n response\n") {
+		t.Fatalf("expected no thinking/response labels in output, got %q", output)
 	}
 	if len(tui.signals) != 1 || tui.signals[0].text != "[Finish: stop]" {
 		t.Fatalf("expected finish reason in round tab, got %v", tui.signals)
@@ -1583,14 +1591,20 @@ func TestTUICaptureContentRoleColors(t *testing.T) {
 	}
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
+	// Each role switch inserts a blank line separator between the
+	// colored sections.
 	want := []struct {
 		text  string
 		color int32
 	}{
 		{"user", outputColorUser},
+		{"", 0},
 		{"model", 0},
+		{"", 0},
 		{"tool", outputColorTool},
+		{"", 0},
 		{"system", outputColorSystem},
+		{"", 0},
 		{"log", outputColorLog},
 	}
 	if len(tui.lines) != len(want) {
@@ -1621,17 +1635,15 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 	}
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	// The closing " response" marker begins with a newline, which
-	// produces an empty thought-colored line, matching the non-TUI
-	// terminal output.
+	// The thought is colored distinctly, and a blank line separates it
+	// from the following answer text. No "thinking"/"response" labels
+	// are emitted.
 	want := []struct {
 		text  string
 		color int32
 	}{
-		{" thinking", outputColorThought},
 		{"thinking", outputColorThought},
-		{"", outputColorThought},
-		{" response", outputColorThought},
+		{"", 0},
 		{"answer", 0},
 	}
 	if len(tui.lines) != len(want) {
