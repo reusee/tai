@@ -258,6 +258,30 @@ func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
 	}
 }
 
+func TestTuiOutputPreservesIndentation(t *testing.T) {
+	// The TUI wraps streamed output with taiui.WrapLines before display.
+	// An indented code line that fits the tab width must keep its
+	// indentation; without the wrap fast path, the slow path dropped
+	// leading spaces and code displayed in the TUI lost all indentation.
+	st := &tuiState{}
+	st.write([]byte("    func main() {\n        fmt.Println(1)\n    }\n"))
+	lines := st.outputLinesForRender()
+	wrapped := taiui.WrapLines(lines, 80)
+	want := []string{
+		"    func main() {",
+		"        fmt.Println(1)",
+		"    }",
+	}
+	if len(wrapped) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %q", len(want), len(wrapped), wrapped)
+	}
+	for i := range want {
+		if wrapped[i] != want[i] {
+			t.Fatalf("line %d: got %q, want %q", i, wrapped[i], want[i])
+		}
+	}
+}
+
 func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
 	// A fragment whose closing line is still streaming must be kept, not
 	// skipped: no complete block exists beyond it, so the parser waits

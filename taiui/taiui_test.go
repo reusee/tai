@@ -542,6 +542,26 @@ func TestWrapLineLimit(t *testing.T) {
 	}
 }
 
+func TestWrapLinePreservesIndentation(t *testing.T) {
+	options := displaywidth.Options{}
+	// An indented code line that fits the box is returned unchanged:
+	// the wrap fast path never re-flows text that fits, so indentation
+	// survives in terminal output.
+	if got := wrapLine("    func main() {", 40, options); !sameStrings(got, []string{"    func main() {"}) {
+		t.Fatalf("indented fitting line: got %q", got)
+	}
+	// When a line wraps, the indentation stays on the first line and
+	// the whitespace at the wrap boundary is dropped; the continuation
+	// line starts at the left column.
+	if got := wrapLine("    hello world", 12, options); !sameStrings(got, []string{"    hello", "world"}) {
+		t.Fatalf("indented wrapped line: got %q", got)
+	}
+	// Runs of consecutive spaces between words survive in wrapped lines.
+	if got := wrapLine("ab  cd ef", 8, options); !sameStrings(got, []string{"ab  cd", "ef"}) {
+		t.Fatalf("double space in wrapped line: got %q", got)
+	}
+}
+
 func TestWrapLineCluster(t *testing.T) {
 	options := displaywidth.Options{}
 	// Wide clusters hard-break at cluster boundaries: cluster(2) + 'x'(1)
@@ -775,6 +795,23 @@ func TestTextWrapHardBreak(t *testing.T) {
 	}
 	if r := screen.cell(3, 1); r != 'h' {
 		t.Fatalf("expected 'h' at (3,1), got %v", r)
+	}
+}
+
+func TestTextWrapPreservesIndentation(t *testing.T) {
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 80},
+		Text("    func main() {", Wrap(true)),
+	)})
+	Render(scope, screen)
+	// The indented code line keeps its indentation through the
+	// render-time wrap: a fitting indented line is returned unchanged
+	// by the wrap function, so its leading spaces reach the frame.
+	for x, want := range []rune{' ', ' ', ' ', ' ', 'f'} {
+		if r := screen.cell(x, 0); r != want {
+			t.Fatalf("expected %q at (%d,0), got %q", want, x, r)
+		}
 	}
 }
 
@@ -2282,17 +2319,17 @@ func TestWrapLineFastPathSpaces(t *testing.T) {
 	if got := wrapLine("a\tb", 8, options); !sameStrings(got, []string{"a b"}) {
 		t.Fatalf("tab line: got %q", got)
 	}
-	// A line with leading or trailing spaces is not fast-pathed: the
-	// slow path trims them.
-	if got := wrapLine(" hello", 10, options); !sameStrings(got, []string{"hello"}) {
+	// Fitting lines keep their leading and trailing spaces: indentation
+	// must survive wrapping, so an indented code line is returned
+	// unchanged.
+	if got := wrapLine(" hello", 10, options); !sameStrings(got, []string{" hello"}) {
 		t.Fatalf("leading space: got %q", got)
 	}
-	if got := wrapLine("hello ", 10, options); !sameStrings(got, []string{"hello"}) {
+	if got := wrapLine("hello ", 10, options); !sameStrings(got, []string{"hello "}) {
 		t.Fatalf("trailing space: got %q", got)
 	}
-	// A line with consecutive spaces is not fast-pathed: the slow path
-	// collapses them.
-	if got := wrapLine("a  b", 10, options); !sameStrings(got, []string{"a b"}) {
+	// A line with consecutive spaces keeps them when it fits.
+	if got := wrapLine("a  b", 10, options); !sameStrings(got, []string{"a  b"}) {
 		t.Fatalf("double space: got %q", got)
 	}
 }
