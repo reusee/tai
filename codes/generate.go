@@ -785,7 +785,7 @@ func (Module) GenerateWithResultWithStats(
 			state, err = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
-					generators.Text("\n``` begin of user input\n" + chats + "\n``` end of user input\n"),
+					generators.Text(chats),
 				},
 			})
 			if err != nil {

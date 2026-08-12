@@ -15,6 +15,7 @@ import (
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/loops"
@@ -41,12 +42,13 @@ generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
 by a blank line, tool calls render as markers, and finish reasons are
-read directly from the state's FinishReason parts. Initial contents of
-the generation state — the user's chat input and any plain-text content —
-are captured when the decorator is applied, so the user's input appears in
-the Output tab alongside the model output; file-context blocks wrapped
-with the file begin/end markers are skipped so the code context does not
-flood the tab. Summary bodies are
+read directly from the state's FinishReason parts. Only content appended
+after the decorator wraps the state is displayed; initial contents are not
+re-parsed or re-displayed, because unstructured text must not be
+imperfectly parsed. The one exception is the user's chat input: runWithTUI
+writes the flags.Chats content to the Output tab in the user role color
+before the command starts, so the user sees what the model was asked even
+though the chat lives in the initial state. Summary bodies are
 parsed from the streamed text parts, so the TUI never scans rendered text
 for "[Finish: ...]" markers and never captures model output through a
 stdout pipe; stdout is discarded in TUI mode, while stderr stays visible
@@ -1372,20 +1374,16 @@ func readTUIKeys(r io.Reader, ch chan<- string) {
 // decorator is passed through RunOptions.StateDecorators, so the loop
 // applies it to the generation state before the phase chain runs. It
 // replaces withFinishReasonObserver: output text, thoughts, tool calls,
-// and finish reasons are all captured by the same decorator. Initial
-// contents of the generation state are captured when the decorator is
-// applied, so the user's chat input appears in the Output tab. See
-// TheoryOfTUI.
+// and finish reasons are all captured by the same decorator. Only
+// content appended after the decorator wraps the state is displayed;
+// initial contents are not re-parsed. See TheoryOfTUI.
 func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
 	return func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
 			// The tuiOutputState layer observes only content appended
-			// after it wraps the state; the initial contents of the
-			// generation state are already present when the decorator is
-			// applied and would otherwise never reach the Output tab.
-			// Capture them now, skipping file-context blocks so the code
-			// context does not flood the tab. See TheoryOfTUI.
-			captureInitialContents(tui, state)
+			// after it wraps the state. Initial contents are not parsed
+			// or displayed: unstructured text must not be re-parsed for
+			// display. See TheoryOfTUI.
 			return tuiOutputState{
 				upstream: state,
 				tui:      tui,
@@ -1393,90 +1391,6 @@ func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
 		})
 		return run(ctx, opts)
 	}
-}
-
-// fileContextMarkers are the markers that open or close a file-context
-// block in the initial user content: the gocodes and anytexts code
-// providers wrap each file with "``` begin of focus file" / "``` begin
-// of context file" / "``` begin of file" markers, and -doc package
-// documentation uses "``` begin of context package". Such blocks are
-// skipped when capturing initial contents so the code context does not
-// flood the Output tab. See TheoryOfTUI.
-var fileContextMarkers = []string{
-	"``` begin of focus file ",
-	"``` begin of context file ",
-	"``` begin of context package ",
-	"``` begin of file ",
-	"``` end of focus file ",
-	"``` end of context file ",
-	"``` end of context package ",
-	"``` end of file ",
-}
-
-// userInputBeginMarker wraps the ai command's chat input in the initial
-// content. The markers are stripped so the user sees their raw input.
-const userInputBeginMarker = "``` begin of user input"
-
-// userInputEndMarker closes the ai command's chat input block.
-const userInputEndMarker = "``` end of user input"
-
-// captureInitialContents captures the initial contents of a generation
-// state into the TUI, skipping file-context blocks so the code context
-// does not flood the Output tab. The user's chat input — wrapped with
-// user-input markers in the ai command, or a separate plain-text content
-// in the codes pipeline — is shown. See TheoryOfTUI.
-func captureInitialContents(tui *TUI, state generators.State) {
-	if state == nil {
-		return
-	}
-	for content := range state.Contents() {
-		var parts []generators.Part
-		for _, part := range content.Parts {
-			text, ok := part.(generators.Text)
-			if !ok {
-				parts = append(parts, part)
-				continue
-			}
-			if displayed := stripFileContext(string(text)); displayed != "" {
-				parts = append(parts, generators.Text(displayed))
-			}
-		}
-		if len(parts) > 0 {
-			tui.captureContent(&generators.Content{
-				Role:  content.Role,
-				Parts: parts,
-			})
-		}
-	}
-}
-
-// stripFileContext returns the displayable portion of a text part from
-// an initial content: file-context blocks are dropped entirely, and the
-// user-input markers are stripped so the raw chat input is displayed.
-// The user-input block is extracted wherever it appears, because
-// Prompts.AppendContent merges adjacent Text parts: a chat message
-// appended after the code context can be glued to a file-context end
-// marker or a restate prompt, and the merged text must still show the
-// chat. Other text is returned unchanged. See TheoryOfTUI.
-func stripFileContext(text string) string {
-	trimmed := strings.TrimSpace(text)
-	// The user-input block may be merged with file context or restate
-	// prompts (Prompts.AppendContent merges adjacent Text parts), so it
-	// is extracted wherever the begin marker appears, not only at the
-	// start.
-	if idx := strings.Index(trimmed, userInputBeginMarker); idx >= 0 {
-		content := trimmed[idx+len(userInputBeginMarker):]
-		if end := strings.Index(content, userInputEndMarker); end >= 0 {
-			content = content[:end]
-		}
-		return strings.TrimSpace(content)
-	}
-	for _, marker := range fileContextMarkers {
-		if strings.HasPrefix(trimmed, marker) {
-			return ""
-		}
-	}
-	return text
 }
 
 func runWithTUI(command Command, scope dscope.Scope) {
@@ -1536,6 +1450,12 @@ func runWithTUI(command Command, scope dscope.Scope) {
 			return withTUIOutputObserver(originalRun, tui)
 		},
 	)
+	// Display the user's chat input (flags.Chats) at the top of the
+	// Output tab before the command starts generating. The chat lives in
+	// the initial generation state, which the tuiOutputState decorator
+	// does not display; writing it here gives the user a clear view of
+	// what the model was asked. See TheoryOfTUI.
+	displayChatInput(tui, dscope.Get[flags.Chats](scope))
 	runErr := tui.Run(func() {
 		scope.Fork(command.Defs...).Call(command.Main)
 	})
@@ -1548,4 +1468,17 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		fmt.Fprintf(oldErr, "%v\n", runErr)
 		os.Exit(1)
 	}
+}
+
+// displayChatInput writes the user's chat input (flags.Chats) to the
+// Output tab, colored as user input. The chat content lives in the
+// initial generation state, which the tuiOutputState decorator does not
+// display (only content appended after the decorator wraps the state is
+// shown). Writing it before the command starts gives the user a clear
+// view of what the model was asked. See TheoryOfTUI.
+func displayChatInput(tui *TUI, chats flags.Chats) {
+	if len(chats) == 0 {
+		return
+	}
+	tui.writeColored(outputColorUser, []byte(strings.Join(chats, "\n")+"\n"))
 }
