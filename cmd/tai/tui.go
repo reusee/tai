@@ -91,8 +91,11 @@ the focused pane; home/end jump to the start/end. Rendering is event-driven:
 every path that appends display content — model output captured by the state
 decorator, stderr pipe writes, and log records — notifies the render loop,
 so streamed output appears live without user input. When the generation
-finishes, the TUI stays open so the output can be browsed, and q quits the
-TUI.
+finishes, the TUI stays open so the output can be browsed, and q (or Ctrl-C)
+quits the TUI after a confirmation: the first press shows a confirmation bar
+at the bottom of the screen, and a second press quits; any other key cancels
+the confirmation and is processed normally, so an accidental q press never
+loses the session.
 `
 
 // Tui enables the terminal UI mode.
@@ -216,6 +219,13 @@ type tuiState struct {
 	topLogs  int
 	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none expanded
 	finished bool
+
+	// confirmQuit reports whether a quit confirmation is pending. The
+	// first press of a quit key (q, Q, or Ctrl-C) sets it and shows a
+	// confirmation bar at the bottom of the screen; a second quit key
+	// press quits, and any other key cancels the confirmation before
+	// its normal processing. See TheoryOfTUI.
+	confirmQuit bool
 
 	// generating reports whether a generation request is in flight. It
 	// is set when the generator's "generating" log record is observed
@@ -878,6 +888,30 @@ func (t *TUI) cycleFocus() {
 	t.focus = -1
 }
 
+// handleQuitKey processes a quit key press (q, Q, or Ctrl-C). The
+// first press sets confirmQuit, which shows a confirmation bar at the
+// bottom of the screen; the second press confirms the quit. It returns
+// true when the TUI should quit. Any other key cancels the
+// confirmation via cancelConfirmQuit. See TheoryOfTUI.
+func (t *TUI) handleQuitKey() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.confirmQuit {
+		return true
+	}
+	t.confirmQuit = true
+	return false
+}
+
+// cancelConfirmQuit cancels a pending quit confirmation. Every key
+// other than a quit key calls it before its normal processing, so an
+// accidental q press is undone by the next key. See TheoryOfTUI.
+func (t *TUI) cancelConfirmQuit() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.confirmQuit = false
+}
+
 func (t *TUI) Stop() error {
 	return t.tty.Stop()
 }
@@ -916,6 +950,13 @@ func (t *TUI) Run(gen func()) error {
 		t.render()
 		select {
 		case key := <-keyCh:
+			// Any key other than a quit key cancels a pending quit
+			// confirmation before its normal processing, so an
+			// accidental q press never loses the session. See
+			// TheoryOfTUI.
+			if key != "quit" {
+				t.cancelConfirmQuit()
+			}
 			switch key {
 			case "tab":
 				t.mu.Lock()
@@ -944,13 +985,17 @@ func (t *TUI) Run(gen func()) error {
 			case "end":
 				t.scrollTo(1 << 30)
 			case "quit":
-				io.WriteString(t.tty, "\x1b[0m")
-				fmt.Fprintf(t.tty, "\x1b[%d;1H", t.height)
-				io.WriteString(t.tty, "\x1b[?25h")
-				t.mu.Lock()
-				err := t.runErr
-				t.mu.Unlock()
-				return err
+				// The first quit key press shows a confirmation bar; a
+				// second press confirms the quit. See TheoryOfTUI.
+				if t.handleQuitKey() {
+					io.WriteString(t.tty, "\x1b[0m")
+					fmt.Fprintf(t.tty, "\x1b[%d;1H", t.height)
+					io.WriteString(t.tty, "\x1b[?25h")
+					t.mu.Lock()
+					err := t.runErr
+					t.mu.Unlock()
+					return err
+				}
 			}
 		case <-t.updateCh:
 		case <-resizeCh:
@@ -1204,6 +1249,20 @@ func (t *TUI) render() {
 	overlaySpecs := make([]any, len(panels))
 	for i, p := range panels {
 		overlaySpecs[i] = p
+	}
+	if t.confirmQuit {
+		// A pending quit confirmation draws a confirmation bar over the
+		// bottom row of the screen, on top of every tab, so it is always
+		// visible. The first quit key press sets confirmQuit; a second
+		// quit key press quits, and any other key cancels. See
+		// TheoryOfTUI.
+		overlaySpecs = append(overlaySpecs, taiui.Rect(
+			taiui.Box{Top: height - 1, Left: 0, Bottom: height, Right: width},
+			taiui.Fill(true),
+			taiui.BGColor(taiui.HexColor(0x800000)),
+			taiui.Bold(true),
+			taiui.Text(" Quit? Press q again to confirm, any other key to cancel "),
+		))
 	}
 	root := taiui.Root{Element: taiui.Overlay(overlaySpecs...)}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)

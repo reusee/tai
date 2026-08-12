@@ -1143,6 +1143,58 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	}
 }
 
+func TestTUIQuitConfirmation(t *testing.T) {
+	t.Run("FirstPressShowsConfirmationSecondPressQuits", func(t *testing.T) {
+		tui := &TUI{}
+		if tui.handleQuitKey() {
+			t.Fatal("the first quit key press must not quit")
+		}
+		if !tui.confirmQuit {
+			t.Fatal("the first quit key press must set the confirmation state")
+		}
+		if !tui.handleQuitKey() {
+			t.Fatal("the second quit key press must confirm the quit")
+		}
+	})
+
+	t.Run("AnyOtherKeyCancels", func(t *testing.T) {
+		tui := &TUI{}
+		tui.handleQuitKey()
+		if !tui.confirmQuit {
+			t.Fatal("expected the confirmation state after the first quit key")
+		}
+		tui.cancelConfirmQuit()
+		if tui.confirmQuit {
+			t.Fatal("a non-quit key must cancel the pending quit confirmation")
+		}
+		// After cancellation, a quit key press starts a new confirmation
+		// instead of quitting immediately.
+		if tui.handleQuitKey() {
+			t.Fatal("a quit key after cancellation must not quit immediately")
+		}
+	})
+
+	t.Run("ConfirmationBarRendered", func(t *testing.T) {
+		var sb strings.Builder
+		tui := &TUI{}
+		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		tui.confirmQuit = true
+		tui.render()
+		if !strings.Contains(sb.String(), "Quit?") {
+			t.Fatalf("expected the quit confirmation bar in the rendered output, got: %q", sb.String())
+		}
+		// Without a pending confirmation the bar is not drawn.
+		sb.Reset()
+		tui.confirmQuit = false
+		tui.render()
+		if strings.Contains(sb.String(), "Quit?") {
+			t.Fatalf("expected no confirmation bar without a pending confirmation, got: %q", sb.String())
+		}
+	})
+}
+
 func TestTabPanelBoxWeighted(t *testing.T) {
 	// Two expanded tabs and one collapsed tab on a 90-column screen: the
 	// collapsed tab takes one column at the right edge, and the expanded
