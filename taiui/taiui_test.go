@@ -2347,6 +2347,88 @@ func TestWrapLineFastPathSpaces(t *testing.T) {
 	}
 }
 
+func TestWrapCJKBreakAtAnyCluster(t *testing.T) {
+	options := displaywidth.Options{}
+	// Han characters have display width 2. A Han sequence is breakable
+	// at any cluster boundary: when the current line cannot fit the
+	// whole sequence but can fit part of it, the part stays on the line
+	// and the rest wraps. In a 4-column box, "ab" leaves two columns
+	// that "汉" fills (the boundary space is dropped), so "汉字" splits
+	// as "ab汉" + "字" instead of "ab" + "汉字".
+	got := wrapLine("ab 汉字", 4, options)
+	want := []string{"ab汉", "字"}
+	if !sameStrings(got, want) {
+		t.Fatalf("wrapLine(\"ab 汉字\", 4) = %q, want %q", got, want)
+	}
+
+	// In a 3-column box neither "ab 汉" (5 columns) nor "ab汉" (4) fits
+	// with the leading text, so each Han character gets its own line.
+	got = wrapLine("ab 汉字", 3, options)
+	want = []string{"ab", "汉", "字"}
+	if !sameStrings(got, want) {
+		t.Fatalf("wrapLine(\"ab 汉字\", 3) = %q, want %q", got, want)
+	}
+
+	// A pure Han line wraps at any cluster boundary when it exceeds the
+	// box width: two Han characters fill a 4-column line.
+	got = wrapLine("汉字测试", 4, options)
+	want = []string{"汉字", "测试"}
+	if !sameStrings(got, want) {
+		t.Fatalf("wrapLine(\"汉字测试\", 4) = %q, want %q", got, want)
+	}
+	got = wrapLine("汉字测试", 3, options)
+	want = []string{"汉", "字", "测", "试"}
+	if !sameStrings(got, want) {
+		t.Fatalf("wrapLine(\"汉字测试\", 3) = %q, want %q", got, want)
+	}
+
+	// Non-Han words remain unbreakable: a long word still hard-breaks
+	// only when it exceeds the box width.
+	got = wrapLine("ab cd", 3, options)
+	want = []string{"ab", "cd"}
+	if !sameStrings(got, want) {
+		t.Fatalf("wrapLine(\"ab cd\", 3) = %q, want %q", got, want)
+	}
+}
+
+func TestTextWrapCJKBreak(t *testing.T) {
+	// End-to-end rendering check: Han characters are two columns wide,
+	// so a 4-column box holds "ab汉" on the first row (the boundary
+	// space is dropped so the cluster fills the line), "字测" on the
+	// second, and "试" on the third. Without CJK break support, "汉字"
+	// would move as a whole to the next row, wasting the two columns
+	// after "ab".
+	screen := newFakeScreen(80, 25)
+	scope := newRootScope(Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
+		Text("ab 汉字测试", Wrap(true)),
+	)})
+	Render(scope, screen)
+
+	if r := screen.cell(0, 0); r != 'a' {
+		t.Fatalf("expected 'a' at (0,0), got %v", r)
+	}
+	if r := screen.cell(1, 0); r != 'b' {
+		t.Fatalf("expected 'b' at (1,0), got %v", r)
+	}
+	if r := screen.cell(2, 0); r != '汉' {
+		t.Fatalf("expected '汉' at (2,0), got %v", r)
+	}
+	if r := screen.cell(0, 1); r != '字' {
+		t.Fatalf("expected '字' at (0,1), got %v", r)
+	}
+	if r := screen.cell(2, 1); r != '测' {
+		t.Fatalf("expected '测' at (2,1), got %v", r)
+	}
+	if r := screen.cell(0, 2); r != '试' {
+		t.Fatalf("expected '试' at (0,2), got %v", r)
+	}
+	// The trailing column of the wide '汉' cluster is blank.
+	if cell := screen.lastCell(3, 0); cell.Set {
+		t.Fatalf("expected the trailing column of '汉' blank, got %+v", cell)
+	}
+}
+
 func TestWrapLinePreservesTabs(t *testing.T) {
 	options := displaywidth.Options{}
 	// Fitting lines with leading tabs (Go indentation) are preserved

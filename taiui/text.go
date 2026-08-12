@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/clipperhouse/displaywidth"
@@ -48,6 +49,10 @@ taiui text rendering theory:
   consecutive spaces survive, and only the whitespace at a wrap
   boundary is dropped. Indented code therefore keeps its layout in
   terminal output.
+- Han text is breakable at any cluster boundary: a Han sequence is
+  treated as a series of break opportunities rather than a single
+  unbreakable word, so a long Han sequence partially fills a line's
+  remaining space instead of moving as a whole to the next line.
 `
 
 // defaultTabWidth is the tab stop interval used by Text rendering and
@@ -578,6 +583,15 @@ func WrapLines(lines []string, width int) []string {
 	return out
 }
 
+// isCJKCluster reports whether a grapheme cluster begins with a Han
+// character. Han text is breakable at any cluster boundary, so such
+// clusters are treated as independent break opportunities rather than
+// as part of an unbreakable word.
+func isCJKCluster(cluster string) bool {
+	r, _ := utf8.DecodeRuneInString(cluster)
+	return unicode.Is(unicode.Han, r)
+}
+
 func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Options, iter *graphemes.Iterator[string], tabWidth int, out []string) []string {
 	if width <= 0 || limit == 0 {
 		return out
@@ -671,18 +685,12 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 		wsWidth = x - curWidth
 		need := wsWidth + wordWidth
 		if curWidth > 0 && curWidth+need > width {
-			// The word does not fit on the current line: flush it and
-			// drop the pending whitespace, which forms the wrap
-			// boundary.
 			if !flushLine() {
 				return false
 			}
 			ws = ws[:0]
 			wsWidth = 0
 		} else if curWidth == 0 && need > width {
-			// Leading whitespace with a word that overflows a fresh
-			// line: drop the whitespace so the word hard-breaks from
-			// the left column.
 			ws = ws[:0]
 			wsWidth = 0
 		}
@@ -698,6 +706,49 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 		return true
 	}
 
+	// addCJKCluster appends a Han cluster to the current line, honoring
+	// CJK break opportunities: the cluster may share a line with
+	// preceding text even when the pending whitespace would overflow.
+	// Whitespace is kept when it fits, dropped when only the cluster
+	// fits, and the line is flushed when neither fits.
+	addCJKCluster := func(cluster string, w int) bool {
+		wsWidth := 0
+		x := curWidth
+		for _, c := range ws {
+			if c == "\t" {
+				x = nextTabStop(x, 0, tabWidth)
+			} else {
+				x++
+			}
+		}
+		wsWidth = x - curWidth
+		if curWidth > 0 && curWidth+wsWidth+w <= width {
+			for _, c := range ws {
+				cur = append(cur, c)
+			}
+			curWidth += wsWidth
+			ws = ws[:0]
+			cur = append(cur, cluster)
+			curWidth += w
+			return true
+		}
+		if curWidth > 0 && curWidth+w <= width {
+			ws = ws[:0]
+			cur = append(cur, cluster)
+			curWidth += w
+			return true
+		}
+		if curWidth > 0 {
+			if !flushLine() {
+				return false
+			}
+		}
+		ws = ws[:0]
+		cur = append(cur, cluster)
+		curWidth = w
+		return true
+	}
+
 	iter.SetText(line)
 	for iter.Next() {
 		cluster := iter.Value()
@@ -706,6 +757,19 @@ func wrapLineLimitedIter(line string, width, limit int, options displaywidth.Opt
 				return lines
 			}
 			ws = append(ws, cluster)
+			continue
+		}
+		if isCJKCluster(cluster) {
+			// A Han cluster is its own break opportunity: flush any
+			// pending word, then add the cluster directly, honoring
+			// CJK break rules.
+			if !packWord() {
+				return lines
+			}
+			w := clusterWidth(options, cluster)
+			if !addCJKCluster(cluster, w) {
+				return lines
+			}
 			continue
 		}
 		w := clusterWidth(options, cluster)
