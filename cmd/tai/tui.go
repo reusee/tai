@@ -39,8 +39,8 @@ hint panel is shown instead of a blank screen.
 Tabs are distinguished by alternating gray background shades instead of
 borders: each tab has a base gray (darker for Output, lighter for Logs)
 that lightens when the tab is focused, so the focus is visible without a
-border. A label strip at the top of each tab names it; the focused label
-is bright and bold, the unfocused label gray.
+border. A one-row label strip across each tab's top names it; the focused
+label is bright and bold, the unfocused label gray.
 
 Standard output is replaced by a pipe whose reader copies into the TUI's
 output buffer, so all existing code paths that write to os.Stdout — including
@@ -64,11 +64,21 @@ Scroll extents are derived from the wrapped display lines, not the raw
 source lines: each pane pre-wraps its content with taiui.WrapLines at the
 visible width (the tab's width minus the scrollbar column), exactly as the
 pane's Text wraps it, so the tail of wrapped content is reachable and the
-scrollbar thumb maps the visible window onto the full content. The
-pane-local offset is clamped by scrollClamp to [0, displayLines -
-paneHeight]; at the maximum offset the last display line lands on the
-pane's last row. The tail sentinel (1<<30) used by the end key clamps to
-that maximum.
+scrollbar thumb maps the visible window onto the full content. Each tab
+carries a one-row label strip across its top; the scroll view spans the
+remaining rows. The panel boxes are computed from the split geometry
+before rendering — full screen height in vertical split (side by side),
+height/N in horizontal split (stacked), with the last tab absorbing the
+rounding remainder — so the label strip and the scroll offset clamp are
+derived from the exact panel dimensions. The pane-local offset is clamped
+by scrollClamp to [0, displayLines - paneHeight], where paneHeight is the
+ACTUAL scroll view height: the panel height minus the label row. A
+full-height pane height would match the scroll view in vertical split but
+would stop the scroll short in horizontal split — each panel is height/N
+tall, so its scroll view is correspondingly shorter — leaving the content
+tail unreachable. At the maximum offset the last display line lands on the
+scroll view's last row. The tail sentinel (1<<30) used by the end key
+clamps to that maximum.
 `
 
 // Tui enables the terminal UI mode.
@@ -464,6 +474,32 @@ func (t *TUI) scrollTo(top int) {
 	}
 }
 
+// tabPanelBox computes the panel box of the pos-th open tab when
+// open tabs are laid out on a width x height screen. In vertical split
+// (side by side) each tab spans the full screen height and a share of
+// the width; in horizontal split (stacked) it spans the full width and
+// a share of the height. The last tab absorbs the rounding remainder.
+// The box is computed here — not left to the layout container — so the
+// panel's one-row label strip, the scroll view below it, and the scroll
+// offset clamp in render() are all derived from the exact panel
+// dimensions. See TheoryOfTUI.
+func tabPanelBox(splitVertical bool, pos, open, width, height int) taiui.Box {
+	if splitVertical {
+		tabWidth := width / open
+		right := (pos + 1) * tabWidth
+		if pos == open-1 {
+			right = width
+		}
+		return taiui.Box{Top: 0, Left: pos * tabWidth, Bottom: height, Right: right}
+	}
+	tabHeight := height / open
+	bottom := (pos + 1) * tabHeight
+	if pos == open-1 {
+		bottom = height
+	}
+	return taiui.Box{Top: pos * tabHeight, Left: 0, Bottom: bottom, Right: width}
+}
+
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -498,50 +534,55 @@ func (t *TUI) render() {
 		return
 	}
 
-	// The label strip consumes one row per ten of the tab's height; the
-	// scroll view spans the rest. See TheoryOfTUI.
-	labelHeight := height / 10
-	paneHeight := max(height-labelHeight, 1)
-
-	// Each tab's width is the screen width divided by the number of open
-	// tabs when the split is vertical (side by side); it is the full
-	// width when the split is horizontal (stacked). The content width
-	// reserves one column for the scrollbar, matching the scroll's
-	// visible-width rendering.
-	tabWidth := width
-	if t.splitVertical {
-		tabWidth = width / len(open)
+	// Compute the panel box of each open tab. The boxes are computed
+	// here — not left to the layout container — so the panel's one-row
+	// label strip, the scroll view below it, and the scroll offset
+	// clamp below are all derived from the exact panel dimensions.
+	// See tabPanelBox and TheoryOfTUI.
+	panelBoxes := [3]taiui.Box{}
+	for pos, idx := range open {
+		panelBoxes[idx] = tabPanelBox(t.splitVertical, pos, len(open), width, height)
 	}
-	contentWidth := max(tabWidth-1, 1)
+
+	// The content width reserves one column for the scrollbar, matching
+	// the scroll's visible-width rendering. All open tabs share the same
+	// width except the last, which absorbs the rounding remainder.
+	contentWidth := max(panelBoxes[open[0]].Width()-1, 1)
 
 	displays := [3][]string{
 		taiui.WrapLines(outputLines, contentWidth),
 		taiui.WrapLines(t.summaries, contentWidth),
 		taiui.WrapLines(logsLines, contentWidth),
 	}
+
+	// The scroll offset is clamped against the ACTUAL scroll view height
+	// — the panel height minus the one-row label strip. In horizontal
+	// split (stacked) each panel is height/N tall, so its scroll view is
+	// far shorter than a full-height pane; clamping against a full-height
+	// pane would stop the scroll before the content tail became visible.
+	// See TheoryOfTUI.
 	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
 	for _, idx := range open {
+		paneHeight := max(panelBoxes[idx].Height()-1, 1)
 		tops[idx] = scrollClamp(tops[idx], len(displays[idx]), paneHeight)
 	}
 	t.topLeft, t.topRight, t.topLogs = tops[0], tops[1], tops[2]
 
 	var panels []taiui.Element
 	for _, idx := range open {
-		panels = append(panels, t.panel(idx, displays[idx], tops[idx], t.focus == idx))
+		panels = append(panels, t.panel(idx, panelBoxes[idx], displays[idx], tops[idx], t.focus == idx))
 	}
 
-	var specs []any
-	for _, p := range panels {
-		specs = append(specs, taiui.Weighted(1, p))
+	// The panels are overlaid on the root; each panel positions its own
+	// label strip and scroll view at the exact box computed above.
+	// Overlay takes ...any; []taiui.Element is not assignable to []any,
+	// so the slice is converted element-wise.
+	// See TheoryOfTUI.
+	overlaySpecs := make([]any, len(panels))
+	for i, p := range panels {
+		overlaySpecs[i] = p
 	}
-	var element taiui.Element
-	if t.splitVertical {
-		element = taiui.Row(specs...)
-	} else {
-		element = taiui.Column(specs...)
-	}
-
-	root := taiui.Root{Element: element}
+	root := taiui.Root{Element: taiui.Overlay(overlaySpecs...)}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
 }
 
@@ -555,7 +596,7 @@ var (
 	tabGray  = [3]int32{0x181818, 0x2c2c2c, 0x404040}
 )
 
-func (t *TUI) panel(idx int, lines []string, top int, focus bool) taiui.Element {
+func (t *TUI) panel(idx int, box taiui.Box, lines []string, top int, focus bool) taiui.Element {
 	base := tabGray[idx]
 	if focus {
 		base += 0x0e
@@ -568,21 +609,32 @@ func (t *TUI) panel(idx int, lines []string, top int, focus bool) taiui.Element 
 	if focus {
 		labelFg = 0xffffff
 	}
-	return taiui.Column(
-		taiui.Weighted(1, taiui.Text(
+	// The label strip is pinned to the panel's top row and the scroll
+	// view spans the remaining rows. The label is exactly one row, so
+	// no blank rows appear below the title, and the scroll offset clamp
+	// in render() can bound the view against the exact scroll height.
+	// See TheoryOfTUI.
+	headerBox := box
+	headerBox.Bottom = box.Top + 1
+	scrollBox := box
+	scrollBox.Top = box.Top + 1
+	return taiui.Overlay(
+		taiui.Text(
 			"  "+label+"  ",
+			taiui.Box(headerBox),
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(base+0x10)),
 			taiui.Bold(focus),
 			taiui.FGColor(taiui.HexColor(labelFg)),
-		)),
-		taiui.Weighted(9, taiui.VerticalScroll(
+		),
+		taiui.VerticalScroll(
 			taiui.Text(lines, taiui.Wrap(true)),
 			top,
+			taiui.Box(scrollBox),
 			taiui.Scrollbar(true),
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(base)),
-		)),
+		),
 	)
 }
 

@@ -131,9 +131,9 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	// The panel must reach the tail of wrapped content: the scroll
 	// offset is clamped against the wrapped display-line count, so at
-	// the maximum offset the last display line lands on the pane's last
-	// row. Under raw-line clamping the tail was unreachable once
-	// wrapping multiplied the display rows. See TheoryOfTUI.
+	// the maximum offset the last display line lands on the scroll
+	// view's last row. Under raw-line clamping the tail was unreachable
+	// once wrapping multiplied the display rows. See TheoryOfTUI.
 	var src []string
 	for i := 0; i < 20; i++ {
 		src = append(src, strings.Repeat("x", 20))
@@ -146,10 +146,10 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	}
 
 	tui := &TUI{}
-	// height 10 gives a label strip of 1 row and a pane height of 9; the
-	// tail offset is len(display) - 9.
-	paneHeight := 10 - 10/10
-	element := tui.panel(0, display, scrollClamp(1<<30, len(display), paneHeight), false)
+	// The panel is 10 rows tall: the one-row label strip leaves 9 rows
+	// for the scroll view; the tail offset is len(display) - 9.
+	paneHeight := 9
+	element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 12}, display, scrollClamp(1<<30, len(display), paneHeight), false)
 
 	screen := &panelTestScreen{width: 12, height: 10}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -160,9 +160,9 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	// At the maximum offset the last display line lands on the pane's
-	// last row: screen row 9, column 0 (the label strip occupies row 0,
-	// and the scroll view starts at row 1).
+	// At the maximum offset the last display line lands on the scroll
+	// view's last row: screen row 9, column 0 (the label strip occupies
+	// row 0, and the scroll view spans rows 1..9).
 	if cell := frame.Cells[9*frame.Width+0]; cell.Rune != 'T' {
 		t.Fatalf("expected THE-END at the pane's bottom row (9,0), got %v", cell.Rune)
 	}
@@ -319,11 +319,12 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	// TUI panels receive display lines pre-wrapped at the pane's visible
 	// width (the tab's width minus the scrollbar column), so a long
 	// source line occupies several display rows. The panel's Text
-	// renders the pre-wrapped lines; the first display rows are visible.
+	// renders the pre-wrapped lines below the one-row label strip; the
+	// first display rows are visible.
 	tui := &TUI{}
 	src := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 1)
 	lines := taiui.WrapLines([]string{src, src, src}, 11)
-	element := tui.panel(0, lines, 0, false)
+	element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 6, Right: 12}, lines, 0, false)
 
 	screen := &panelTestScreen{width: 12, height: 6}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -337,14 +338,45 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	// The pane is 12 columns wide with a scrollbar; the visible content
 	// area is 11 columns, so each 26-character source line wraps into
 	// three display rows. The first display row holds the first 11
-	// characters, the second row the next 11.
-	if cell := frame.Cells[0*frame.Width+0]; cell.Rune != 'a' {
-		t.Fatalf("expected 'a' at (0,0), got %v", cell.Rune)
+	// characters, the second row the next 11. The label strip occupies
+	// row 0, so the content starts at row 1.
+	if cell := frame.Cells[1*frame.Width+0]; cell.Rune != 'a' {
+		t.Fatalf("expected 'a' at (0,1), got %v", cell.Rune)
 	}
-	if cell := frame.Cells[0*frame.Width+10]; cell.Rune != 'k' {
-		t.Fatalf("expected 'k' at (10,0), got %v", cell.Rune)
+	if cell := frame.Cells[1*frame.Width+10]; cell.Rune != 'k' {
+		t.Fatalf("expected 'k' at (10,1), got %v", cell.Rune)
 	}
-	if cell := frame.Cells[1*frame.Width+0]; cell.Rune != 'l' {
-		t.Fatalf("expected 'l' at (0,1), got %v", cell.Rune)
+	if cell := frame.Cells[2*frame.Width+0]; cell.Rune != 'l' {
+		t.Fatalf("expected 'l' at (0,2), got %v", cell.Rune)
+	}
+}
+
+func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
+	// The scroll offset clamp must match the actual scroll view height.
+	// In horizontal split (stacked), each panel is height/N tall, so the
+	// scroll view is the panel height minus the one-row label strip. The
+	// old clamp used the full-height pane (height - height/10), which
+	// allowed the offset to reach only len(displays) - 0.9*height —
+	// stopping the scroll before the content tail became visible.
+	// See TheoryOfTUI.
+	//
+	// Stacked layout, 2 tabs on a 40-row screen: each panel is 20 rows,
+	// the label strip is 1 row, so the scroll view is 19 rows and the
+	// tail offset is len(displays) - 19.
+	box := tabPanelBox(false, 0, 2, 80, 40)
+	paneHeight := max(box.Height()-1, 1)
+	if paneHeight != 19 {
+		t.Fatalf("expected a 19-row scroll view, got %d", paneHeight)
+	}
+	const displayLines = 100
+	if got := scrollClamp(1<<30, displayLines, paneHeight); got != displayLines-19 {
+		t.Fatalf("expected the tail offset %d, got %d", displayLines-19, got)
+	}
+
+	// Side-by-side layout: the panel spans the full height, so the
+	// scroll view is height - 1.
+	box = tabPanelBox(true, 0, 2, 80, 40)
+	if paneHeight := max(box.Height()-1, 1); paneHeight != 39 {
+		t.Fatalf("expected a 39-row scroll view, got %d", paneHeight)
 	}
 }
