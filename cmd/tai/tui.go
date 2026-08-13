@@ -40,11 +40,11 @@ alternating log backgrounds, grouped colored text, tab auto-expansion and
 focus order, weighted panel layout, collapsed strips, and follow-tail
 scroll offsets. This command wires them with tai-specific capture:
 generators.Content is converted to taiui.Line by captureContent, summary
-blocks are parsed into Round-tab lines by parseSummaries, and the request
+blocks are parsed into Summary-tab lines by parseSummaries, and the request
 lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
-tab streams the model output, the Round tab collects the round completion
+tab streams the model output, the Summary tab collects the round completion
 signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
 — and the Logs tab collects log records. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
@@ -71,7 +71,7 @@ magenta; model output keeps the default foreground. Role colors are ANSI 16
 palette colors, so text uses only the standard 16-color SGR codes; only
 backgrounds use true-color hex values. Colors are carried per output line
 through wrapping, so a wrapped line keeps its role color. The keys
-1, 2, and 3 select the corresponding tab (Output, Round, Logs respectively):
+1, 2, and 3 select the corresponding tab (Output, Summary, Logs respectively):
 pressing a focused tab's key collapses it to a thin strip showing the tab's
 key and title, and moves the focus to the expanded tab that was last focused
 (see the focus-order paragraph below); pressing a non-focused or collapsed
@@ -79,7 +79,7 @@ tab's key expands it (if collapsed) and takes the focus. Switching to an
 already-expanded tab keeps its current view; re-expanding a collapsed tab
 resumes following the live tail. All tabs are collapsed by default; a
 collapsed tab expands automatically the FIRST time content for it arrives —
-the Output tab on any streamed output, the Round tab on a parsed summary
+the Output tab on any streamed output, the Summary tab on a parsed summary
 block or a finish reason, the Logs tab on any log record — so the interface
 surfaces panes only when they have something to show. Subsequent content
 arrivals do not re-expand a tab the user collapsed. Auto-expansion never
@@ -245,10 +245,10 @@ func (s *tuiState) write(p []byte) {
 }
 
 // writeColored appends output with the given display color, extracting
-// summary blocks and collecting finish lines into the Round tab's
-// signals. A collapsed Output tab expands automatically on the first
-// streamed output. The color is carried per line, so wrapped lines keep
-// their role color. See TheoryOfTUI.
+// summary blocks and collecting finish lines into the Summary tab's signals.
+// A collapsed Output tab expands automatically on the first streamed output.
+// The color is carried per line, so wrapped lines keep their role color.
+// See TheoryOfTUI.
 func (s *tuiState) writeColored(color taiui.Color, p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -403,7 +403,7 @@ func (s *tuiState) parseSummaries(p []byte) {
 		if block.Kind == "summary" {
 			body := strings.TrimSpace(block.Body)
 			if body != "" {
-				// A collapsed Round tab expands automatically on the first
+				// A collapsed Summary tab expands automatically on the first
 				// summary block; the output text carrying the block
 				// already expanded the Output tab. See TheoryOfTUI.
 				if s.tabs.AutoExpand(1) {
@@ -506,7 +506,7 @@ func (t *TUI) LogsWriter() io.Writer {
 // Text parts stream to the Output tab colored by the content role;
 // thoughts stream colored distinctly, separated from non-thought
 // content by a blank line; function calls, call results, and errors
-// render as markers colored by role; finish reasons go to the Round
+// render as markers colored by role; finish reasons go to the Summary
 // tab colored as log lines. Internal metadata parts (Usage) are
 // skipped. It is called from the generation goroutine via
 // tuiOutputState.AppendContent, the only goroutine that reads or
@@ -904,7 +904,7 @@ func (t *TUI) render() {
 }
 
 var (
-	tabNames = [...]string{"Output", "Round", "Logs"}
+	tabNames = [...]string{"Output", "Summary", "Logs"}
 	// tabUnfocusBG is the dark blue background of every unfocused tab.
 	tabUnfocusBG int32 = 0x0a1428
 	// tabFocusBG is the dark gray background of the focused tab.

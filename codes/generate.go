@@ -568,7 +568,7 @@ as both the summary and the retry prompt would feed the model unstructured,
 possibly truncated reasoning as if it were a distilled summary, degrading the
 retry prompt's quality and masking the summarization failure. Callers treat the
 error as "no summary available": the retry round proceeds without a synthesized
-summary, and the round statistics and the TUI's Round tab show no completion
+summary, and the round statistics and the TUI's Summary tab show no completion
 signal for that round.
 `
 

@@ -466,14 +466,14 @@ func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
 	}
 }
 
-func TestTuiStateFinishSignalExpandsRoundTab(t *testing.T) {
+func TestTuiStateFinishSignalExpandsSummaryTab(t *testing.T) {
 	tui := &TUI{tuiState: *newTUIState()}
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
 	tui.finishReason("stop")
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("round tab should auto-expand on a finish reason")
+		t.Fatal("summary tab should auto-expand on a finish reason")
 	}
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
@@ -483,9 +483,9 @@ func TestTuiStateFinishSignalExpandsRoundTab(t *testing.T) {
 	}
 }
 
-func TestTuiStateRoundTabTitle(t *testing.T) {
-	if tabNames[1] != "Round" {
-		t.Fatalf("expected the round tab title, got %q", tabNames[1])
+func TestTuiStateSummaryTabTitle(t *testing.T) {
+	if tabNames[1] != "Summary" {
+		t.Fatalf("expected the summary tab title, got %q", tabNames[1])
 	}
 }
 
@@ -630,15 +630,15 @@ func TestTUINumberKeySemantics(t *testing.T) {
 
 	tui.toggleTab(1)
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("expanded round tab must stay expanded")
+		t.Fatal("expanded summary tab must stay expanded")
 	}
 	if tui.tabs.Focus != 1 {
-		t.Fatalf("focus should switch to the round tab, got %d", tui.tabs.Focus)
+		t.Fatalf("focus should switch to the summary tab, got %d", tui.tabs.Focus)
 	}
 
 	tui.toggleTab(1)
 	if tui.tabs.Expanded[1] {
-		t.Fatal("focused round tab should collapse")
+		t.Fatal("focused summary tab should collapse")
 	}
 	if tui.tabs.Focus != 2 {
 		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.tabs.Focus)
@@ -684,7 +684,7 @@ func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
 
 	tui.toggleTab(1)
 	if tui.tabs.Focus != 1 {
-		t.Fatalf("focus should switch to the round tab, got %d", tui.tabs.Focus)
+		t.Fatalf("focus should switch to the summary tab, got %d", tui.tabs.Focus)
 	}
 	if !tui.scrolls[1].Follow {
 		t.Fatal("switching to an expanded tab must keep its follow state")
@@ -692,11 +692,11 @@ func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
 
 	tui.toggleTab(1)
 	if tui.tabs.Expanded[1] {
-		t.Fatal("focused round tab should collapse")
+		t.Fatal("focused summary tab should collapse")
 	}
 	tui.toggleTab(1)
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("collapsed round tab should re-expand")
+		t.Fatal("collapsed summary tab should re-expand")
 	}
 	if !tui.scrolls[1].Follow {
 		t.Fatal("re-expanding a collapsed tab must resume following")
@@ -709,7 +709,7 @@ func TestTUICycleFocusSkipsCollapsedTabs(t *testing.T) {
 	tui.tabs.Focus = 0
 	tui.cycleFocus()
 	if tui.tabs.Focus != 2 {
-		t.Fatalf("focus should skip the collapsed round tab and land on logs, got %d", tui.tabs.Focus)
+		t.Fatalf("focus should skip the collapsed summary tab and land on logs, got %d", tui.tabs.Focus)
 	}
 	tui.cycleFocus()
 	if tui.tabs.Focus != 0 {
@@ -1344,7 +1344,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 
 	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("round tab should auto-expand on a summary block")
+		t.Fatal("summary tab should auto-expand on a summary block")
 	}
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
@@ -1359,7 +1359,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.Focus = 0
 	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
 	if tui2.tabs.Expanded[1] {
-		t.Fatal("round tab must not expand without a summary block or finish line")
+		t.Fatal("summary tab must not expand without a summary block or finish line")
 	}
 }
 

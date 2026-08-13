@@ -113,7 +113,7 @@ TheoryOfIncompleteOutputSummarization in codes/generate.go.
 When the retry budget is exhausted and the final attempt still lacks a summary
 block, the loop synthesizes a summary from the round's output and appends it to
 the state as a summary block, so the round has a completion signal for the round
-statistics and the TUI's Round tab. When the summarization itself fails (see
+statistics and the TUI's Summary tab. When the summarization itself fails (see
 TheoryOfIncompleteOutputSummarization in codes/generate.go), the round proceeds
 without a synthesized summary.
 
@@ -127,7 +127,7 @@ critical in unattended operation, where no human can intervene once the budget i
 exhausted.
 
 The retry message carries the synthesized summary as a boundary-delimited summary
-block before the continue block, so the TUI's Round tab displays it as the
+block before the continue block, so the TUI's Summary tab displays it as the
 truncated or failed round's completion signal. A round's summary is either parsed
 from the model's own output or synthesized by the retry process; when the
 summarization fails, the round proceeds without a synthesized summary.
@@ -372,7 +372,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 					// Append the summary block and the continue
 					// block as the retry user prompt. The summary
 					// block carries the synthesized summary so the
-					// TUI's Round tab can display it as the failed
+					// TUI's Summary tab can display it as the failed
 					// round's completion signal.
 					// See TheoryOfLoops.
 					if retryPrompt != "" || summary != "" {
@@ -478,7 +478,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 
 		// Append the summary block and the continue block as the
 		// retry user prompt. The summary block carries the
-		// synthesized summary so the TUI's Round tab can display
+		// synthesized summary so the TUI's Summary tab can display
 		// it as the truncated round's completion signal.
 		// See TheoryOfLoops.
 		if retryPrompt != "" || summary != "" {
@@ -512,7 +512,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 	// still produced no summary block, synthesize a summary from
 	// the round's output and append it to the state as a summary
 	// block, so every round has a completion signal for the round
-	// statistics and the TUI's Round tab. See
+	// statistics and the TUI's Summary tab. See
 	// TheoryOfIncompleteOutputSummarization.
 	if len(roundSummaries) == 0 && ls.opts.SummarizeIncomplete != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
