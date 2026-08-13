@@ -91,25 +91,25 @@ func TestSummarizeRetryState(t *testing.T) {
 	phaseErr := errors.New("boom")
 
 	t.Run("Summarized", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			if text != "partial output" {
 				t.Fatalf("expected partial output, got %q", text)
 			}
 			return &loops.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
 		})
-		if !summarized {
-			t.Fatal("expected summarized=true")
+		if summary != "condensed" {
+			t.Fatalf("expected summary 'condensed', got %q", summary)
 		}
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
-		foundSummary := false
+		foundSummaryBlock := false
 		foundError := false
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
 				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "condensed") {
-						foundSummary = true
+					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "condensed") {
+						foundSummaryBlock = true
 					}
 					if strings.Contains(string(text), "boom") {
 						foundError = true
@@ -117,8 +117,8 @@ func TestSummarizeRetryState(t *testing.T) {
 				}
 			}
 		}
-		if !foundSummary {
-			t.Fatal("expected summary in state")
+		if !foundSummaryBlock {
+			t.Fatal("expected summary block in state")
 		}
 		if !foundError {
 			t.Fatal("expected error in state")
@@ -126,22 +126,31 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("SummarizeError", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			return nil, errors.New("summarize failed")
 		})
-		if summarized {
-			t.Fatal("expected summarized=false")
+		if summary != "[Error: boom]" {
+			t.Fatalf("expected summary '[Error: boom]', got %q", summary)
 		}
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
+		foundSummaryBlock := false
 		foundError := false
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "[Error: boom]") {
+						foundSummaryBlock = true
+					}
+				}
 				if _, ok := part.(generators.Error); ok {
 					foundError = true
 				}
 			}
+		}
+		if !foundSummaryBlock {
+			t.Fatal("expected summary block in state")
 		}
 		if !foundError {
 			t.Fatal("expected error in state")
@@ -149,23 +158,32 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("NoPartial", func(t *testing.T) {
-		state, count, summarized := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			t.Fatal("summarize should not be called")
 			return nil, nil
 		})
-		if summarized {
-			t.Fatal("expected summarized=false")
+		if summary != "[Error: boom]" {
+			t.Fatalf("expected summary '[Error: boom]', got %q", summary)
 		}
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
+		foundSummaryBlock := false
 		foundError := false
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
+				if text, ok := part.(generators.Text); ok {
+					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "[Error: boom]") {
+						foundSummaryBlock = true
+					}
+				}
 				if _, ok := part.(generators.Error); ok {
 					foundError = true
 				}
 			}
+		}
+		if !foundSummaryBlock {
+			t.Fatal("expected summary block in state")
 		}
 		if !foundError {
 			t.Fatal("expected error in state")
@@ -435,5 +453,136 @@ func TestRunReviewUsesModelFlagValue(t *testing.T) {
 	}
 	if reviewModel != "gemini-flash" {
 		t.Fatalf("review must use the -model flag value, got %q", reviewModel)
+	}
+}
+
+type summarizeRetryMockGenerator struct {
+	calls     int
+	responses []string
+	errs      []error
+}
+
+func (g *summarizeRetryMockGenerator) Spec() generators.Spec {
+	return generators.Spec{}
+}
+
+func (g *summarizeRetryMockGenerator) CountTokens(string) (int, error) {
+	return 0, nil
+}
+
+func (g *summarizeRetryMockGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+	if g.calls < len(g.errs) && g.errs[g.calls] != nil {
+		err := g.errs[g.calls]
+		g.calls++
+		return state, err
+	}
+	response := g.responses[g.calls]
+	g.calls++
+	return state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text(response),
+		},
+	})
+}
+
+func TestSummarizeIncompleteOutputRetriesOnParseFailure(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{
+			"unparseable response without blocks",
+			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+		},
+	}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 2 {
+		t.Fatalf("expected 2 summarize calls, got %d", gen.calls)
+	}
+	if retrySummary.Summary != "summary" {
+		t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
+	}
+	if retrySummary.RetryPrompt != "retry prompt" {
+		t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
+	}
+}
+
+func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{
+			"unparseable 1",
+			"unparseable 2",
+			"unparseable 3",
+		},
+	}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	if err == nil {
+		t.Fatal("expected error after all summarize attempts fail")
+	}
+	if retrySummary != nil {
+		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	}
+	if gen.calls != maxSummarizeRetries {
+		t.Fatalf("expected %d summarize calls, got %d", maxSummarizeRetries, gen.calls)
+	}
+	if !strings.Contains(err.Error(), "summarize incomplete output failed") {
+		t.Fatalf("expected failure message, got: %v", err)
+	}
+}
+
+func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
+	// A failed summarize generation is a failed summarize attempt: it
+	// must be retried like a parsing failure, so a transient API error
+	// does not leave the round without a summary. See
+	// TheoryOfIncompleteOutputSummarization.
+	gen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("summarize generation failed"),
+		},
+		responses: []string{
+			"", // unused (first call errors)
+			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+		},
+	}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen.calls != 2 {
+		t.Fatalf("expected 2 summarize calls, got %d", gen.calls)
+	}
+	if retrySummary.Summary != "summary" {
+		t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
+	}
+	if retrySummary.RetryPrompt != "retry prompt" {
+		t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
+	}
+}
+
+func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+			errors.New("failure 3"),
+		},
+		responses: []string{"", "", ""},
+	}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	if err == nil {
+		t.Fatal("expected error after all summarize generations fail")
+	}
+	if retrySummary != nil {
+		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	}
+	if gen.calls != maxSummarizeRetries {
+		t.Fatalf("expected %d summarize calls, got %d", maxSummarizeRetries, gen.calls)
+	}
+	if !strings.Contains(err.Error(), "summarize incomplete output failed") {
+		t.Fatalf("expected failure message, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "failure 3") {
+		t.Fatalf("expected the last failure in the error message, got: %v", err)
 	}
 }

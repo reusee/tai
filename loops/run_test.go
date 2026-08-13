@@ -523,6 +523,65 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 	})
 }
 
+func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
+	// When the retry budget is exhausted and the final attempt still
+	// produced no summary block, the loop must synthesize a summary from
+	// the round's output and append it to the state as a summary block,
+	// so every round has a completion signal for the round statistics and
+	// the TUI's Round tab. See TheoryOfIncompleteOutputSummarization.
+	withRun(t, func(run Run) {
+		callCount := 0
+		var successSummaries [][]string
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			return appendPhase("always incomplete")
+		}
+
+		result, err := runOnce(run, RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               nil,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               1,
+			OnRoundSuccess: func(state generators.State, summaries []string) error {
+				successSummaries = append(successSummaries, summaries)
+				return nil
+			},
+			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
+				return &RetrySummary{Summary: "synthesized summary", RetryPrompt: "retry prompt"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 calls (initial + 1 retry), got %d", callCount)
+		}
+		if len(successSummaries) != 1 || len(successSummaries[0]) != 1 ||
+			successSummaries[0][0] != "synthesized summary" {
+			t.Fatalf("expected the synthesized summary in OnRoundSuccess, got %v", successSummaries)
+		}
+
+		// The exhausted round must have a synthesized summary block
+		// appended to the state so the TUI's Round tab can display it.
+		foundSummary := false
+		for c := range result.FinalState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "<summary>") &&
+						strings.Contains(string(text), "synthesized summary") {
+						foundSummary = true
+					}
+				}
+			}
+		}
+		if !foundSummary {
+			t.Fatal("expected a synthesized summary block in the final state")
+		}
+	})
+}
+
 func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -1221,6 +1280,36 @@ func TestRunRetryPromptIsContinueBlock(t *testing.T) {
 			t.Fatal("expected retry prompt to be a continue block with compressed content")
 		}
 	})
+}
+
+func TestFormatRetryPromptIncludesSummaryBlock(t *testing.T) {
+	msg := formatRetryPrompt("synthesized summary", "retry content", 1, 3)
+	if !strings.Contains(msg, "<summary>") {
+		t.Fatal("expected a summary block in the retry prompt")
+	}
+	if !strings.Contains(msg, "synthesized summary") {
+		t.Fatal("expected the summary text in the retry prompt")
+	}
+	if !strings.Contains(msg, "<continue>") {
+		t.Fatal("expected a continue block in the retry prompt")
+	}
+	if !strings.Contains(msg, "retry content") {
+		t.Fatal("expected the retry content in the continue block")
+	}
+	summaryIdx := strings.Index(msg, "<summary>")
+	continueIdx := strings.Index(msg, "<continue>")
+	if summaryIdx == -1 || continueIdx == -1 || summaryIdx > continueIdx {
+		t.Fatalf("expected the summary block before the continue block, got: %s", msg)
+	}
+
+	// An empty summary omits the summary block.
+	msg = formatRetryPrompt("", "retry content", 1, 3)
+	if strings.Contains(msg, "<summary>") {
+		t.Fatal("expected no summary block when the summary is empty")
+	}
+	if !strings.Contains(msg, "<continue>") {
+		t.Fatal("expected a continue block in the retry prompt")
+	}
 }
 
 func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {

@@ -378,6 +378,13 @@ Prioritize the following valuable content in the retry prompt:
 
 Output ONLY these two blocks, no other text.`
 
+// maxSummarizeRetries bounds the number of attempts to summarize
+// incomplete output when the summarize response cannot be parsed into
+// summary and continue blocks. When all attempts fail, the summarization
+// returns an error instead of falling back to the incomplete text. See
+// TheoryOfIncompleteOutputSummarization.
+const maxSummarizeRetries = 3
+
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	generator generators.Generator,
@@ -387,52 +394,65 @@ func summarizeIncompleteOutput(
 		return nil, nil
 	}
 	systemPrompt := retrySummarizationSystemPrompt
-	var state generators.State
-	state = generators.NewPrompts(systemPrompt, []*generators.Content{
-		{
-			Role: generators.RoleUser,
-			Parts: []generators.Part{
-				generators.Text(incompleteText),
+	var lastErr error
+	for range maxSummarizeRetries {
+		var state generators.State
+		state = generators.NewPrompts(systemPrompt, []*generators.Content{
+			{
+				Role: generators.RoleUser,
+				Parts: []generators.Part{
+					generators.Text(incompleteText),
+				},
 			},
-		},
-	})
-	var buf bytes.Buffer
-	state = generators.NewOutput(state, &buf, false)
-	options := &generators.GenerateOptions{
-		NonStreaming: true,
-	}
-	_, err := generator.Generate(ctx, state, options)
-	if err != nil {
-		return nil, fmt.Errorf("summarization call failed: %w", err)
-	}
-	outputText := buf.String()
-	parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
-	if err != nil {
-		// Fallback: use the entire output as both summary and retry prompt.
-		return &loops.RetrySummary{
-			Summary:     outputText,
-			RetryPrompt: outputText,
-		}, nil
-	}
-	var summary, continueContent string
-	for _, block := range parsedBlocks {
-		switch block.Kind {
-		case "summary":
-			summary = block.Body
-		case "continue":
-			continueContent = block.Body
+		})
+		var buf bytes.Buffer
+		state = generators.NewOutput(state, &buf, false)
+		options := &generators.GenerateOptions{
+			NonStreaming: true,
 		}
+		_, err := generator.Generate(ctx, state, options)
+		if err != nil {
+			// A failed summarize generation is a failed summarize
+			// attempt: retry it like a parsing failure, so a transient
+			// API error does not leave the round without a summary.
+			// See TheoryOfIncompleteOutputSummarization.
+			lastErr = err
+			continue
+		}
+		outputText := buf.String()
+		parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var summary, continueContent string
+		for _, block := range parsedBlocks {
+			switch block.Kind {
+			case "summary":
+				summary = block.Body
+			case "continue":
+				continueContent = block.Body
+			}
+		}
+		if summary != "" && continueContent != "" {
+			return &loops.RetrySummary{
+				Summary:     summary,
+				RetryPrompt: continueContent,
+			}, nil
+		}
+		lastErr = fmt.Errorf("summarize response missing summary or continue block")
 	}
-	if summary == "" {
-		summary = outputText
+	// All retries exhausted: report the failure instead of falling back
+	// to the incomplete text. A fallback would feed the raw, possibly
+	// truncated reasoning to the retry round as if it were a distilled
+	// summary, degrading the retry prompt's quality; failing loudly
+	// surfaces the summarization problem. Callers treat the error as
+	// "no summary available" and proceed without a synthesized summary.
+	// See TheoryOfIncompleteOutputSummarization.
+	if lastErr != nil {
+		return nil, fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
 	}
-	if continueContent == "" {
-		continueContent = summary
-	}
-	return &loops.RetrySummary{
-		Summary:     summary,
-		RetryPrompt: continueContent,
-	}, nil
+	return nil, fmt.Errorf("summarize incomplete output failed after %d attempts", maxSummarizeRetries)
 }
 
 func summarizeRetryState(
@@ -440,13 +460,13 @@ func summarizeRetryState(
 	phaseErr error,
 	prevContentCount int,
 	summarize func(string) (*loops.RetrySummary, error),
-) (newState generators.State, contentCount int, summarized bool) {
+) (newState generators.State, contentCount int, summary string) {
 	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
-		if retrySummary, err := summarize(partialText); err == nil && retrySummary != nil {
+		if retrySummary, _ := summarize(partialText); retrySummary != nil {
 			msg := "The previous generation attempt was interrupted by an error after producing partial output. " +
 				"A summary is provided for context; this is a retry.\n\n" +
-				"Summary of partial output:\n" + retrySummary.Summary + "\n\n" +
+				loops.FormatSummaryBlock(retrySummary.Summary) + "\n\n" +
 				"Error: " + phaseErr.Error() + "\n\n" +
 				"The retry content below carries the valuable conclusions already reached in the partial output — discoveries, decisions, and facts. Adopt them; do not re-derive them, so this retry needs less thinking than the failed attempt:\n\n" +
 				retrySummary.RetryPrompt
@@ -457,7 +477,7 @@ func summarizeRetryState(
 				},
 			})
 			if err == nil {
-				return newState, generators.CountContents(newState), true
+				return newState, generators.CountContents(newState), retrySummary.Summary
 			}
 		}
 	}
@@ -465,12 +485,13 @@ func summarizeRetryState(
 		Role: generators.RoleLog,
 		Parts: []generators.Part{
 			generators.Error{Error: phaseErr},
+			generators.Text(loops.FormatSummaryBlock("[Error: " + phaseErr.Error() + "]")),
 		},
 	})
 	if err != nil {
-		return errState, generators.CountContents(errState), false
+		return errState, generators.CountContents(errState), "[Error: " + phaseErr.Error() + "]"
 	}
-	return newState, generators.CountContents(newState), false
+	return newState, generators.CountContents(newState), "[Error: " + phaseErr.Error() + "]"
 }
 
 const TheoryOfSummaryCompletionRetry = `
@@ -535,6 +556,20 @@ TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
 The summarization uses a fast model to minimize latency. The summary is appended
 as user content with a system note explaining the retry.
+
+The summarization itself is retried when its response cannot be parsed into
+summary and continue blocks, or when the summarize generation fails: a malformed
+or incomplete summarize response would otherwise leave the retry round without a
+summary or with a degraded retry prompt, and a transient API error would leave
+the round without any summary at all. The retry is bounded by maxSummarizeRetries;
+when all attempts fail, the summarization returns an error instead of falling
+back to the incomplete text. A fallback that substitutes the raw incomplete text
+as both the summary and the retry prompt would feed the model unstructured,
+possibly truncated reasoning as if it were a distilled summary, degrading the
+retry prompt's quality and masking the summarization failure. Callers treat the
+error as "no summary available": the retry round proceeds without a synthesized
+summary, and the round statistics and the TUI's Round tab show no completion
+signal for that round.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -865,6 +900,17 @@ func (Module) GenerateWithResultWithStats(
 				summaryText := ""
 				if len(summaries) > 0 {
 					summaryText = strings.Join(summaries, "\n")
+				} else {
+					// The round produced no summary blocks (e.g., retries
+					// were exhausted and the final attempt still lacked a
+					// summary). Summarize the round's output so every round
+					// has a summary for the round statistics and the TUI's
+					// Round tab. See TheoryOfIncompleteOutputSummarization.
+					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
+						if retrySummary, err := summarizeIncompleteOutput(ctx, fastModel, incompleteText); err == nil && retrySummary != nil {
+							summaryText = retrySummary.Summary
+						}
+					}
 				}
 				roundStats, prevContentCount = collectRoundStats(
 					roundStats, roundState, prevContentCount, elapsed, summaryText,
@@ -895,12 +941,10 @@ func (Module) GenerateWithResultWithStats(
 
 			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
 				// Record the failed round in round statistics so it appears
-				// as a separate loop. The failed round has no synthesized
-				// summary because no retry follows. See TheoryOfRoundStatistics.
+				// as a separate loop. The failed round's summary is
+				// synthesized by the retry process. See TheoryOfRoundStatistics.
 				elapsed := time.Since(roundStartTime)
-				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, "")
-
-				newState, newContentCount, _ := summarizeRetryState(
+				newState, newContentCount, summary := summarizeRetryState(
 					errState,
 					phaseErr,
 					prevContentCount,
@@ -908,6 +952,7 @@ func (Module) GenerateWithResultWithStats(
 						return summarizeIncompleteOutput(ctx, fastModel, text)
 					},
 				)
+				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
 				prevContentCount = newContentCount
 				return newState
 			},
