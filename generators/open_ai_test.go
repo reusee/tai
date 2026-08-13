@@ -355,6 +355,113 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 	})
 }
 
+func TestChatCompletionMessageUnmarshalArrayContent(t *testing.T) {
+	var msg ChatCompletionMessage
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"image_url","image_url":{"url":"x"}}]}`), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Role != "assistant" {
+		t.Fatalf("expected role assistant, got %q", msg.Role)
+	}
+	if content, ok := msg.Content.(string); !ok || content != "hello" {
+		t.Fatalf("expected content 'hello', got %#v", msg.Content)
+	}
+
+	// String content is preserved unchanged.
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":"plain text"}`), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if content, ok := msg.Content.(string); !ok || content != "plain text" {
+		t.Fatalf("expected content 'plain text', got %#v", msg.Content)
+	}
+
+	// Multiple text parts are concatenated in order.
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}`), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if content, ok := msg.Content.(string); !ok || content != "ab" {
+		t.Fatalf("expected content 'ab', got %#v", msg.Content)
+	}
+
+	// No text parts: content becomes nil so the caller skips it.
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":[{"type":"image_url","image_url":{"url":"x"}}]}`), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != nil {
+		t.Fatalf("expected nil content for non-text parts, got %#v", msg.Content)
+	}
+}
+
+func TestOpenAINonStreamingArrayContent(t *testing.T) {
+	// Some providers return non-streaming responses whose message content
+	// is an array of content parts rather than a plain string. The text
+	// parts must be captured; without the ChatCompletionMessage
+	// normalization, the text is silently dropped and the caller receives
+	// an empty response.
+	response := ChatCompletionResponse{
+		Choices: []ChatCompletionChoice{
+			{
+				Message: ChatCompletionMessage{
+					Role:    "assistant",
+					Content: []any{map[string]any{"type": "text", "text": "hello from array"}},
+				},
+				FinishReason: "stop",
+			},
+		},
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	defer server.Close()
+
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		disableTools := true
+		openai := newOpenAI(Spec{
+			BaseURL:      server.URL,
+			Model:        "test-model",
+			DisableTools: &disableTools,
+		}, "test-key")
+
+		state := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
+
+		newState, err := openai.Generate(context.Background(), state, &GenerateOptions{
+			NonStreaming: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		found := false
+		for c := range newState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(Text); ok && strings.Contains(string(text), "hello from array") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("expected array-form content to be captured as text")
+		}
+	})
+}
+
 func TestTemperatureAndMaxTokensOmittedWhenNotSet(t *testing.T) {
 	// When neither temperature nor max_completion_tokens is specified
 	// (nil pointers), both must be omitted from the request JSON so the

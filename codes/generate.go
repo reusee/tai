@@ -355,11 +355,13 @@ func collectRoundStats(
 	return roundStats, contentIndex
 }
 
-const retrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks:
+const retrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks, and ONLY these two blocks:
 
 1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
 
 2. A continue block (kind "continue") whose body is the retry prompt: the essence of the truncated output that the next round needs to continue from where the model left off. Truncation most often happens when thinking is too long, and the truncated thinking has already produced valuable results. The retry prompt must carry these results over — the conclusions, not the reasoning that led to them — so the next round adopts them instead of re-deriving them and needs less thinking.
+
+Both blocks MUST have non-empty bodies. The continue block body MUST carry the valuable conclusions from the truncated thinking whenever any exist — discoveries, decisions, facts, completed work, next steps.
 
 Prioritize the following valuable content in the retry prompt:
 - Important discoveries and insights the model reached
@@ -379,9 +381,9 @@ Prioritize the following valuable content in the retry prompt:
 The root cause is the missing boundary check in the parser. Next: add the boundary check, then update the tests.
 灪麤爨
 
-The delimiters 黿鼍爩 and 灪麤爨 in the example are illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+The delimiters 黿鼍爩 and 灪麤爨 in the example are illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, use a DIFFERENT trio for each block, and use the same delimiter on the closing line. The delimiter MUST NOT appear anywhere in the block body. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
-Output ONLY these two blocks, no other text.`
+Output ONLY these two blocks as your final text, with no other text before or after them.`
 
 // maxSummarizeRetries bounds the number of attempts to summarize
 // incomplete output when the summarize response cannot be parsed into

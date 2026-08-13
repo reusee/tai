@@ -684,6 +684,38 @@ type ChatCompletionMessage struct {
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
+// UnmarshalJSON normalizes the message content: array content parts
+// (e.g., [{"type":"text","text":"..."}]) are reduced to a single text
+// string so consumers can treat Content uniformly as a string. Some
+// providers return content parts in non-streaming responses; without
+// this normalization the text output would be silently dropped.
+func (m *ChatCompletionMessage) UnmarshalJSON(data []byte) error {
+	type alias ChatCompletionMessage
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = ChatCompletionMessage(a)
+	if content, ok := m.Content.([]any); ok {
+		var sb strings.Builder
+		for _, item := range content {
+			if part, ok := item.(map[string]any); ok {
+				if typ, _ := part["type"].(string); typ == "text" {
+					if text, _ := part["text"].(string); text != "" {
+						sb.WriteString(text)
+					}
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			m.Content = sb.String()
+		} else {
+			m.Content = nil
+		}
+	}
+	return nil
+}
+
 type ChatMessagePart struct {
 	Type     string               `json:"type"`
 	Text     string               `json:"text,omitempty"`

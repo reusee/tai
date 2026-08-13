@@ -248,6 +248,25 @@ func TestRetrySummarizationSystemPromptShowsBlockFormat(t *testing.T) {
 	}
 }
 
+func TestRetrySummarizationSystemPromptRequiresNonEmptyBlocks(t *testing.T) {
+	// The retry summarization prompt must require non-empty block bodies,
+	// distinct delimiters per block, delimiter-body disjointness, and a
+	// response containing only the two blocks. These requirements make the
+	// summarizer's parse robust: an empty or missing block, a reused
+	// delimiter, or surrounding prose would fail to produce a usable
+	// retry summary. See TheoryOfIncompleteOutputSummarization.
+	for _, want := range []string{
+		"Both blocks MUST have non-empty bodies",
+		"DIFFERENT trio for each block",
+		"The delimiter MUST NOT appear anywhere in the block body",
+		"Output ONLY these two blocks as your final text",
+	} {
+		if !strings.Contains(retrySummarizationSystemPrompt, want) {
+			t.Fatalf("retrySummarizationSystemPrompt must contain %q", want)
+		}
+	}
+}
+
 func TestPrintRoundStatsWithSummaries(t *testing.T) {
 	var buf bytes.Buffer
 	stats := []RoundStat{
