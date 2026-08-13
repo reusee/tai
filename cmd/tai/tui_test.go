@@ -613,7 +613,7 @@ func TestTUIPanelBackgroundColors(t *testing.T) {
 
 func TestReadTUIKeys(t *testing.T) {
 	ch := make(chan string, 10)
-	go readTUIKeys(strings.NewReader("\x1b[Aq\x1b[5~\x1b[6~"), ch)
+	go taiui.ReadKeys(strings.NewReader("\x1b[Aq\x1b[5~\x1b[6~"), ch)
 	var got []string
 	for len(got) < 4 {
 		select {
@@ -633,7 +633,7 @@ func TestReadTUIKeys(t *testing.T) {
 
 func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	ch := make(chan string, 10)
-	go readTUIKeys(strings.NewReader("123sS"), ch)
+	go taiui.ReadKeys(strings.NewReader("123sS"), ch)
 	var got []string
 	for len(got) < 5 {
 		select {

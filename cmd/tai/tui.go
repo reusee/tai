@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -923,7 +922,7 @@ func (t *TUI) Run(gen func()) error {
 	resizeCh := make(chan bool, 4)
 	t.tty.NotifyResize(resizeCh)
 	keyCh := make(chan string, 16)
-	go readTUIKeys(t.tty, keyCh)
+	go taiui.ReadKeys(t.tty, keyCh)
 
 	go func() {
 		defer func() {
@@ -1428,100 +1427,6 @@ func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
 			taiui.FGColor(color.PaletteColor(int(labelFg))),
 		),
 	)
-}
-
-func readTUIKeys(r io.Reader, ch chan<- string) {
-	var buf [64]byte
-	var pending []byte
-	for {
-		n, err := r.Read(buf[:])
-		if err != nil {
-			return
-		}
-		if n == 0 {
-			// The tty is in non-blocking raw mode; avoid a busy loop.
-			// An incomplete ESC sequence that never grew is discarded.
-			if len(pending) > 0 && pending[0] == 0x1b && len(pending) < 3 {
-				pending = pending[:0]
-			}
-			time.Sleep(2 * time.Millisecond)
-			continue
-		}
-		pending = append(pending, buf[:n]...)
-		for len(pending) > 0 {
-			if pending[0] == 0x1b {
-				if len(pending) == 1 {
-					break
-				}
-				if pending[1] != '[' {
-					// ESC followed by a non-sequence byte: the ESC
-					// is not part of an escape sequence.
-					pending = pending[1:]
-					continue
-				}
-				if len(pending) < 3 {
-					break
-				}
-				switch pending[2] {
-				case 'A':
-					ch <- "up"
-					pending = pending[3:]
-					continue
-				case 'B':
-					ch <- "down"
-					pending = pending[3:]
-					continue
-				case 'H':
-					ch <- "home"
-					pending = pending[3:]
-					continue
-				case 'F':
-					ch <- "end"
-					pending = pending[3:]
-					continue
-				default:
-					if pending[2] >= '0' && pending[2] <= '9' {
-						// tilde sequence: ESC [ n ~
-						idx := bytes.IndexByte(pending, '~')
-						if idx < 0 {
-							break
-						}
-						seq := string(pending[:idx+1])
-						switch seq {
-						case "\x1b[5~":
-							ch <- "pageup"
-						case "\x1b[6~":
-							ch <- "pagedown"
-						case "\x1b[7~":
-							ch <- "home"
-						case "\x1b[8~":
-							ch <- "end"
-						}
-						pending = pending[idx+1:]
-						continue
-					}
-					// unknown escape sequence: discard one byte
-					pending = pending[3:]
-					continue
-				}
-			}
-			switch pending[0] {
-			case '1':
-				ch <- "1"
-			case '2':
-				ch <- "2"
-			case '3':
-				ch <- "3"
-			case 's', 'S':
-				ch <- "split"
-			case 'q', 'Q', 0x03:
-				ch <- "quit"
-			case '\t':
-				ch <- "tab"
-			}
-			pending = pending[1:]
-		}
-	}
 }
 
 // withTUIOutputObserver wraps a loops.Run so that model output content
