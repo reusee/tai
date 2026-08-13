@@ -148,7 +148,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `pathutil` | Path safety utilities |
 | `nets` | HTTP client and proxy support |
 | `logs` | Structured logging |
-| `taiui` | Terminal UI framework (elements, screens, tabbed panes) |
 | `debugs` | Debug tap (Starlark REPL) |
 | `memories` | Per-model user profile persistence |
 | `records` | Interaction recording and self-improvement analysis |
