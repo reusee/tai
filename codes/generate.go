@@ -355,14 +355,6 @@ func collectRoundStats(
 	return roundStats, contentIndex
 }
 
-// retrySummarizationSystemPrompt instructs the summarization model to
-// extract the valuable conclusions of the truncated output — important
-// discoveries, decisions, facts, the state of completed work, and next
-// steps — rather than reproducing the reasoning that led to them.
-// Truncation most often happens when thinking is too long; carrying the
-// conclusions over lets the retry round adopt them instead of
-// re-deriving them, reducing the thinking it needs and lowering the
-// chance of truncating again. See TheoryOfIncompleteOutputSummarization.
 const retrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks:
 
 1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
@@ -375,6 +367,19 @@ Prioritize the following valuable content in the retry prompt:
 - Important facts the model established about the codebase, the task, or the environment
 - The state of the work: what was completed and what remains
 - The next steps the model was about to take
+
+**Block Format (complete example):**
+
+<<黿鼍爩 <summary>
+- The model was analyzing the parser and had identified the root cause
+- It was interrupted before writing the fix
+黿鼍爩
+
+<<灪麤爨 <continue>
+The root cause is the missing boundary check in the parser. Next: add the boundary check, then update the tests.
+灪麤爨
+
+The delimiters 黿鼍爩 and 灪麤爨 in the example are illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
 
 Output ONLY these two blocks, no other text.`
 
@@ -576,6 +581,10 @@ TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
 The summarization uses a fast model to minimize latency. The summary is appended
 as user content with a system note explaining the retry.
+
+The summarization system prompt (retrySummarizationSystemPrompt) shows a complete
+example of the summary and continue block format with concrete delimiters, so
+the model emits parseable blocks rather than plain text.
 
 The summarization itself is retried when its response cannot be parsed into
 summary and continue blocks, or when the summarize generation fails: a malformed

@@ -215,6 +215,27 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 	}
 }
 
+func TestRetrySummarizationSystemPromptShowsBlockFormat(t *testing.T) {
+	// The summarization prompt must show a complete example of the
+	// heredoc-delimited block format with concrete delimiters. Without
+	// an example, the model does not know the format and produces plain
+	// text that cannot be parsed into summary and continue blocks,
+	// causing the retry to proceed without a synthesized summary. See
+	// TheoryOfIncompleteOutputSummarization.
+	if strings.Contains(retrySummarizationSystemPrompt, "<<DELIMITER") {
+		t.Fatal("retrySummarizationSystemPrompt must not display the literal template marker '<<DELIMITER'")
+	}
+	if !strings.Contains(retrySummarizationSystemPrompt, "<summary>") {
+		t.Fatal("retrySummarizationSystemPrompt must show a summary block example")
+	}
+	if !strings.Contains(retrySummarizationSystemPrompt, "<continue>") {
+		t.Fatal("retrySummarizationSystemPrompt must show a continue block example")
+	}
+	if !strings.Contains(retrySummarizationSystemPrompt, "uncommon Chinese characters") {
+		t.Fatal("retrySummarizationSystemPrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	}
+}
+
 func TestPrintRoundStatsWithSummaries(t *testing.T) {
 	var buf bytes.Buffer
 	stats := []RoundStat{
