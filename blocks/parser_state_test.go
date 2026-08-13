@@ -130,6 +130,38 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 	}
 }
 
+func TestParserStateBareKindBlock(t *testing.T) {
+	// A block whose opening marker carries a bare kind — <<DELIMITER
+	// kind — is parsed with that kind during streaming, matching the
+	// XML opening tag form. See TheoryOfBareKinds.
+	upstream := &mockState{systemPrompt: "system prompt"}
+	var collectedBlocks []Block
+	ps := NewParserState(upstream, func(block Block) error {
+		collectedBlocks = append(collectedBlocks, block)
+		return nil
+	})
+
+	text := "<<徕珑龘 summary\n- done\n徕珑龘\n"
+	newState, err := ps.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps = newState.(*ParserState)
+
+	if len(collectedBlocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(collectedBlocks))
+	}
+	if collectedBlocks[0].Kind != "summary" {
+		t.Fatalf("expected kind summary, got %s", collectedBlocks[0].Kind)
+	}
+	if collectedBlocks[0].Body != "- done" {
+		t.Fatalf("expected body '- done', got %q", collectedBlocks[0].Body)
+	}
+}
+
 func TestParserStateUnwrapAndPassthrough(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	state := NewParserState(upstream)

@@ -152,6 +152,19 @@ parse error so the model can correct it, rather than silently dropping the inten
 block.
 `
 
+const TheoryOfBareKinds = `
+Models sometimes emit block opening markers with a bare kind instead of an
+XML opening tag: <<DELIMITER kind instead of <<DELIMITER <kind ...>.
+Both forms are accepted on equal footing: a bare kind carries no
+attributes, and the XML opening tag takes precedence whenever the marker
+carries one. The compatibility does not introduce new block boundaries:
+a marker line with a compatible token already opened a block, kindless,
+before the extension; the extension only gives those blocks the intended
+kind. Nested-block detection accepts the same bare form, requiring the
+whole marker line to be the bare token so trailing prose is never
+mistaken for a nested opening.
+`
+
 const TheoryOfKindlessBlocks = `
 Models sometimes emit blocks whose opening marker omits the XML opening tag:
 <<DELIMITER ... DELIMITER with no kind or attributes. The parser accepts these blocks
@@ -328,9 +341,10 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	rest := trimmedOpeningLine[len(delimiter):]
 
 	// The XML opening tag is optional: a model may emit
-	// <<DELIMITER ... DELIMITER with no kind or attributes. Such
-	// blocks are parsed with an empty Kind and can only be located by
-	// iterating all blocks. See TheoryOfKindlessBlocks.
+	// <<DELIMITER ... DELIMITER with no kind or attributes, parsed with
+	// an empty Kind; or a bare kind — <<DELIMITER kind — whose first
+	// XML-name token is the Kind. See TheoryOfKindlessBlocks and
+	// TheoryOfBareKinds.
 	var kind string
 	var attrs map[string]string
 	if ltIdx := strings.Index(rest, "<"); ltIdx != -1 {
@@ -371,6 +385,13 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 			}
 			return
 		}
+	} else {
+		// A bare kind without the XML opening tag: the model may emit
+		// <<DELIMITER kind instead of <<DELIMITER <kind ...>. The first
+		// XML-name token of the rest is the Kind, and the block has no
+		// attributes. An empty or non-token rest stays kindless.
+		// See TheoryOfBareKinds.
+		kind = extractBareKind(rest)
 	}
 	matched = true
 	result.block.Kind = kind
@@ -412,15 +433,6 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	return
 }
 
-// nestedOpeningDelimiter checks if a line starting with "<<" is a valid
-// nested block opening marker and returns its delimiter. It validates
-// that the delimiter is followed by a valid XML opening tag that consumes
-// the entire remaining line (up to whitespace), mirroring the logic in
-// tryParseBlock but with an additional trailing-content check. This
-// prevents false positives from content that starts with "<<" but is not
-// a block opening (e.g., shell heredocs, text with angle brackets, or
-// prose containing XML-like tags with trailing text). See
-// TheoryOfNestedBlockParsing.
 func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if !strings.HasPrefix(line, "<<") {
 		return "", false
@@ -438,7 +450,16 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	rest := trimmedAfterMarker[len(delimiter):]
 	ltIdx := strings.Index(rest, "<")
 	if ltIdx == -1 {
-		return "", false
+		// A bare kind without the XML opening tag is accepted as a
+		// nested opening marker, mirroring the bare-kind acceptance in
+		// tryParseBlock. Unlike the rendering path, the whole rest must
+		// be exactly the bare token: a marker line with trailing prose
+		// is not a nested opening, honoring the trailing-content check
+		// below. See TheoryOfBareKinds.
+		if token := extractBareKind(rest); token == "" || strings.TrimSpace(rest) != token {
+			return "", false
+		}
+		return delimiter, true
 	}
 	xmlPart := strings.TrimSpace(rest[ltIdx:])
 	if strings.HasPrefix(xmlPart, "</") {
@@ -596,6 +617,30 @@ func extractDelimiter(s string) string {
 		}
 	}
 	return delimiter
+}
+
+// extractBareKind extracts a bare block kind from the remainder of an
+// opening marker line. Models sometimes emit <<DELIMITER kind instead of
+// <<DELIMITER <kind ...>; the remainder is trimmed and its first
+// whitespace-delimited token is returned when it consists solely of XML
+// name characters. An empty remainder, or a first token containing a
+// non-name character (a space, a '<', Han text, punctuation), yields "",
+// so the block stays kindless. See TheoryOfBareKinds.
+func extractBareKind(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if isXMLSpace(c) {
+			return rest[:i]
+		}
+		if !isXMLNameChar(c) {
+			return ""
+		}
+	}
+	return rest
 }
 
 // extractTagName extracts the element name from a possibly-incomplete XML

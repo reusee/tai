@@ -671,6 +671,124 @@ func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockBareKind(t *testing.T) {
+	// A kind without the XML opening tag — <<DELIMITER kind — is
+	// accepted on equal footing with <<DELIMITER <kind ...>. The bare
+	// kind yields no attributes; a marker line with trailing text still
+	// takes its first token as the kind; a first token that is not an
+	// XML name (e.g. Han text) leaves the block kindless.
+	// See TheoryOfBareKinds.
+
+	t.Run("Change", func(t *testing.T) {
+		content := []byte("<<徕珑龘 change\nfunc Foo() {}\n徕珑龘\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		if len(block.Attributes) != 0 {
+			t.Fatalf("expected no attributes for a bare kind, got %v", block.Attributes)
+		}
+		if block.Body != "func Foo() {}" {
+			t.Fatalf("expected body 'func Foo() {}', got %q", block.Body)
+		}
+	})
+
+	t.Run("Summary", func(t *testing.T) {
+		content := []byte("<<龘靐齉 summary\n- done\n龘靐齉\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "summary" {
+			t.Fatalf("expected kind summary, got %q", block.Kind)
+		}
+		if block.Body != "- done" {
+			t.Fatalf("expected body '- done', got %q", block.Body)
+		}
+	})
+
+	t.Run("HyphenatedKind", func(t *testing.T) {
+		content := []byte("<<黿鼍爩 go-test\n-run\nTestFoo\n黿鼍爩\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "go-test" {
+			t.Fatalf("expected kind go-test, got %q", block.Kind)
+		}
+		if block.Body != "-run\nTestFoo" {
+			t.Fatalf("unexpected body: %q", block.Body)
+		}
+	})
+
+	t.Run("TrailingText", func(t *testing.T) {
+		// A marker line with trailing text after the bare kind still
+		// yields that kind; the trailing text is ignored, matching the
+		// lenient handling of trailing content after an XML opening tag.
+		content := []byte("<<徕珑龘 summary be brief\n- done\n徕珑龘\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "summary" {
+			t.Fatalf("expected kind summary, got %q", block.Kind)
+		}
+		if block.Body != "- done" {
+			t.Fatalf("expected body '- done', got %q", block.Body)
+		}
+	})
+
+	t.Run("NonNameTokenStaysKindless", func(t *testing.T) {
+		// A first token containing a non-XML-name character (Han text,
+		// punctuation) does not become a kind; the block stays kindless.
+		content := []byte("<<徕珑龘 中文\nbody\n徕珑龘\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "" {
+			t.Fatalf("expected kindless block, got %q", block.Kind)
+		}
+	})
+
+	t.Run("ParseBlocks", func(t *testing.T) {
+		// Bare-kind blocks compose with XML-kind blocks and are found in
+		// order by ParseBlocks, each with its own kind.
+		content := []byte("<<徕珑龘 summary\nfirst\n徕珑龘\n<<龘靐齉 change\nfunc Bar() {}\n龘靐齉\n")
+		blocks, err := ParseBlocks(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(blocks) != 2 {
+			t.Fatalf("expected 2 blocks, got %d", len(blocks))
+		}
+		if blocks[0].Kind != "summary" || blocks[0].Body != "first" {
+			t.Fatalf("unexpected first block: %+v", blocks[0])
+		}
+		if blocks[1].Kind != "change" || blocks[1].Body != "func Bar() {}" {
+			t.Fatalf("unexpected second block: %+v", blocks[1])
+		}
+	})
+}
+
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	// Two blocks, the second ending without a trailing newline.
 	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n<<龘靐齉 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n龘靐齉")
@@ -787,6 +905,33 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 	}
 	if !strings.Contains(block.Body, "<<徕珑龘") {
 		t.Fatalf("body should contain inner block opening marker: %q", block.Body)
+	}
+}
+
+func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
+	// A nested block whose opening marker carries a bare kind — with the
+	// same delimiter as the outer block — must not prematurely close the
+	// outer block, mirroring the XML opening tag form.
+	// See TheoryOfBareKinds.
+	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<徕珑龘 summary\n- inner\n徕珑龘\nfunc Outer() {}\n徕珑龘\n")
+	block, _, _, ok, err := ParseFirstBlock(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected block to be found")
+	}
+	if block.Kind != "change" || block.Boundary != "徕珑龘" {
+		t.Fatalf("unexpected block: kind=%s boundary=%s", block.Kind, block.Boundary)
+	}
+	if !strings.Contains(block.Body, "- inner") {
+		t.Fatalf("body should contain the inner block body: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "<<徕珑龘 summary") {
+		t.Fatalf("body should contain the inner opening marker: %q", block.Body)
+	}
+	if !strings.Contains(block.Body, "func Outer() {}") {
+		t.Fatalf("body should contain the outer block body: %q", block.Body)
 	}
 }
 
