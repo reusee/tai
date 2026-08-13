@@ -141,6 +141,21 @@ taiui theory: UI = pure Element value derived from state.
   attribute set and its underline variants.
 `
 
+const TheoryOfTUISupport = `
+taiui TUI support theory:
+- The TUI content mechanisms (colored line buffers, wrapped colored
+  lines, alternating log backgrounds, and grouped colored text
+  elements) and the tab state machine (auto-expansion, focus order,
+  weighted panel layout, and collapsed strips) live in this library so
+  any project can build a terminal UI on top of taiui's rendering. They
+  are pure state and rendering: they do not depend on generators,
+  blocks, or any application-specific model.
+- ScrollState encapsulates the follow-tail view state of a scrollable
+  pane: the offset is clamped against the wrapped display-line count,
+  following sticks to the latest row, and reaching the latest row
+  resumes following.
+`
+
 const TheoryOfCellComparison = `
 taiui cell comparison theory:
 - Cell comparison is optimized for the common case: the Set flag and the

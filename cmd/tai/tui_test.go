@@ -14,6 +14,23 @@ import (
 	"github.com/reusee/tai/taiui"
 )
 
+func newTUIState() *tuiState {
+	return &tuiState{
+		output:  taiui.NewLineBuffer(0),
+		logs:    taiui.NewStringBuffer(0),
+		tabs:    taiui.NewTabs(3),
+		scrolls: [3]taiui.ScrollState{},
+	}
+}
+
+func plainLines(lines []string) []taiui.Line {
+	out := make([]taiui.Line, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, taiui.Line{Text: line})
+	}
+	return out
+}
+
 func TestTuiFlagHandle(t *testing.T) {
 	f := Tui(false)
 	newDef, remainArgs, err := f.Handle("-tui", []string{"chat", "hello"})
@@ -32,77 +49,65 @@ func TestTuiFlagHandle(t *testing.T) {
 	}
 }
 
-func plainDisplay(lines []string) []displayLine {
-	out := make([]displayLine, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, displayLine{text: line})
-	}
-	return out
-}
-
 func TestTuiStateWriteLines(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("hello\nworld\n"))
-	if len(st.lines) != 2 || st.lines[0].text != "hello" || st.lines[1].text != "world" {
-		t.Fatalf("unexpected lines: %v", st.lines)
+	lines := st.output.Lines()
+	if len(lines) != 2 || lines[0].Text != "hello" || lines[1].Text != "world" {
+		t.Fatalf("unexpected lines: %v", lines)
 	}
 }
 
 func TestDisplayChatInput(t *testing.T) {
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	displayChatInput(tui, flags.Chats{"hello", "world"})
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	if len(tui.lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d: %v", len(tui.lines), tui.lines)
+	lines := tui.output.Lines()
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
 	}
-	if tui.lines[0].text != "hello" || tui.lines[0].color != outputColorUser {
-		t.Fatalf("unexpected first line: %+v", tui.lines[0])
+	if lines[0].Text != "hello" || lines[0].Color != outputColorUserLine {
+		t.Fatalf("unexpected first line: %+v", lines[0])
 	}
-	if tui.lines[1].text != "world" || tui.lines[1].color != outputColorUser {
-		t.Fatalf("unexpected second line: %+v", tui.lines[1])
+	if lines[1].Text != "world" || lines[1].Color != outputColorUserLine {
+		t.Fatalf("unexpected second line: %+v", lines[1])
 	}
-	// The Output tab expands and takes the focus for the chat input.
-	if !tui.expanded[0] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on chat input")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("expected focus on the output tab, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("expected focus on the output tab, got %d", tui.tabs.Focus)
 	}
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("output tab should follow the tail")
 	}
 }
 
 func TestDisplayChatInputEmpty(t *testing.T) {
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	displayChatInput(tui, nil)
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	if len(tui.lines) != 0 {
-		t.Fatalf("expected no lines for empty chats, got %v", tui.lines)
+	if len(tui.output.Lines()) != 0 {
+		t.Fatalf("expected no lines for empty chats, got %v", tui.output.Lines())
 	}
-	if tui.expanded[0] {
+	if tui.tabs.Expanded[0] {
 		t.Fatal("output tab must not expand for empty chats")
 	}
 }
 
 func TestTuiStateWriteLogs(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.writeLogs([]byte("hello\nworld\n"))
-	if len(st.logs) != 2 || st.logs[0] != "hello" || st.logs[1] != "world" {
-		t.Fatalf("unexpected logs: %v", st.logs)
+	logs := st.logs.Lines()
+	if len(logs) != 2 || logs[0] != "hello" || logs[1] != "world" {
+		t.Fatalf("unexpected logs: %v", logs)
 	}
 }
 
 func TestTuiStateRequesting(t *testing.T) {
-	// The Output tab's "generating" hint appears while a generation
-	// request is in flight and clears when the request returns: a fresh
-	// state with no activity and a finished session are never
-	// "requesting", the request-start log sets the hint, and the finish
-	// reason clears it. Finish reasons are read from the generation
-	// state, not scanned from rendered text. See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	if st.requesting() {
 		t.Fatal("expected not requesting with no activity")
 	}
@@ -110,9 +115,6 @@ func TestTuiStateRequesting(t *testing.T) {
 	if !st.requesting() {
 		t.Fatal("expected requesting after the generating log")
 	}
-	// The finish reason marks the request as returned: the hint clears
-	// even though the session has not ended (e.g., waiting for the next
-	// round or user input).
 	st.finishReason("stop")
 	if st.requesting() {
 		t.Fatal("expected not requesting after the finish reason")
@@ -124,12 +126,7 @@ func TestTuiStateRequesting(t *testing.T) {
 }
 
 func TestTuiStateRequestingLogsWrite(t *testing.T) {
-	// The generator logs a record at the start of each request (e.g., the
-	// "generating" log in the generators package), so a log write also
-	// marks the model as actively generating — this covers the wait for
-	// the first output byte, before any content has streamed.
-	// See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	st.writeLogs([]byte("msg=\"generating\"\n"))
 	if !st.requesting() {
 		t.Fatal("expected requesting after log write")
@@ -137,11 +134,6 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 }
 
 func TestIsGeneratingLog(t *testing.T) {
-	// The request-start log appears as "msg=generating" (bare message)
-	// or `msg="generating"` (quoted message). The detection requires the
-	// value to be followed by a space or the line end, so a log about
-	// "generating" that is not the request-start record (e.g.,
-	// "generating failed") is not mistaken for one. See TheoryOfTUI.
 	tests := []struct {
 		line string
 		want bool
@@ -161,13 +153,7 @@ func TestIsGeneratingLog(t *testing.T) {
 }
 
 func TestTuiStateRequestingClearedByFinish(t *testing.T) {
-	// The generating hint reflects the request lifecycle, not a time
-	// window: it persists for the whole request (including silent
-	// thinking phases) and clears when the request returns with a finish
-	// reason. Before the fix, the hint was a recency timeout, so it
-	// disappeared after a silence and only reappeared on the next output.
-	// See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !st.requesting() {
 		t.Fatal("expected requesting after the generating log")
@@ -179,12 +165,7 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
-	// The Output tab title carries the session-state hint: "generating..."
-	// while a generation request is in flight, "(done)" after the session
-	// ends, and the plain title otherwise. The generating hint also
-	// requests the active-request highlight. The request is marked in
-	// flight by the generator's "generating" log. See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	if label, highlight := st.outputTabLabel(); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
 	}
@@ -199,13 +180,14 @@ func TestTUIOutputTabLabel(t *testing.T) {
 }
 
 func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
-	// While a generation request is in flight, the Output tab's title is
-	// drawn in tabActiveLabelFg so the in-flight request is visible at a
-	// glance. An idle session keeps the ordinary title color. The
-	// request is marked in flight by the generator's "generating" log.
-	// See TheoryOfTUI.
 	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
-		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12}, plainDisplay([]string{"content"}), 0, focus)
+		label, highlight := tui.outputTabLabel()
+		element := taiui.Panel(
+			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
+			label, highlight,
+			[]taiui.Line{{Text: "content"}},
+			0, focus, true, panelStyle,
+		)
 		screen := &panelTestScreen{width: 12, height: 2}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 			return taiui.Root{Element: element}
@@ -216,10 +198,10 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 		return screen.frames[len(screen.frames)-1]
 	}
 
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	frame := renderTitle(tui, false)
-	cell := frame.Cells[2] // 'O' of the title at (2,0)
+	cell := frame.Cells[2]
 	if cell.Rune != 'O' {
 		t.Fatalf("expected title 'O' at (2,0), got %v", cell.Rune)
 	}
@@ -228,8 +210,7 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 		t.Fatalf("expected highlighted title foreground %#x %#x %#x, got %#x %#x %#x", wantR, wantG, wantB, r, g, b)
 	}
 
-	// An idle session shows the plain title without the highlight.
-	idle := &TUI{}
+	idle := &TUI{tuiState: *newTUIState()}
 	idleFrame := renderTitle(idle, false)
 	idleCell := idleFrame.Cells[2]
 	if idleCell.Rune != 'O' {
@@ -241,67 +222,67 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 }
 
 func TestTuiStateLogsPartialLines(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.writeLogs([]byte("foo"))
 	st.writeLogs([]byte("bar\n"))
-	if len(st.logs) != 1 || st.logs[0] != "foobar" {
-		t.Fatalf("unexpected logs: %v", st.logs)
+	logs := st.logs.Lines()
+	if len(logs) != 1 || logs[0] != "foobar" {
+		t.Fatalf("unexpected logs: %v", logs)
 	}
-	if st.logsPartial != "" {
-		t.Fatalf("unexpected partial: %q", st.logsPartial)
+	if st.logs.HasPartial() {
+		t.Fatalf("unexpected partial: %q", st.logs.Lines())
 	}
 	st.writeLogs([]byte("baz"))
-	if st.logsPartial != "baz" {
-		t.Fatalf("unexpected partial: %q", st.logsPartial)
+	if !st.logs.HasPartial() {
+		t.Fatal("expected partial line")
 	}
-	lines := st.logsLinesForRender()
+	lines := st.logs.Lines()
 	if len(lines) != 2 || lines[1] != "baz" {
 		t.Fatalf("unexpected rendered log lines: %v", lines)
 	}
 }
 
 func TestTuiLogsWriterWritesToLogs(t *testing.T) {
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	writer := logsWriter{t: tui}
 	if _, err := writer.Write([]byte("hello\n")); err != nil {
 		t.Fatal(err)
 	}
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	if len(tui.logs) != 1 || tui.logs[0] != "hello" {
-		t.Fatalf("unexpected logs: %v", tui.logs)
+	logs := tui.logs.Lines()
+	if len(logs) != 1 || logs[0] != "hello" {
+		t.Fatalf("unexpected logs: %v", logs)
 	}
 }
 
 func TestPlainOutputLinesAlternatesBackgrounds(t *testing.T) {
-	lines := plainOutputLines([]string{"a", "b", "c"}, tabUnfocusBG)
+	base := taiui.HexColor(tabUnfocusBG)
+	lines := taiui.PlainLines([]string{"a", "b", "c"}, base)
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
 	}
 	for i, line := range lines {
-		want := int32(tabUnfocusBG)
+		want := base
 		if i%2 == 1 {
-			want = logAltBG(tabUnfocusBG)
+			want = taiui.AltBG(base)
 		}
-		if line.bgColor != want {
-			t.Fatalf("line %d: expected background %#x, got %#x", i, want, line.bgColor)
+		if line.BGColor != want {
+			t.Fatalf("line %d: expected background %#x, got %#x", i, want, line.BGColor)
 		}
-		if line.color != 0 {
-			t.Fatalf("line %d: expected no foreground color, got %#x", i, line.color)
+		if line.Color != taiui.NoColor {
+			t.Fatalf("line %d: expected no foreground color, got %#x", i, line.Color)
 		}
 	}
-	if logAltBG(tabUnfocusBG) == tabUnfocusBG {
+	if taiui.AltBG(base) == base {
 		t.Fatal("alternate background must differ from the base")
 	}
 }
 
 func TestLogAltBG(t *testing.T) {
-	// The alternate shade shifts each channel of the base toward the
-	// mid-gray, so it works on both the focused (gray) and unfocused
-	// (dark blue) tab backgrounds.
-	for _, base := range []int32{tabUnfocusBG, tabFocusBG} {
-		r1, g1, b1 := color.NewHexColor(base).RGB()
-		r2, g2, b2 := color.NewHexColor(logAltBG(base)).RGB()
+	for _, base := range []taiui.Color{taiui.HexColor(tabUnfocusBG), taiui.HexColor(tabFocusBG)} {
+		r1, g1, b1 := base.RGB()
+		r2, g2, b2 := taiui.AltBG(base).RGB()
 		if !(r2 > r1 && g2 > g1 && b2 > b1) {
 			t.Fatalf("expected alternate lighter than base %#x, got %#x %#x %#x -> %#x %#x %#x",
 				base, r1, g1, b1, r2, g2, b2)
@@ -310,12 +291,12 @@ func TestLogAltBG(t *testing.T) {
 }
 
 func TestColoredTextAlternatingBackgrounds(t *testing.T) {
-	alt := logAltBG(tabUnfocusBG)
-	lines := []displayLine{
-		{text: "first", bgColor: tabUnfocusBG},
-		{text: "second", bgColor: alt},
+	alt := taiui.AltBG(taiui.HexColor(tabUnfocusBG))
+	lines := []taiui.Line{
+		{Text: "first", BGColor: taiui.HexColor(tabUnfocusBG)},
+		{Text: "second", BGColor: alt},
 	}
-	element := coloredText(lines, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
+	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
 	screen := &panelTestScreen{width: 10, height: 2}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 		return taiui.Root{Element: element}
@@ -325,9 +306,8 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 	}
 	frame := screen.frames[len(screen.frames)-1]
 
-	// The first row carries the base background across its full width.
-	wantR, wantG, wantB := color.NewHexColor(tabUnfocusBG).RGB()
-	cell := frame.Cells[9] // row 0, rightmost column: a fill cell
+	wantR, wantG, wantB := taiui.HexColor(tabUnfocusBG).RGB()
+	cell := frame.Cells[9]
 	if !cell.Set {
 		t.Fatal("expected the first row painted with its background")
 	}
@@ -335,9 +315,8 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 		t.Fatalf("expected base background %#x, got %#x %#x %#x", tabUnfocusBG, r, g, b)
 	}
 
-	// The second row carries the alternate background.
-	wantR, wantG, wantB = color.NewHexColor(alt).RGB()
-	cell = frame.Cells[19] // row 1, rightmost column: a fill cell
+	wantR, wantG, wantB = alt.RGB()
+	cell = frame.Cells[19]
 	if !cell.Set {
 		t.Fatal("expected the second row painted with its background")
 	}
@@ -347,83 +326,76 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 }
 
 func TestTuiStatePartialLines(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("foo"))
 	st.write([]byte("bar\n"))
-	if len(st.lines) != 1 || st.lines[0].text != "foobar" {
-		t.Fatalf("unexpected lines: %v", st.lines)
+	lines := st.output.Lines()
+	if len(lines) != 1 || lines[0].Text != "foobar" {
+		t.Fatalf("unexpected lines: %v", lines)
 	}
-	if st.partial.text != "" {
-		t.Fatalf("unexpected partial: %q", st.partial.text)
+	if st.output.HasPartial() {
+		t.Fatalf("unexpected partial: %q", st.output.Lines())
 	}
 	st.write([]byte("baz"))
-	if st.partial.text != "baz" {
-		t.Fatalf("unexpected partial: %q", st.partial.text)
+	if !st.output.HasPartial() {
+		t.Fatal("expected partial line")
 	}
-	lines := st.outputLinesForRender()
-	if len(lines) != 2 || lines[1].text != "baz" {
+	lines = st.output.Lines()
+	if len(lines) != 2 || lines[1].Text != "baz" {
 		t.Fatalf("unexpected rendered lines: %v", lines)
 	}
 }
 
 func TestTuiStateParsesSummaries(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n"))
 	if len(st.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
-	if st.signals[0].text != "- one" || st.signals[1].text != "- two" || st.signals[2].text != "" {
+	if st.signals[0].Text != "- one" || st.signals[1].Text != "- two" || st.signals[2].Text != "" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesAcrossChunks(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<徕珑龘 <summary>\n- one\n- tw"))
 	st.write([]byte("o\n徕珑龘\n"))
 	if len(st.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
-	if st.signals[0].text != "- one" || st.signals[1].text != "- two" {
+	if st.signals[0].Text != "- one" || st.signals[1].Text != "- two" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	text := "<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n" +
 		"<<徕珑龘 <summary>\n- s\n徕珑龘\n"
 	st.write([]byte(text))
-	if len(st.signals) != 2 || st.signals[0].text != "- s" || st.signals[1].text != "" {
+	if len(st.signals) != 2 || st.signals[0].Text != "- s" || st.signals[1].Text != "" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
-	// An unclosed fragment from a truncated round must not wedge the
-	// parse buffer: when a complete block exists beyond the fragment's
-	// opening line, the fragment is skipped and the later summary is
-	// still extracted. See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
 	st.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
 	if len(st.signals) != 2 {
 		t.Fatalf("expected 2 signal lines, got %v", st.signals)
 	}
-	if st.signals[0].text != "- done" || st.signals[1].text != "" {
+	if st.signals[0].Text != "- done" || st.signals[1].Text != "" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiOutputPreservesIndentation(t *testing.T) {
-	// The TUI wraps streamed output with taiui.WrapLines before display.
-	// An indented code line that fits the tab width must keep its
-	// indentation; without the wrap fast path, the slow path dropped
-	// leading spaces and code displayed in the TUI lost all indentation.
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("    func main() {\n        fmt.Println(1)\n    }\n"))
-	lines := st.outputLinesForRender()
-	wrapped := wrapTabLines(lines, 80)
+	lines := st.output.Lines()
+	wrapped := taiui.WrapLinesColored(lines, 80)
 	want := []string{
 		"    func main() {",
 		"        fmt.Println(1)",
@@ -433,87 +405,77 @@ func TestTuiOutputPreservesIndentation(t *testing.T) {
 		t.Fatalf("expected %d lines, got %d: %q", len(want), len(wrapped), wrapped)
 	}
 	for i := range want {
-		if wrapped[i].text != want[i] {
-			t.Fatalf("line %d: got %q, want %q", i, wrapped[i].text, want[i])
+		if wrapped[i].Text != want[i] {
+			t.Fatalf("line %d: got %q, want %q", i, wrapped[i].Text, want[i])
 		}
 	}
 }
 
 func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
-	// A fragment whose closing line is still streaming must be kept, not
-	// skipped: no complete block exists beyond it, so the parser waits
-	// for the fragment's own closing line. See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
 	if len(st.signals) != 0 {
 		t.Fatalf("expected no signals while the block is incomplete, got %v", st.signals)
 	}
 	st.write([]byte("\n黿鼍爩\n"))
-	if len(st.signals) != 2 || st.signals[0].text != "- not yet complete" {
+	if len(st.signals) != 2 || st.signals[0].Text != "- not yet complete" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
-	// A block opener split across chunk boundaries at any byte position
-	// must be retained until the next chunk completes it. Without
-	// retention, a "<<" or a lone "<" at the end of a chunk is discarded
-	// and the summary it opens is lost. See TheoryOfTUI.
 	t.Run("PartialDoubleLeftChevrons", func(t *testing.T) {
-		st := &tuiState{}
+		st := newTUIState()
 		st.write([]byte("prose\n<<"))
 		st.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.signals) != 2 || st.signals[0].text != "- done" {
+		if len(st.signals) != 2 || st.signals[0].Text != "- done" {
 			t.Fatalf("unexpected signals: %v", st.signals)
 		}
 	})
 	t.Run("SingleLeftChevron", func(t *testing.T) {
-		st := &tuiState{}
+		st := newTUIState()
 		st.write([]byte("prose\n<"))
 		st.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.signals) != 2 || st.signals[0].text != "- done" {
+		if len(st.signals) != 2 || st.signals[0].Text != "- done" {
 			t.Fatalf("unexpected signals: %v", st.signals)
 		}
 	})
 }
 
 func TestTuiStateCollectsFinishSignals(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.finishReason("stop")
 	if len(st.signals) != 1 {
 		t.Fatalf("expected 1 finish signal, got %v", st.signals)
 	}
-	if st.signals[0].text != "[Finish: stop]" {
-		t.Fatalf("unexpected signal: %q", st.signals[0].text)
+	if st.signals[0].Text != "[Finish: stop]" {
+		t.Fatalf("unexpected signal: %q", st.signals[0].Text)
 	}
 }
 
 func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
-	// The Round tab shows both round completion signals: the summary
-	// block body and the finish reason, in order. Finish reasons are
-	// read from the generation state. See TheoryOfTUI.
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
 	st.finishReason("stop")
 	if len(st.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", st.signals)
 	}
-	if st.signals[0].text != "- done" || st.signals[1].text != "" || st.signals[2].text != "[Finish: stop]" {
+	if st.signals[0].Text != "- done" || st.signals[1].Text != "" || st.signals[2].Text != "[Finish: stop]" {
 		t.Fatalf("unexpected signals: %v", st.signals)
 	}
 }
 
 func TestTuiStateFinishSignalExpandsRoundTab(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
 	tui.finishReason("stop")
-	if !tui.expanded[1] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("round tab should auto-expand on a finish reason")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 	if len(tui.signals) != 1 {
 		t.Fatalf("expected the finish signal, got %v", tui.signals)
@@ -521,35 +483,30 @@ func TestTuiStateFinishSignalExpandsRoundTab(t *testing.T) {
 }
 
 func TestTuiStateRoundTabTitle(t *testing.T) {
-	// The tab shows round completion signals, not only summaries, so its
-	// title is "Round". See TheoryOfTUI.
 	if tabNames[1] != "Round" {
 		t.Fatalf("expected the round tab title, got %q", tabNames[1])
 	}
 }
 
 func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
-	// The panel must reach the tail of wrapped content: the scroll
-	// offset is clamped against the wrapped display-line count, so at
-	// the maximum offset the last display line lands on the scroll
-	// view's last row. Under raw-line clamping the tail was unreachable
-	// once wrapping multiplied the display rows. See TheoryOfTUI.
 	var src []string
 	for i := 0; i < 20; i++ {
 		src = append(src, strings.Repeat("x", 20))
 	}
 	src = append(src, "THE-END")
-	display := plainDisplay(taiui.WrapLines(src, 9))
-	last := display[len(display)-1].text
+	display := plainLines(taiui.WrapLines(src, 9))
+	last := display[len(display)-1].Text
 	if last != "THE-END" {
 		t.Fatalf("expected the last display line to be THE-END, got %q", last)
 	}
 
-	tui := &TUI{}
-	// The panel is 10 rows tall: the one-row label strip leaves 9 rows
-	// for the scroll view; the tail offset is len(display) - 9.
 	paneHeight := 9
-	element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 12}, display, scrollClamp(1<<30, len(display), paneHeight), false)
+	element := taiui.Panel(
+		taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 12},
+		"Output", false, display,
+		taiui.ClampOffset(1<<30, len(display), paneHeight),
+		false, true, panelStyle,
+	)
 
 	screen := &panelTestScreen{width: 12, height: 10}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -560,22 +517,19 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	// At the maximum offset the last display line lands on the scroll
-	// view's last row: screen row 9, column 0 (the label strip occupies
-	// row 0, and the scroll view spans rows 1..9).
 	if cell := frame.Cells[9*frame.Width+0]; cell.Rune != 'T' {
 		t.Fatalf("expected THE-END at the pane's bottom row (9,0), got %v", cell.Rune)
 	}
 }
 
 func TestTUIPanelBackgroundColors(t *testing.T) {
-	// The TUI uses exactly two background colors: dark blue for the
-	// unfocused tab and dark gray for the focused tab. The label strip
-	// shares the tab's background, so the focus state is the only
-	// differentiator. See TheoryOfTUI.
 	renderPanel := func(focus bool) taiui.Frame {
-		tui := &TUI{}
-		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12}, plainDisplay([]string{"content"}), 0, focus)
+		element := taiui.Panel(
+			taiui.Box{Top: 0, Left: 0, Bottom: 4, Right: 12},
+			"Output", false,
+			[]taiui.Line{{Text: "content"}},
+			0, focus, true, panelStyle,
+		)
 		screen := &panelTestScreen{width: 12, height: 4}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 			return taiui.Root{Element: element}
@@ -590,13 +544,11 @@ func TestTUIPanelBackgroundColors(t *testing.T) {
 		focus bool
 		want  [3]int32
 	}{
-		{false, [3]int32{0x0a, 0x14, 0x28}}, // dark blue
-		{true, [3]int32{0x2e, 0x2e, 0x2e}},  // dark gray
+		{false, [3]int32{0x0a, 0x14, 0x28}},
+		{true, [3]int32{0x2e, 0x2e, 0x2e}},
 	}
 	for _, tc := range cases {
 		frame := renderPanel(tc.focus)
-		// Row 0 is the label strip and row 1 is the scroll content; both
-		// share the tab's background color.
 		for _, y := range []int{0, 1} {
 			cell := frame.Cells[y*frame.Width+0]
 			if !cell.Set {
@@ -652,172 +604,146 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 }
 
 func TestTUINumberKeySemantics(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, true, false}
-	tui.hasContent = [3]bool{true, true, false}
-	tui.focus = 0
-	tui.lastFocus = [3]int{0, -1, -1}
-	tui.focusOrder = 1
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.AutoExpand(0)
+	tui.tabs.AutoExpand(1)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("expected focus on tab 0, got %d", tui.tabs.Focus)
+	}
 
-	// Focused tab: pressing its key collapses it and moves the focus to
-	// the expanded tab that was last focused. Tab 1 was never focused
-	// (lastFocus -1), so it is the only expanded tab and takes the focus.
 	tui.toggleTab(0)
-	if tui.expanded[0] {
+	if tui.tabs.Expanded[0] {
 		t.Fatal("focused output tab should be collapsed")
 	}
-	if tui.focus != 1 {
-		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.focus)
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.tabs.Focus)
 	}
 
-	// Collapsed tab: pressing its key expands it and switches the focus to it.
 	tui.toggleTab(2)
-	if !tui.expanded[2] {
+	if !tui.tabs.Expanded[2] {
 		t.Fatal("collapsed logs tab should expand")
 	}
-	if tui.focus != 2 {
-		t.Fatalf("focus should switch to the logs tab, got %d", tui.focus)
+	if tui.tabs.Focus != 2 {
+		t.Fatalf("focus should switch to the logs tab, got %d", tui.tabs.Focus)
 	}
 
-	// Expanded non-focused tab: pressing its key switches the focus to it
-	// without collapsing it.
 	tui.toggleTab(1)
-	if !tui.expanded[1] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("expanded round tab must stay expanded")
 	}
-	if tui.focus != 1 {
-		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("focus should switch to the round tab, got %d", tui.tabs.Focus)
 	}
 
-	// Focused tab again: pressing its key collapses it, leaving the other
-	// expanded tab focused. Tab 2 was focused most recently (lastFocus 1),
-	// so the focus returns to it.
 	tui.toggleTab(1)
-	if tui.expanded[1] {
+	if tui.tabs.Expanded[1] {
 		t.Fatal("focused round tab should collapse")
 	}
-	if tui.focus != 2 {
-		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.focus)
+	if tui.tabs.Focus != 2 {
+		t.Fatalf("focus should move to the last-focused expanded tab, got %d", tui.tabs.Focus)
 	}
 
-	// Collapsing the last expanded tab clears the focus.
 	tui.toggleTab(2)
-	if tui.expanded[2] {
+	if tui.tabs.Expanded[2] {
 		t.Fatal("focused logs tab should collapse")
 	}
-	if tui.focus != -1 {
-		t.Fatalf("focus should be -1 when no tab is expanded, got %d", tui.focus)
+	if tui.tabs.Focus != -1 {
+		t.Fatalf("focus should be -1 when no tab is expanded, got %d", tui.tabs.Focus)
 	}
 }
 
 func TestTuiStateCollapseFocusLastExpanded(t *testing.T) {
-	// When a focused tab collapses, the focus moves to the expanded tab
-	// that was last focused. Tabs that were never focused tie-break by
-	// index order. See TheoryOfTUI.
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, true, true}
-	tui.hasContent = [3]bool{true, true, true}
-	tui.focus = 0
-	tui.lastFocus = [3]int{0, -1, -1}
-	tui.focusOrder = 1
-
-	// Focus tab 2, then tab 1: tab 1 is the most recently focused.
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.AutoExpand(0)
+	tui.tabs.AutoExpand(1)
+	tui.tabs.AutoExpand(2)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("expected focus on tab 0, got %d", tui.tabs.Focus)
+	}
 	tui.toggleTab(2)
 	tui.toggleTab(1)
-	if tui.focus != 1 {
-		t.Fatalf("expected focus on tab 1, got %d", tui.focus)
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("expected focus on tab 1, got %d", tui.tabs.Focus)
 	}
-
-	// Collapse tab 1: focus returns to tab 2, the last-focused expanded
-	// tab.
 	tui.toggleTab(1)
-	if tui.expanded[1] {
+	if tui.tabs.Expanded[1] {
 		t.Fatal("tab 1 should be collapsed")
 	}
-	if tui.focus != 2 {
-		t.Fatalf("expected focus to return to tab 2, got %d", tui.focus)
+	if tui.tabs.Focus != 2 {
+		t.Fatalf("expected focus to return to tab 2, got %d", tui.tabs.Focus)
 	}
 }
 
 func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, true, false}
-	tui.hasContent = [3]bool{true, true, false}
-	tui.focus = 0
-	tui.follow = [3]bool{false, true, false}
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.AutoExpand(0)
+	tui.tabs.AutoExpand(1)
+	tui.scrolls[0].Follow = false
+	tui.scrolls[1].Follow = true
 
-	// Switching to an already-expanded non-focused tab keeps its view: the
-	// tab's follow state is untouched, so a scrolled position survives.
 	tui.toggleTab(1)
-	if tui.focus != 1 {
-		t.Fatalf("focus should switch to the round tab, got %d", tui.focus)
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("focus should switch to the round tab, got %d", tui.tabs.Focus)
 	}
-	if !tui.follow[1] {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("switching to an expanded tab must keep its follow state")
 	}
 
-	// Collapsing and re-expanding the focused tab resumes following the
-	// live tail.
 	tui.toggleTab(1)
-	if tui.expanded[1] {
+	if tui.tabs.Expanded[1] {
 		t.Fatal("focused round tab should collapse")
 	}
 	tui.toggleTab(1)
-	if !tui.expanded[1] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("collapsed round tab should re-expand")
 	}
-	if !tui.follow[1] {
+	if !tui.scrolls[1].Follow {
 		t.Fatal("re-expanding a collapsed tab must resume following")
 	}
 }
 
 func TestTUICycleFocusSkipsCollapsedTabs(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, true}
-	tui.focus = 0
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, true}
+	tui.tabs.Focus = 0
 	tui.cycleFocus()
-	if tui.focus != 2 {
-		t.Fatalf("focus should skip the collapsed round tab and land on logs, got %d", tui.focus)
+	if tui.tabs.Focus != 2 {
+		t.Fatalf("focus should skip the collapsed round tab and land on logs, got %d", tui.tabs.Focus)
 	}
 	tui.cycleFocus()
-	if tui.focus != 0 {
-		t.Fatalf("focus should wrap to the output tab, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("focus should wrap to the output tab, got %d", tui.tabs.Focus)
 	}
-	tui.expanded = [3]bool{false, false, false}
+	tui.tabs.Expanded = []bool{false, false, false}
 	tui.cycleFocus()
-	if tui.focus != -1 {
-		t.Fatalf("focus should be -1 with no expanded tabs, got %d", tui.focus)
+	if tui.tabs.Focus != -1 {
+		t.Fatalf("focus should be -1 with no expanded tabs, got %d", tui.tabs.Focus)
 	}
 }
 
 func TestScrollClamp(t *testing.T) {
-	// The maximum offset is displayLines - paneHeight: at the maximum
-	// offset the last display line lands on the pane's last row. An
-	// offset beyond the content clamps to the maximum, a negative
-	// offset clamps to 0, and the tail sentinel (1<<30) clamps to the
-	// last row. See TheoryOfTUI.
-	if got := scrollClamp(0, 10, 3); got != 0 {
+	if got := taiui.ClampOffset(0, 10, 3); got != 0 {
 		t.Fatalf("offset 0 should be unchanged, got %d", got)
 	}
-	if got := scrollClamp(7, 10, 3); got != 7 {
+	if got := taiui.ClampOffset(7, 10, 3); got != 7 {
 		t.Fatalf("offset 7 (the max) should be unchanged, got %d", got)
 	}
-	if got := scrollClamp(8, 10, 3); got != 7 {
+	if got := taiui.ClampOffset(8, 10, 3); got != 7 {
 		t.Fatalf("offset 8 should clamp to 7, got %d", got)
 	}
-	if got := scrollClamp(100, 10, 3); got != 7 {
+	if got := taiui.ClampOffset(100, 10, 3); got != 7 {
 		t.Fatalf("offset 100 should clamp to 7, got %d", got)
 	}
-	if got := scrollClamp(1<<30, 10, 3); got != 7 {
+	if got := taiui.ClampOffset(1<<30, 10, 3); got != 7 {
 		t.Fatalf("tail sentinel should clamp to 7, got %d", got)
 	}
-	if got := scrollClamp(-5, 10, 3); got != 0 {
+	if got := taiui.ClampOffset(-5, 10, 3); got != 0 {
 		t.Fatalf("negative offset should clamp to 0, got %d", got)
 	}
-	if got := scrollClamp(0, 2, 3); got != 0 {
+	if got := taiui.ClampOffset(0, 2, 3); got != 0 {
 		t.Fatalf("fitted content should clamp to 0, got %d", got)
 	}
-	if got := scrollClamp(1<<30, 2, 3); got != 0 {
+	if got := taiui.ClampOffset(1<<30, 2, 3); got != 0 {
 		t.Fatalf("tail sentinel with fitted content should clamp to 0, got %d", got)
 	}
 }
@@ -837,15 +763,12 @@ func (s *panelTestScreen) Present(f taiui.Frame) {
 }
 
 func TestTUIPanelWrapsLongLines(t *testing.T) {
-	// TUI panels receive display lines pre-wrapped at the pane's visible
-	// width (the tab's width minus the scrollbar column), so a long
-	// source line occupies several display rows. The panel's Text
-	// renders the pre-wrapped lines below the one-row label strip; the
-	// first display rows are visible.
-	tui := &TUI{}
 	src := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 1)
-	lines := plainDisplay(taiui.WrapLines([]string{src, src, src}, 11))
-	element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 6, Right: 12}, lines, 0, false)
+	lines := plainLines(taiui.WrapLines([]string{src, src, src}, 11))
+	element := taiui.Panel(
+		taiui.Box{Top: 0, Left: 0, Bottom: 6, Right: 12},
+		"Output", false, lines, 0, false, true, panelStyle,
+	)
 
 	screen := &panelTestScreen{width: 12, height: 6}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
@@ -856,11 +779,6 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	// The pane is 12 columns wide with a scrollbar; the visible content
-	// area is 11 columns, so each 26-character source line wraps into
-	// three display rows. The first display row holds the first 11
-	// characters, the second row the next 11. The label strip occupies
-	// row 0, so the content starts at row 1.
 	if cell := frame.Cells[1*frame.Width+0]; cell.Rune != 'a' {
 		t.Fatalf("expected 'a' at (0,1), got %v", cell.Rune)
 	}
@@ -873,19 +791,16 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 }
 
 func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
-	// The scrollbar is hidden while the pane follows the tail: at the
-	// latest position there is nothing left to scroll toward, so the
-	// thumb would only add visual noise and waste a column. Scrolling
-	// away from the tail brings the scrollbar back. See TheoryOfTUI.
 	var lines []string
 	for i := 0; i < 40; i++ {
 		lines = append(lines, fmt.Sprintf("line %02d", i))
 	}
 
 	renderPanel := func(follow bool) taiui.Frame {
-		tui := &TUI{}
-		tui.follow = [3]bool{follow, false, false}
-		element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}, plainDisplay(lines), 0, false)
+		element := taiui.Panel(
+			taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
+			"Output", false, plainLines(lines), 0, false, follow, panelStyle,
+		)
 		screen := &panelTestScreen{width: 80, height: 10}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 			return taiui.Root{Element: element}
@@ -896,7 +811,6 @@ func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
 		return screen.frames[len(screen.frames)-1]
 	}
 
-	// While following, no scrollbar thumb appears at the right edge.
 	following := renderPanel(true)
 	rightmost := following.Width - 1
 	for y := 0; y < following.Height; y++ {
@@ -905,7 +819,6 @@ func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
 		}
 	}
 
-	// When scrolled away from the tail, the scrollbar thumb appears.
 	scrolled := renderPanel(false)
 	foundThumb := false
 	for y := 0; y < scrolled.Height; y++ {
@@ -920,36 +833,35 @@ func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
 }
 
 func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
-	// Stacked layout, 2 expanded tabs and 1 collapsed tab on a 40-row
-	// screen: the collapsed tab takes one row at the bottom, and the
-	// expanded tabs share the remaining 39 rows. The scroll offset clamp
-	// must match the actual scroll view height (the panel height minus
-	// the one-row label strip). See TheoryOfTUI.
-	boxes := computeTabBoxes(false, [3]bool{true, true, false}, -1, 80, 40)
+	tabs := taiui.NewTabs(3)
+	tabs.Expanded = []bool{true, true, false}
+	tabs.Focus = -1
+	boxes := tabs.Boxes(80, 40)
 	paneHeight := max(boxes[0].Height()-1, 1)
 	if paneHeight != 18 {
 		t.Fatalf("expected an 18-row scroll view, got %d", paneHeight)
 	}
 	const displayLines = 100
-	if got := scrollClamp(1<<30, displayLines, paneHeight); got != displayLines-18 {
+	if got := taiui.ClampOffset(1<<30, displayLines, paneHeight); got != displayLines-18 {
 		t.Fatalf("expected the tail offset %d, got %d", displayLines-18, got)
 	}
 
-	// Side-by-side layout: the panel spans the full height, so the
-	// scroll view is height - 1.
-	boxes = computeTabBoxes(true, [3]bool{true, true, false}, -1, 80, 40)
+	tabs2 := taiui.NewTabs(3)
+	tabs2.Expanded = []bool{true, true, false}
+	tabs2.Focus = -1
+	tabs2.SplitVertical = true
+	boxes = tabs2.Boxes(80, 40)
 	if paneHeight := max(boxes[0].Height()-1, 1); paneHeight != 39 {
 		t.Fatalf("expected a 39-row scroll view, got %d", paneHeight)
 	}
 }
 
 func TestTUISticksToTail(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
-	tui.follow = [3]bool{true, false, false}
-	tui.splitVertical = false
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.scrolls[0].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -960,45 +872,40 @@ func TestTUISticksToTail(t *testing.T) {
 	}
 	tui.write([]byte(sb.String()))
 	tui.render()
-	// The output tab spans the full width (80 columns) minus the
-	// scrollbar column = 79 content columns, and 8 rows (10 minus the two
-	// collapsed tabs' rows). The scroll view is 7 rows (8 minus the
-	// one-row label strip).
 	contentWidth := 79
-	display := wrapTabLines(tui.outputLinesForRender(), contentWidth)
+	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	want := len(display) - 7
 	if want < 0 {
 		want = 0
 	}
-	if tui.topLeft != want {
-		t.Fatalf("expected topLeft %d, got %d", want, tui.topLeft)
+	if tui.scrolls[0].Offset != want {
+		t.Fatalf("expected topLeft %d, got %d", want, tui.scrolls[0].Offset)
 	}
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow on the output tab")
 	}
 
 	tui.write([]byte("new line\nanother line\n"))
 	tui.render()
-	display = wrapTabLines(tui.outputLinesForRender(), contentWidth)
+	display = taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	want = len(display) - 7
 	if want < 0 {
 		want = 0
 	}
-	if tui.topLeft != want {
-		t.Fatalf("expected topLeft %d after new output, got %d", want, tui.topLeft)
+	if tui.scrolls[0].Offset != want {
+		t.Fatalf("expected topLeft %d after new output, got %d", want, tui.scrolls[0].Offset)
 	}
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow to persist on the output tab")
 	}
 }
 
 func TestTUIReopenResumesFollow(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
-	tui.follow = [3]bool{true, false, false}
-	tui.splitVertical = false
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.scrolls[0].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1010,58 +917,51 @@ func TestTUIReopenResumesFollow(t *testing.T) {
 	tui.write([]byte(sb.String()))
 	tui.render()
 
-	// Simulate the user scrolling away from the tail: follow must clear
-	// and the view must leave the latest row.
 	tui.scroll(-1)
-	if tui.follow[0] {
+	if tui.scrolls[0].Follow {
 		t.Fatal("expected follow false after scrolling away")
 	}
 
-	// Collapse and re-expand the output tab.
 	tui.toggleTab(0)
-	if tui.expanded[0] {
+	if tui.tabs.Expanded[0] {
 		t.Fatal("expected output tab collapsed")
 	}
-	if tui.focus != -1 {
-		t.Fatalf("expected focus -1 with no expanded tabs, got %d", tui.focus)
+	if tui.tabs.Focus != -1 {
+		t.Fatalf("expected focus -1 with no expanded tabs, got %d", tui.tabs.Focus)
 	}
 	tui.toggleTab(0)
-	if !tui.expanded[0] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("expected output tab re-expanded")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("expected focus 0 after re-expand, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("expected focus 0 after re-expand, got %d", tui.tabs.Focus)
 	}
-	// Re-expanding must resume following the live tail.
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow true after re-expand")
 	}
 
-	// New content arriving after the re-expand must move the view to the
-	// new tail, so the pane shows the latest lines.
 	tui.write([]byte("line 10\nline 11\n"))
 	tui.render()
-	contentWidth := 79 // 80 columns minus the scrollbar column
-	display := wrapTabLines(tui.outputLinesForRender(), contentWidth)
-	want := len(display) - 7 // 8 rows minus the one-row label strip
+	contentWidth := 79
+	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
+	want := len(display) - 7
 	if want < 0 {
 		want = 0
 	}
-	if tui.topLeft != want {
-		t.Fatalf("expected topLeft %d after new content, got %d", want, tui.topLeft)
+	if tui.scrolls[0].Offset != want {
+		t.Fatalf("expected topLeft %d after new content, got %d", want, tui.scrolls[0].Offset)
 	}
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow to persist after new content")
 	}
 }
 
 func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
-	tui.follow = [3]bool{true, false, false}
-	tui.splitVertical = false
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.scrolls[0].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1074,55 +974,54 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 	tui.render()
 
 	contentWidth := 79
-	display := wrapTabLines(tui.outputLinesForRender(), contentWidth)
+	display := taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	initialMax := len(display) - 7
 	if initialMax < 0 {
 		initialMax = 0
 	}
 
 	tui.scroll(-3)
-	if tui.topLeft != initialMax-3 {
-		t.Fatalf("expected topLeft %d after scrolling up, got %d", initialMax-3, tui.topLeft)
+	if tui.scrolls[0].Offset != initialMax-3 {
+		t.Fatalf("expected topLeft %d after scrolling up, got %d", initialMax-3, tui.scrolls[0].Offset)
 	}
-	if tui.follow[0] {
+	if tui.scrolls[0].Follow {
 		t.Fatal("expected follow cleared after scrolling away")
 	}
 
 	tui.write([]byte("more\n"))
 	tui.render()
-	if tui.topLeft != initialMax-3 {
-		t.Fatalf("expected view to stay at %d while scrolled away, got %d", initialMax-3, tui.topLeft)
+	if tui.scrolls[0].Offset != initialMax-3 {
+		t.Fatalf("expected view to stay at %d while scrolled away, got %d", initialMax-3, tui.scrolls[0].Offset)
 	}
-	if tui.follow[0] {
+	if tui.scrolls[0].Follow {
 		t.Fatal("expected follow to stay cleared while scrolled away")
 	}
 
 	tui.scrollTo(1 << 30)
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow restored at the end")
 	}
 	tui.write([]byte("tail\n"))
 	tui.render()
-	display = wrapTabLines(tui.outputLinesForRender(), contentWidth)
+	display = taiui.WrapLinesColored(tui.output.Lines(), contentWidth)
 	want := len(display) - 7
 	if want < 0 {
 		want = 0
 	}
-	if tui.topLeft != want {
-		t.Fatalf("expected topLeft %d after resuming follow, got %d", want, tui.topLeft)
+	if tui.scrolls[0].Offset != want {
+		t.Fatalf("expected topLeft %d after resuming follow, got %d", want, tui.scrolls[0].Offset)
 	}
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("expected follow to persist after resuming")
 	}
 }
 
 func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
-	tui.follow = [3]bool{false, false, false}
-	tui.splitVertical = false
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.scrolls[0].Follow = false
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1133,43 +1032,36 @@ func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
 	}
 	tui.write([]byte(sb.String()))
 	tui.render()
-	tui.topLeft = 0
-	tui.follow[0] = false
+	tui.scrolls[0].Offset = 0
+	tui.scrolls[0].Follow = false
 
-	// Stacked layout with two collapsed tabs: the output panel occupies 8
-	// rows (10 minus 2 one-row collapsed strips), and its scroll view is
-	// 7 rows (panel height minus the one-row label). A page is 6 rows, so
-	// one line of the previous view remains: the previous last row becomes
-	// the new first row.
 	tui.pageScroll(1)
-	if tui.topLeft != 6 {
-		t.Fatalf("expected topLeft 6 after page down, got %d", tui.topLeft)
+	if tui.scrolls[0].Offset != 6 {
+		t.Fatalf("expected topLeft 6 after page down, got %d", tui.scrolls[0].Offset)
 	}
-	if tui.follow[0] {
+	if tui.scrolls[0].Follow {
 		t.Fatal("expected follow cleared after page down from the top")
 	}
 
 	tui.pageScroll(-1)
-	if tui.topLeft != 0 {
-		t.Fatalf("expected topLeft 0 after page up, got %d", tui.topLeft)
+	if tui.scrolls[0].Offset != 0 {
+		t.Fatalf("expected topLeft 0 after page up, got %d", tui.scrolls[0].Offset)
 	}
 
-	// Page down near the end clamps to the content extent.
-	tui.topLeft = 90
-	tui.follow[0] = false
+	tui.scrolls[0].Offset = 90
+	tui.scrolls[0].Follow = false
 	tui.pageScroll(1)
-	if tui.topLeft != tui.maxOffsets[0] {
-		t.Fatalf("expected topLeft clamped to %d, got %d", tui.maxOffsets[0], tui.topLeft)
+	if tui.scrolls[0].Offset != tui.scrolls[0].MaxOffset {
+		t.Fatalf("expected topLeft clamped to %d, got %d", tui.scrolls[0].MaxOffset, tui.scrolls[0].Offset)
 	}
 }
 
 func TestTUIDownAtEndKeepsFollow(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
-	tui.follow = [3]bool{true, false, false}
-	tui.splitVertical = false
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
+	tui.scrolls[0].Follow = true
 	tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 	tui.width = 80
 	tui.height = 10
@@ -1182,17 +1074,17 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 	tui.render()
 
 	tui.scroll(1)
-	if !tui.follow[0] {
+	if !tui.scrolls[0].Follow {
 		t.Fatal("down at the latest row must keep following")
 	}
-	if tui.topLeft != tui.maxOffsets[0] {
-		t.Fatalf("expected topLeft at max offset %d, got %d", tui.maxOffsets[0], tui.topLeft)
+	if tui.scrolls[0].Offset != tui.scrolls[0].MaxOffset {
+		t.Fatalf("expected topLeft at max offset %d, got %d", tui.scrolls[0].MaxOffset, tui.scrolls[0].Offset)
 	}
 }
 
 func TestTUIQuitConfirmation(t *testing.T) {
 	t.Run("FirstPressShowsConfirmationSecondPressQuits", func(t *testing.T) {
-		tui := &TUI{}
+		tui := &TUI{tuiState: *newTUIState()}
 		if tui.handleQuitKey() {
 			t.Fatal("the first quit key press must not quit")
 		}
@@ -1205,7 +1097,7 @@ func TestTUIQuitConfirmation(t *testing.T) {
 	})
 
 	t.Run("AnyOtherKeyCancels", func(t *testing.T) {
-		tui := &TUI{}
+		tui := &TUI{tuiState: *newTUIState()}
 		tui.handleQuitKey()
 		if !tui.confirmQuit {
 			t.Fatal("expected the confirmation state after the first quit key")
@@ -1214,8 +1106,6 @@ func TestTUIQuitConfirmation(t *testing.T) {
 		if tui.confirmQuit {
 			t.Fatal("a non-quit key must cancel the pending quit confirmation")
 		}
-		// After cancellation, a quit key press starts a new confirmation
-		// instead of quitting immediately.
 		if tui.handleQuitKey() {
 			t.Fatal("a quit key after cancellation must not quit immediately")
 		}
@@ -1223,7 +1113,7 @@ func TestTUIQuitConfirmation(t *testing.T) {
 
 	t.Run("ConfirmationBarRendered", func(t *testing.T) {
 		var sb strings.Builder
-		tui := &TUI{}
+		tui := &TUI{tuiState: *newTUIState()}
 		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
 		tui.width = 80
 		tui.height = 10
@@ -1232,7 +1122,6 @@ func TestTUIQuitConfirmation(t *testing.T) {
 		if !strings.Contains(sb.String(), "Quit?") {
 			t.Fatalf("expected the quit confirmation bar in the rendered output, got: %q", sb.String())
 		}
-		// Without a pending confirmation the bar is not drawn.
 		sb.Reset()
 		tui.confirmQuit = false
 		tui.render()
@@ -1243,13 +1132,14 @@ func TestTUIQuitConfirmation(t *testing.T) {
 }
 
 func TestTabPanelBoxWeighted(t *testing.T) {
-	// Two expanded tabs and one collapsed tab on a 90-column screen: the
-	// collapsed tab takes one column at the right edge, and the expanded
-	// tabs share the remaining 89 columns. The focused tab has weight 2
-	// and the other weight 1, so the total weight is 3: the focused tab
-	// gets 2/3 of 89 = 59 columns (integer division), the other gets the
-	// remaining 30.
-	boxes := computeTabBoxes(true, [3]bool{true, true, false}, 0, 90, 40)
+	tabs := taiui.NewTabs(3)
+	// The first set of assertions exercises the side-by-side (vertical
+	// split) layout; the default is horizontal (stacked). See
+	// TheoryOfTUI.
+	tabs.SplitVertical = true
+	tabs.Expanded = []bool{true, true, false}
+	tabs.Focus = 0
+	boxes := tabs.Boxes(90, 40)
 	if boxes[0].Left != 0 || boxes[0].Right != 59 || boxes[0].Top != 0 || boxes[0].Bottom != 40 {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
@@ -1260,8 +1150,8 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
 	}
 
-	// Focusing the second tab swaps the proportions.
-	boxes = computeTabBoxes(true, [3]bool{true, true, false}, 1, 90, 40)
+	tabs.Focus = 1
+	boxes = tabs.Boxes(90, 40)
 	if boxes[0].Left != 0 || boxes[0].Right != 29 {
 		t.Fatalf("unexpected non-focused panel box: %+v", boxes[0])
 	}
@@ -1269,10 +1159,8 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[1])
 	}
 
-	// With no focused tab, every expanded tab has weight 1 and the space
-	// is shared equally: each of two expanded tabs on 89 columns gets 44
-	// (integer division), the last absorbs the remainder.
-	boxes = computeTabBoxes(true, [3]bool{true, true, false}, -1, 90, 40)
+	tabs.Focus = -1
+	boxes = tabs.Boxes(90, 40)
 	if boxes[0].Left != 0 || boxes[0].Right != 44 {
 		t.Fatalf("unexpected equal-share panel box: %+v", boxes[0])
 	}
@@ -1280,8 +1168,10 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 		t.Fatalf("unexpected equal-share panel box: %+v", boxes[1])
 	}
 
-	// Horizontal split applies the same weights along the height.
-	boxes = computeTabBoxes(false, [3]bool{true, true, false}, 0, 80, 45)
+	tabs2 := taiui.NewTabs(3)
+	tabs2.Expanded = []bool{true, true, false}
+	tabs2.Focus = 0
+	boxes = tabs2.Boxes(80, 45)
 	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
@@ -1292,9 +1182,12 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 		t.Fatalf("unexpected collapsed panel box: %+v", boxes[2])
 	}
 
-	// Three expanded tabs with the middle focused: weights [1,2,1] over
-	// total 4; the last tab absorbs the rounding remainder.
-	boxes = computeTabBoxes(true, [3]bool{true, true, true}, 1, 90, 24)
+	tabs3 := taiui.NewTabs(3)
+	// The last set of assertions also exercises the side-by-side layout.
+	tabs3.SplitVertical = true
+	tabs3.Expanded = []bool{true, true, true}
+	tabs3.Focus = 1
+	boxes = tabs3.Boxes(90, 24)
 	if boxes[0].Left != 0 || boxes[0].Right != 22 {
 		t.Fatalf("unexpected first panel box: %+v", boxes[0])
 	}
@@ -1307,11 +1200,13 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 }
 
 func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
-	// A collapsed tab must stay in its original position, not be pushed
-	// to the edge. In vertical split, tab 1 (Round) collapsed between
-	// expanded tabs 0 and 2 keeps its middle position as a one-column
-	// strip. See TheoryOfTUI.
-	boxes := computeTabBoxes(true, [3]bool{true, false, true}, 0, 90, 40)
+	tabs := taiui.NewTabs(3)
+	// Side-by-side (vertical split) layout is exercised explicitly; the
+	// default is horizontal (stacked).
+	tabs.SplitVertical = true
+	tabs.Expanded = []bool{true, false, true}
+	tabs.Focus = 0
+	boxes := tabs.Boxes(90, 40)
 	if boxes[0].Left != 0 || boxes[0].Right != 59 {
 		t.Fatalf("unexpected output panel box: %+v", boxes[0])
 	}
@@ -1322,9 +1217,10 @@ func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
 		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
 	}
 
-	// Horizontal split: the collapsed tab stays in its original row
-	// position.
-	boxes = computeTabBoxes(false, [3]bool{true, false, true}, 0, 80, 45)
+	tabs2 := taiui.NewTabs(3)
+	tabs2.Expanded = []bool{true, false, true}
+	tabs2.Focus = 0
+	boxes = tabs2.Boxes(80, 45)
 	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
 		t.Fatalf("unexpected output panel box: %+v", boxes[0])
 	}
@@ -1337,9 +1233,13 @@ func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
 }
 
 func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
-	// Collapsed tabs at the edges stay at the edges, and the expanded
-	// middle tab absorbs the remaining space.
-	boxes := computeTabBoxes(true, [3]bool{false, true, false}, 1, 90, 40)
+	tabs := taiui.NewTabs(3)
+	// Side-by-side (vertical split) layout is exercised explicitly; the
+	// default is horizontal (stacked).
+	tabs.SplitVertical = true
+	tabs.Expanded = []bool{false, true, false}
+	tabs.Focus = 1
+	boxes := tabs.Boxes(90, 40)
 	if boxes[0].Left != 0 || boxes[0].Right != 1 {
 		t.Fatalf("unexpected collapsed output panel box: %+v", boxes[0])
 	}
@@ -1352,13 +1252,8 @@ func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
 }
 
 func TestCollapsedPanelRendering(t *testing.T) {
-	// A collapsed tab renders as a thin strip showing the tab's key and
-	// title. In horizontal split the strip is one row tall and the label
-	// is written horizontally; in vertical split the strip is one column
-	// wide and the label is written vertically. See TheoryOfTUI.
 	t.Run("Horizontal", func(t *testing.T) {
-		tui := &TUI{}
-		element := tui.collapsedPanel(0, taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, false)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, panelStyle)
 		screen := &panelTestScreen{width: 12, height: 1}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 			return taiui.Root{Element: element}
@@ -1367,7 +1262,6 @@ func TestCollapsedPanelRendering(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The label "1 Output" is rendered with padding: "  1 Output  ".
 		if cell := frame.Cells[2]; cell.Rune != '1' {
 			t.Fatalf("expected '1' at (2,0), got %v", cell.Rune)
 		}
@@ -1377,8 +1271,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		tui := &TUI{}
-		element := tui.collapsedPanel(0, taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, false)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, panelStyle)
 		screen := &panelTestScreen{width: 1, height: 8}
 		taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 			return taiui.Root{Element: element}
@@ -1387,8 +1280,6 @@ func TestCollapsedPanelRendering(t *testing.T) {
 			t.Fatal("expected a rendered frame")
 		}
 		frame := screen.frames[len(screen.frames)-1]
-		// The label "1 Output" is written vertically: '1' at row 0, the
-		// space at row 1, 'O' at row 2.
 		if cell := frame.Cells[0]; cell.Rune != '1' {
 			t.Fatalf("expected '1' at (0,0), got %v", cell.Rune)
 		}
@@ -1402,9 +1293,9 @@ func TestCollapsedPanelRendering(t *testing.T) {
 }
 
 func TestComputeTabBoxesAllCollapsed(t *testing.T) {
-	// When all tabs are collapsed, each takes one column (vertical
-	// split) or one row (horizontal split). See TheoryOfTUI.
-	boxes := computeTabBoxes(true, [3]bool{false, false, false}, -1, 80, 24)
+	tabs := taiui.NewTabs(3)
+	tabs.SplitVertical = true
+	boxes := tabs.Boxes(80, 24)
 	for i := 0; i < 3; i++ {
 		if boxes[i].Width() != 1 {
 			t.Fatalf("tab %d: expected 1-column box, got %+v", i, boxes[i])
@@ -1417,7 +1308,8 @@ func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 		t.Fatalf("unexpected collapsed layout: %+v", boxes)
 	}
 
-	boxes = computeTabBoxes(false, [3]bool{false, false, false}, -1, 80, 24)
+	tabs2 := taiui.NewTabs(3)
+	boxes = tabs2.Boxes(80, 24)
 	for i := 0; i < 3; i++ {
 		if boxes[i].Height() != 1 {
 			t.Fatalf("tab %d: expected 1-row box, got %+v", i, boxes[i])
@@ -1432,114 +1324,97 @@ func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 }
 
 func TestTuiStateAutoExpandTabs(t *testing.T) {
-	tui := &TUI{}
-	tui.focus = -1
+	tui := &TUI{tuiState: *newTUIState()}
 	tui.write([]byte("model output\n"))
-	if !tui.expanded[0] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on streamed output")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("expected focus on the output tab, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("expected focus on the output tab, got %d", tui.tabs.Focus)
 	}
 
-	// A log record expands the Logs tab without changing the focus.
 	tui.writeLogs([]byte("msg=\"log record\"\n"))
-	if !tui.expanded[2] {
+	if !tui.tabs.Expanded[2] {
 		t.Fatal("logs tab should auto-expand on log records")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	// A summary block expands the Round tab without changing the focus.
 	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
-	if !tui.expanded[1] {
+	if !tui.tabs.Expanded[1] {
 		t.Fatal("round tab should auto-expand on a summary block")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("auto-expand must not change an established focus, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 	if len(tui.signals) != 2 {
 		t.Fatalf("expected the summary signals, got %v", tui.signals)
 	}
 
-	// A non-summary block does not expand the Round tab on its own.
-	tui2 := &TUI{}
-	tui2.expanded = [3]bool{true, false, false}
-	tui2.hasContent = [3]bool{true, false, false}
-	tui2.focus = 0
+	tui2 := &TUI{tuiState: *newTUIState()}
+	tui2.tabs.Expanded = []bool{true, false, false}
+	tui2.tabs.HasContent = []bool{true, false, false}
+	tui2.tabs.Focus = 0
 	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
-	if tui2.expanded[1] {
+	if tui2.tabs.Expanded[1] {
 		t.Fatal("round tab must not expand without a summary block or finish line")
 	}
 }
 
 func TestTuiStateAutoExpandPreservesFocus(t *testing.T) {
-	tui := &TUI{}
-	tui.expanded = [3]bool{true, false, false}
-	tui.hasContent = [3]bool{true, false, false}
-	tui.focus = 0
+	tui := &TUI{tuiState: *newTUIState()}
+	tui.tabs.Expanded = []bool{true, false, false}
+	tui.tabs.HasContent = []bool{true, false, false}
+	tui.tabs.Focus = 0
 	tui.writeLogs([]byte("msg=\"log record\"\n"))
-	if !tui.expanded[2] {
+	if !tui.tabs.Expanded[2] {
 		t.Fatal("logs tab should auto-expand on log records")
 	}
-	if tui.focus != 0 {
-		t.Fatalf("focus must stay on the output tab, got %d", tui.focus)
+	if tui.tabs.Focus != 0 {
+		t.Fatalf("focus must stay on the output tab, got %d", tui.tabs.Focus)
 	}
-	if !tui.follow[2] {
+	if !tui.scrolls[2].Follow {
 		t.Fatal("auto-expanded tab should follow the tail")
 	}
-	// The newly auto-expanded tab is immediately navigable: tab cycles
-	// to it from the current focus.
 	tui.cycleFocus()
-	if tui.focus != 2 {
-		t.Fatalf("expected focus to cycle to the logs tab, got %d", tui.focus)
+	if tui.tabs.Focus != 2 {
+		t.Fatalf("expected focus to cycle to the logs tab, got %d", tui.tabs.Focus)
 	}
 }
 
 func TestTuiStateEmptyWriteDoesNotExpandTabs(t *testing.T) {
-	st := &tuiState{}
-	st.focus = -1
+	st := newTUIState()
 	st.write(nil)
 	st.writeLogs(nil)
 	for i := 0; i < 3; i++ {
-		if st.expanded[i] {
+		if st.tabs.Expanded[i] {
 			t.Fatalf("tab %d must not expand on empty writes", i)
 		}
 	}
-	if st.focus != -1 {
-		t.Fatalf("expected no focus change on empty writes, got %d", st.focus)
+	if st.tabs.Focus != -1 {
+		t.Fatalf("expected no focus change on empty writes, got %d", st.tabs.Focus)
 	}
 }
 
 func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
-	// A collapsed tab expands automatically the first time content for it
-	// arrives, but not on subsequent arrivals after the user collapses
-	// it. See TheoryOfTUI.
-	tui := &TUI{}
-	tui.focus = -1
+	tui := &TUI{tuiState: *newTUIState()}
 	tui.write([]byte("first output\n"))
-	if !tui.expanded[0] {
+	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on first content")
 	}
-	// Collapse the output tab.
 	tui.toggleTab(0)
-	if tui.expanded[0] {
+	if tui.tabs.Expanded[0] {
 		t.Fatal("output tab should be collapsed")
 	}
-	// New content must not re-expand it.
 	tui.write([]byte("more output\n"))
-	if tui.expanded[0] {
+	if tui.tabs.Expanded[0] {
 		t.Fatal("output tab must not re-expand on subsequent content")
 	}
 }
 
 func TestWithTUIOutputObserver(t *testing.T) {
-	// The TUI's output observer must be passed through
-	// RunOptions.StateDecorators so the loop applies it to the
-	// generation state. Without the wrapper, the model output and
-	// finish reasons never reach the TUI. See TheoryOfTUI.
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	var gotOpts loops.RunOptions
 	run := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
 		gotOpts = opts
@@ -1555,9 +1430,6 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))
 	}
 
-	// Apply the decorator to a state and append content: text streams
-	// to the Output tab, thoughts are separated by blank lines and
-	// colored distinctly, and finish reasons reach the Round tab.
 	var state generators.State = generators.NewPrompts("", nil)
 	state, err = gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
 		Role: generators.RoleModel,
@@ -1599,13 +1471,11 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var sb strings.Builder
-	for _, line := range tui.lines {
-		sb.WriteString(line.text)
+	for _, line := range tui.output.Lines() {
+		sb.WriteString(line.Text)
 		sb.WriteString("\n")
 	}
 	output := sb.String()
-	// The thought is separated from the surrounding text by blank lines,
-	// with no "thinking"/"response" labels.
 	for _, want := range []string{"model output", "deep thinking", "answer"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q in output, got %q", want, output)
@@ -1614,22 +1484,13 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	if !strings.Contains(output, "deep thinking\n\nanswer") {
 		t.Fatalf("expected a blank line between the thought and the answer, got %q", output)
 	}
-	if strings.Contains(output, "\n thinking\n") || strings.Contains(output, "\n response\n") {
-		t.Fatalf("expected no thinking/response labels in output, got %q", output)
-	}
-	if len(tui.signals) != 1 || tui.signals[0].text != "[Finish: stop]" {
+	if len(tui.signals) != 1 || tui.signals[0].Text != "[Finish: stop]" {
 		t.Fatalf("expected finish reason in round tab, got %v", tui.signals)
 	}
 }
 
 func TestTUICaptureContentNotifies(t *testing.T) {
-	// Model output captured via the state decorator must notify the
-	// render loop. The decorator appends content directly to the
-	// display buffers, bypassing the tuiWriter path that notifies;
-	// without a notification the loop stays blocked on the update
-	// channel and the output pane appears frozen until an input key
-	// forces a re-render. See TheoryOfTUI.
-	tui := &TUI{updateCh: make(chan struct{}, 1)}
+	tui := &TUI{tuiState: *newTUIState(), updateCh: make(chan struct{}, 1)}
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	if _, err := s.AppendContent(&generators.Content{
@@ -1648,14 +1509,14 @@ func TestTUICaptureContentNotifies(t *testing.T) {
 func TestRoleColor(t *testing.T) {
 	cases := []struct {
 		role generators.Role
-		want int32
+		want taiui.Color
 	}{
-		{generators.RoleUser, outputColorUser},
-		{generators.RoleTool, outputColorTool},
-		{generators.RoleSystem, outputColorSystem},
-		{generators.RoleLog, outputColorLog},
-		{generators.RoleModel, 0},
-		{generators.RoleAssistant, 0},
+		{generators.RoleUser, outputColorUserLine},
+		{generators.RoleTool, outputColorToolLine},
+		{generators.RoleSystem, outputColorSystemLine},
+		{generators.RoleLog, outputColorLogLine},
+		{generators.RoleModel, taiui.NoColor},
+		{generators.RoleAssistant, taiui.NoColor},
 	}
 	for _, c := range cases {
 		if got := roleColor(c.role); got != c.want {
@@ -1665,7 +1526,7 @@ func TestRoleColor(t *testing.T) {
 }
 
 func TestTUICaptureContentRoleColors(t *testing.T) {
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	for _, c := range []struct {
@@ -1687,34 +1548,33 @@ func TestTUICaptureContentRoleColors(t *testing.T) {
 	}
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	// Each role switch inserts a blank line separator between the
-	// colored sections.
+	lines := tui.output.Lines()
 	want := []struct {
 		text  string
-		color int32
+		color taiui.Color
 	}{
-		{"user", outputColorUser},
-		{"", 0},
-		{"model", 0},
-		{"", 0},
-		{"tool", outputColorTool},
-		{"", 0},
-		{"system", outputColorSystem},
-		{"", 0},
-		{"log", outputColorLog},
+		{"user", outputColorUserLine},
+		{"", taiui.NoColor},
+		{"model", taiui.NoColor},
+		{"", taiui.NoColor},
+		{"tool", outputColorToolLine},
+		{"", taiui.NoColor},
+		{"system", outputColorSystemLine},
+		{"", taiui.NoColor},
+		{"log", outputColorLogLine},
 	}
-	if len(tui.lines) != len(want) {
-		t.Fatalf("expected %d lines, got %d: %v", len(want), len(tui.lines), tui.lines)
+	if len(lines) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(lines), lines)
 	}
 	for i, w := range want {
-		if tui.lines[i].text != w.text || tui.lines[i].color != w.color {
-			t.Fatalf("line %d: got %+v, want text %q color %#x", i, tui.lines[i], w.text, w.color)
+		if lines[i].Text != w.text || lines[i].Color != w.color {
+			t.Fatalf("line %d: got %+v, want text %q color %#x", i, lines[i], w.text, w.color)
 		}
 	}
 }
 
 func TestTUICaptureContentThoughtColor(t *testing.T) {
-	tui := &TUI{}
+	tui := &TUI{tuiState: *newTUIState()}
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	if _, err := s.AppendContent(&generators.Content{
@@ -1731,59 +1591,57 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 	}
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	// The thought is colored distinctly, and a blank line separates it
-	// from the following answer text. No "thinking"/"response" labels
-	// are emitted.
+	lines := tui.output.Lines()
 	want := []struct {
 		text  string
-		color int32
+		color taiui.Color
 	}{
-		{"thinking", outputColorThought},
-		{"", 0},
-		{"answer", 0},
+		{"thinking", outputColorThoughtLine},
+		{"", taiui.NoColor},
+		{"answer", taiui.NoColor},
 	}
-	if len(tui.lines) != len(want) {
-		t.Fatalf("expected %d lines, got %d: %v", len(want), len(tui.lines), tui.lines)
+	if len(lines) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(lines), lines)
 	}
 	for i, w := range want {
-		if tui.lines[i].text != w.text || tui.lines[i].color != w.color {
-			t.Fatalf("line %d: got %+v, want text %q color %#x", i, tui.lines[i], w.text, w.color)
+		if lines[i].Text != w.text || lines[i].Color != w.color {
+			t.Fatalf("line %d: got %+v, want text %q color %#x", i, lines[i], w.text, w.color)
 		}
 	}
 }
 
 func TestTuiStateFinishReasonColor(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.finishReason("stop")
 	if len(st.signals) != 1 {
 		t.Fatalf("expected 1 finish signal, got %v", st.signals)
 	}
-	if st.signals[0].text != "[Finish: stop]" || st.signals[0].color != outputColorLog {
+	if st.signals[0].Text != "[Finish: stop]" || st.signals[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected signal: %+v", st.signals[0])
 	}
 }
 
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
-	st := &tuiState{}
+	st := newTUIState()
 	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
 	if len(st.signals) != 2 {
 		t.Fatalf("expected 2 signal lines, got %v", st.signals)
 	}
-	if st.signals[0].text != "- done" || st.signals[0].color != 0 {
+	if st.signals[0].Text != "- done" || st.signals[0].Color != taiui.NoColor {
 		t.Fatalf("unexpected signal: %+v", st.signals[0])
 	}
 }
 
 func TestWrapTabLinesCarriesColors(t *testing.T) {
-	lines := []outputLine{
-		{text: "aaa bbb", color: outputColorUser},
-		{text: "ccc", color: 0},
+	lines := []taiui.Line{
+		{Text: "aaa bbb", Color: outputColorUserLine},
+		{Text: "ccc", Color: taiui.NoColor},
 	}
-	wrapped := wrapTabLines(lines, 5)
-	want := []displayLine{
-		{text: "aaa", color: outputColorUser},
-		{text: "bbb", color: outputColorUser},
-		{text: "ccc", color: 0},
+	wrapped := taiui.WrapLinesColored(lines, 5)
+	want := []taiui.Line{
+		{Text: "aaa", Color: outputColorUserLine},
+		{Text: "bbb", Color: outputColorUserLine},
+		{Text: "ccc", Color: taiui.NoColor},
 	}
 	if len(wrapped) != len(want) {
 		t.Fatalf("expected %d lines, got %d: %v", len(want), len(wrapped), wrapped)
@@ -1796,12 +1654,14 @@ func TestWrapTabLinesCarriesColors(t *testing.T) {
 }
 
 func TestTUIPanelColorsContent(t *testing.T) {
-	tui := &TUI{}
-	lines := []displayLine{
-		{text: "red", color: outputColorLog},
-		{text: "plain", color: 0},
+	lines := []taiui.Line{
+		{Text: "red", Color: outputColorLogLine},
+		{Text: "plain", Color: taiui.NoColor},
 	}
-	element := tui.panel(0, taiui.Box{Top: 0, Left: 0, Bottom: 3, Right: 10}, lines, 0, false)
+	element := taiui.Panel(
+		taiui.Box{Top: 0, Left: 0, Bottom: 3, Right: 10},
+		"Output", false, lines, 0, false, true, panelStyle,
+	)
 	screen := &panelTestScreen{width: 10, height: 3}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 		return taiui.Root{Element: element}
@@ -1810,7 +1670,6 @@ func TestTUIPanelColorsContent(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	// Row 0 is the label strip; content starts at row 1.
 	cell := frame.Cells[1*frame.Width+0]
 	if cell.Rune != 'r' {
 		t.Fatalf("expected 'r' at (0,1), got %v", cell.Rune)
@@ -1829,18 +1688,14 @@ func TestTUIPanelColorsContent(t *testing.T) {
 }
 
 func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
-	// Text colors must use the ANSI 16 palette, never true-color RGB:
-	// the rendered foreground is a PaletteColor, not an RGB color.
-	// Backgrounds are exempt and keep true-color hex values.
-	// See TheoryOfTUI.
-	lines := []displayLine{
-		{text: "u", color: outputColorUser},
-		{text: "t", color: outputColorTool},
-		{text: "s", color: outputColorSystem},
-		{text: "l", color: outputColorLog},
-		{text: "m", color: outputColorThought},
+	lines := []taiui.Line{
+		{Text: "u", Color: outputColorUserLine},
+		{Text: "t", Color: outputColorToolLine},
+		{Text: "s", Color: outputColorSystemLine},
+		{Text: "l", Color: outputColorLogLine},
+		{Text: "m", Color: outputColorThoughtLine},
 	}
-	element := coloredText(lines, taiui.Box{Top: 0, Left: 0, Bottom: 5, Right: 40})
+	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 5, Right: 40})
 	screen := &panelTestScreen{width: 40, height: 5}
 	taiui.Render(taiui.NewBaseScope(func() taiui.Root {
 		return taiui.Root{Element: element}
@@ -1849,7 +1704,7 @@ func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
 		t.Fatal("expected a rendered frame")
 	}
 	frame := screen.frames[len(screen.frames)-1]
-	want := []int32{outputColorUser, outputColorTool, outputColorSystem, outputColorLog, outputColorThought}
+	want := []taiui.Color{outputColorUserLine, outputColorToolLine, outputColorSystemLine, outputColorLogLine, outputColorThoughtLine}
 	for i, c := range want {
 		cell := frame.Cells[i*frame.Width]
 		if !cell.Set {
@@ -1859,8 +1714,10 @@ func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
 		if fg&color.IsRGB != 0 {
 			t.Fatalf("color %d must be a palette color, not true-color RGB", i)
 		}
-		if got := int(fg & 0xff); got != int(c) {
-			t.Fatalf("color %d: expected ANSI 16 palette index %d, got %d", i, int(c), got)
+		// The palette index is the low byte of the color value; the high
+		// bits carry the IsValid marker, so the comparison masks them off.
+		if got := int(fg & 0xff); got != int(c&0xff) {
+			t.Fatalf("color %d: expected ANSI 16 palette index %d, got %d", i, int(c&0xff), got)
 		}
 	}
 }

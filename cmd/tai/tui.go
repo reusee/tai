@@ -33,6 +33,16 @@ const (
 )
 
 const TheoryOfTUI = `
+The TUI's content lines, tab state machine, and scroll state are provided
+by the taiui library (see taiui.TheoryOfLines, taiui.TheoryOfTabs, and
+taiui.TheoryOfScrollState): colored line buffers, wrapped colored lines,
+alternating log backgrounds, grouped colored text, tab auto-expansion and
+focus order, weighted panel layout, collapsed strips, and follow-tail
+scroll offsets. This command wires them with tai-specific capture:
+generators.Content is converted to taiui.Line by captureContent, summary
+blocks are parsed into Round-tab lines by parseSummaries, and the request
+lifecycle is tracked by isGeneratingLog and outputTabLabel.
+
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Round tab collects the round completion
 signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
@@ -113,6 +123,26 @@ func (t Tui) Keys() map[string]string {
 	return map[string]string{"-tui": "Use the TUI interface"}
 }
 
+// panelStyle styles the three tab panels: dark blue for unfocused tabs,
+// dark gray for the focused tab, and a highlight color for the active
+// request label. It is the single style definition shared by the panel
+// rendering and the tests.
+var panelStyle = taiui.PanelStyle{
+	BaseBG:        taiui.HexColor(tabUnfocusBG),
+	FocusBG:       taiui.HexColor(tabFocusBG),
+	LabelFG:       color.PaletteColor(8),
+	FocusLabelFG:  color.PaletteColor(15),
+	ActiveLabelFG: color.PaletteColor(int(tabActiveLabelFg)),
+}
+
+var (
+	outputColorUserLine    = color.PaletteColor(int(outputColorUser))
+	outputColorToolLine    = color.PaletteColor(int(outputColorTool))
+	outputColorSystemLine  = color.PaletteColor(int(outputColorSystem))
+	outputColorLogLine     = color.PaletteColor(int(outputColorLog))
+	outputColorThoughtLine = color.PaletteColor(int(outputColorThought))
+)
+
 // tuiOutputState is a State decorator that forwards the model's output
 // content to the TUI for display. It observes every content appended to
 // the generation state and extracts the parts the TUI displays: text and
@@ -162,70 +192,28 @@ func (s tuiOutputState) Unwrap() generators.State {
 	return s.upstream
 }
 
-type (
-	outputLine struct {
-		text  string
-		color int32
-		// bgColor is the optional line background; the Logs tab sets it
-		// to alternating shades so consecutive lines are distinct.
-		bgColor int32
-	}
-
-	displayLine struct {
-		text  string
-		color int32
-		// bgColor carries the source line's background through wrapping.
-		bgColor int32
-	}
-)
-
+// tuiState is the display state of the TUI. The content lines, tab state
+// machine, and scroll state live in the taiui library; this command wires
+// them with tai-specific capture (summary parsing, request lifecycle).
+// See TheoryOfTUI.
 type tuiState struct {
-	mu          sync.Mutex
-	lines       []outputLine
-	partial     outputLine
-	signals     []outputLine
-	logs        []string
-	logsPartial string
-	parseBuf    []byte
+	mu       sync.Mutex
+	output   *taiui.LineBuffer
+	logs     *taiui.StringBuffer
+	tabs     *taiui.Tabs
+	scrolls  [3]taiui.ScrollState
+	signals  []taiui.Line
+	parseBuf []byte
 
-	// expanded reports whether each tab is expanded: index 0 is the
-	// output tab, 1 the round tab, 2 the logs tab. The keys 1, 2, and 3
-	// toggle them; a collapsed tab expands automatically the first time
-	// content for it arrives, without changing the focus. splitVertical
-	// reports whether the tabs are laid out side by side (vertical
-	// split line) or stacked (horizontal split line); the s key toggles
-	// it. See TheoryOfTUI.
-	expanded [3]bool
-	// hasContent reports whether each tab has ever received content.
-	// Only the first content arrival auto-expands a collapsed tab;
-	// subsequent content does not re-expand a tab the user collapsed.
-	// See TheoryOfTUI.
-	hasContent [3]bool
-	// lastFocus records the focus order of each tab: a monotonically
-	// increasing counter assigned when a tab gains focus. When a tab
-	// collapses, focus moves to the expanded tab with the most recent
-	// lastFocus value; ties (tabs that were never focused) break by
-	// index order. See TheoryOfTUI.
-	lastFocus [3]int
-	// focusOrder is the counter for lastFocus.
-	focusOrder int
-
-	splitVertical bool
-
-	// view state
-	topLeft  int
-	topRight int
-	topLogs  int
-	focus    int // 0 = output, 1 = round, 2 = logs, -1 = none expanded
+	// finished reports whether the generation session has ended. It
+	// clears the Output tab's "generating..." hint.
 	finished bool
-
 	// confirmQuit reports whether a quit confirmation is pending. The
 	// first press of a quit key (q, Q, or Ctrl-C) sets it and shows a
 	// confirmation bar at the bottom of the screen; a second quit key
 	// press quits, and any other key cancels the confirmation before
 	// its normal processing. See TheoryOfTUI.
 	confirmQuit bool
-
 	// generating reports whether a generation request is in flight. It
 	// is set when the generator's "generating" log record is observed
 	// and cleared by a finish line ("[Finish: ...]") or by the session
@@ -249,21 +237,11 @@ type tuiState struct {
 	// Output tab. It is false until the first part is written, so the
 	// first output never gets a leading blank line separator.
 	hasOutput bool
-
-	// follow reports whether each tab's view sticks to the latest content.
-	// It starts true; manual scrolling away clears it, and reaching the
-	// latest row sets it again. See TheoryOfTUI.
-	follow [3]bool
-
-	// maxOffsets holds the maximum scroll offset of each tab computed at the
-	// last render. scroll and scrollTo use it to decide whether the user's
-	// view is at the latest row.
-	maxOffsets [3]int
 }
 
 // write appends uncolored output (stderr, panics) to the Output tab.
 func (s *tuiState) write(p []byte) {
-	s.writeColored(0, p)
+	s.writeColored(taiui.NoColor, p)
 }
 
 // writeColored appends output with the given display color, extracting
@@ -271,18 +249,20 @@ func (s *tuiState) write(p []byte) {
 // signals. A collapsed Output tab expands automatically on the first
 // streamed output. The color is carried per line, so wrapped lines keep
 // their role color. See TheoryOfTUI.
-func (s *tuiState) writeColored(color int32, p []byte) {
+func (s *tuiState) writeColored(color taiui.Color, p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(p) == 0 {
 		return
 	}
-	s.autoExpand(0)
+	if s.tabs.AutoExpand(0) {
+		s.scrolls[0].Follow = true
+	}
 	// Summary blocks are parsed before finish signals so signals sharing
 	// one stream chunk keep their chronological order: the model's
 	// summary block precedes the round's finish line. See TheoryOfTUI.
 	s.parseSummaries(p)
-	s.appendOutput(color, p)
+	s.output.Append(color, string(p))
 }
 
 func (s *tuiState) finishReason(reason string) {
@@ -291,15 +271,17 @@ func (s *tuiState) finishReason(reason string) {
 	if reason == "" {
 		return
 	}
-	s.autoExpand(1)
+	if s.tabs.AutoExpand(1) {
+		s.scrolls[1].Follow = true
+	}
 	// The finish reason marks the end of the generation request: the
 	// Output tab's "generating..." hint clears once the request has
 	// returned. A new request's "generating" log re-sets it.
 	// See TheoryOfTUI.
 	s.generating = false
-	s.signals = append(s.signals, outputLine{text: "[Finish: " + reason + "]", color: outputColorLog})
+	s.signals = append(s.signals, taiui.Line{Text: "[Finish: " + reason + "]", Color: outputColorLogLine})
 	if len(s.signals) > maxTUISignals {
-		s.signals = append([]outputLine(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+		s.signals = append([]taiui.Line(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 	}
 }
 
@@ -316,21 +298,12 @@ func (s *tuiState) writeLogs(p []byte) {
 	if len(p) == 0 {
 		return
 	}
-	s.autoExpand(2)
-	s.logsPartial += string(p)
-	for {
-		idx := strings.IndexByte(s.logsPartial, '\n')
-		if idx < 0 {
-			break
-		}
-		line := s.logsPartial[:idx]
-		s.logs = append(s.logs, line)
+	if s.tabs.AutoExpand(2) {
+		s.scrolls[2].Follow = true
+	}
+	for _, line := range s.logs.Append(p) {
 		if isGeneratingLog(line) {
 			s.generating = true
-		}
-		s.logsPartial = s.logsPartial[idx+1:]
-		if len(s.logs) > maxTUILines {
-			s.logs = append([]string(nil), s.logs[len(s.logs)-maxTUILines:]...)
 		}
 	}
 }
@@ -349,35 +322,6 @@ func isGeneratingLog(line string) bool {
 		strings.Contains(line, "msg=generating ") ||
 		strings.HasSuffix(line, `msg="generating"`) ||
 		strings.Contains(line, `msg="generating" `)
-}
-
-// autoExpand expands a collapsed tab the first time content for it
-// arrives. It never changes an existing focus: a tab popping open cannot
-// steal attention from the pane the user is reading, and the pane resumes
-// following the tail. Only when no tab is focused does the first
-// auto-expanded tab become the focus, so keyboard navigation remains
-// usable. Subsequent content arrivals do not re-expand a tab the user
-// collapsed. Callers must hold mu. See TheoryOfTUI.
-func (s *tuiState) autoExpand(idx int) {
-	if idx < 0 || idx > 2 {
-		return
-	}
-	// Only the first content arrival auto-expands a collapsed tab;
-	// subsequent content does not re-expand a tab the user collapsed.
-	if s.hasContent[idx] {
-		return
-	}
-	s.hasContent[idx] = true
-	if s.expanded[idx] {
-		return
-	}
-	s.expanded[idx] = true
-	s.follow[idx] = true
-	if s.focus == -1 {
-		s.focus = idx
-		s.lastFocus[idx] = s.focusOrder
-		s.focusOrder++
-	}
 }
 
 // requesting reports whether a generation request is in flight: the
@@ -410,29 +354,6 @@ func (s *tuiState) outputTabLabel() (label string, highlight bool) {
 		highlight = true
 	}
 	return
-}
-
-// appendOutput appends output bytes to the Output tab, splitting them
-// into lines. A line keeps the color of the chunk that started it; a
-// partial line retains its color until the next newline arrives.
-func (s *tuiState) appendOutput(color int32, p []byte) {
-	if s.partial.text == "" {
-		s.partial.color = color
-	}
-	s.partial.text += string(p)
-	for {
-		idx := strings.IndexByte(s.partial.text, '\n')
-		if idx < 0 {
-			break
-		}
-		line := s.partial.text[:idx]
-		s.lines = append(s.lines, outputLine{text: line, color: s.partial.color})
-		s.partial.text = s.partial.text[idx+1:]
-		s.partial.color = color
-		if len(s.lines) > maxTUILines {
-			s.lines = append([]outputLine(nil), s.lines[len(s.lines)-maxTUILines:]...)
-		}
-	}
 }
 
 func (s *tuiState) parseSummaries(p []byte) {
@@ -485,13 +406,15 @@ func (s *tuiState) parseSummaries(p []byte) {
 				// A collapsed Round tab expands automatically on the first
 				// summary block; the output text carrying the block
 				// already expanded the Output tab. See TheoryOfTUI.
-				s.autoExpand(1)
-				for _, line := range strings.Split(body, "\n") {
-					s.signals = append(s.signals, outputLine{text: line})
+				if s.tabs.AutoExpand(1) {
+					s.scrolls[1].Follow = true
 				}
-				s.signals = append(s.signals, outputLine{})
+				for _, line := range strings.Split(body, "\n") {
+					s.signals = append(s.signals, taiui.Line{Text: line})
+				}
+				s.signals = append(s.signals, taiui.Line{})
 				if len(s.signals) > maxTUISignals {
-					s.signals = append([]outputLine(nil), s.signals[len(s.signals)-maxTUISignals:]...)
+					s.signals = append([]taiui.Line(nil), s.signals[len(s.signals)-maxTUISignals:]...)
 				}
 			}
 		}
@@ -500,112 +423,6 @@ func (s *tuiState) parseSummaries(p []byte) {
 			return
 		}
 	}
-}
-
-// outputLinesForRender returns the complete output lines, including the
-// partial trailing line.
-func (s *tuiState) outputLinesForRender() []outputLine {
-	if s.partial.text == "" {
-		return s.lines
-	}
-	ret := make([]outputLine, 0, len(s.lines)+1)
-	ret = append(ret, s.lines...)
-	ret = append(ret, s.partial)
-	return ret
-}
-
-// wrapTabLines wraps each source output line to the given width,
-// carrying the line's foreground and background colors onto every
-// wrapped display line.
-func wrapTabLines(lines []outputLine, width int) []displayLine {
-	var out []displayLine
-	for _, line := range lines {
-		for _, text := range taiui.WrapLines([]string{line.text}, width) {
-			out = append(out, displayLine{text: text, color: line.color, bgColor: line.bgColor})
-		}
-	}
-	return out
-}
-
-// plainOutputLines converts plain text lines into output lines with
-// alternating background shades, so consecutive log entries are visually
-// distinct. The base shade is the tab's focused or unfocused background,
-// whichever the Logs tab currently has; odd-numbered lines get the
-// shifted alternate. See logAltBG.
-func plainOutputLines(lines []string, base int32) []outputLine {
-	out := make([]outputLine, 0, len(lines))
-	for i, line := range lines {
-		bg := base
-		if i%2 == 1 {
-			bg = logAltBG(base)
-		}
-		out = append(out, outputLine{text: line, bgColor: bg})
-	}
-	return out
-}
-
-// logAltBGDiff is the per-channel shift of the alternate log line
-// background toward the mid-gray. It is small enough to stay subtle on
-// the dark tab backgrounds and large enough to be visible.
-const logAltBGDiff = 12
-
-// logAltBG returns the alternate shade for odd-numbered log lines: each
-// channel of the base background is shifted toward the mid-gray, so the
-// alternation stays visible on both the focused and unfocused tab
-// backgrounds.
-func logAltBG(base int32) int32 {
-	shift := func(x int32) int32 {
-		if x > 128 {
-			return x - logAltBGDiff
-		}
-		return x + logAltBGDiff
-	}
-	r, g, b := color.NewHexColor(base).RGB()
-	return color.NewRGBColor(shift(r), shift(g), shift(b)).Hex()
-}
-
-func coloredText(lines []displayLine, box taiui.Box) taiui.Element {
-	if len(lines) == 0 {
-		return taiui.Text("")
-	}
-	var children []any
-	start := 0
-	for i := 1; i <= len(lines); i++ {
-		if i == len(lines) || lines[i].color != lines[start].color || lines[i].bgColor != lines[start].bgColor {
-			count := i - start
-			texts := make([]string, 0, count)
-			for j := start; j < i; j++ {
-				texts = append(texts, lines[j].text)
-			}
-			groupBox := taiui.Box{Top: box.Top + start, Left: box.Left, Bottom: box.Top + i, Right: box.Right}
-			specs := []any{taiui.Box(groupBox), texts}
-			if lines[start].color != 0 {
-				specs = append(specs, taiui.FGColor(color.PaletteColor(int(lines[start].color))))
-			}
-			if lines[start].bgColor != 0 {
-				// A background color fills the whole group box, so a
-				// wrapped log line keeps one background across its
-				// display rows and consecutive lines are distinct.
-				// See plainOutputLines.
-				specs = append(specs, taiui.BGColor(taiui.HexColor(lines[start].bgColor)), taiui.Fill(true))
-			}
-			children = append(children, taiui.Text(specs...))
-			start = i
-		}
-	}
-	return taiui.Overlay(children...)
-}
-
-// logsLinesForRender returns the complete log lines, including the
-// partial trailing line.
-func (s *tuiState) logsLinesForRender() []string {
-	if s.logsPartial == "" {
-		return s.logs
-	}
-	ret := make([]string, 0, len(s.logs)+1)
-	ret = append(ret, s.logs...)
-	ret = append(ret, s.logsPartial)
-	return ret
 }
 
 type tuiWriter struct{ t *TUI }
@@ -651,22 +468,18 @@ func newTUI() (*TUI, error) {
 	}
 	return &TUI{
 		tuiState: tuiState{
+			output: taiui.NewLineBuffer(maxTUILines),
+			logs:   taiui.NewStringBuffer(maxTUILines),
+			tabs:   taiui.NewTabs(3),
 			// All tabs are collapsed by default; a tab expands automatically
 			// the first time content for it arrives, without changing the
-			// focus. See TheoryOfTUI.
-			expanded:   [3]bool{false, false, false},
-			hasContent: [3]bool{false, false, false},
-			lastFocus:  [3]int{-1, -1, -1},
-			focusOrder: 0,
-			// Tabs are stacked vertically by default (horizontal split);
-			// the s key toggles to side-by-side (vertical split).
-			// See TheoryOfTUI.
-			splitVertical: false,
-			focus:         -1,
-			topLeft:       1 << 30,
-			topRight:      1 << 30,
-			topLogs:       1 << 30,
-			follow:        [3]bool{false, false, false},
+			// focus. The scroll offsets start at the tail sentinel so the
+			// first render sticks to the latest content. See TheoryOfTUI.
+			scrolls: [3]taiui.ScrollState{
+				{Offset: 1 << 30},
+				{Offset: 1 << 30},
+				{Offset: 1 << 30},
+			},
 		},
 		tty:      t,
 		screen:   taiui.NewTerminalScreen(t, width, height),
@@ -709,7 +522,7 @@ func (t *TUI) captureContent(content *generators.Content) {
 			}
 		case generators.Thought:
 			if len(p) > 0 {
-				t.writeOutputPart(role, outputColorThought, true, string(p))
+				t.writeOutputPart(role, outputColorThoughtLine, true, string(p))
 			}
 		case generators.FuncCall:
 			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments))
@@ -737,7 +550,7 @@ func (t *TUI) captureContent(content *generators.Content) {
 // thinking and non-thinking content. The section state (hasOutput,
 // lastOutputRole, lastWasThought) is only accessed by the generation
 // goroutine via captureContent, so it is read and written without a lock.
-func (t *TUI) writeOutputPart(role generators.Role, color int32, isThought bool, text string) {
+func (t *TUI) writeOutputPart(role generators.Role, color taiui.Color, isThought bool, text string) {
 	if t.hasOutput && (role != t.lastOutputRole || isThought != t.lastWasThought) {
 		t.separateOutput()
 	}
@@ -755,10 +568,10 @@ func (t *TUI) writeOutputPart(role generators.Role, color int32, isThought bool,
 func (t *TUI) separateOutput() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.partial.text == "" {
-		t.appendOutput(0, []byte("\n"))
+	if t.output.HasPartial() {
+		t.output.Append(taiui.NoColor, "\n\n")
 	} else {
-		t.appendOutput(0, []byte("\n\n"))
+		t.output.Append(taiui.NoColor, "\n")
 	}
 }
 
@@ -766,18 +579,18 @@ func (t *TUI) separateOutput() {
 // matching the non-TUI output colors in generators/colors.go. Model and
 // assistant content keep the default foreground; user input, tool calls
 // and results, system messages, and log records get their role colors.
-func roleColor(role generators.Role) int32 {
+func roleColor(role generators.Role) taiui.Color {
 	switch role {
 	case generators.RoleUser:
-		return outputColorUser
+		return outputColorUserLine
 	case generators.RoleTool:
-		return outputColorTool
+		return outputColorToolLine
 	case generators.RoleSystem:
-		return outputColorSystem
+		return outputColorSystemLine
 	case generators.RoleLog:
-		return outputColorLog
+		return outputColorLogLine
 	default:
-		return 0
+		return taiui.NoColor
 	}
 }
 
@@ -788,103 +601,24 @@ func (t *TUI) notify() {
 	}
 }
 
-// scrollClamp clamps a pane scroll offset against the pane's wrapped
-// display lines. The maximum offset is displayLines - paneHeight: at the
-// maximum offset the last display line lands on the pane's last row.
-// Offsets beyond the content clamp to the maximum; negative offsets clamp
-// to 0. A large sentinel offset (1<<30) therefore sticks the view to the
-// tail. See TheoryOfTUI.
-func scrollClamp(offset, displayLines, paneHeight int) int {
-	if displayLines <= paneHeight {
-		return 0
-	}
-	maxOffset := displayLines - paneHeight
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return offset
-}
-
 // toggleTab implements the number-key semantics (keys 1, 2, 3): pressing
-// a tab's key toggles its expansion. When the tab is focused, it is
-// collapsed to a thin strip and the focus moves to the expanded tab that
-// was last focused (see focusLastExpanded). When it is not focused (or
-// collapsed), it is expanded (if collapsed) and becomes the focus.
-// Re-expanding a collapsed tab resumes following the live tail, even if
-// the user had scrolled away before collapsing it; switching to an
-// already-expanded tab keeps its current view. See TheoryOfTUI.
+// a tab's key toggles its expansion. The state machine lives in
+// taiui.Tabs; expanding a collapsed tab resumes following the live tail.
+// See taiui.TheoryOfTabs.
 func (t *TUI) toggleTab(idx int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.focus == idx {
-		// A focused tab's key collapses it and moves the focus to the
-		// expanded tab that was last focused.
-		t.expanded[idx] = false
-		t.focusLastExpanded()
-		return
+	if t.tabs.Toggle(idx) {
+		t.scrolls[idx].Follow = true
 	}
-	if !t.expanded[idx] {
-		// Expanding a collapsed tab resumes following the live tail, even
-		// if the user had scrolled away before collapsing it: the pane
-		// returns to the latest content. See TheoryOfTUI.
-		t.expanded[idx] = true
-		t.follow[idx] = true
-	}
-	// A non-focused tab's key (expanded or collapsed) makes it the focus;
-	// switching to an already-expanded tab keeps its current view.
-	t.focus = idx
-	t.lastFocus[idx] = t.focusOrder
-	t.focusOrder++
-}
-
-// focusLastExpanded moves the focus to the expanded tab that was last
-// focused, based on the lastFocus order. Tabs that were never focused
-// (lastFocus -1) tie-break by index order. When no tab is expanded, the
-// focus becomes -1. See TheoryOfTUI.
-func (t *TUI) focusLastExpanded() {
-	best := -1
-	bestOrder := -2
-	for i := 0; i < 3; i++ {
-		if !t.expanded[i] {
-			continue
-		}
-		if t.lastFocus[i] > bestOrder {
-			bestOrder = t.lastFocus[i]
-			best = i
-		}
-	}
-	t.focus = best
 }
 
 // cycleFocus advances the focus to the next expanded tab after the
-// current one, wrapping around. Collapsed tabs are skipped. When no tab
-// is expanded, the focus becomes -1. The new focus's lastFocus is
-// updated so a later collapse returns to the most recently focused tab.
-// See TheoryOfTUI.
+// current one, wrapping around. Collapsed tabs are skipped.
 func (t *TUI) cycleFocus() {
-	if t.focus >= 0 {
-		for i := 1; i <= 3; i++ {
-			f := (t.focus + i) % 3
-			if t.expanded[f] {
-				t.focus = f
-				t.lastFocus[f] = t.focusOrder
-				t.focusOrder++
-				return
-			}
-		}
-	}
-	for i := 0; i < 3; i++ {
-		if t.expanded[i] {
-			t.focus = i
-			t.lastFocus[i] = t.focusOrder
-			t.focusOrder++
-			return
-		}
-	}
-	t.focus = -1
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tabs.CycleFocus()
 }
 
 // handleQuitKey processes a quit key press (q, Q, or Ctrl-C). The
@@ -958,9 +692,7 @@ func (t *TUI) Run(gen func()) error {
 			}
 			switch key {
 			case "tab":
-				t.mu.Lock()
 				t.cycleFocus()
-				t.mu.Unlock()
 			case "1":
 				t.toggleTab(0)
 			case "2":
@@ -969,7 +701,7 @@ func (t *TUI) Run(gen func()) error {
 				t.toggleTab(2)
 			case "split":
 				t.mu.Lock()
-				t.splitVertical = !t.splitVertical
+				t.tabs.SplitVertical = !t.tabs.SplitVertical
 				t.mu.Unlock()
 			case "up":
 				t.scroll(-1)
@@ -1011,32 +743,11 @@ func (t *TUI) Run(gen func()) error {
 func (t *TUI) scroll(delta int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var top *int
-	idx := -1
-	switch t.focus {
-	case 0:
-		top = &t.topLeft
-		idx = 0
-	case 1:
-		top = &t.topRight
-		idx = 1
-	case 2:
-		top = &t.topLogs
-		idx = 2
-	default:
+	idx := t.tabs.Focus
+	if idx < 0 || !t.tabs.Expanded[idx] {
 		return
 	}
-	newTop := *top + delta
-	if newTop < 0 {
-		newTop = 0
-	}
-	if newTop > t.maxOffsets[idx] {
-		newTop = t.maxOffsets[idx]
-	}
-	*top = newTop
-	// Reaching the latest row resumes following; scrolling away stops it.
-	// See TheoryOfTUI.
-	t.follow[idx] = newTop >= t.maxOffsets[idx]
+	t.scrolls[idx].Scroll(delta)
 }
 
 // pageScroll scrolls the focused pane by one page. The page size is the
@@ -1049,174 +760,38 @@ func (t *TUI) scroll(delta int) {
 func (t *TUI) pageScroll(direction int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.focus < 0 || !t.expanded[t.focus] {
+	idx := t.tabs.Focus
+	if idx < 0 || !t.tabs.Expanded[idx] {
 		return
 	}
-	boxes := computeTabBoxes(t.splitVertical, t.expanded, t.focus, t.width, t.height)
-	box := boxes[t.focus]
+	boxes := t.tabs.Boxes(t.width, t.height)
+	box := boxes[idx]
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
 	// The scroll view is the panel box minus the one-row label strip.
 	paneHeight := max(box.Height()-1, 1)
-	delta := direction * (paneHeight - 1)
-
-	var top *int
-	idx := -1
-	switch t.focus {
-	case 0:
-		top = &t.topLeft
-		idx = 0
-	case 1:
-		top = &t.topRight
-		idx = 1
-	case 2:
-		top = &t.topLogs
-		idx = 2
-	default:
-		return
-	}
-	newTop := *top + delta
-	if newTop < 0 {
-		newTop = 0
-	}
-	if newTop > t.maxOffsets[idx] {
-		newTop = t.maxOffsets[idx]
-	}
-	*top = newTop
-	t.follow[idx] = newTop >= t.maxOffsets[idx]
+	t.scrolls[idx].PageScroll(direction, paneHeight)
 }
 
 func (t *TUI) scrollTo(top int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	idx := -1
-	switch t.focus {
-	case 0:
-		t.topLeft = top
-		idx = 0
-	case 1:
-		t.topRight = top
-		idx = 1
-	case 2:
-		t.topLogs = top
-		idx = 2
-	default:
+	idx := t.tabs.Focus
+	if idx < 0 || !t.tabs.Expanded[idx] {
 		return
 	}
 	// Only a jump to the latest row (the end key reaches it via the sentinel)
 	// resumes following; any other jump stops it. See TheoryOfTUI.
-	t.follow[idx] = top >= t.maxOffsets[idx]
-}
-
-// computeTabBoxes computes the panel box of each tab. In vertical split
-// (side by side), collapsed tabs take one column each and expanded tabs
-// share the remaining width proportionally to their weights (the focused
-// tab has weight 2, every other expanded tab weight 1); in horizontal
-// split (stacked), collapsed tabs take one row each and expanded tabs
-// share the remaining height. The last expanded tab absorbs the rounding
-// remainder. Tabs are laid out in index order, so a collapsed tab stays
-// in its original position rather than being pushed to the edge.
-// See TheoryOfTUI.
-func computeTabBoxes(splitVertical bool, expanded [3]bool, focused int, width, height int) [3]taiui.Box {
-	var boxes [3]taiui.Box
-
-	// Collect expanded tab indices in order and compute the total weight.
-	var expandedIndices []int
-	totalWeight := 0
-	for i := 0; i < 3; i++ {
-		if expanded[i] {
-			expandedIndices = append(expandedIndices, i)
-			weight := 1
-			if i == focused {
-				weight = 2
-			}
-			totalWeight += weight
-		}
-	}
-	collapsedCount := 3 - len(expandedIndices)
-	if totalWeight <= 0 {
-		totalWeight = 1
-	}
-
-	if splitVertical {
-		// Collapsed tabs take one column each; expanded tabs share the
-		// remaining width.
-		expandedWidth := width - collapsedCount
-		if expandedWidth < 0 {
-			expandedWidth = 0
-		}
-		edge := 0
-		expandedEdge := 0
-		expandedPos := 0
-		for i := 0; i < 3; i++ {
-			if expanded[i] {
-				weight := 1
-				if i == focused {
-					weight = 2
-				}
-				var size int
-				if expandedPos == len(expandedIndices)-1 {
-					// The last expanded tab absorbs the rounding remainder.
-					size = expandedWidth - expandedEdge
-				} else {
-					size = expandedWidth * weight / totalWeight
-				}
-				boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + size}
-				edge += size
-				expandedEdge += size
-				expandedPos++
-			} else {
-				// A collapsed tab stays in its original position, taking
-				// one column.
-				boxes[i] = taiui.Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
-				edge++
-			}
-		}
-		return boxes
-	}
-
-	// Horizontal split: collapsed tabs take one row each; expanded tabs
-	// share the remaining height.
-	expandedHeight := height - collapsedCount
-	if expandedHeight < 0 {
-		expandedHeight = 0
-	}
-	edge := 0
-	expandedEdge := 0
-	expandedPos := 0
-	for i := 0; i < 3; i++ {
-		if expanded[i] {
-			weight := 1
-			if i == focused {
-				weight = 2
-			}
-			var size int
-			if expandedPos == len(expandedIndices)-1 {
-				size = expandedHeight - expandedEdge
-			} else {
-				size = expandedHeight * weight / totalWeight
-			}
-			boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + size, Right: width}
-			edge += size
-			expandedEdge += size
-			expandedPos++
-		} else {
-			// A collapsed tab stays in its original position, taking one
-			// row.
-			boxes[i] = taiui.Box{Top: edge, Left: 0, Bottom: edge + 1, Right: width}
-			edge++
-		}
-	}
-	return boxes
+	t.scrolls[idx].ScrollTo(top)
 }
 
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	outputLines := t.outputLinesForRender()
-	logsLines := t.logsLinesForRender()
+	outputLines := t.output.Lines()
+	logsLines := t.logs.Lines()
 	height := t.height
 	if height < 1 {
 		height = 1
@@ -1229,8 +804,8 @@ func (t *TUI) render() {
 	// Compute the panel box of each tab. Collapsed tabs take one column
 	// (vertical split) or one row (horizontal split); expanded tabs share
 	// the remaining space proportionally to their weights. See
-	// computeTabBoxes and TheoryOfTUI.
-	panelBoxes := computeTabBoxes(t.splitVertical, t.expanded, t.focus, width, height)
+	// taiui.Tabs.Boxes and TheoryOfTUI.
+	panelBoxes := t.tabs.Boxes(width, height)
 
 	// Render each tab: expanded tabs show the label strip and scroll
 	// view; collapsed tabs show a thin strip with the key and title.
@@ -1240,27 +815,29 @@ func (t *TUI) render() {
 	// The logs tab alternates line backgrounds derived from its tab
 	// background, so consecutive log entries are visually distinct. The
 	// base is the focused or unfocused tab background, whichever the
-	// logs tab currently has. See plainOutputLines.
-	logsBase := tabUnfocusBG
-	if t.focus == 2 {
-		logsBase = tabFocusBG
+	// logs tab currently has. See taiui.PlainLines.
+	logsBase := panelStyle.BaseBG
+	if t.tabs.Focus == 2 {
+		logsBase = panelStyle.FocusBG
 	}
-	contentByTab := [3][]outputLine{
+	contentByTab := [3][]taiui.Line{
 		outputLines,
 		t.signals,
-		plainOutputLines(logsLines, logsBase),
+		taiui.PlainLines(logsLines, logsBase),
 	}
-	displays := [3][]displayLine{}
-	tops := [3]int{t.topLeft, t.topRight, t.topLogs}
-	var maxOffsets [3]int
 	var panels []taiui.Element
 	for idx := 0; idx < 3; idx++ {
 		box := panelBoxes[idx]
 		if box.Width() <= 0 || box.Height() <= 0 {
 			continue
 		}
-		if !t.expanded[idx] {
-			panels = append(panels, t.collapsedPanel(idx, box, t.focus == idx))
+		if !t.tabs.Expanded[idx] {
+			panels = append(panels, taiui.CollapsedPanel(
+				box,
+				fmt.Sprintf("%d %s", idx+1, tabNames[idx]),
+				t.tabs.Focus == idx,
+				panelStyle,
+			))
 			continue
 		}
 		// Each tab's content width reserves one column for its scrollbar,
@@ -1269,7 +846,7 @@ func (t *TUI) render() {
 		// as wide as the others — so each tab's content wraps at its own
 		// width. See TheoryOfTUI.
 		tabContentWidth := max(box.Width()-1, 1)
-		displays[idx] = wrapTabLines(contentByTab[idx], tabContentWidth)
+		display := taiui.WrapLinesColored(contentByTab[idx], tabContentWidth)
 
 		// The scroll offset is clamped against the ACTUAL scroll view height
 		// — the panel height minus the one-row label strip. In horizontal
@@ -1280,18 +857,29 @@ func (t *TUI) render() {
 		// newest row before clamping; a view manually placed at the latest
 		// row resumes following. See TheoryOfTUI.
 		paneHeight := max(box.Height()-1, 1)
-		maxOffsets[idx] = max(len(displays[idx])-paneHeight, 0)
-		if t.follow[idx] {
-			tops[idx] = maxOffsets[idx]
+		t.scrolls[idx].Update(len(display), paneHeight)
+
+		label := tabNames[idx]
+		highlight := false
+		if idx == 0 {
+			// The Output tab's title carries the session-state hint:
+			// "generating..." while the model is actively working and
+			// "(done)" after the session ends. The generating hint also
+			// switches the title to the active-request highlight color.
+			// See TheoryOfTUI.
+			label, highlight = t.outputTabLabel()
 		}
-		tops[idx] = scrollClamp(tops[idx], len(displays[idx]), paneHeight)
-		if tops[idx] == maxOffsets[idx] {
-			t.follow[idx] = true
-		}
-		panels = append(panels, t.panel(idx, box, displays[idx], tops[idx], t.focus == idx))
+		panels = append(panels, taiui.Panel(
+			box,
+			label,
+			highlight,
+			display,
+			t.scrolls[idx].Offset,
+			t.tabs.Focus == idx,
+			t.scrolls[idx].Follow,
+			panelStyle,
+		))
 	}
-	t.topLeft, t.topRight, t.topLogs = tops[0], tops[1], tops[2]
-	t.maxOffsets = maxOffsets
 
 	overlaySpecs := make([]any, len(panels))
 	for i, p := range panels {
@@ -1323,111 +911,6 @@ var (
 	tabFocusBG       int32 = 0x2e2e2e
 	tabActiveLabelFg int32 = 10
 )
-
-func (t *TUI) panel(idx int, box taiui.Box, lines []displayLine, top int, focus bool) taiui.Element {
-	// Exactly two background colors: dark gray for the focused tab, dark
-	// blue for every unfocused tab. The label strip shares the tab's
-	// background; focus is conveyed by the label's foreground and bold
-	// weight. See TheoryOfTUI.
-	base := tabUnfocusBG
-	if focus {
-		base = tabFocusBG
-	}
-	label := tabNames[idx]
-	highlight := false
-	if idx == 0 {
-		// The Output tab's title carries the session-state hint:
-		// "generating..." while the model is actively working and
-		// "(done)" after the session ends. The generating hint also
-		// switches the title to the active-request highlight color.
-		// See TheoryOfTUI.
-		label, highlight = t.outputTabLabel()
-	}
-	labelFg := int32(8) // bright black (gray)
-	if highlight {
-		labelFg = tabActiveLabelFg
-	} else if focus {
-		labelFg = 15 // bright white
-	}
-	// The label strip is pinned to the panel's top row and the scroll
-	// view spans the remaining rows. The label is exactly one row, so
-	// no blank rows appear below the title, and the scroll offset clamp
-	// in render() can bound the view against the exact scroll height.
-	// See TheoryOfTUI.
-	headerBox := box
-	headerBox.Bottom = box.Top + 1
-	scrollBox := box
-	scrollBox.Top = box.Top + 1
-
-	// The scrollbar is hidden while the pane follows the tail: at the
-	// latest position there is nothing left to scroll toward, so the
-	// thumb would only add visual noise and waste a column. Scrolling
-	// away from the tail brings the scrollbar back. See TheoryOfTUI.
-	scrollSpecs := []any{
-		taiui.Box(scrollBox),
-		taiui.Fill(true),
-		taiui.BGColor(taiui.HexColor(base)),
-	}
-	if !t.follow[idx] {
-		scrollSpecs = append(scrollSpecs, taiui.Scrollbar(true))
-	}
-
-	return taiui.Overlay(
-		taiui.Text(
-			"  "+label+"  ",
-			taiui.Box(headerBox),
-			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(base)),
-			taiui.Bold(focus),
-			taiui.FGColor(color.PaletteColor(int(labelFg))),
-		),
-		taiui.VerticalScroll(
-			coloredText(lines, scrollBox),
-			top,
-			scrollSpecs...,
-		),
-	)
-}
-
-func (t *TUI) collapsedPanel(idx int, box taiui.Box, focus bool) taiui.Element {
-	base := tabUnfocusBG
-	if focus {
-		base = tabFocusBG
-	}
-	label := fmt.Sprintf("%d %s", idx+1, tabNames[idx])
-	labelFg := int32(8) // bright black (gray)
-	if focus {
-		labelFg = 15 // bright white
-	}
-	if box.Width() < box.Height() {
-		// Vertical strip: one column, label written vertically.
-		var lines []string
-		for _, r := range label {
-			lines = append(lines, string(r))
-		}
-		return taiui.Rect(
-			taiui.Box(box),
-			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(base)),
-			taiui.Text(
-				lines,
-				taiui.Bold(focus),
-				taiui.FGColor(color.PaletteColor(int(labelFg))),
-			),
-		)
-	}
-	// Horizontal strip: one row, label written horizontally.
-	return taiui.Rect(
-		taiui.Box(box),
-		taiui.Fill(true),
-		taiui.BGColor(taiui.HexColor(base)),
-		taiui.Text(
-			"  "+label+"  ",
-			taiui.Bold(focus),
-			taiui.FGColor(color.PaletteColor(int(labelFg))),
-		),
-	)
-}
 
 // withTUIOutputObserver wraps a loops.Run so that model output content
 // appended to the generation state is forwarded to the TUI. The
@@ -1540,5 +1023,5 @@ func displayChatInput(tui *TUI, chats flags.Chats) {
 	if len(chats) == 0 {
 		return
 	}
-	tui.writeColored(outputColorUser, []byte(strings.Join(chats, "\n")+"\n"))
+	tui.writeColored(outputColorUserLine, []byte(strings.Join(chats, "\n")+"\n"))
 }
