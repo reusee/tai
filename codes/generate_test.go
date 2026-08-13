@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/loops"
 )
 
@@ -493,7 +495,8 @@ func TestSummarizeIncompleteOutputRetriesOnParseFailure(t *testing.T) {
 			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
 		},
 	}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +519,8 @@ func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
 			"unparseable 3",
 		},
 	}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize attempts fail")
 	}
@@ -545,7 +549,8 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
 		},
 	}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +574,8 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 		},
 		responses: []string{"", "", ""},
 	}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), gen, "incomplete text")
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize generations fail")
 	}
@@ -584,5 +590,52 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failure 3") {
 		t.Fatalf("expected the last failure in the error message, got: %v", err)
+	}
+}
+
+func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
+	// Each failed summarize attempt must be logged with the attempt
+	// number and the error, and the final failure must be logged as an
+	// error, so the operator can diagnose why a round lacks a
+	// synthesized summary. See TheoryOfIncompleteOutputSummarization.
+	gen := &summarizeRetryMockGenerator{
+		errs: []error{
+			errors.New("failure 1"),
+			errors.New("failure 2"),
+			errors.New("failure 3"),
+		},
+		responses: []string{"", "", ""},
+	}
+	var buf bytes.Buffer
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	if err == nil {
+		t.Fatal("expected error after all summarize generations fail")
+	}
+	if retrySummary != nil {
+		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	}
+	output := buf.String()
+	// Each failed attempt is logged as a warning with the attempt number.
+	for _, want := range []string{
+		"level=WARN",
+		"summarize incomplete output: generation failed",
+		"attempt=1",
+		"attempt=2",
+		"attempt=3",
+		"failure 1",
+		"failure 2",
+		"failure 3",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in log output, got: %s", want, output)
+		}
+	}
+	// The final failure is logged as an error.
+	if !strings.Contains(output, "level=ERROR") {
+		t.Fatalf("expected an error-level log for the final failure, got: %s", output)
+	}
+	if !strings.Contains(output, "summarize incomplete output failed") {
+		t.Fatalf("expected the final failure message in the log, got: %s", output)
 	}
 }

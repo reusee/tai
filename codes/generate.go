@@ -387,6 +387,7 @@ const maxSummarizeRetries = 3
 
 func summarizeIncompleteOutput(
 	ctx context.Context,
+	logger logs.Logger,
 	generator generators.Generator,
 	incompleteText string,
 ) (*loops.RetrySummary, error) {
@@ -395,7 +396,7 @@ func summarizeIncompleteOutput(
 	}
 	systemPrompt := retrySummarizationSystemPrompt
 	var lastErr error
-	for range maxSummarizeRetries {
+	for attempt := range maxSummarizeRetries {
 		var state generators.State
 		state = generators.NewPrompts(systemPrompt, []*generators.Content{
 			{
@@ -417,12 +418,22 @@ func summarizeIncompleteOutput(
 			// API error does not leave the round without a summary.
 			// See TheoryOfIncompleteOutputSummarization.
 			lastErr = err
+			logger.WarnContext(ctx, "summarize incomplete output: generation failed",
+				"attempt", attempt+1,
+				"max_attempts", maxSummarizeRetries,
+				"err", err,
+			)
 			continue
 		}
 		outputText := buf.String()
 		parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
 		if err != nil {
 			lastErr = err
+			logger.WarnContext(ctx, "summarize incomplete output: parse failed",
+				"attempt", attempt+1,
+				"max_attempts", maxSummarizeRetries,
+				"err", err,
+			)
 			continue
 		}
 		var summary, continueContent string
@@ -441,6 +452,10 @@ func summarizeIncompleteOutput(
 			}, nil
 		}
 		lastErr = fmt.Errorf("summarize response missing summary or continue block")
+		logger.WarnContext(ctx, "summarize incomplete output: response missing summary or continue block",
+			"attempt", attempt+1,
+			"max_attempts", maxSummarizeRetries,
+		)
 	}
 	// All retries exhausted: report the failure instead of falling back
 	// to the incomplete text. A fallback would feed the raw, possibly
@@ -450,7 +465,12 @@ func summarizeIncompleteOutput(
 	// "no summary available" and proceed without a synthesized summary.
 	// See TheoryOfIncompleteOutputSummarization.
 	if lastErr != nil {
-		return nil, fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
+		err := fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
+		logger.ErrorContext(ctx, "summarize incomplete output failed",
+			"max_attempts", maxSummarizeRetries,
+			"err", err,
+		)
+		return nil, err
 	}
 	return nil, fmt.Errorf("summarize incomplete output failed after %d attempts", maxSummarizeRetries)
 }
@@ -570,6 +590,10 @@ retry prompt's quality and masking the summarization failure. Callers treat the
 error as "no summary available": the retry round proceeds without a synthesized
 summary, and the round statistics and the TUI's Summary tab show no completion
 signal for that round.
+
+Each failed summarize attempt is logged with the attempt number and the error,
+and the final failure is logged as an error, so the operator can diagnose why a
+round lacks a synthesized summary.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -907,7 +931,7 @@ func (Module) GenerateWithResultWithStats(
 					// has a summary for the round statistics and the TUI's
 					// Round tab. See TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
-						if retrySummary, err := summarizeIncompleteOutput(ctx, fastModel, incompleteText); err == nil && retrySummary != nil {
+						if retrySummary, err := summarizeIncompleteOutput(ctx, logger, fastModel, incompleteText); err == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
 						}
 					}
@@ -949,7 +973,7 @@ func (Module) GenerateWithResultWithStats(
 					phaseErr,
 					prevContentCount,
 					func(text string) (*loops.RetrySummary, error) {
-						return summarizeIncompleteOutput(ctx, fastModel, text)
+						return summarizeIncompleteOutput(ctx, logger, fastModel, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
@@ -961,7 +985,7 @@ func (Module) GenerateWithResultWithStats(
 			RetryOnError:             true,
 			MaxRetries:               maxRetriesForMissingSummary,
 			SummarizeIncomplete: func(incompleteText string) (*loops.RetrySummary, error) {
-				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
+				return summarizeIncompleteOutput(ctx, logger, fastModel, incompleteText)
 			},
 		}, &result) {
 			err = e
