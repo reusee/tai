@@ -605,8 +605,9 @@ The same extraction serves both retry paths: missing-completion retries (truncat
 output) and error retries (partial output followed by an error). See
 TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
-The summarization uses a fast model to minimize latency. The summary is appended
-as user content with a system note explaining the retry.
+The summarization uses the same model as the generation, because a separate
+fast model may lack the capability to produce useful summaries. The summary is
+appended as user content with a system note explaining the retry.
 
 The summarization system prompt (retrySummarizationSystemPrompt) shows a complete
 example of the summary and continue block format with concrete delimiters, so
@@ -686,7 +687,6 @@ func (Module) GenerateWithResultWithStats(
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
 	getDefaultSummarizer states.GetDefaultSummarizer,
-	getDefaultFastModel generators.GetDefaultFastModel,
 	buildGenerate phases.BuildGenerate,
 	maxTokens flags.MaxTokens,
 	buildChat phases.BuildChat,
@@ -859,13 +859,6 @@ func (Module) GenerateWithResultWithStats(
 		// duration in OnRoundSuccess.
 		var roundStartTime time.Time
 
-		// Get the fast model for summarization tasks.
-		// See TheoryOfIncompleteOutputSummarization.
-		fastModel, err := getDefaultFastModel()
-		if err != nil {
-			return loops.Result{}, nil, err
-		}
-
 		// Set up initial phase: if an action argument is present, append it
 		// as user content and run generation; otherwise there is nothing to do.
 		var hasChats bool
@@ -980,7 +973,7 @@ func (Module) GenerateWithResultWithStats(
 					// Round tab. See TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
 						var retrySummary *loops.RetrySummary
-						retrySummary, summarizeErr = summarizeIncompleteOutput(ctx, logger, fastModel, incompleteText)
+						retrySummary, summarizeErr = summarizeIncompleteOutput(ctx, logger, generator, incompleteText)
 						if summarizeErr == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
 						}
@@ -1039,7 +1032,7 @@ func (Module) GenerateWithResultWithStats(
 					phaseErr,
 					prevContentCount,
 					func(text string) (*loops.RetrySummary, error) {
-						return summarizeIncompleteOutput(ctx, logger, fastModel, text)
+						return summarizeIncompleteOutput(ctx, logger, generator, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
@@ -1064,7 +1057,7 @@ func (Module) GenerateWithResultWithStats(
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
-				retrySummary, err := summarizeIncompleteOutput(ctx, logger, fastModel, incompleteText)
+				retrySummary, err := summarizeIncompleteOutput(ctx, logger, generator, incompleteText)
 				if err != nil {
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a
