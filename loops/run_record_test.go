@@ -1,7 +1,6 @@
 package loops
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -54,7 +53,7 @@ func (f *fakeInteractionRecorder) ParseError(parseErr *blocks.BlockParseError) {
 func TestRunRecordsRound(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:           nil,
 			InitialState:        generators.NewPrompts("my system prompt", nil),
 			Components:          nil,
@@ -87,7 +86,7 @@ func TestRunRecordsRound(t *testing.T) {
 func TestRunRecordsDisabled(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: false}
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:           nil,
 			InitialState:        generators.NewPrompts("", nil),
 			Components:          nil,
@@ -108,7 +107,7 @@ func TestRunRecordsDisabled(t *testing.T) {
 func TestRunRecordsRoundError(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:           nil,
 			InitialState:        generators.NewPrompts("", nil),
 			Components:          nil,
@@ -139,7 +138,7 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -171,7 +170,7 @@ func TestRunRecordsParseError(t *testing.T) {
 			return appendPhaseWithFlush("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:           nil,
 			InitialState:        generators.NewPrompts("", nil),
 			Components:          nil,

@@ -207,8 +207,11 @@ var AICommand = Command{
 		// before prompting the user for input, and memory is persisted
 		// after each round via OnRoundSuccess. The interaction recorder is
 		// passed explicitly so the session is captured when -record is
-		// enabled. See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
-		_, err = loopRun(ctx, loops.RunOptions{
+		// enabled. The result is filled into result as the run progresses;
+		// the iterator yields the terminal error, if any.
+		// See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
+		var result loops.Result
+		for e := range loopRun(ctx, loops.RunOptions{
 			Generator:           generator,
 			InitialState:        baseState,
 			Components:          comps.ComponentSet,
@@ -232,7 +235,9 @@ var AICommand = Command{
 			},
 			OnIdle:     onIdle,
 			HTTPClient: nets.HTTPClient{},
-		})
+		}, &result) {
+			err = e
+		}
 		ce(err)
 
 	},

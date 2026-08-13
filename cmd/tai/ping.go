@@ -60,8 +60,12 @@ var PingCommand = Command{
 		// components). The loop handles ParserState wrapping, phase
 		// execution, and interaction recording; the TUI's finish-reason
 		// observer is applied via RunOptions.StateDecorators when -tui
-		// is enabled. See loops.TheoryOfLoops and TheoryOfTUI.
-		_, err := loopRun(ctx, loops.RunOptions{
+		// is enabled. The result is filled into result as the run
+		// progresses; the iterator yields the terminal error, if any.
+		// See loops.TheoryOfLoops and TheoryOfTUI.
+		var result loops.Result
+		var err error
+		for e := range loopRun(ctx, loops.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
@@ -70,7 +74,9 @@ var PingCommand = Command{
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
-		})
+		}, &result) {
+			err = e
+		}
 		ce(err)
 	},
 }

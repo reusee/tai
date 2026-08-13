@@ -912,16 +912,8 @@ var (
 	tabActiveLabelFg int32 = 10
 )
 
-// withTUIOutputObserver wraps a loops.Run so that model output content
-// appended to the generation state is forwarded to the TUI. The
-// decorator is passed through RunOptions.StateDecorators, so the loop
-// applies it to the generation state before the phase chain runs. It
-// replaces withFinishReasonObserver: output text, thoughts, tool calls,
-// and finish reasons are all captured by the same decorator. Only
-// content appended after the decorator wraps the state is displayed;
-// initial contents are not re-parsed. See TheoryOfTUI.
 func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
-	return func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+	return func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
 			// The tuiOutputState layer observes only content appended
 			// after it wraps the state. Initial contents are not parsed
@@ -932,7 +924,7 @@ func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
 				tui:      tui,
 			}
 		})
-		return run(ctx, opts)
+		return run(ctx, opts, result)
 	}
 }
 

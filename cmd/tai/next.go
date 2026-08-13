@@ -161,8 +161,11 @@ var NextCommand = Command{
 		// interactive session. Apply errors trigger a retry with the
 		// error message fed back as user content. The interaction
 		// recorder is passed explicitly so the session is captured when
-		// -record is enabled. See loops.TheoryOfLoops.
-		_, err = loopRun(ctx, loops.RunOptions{
+		// -record is enabled. The result is filled into result as the
+		// run progresses; the iterator yields the terminal error, if
+		// any. See loops.TheoryOfLoops.
+		var result loops.Result
+		for e := range loopRun(ctx, loops.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
@@ -176,7 +179,9 @@ var NextCommand = Command{
 				memStore.Reset()
 			},
 			RetryOnError: true,
-		})
+		}, &result) {
+			err = e
+		}
 		ce(err)
 
 		// Flush in-memory changes to disk after the generation round

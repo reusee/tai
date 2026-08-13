@@ -34,6 +34,17 @@ func withRun(t *testing.T, fn func(Run)) {
 	})
 }
 
+// runOnce runs the loop to completion and returns the result and the
+// terminal error, if any. It adapts the iterator-based Run to the
+// (Result, error) shape used by the tests.
+func runOnce(run Run, opts RunOptions) (Result, error) {
+	var result Result
+	for e := range run(context.Background(), opts, &result) {
+		return result, e
+	}
+	return result, nil
+}
+
 // appendPhase creates a phase that appends text content and returns nil
 // (end of phase chain).
 func appendPhase(text string) phases.Phase {
@@ -125,7 +136,7 @@ func TestRunParseErrorCorrection(t *testing.T) {
 			return appendPhaseWithFlush("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -169,7 +180,7 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 			return appendPhaseWithFlush("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -211,7 +222,7 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 			},
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -274,7 +285,7 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 					"<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -321,7 +332,7 @@ func errorPhase(err error) phases.Phase {
 
 func TestRunSingleRound(t *testing.T) {
 	withRun(t, func(run Run) {
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -369,7 +380,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 			},
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -424,7 +435,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			},
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -458,7 +469,7 @@ func TestRunPhaseError(t *testing.T) {
 			return state
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -492,7 +503,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -527,7 +538,7 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 			return appendPhaseWithFinish("<<徕珑龘 <summary>\nDone.\n徕珑龘\n", "stop")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -555,7 +566,7 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 			return appendPhaseWithFinish("<<徕珑龘 <summary>\nDone.\n徕珑龘\n", "stop")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -583,7 +594,7 @@ func TestRunRetryMaxRetries(t *testing.T) {
 			return appendPhase("always incomplete")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -623,7 +634,7 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 		}
 
 		round := 0
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -657,7 +668,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			return nil
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:      nil,
 			InitialState:   generators.NewPrompts("", nil),
 			Components:     nil,
@@ -688,7 +699,7 @@ func TestRunOnRoundSuccessError(t *testing.T) {
 			return expectedErr
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:      nil,
 			InitialState:   generators.NewPrompts("", nil),
 			Components:     nil,
@@ -709,7 +720,7 @@ func TestRunOnRoundSuccessError(t *testing.T) {
 func TestRunEmptyComponentsSingleShot(t *testing.T) {
 	withRun(t, func(run Run) {
 		phaseCalled := false
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -745,7 +756,7 @@ func TestRunMaxRounds(t *testing.T) {
 			},
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -774,7 +785,7 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 		}
 
 		initialState := generators.NewPrompts("", nil)
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: initialState,
 			Components:   nil,
@@ -805,7 +816,7 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -867,7 +878,7 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -912,7 +923,7 @@ func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 			return appendThenErrorPhase("some output", errors.New("always fails"))
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -942,7 +953,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 			}
 
-			result, err := run(context.Background(), RunOptions{
+			result, err := runOnce(run, RunOptions{
 				Generator:                nil,
 				InitialState:             generators.NewPrompts("", nil),
 				Components:               nil,
@@ -987,7 +998,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 			}
 
-			result, err := run(context.Background(), RunOptions{
+			result, err := runOnce(run, RunOptions{
 				Generator:    nil,
 				InitialState: generators.NewPrompts("", nil),
 				Components:   nil,
@@ -1036,7 +1047,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 			}
 
-			result, err := run(context.Background(), RunOptions{
+			result, err := runOnce(run, RunOptions{
 				Generator:                nil,
 				InitialState:             generators.NewPrompts("", nil),
 				Components:               nil,
@@ -1081,7 +1092,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 			}
 
-			result, err := run(context.Background(), RunOptions{
+			result, err := runOnce(run, RunOptions{
 				Generator:    nil,
 				InitialState: generators.NewPrompts("", nil),
 				Components:   nil,
@@ -1135,7 +1146,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -1173,7 +1184,7 @@ func TestRunRetryPromptIsContinueBlock(t *testing.T) {
 			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:                nil,
 			InitialState:             generators.NewPrompts("", nil),
 			Components:               nil,
@@ -1220,7 +1231,7 @@ func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {
 			return appendThenErrorPhase("some content", errors.New("some error"))
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -1244,7 +1255,7 @@ func TestRunRetryOnErrorNoContentNoRetry(t *testing.T) {
 			return errorPhase(errors.New("system error"))
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
@@ -1292,7 +1303,7 @@ func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
 			return state, false, nil
 		})
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -1337,7 +1348,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 			return state, false, nil
 		})
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -1373,7 +1384,7 @@ func TestRunOnIdleError(t *testing.T) {
 			},
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -1409,7 +1420,7 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 			},
 		}
 
-		_, err := run(context.Background(), RunOptions{
+		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -1450,7 +1461,7 @@ func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 			},
 		}
 
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
@@ -1534,7 +1545,7 @@ func TestRunStateDecorators(t *testing.T) {
 		var applied []string
 		var observed []string
 		initialState := generators.NewPrompts("", nil)
-		result, err := run(context.Background(), RunOptions{
+		result, err := runOnce(run, RunOptions{
 			Generator:    nil,
 			InitialState: initialState,
 			Components:   nil,

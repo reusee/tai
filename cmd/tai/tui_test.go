@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 	"time"
@@ -1416,22 +1417,22 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 func TestWithTUIOutputObserver(t *testing.T) {
 	tui := &TUI{tuiState: *newTUIState()}
 	var gotOpts loops.RunOptions
-	run := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+	run := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		gotOpts = opts
-		return loops.Result{}, nil
+		return func(yield func(error) bool) {}
 	}
 	wrapped := withTUIOutputObserver(run, tui)
 
-	_, err := wrapped(context.Background(), loops.RunOptions{})
-	if err != nil {
-		t.Fatal(err)
+	var result loops.Result
+	for e := range wrapped(context.Background(), loops.RunOptions{}, &result) {
+		t.Fatal(e)
 	}
 	if len(gotOpts.StateDecorators) != 1 {
 		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))
 	}
 
 	var state generators.State = generators.NewPrompts("", nil)
-	state, err = gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
+	state, err := gotOpts.StateDecorators[0](state).AppendContent(&generators.Content{
 		Role: generators.RoleModel,
 		Parts: []generators.Part{
 			generators.Text("model output\n"),

@@ -822,9 +822,11 @@ func (Module) GenerateWithResultWithStats(
 		// on missing completion and errors, and component processing
 		// between rounds. The interaction recorder is passed explicitly
 		// so every round, content, and block is captured when -record is
-		// enabled.
+		// enabled. The result is filled into result as the run
+		// progresses; the iterator yields the terminal error, if any.
 		// See records.TheoryOfInteractionRecording.
-		result, err := loopRun(ctx, loops.RunOptions{
+		var result loops.Result
+		for e := range loopRun(ctx, loops.RunOptions{
 			Generator:    generator,
 			InitialState: state,
 			Components:   comps.ComponentSet,
@@ -916,7 +918,9 @@ func (Module) GenerateWithResultWithStats(
 			SummarizeIncomplete: func(incompleteText string) (*loops.RetrySummary, error) {
 				return summarizeIncompleteOutput(ctx, fastModel, incompleteText)
 			},
-		})
+		}, &result) {
+			err = e
+		}
 
 		// Surface uncorrected malformed blocks in unattended operation:
 		// when the parse-error correction budget is exhausted, the

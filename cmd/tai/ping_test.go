@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"iter"
 	"strings"
 	"testing"
 
@@ -45,9 +46,9 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 	// participates in the TUI mechanism (finish-reason observer,
 	// generating hint) and interaction recording. See TheoryOfPingCommand.
 	var gotOpts loops.RunOptions
-	fakeRun := func(ctx context.Context, opts loops.RunOptions) (loops.Result, error) {
+	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		gotOpts = opts
-		return loops.Result{}, nil
+		return func(yield func(error) bool) {}
 	}
 
 	mainFn, ok := PingCommand.Main.(func(*records.Recorder, generators.Generator, phases.BuildGenerate, loops.Run))

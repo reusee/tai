@@ -72,6 +72,11 @@ commands (codes, ai, next). The core pattern:
 4. Process collected blocks through components (if any)
 5. Repeat until no components trigger or MaxRounds is reached
 
+Run is exposed as an iterator: func(ctx, opts, result *Result) iter.Seq[error].
+The result is filled incrementally as the run progresses, and the iterator
+yields the terminal error, if any, when the run stops. Callers may suspend
+and resume the run via iter.Pull, inspecting the result between pulls.
+
 A round is one pass through the phase chain, producing a set of blocks. A retry is
 a re-execution of the phase chain within the same round, triggered by a missing
 completion (no summary block) or an error after content output. Retries count as
@@ -139,8 +144,11 @@ func (Module) InteractionRecorder() InteractionRecorder {
 // with ParserState, executes the phase chain, processes blocks via
 // components, and continues if a component triggers a new round.
 // When Components is empty, the loop runs a single round (single-shot
-// mode). See TheoryOfLoops.
-type Run func(ctx context.Context, opts RunOptions) (Result, error)
+// mode). The result is filled into result as the run progresses, and
+// the returned iterator yields the terminal error, if any, when the
+// run stops. Callers may suspend and resume the run via iter.Pull,
+// inspecting result between pulls. See TheoryOfLoops.
+type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error]
 
 // BlockHandler processes a block during streaming. If consumed is true,
 // the block is not passed to ProcessComponents. If err is non-nil,
@@ -408,518 +416,526 @@ func (s recordedState) AppendContent(content *generators.Content) (generators.St
 func (Module) Run(
 	recorder InteractionRecorder,
 ) Run {
-	return func(ctx context.Context, opts RunOptions) (result Result, err error) {
-		// Determine the active interaction recorder. When the caller does
-		// not pass one explicitly, the provider-injected default is used,
-		// so every loop run records interactions automatically.
-		// See records.TheoryOfInteractionRecording.
-		rec := opts.InteractionRecorder
-		if rec == nil {
-			rec = recorder
+	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error] {
+		if result == nil {
+			result = &Result{}
 		}
-		opts.InteractionRecorder = rec
-		recording := rec != nil && rec.Enabled()
-		if recording {
-			command := opts.Command
-			if command == "" {
-				command = "codes"
+		return func(yield func(error) bool) {
+			// runErr carries the terminal error of the run. It is
+			// captured by the deferred EndSession so the session is
+			// closed with the final outcome on every return path.
+			var runErr error
+
+			// Determine the active interaction recorder. When the caller does
+			// not pass one explicitly, the provider-injected default is used,
+			// so every loop run records interactions automatically.
+			// See records.TheoryOfInteractionRecording.
+			rec := opts.InteractionRecorder
+			if rec == nil {
+				rec = recorder
 			}
-			rec.StartSession(command)
-			// EndSession is deferred so every return path — including
-			// errors — closes the session with the final outcome. The
-			// named result value carries the loop's error.
-			defer func() {
-				rec.EndSession(err)
-			}()
-		}
-
-		state := opts.InitialState
-		var remainingBlocks []blocks.Block
-		roundCounts := make(map[string]int)
-		maxRetries := opts.MaxRetries
-		if maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
-			maxRetries = defaultMaxRetries
-		}
-
-		// parseErrorCorrectionRounds counts rounds that produced parse
-		// errors and received correction feedback since the last clean
-		// round. The correction budget is cumulative per run: it resets
-		// only when a round produces no parse errors, so a model that
-		// persistently emits malformed blocks cannot restart the
-		// correction cycle indefinitely when other components keep
-		// triggering rounds. When the budget is exhausted, feedback stops
-		// and the uncorrected parse errors are recorded in the Result.
-		// See TheoryOfLoops.
-		parseErrorCorrectionRounds := 0
-		// uncorrectedParseErrors accumulates parse errors from rounds
-		// where the correction budget was exhausted. They are surfaced in
-		// Result.ParseErrors so unattended callers can detect silent
-		// change loss. See TheoryOfLoops.
-		var uncorrectedParseErrors []*blocks.BlockParseError
-		// skipOnRoundStart is set when a round produced parse errors and
-		// its changes were already flushed by OnRoundSuccess; it prevents
-		// the next round's OnRoundStart from resetting per-round state
-		// (e.g., MemoryStore) that would discard the successfully applied
-		// changes before the model corrects the malformed blocks.
-		// See TheoryOfParseErrorCollection.
-		skipOnRoundStart := false
-
-		// Report the initial system prompt and contents, then wrap the
-		// state so every subsequent content append is captured for
-		// interaction recording. The recordedState layer sits below
-		// ParserState so both the parsed blocks and the contents
-		// carrying them are recorded. Recording is skipped entirely when
-		// the recorder is nil or disabled.
-		// See records.TheoryOfInteractionRecording.
-		state, _ = RecordState(rec, state)
-
-		// Apply the state decorators after recording so decorations (e.g.,
-		// observing FinishReason parts for a TUI) see every subsequent
-		// content append. Decorators are applied in order, each wrapping
-		// the state produced by the previous one. See loops.StateDecorator.
-		for _, decorator := range opts.StateDecorators {
-			if decorator != nil {
-				state = decorator(state)
-			}
-		}
-
-		// recordRoundError reports a failed round to the interaction
-		// recorder when recording is active.
-		recordRoundError := func(err error) {
-			if rec != nil && rec.Enabled() {
-				rec.RoundError(err)
-			}
-		}
-
-		for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
-			if rec != nil && rec.Enabled() {
-				rec.RoundStart()
-			}
-			if opts.OnRoundStart != nil && !skipOnRoundStart {
-				opts.OnRoundStart()
+			opts.InteractionRecorder = rec
+			recording := rec != nil && rec.Enabled()
+			if recording {
+				command := opts.Command
+				if command == "" {
+					command = "codes"
+				}
+				rec.StartSession(command)
+				// EndSession is deferred so every return path — including
+				// errors — closes the session with the final outcome. The
+				// deferred function runs when the iterator is exhausted,
+				// whether the consumer pulled the terminal error and
+				// resumed, or stopped the iteration early.
+				defer func() {
+					rec.EndSession(runErr)
+				}()
 			}
 
-			var collectedBlocks []blocks.Block
-			var roundSummaries []string
-			var roundParseErrors []*blocks.BlockParseError
-			phaseState := state
-			var roundErr error
+			state := opts.InitialState
+			var remainingBlocks []blocks.Block
+			roundCounts := make(map[string]int)
+			maxRetries := opts.MaxRetries
+			if maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
+				maxRetries = defaultMaxRetries
+			}
 
-			// Inner retry loop for missing completion and errors with content output.
-			for retry := 0; ; retry++ {
-				collectedBlocks = nil
-				roundParseErrors = nil
+			// parseErrorCorrectionRounds counts rounds that produced parse
+			// errors and received correction feedback since the last clean
+			// round. The correction budget is cumulative per run: it resets
+			// only when a round produces no parse errors, so a model that
+			// persistently emits malformed blocks cannot restart the
+			// correction cycle indefinitely when other components keep
+			// triggering rounds. When the budget is exhausted, feedback stops
+			// and the uncorrected parse errors are recorded in the Result.
+			// See TheoryOfLoops.
+			parseErrorCorrectionRounds := 0
+			// uncorrectedParseErrors accumulates parse errors from rounds
+			// where the correction budget was exhausted. They are surfaced in
+			// Result.ParseErrors so unattended callers can detect silent
+			// change loss. See TheoryOfLoops.
+			var uncorrectedParseErrors []*blocks.BlockParseError
+			// skipOnRoundStart is set when a round produced parse errors and
+			// its changes were already flushed by OnRoundSuccess; it prevents
+			// the next round's OnRoundStart from resetting per-round state
+			// (e.g., MemoryStore) that would discard the successfully applied
+			// changes before the model corrects the malformed blocks.
+			// See TheoryOfParseErrorCollection.
+			skipOnRoundStart := false
 
-				// Create parser handler that collects blocks and
-				// optionally invokes the caller's BlockHandler.
-				parserHandler := func(block blocks.Block) error {
-					// Report every parsed block to the interaction
-					// recorder, whether or not it is consumed by the
-					// caller's BlockHandler.
-					if rec != nil && rec.Enabled() {
-						rec.Block(block)
-					}
-					if opts.BlockHandler != nil {
-						consumed, err := opts.BlockHandler(block)
-						if err != nil {
-							return err
-						}
-						if consumed {
-							return nil
-						}
-					}
-					collectedBlocks = append(collectedBlocks, block)
-					return nil
+			// Report the initial system prompt and contents, then wrap the
+			// state so every subsequent content append is captured for
+			// interaction recording. The recordedState layer sits below
+			// ParserState so both the parsed blocks and the contents
+			// carrying them are recorded. Recording is skipped entirely when
+			// the recorder is nil or disabled.
+			// See records.TheoryOfInteractionRecording.
+			state, _ = RecordState(rec, state)
+
+			// Apply the state decorators after recording so decorations (e.g.,
+			// observing FinishReason parts for a TUI) see every subsequent
+			// content append. Decorators are applied in order, each wrapping
+			// the state produced by the previous one. See loops.StateDecorator.
+			for _, decorator := range opts.StateDecorators {
+				if decorator != nil {
+					state = decorator(state)
+				}
+			}
+
+			// recordRoundError reports a failed round to the interaction
+			// recorder when recording is active.
+			recordRoundError := func(err error) {
+				if rec != nil && rec.Enabled() {
+					rec.RoundError(err)
+				}
+			}
+
+			// finishWithError fills the result with the final state and
+			// yields the terminal error, ending the run. The caller must
+			// return immediately after the call.
+			finishWithError := func(err error, finalState generators.State) {
+				result.FinalState = finalState
+				result.RemainingBlocks = remainingBlocks
+				result.ParseErrors = uncorrectedParseErrors
+				runErr = err
+				if !yield(runErr) {
+					return
+				}
+			}
+
+			// finish fills the result with the final state and ends the
+			// run without an error.
+			finish := func(finalState generators.State, finalBlocks []blocks.Block) {
+				result.FinalState = finalState
+				result.RemainingBlocks = finalBlocks
+				result.ParseErrors = uncorrectedParseErrors
+			}
+
+			for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
+				if rec != nil && rec.Enabled() {
+					rec.RoundStart()
+				}
+				if opts.OnRoundStart != nil && !skipOnRoundStart {
+					opts.OnRoundStart()
 				}
 
-				// Wrap state with ParserState.
-				parserState := blocks.NewParserState(state, parserHandler)
-				wrappedState := generators.State(parserState)
+				var collectedBlocks []blocks.Block
+				var roundSummaries []string
+				var roundParseErrors []*blocks.BlockParseError
+				phaseState := state
+				var roundErr error
 
-				// Build and execute phase chain.
-				phase := opts.PhaseBuilder(opts.Generator)
-				for phase != nil {
-					var err error
-					phase, wrappedState, err = phase(ctx, wrappedState)
-					if err != nil {
-						roundErr = err
+				// Inner retry loop for missing completion and errors with content output.
+				for retry := 0; ; retry++ {
+					collectedBlocks = nil
+					roundParseErrors = nil
+
+					// Create parser handler that collects blocks and
+					// optionally invokes the caller's BlockHandler.
+					parserHandler := func(block blocks.Block) error {
+						// Report every parsed block to the interaction
+						// recorder, whether or not it is consumed by the
+						// caller's BlockHandler.
+						if rec != nil && rec.Enabled() {
+							rec.Block(block)
+						}
+						if opts.BlockHandler != nil {
+							consumed, err := opts.BlockHandler(block)
+							if err != nil {
+								return err
+							}
+							if consumed {
+								return nil
+							}
+						}
+						collectedBlocks = append(collectedBlocks, block)
+						return nil
+					}
+
+					// Wrap state with ParserState.
+					parserState := blocks.NewParserState(state, parserHandler)
+					wrappedState := generators.State(parserState)
+
+					// Build and execute phase chain.
+					phase := opts.PhaseBuilder(opts.Generator)
+					for phase != nil {
+						var err error
+						phase, wrappedState, err = phase(ctx, wrappedState)
+						if err != nil {
+							roundErr = err
+							break
+						}
+					}
+
+					// Unwrap ParserState to get the base state. A phase may
+					// return a nil state on error; fall back to the pre-phase
+					// state so OnPhaseError receives a valid state rather
+					// than a nil pointer that would cause a panic.
+					if wrappedState == nil {
+						phaseState = state
+					} else if ps, ok := generators.As[*blocks.ParserState](wrappedState); ok {
+						phaseState = ps.Unwrap()
+						// Collect parse errors from the stream so they can be
+						// fed back to the model for self-correction.
+						// See TheoryOfParseErrorCollection.
+						roundParseErrors = ps.ParseErrors()
+						// Report malformed blocks to the interaction recorder.
+						if rec != nil && rec.Enabled() {
+							for _, parseErr := range roundParseErrors {
+								rec.ParseError(parseErr)
+							}
+						}
+					} else {
+						phaseState = wrappedState
+					}
+
+					if roundErr != nil {
+						// Retry on any error when content was output during
+						// the round. The loop summarizes the incomplete
+						// output, appends both the error context and the
+						// summary as user content so the model can correct
+						// its output, resets per-round state via
+						// OnRoundStart (which resets the MemoryStore,
+						// discarding failed changes), and retries from the
+						// updated state. Errors that occur before any
+						// content is output do not trigger retry. The
+						// feedback states the current attempt number so the
+						// model knows how much retry budget remains.
+						// See TheoryOfLoops.
+						if opts.RetryOnError && retry < maxRetries {
+							prevCount := generators.CountContents(state)
+							if generators.CountContents(phaseState) > prevCount {
+								state = phaseState
+
+								// Report the failed attempt to the
+								// interaction recorder.
+								if rec != nil && rec.Enabled() {
+									rec.RoundError(roundErr)
+								}
+
+								var retryParts []generators.Part
+								retryParts = append(retryParts, generators.Text(
+									fmt.Sprintf(errorRetryPrefix, roundErr.Error(), retry+1, maxRetries)))
+
+								// For change block apply errors, add specific
+								// guidance: the retry discards ALL change
+								// blocks from the failed attempt (OnRoundStart
+								// resets the in-memory store below), so the
+								// model must re-emit every intended change
+								// block, correcting the one that failed.
+								// See TheoryOfLoops.
+								var applyErr *changes.ApplyError
+								if errors.As(roundErr, &applyErr) {
+									retryParts = append(retryParts, generators.Text(
+										"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
+								}
+
+								// Summarize the failed attempt's output. The
+								// retry process produces both a summary
+								// (recorded as the failed round's summary in
+								// round statistics) and the compressed content
+								// fed to the retry round as user input.
+								summary := ""
+								retryPrompt := ""
+								if opts.SummarizeIncomplete != nil {
+									incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
+									if incompleteText != "" {
+										retrySummary, summaryErr := opts.SummarizeIncomplete(incompleteText)
+										if summaryErr == nil && retrySummary != nil {
+											summary = retrySummary.Summary
+											retryPrompt = retrySummary.RetryPrompt
+										}
+									}
+								}
+
+								// Record the failed round in round statistics
+								// so it appears as a separate loop.
+								// See TheoryOfRoundStatistics.
+								if opts.OnRoundTruncated != nil {
+									if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
+										roundErr = rerr
+										break
+									}
+								}
+
+								// Append the continue block as the retry user
+								// prompt.
+								if retryPrompt != "" {
+									retryParts = append(retryParts, generators.Text(
+										formatRetryPrompt(retryPrompt, retry+1, maxRetries)))
+								}
+
+								var appendErr error
+								state, appendErr = state.AppendContent(&generators.Content{
+									Role:  generators.RoleUser,
+									Parts: retryParts,
+								})
+								if appendErr != nil {
+									break
+								}
+								roundErr = nil
+								// Reset for retry: OnRoundStart resets the
+								// MemoryStore, discarding all changes from the
+								// failed attempt. This preserves filesystem
+								// consistency — the disk is never left in a
+								// partially modified state by a failed attempt.
+								if opts.OnRoundStart != nil {
+									opts.OnRoundStart()
+								}
+								continue
+							}
+						}
 						break
 					}
-				}
 
-				// Unwrap ParserState to get the base state. A phase may
-				// return a nil state on error; fall back to the pre-phase
-				// state so OnPhaseError receives a valid state rather
-				// than a nil pointer that would cause a panic.
-				if wrappedState == nil {
-					phaseState = state
-				} else if ps, ok := generators.As[*blocks.ParserState](wrappedState); ok {
-					phaseState = ps.Unwrap()
-					// Collect parse errors from the stream so they can be
-					// fed back to the model for self-correction.
-					// See TheoryOfParseErrorCollection.
-					roundParseErrors = ps.ParseErrors()
-					// Report malformed blocks to the interaction recorder.
-					if rec != nil && rec.Enabled() {
-						for _, parseErr := range roundParseErrors {
-							rec.ParseError(parseErr)
+					// Always extract and remove summary blocks from
+					// collectedBlocks. Summaries must be available to
+					// OnRoundSuccess regardless of whether retry is
+					// enabled. See TheoryOfLoops.
+					roundSummaries = nil
+					var remaining []blocks.Block
+					for _, block := range collectedBlocks {
+						if block.Kind == "summary" {
+							roundSummaries = append(roundSummaries, block.Body)
+						} else {
+							remaining = append(remaining, block)
 						}
 					}
-				} else {
-					phaseState = wrappedState
+					collectedBlocks = remaining
+
+					// If retry is disabled, we're done with this round.
+					if !opts.RetryOnMissingCompletion {
+						break
+					}
+
+					// Check for completion: a summary block signals normal
+					// completion, but an abnormal finish reason (e.g.,
+					// "length" from max-token truncation) overrides the
+					// summary signal and triggers retry. See
+					// TheoryOfSummaryCompletionRetry in codes/generate.go.
+					hasCompletion := len(roundSummaries) > 0
+					finishReason := extractFinishReason(phaseState, generators.CountContents(state))
+					isAbnormalFinish := isAbnormalFinishReason(finishReason)
+
+					if hasCompletion && !isAbnormalFinish {
+						break
+					}
+					if retry >= maxRetries {
+						break
+					}
+
+					// Report the truncated attempt to the interaction
+					// recorder.
+					if rec != nil && rec.Enabled() {
+						rec.RoundTruncated()
+					}
+
+					// Summarize incomplete output and retry. The retry process
+					// produces both a summary of the truncated output (recorded
+					// as the truncated round's summary in round statistics) and
+					// a continue block whose content is the compressed version
+					// of the truncated output, fed to the retry round as user
+					// input. The feedback states the current attempt number so
+					// the model knows how much retry budget remains.
+					// See TheoryOfLoops.
+					summary := ""
+					retryPrompt := ""
+					if opts.SummarizeIncomplete != nil {
+						incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(state))
+						if incompleteText != "" {
+							retrySummary, rerr := opts.SummarizeIncomplete(incompleteText)
+							if rerr == nil && retrySummary != nil {
+								summary = retrySummary.Summary
+								retryPrompt = retrySummary.RetryPrompt
+							}
+						}
+					}
+
+					// Record the truncated round in round statistics so it
+					// appears as a separate loop. The summary is synthesized
+					// by the retry process. See TheoryOfRoundStatistics.
+					if opts.OnRoundTruncated != nil {
+						if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
+							roundErr = rerr
+							break
+						}
+					}
+
+					// Append the continue block as the retry user prompt.
+					if retryPrompt != "" {
+						var appendErr error
+						state, appendErr = state.AppendContent(&generators.Content{
+							Role: generators.RoleUser,
+							Parts: []generators.Part{
+								generators.Text(formatRetryPrompt(retryPrompt, retry+1, maxRetries)),
+							},
+						})
+						if appendErr != nil {
+							break
+						}
+					}
+
+					// Reset for retry.
+					if opts.OnRoundStart != nil {
+						opts.OnRoundStart()
+					}
 				}
 
 				if roundErr != nil {
-					// Retry on any error when content was output during
-					// the round. The loop summarizes the incomplete
-					// output, appends both the error context and the
-					// summary as user content so the model can correct
-					// its output, resets per-round state via
-					// OnRoundStart (which resets the MemoryStore,
-					// discarding failed changes), and retries from the
-					// updated state. Errors that occur before any
-					// content is output do not trigger retry. The
-					// feedback states the current attempt number so the
-					// model knows how much retry budget remains.
-					// See TheoryOfLoops.
-					if opts.RetryOnError && retry < maxRetries {
-						prevCount := generators.CountContents(state)
-						if generators.CountContents(phaseState) > prevCount {
-							state = phaseState
-
-							// Report the failed attempt to the
-							// interaction recorder.
-							if rec != nil && rec.Enabled() {
-								rec.RoundError(roundErr)
-							}
-
-							var retryParts []generators.Part
-							retryParts = append(retryParts, generators.Text(
-								fmt.Sprintf(errorRetryPrefix, roundErr.Error(), retry+1, maxRetries)))
-
-							// For change block apply errors, add specific
-							// guidance: the retry discards ALL change
-							// blocks from the failed attempt (OnRoundStart
-							// resets the in-memory store below), so the
-							// model must re-emit every intended change
-							// block, correcting the one that failed.
-							// See TheoryOfLoops.
-							var applyErr *changes.ApplyError
-							if errors.As(roundErr, &applyErr) {
-								retryParts = append(retryParts, generators.Text(
-									"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
-							}
-
-							// Summarize the failed attempt's output. The
-							// retry process produces both a summary
-							// (recorded as the failed round's summary in
-							// round statistics) and the compressed content
-							// fed to the retry round as user input.
-							summary := ""
-							retryPrompt := ""
-							if opts.SummarizeIncomplete != nil {
-								incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
-								if incompleteText != "" {
-									retrySummary, summaryErr := opts.SummarizeIncomplete(incompleteText)
-									if summaryErr == nil && retrySummary != nil {
-										summary = retrySummary.Summary
-										retryPrompt = retrySummary.RetryPrompt
-									}
-								}
-							}
-
-							// Record the failed round in round statistics
-							// so it appears as a separate loop.
-							// See TheoryOfRoundStatistics.
-							if opts.OnRoundTruncated != nil {
-								if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
-									roundErr = rerr
-									break
-								}
-							}
-
-							// Append the continue block as the retry user
-							// prompt.
-							if retryPrompt != "" {
-								retryParts = append(retryParts, generators.Text(
-									formatRetryPrompt(retryPrompt, retry+1, maxRetries)))
-							}
-
-							var appendErr error
-							state, appendErr = state.AppendContent(&generators.Content{
-								Role:  generators.RoleUser,
-								Parts: retryParts,
-							})
-							if appendErr != nil {
-								break
-							}
-							roundErr = nil
-							// Reset for retry: OnRoundStart resets the
-							// MemoryStore, discarding all changes from the
-							// failed attempt. This preserves filesystem
-							// consistency — the disk is never left in a
-							// partially modified state by a failed attempt.
-							if opts.OnRoundStart != nil {
-								opts.OnRoundStart()
-							}
-							continue
-						}
+					recordRoundError(roundErr)
+					if opts.OnPhaseError != nil {
+						phaseState = opts.OnPhaseError(phaseState, roundErr)
 					}
-					break
+					finishWithError(roundErr, phaseState)
+					return
 				}
 
-				// Always extract and remove summary blocks from
-				// collectedBlocks. Summaries must be available to
-				// OnRoundSuccess regardless of whether retry is
-				// enabled. See TheoryOfLoops.
-				roundSummaries = nil
-				var remaining []blocks.Block
-				for _, block := range collectedBlocks {
-					if block.Kind == "summary" {
-						roundSummaries = append(roundSummaries, block.Body)
-					} else {
-						remaining = append(remaining, block)
+				// OnRoundSuccess hook.
+				if opts.OnRoundSuccess != nil {
+					if serr := opts.OnRoundSuccess(phaseState, roundSummaries); serr != nil {
+						recordRoundError(serr)
+						finishWithError(serr, phaseState)
+						return
 					}
 				}
-				collectedBlocks = remaining
 
-				// If retry is disabled, we're done with this round.
-				if !opts.RetryOnMissingCompletion {
-					break
-				}
-
-				// Check for completion: a summary block signals normal
-				// completion, but an abnormal finish reason (e.g.,
-				// "length" from max-token truncation) overrides the
-				// summary signal and triggers retry. See
-				// TheoryOfSummaryCompletionRetry in codes/generate.go.
-				hasCompletion := len(roundSummaries) > 0
-				finishReason := extractFinishReason(phaseState, generators.CountContents(state))
-				isAbnormalFinish := isAbnormalFinishReason(finishReason)
-
-				if hasCompletion && !isAbnormalFinish {
-					break
-				}
-				if retry >= maxRetries {
-					break
-				}
-
-				// Report the truncated attempt to the interaction
+				// Report the successfully completed round to the interaction
 				// recorder.
 				if rec != nil && rec.Enabled() {
-					rec.RoundTruncated()
+					rec.RoundSuccess(roundSummaries)
 				}
 
-				// Summarize incomplete output and retry. The retry process
-				// produces both a summary of the truncated output (recorded
-				// as the truncated round's summary in round statistics) and
-				// a continue block whose content is the compressed version
-				// of the truncated output, fed to the retry round as user
-				// input. The feedback states the current attempt number so
-				// the model knows how much retry budget remains.
-				// See TheoryOfLoops.
-				summary := ""
-				retryPrompt := ""
-				if opts.SummarizeIncomplete != nil {
-					incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(state))
-					if incompleteText != "" {
-						retrySummary, rerr := opts.SummarizeIncomplete(incompleteText)
-						if rerr == nil && retrySummary != nil {
-							summary = retrySummary.Summary
-							retryPrompt = retrySummary.RetryPrompt
+				state = phaseState
+
+				// Parse error handling: feed parse errors back to the model
+				// for self-correction in the next round. A round that
+				// produced parse errors always triggers another round (within
+				// the maxParseErrorRounds correction budget), so the model can
+				// re-emit the malformed blocks in corrected form. The changes
+				// from blocks that parsed successfully were already flushed
+				// by OnRoundSuccess; skipOnRoundStart prevents the correction
+				// round from resetting per-round state that would discard
+				// them. When the budget is exhausted, feedback stops and the
+				// uncorrected parse errors are recorded in the Result.
+				// See TheoryOfParseErrorCollection.
+				var parseErrorParts []generators.Part
+				var roundUncorrected []*blocks.BlockParseError
+				parseErrorParts, parseErrorCorrectionRounds, skipOnRoundStart, roundUncorrected =
+					decideParseErrorFeedback(roundParseErrors, parseErrorCorrectionRounds)
+				if len(roundUncorrected) > 0 {
+					uncorrectedParseErrors = appendUncorrectedParseErrors(uncorrectedParseErrors, roundUncorrected)
+				}
+
+				// Single-shot mode: no component processing. When parse errors
+				// were collected, feed them back and continue with a
+				// correction round instead of ending the loop.
+				if len(opts.Components) == 0 {
+					if len(parseErrorParts) > 0 {
+						var aerr error
+						state, aerr = state.AppendContent(&generators.Content{
+							Role:  generators.RoleUser,
+							Parts: parseErrorParts,
+						})
+						if aerr != nil {
+							recordRoundError(aerr)
+							finishWithError(aerr, state)
+							return
 						}
+						continue
 					}
+					finish(state, collectedBlocks)
+					return
 				}
 
-				// Record the truncated round in round statistics so it
-				// appears as a separate loop. The summary is synthesized
-				// by the retry process. See TheoryOfRoundStatistics.
-				if opts.OnRoundTruncated != nil {
-					if rerr := opts.OnRoundTruncated(phaseState, state, summary); rerr != nil {
-						roundErr = rerr
-						break
-					}
-				}
-
-				// Append the continue block as the retry user prompt.
-				if retryPrompt != "" {
-					var appendErr error
-					state, appendErr = state.AppendContent(&generators.Content{
-						Role: generators.RoleUser,
-						Parts: []generators.Part{
-							generators.Text(formatRetryPrompt(retryPrompt, retry+1, maxRetries)),
-						},
-					})
-					if appendErr != nil {
-						break
-					}
-				}
-
-				// Reset for retry.
-				if opts.OnRoundStart != nil {
-					opts.OnRoundStart()
-				}
-			}
-
-			if roundErr != nil {
-				recordRoundError(roundErr)
-				if opts.OnPhaseError != nil {
-					phaseState = opts.OnPhaseError(phaseState, roundErr)
-				}
-				return Result{
-					FinalState:      phaseState,
-					RemainingBlocks: remainingBlocks,
-					ParseErrors:     uncorrectedParseErrors,
-				}, roundErr
-			}
-
-			// OnRoundSuccess hook.
-			if opts.OnRoundSuccess != nil {
-				if serr := opts.OnRoundSuccess(phaseState, roundSummaries); serr != nil {
-					recordRoundError(serr)
-					return Result{
-						FinalState:      phaseState,
-						RemainingBlocks: remainingBlocks,
-						ParseErrors:     uncorrectedParseErrors,
-					}, serr
-				}
-			}
-
-			// Report the successfully completed round to the interaction
-			// recorder.
-			if rec != nil && rec.Enabled() {
-				rec.RoundSuccess(roundSummaries)
-			}
-
-			state = phaseState
-
-			// Parse error handling: feed parse errors back to the model
-			// for self-correction in the next round. A round that
-			// produced parse errors always triggers another round (within
-			// the maxParseErrorRounds correction budget), so the model can
-			// re-emit the malformed blocks in corrected form. The changes
-			// from blocks that parsed successfully were already flushed
-			// by OnRoundSuccess; skipOnRoundStart prevents the correction
-			// round from resetting per-round state that would discard
-			// them. When the budget is exhausted, feedback stops and the
-			// uncorrected parse errors are recorded in the Result.
-			// See TheoryOfParseErrorCollection.
-			var parseErrorParts []generators.Part
-			var roundUncorrected []*blocks.BlockParseError
-			parseErrorParts, parseErrorCorrectionRounds, skipOnRoundStart, roundUncorrected =
-				decideParseErrorFeedback(roundParseErrors, parseErrorCorrectionRounds)
-			if len(roundUncorrected) > 0 {
-				uncorrectedParseErrors = appendUncorrectedParseErrors(uncorrectedParseErrors, roundUncorrected)
-			}
-
-			// Single-shot mode: no component processing. When parse errors
-			// were collected, feed them back and continue with a
-			// correction round instead of ending the loop.
-			if len(opts.Components) == 0 {
-				if len(parseErrorParts) > 0 {
-					var aerr error
-					state, aerr = state.AppendContent(&generators.Content{
-						Role:  generators.RoleUser,
-						Parts: parseErrorParts,
-					})
-					if aerr != nil {
-						recordRoundError(aerr)
-						return Result{
-							FinalState:      state,
-							RemainingBlocks: remainingBlocks,
-							ParseErrors:     uncorrectedParseErrors,
-						}, aerr
-					}
-					continue
-				}
-				return Result{
-					FinalState:      state,
-					RemainingBlocks: collectedBlocks,
-					ParseErrors:     uncorrectedParseErrors,
-				}, nil
-			}
-
-			// Process components.
-			// Unmatched blocks are accumulated across rounds so that
-			// blocks not consumed by any component (e.g., a goal done
-			// block emitted in a round that also triggers another round)
-			// remain available in Result.RemainingBlocks. See
-			// TheoryOfGoalCommand in cmd/tai/goal.go.
-			var roundRemaining []blocks.Block
-			var combinedParts []generators.Part
-			var triggered bool
-			var cerr error
-			roundRemaining, state, combinedParts, triggered, cerr = components.ProcessComponents(
-				ctx, opts.Components, collectedBlocks, state,
-				opts.Root, opts.HTTPClient, roundCounts, true,
-			)
-			if cerr != nil {
-				recordRoundError(cerr)
-				return Result{
-					FinalState:      state,
-					RemainingBlocks: remainingBlocks,
-					ParseErrors:     uncorrectedParseErrors,
-				}, cerr
-			}
-			remainingBlocks = append(remainingBlocks, roundRemaining...)
-
-			// Prepend parse error feedback to component output parts so
-			// the model corrects malformed blocks alongside processing
-			// component results. Parse errors always trigger a new round.
-			if len(parseErrorParts) > 0 {
-				combinedParts = append(parseErrorParts, combinedParts...)
-				triggered = true
-			}
-
-			if triggered {
-				if len(combinedParts) > 0 {
-					state, cerr = state.AppendContent(&generators.Content{
-						Role:  generators.RoleUser,
-						Parts: combinedParts,
-					})
-					if cerr != nil {
-						recordRoundError(cerr)
-						return Result{
-							FinalState:      state,
-							RemainingBlocks: remainingBlocks,
-							ParseErrors:     uncorrectedParseErrors,
-						}, cerr
-					}
-				}
-				continue
-			}
-
-			// No component triggered. Try OnIdle (e.g., chat prompt) to
-			// allow interactive user input before ending the loop.
-			// Automated actions (continue, shell, go-test,
-			// request-context) are processed first via component
-			// processing above; OnIdle is only invoked when no
-			// automated action is pending.
-			// See phases.TheoryOfIdleHandler.
-			if opts.OnIdle != nil {
-				var idleContinue bool
-				state, idleContinue, cerr = opts.OnIdle(ctx, state)
+				// Process components.
+				// Unmatched blocks are accumulated across rounds so that
+				// blocks not consumed by any component (e.g., a goal done
+				// block emitted in a round that also triggers another round)
+				// remain available in Result.RemainingBlocks. See
+				// TheoryOfGoalCommand in cmd/tai/goal.go.
+				var roundRemaining []blocks.Block
+				var combinedParts []generators.Part
+				var triggered bool
+				var cerr error
+				roundRemaining, state, combinedParts, triggered, cerr = components.ProcessComponents(
+					ctx, opts.Components, collectedBlocks, state,
+					opts.Root, opts.HTTPClient, roundCounts, true,
+				)
 				if cerr != nil {
 					recordRoundError(cerr)
-					return Result{
-						FinalState:      state,
-						RemainingBlocks: remainingBlocks,
-						ParseErrors:     uncorrectedParseErrors,
-					}, cerr
+					finishWithError(cerr, state)
+					return
 				}
-				if idleContinue {
+				remainingBlocks = append(remainingBlocks, roundRemaining...)
+
+				// Prepend parse error feedback to component output parts so
+				// the model corrects malformed blocks alongside processing
+				// component results. Parse errors always trigger a new round.
+				if len(parseErrorParts) > 0 {
+					combinedParts = append(parseErrorParts, combinedParts...)
+					triggered = true
+				}
+
+				if triggered {
+					if len(combinedParts) > 0 {
+						state, cerr = state.AppendContent(&generators.Content{
+							Role:  generators.RoleUser,
+							Parts: combinedParts,
+						})
+						if cerr != nil {
+							recordRoundError(cerr)
+							finishWithError(cerr, state)
+							return
+						}
+					}
 					continue
 				}
+
+				// No component triggered. Try OnIdle (e.g., chat prompt) to
+				// allow interactive user input before ending the loop.
+				// Automated actions (continue, shell, go-test,
+				// request-context) are processed first via component
+				// processing above; OnIdle is only invoked when no
+				// automated action is pending.
+				// See phases.TheoryOfIdleHandler.
+				if opts.OnIdle != nil {
+					var idleContinue bool
+					state, idleContinue, cerr = opts.OnIdle(ctx, state)
+					if cerr != nil {
+						recordRoundError(cerr)
+						finishWithError(cerr, state)
+						return
+					}
+					if idleContinue {
+						continue
+					}
+				}
+
+				break
 			}
 
-			break
+			finish(state, remainingBlocks)
 		}
-
-		return Result{
-			FinalState:      state,
-			RemainingBlocks: remainingBlocks,
-			ParseErrors:     uncorrectedParseErrors,
-		}, nil
 	}
 }
 
