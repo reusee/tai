@@ -392,6 +392,13 @@ Output ONLY these two blocks as your final text, with no other text before or af
 // TheoryOfIncompleteOutputSummarization.
 const maxSummarizeRetries = 3
 
+// summarizeRecorderKey is the context key carrying the interaction recorder
+// to summarize requests. Summarize requests run outside the main generation
+// loop, so the recorder is carried in the context for summarizeIncompleteOutput
+// to pick up, keeping the summarize call sites unchanged. See
+// records.TheoryOfInteractionRecording.
+type summarizeRecorderKey struct{}
+
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	logger logs.Logger,
@@ -401,6 +408,11 @@ func summarizeIncompleteOutput(
 	if incompleteText == "" {
 		return nil, nil
 	}
+	// The interaction recorder is carried in the context so summarize
+	// requests are recorded alongside the main generation session. See
+	// records.TheoryOfInteractionRecording.
+	recorder, _ := ctx.Value(summarizeRecorderKey{}).(loops.InteractionRecorder)
+
 	systemPrompt := retrySummarizationSystemPrompt
 	var lastErr error
 	for attempt := range maxSummarizeRetries {
@@ -418,21 +430,50 @@ func summarizeIncompleteOutput(
 		options := &generators.GenerateOptions{
 			NonStreaming: true,
 		}
+
+		// Record the summarize request. The input is recorded per attempt so
+		// the interaction transcript shows each retry of the summarization.
+		if recorder != nil && recorder.Enabled() {
+			recorder.Content(&generators.Content{
+				Role: generators.RoleUser,
+				Parts: []generators.Part{
+					generators.Text(fmt.Sprintf("Summarize request (attempt %d):\n\n%s", attempt+1, incompleteText)),
+				},
+			})
+		}
+
 		_, err := generator.Generate(ctx, state, options)
 		if err != nil {
-			// A failed summarize generation is a failed summarize
-			// attempt: retry it like a parsing failure, so a transient
-			// API error does not leave the round without a summary.
-			// See TheoryOfIncompleteOutputSummarization.
 			lastErr = err
 			logger.WarnContext(ctx, "summarize incomplete output: generation failed",
 				"attempt", attempt+1,
 				"max_attempts", maxSummarizeRetries,
 				"err", err,
 			)
+			// Record the failure so the transcript shows why the attempt failed.
+			if recorder != nil && recorder.Enabled() {
+				recorder.Content(&generators.Content{
+					Role: generators.RoleLog,
+					Parts: []generators.Part{
+						generators.Error{Error: err},
+					},
+				})
+			}
 			continue
 		}
 		outputText := buf.String()
+
+		// Record the summarize response. The raw output is recorded before
+		// parsing, so even a malformed response is visible in the transcript.
+		if recorder != nil && recorder.Enabled() {
+			recorder.Content(&generators.Content{
+				Role: generators.RoleModel,
+				Parts: []generators.Part{
+					generators.Text(fmt.Sprintf("Summarize response (attempt %d):\n\n%s", attempt+1, outputText)),
+				},
+			})
+		}
+
 		parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
 		if err != nil {
 			lastErr = err
@@ -464,14 +505,6 @@ func summarizeIncompleteOutput(
 			"max_attempts", maxSummarizeRetries,
 		)
 	}
-	// All retries exhausted: report the failure instead of falling back
-	// to the incomplete text. A fallback would feed the raw, possibly
-	// truncated reasoning to the retry round as if it were a distilled
-	// summary, degrading the retry prompt's quality; failing loudly
-	// surfaces the summarization problem. Callers must treat the error
-	// as fatal and abort the run; proceeding without a synthesized
-	// summary would hide truncation and degrade the retry prompt.
-	// See TheoryOfIncompleteOutputSummarization.
 	if lastErr != nil {
 		err := fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
 		logger.ErrorContext(ctx, "summarize incomplete output failed",
@@ -922,7 +955,11 @@ func (Module) GenerateWithResultWithStats(
 		// callback that cannot return an error (OnPhaseError). fatalErr
 		// records the serious error; after the loop it overrides the
 		// loop's terminal error. See TheoryOfIncompleteOutputSummarization.
-		runCtx, cancel := context.WithCancel(ctx)
+		// The interaction recorder is carried in the context so summarize
+		// requests are recorded alongside the main generation session.
+		// See records.TheoryOfInteractionRecording.
+		ctxWithRecorder := context.WithValue(ctx, summarizeRecorderKey{}, recorder)
+		runCtx, cancel := context.WithCancel(ctxWithRecorder)
 		defer cancel()
 		var fatalErr error
 
@@ -975,7 +1012,7 @@ func (Module) GenerateWithResultWithStats(
 					// Round tab. See TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
 						var retrySummary *loops.RetrySummary
-						retrySummary, summarizeErr = summarizeIncompleteOutput(ctx, logger, generator, incompleteText)
+						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, logger, generator, incompleteText)
 						if summarizeErr == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
 						}
@@ -1034,7 +1071,7 @@ func (Module) GenerateWithResultWithStats(
 					phaseErr,
 					prevContentCount,
 					func(text string) (*loops.RetrySummary, error) {
-						return summarizeIncompleteOutput(ctx, logger, generator, text)
+						return summarizeIncompleteOutput(runCtx, logger, generator, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
@@ -1059,7 +1096,7 @@ func (Module) GenerateWithResultWithStats(
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
-				retrySummary, err := summarizeIncompleteOutput(ctx, logger, generator, incompleteText)
+				retrySummary, err := summarizeIncompleteOutput(runCtx, logger, generator, incompleteText)
 				if err != nil {
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a

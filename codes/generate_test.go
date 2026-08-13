@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -691,3 +692,127 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 		t.Fatalf("expected the final failure message in the log, got: %s", output)
 	}
 }
+
+// fakeRecorderForSummarize is a minimal InteractionRecorder for testing
+// that summarize requests are recorded. It captures contents appended via
+// Content.
+type fakeRecorderForSummarize struct {
+	enabled  bool
+	contents []*generators.Content
+}
+
+func TestSummarizeIncompleteOutputRecords(t *testing.T) {
+	t.Run("Enabled", func(t *testing.T) {
+		gen := &summarizeRetryMockGenerator{
+			responses: []string{
+				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			},
+		}
+		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+		rec := &fakeRecorderForSummarize{enabled: true}
+		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
+		retrySummary, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retrySummary == nil {
+			t.Fatal("expected retry summary")
+		}
+		if len(rec.contents) != 2 {
+			t.Fatalf("expected 2 recorded contents, got %d", len(rec.contents))
+		}
+		if rec.contents[0].Role != generators.RoleUser {
+			t.Fatalf("expected first content role user, got %s", rec.contents[0].Role)
+		}
+		if text, ok := rec.contents[0].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "incomplete text") {
+			t.Fatalf("expected first content to include the incomplete text, got %v", rec.contents[0].Parts[0])
+		}
+		if rec.contents[1].Role != generators.RoleModel {
+			t.Fatalf("expected second content role model, got %s", rec.contents[1].Role)
+		}
+		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "summary") {
+			t.Fatalf("expected second content to include the summary response, got %v", rec.contents[1].Parts[0])
+		}
+	})
+
+	t.Run("Disabled", func(t *testing.T) {
+		gen := &summarizeRetryMockGenerator{
+			responses: []string{
+				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			},
+		}
+		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+		rec := &fakeRecorderForSummarize{enabled: false}
+		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
+		_, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rec.contents) != 0 {
+			t.Fatalf("expected no recorded contents when disabled, got %d", len(rec.contents))
+		}
+	})
+
+	t.Run("RecordsFailure", func(t *testing.T) {
+		gen := &summarizeRetryMockGenerator{
+			errs: []error{
+				errors.New("failure"),
+			},
+			responses: []string{
+				"", // unused (first call errors)
+				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			},
+		}
+		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+		rec := &fakeRecorderForSummarize{enabled: true}
+		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
+		retrySummary, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retrySummary == nil {
+			t.Fatal("expected retry summary")
+		}
+		// Attempt 1: user input, then a failure log. Attempt 2: user
+		// input, then the successful model response. Total: 4 contents.
+		if len(rec.contents) != 4 {
+			t.Fatalf("expected 4 recorded contents, got %d", len(rec.contents))
+		}
+		if rec.contents[0].Role != generators.RoleUser {
+			t.Fatalf("expected content 0 role user, got %s", rec.contents[0].Role)
+		}
+		if rec.contents[1].Role != generators.RoleLog {
+			t.Fatalf("expected content 1 role log, got %s", rec.contents[1].Role)
+		}
+		if rec.contents[2].Role != generators.RoleUser {
+			t.Fatalf("expected content 2 role user, got %s", rec.contents[2].Role)
+		}
+		if rec.contents[3].Role != generators.RoleModel {
+			t.Fatalf("expected content 3 role model, got %s", rec.contents[3].Role)
+		}
+	})
+}
+
+func (f *fakeRecorderForSummarize) Enabled() bool { return f.enabled }
+
+func (f *fakeRecorderForSummarize) StartSession(string) {}
+
+func (f *fakeRecorderForSummarize) EndSession(error) {}
+
+func (f *fakeRecorderForSummarize) SystemPrompt(string) {}
+
+func (f *fakeRecorderForSummarize) RoundStart() {}
+
+func (f *fakeRecorderForSummarize) RoundSuccess([]string) {}
+
+func (f *fakeRecorderForSummarize) RoundTruncated() {}
+
+func (f *fakeRecorderForSummarize) RoundError(error) {}
+
+func (f *fakeRecorderForSummarize) Content(content *generators.Content) {
+	f.contents = append(f.contents, content)
+}
+
+func (f *fakeRecorderForSummarize) Block(blocks.Block) {}
+
+func (f *fakeRecorderForSummarize) ParseError(*blocks.BlockParseError) {}
