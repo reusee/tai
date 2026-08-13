@@ -1141,10 +1141,10 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 	tabs.Expanded = []bool{true, true, false}
 	tabs.Focus = 0
 	boxes := tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 59 || boxes[0].Top != 0 || boxes[0].Bottom != 40 {
+	if boxes[0].Left != 0 || boxes[0].Right != 66 || boxes[0].Top != 0 || boxes[0].Bottom != 40 {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
-	if boxes[1].Left != 59 || boxes[1].Right != 89 {
+	if boxes[1].Left != 66 || boxes[1].Right != 89 {
 		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
 	}
 	if boxes[2].Left != 89 || boxes[2].Right != 90 {
@@ -1153,10 +1153,10 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 
 	tabs.Focus = 1
 	boxes = tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 29 {
+	if boxes[0].Left != 0 || boxes[0].Right != 22 {
 		t.Fatalf("unexpected non-focused panel box: %+v", boxes[0])
 	}
-	if boxes[1].Left != 29 || boxes[1].Right != 89 {
+	if boxes[1].Left != 22 || boxes[1].Right != 89 {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[1])
 	}
 
@@ -1173,10 +1173,10 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 	tabs2.Expanded = []bool{true, true, false}
 	tabs2.Focus = 0
 	boxes = tabs2.Boxes(80, 45)
-	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
+	if boxes[0].Top != 0 || boxes[0].Bottom != 33 {
 		t.Fatalf("unexpected focused panel box: %+v", boxes[0])
 	}
-	if boxes[1].Top != 29 || boxes[1].Bottom != 44 {
+	if boxes[1].Top != 33 || boxes[1].Bottom != 44 {
 		t.Fatalf("unexpected non-focused panel box: %+v", boxes[1])
 	}
 	if boxes[2].Top != 44 || boxes[2].Bottom != 45 {
@@ -1189,13 +1189,13 @@ func TestTabPanelBoxWeighted(t *testing.T) {
 	tabs3.Expanded = []bool{true, true, true}
 	tabs3.Focus = 1
 	boxes = tabs3.Boxes(90, 24)
-	if boxes[0].Left != 0 || boxes[0].Right != 22 {
+	if boxes[0].Left != 0 || boxes[0].Right != 18 {
 		t.Fatalf("unexpected first panel box: %+v", boxes[0])
 	}
-	if boxes[1].Left != 22 || boxes[1].Right != 67 {
+	if boxes[1].Left != 18 || boxes[1].Right != 72 {
 		t.Fatalf("unexpected focused middle panel box: %+v", boxes[1])
 	}
-	if boxes[2].Left != 67 || boxes[2].Right != 90 {
+	if boxes[2].Left != 72 || boxes[2].Right != 90 {
 		t.Fatalf("unexpected last panel box: %+v", boxes[2])
 	}
 }

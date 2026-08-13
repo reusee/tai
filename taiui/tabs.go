@@ -19,7 +19,7 @@ taiui tabs theory:
   already-expanded tab keeps its current view.
 - Boxes lays out the tabs: in vertical split (side by side), collapsed
   tabs take one column each and expanded tabs share the remaining width
-  proportionally to their weights (the focused tab has weight 2, every
+  proportionally to their weights (the focused tab has weight 3, every
   other expanded tab weight 1); in horizontal split (stacked), collapsed
   tabs take one row each and expanded tabs share the remaining height.
   The last expanded tab absorbs the rounding remainder. Tabs are laid
@@ -161,7 +161,7 @@ func (t *Tabs) Boxes(width, height int) []Box {
 			expandedIndices = append(expandedIndices, i)
 			weight := 1
 			if i == t.Focus {
-				weight = 2
+				weight = 3
 			}
 			totalWeight += weight
 		}
@@ -183,7 +183,7 @@ func (t *Tabs) Boxes(width, height int) []Box {
 			if t.Expanded[i] {
 				weight := 1
 				if i == t.Focus {
-					weight = 2
+					weight = 3
 				}
 				var size int
 				if expandedPos == len(expandedIndices)-1 {
@@ -214,7 +214,7 @@ func (t *Tabs) Boxes(width, height int) []Box {
 		if t.Expanded[i] {
 			weight := 1
 			if i == t.Focus {
-				weight = 2
+				weight = 3
 			}
 			var size int
 			if expandedPos == len(expandedIndices)-1 {

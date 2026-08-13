@@ -86,10 +86,10 @@ arrivals do not re-expand a tab the user collapsed. Auto-expansion never
 changes an existing focus: a tab popping open cannot steal attention from the
 pane the user is reading, and it resumes following the tail; only when
 no tab is focused does the first auto-expanded tab become the focus, so
-keyboard navigation remains usable. The focused tab occupies twice the space
+keyboard navigation remains usable. The focused tab occupies three times the space
 of each non-focused tab: the expanded tabs share the available space
-proportionally to their weights (2 for the focused tab, 1 for every
-other, total expanded+1), with the last tab absorbing the rounding
+proportionally to their weights (3 for the focused tab, 1 for every
+other, total expanded+2), with the last tab absorbing the rounding
 remainder; collapsed tabs take one column (vertical split) or one row
 (horizontal split) each. The s key switches between vertical splitting (tabs
 side by side, a vertical split line) and horizontal splitting (tabs
@@ -809,7 +809,7 @@ func (t *TUI) render() {
 
 	// Render each tab: expanded tabs show the label strip and scroll
 	// view; collapsed tabs show a thin strip with the key and title.
-	// The focused tab occupies twice the space of each non-focused tab.
+	// The focused tab occupies three times the space of each non-focused tab.
 	// See TheoryOfTUI.
 	//
 	// The logs tab alternates line backgrounds derived from its tab
@@ -842,9 +842,9 @@ func (t *TUI) render() {
 		}
 		// Each tab's content width reserves one column for its scrollbar,
 		// matching the scroll's visible-width rendering. In the weighted
-		// layout the tabs have different widths — the focused tab is twice
-		// as wide as the others — so each tab's content wraps at its own
-		// width. See TheoryOfTUI.
+		// layout the tabs have different widths — the focused tab is three
+		// times as wide as the others — so each tab's content wraps at its
+		// own width. See TheoryOfTUI.
 		tabContentWidth := max(box.Width()-1, 1)
 		display := taiui.WrapLinesColored(contentByTab[idx], tabContentWidth)
 
