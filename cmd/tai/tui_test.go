@@ -1132,6 +1132,41 @@ func TestTUIQuitConfirmation(t *testing.T) {
 	})
 }
 
+func TestTUIRenderBaseScope(t *testing.T) {
+	// The render hot path forks a pre-built dscope base scope with the
+	// current root element instead of constructing a fresh scope from
+	// scratch. The zero-value base scope (dscope.Universe) is a valid
+	// fallback: forking it is equivalent to dscope.New, so a TUI
+	// constructed without a base scope still renders correctly.
+	// See TheoryOfTUI.
+	render := func(t *testing.T, baseScope taiui.Scope) string {
+		t.Helper()
+		var sb strings.Builder
+		tui := &TUI{tuiState: *newTUIState()}
+		tui.baseScope = baseScope
+		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		tui.write([]byte("hello\n"))
+		tui.render()
+		return sb.String()
+	}
+
+	t.Run("Prebuilt", func(t *testing.T) {
+		output := render(t, taiui.NewBaseScope())
+		if !strings.Contains(output, "hello") {
+			t.Fatalf("expected rendered output, got: %q", output)
+		}
+	})
+
+	t.Run("ZeroValueFallback", func(t *testing.T) {
+		output := render(t, taiui.Scope{})
+		if !strings.Contains(output, "hello") {
+			t.Fatalf("expected rendered output, got: %q", output)
+		}
+	})
+}
+
 func TestTabPanelBoxWeighted(t *testing.T) {
 	tabs := taiui.NewTabs(3)
 	// The first set of assertions exercises the side-by-side (vertical

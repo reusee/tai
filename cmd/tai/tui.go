@@ -105,6 +105,13 @@ quits the TUI after a confirmation: the first press shows a confirmation bar
 at the bottom of the screen, and a second press quits; any other key cancels
 the confirmation and is processed normally, so an accidental q press never
 loses the session.
+
+- Rendering reuses a dscope base scope: the base scope is built once in
+newTUI, and each render forks it with the current root element. The render
+hot path therefore never constructs a fresh scope from scratch; the fork is
+the only per-render dscope cost. The zero-value base scope (dscope.Universe)
+is a valid fallback: forking it is equivalent to dscope.New, so a TUI
+constructed without a base scope still renders correctly.
 `
 
 // Tui enables the terminal UI mode.
@@ -449,6 +456,13 @@ type TUI struct {
 	width    int
 	height   int
 	runErr   error
+	// baseScope is the dscope base scope for rendering. It is built once
+	// in newTUI and forked per render with the current root element, so
+	// the render hot path never constructs a fresh scope from scratch.
+	// The zero value (dscope.Universe) is a valid fallback: forking it
+	// is equivalent to dscope.New, so a TUI constructed without a base
+	// scope still renders correctly. See TheoryOfTUI.
+	baseScope taiui.Scope
 }
 
 func newTUI() (*TUI, error) {
@@ -486,6 +500,10 @@ func newTUI() (*TUI, error) {
 		updateCh: make(chan struct{}, 1),
 		width:    width,
 		height:   height,
+		// The base scope is built once and forked per render with the
+		// current root element, so the render hot path never constructs
+		// a fresh scope from scratch. See TheoryOfTUI.
+		baseScope: taiui.NewBaseScope(),
 	}, nil
 }
 
@@ -900,7 +918,7 @@ func (t *TUI) render() {
 		))
 	}
 	root := taiui.Root{Element: taiui.Overlay(overlaySpecs...)}
-	taiui.Render(taiui.NewBaseScope(func() taiui.Root { return root }), t.screen)
+	taiui.Render(t.baseScope.Fork(func() taiui.Root { return root }), t.screen)
 }
 
 var (
