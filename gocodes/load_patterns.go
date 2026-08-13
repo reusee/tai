@@ -9,6 +9,30 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
+const (
+	// TheoryOfDefaultLoadPattern explains why an explicit -pkg flag
+	// replaces the default ./... pattern instead of appending to it.
+	TheoryOfDefaultLoadPattern = `
+The default focus load pattern is ./..., loading every package in the
+current directory as a focus package. An explicit -pkg flag replaces this
+default instead of appending to it: appending keeps ./... in the pattern
+list, so every package in the current directory remains a focus package
+and -pkg cannot limit the focus to the specified packages. Replacement is
+detected by comparing the current scope value against the exact default
+[./...]; such a value is indistinguishable from the default regardless of
+origin (module provider or config file), so it is always replaced. After
+the first explicit pattern, later -pkg flags accumulate. To combine the
+default with additional packages, pass -pkg ./... explicitly.
+`
+
+	// DefaultLoadPattern is the pattern used to load focus packages when
+	// no -pkg flag is given: every package in the current directory. An
+	// explicit -pkg flag replaces this default rather than appending to
+	// it, so focus is limited to the specified packages. See
+	// TheoryOfDefaultLoadPattern.
+	DefaultLoadPattern = "./..."
+)
+
 type LoadPatterns []string
 
 var _ flags.Flag = LoadPatterns{}
@@ -32,7 +56,15 @@ func (l LoadPatterns) Handle(key string, args []string) (newDef any, remainArgs 
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expected pattern, got empty")
 	}
-	ret := append(slices.Clone(l), args[0])
+	ret := slices.Clone(l)
+	// An explicit -pkg flag replaces the default ./... pattern so that
+	// focus is limited to the specified packages; appending would keep
+	// ./... and load every package in the current directory as a focus
+	// package. See TheoryOfDefaultLoadPattern.
+	if len(ret) == 1 && ret[0] == DefaultLoadPattern {
+		ret = nil
+	}
+	ret = append(ret, args[0])
 	return &ret, args[1:], nil
 }
 
@@ -79,7 +111,7 @@ func (c ContextPatterns) Keys() map[string]string {
 
 func (Module) LoadArgs() LoadPatterns {
 	return LoadPatterns{
-		"./...",
+		DefaultLoadPattern,
 	}
 }
 
