@@ -1208,13 +1208,16 @@ func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
 	tabs.Expanded = []bool{true, false, true}
 	tabs.Focus = 0
 	boxes := tabs.Boxes(90, 40)
-	if boxes[0].Left != 0 || boxes[0].Right != 59 {
+	// The focused tab has weight 3, the other expanded tab weight 1: the
+	// expanded width (89) splits as 66 and 23, and the collapsed tab
+	// keeps its one-column strip in the middle.
+	if boxes[0].Left != 0 || boxes[0].Right != 66 {
 		t.Fatalf("unexpected output panel box: %+v", boxes[0])
 	}
-	if boxes[1].Left != 59 || boxes[1].Right != 60 {
+	if boxes[1].Left != 66 || boxes[1].Right != 67 {
 		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
 	}
-	if boxes[2].Left != 60 || boxes[2].Right != 90 {
+	if boxes[2].Left != 67 || boxes[2].Right != 90 {
 		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
 	}
 
@@ -1222,13 +1225,15 @@ func TestTabPanelBoxCollapsedInPlace(t *testing.T) {
 	tabs2.Expanded = []bool{true, false, true}
 	tabs2.Focus = 0
 	boxes = tabs2.Boxes(80, 45)
-	if boxes[0].Top != 0 || boxes[0].Bottom != 29 {
+	// The stacked layout splits the expanded height (44) the same way:
+	// 33 rows for the focused tab, 11 for the other expanded tab.
+	if boxes[0].Top != 0 || boxes[0].Bottom != 33 {
 		t.Fatalf("unexpected output panel box: %+v", boxes[0])
 	}
-	if boxes[1].Top != 29 || boxes[1].Bottom != 30 {
+	if boxes[1].Top != 33 || boxes[1].Bottom != 34 {
 		t.Fatalf("collapsed round tab must stay in the middle, got %+v", boxes[1])
 	}
-	if boxes[2].Top != 30 || boxes[2].Bottom != 45 {
+	if boxes[2].Top != 34 || boxes[2].Bottom != 45 {
 		t.Fatalf("unexpected logs panel box: %+v", boxes[2])
 	}
 }
