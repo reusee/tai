@@ -93,12 +93,15 @@ func TestSummarizeRetryState(t *testing.T) {
 	phaseErr := errors.New("boom")
 
 	t.Run("Summarized", func(t *testing.T) {
-		state, count, summary := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			if text != "partial output" {
 				t.Fatalf("expected partial output, got %q", text)
 			}
 			return &loops.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
 		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if summary != "condensed" {
 			t.Fatalf("expected summary 'condensed', got %q", summary)
 		}
@@ -128,9 +131,15 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("SummarizeError", func(t *testing.T) {
-		state, count, summary := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			return nil, errors.New("summarize failed")
 		})
+		if err == nil {
+			t.Fatal("expected error when summarize fails")
+		}
+		if !strings.Contains(err.Error(), "summarize failed") {
+			t.Fatalf("expected summarize error, got %v", err)
+		}
 		if summary != "[Error: boom]" {
 			t.Fatalf("expected summary '[Error: boom]', got %q", summary)
 		}
@@ -160,10 +169,13 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("NoPartial", func(t *testing.T) {
-		state, count, summary := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
 			t.Fatal("summarize should not be called")
 			return nil, nil
 		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if summary != "[Error: boom]" {
 			t.Fatalf("expected summary '[Error: boom]', got %q", summary)
 		}
