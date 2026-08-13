@@ -13,6 +13,11 @@ model?: string
 fast_model_name?: string
 fast_model?: string
 
+// summarize_model specifies the model used for summarization (thought
+// summaries and retry summarization). When empty, the fast model is used
+// if configured; otherwise the default model is used.
+summarize_model?: string
+
 // max_tokens limits the total context tokens (input + output).
 // Deprecated in favor of max_context_tokens.
 max_tokens?: int

@@ -26,10 +26,9 @@ is propagated to upstream, regardless of interval or paragraph boundaries,
 ensuring the summary appears before the main text output rather than after it.
 The flush is triggered by the presence of non-thought parts, so a mixed content
 with both Thought and Text parts correctly flushes before the text is printed.
-The same generator used for the main generation is used for summarization,
-because a separate fast model may lack the capability to produce useful
-summaries. The GetDefaultSummarizer provider wires the default generator
-(obtained via GetDefaultGenerator) into a Summarizer. On Flush, any
+The summarization model follows SummarizeModel, falling back to the fast model
+and then the default model (see TheoryOfSummarizeModel). The GetDefaultSummarizer
+provider wires the selected generator into a Summarizer. On Flush, any
 remaining accumulated thoughts are summarized before propagating the flush
 upstream. The summarization system prompt is designed to extract only the most
 important points and direction of reasoning, not to reproduce the full thought
@@ -82,7 +81,7 @@ func NewSummarizer(generator generators.Generator) *Summarizer {
 type GetDefaultSummarizer func() (*Summarizer, error)
 
 func (Module) GetDefaultSummarizer(
-	getDefaultGenerator generators.GetDefaultGenerator,
+	getSummarizeGenerator GetSummarizeGenerator,
 	enable SummarizeThoughts,
 	language ThoughtsSummarizeLanguage,
 ) GetDefaultSummarizer {
@@ -90,7 +89,7 @@ func (Module) GetDefaultSummarizer(
 		if !enable {
 			return nil, nil
 		}
-		gen, err := getDefaultGenerator()
+		gen, err := getSummarizeGenerator()
 		if err != nil {
 			return nil, err
 		}
