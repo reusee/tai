@@ -13,9 +13,12 @@ taiui key input theory:
   is polled with a short sleep instead of spinning. A lone ESC that never
   grows into a sequence is discarded. ESC followed by a non-sequence byte
   is treated as a stray ESC and the byte is processed normally. Arrow,
-  home/end, page-up/page-down, tab, the digit keys 1-3, s, and q (plus
-  Ctrl-C) map to the names "up", "down", "home", "end", "pageup",
-  "pagedown", "tab", "1", "2", "3", "split", and "quit".
+  home/end, page-up/page-down, tab, the digit keys 1-3, the bracket keys
+  '[' and ']', s, and q (plus Ctrl-C) map to the names "up", "down",
+  "home", "end", "pageup", "pagedown", "tab", "1", "2", "3",
+  "prev-transition", "next-transition", "split", and "quit". The bracket
+  keys name section-transition navigation: a TUI jumps its Output pane to
+  the previous or next role or thinking-state transition.
 - The function is intentionally transport-agnostic: it accepts an
   io.Reader, so it works with tcell's tty, terminal state files, pipes,
   and test buffers. It does no terminal mode management; the caller
@@ -107,6 +110,10 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 				ch <- "2"
 			case '3':
 				ch <- "3"
+			case '[':
+				ch <- "prev-transition"
+			case ']':
+				ch <- "next-transition"
 			case 's', 'S':
 				ch <- "split"
 			case 'q', 'Q', 0x03:

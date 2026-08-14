@@ -57,6 +57,26 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	return nil
 }
 
+// transitionBoundaries returns the display-line indices where the
+// Output's sections change: a display line whose color differs from the
+// previous line's color. The Output tab colors each section by its role
+// and thinking state (captureContent colors thoughts distinctly), so a
+// color change is exactly a role change or a thought/non-thought change.
+// WrapLinesColored carries a source line's color onto every wrapped
+// display line, so transitions are identified in display coordinates,
+// matching the scroll offsets. The first display line is never a
+// boundary: there is no previous section to transition from. See
+// TheoryOfTUI.
+func transitionBoundaries(display []taiui.Line) []int {
+	var indices []int
+	for i := 1; i < len(display); i++ {
+		if display[i].Color != display[i-1].Color {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
 // outputPanel builds the Output tab element: a one-row label strip with
 // the session-state hint and a scroll view spanning the remaining rows,
 // or a collapsed strip when the tab is collapsed. A degenerate box yields

@@ -692,6 +692,26 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	}
 }
 
+func TestReadTUIKeysTransitions(t *testing.T) {
+	ch := make(chan string, 10)
+	go taiui.ReadKeys(strings.NewReader("[]"), ch)
+	var got []string
+	for len(got) < 2 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for keys")
+		}
+	}
+	want := []string{"prev-transition", "next-transition"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
 func TestTUINumberKeySemantics(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.AutoExpand(0)
@@ -1804,6 +1824,28 @@ func TestTuiStateFinishReasonColor(t *testing.T) {
 	}
 }
 
+func TestTransitionBoundaries(t *testing.T) {
+	t.Run("Empty", func(t *testing.T) {
+		if got := transitionBoundaries(nil); len(got) != 0 {
+			t.Fatalf("expected no boundaries for no lines, got %v", got)
+		}
+	})
+
+	t.Run("ColorChanges", func(t *testing.T) {
+		lines := []taiui.Line{
+			{Text: "a", Color: outputColorUserLine},
+			{Text: "b", Color: outputColorUserLine},
+			{Text: "c", Color: taiui.NoColor},
+			{Text: "d", Color: outputColorThoughtLine},
+			{Text: "e", Color: outputColorThoughtLine},
+		}
+		got := transitionBoundaries(lines)
+		if len(got) != 2 || got[0] != 2 || got[1] != 3 {
+			t.Fatalf("expected boundaries [2 3], got %v", got)
+		}
+	})
+}
+
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
@@ -1899,4 +1941,171 @@ func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
 			t.Fatalf("color %d: expected ANSI 16 palette index %d, got %d", i, int(c&0xff), got)
 		}
 	}
+}
+
+func TestTUIJumpToTransition(t *testing.T) {
+	// The [ ] shortcuts must jump the Output tab's view to the nearest
+	// role or thoughts transition, letting the user quickly browse the
+	// whole output. The Output tab colors each section by its role and
+	// thinking state, so a transition is a color change between
+	// consecutive display lines. See TheoryOfTUI.
+
+	// setupLong builds an output long enough to scroll, with sections
+	// (plain, thought, plain, tool, plain) whose transitions sit at
+	// display indices 20, 21, 41, and 42: the thought and tool sections
+	// each contribute an entry boundary and an exit boundary.
+	setupLong := func(t *testing.T) *TUI {
+		t.Helper()
+		tui := newTUIForTest()
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		var b strings.Builder
+		for i := 0; i < 20; i++ {
+			fmt.Fprintf(&b, "plain %02d\n", i)
+		}
+		tui.writeColored(taiui.NoColor, []byte(b.String()))
+		tui.writeColored(outputColorThoughtLine, []byte("a thought\n"))
+		b.Reset()
+		for i := 0; i < 20; i++ {
+			fmt.Fprintf(&b, "middle %02d\n", i)
+		}
+		tui.writeColored(taiui.NoColor, []byte(b.String()))
+		tui.writeColored(outputColorToolLine, []byte("a tool call\n"))
+		b.Reset()
+		for i := 0; i < 20; i++ {
+			fmt.Fprintf(&b, "tail %02d\n", i)
+		}
+		tui.writeColored(taiui.NoColor, []byte(b.String()))
+		tui.scrolls[0].Follow = false
+		return tui
+	}
+
+	t.Run("Next", func(t *testing.T) {
+		tui := setupLong(t)
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected offset 20 at the first transition, got %d", tui.scrolls[0].Offset)
+		}
+		if tui.tabs.Focus != 0 {
+			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 21 {
+			t.Fatalf("expected offset 21 at the thought exit transition, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 41 {
+			t.Fatalf("expected offset 41 at the tool entry transition, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 42 {
+			t.Fatalf("expected offset 42 at the tool exit transition, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 42 {
+			t.Fatalf("expected the view to stay at 42 past the last transition, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("Previous", func(t *testing.T) {
+		tui := setupLong(t)
+		tui.scrolls[0].Offset = 42
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 41 {
+			t.Fatalf("expected offset 41 after the prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 21 {
+			t.Fatalf("expected offset 21 after the second prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected offset 20 after the third prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected the view to stay at 20 past the first transition, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("FromTailSentinel", func(t *testing.T) {
+		// Before the first render the scroll offset is the tail sentinel;
+		// the jump clamps it against the fresh display so it anchors at
+		// the content end, and the previous jump lands on the last
+		// transition.
+		tui := setupLong(t)
+		tui.scrolls[0].Offset = 1 << 30
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 42 {
+			t.Fatalf("expected the last transition when jumping back from the tail, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("ExpandsCollapsedTab", func(t *testing.T) {
+		tui := setupLong(t)
+		tui.tabs.Toggle(0) // collapse the focused output tab
+		if tui.tabs.Expanded[0] {
+			t.Fatal("expected the output tab collapsed")
+		}
+		tui.jumpToTransition(1)
+		if !tui.tabs.Expanded[0] {
+			t.Fatal("the jump must expand a collapsed output tab")
+		}
+		if tui.tabs.Focus != 0 {
+			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
+		}
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected offset 20 after the jump, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("TakesFocusFromAnotherTab", func(t *testing.T) {
+		tui := setupLong(t)
+		tui.tabs.Expanded = []bool{true, true, false}
+		tui.tabs.HasContent = []bool{true, true, false}
+		tui.tabs.Focus = 1
+		tui.jumpToTransition(1)
+		if tui.tabs.Focus != 0 {
+			t.Fatalf("the jump must take the focus on the output tab, got %d", tui.tabs.Focus)
+		}
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected offset 20 after the jump, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("EmptyContent", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		tui.scrolls[0].Offset = 0
+		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the view unchanged without content, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("NoTransitions", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		tui.scrolls[0].Offset = 0
+		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		// All lines share the default color: no transitions to jump to.
+		tui.write([]byte("line one\nline two\n"))
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the view unchanged without transitions, got %d", tui.scrolls[0].Offset)
+		}
+	})
 }

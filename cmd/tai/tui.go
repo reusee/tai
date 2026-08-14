@@ -98,7 +98,13 @@ remainder; collapsed tabs take one column (vertical split) or one row
 side by side, a vertical split line) and horizontal splitting (tabs
 stacked, a horizontal split line). The default is horizontal splitting: the
 tabs are stacked vertically, one above the other. Tab cycles the focus among
-the expanded tabs, skipping collapsed ones; up/down and page up/down scroll
+the expanded tabs, skipping collapsed ones; the [ and ] keys jump the Output
+tab's view to the previous and next section transition — a role change or a
+thought/non-thought change — so the user can quickly browse the whole output:
+the Output tab colors each section by its role and thinking state, so a
+transition is a color change between consecutive wrapped display lines. The
+jump stops following the tail, and a collapsed Output tab expands and takes
+the focus so the jump result is visible. up/down and page up/down scroll
 the focused pane; home/end jump to the start/end. Rendering is event-driven:
 every path that appends display content — model output captured by the state
 decorator, stderr pipe writes, and log records — notifies the render loop,
@@ -708,6 +714,10 @@ func (t *TUI) Run(gen func()) error {
 				t.mu.Lock()
 				t.tabs.SplitVertical = !t.tabs.SplitVertical
 				t.mu.Unlock()
+			case "prev-transition":
+				t.jumpToTransition(-1)
+			case "next-transition":
+				t.jumpToTransition(1)
 			case "up":
 				t.scroll(-1)
 			case "down":
@@ -789,6 +799,72 @@ func (t *TUI) scrollTo(top int) {
 	// Only a jump to the latest row (the end key reaches it via the sentinel)
 	// resumes following; any other jump stops it. See TheoryOfTUI.
 	t.scrolls[idx].ScrollTo(top)
+}
+
+// jumpToTransition moves the Output tab's view to the nearest section
+// transition in the given direction: -1 for the previous role or
+// thoughts change, +1 for the next. A transition is a color change
+// between consecutive wrapped display lines: the Output tab colors each
+// section by its role and thinking state (see captureContent), and
+// WrapLinesColored carries a source line's color onto every wrapped
+// display line. The jump targets the same display-line coordinate space
+// as the scroll offsets. A collapsed Output tab expands on the jump, and
+// the jump takes the focus so the result is visible; the jump stops
+// following the tail. See TheoryOfTUI.
+func (t *TUI) jumpToTransition(direction int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// The jump result must be visible: expand the Output tab when it is
+	// collapsed and take the focus so the view switches to it. Toggle
+	// on an expanded non-focused tab switches the focus without
+	// collapsing.
+	if !t.tabs.Expanded[0] || t.tabs.Focus != 0 {
+		t.tabs.Toggle(0)
+	}
+	boxes := t.tabs.Boxes(t.width, t.height)
+	box := boxes[0]
+	if box.Width() <= 0 || box.Height() <= 0 {
+		return
+	}
+	display := wrappedDisplay(t, 0, box)
+	if len(display) == 0 {
+		return
+	}
+	// The anchor offset is clamped against the fresh display so a stale
+	// offset (e.g., the tail sentinel before the first render) anchors
+	// the jump at the content end. The pane height is the panel box
+	// minus its one-row label strip, matching render's scroll updates.
+	paneHeight := max(box.Height()-1, 1)
+	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
+	boundaries := transitionBoundaries(display)
+	target := -1
+	if direction < 0 {
+		// previous: the largest boundary before the view start
+		for i := len(boundaries) - 1; i >= 0; i-- {
+			if boundaries[i] < offset {
+				target = boundaries[i]
+				break
+			}
+		}
+	} else {
+		// next: the smallest boundary after the view start
+		for _, b := range boundaries {
+			if b > offset {
+				target = b
+				break
+			}
+		}
+	}
+	if target < 0 {
+		return
+	}
+	// The target is clamped to the content extent so the offset is valid
+	// immediately; a transition beyond the last view position shows at
+	// the bottom of the final view. The jump is a deliberate navigation
+	// away from the live tail: following resumes only when the view
+	// reaches the latest row (see ScrollState.Update).
+	t.scrolls[0].Offset = taiui.ClampOffset(target, len(display), paneHeight)
+	t.scrolls[0].Follow = false
 }
 
 // render presents the current state through a fresh element tree. It
