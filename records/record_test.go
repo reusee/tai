@@ -11,13 +11,39 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/phases"
 )
+
+// stubGetDefaultGenerator satisfies dscope.New validation for
+// records.Module's RunAnalysis provider, which depends on
+// generators.GetDefaultGenerator. The stub returns a nil generator; it is
+// never invoked by non-analysis tests, which only need the dependency to
+// resolve during scope construction. See TheoryOfInteractionRecording.
+func stubGetDefaultGenerator() generators.GetDefaultGenerator {
+	return func() (generators.Generator, error) {
+		return nil, nil
+	}
+}
+
+// stubBuildGenerate satisfies dscope.New validation for records.Module's
+// RunAnalysis provider, which depends on phases.BuildGenerate. The stub
+// returns a pass-through phase; it is never invoked by non-analysis
+// tests. See TheoryOfInteractionRecording.
+func stubBuildGenerate() phases.BuildGenerate {
+	return func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
+		return func(cont phases.Phase) phases.Phase {
+			return cont
+		}
+	}
+}
 
 func withRecorder(t *testing.T, enabled bool, fn func(*Recorder)) {
 	t.Helper()
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
+		stubGetDefaultGenerator,
+		stubBuildGenerate,
 	).Fork(
 		func() DBPath {
 			return DBPath(filepath.Join(t.TempDir(), "test.db"))
@@ -251,6 +277,8 @@ func TestRecorderNilWhenDBUnavailable(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
+		stubGetDefaultGenerator,
+		stubBuildGenerate,
 	).Fork(
 		func() DBPath { return "" },
 		func() Enabled { return Enabled(true) },
@@ -294,7 +322,7 @@ func TestListSessions(t *testing.T) {
 		recorder.EndSession(nil)
 
 		var buf bytes.Buffer
-		if err := ListSessions(recorder, 10, &buf); err != nil {
+		if err := listSessions(recorder, 10, &buf); err != nil {
 			t.Fatal(err)
 		}
 		out := buf.String()
@@ -329,7 +357,7 @@ func TestLatestSessionID(t *testing.T) {
 
 func TestSessionNotFound(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
-		err := ShowSession(recorder, 999, &bytes.Buffer{})
+		err := showSession(recorder, 999, &bytes.Buffer{})
 		if err == nil {
 			t.Fatal("expected error for nonexistent session")
 		}

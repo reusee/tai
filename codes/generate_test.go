@@ -17,6 +17,9 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/loops"
+	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/states"
 )
 
 func TestPrintRoundStats(t *testing.T) {
@@ -691,6 +694,45 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 	if !strings.Contains(output, "summarize incomplete output failed") {
 		t.Fatalf("expected the final failure message in the log, got: %s", output)
 	}
+}
+
+func TestSummarizeIncompleteOutputProvider(t *testing.T) {
+	// The SummarizeIncompleteOutput provider binds the summarize
+	// generator, logger, and interaction recorder from the dscope scope,
+	// so the caller passes only the runtime values (context and the
+	// incomplete text). The recorder is overridden to nil so the test
+	// does not open the interaction database, and the summarize
+	// generator is overridden to the mock. See
+	// TheoryOfIncompleteOutputSummarization.
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{
+			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+		},
+	}
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() states.GetSummarizeGenerator {
+			return func() (generators.Generator, error) {
+				return gen, nil
+			}
+		},
+		func() *records.Recorder { return nil },
+	).Call(func(
+		summarizeIncompleteOutput SummarizeIncompleteOutput,
+	) {
+		retrySummary, err := summarizeIncompleteOutput(context.Background(), "incomplete text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retrySummary.Summary != "summary" {
+			t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
+		}
+		if retrySummary.RetryPrompt != "retry prompt" {
+			t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
+		}
+	})
 }
 
 // fakeRecorderForSummarize is a minimal InteractionRecorder for testing

@@ -26,12 +26,12 @@ const analysisSystemPrompt = `你是一个AI工具交互分析器。tai是一个
 - 优先分析反复出现或阻碍进展的问题。
 - 使用简体中文，输出易读的纯文本，不要使用markdown格式符号，不要生成表格。`
 
-// RunAnalysis renders the selected session as a transcript and sends it to
+// runAnalysis renders the selected session as a transcript and sends it to
 // the model with the analysis system prompt. A session id of 0 selects the
 // most recent session. The generation runs as a single round using the
 // provided generator and phase builder; the analysis is written to output.
 // See TheoryOfInteractionRecording.
-func RunAnalysis(
+func runAnalysis(
 	ctx context.Context,
 	generator generators.Generator,
 	buildGenerate phases.BuildGenerate,
@@ -77,4 +77,24 @@ func RunAnalysis(
 		}
 	}
 	return nil
+}
+
+// RunAnalysis analyzes a recorded session with the model to seek
+// improvements. The generator, phase builder, and recorder are bound from
+// the dscope scope, so callers pass only the runtime values (context, the
+// session id, and the output writer). See TheoryOfInteractionRecording.
+type RunAnalysis func(ctx context.Context, sessionID int64, output io.Writer) error
+
+func (Module) RunAnalysis(
+	recorder *Recorder,
+	getDefaultGenerator generators.GetDefaultGenerator,
+	buildGenerate phases.BuildGenerate,
+) RunAnalysis {
+	return func(ctx context.Context, sessionID int64, output io.Writer) error {
+		generator, err := getDefaultGenerator()
+		if err != nil {
+			return err
+		}
+		return runAnalysis(ctx, generator, buildGenerate, recorder, sessionID, output)
+	}
 }

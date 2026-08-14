@@ -42,6 +42,7 @@ type Gemini struct {
 	Debug           dscope.Inject[DebugGemini]
 	FuncDecls       dscope.Inject[FuncDecls]
 	EventRecorder   dscope.Inject[EventRecorder]
+	DoWithRetry     dscope.Inject[DoWithRetry]
 }
 
 var _ Generator = Gemini{}
@@ -270,7 +271,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		nonStreaming = true
 	}
 
-	ret, err = doWithRetry(ctx, g.Logger(), g.EventRecorder(), func() (State, error) {
+	ret, err = g.DoWithRetry()(ctx, func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
 			"name", g.spec.Name,
@@ -404,6 +405,31 @@ break outer retry loops that would otherwise re-trigger indefinitely. The
 initial backoff duration is parameterized so tests can run without real-time
 delays while production callers use a meaningful delay.
 `
+
+// DoWithRetry runs a State-returning function with retry and exponential
+// backoff. The logger and event recorder are bound from the dscope scope,
+// so callers pass only the runtime values (context, the function, and the
+// optional backoff). The generic doWithRetry remains the underlying
+// implementation; this type fixes T to generators.State, the only
+// production caller (Gemini.Generate). See TheoryOfRetry.
+type DoWithRetry func(
+	ctx context.Context,
+	fn func() (State, error),
+	backoff ...time.Duration,
+) (State, error)
+
+func (Module) DoWithRetry(
+	logger logs.Logger,
+	eventRecorder EventRecorder,
+) DoWithRetry {
+	return func(
+		ctx context.Context,
+		fn func() (State, error),
+		backoff ...time.Duration,
+	) (State, error) {
+		return doWithRetry(ctx, logger, eventRecorder, fn, backoff...)
+	}
+}
 
 func doWithRetry[T any](
 	ctx context.Context,

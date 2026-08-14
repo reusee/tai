@@ -36,7 +36,29 @@ func TestRunAnalysis(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
+		// RunAnalysis provider 的依赖必须在 new(Module) 同一层已定义，
+		// 否则 dscope.New 校验 records.Module 时会因缺少
+		// generators.GetDefaultGenerator / phases.BuildGenerate 而 panic。
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return analysisMockGenerator{}, nil
+			}
+		},
+		func() phases.BuildGenerate {
+			return func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
+				return func(cont phases.Phase) phases.Phase {
+					return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+						newState, err := generator.Generate(ctx, state, options)
+						if err != nil {
+							return nil, state, err
+						}
+						return nil, newState, nil
+					}
+				}
+			}
+		},
 	).Fork(
+		// 覆盖 defs 位于独立 Fork 层，避免与 new(Module) 同层重复定义。
 		func() DBPath {
 			return DBPath(filepath.Join(t.TempDir(), "test.db"))
 		},
@@ -50,7 +72,7 @@ func TestRunAnalysis(t *testing.T) {
 		func() Enabled {
 			return Enabled(true)
 		},
-	).Call(func(recorder *Recorder) {
+	).Call(func(recorder *Recorder, runAnalysis RunAnalysis) {
 		recorder.StartSession("test")
 		recorder.RoundStart()
 		recorder.RoundSuccess(nil)
@@ -61,28 +83,8 @@ func TestRunAnalysis(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		buildGenerate := phases.BuildGenerate(func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-			return func(cont phases.Phase) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
-					newState, err := generator.Generate(ctx, state, options)
-					if err != nil {
-						return nil, state, err
-					}
-					return nil, newState, nil
-				}
-			}
-		})
-
 		var buf bytes.Buffer
-		err := RunAnalysis(
-			context.Background(),
-			analysisMockGenerator{},
-			buildGenerate,
-			recorder,
-			id,
-			&buf,
-		)
-		if err != nil {
+		if err := runAnalysis(context.Background(), id, &buf); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(buf.String(), "analysis report output") {

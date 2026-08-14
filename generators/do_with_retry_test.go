@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reusee/dscope"
+	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/modes"
 )
 
 func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
@@ -117,4 +120,38 @@ func TestDoWithRetryRecordsAPIErrors(t *testing.T) {
 	if !strings.Contains(rec.events[1], "retryable API error (attempt 2/10)") {
 		t.Fatalf("unexpected event: %s", rec.events[1])
 	}
+}
+
+func TestDoWithRetryProvider(t *testing.T) {
+	// The DoWithRetry provider binds the logger and event recorder from
+	// the dscope scope, so the caller passes only the runtime values
+	// (context, the function, and the optional backoff). The generic
+	// doWithRetry remains the underlying implementation; this test
+	// exercises the State-bound provider. See TheoryOfRetry.
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Call(func(
+		doWithRetry DoWithRetry,
+	) {
+		calls := 0
+		result, err := doWithRetry(context.Background(), func() (State, error) {
+			calls++
+			if calls < 2 {
+				return nil, errors.Join(errors.New("transient"), ErrRetryable)
+			}
+			return NewPrompts("", nil), nil
+		}, 0)
+		if err != nil {
+			t.Fatalf("expected success on second attempt, got: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a non-nil state")
+		}
+		if calls != 2 {
+			t.Fatalf("expected 2 calls, got %d", calls)
+		}
+	})
 }

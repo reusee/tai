@@ -15,8 +15,6 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes/codetypes"
-	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -392,6 +390,44 @@ Output ONLY these two blocks as your final text, with no other text before or af
 // TheoryOfIncompleteOutputSummarization.
 const maxSummarizeRetries = 3
 
+// SummarizeIncompleteOutput summarizes truncated or failed generation
+// output before retry, producing both a summary of the truncated output
+// and the retry prompt carried into the next round. The summarize
+// generator, logger, and interaction recorder are bound from the dscope
+// scope, so callers pass only the runtime values (context and the
+// incomplete text). See TheoryOfIncompleteOutputSummarization.
+type SummarizeIncompleteOutput func(
+	ctx context.Context,
+	incompleteText string,
+) (*loops.RetrySummary, error)
+
+func (Module) SummarizeIncompleteOutput(
+	logger logs.Logger,
+	recorder *records.Recorder,
+	getSummarizeGenerator states.GetSummarizeGenerator,
+) SummarizeIncompleteOutput {
+	return func(
+		ctx context.Context,
+		incompleteText string,
+	) (*loops.RetrySummary, error) {
+		generator, err := getSummarizeGenerator()
+		if err != nil {
+			return nil, err
+		}
+		return summarizeIncompleteOutput(ctx, logger, recorder, generator, incompleteText)
+	}
+}
+
+const TheoryOfDscopeBoundFunctions = `
+Functions whose parameters are consistently drawn from the dscope scope —
+loggers, recorders, generators — are provided as dscope-bound function
+types whose Module methods capture those dependencies. Callers depend on
+the type and invoke it with only the runtime values that belong to the
+call's semantics, keeping signatures free of cross-cutting infrastructure.
+The package-level implementation remains a plain function so tests can
+call it directly.
+`
+
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	logger logs.Logger,
@@ -715,13 +751,10 @@ func (Module) GenerateWithResultWithStats(
 	getSummarizeGenerator states.GetSummarizeGenerator,
 	buildGenerate phases.BuildGenerate,
 	maxTokens flags.MaxTokens,
-	buildChat phases.BuildChat,
-	tap debugs.Tap,
 	buildChangeBlockHandler changes.BuildChangeBlockHandler,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
 	summarizeThoughts states.SummarizeThoughts,
-	loader configs.Loader,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
 	debug Debug,
@@ -731,6 +764,7 @@ func (Module) GenerateWithResultWithStats(
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
 	thoughtSummaryWriter states.ThoughtSummaryWriter,
+	summarizeIncompleteOutput SummarizeIncompleteOutput,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
@@ -1031,7 +1065,7 @@ func (Module) GenerateWithResultWithStats(
 					// Round tab. See TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
 						var retrySummary *loops.RetrySummary
-						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, incompleteText)
+						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, incompleteText)
 						if summarizeErr == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
 						}
@@ -1090,7 +1124,7 @@ func (Module) GenerateWithResultWithStats(
 					phaseErr,
 					prevContentCount,
 					func(text string) (*loops.RetrySummary, error) {
-						return summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, text)
+						return summarizeIncompleteOutput(runCtx, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
@@ -1115,7 +1149,7 @@ func (Module) GenerateWithResultWithStats(
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
-				retrySummary, err := summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, incompleteText)
+				retrySummary, err := summarizeIncompleteOutput(runCtx, incompleteText)
 				if err != nil {
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a

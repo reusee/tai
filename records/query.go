@@ -18,9 +18,9 @@ type SessionInfo struct {
 	EventCount int
 }
 
-// ListSessions writes a table of recent sessions, most recent first, to
+// listSessions writes a table of recent sessions, most recent first, to
 // output. See TheoryOfInteractionRecording.
-func ListSessions(recorder *Recorder, limit int, output io.Writer) error {
+func listSessions(recorder *Recorder, limit int, output io.Writer) error {
 	if recorder == nil || recorder.db == nil {
 		return fmt.Errorf("interaction database not available")
 	}
@@ -104,8 +104,8 @@ func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	return b.String(), nil
 }
 
-// ShowSession writes the transcript of a session to output.
-func ShowSession(recorder *Recorder, sessionID int64, output io.Writer) error {
+// showSession writes the transcript of a session to output.
+func showSession(recorder *Recorder, sessionID int64, output io.Writer) error {
 	text, err := Transcript(recorder, sessionID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -129,4 +129,28 @@ func latestSessionID(recorder *Recorder) (int64, error) {
 		return 0, nil
 	}
 	return id, err
+}
+
+// ShowSession writes the transcript of a session to output. The recorder
+// is bound from the dscope scope, so callers pass only the runtime values
+// (the session id and the output writer). See
+// TheoryOfInteractionRecording.
+type ShowSession func(sessionID int64, output io.Writer) error
+
+func (Module) ShowSession(recorder *Recorder) ShowSession {
+	return func(sessionID int64, output io.Writer) error {
+		return showSession(recorder, sessionID, output)
+	}
+}
+
+// ListSessions writes a table of recent sessions, most recent first, to
+// output. The recorder is bound from the dscope scope, so callers pass
+// only the runtime values (the limit and the output writer). See
+// TheoryOfInteractionRecording.
+type ListSessions func(limit int, output io.Writer) error
+
+func (Module) ListSessions(recorder *Recorder) ListSessions {
+	return func(limit int, output io.Writer) error {
+		return listSessions(recorder, limit, output)
+	}
 }
