@@ -354,6 +354,16 @@ func (c CodeProvider) Parts(
 		"total", totalTokens,
 	)
 
+	// The working directory hint is appended after all file contents so
+	// the model can construct correct absolute paths for change block
+	// file-path attributes. The path is dynamic — it changes per
+	// invocation — so it is placed at the end, keeping the file contents
+	// byte-identical in the LLM prefix cache across runs in different
+	// directories. See anytexts.TheoryOfWorkingDirectoryHint.
+	if part := anytexts.WorkingDirectoryPart(); part != nil {
+		parts = append(parts, part)
+	}
+
 	return
 }
 

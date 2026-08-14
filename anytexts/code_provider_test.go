@@ -33,8 +33,10 @@ func TestContextPrompt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(parts) != 1 {
-			t.Fatalf("got %v", len(parts))
+		// The parts are the file contents followed by the working
+		// directory hint. See TheoryOfWorkingDirectoryHint.
+		if len(parts) != 2 {
+			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
 		}
 		text, ok := parts[0].(generators.Text)
 		if !ok {
@@ -73,8 +75,10 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(parts) != 1 {
-			t.Fatalf("expected 1 part, got %d", len(parts))
+		// The parts are the file contents followed by the working
+		// directory hint. See TheoryOfWorkingDirectoryHint.
+		if len(parts) != 2 {
+			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
 		}
 		text, ok := parts[0].(generators.Text)
 		if !ok {
@@ -82,6 +86,56 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 		}
 		if !strings.Contains(string(text), content) {
 			t.Fatalf("got %q, want to contain %q", string(text), content)
+		}
+	})
+}
+
+func TestCodeProviderIncludesWorkingDirectoryHint(t *testing.T) {
+	// The working directory hint must be appended after all file contents
+	// so the model can construct correct absolute paths for change block
+	// file-path attributes. The path is dynamic — it changes per
+	// invocation — so it is located at the end, keeping the file contents
+	// byte-identical in the LLM prefix cache. See
+	// TheoryOfWorkingDirectoryHint.
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("test.txt", []byte("test content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+		modes.ForTest(t),
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) < 2 {
+			t.Fatalf("expected the file content and the working directory hint, got %d parts", len(parts))
+		}
+		last, ok := parts[len(parts)-1].(generators.Text)
+		if !ok {
+			t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Working directory: " + cwd
+		if !strings.Contains(string(last), want) {
+			t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
 		}
 	})
 }

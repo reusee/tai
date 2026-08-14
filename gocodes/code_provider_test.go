@@ -76,6 +76,53 @@ func TestContextPrompt(t *testing.T) {
 
 }
 
+func TestPartsIncludesWorkingDirectoryHint(t *testing.T) {
+	// The working directory hint must be appended after all file contents
+	// so the model can construct correct absolute paths for change block
+	// file-path attributes. See
+	// anytexts.TheoryOfWorkingDirectoryHint.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+		new(configs.NewLoader(nil, configs.LoaderConfig{})),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+	).Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(1<<20, countTokens, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) == 0 {
+			t.Fatal("expected at least one part")
+		}
+		last, ok := parts[len(parts)-1].(generators.Text)
+		if !ok {
+			t.Fatalf("expected the last part to be Text, got %T", parts[len(parts)-1])
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Working directory: " + cwd
+		if !strings.Contains(string(last), want) {
+			t.Fatalf("expected the last part to carry the working directory hint %q, got %q", want, string(last))
+		}
+	})
+}
+
 func TestExcludePatternDirectoryPrefix(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),

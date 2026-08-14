@@ -81,6 +81,20 @@ is retained only as a final tiebreaker for the hypothetical case where two
 files share the same path (impossible in practice).
 `
 
+const TheoryOfWorkingDirectoryHint = `
+The working directory hint appends the absolute path of the process working
+directory after all file contents provided by CodeProvider, together with a
+directive to construct change block file-path attributes as absolute paths
+within it. The apply layer resolves such paths relative to the working
+directory, so the hint gives the model the base path it needs instead of
+guessing from file context that may live in a different directory.
+
+The working directory is dynamic content that changes per invocation, so the
+hint is positioned at the very end of the provider parts: the file contents
+stay byte-identical in the LLM prefix cache across runs in different
+directories, and only the trailing hint changes.
+`
+
 const TheoryOfBinaryFileMarkers = `
 Binary files included in the model context must be wrapped with begin/end markers
 matching the text file format, so the model can identify the attachment boundary.
@@ -413,6 +427,24 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 	return false
 }
 
+// WorkingDirectoryPart returns a Text part carrying the absolute path of
+// the process working directory, or nil when the directory cannot be
+// determined. CodeProvider.Parts appends it after all file contents so
+// the model can construct correct absolute paths for change block
+// file-path attributes. It is exported because
+// gocodes.CodeProvider.Parts appends the same hint after the Go file
+// contents. See TheoryOfWorkingDirectoryHint.
+func WorkingDirectoryPart() generators.Part {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	return generators.Text(
+		"Working directory: " + cwd + "\n" +
+			"Construct change block file-path attributes as absolute paths within this working directory.\n",
+	)
+}
+
 // isExcludedPath checks whether the given path is excluded by any exclusion
 // pattern. Non-glob patterns are treated as directory prefixes: "pkg"
 // excludes both "pkg" itself and everything under "pkg/". Glob patterns
@@ -582,6 +614,16 @@ func (c CodeProvider) Parts(
 
 		}
 
+	}
+
+	// The working directory hint is appended after all file contents so
+	// the model can construct correct absolute paths for change block
+	// file-path attributes. The path is dynamic — it changes per
+	// invocation — so it is placed at the end, keeping the file contents
+	// byte-identical in the LLM prefix cache across runs in different
+	// directories. See TheoryOfWorkingDirectoryHint.
+	if part := WorkingDirectoryPart(); part != nil {
+		parts = append(parts, part)
 	}
 
 	c.Logger().Info("anytexts.CodeProvider",
