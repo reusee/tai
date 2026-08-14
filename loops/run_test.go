@@ -1,6 +1,7 @@
 package loops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"iter"
@@ -13,6 +14,7 @@ import (
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
@@ -77,6 +79,29 @@ func appendPhaseWithFinish(text string, finishReason string) phases.Phase {
 			Parts: []generators.Part{
 				generators.FinishReason(finishReason),
 			},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		return nil, newState, nil
+	}
+}
+
+// appendPhaseWithUsage creates a phase that appends text content and a
+// token usage part, then returns nil (end of phase chain). Used to test
+// the round usage log record. See TheoryOfUsageLogging.
+func appendPhaseWithUsage(text string, usage generators.Usage) phases.Phase {
+	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		newState, err := state.AppendContent(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text(text)},
+		})
+		if err != nil {
+			return nil, state, err
+		}
+		newState, err = newState.AppendContent(&generators.Content{
+			Role:  generators.RoleLog,
+			Parts: []generators.Part{usage},
 		})
 		if err != nil {
 			return nil, state, err
@@ -747,6 +772,56 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 		}
 		if !strings.Contains(successSummaries[0][0], "Round 1 done") {
 			t.Fatalf("unexpected summary: %s", successSummaries[0][0])
+		}
+	})
+}
+
+func TestRunLogsRoundUsage(t *testing.T) {
+	// The Run loop must record the aggregated token usage of each round
+	// to the logger, so token consumption is visible in log output and in
+	// the TUI's Logs pane, not only in the end-of-session statistics
+	// table. The logger is the dscope-provided one; the test redirects
+	// the logs writer to a buffer to observe the record. See
+	// TheoryOfUsageLogging.
+	var buf bytes.Buffer
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() logs.Writer { return logs.Writer(&buf) },
+	).Call(func(run Run) {
+		usage := generators.Usage{}
+		usage.Prompt.TokenCount = 100
+		usage.Prompt.TokenCountCached = 20
+		usage.Candidates.TokenCount = 50
+		usage.Thoughts.TokenCount = 10
+
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return appendPhaseWithUsage("model output", usage)
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output := buf.String()
+		for _, want := range []string{
+			"msg=usage",
+			"round=1",
+			"prompt=100",
+			"cached=20",
+			"completion=50",
+			"thoughts=10",
+		} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("expected %q in log output, got: %s", want, output)
+			}
 		}
 	})
 }

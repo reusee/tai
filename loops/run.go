@@ -13,6 +13,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 )
@@ -133,6 +134,25 @@ from the model's own output or synthesized by the retry process; when the
 summarization fails, the round proceeds without a synthesized summary.
 `
 
+const TheoryOfUsageLogging = `
+The aggregated token usage of each generation round is recorded to the
+logger by the Run loop itself, not by individual commands. After each
+round, a "usage" log record carries the 1-based round number and the
+prompt, cached, completion, and thought token counts of the contents
+appended during the round, so every generation command — codes, ai,
+next, ping — shows token consumption in its logs, and in the TUI's Logs
+pane when the logs writer is routed there. A round that ends with an
+error is logged with outcome="error", so token consumption is
+traceable for every attempt, including retries. Rounds that record no
+token usage emit no record.
+
+The aggregation scans the state's contents appended since the start of
+the round and sums every generators.Usage part. It runs in the Run
+loop after each round, so it covers the round's retries as well: the
+recorded total is the token consumption of the round as a whole,
+matching the round statistics table.
+`
+
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
 
 const defaultMaxRetries = 3
@@ -215,6 +235,11 @@ type loopState struct {
 	skipOnRoundStart           bool
 
 	runErr error
+
+	// logger records the aggregated token usage of each round. It is the
+	// dscope-provided logger captured by the Run provider. See
+	// TheoryOfUsageLogging.
+	logger logs.Logger
 }
 
 // runRound executes one generation round: the phase chain, summary
@@ -676,6 +701,52 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}, nil
 }
 
+// logRoundUsage aggregates the token usage of the contents appended
+// since roundBaseCount and records it to the logger as a single "usage"
+// log record. The record carries the 1-based round number and the
+// prompt, cached, completion, and thought token counts, so token
+// consumption is visible in log output and in the TUI's Logs pane, not
+// only in the end-of-session statistics table. The optional outcome
+// distinguishes rounds that ended with an error, so token consumption
+// is traceable for every attempt, including retries. Rounds that
+// record no token usage emit no record. See TheoryOfUsageLogging.
+func (ls *loopState) logRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
+	var usage generators.Usage
+	i := 0
+	for c := range state.Contents() {
+		if i < roundBaseCount {
+			i++
+			continue
+		}
+		for _, p := range c.Parts {
+			if u, ok := p.(generators.Usage); ok {
+				usage.Prompt.TokenCount += u.Prompt.TokenCount
+				usage.Prompt.TokenCountCached += u.Prompt.TokenCountCached
+				usage.Candidates.TokenCount += u.Candidates.TokenCount
+				usage.Thoughts.TokenCount += u.Thoughts.TokenCount
+			}
+		}
+		i++
+	}
+	if usage.Prompt.TokenCount == 0 &&
+		usage.Prompt.TokenCountCached == 0 &&
+		usage.Candidates.TokenCount == 0 &&
+		usage.Thoughts.TokenCount == 0 {
+		return
+	}
+	args := []any{
+		"round", roundNumber,
+		"prompt", usage.Prompt.TokenCount,
+		"cached", usage.Prompt.TokenCountCached,
+		"completion", usage.Candidates.TokenCount,
+		"thoughts", usage.Thoughts.TokenCount,
+	}
+	if outcome != "" {
+		args = append([]any{"outcome", outcome}, args...)
+	}
+	ls.logger.InfoContext(ls.ctx, "usage", args...)
+}
+
 // recordRoundError reports a failed round to the interaction recorder
 // when recording is active.
 func (ls *loopState) recordRoundError(err error) {
@@ -978,6 +1049,7 @@ func (s recordedState) AppendContent(content *generators.Content) (generators.St
 
 func (Module) Run(
 	recorder InteractionRecorder,
+	logger logs.Logger,
 ) Run {
 	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error] {
 		if result == nil {
@@ -1004,6 +1076,7 @@ func (Module) Run(
 				state:       opts.InitialState,
 				roundCounts: make(map[string]int),
 				maxRetries:  opts.MaxRetries,
+				logger:      logger,
 			}
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries
@@ -1047,13 +1120,27 @@ func (Module) Run(
 
 			// The main loop: each iteration is one generation round. A
 			// round produces a summary and parts; when parts exist, the
-			// next round starts. See TheoryOfLoops.
+			// next round starts. prevRoundContentCount tracks the content
+			// count at the start of the current round so the round's
+			// aggregated token usage can be isolated from the contents
+			// appended during the round. See TheoryOfLoops.
+			prevRoundContentCount := generators.CountContents(ls.state)
 			for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
 				outcome, err := ls.runRound()
 				if err != nil {
+					// Log the failed round's token usage so token
+					// consumption is traceable for every attempt, including
+					// rounds that end with an error. See TheoryOfUsageLogging.
+					ls.logRoundUsage(outcome.state, prevRoundContentCount, round+1, "error")
 					ls.finishWithError(err, outcome.state)
 					return
 				}
+				// Log the round's aggregated token usage to the logger so
+				// token consumption is visible in log output and in the
+				// TUI's Logs pane, not only in the end-of-session statistics
+				// table. See TheoryOfUsageLogging.
+				ls.logRoundUsage(outcome.state, prevRoundContentCount, round+1, "")
+				prevRoundContentCount = generators.CountContents(outcome.state)
 				if outcome.continueNext {
 					continue
 				}
