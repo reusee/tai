@@ -22,9 +22,6 @@ import (
 )
 
 const (
-	maxTUILines   = 10000
-	maxTUISignals = 2000
-
 	outputColorUser    int32 = 12
 	outputColorTool    int32 = 11
 	outputColorSystem  int32 = 14
@@ -126,6 +123,17 @@ the machinery was dropped because building a Frame is cheap and the
 screens diff whole frames anyway, so the caching saved nothing while
 adding a provider layer to read and reason about. See
 taiui.TheoryOfTaiUI.)
+`
+
+const TheoryOfTUINoTruncation = `
+Display buffers are unbounded and no information is ever truncated: the
+Output tab retains every streamed line, the Logs tab every log record, and
+the Summary tab every signal (summary block bodies and finish reasons). A
+bounded buffer silently drops the oldest entries past its ceiling, making
+the TUI's record of the session incomplete and shifting a scrolled-back
+view by one row on each new line. Whatever the volume, losing information
+is unacceptable; the memory cost of unbounded retention is accepted in
+exchange for a complete browsable session record.
 `
 
 // Tui enables the terminal UI mode.
@@ -256,9 +264,6 @@ func (t *TUI) finishReason(reason string) {
 	// See TheoryOfTUI.
 	t.generating = false
 	t.signals = append(t.signals, taiui.Line{Text: "[Finish: " + reason + "]", Color: outputColorLogLine})
-	if len(t.signals) > maxTUISignals {
-		t.signals = append([]taiui.Line(nil), t.signals[len(t.signals)-maxTUISignals:]...)
-	}
 }
 
 func (t *TUI) writeLogs(p []byte) {
@@ -350,9 +355,6 @@ func (t *TUI) parseSummaries(p []byte) {
 					t.signals = append(t.signals, taiui.Line{Text: line})
 				}
 				t.signals = append(t.signals, taiui.Line{})
-				if len(t.signals) > maxTUISignals {
-					t.signals = append([]taiui.Line(nil), t.signals[len(t.signals)-maxTUISignals:]...)
-				}
 			}
 		}
 		t.parseBuf = t.parseBuf[end:]
@@ -449,8 +451,13 @@ func newTUI() (*TUI, error) {
 		width, height = ws.Width, ws.Height
 	}
 	return &TUI{
-		output: taiui.NewLineBuffer(maxTUILines),
-		logs:   taiui.NewStringBuffer(maxTUILines),
+		// Every display buffer is unbounded: the Output tab retains each
+		// streamed line, the Logs tab each log record, and the Summary
+		// tab each signal. Truncation would silently discard information,
+		// leaving the TUI's record of the session incomplete. See
+		// TheoryOfTUINoTruncation.
+		output: taiui.NewLineBuffer(0),
+		logs:   taiui.NewStringBuffer(0),
 		tabs:   taiui.NewTabs(3),
 		// All tabs are collapsed by default; a tab expands automatically
 		// the first time content for it arrives, without changing the

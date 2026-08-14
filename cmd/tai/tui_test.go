@@ -64,6 +64,85 @@ func TestTuiStateWriteLines(t *testing.T) {
 	}
 }
 
+func TestTuiOutputHasNoLineLimit(t *testing.T) {
+	// The Output tab's line buffer is wired without a line limit (see
+	// newTUI): a bounded buffer would drop the oldest lines past its
+	// ceiling, so a view scrolled back to earlier output would shift by
+	// one row on every newly appended line — experienced as continuous
+	// scrolling. The former ceiling was 10000 lines; the unbounded
+	// buffer must retain every line far past it, oldest first.
+	const lines = 20000 // past the former 10000-line ceiling
+	buf := taiui.NewLineBuffer(0)
+	for i := 0; i < lines; i++ {
+		buf.Append(taiui.NoColor, fmt.Sprintf("line %d\n", i))
+	}
+	got := buf.Lines()
+	if len(got) != lines {
+		t.Fatalf("expected %d lines retained, got %d", lines, len(got))
+	}
+	if got[0].Text != "line 0" {
+		t.Fatalf("expected the very first line retained, got %q", got[0].Text)
+	}
+}
+
+func TestTuiLogsHasNoLineLimit(t *testing.T) {
+	// The Logs tab's buffer is wired without a line limit (see newTUI):
+	// a bounded buffer would silently drop the oldest log records past
+	// its ceiling, making the session's log record incomplete. The
+	// former ceiling was 10000 lines; the unbounded buffer must retain
+	// every record far past it, oldest first. See
+	// TheoryOfTUINoTruncation.
+	const lines = 20000 // past the former 10000-line ceiling
+	buf := taiui.NewStringBuffer(0)
+	for i := 0; i < lines; i++ {
+		buf.Append([]byte(fmt.Sprintf("log %d\n", i)))
+	}
+	got := buf.Lines()
+	if len(got) != lines {
+		t.Fatalf("expected %d records retained, got %d", lines, len(got))
+	}
+	if got[0] != "log 0" {
+		t.Fatalf("expected the very first record retained, got %q", got[0])
+	}
+}
+
+func TestTuiSignalsHasNoLimit(t *testing.T) {
+	// The Summary tab's signal list is unbounded: summary block bodies
+	// and finish reasons are never truncated, whatever the volume,
+	// because they are the TUI's record of round completions. The former
+	// ceiling was 2000 signals; the unbounded list must retain every
+	// signal far past it, oldest first. See TheoryOfTUINoTruncation.
+	const lines = 5000 // past the former 2000-signal ceiling
+	tui := newTUIForTest()
+	var body strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&body, "- line %d\n", i)
+	}
+	tui.write([]byte("<<黿鼍爩 <summary>\n" + body.String() + "黿鼍爩\n"))
+	if len(tui.signals) != lines+1 {
+		t.Fatalf("expected %d signal lines, got %d", lines+1, len(tui.signals))
+	}
+	if tui.signals[0].Text != "- line 0" {
+		t.Fatalf("expected the very first signal retained, got %q", tui.signals[0].Text)
+	}
+	if tui.signals[lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
+		t.Fatalf("expected the last signal retained, got %q", tui.signals[lines-1].Text)
+	}
+	if tui.signals[lines].Text != "" {
+		t.Fatalf("expected the trailing blank separator retained, got %q", tui.signals[lines].Text)
+	}
+
+	// Finish reasons accumulate without truncation as well.
+	tui2 := newTUIForTest()
+	const finishes = 3000 // past the former 2000-signal ceiling
+	for i := 0; i < finishes; i++ {
+		tui2.finishReason("stop")
+	}
+	if len(tui2.signals) != finishes {
+		t.Fatalf("expected %d finish signals, got %d", finishes, len(tui2.signals))
+	}
+}
+
 func TestDisplayChatInput(t *testing.T) {
 	tui := newTUIForTest()
 	displayChatInput(tui, flags.Chats{"hello", "world"})
