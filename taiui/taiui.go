@@ -6,15 +6,16 @@ import (
 
 const TheoryOfTaiUI = `
 taiui theory: UI = pure Element value derived from state.
-- The application holds its state outside the library and derives a Root
-  value from it; Render accepts the Root directly, interprets the element
-  tree into a Frame, and presents the frame to each screen. A state change
-  is a rebuilt Root; the next render reflects the change. There is no
-  imperative element-update protocol and no dependency-injection framework:
-  dscope was dropped because per-component provider caching was not worth
-  its complexity — building a Frame is cheap and the screens diff whole
-  frames anyway. Render context (boxes, styles, draw callbacks) is never
-  stored; screens are passed per call.
+- The application holds its state outside the library and derives an
+  Element value from it; Render accepts the Element directly, interprets
+  the element tree into a Frame, and presents the frame to each screen.
+  A state change is a rebuilt Element; the next render reflects the
+  change. There is no imperative element-update protocol and no
+  dependency-injection framework: dscope was dropped because
+  per-component provider caching was not worth its complexity — building
+  a Frame is cheap and the screens diff whole frames anyway. Render
+  context (boxes, styles, draw callbacks) is never stored; screens are
+  passed per call.
 - Elements are pure values: constructors resolve spec lists at construction
   time. Zero-argument function specs are evaluated eagerly, and each result
   is itself resolved as specs, so nested zero-argument functions expand
@@ -29,7 +30,7 @@ taiui theory: UI = pure Element value derived from state.
   is split into lines at newline boundaries, with CRLF normalized to LF.
   If and Alt compose conditionally.
 - Rendering interprets the element tree into a Frame (a styled cell grid)
-  and presents the frame to each screen. A nil root element renders an
+  and presents the frame to each screen. A nil element renders an
   empty frame, clearing every screen. Each render pass allocates a fresh
   frame per screen; frames are never reused unless the screen opts in via
   FrameReleaser, because a screen may retain the frame it presented. A
@@ -166,14 +167,6 @@ taiui cell comparison theory:
 type Element interface {
 	Spec
 	element()
-}
-
-// Root is the root UI state: a wrapper around the root UI element. An
-// application builds a Root from its state and passes it to Render; Render
-// renders its element to each screen. Rebuilding the Root with new state
-// makes the next Render reflect the change.
-type Root struct {
-	Element Element
 }
 
 type Box struct {

@@ -106,9 +106,9 @@ func (s *State) HandleKey(key string) (changed bool, quit bool) {
 }
 
 // BuildRoot builds the root element tree from the current state.
-func BuildRoot(s State) taiui.Root {
+func BuildRoot(s State) taiui.Element {
 	if s.Width < minWidth || s.Height < minHeight {
-		return taiui.Root{Element: taiui.Rect(
+		return taiui.Rect(
 			// A Box override pins the banner to the middle third of the
 			// screen regardless of the box the parent would assign.
 			taiui.Box{Top: s.Height / 3, Left: 0, Bottom: 2 * s.Height / 3, Right: s.Width},
@@ -119,7 +119,7 @@ func BuildRoot(s State) taiui.Root {
 				fmt.Sprintf("too small: %dx%d, need %dx%d", s.Width, s.Height, minWidth, minHeight),
 				taiui.AlignCenter,
 			),
-		)}
+		)
 	}
 	// The four panels are arranged in clockwise order (top-left,
 	// top-right, bottom-right, bottom-left) and rotated by the rotation
@@ -131,7 +131,7 @@ func BuildRoot(s State) taiui.Root {
 		panelScroll(s.Scroll),
 		s.Rotation,
 	)
-	root := taiui.Root{Element: taiui.Column(
+	var root taiui.Element = taiui.Column(
 		taiui.Weighted(1, header(s.Toggle, s.Now)),
 		taiui.Weighted(22, taiui.Row(
 			taiui.Weighted(1, taiui.Column(
@@ -144,13 +144,13 @@ func BuildRoot(s State) taiui.Root {
 			)),
 		)),
 		taiui.Weighted(1, footer()),
-	)}
+	)
 	if s.Modal {
 		// The modal is part of the element tree, derived from state: an
 		// Overlay stacks it over the main UI, so toggling the modal state
 		// re-renders the overlay without any imperative layer management.
-		root.Element = taiui.Overlay(
-			root.Element,
+		root = taiui.Overlay(
+			root,
 			taiui.Rect(
 				taiui.Box{Top: s.Height / 4, Left: s.Width / 4, Bottom: 3 * s.Height / 4, Right: 3 * s.Width / 4},
 				taiui.Border(true),

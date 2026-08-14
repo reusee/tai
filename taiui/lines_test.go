@@ -129,7 +129,7 @@ func TestLinesElementGroupsColors(t *testing.T) {
 	}
 	element := LinesElement(lines, Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
 	screen := newFakeScreen(10, 2)
-	Render(Root{Element: element}, screen)
+	Render(element, screen)
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
 	}

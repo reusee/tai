@@ -136,11 +136,7 @@ func logsPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 	)
 }
 
-// buildRoot composes the panel elements and the optional quit-confirmation
-// bar into the root element. The confirmation bar draws over every tab
-// when a quit confirmation is pending, so it is always visible. See
-// TheoryOfTUI.
-func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Root {
+func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Element {
 	boxes := t.tabs.Boxes(width, height)
 	var elements []any
 	for _, panel := range []taiui.Element{
@@ -152,13 +148,13 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Root {
 			elements = append(elements, panel)
 		}
 	}
-	root := taiui.Root{Element: taiui.Overlay(elements...)}
+	root := taiui.Overlay(elements...)
 	if t.confirmQuit {
 		// A pending quit confirmation draws a confirmation bar over the
 		// bottom row of the screen, on top of every tab, so it is always
 		// visible. See TheoryOfTUI.
-		root.Element = taiui.Overlay(
-			root.Element,
+		root = taiui.Overlay(
+			root,
 			taiui.Rect(
 				taiui.Box{Top: height - 1, Left: 0, Bottom: height, Right: width},
 				taiui.Fill(true),

@@ -23,54 +23,54 @@ func (benchmarkReleasingScreen) ReleaseFrame(frame Frame) {
 }
 
 func BenchmarkRenderText(b *testing.B) {
-	root := Root{Element: Text("hello world")}
+	element := Text("hello world")
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
 func BenchmarkRenderTextFill(b *testing.B) {
-	root := Root{Element: Text("hello world", Fill(true))}
+	element := Text("hello world", Fill(true))
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
 func BenchmarkRenderTextWrapped(b *testing.B) {
-	root := Root{Element: Rect(
+	element := Rect(
 		Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
 		Text("one two three four five six seven eight nine ten eleven twelve", Wrap(true)),
-	)}
+	)
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
 func BenchmarkRenderRectFill(b *testing.B) {
-	root := Root{Element: Rect(
+	element := Rect(
 		Fill(true),
 		BGColor(HexColor(0x141414)),
 		Text("content"),
-	)}
+	)
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
 func BenchmarkRenderInput(b *testing.B) {
-	root := Root{Element: Input("hello world", 5)}
+	element := Input("hello world", 5)
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
@@ -79,27 +79,27 @@ func BenchmarkRenderList(b *testing.B) {
 	for i := range items {
 		items[i] = fmt.Sprintf("item %02d", i)
 	}
-	root := Root{Element: Rect(
+	element := Rect(
 		Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
 		List(items, 50),
-	)}
+	)
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 
 func BenchmarkRenderBorderTitle(b *testing.B) {
-	root := Root{Element: Rect(
+	element := Rect(
 		Border(true),
 		Title("Title"),
 		Text("content"),
-	)}
+	)
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(root, screen)
+		Render(element, screen)
 	}
 }
 

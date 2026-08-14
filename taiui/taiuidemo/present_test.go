@@ -216,16 +216,15 @@ func TestBounce(t *testing.T) {
 func TestBuildRoot(t *testing.T) {
 	// BuildRoot turns the current state into a root element tree,
 	// including the small-screen banner and the modal overlay.
-	root := BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1})
-	if root.Element == nil {
+	if root := BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1}); root == nil {
 		t.Fatal("expected a root element")
 	}
-	root = BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1, Modal: true})
-	if root.Element == nil {
+	root := BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1, Modal: true})
+	if root == nil {
 		t.Fatal("expected a root element with the modal open")
 	}
 	root = BuildRoot(State{Width: 10, Height: 10, Toggle: true, W1Weight: 1})
-	if root.Element == nil {
+	if root == nil {
 		t.Fatal("expected a root element for a small screen")
 	}
 }

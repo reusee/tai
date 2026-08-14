@@ -207,7 +207,7 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 			0, focus, true, panelStyle,
 		)
 		screen := &panelTestScreen{width: 12, height: 2}
-		taiui.Render(taiui.Root{Element: element}, screen)
+		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -314,7 +314,7 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 	}
 	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 10})
 	screen := &panelTestScreen{width: 10, height: 2}
-	taiui.Render(taiui.Root{Element: element}, screen)
+	taiui.Render(element, screen)
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
 	}
@@ -523,7 +523,7 @@ func TestTUIPanelShowsTailOfWrappedContent(t *testing.T) {
 	)
 
 	screen := &panelTestScreen{width: 12, height: 10}
-	taiui.Render(taiui.Root{Element: element}, screen)
+	taiui.Render(element, screen)
 
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
@@ -543,7 +543,7 @@ func TestTUIPanelBackgroundColors(t *testing.T) {
 			0, focus, true, panelStyle,
 		)
 		screen := &panelTestScreen{width: 12, height: 4}
-		taiui.Render(taiui.Root{Element: element}, screen)
+		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -781,7 +781,7 @@ func TestTUIPanelWrapsLongLines(t *testing.T) {
 	)
 
 	screen := &panelTestScreen{width: 12, height: 6}
-	taiui.Render(taiui.Root{Element: element}, screen)
+	taiui.Render(element, screen)
 
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
@@ -810,7 +810,7 @@ func TestTUIPanelScrollbarHiddenWhenFollowing(t *testing.T) {
 			"Output", false, plainLines(lines), 0, false, follow, panelStyle,
 		)
 		screen := &panelTestScreen{width: 80, height: 10}
-		taiui.Render(taiui.Root{Element: element}, screen)
+		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -1286,10 +1286,12 @@ func TestTabPanelBoxCollapsedFirstAndLast(t *testing.T) {
 }
 
 func TestCollapsedPanelRendering(t *testing.T) {
+	style := panelStyle
+
 	t.Run("Horizontal", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, panelStyle)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, style)
 		screen := &panelTestScreen{width: 12, height: 1}
-		taiui.Render(taiui.Root{Element: element}, screen)
+		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -1303,9 +1305,9 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, panelStyle)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, style)
 		screen := &panelTestScreen{width: 1, height: 8}
-		taiui.Render(taiui.Root{Element: element}, screen)
+		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -1694,7 +1696,7 @@ func TestTUIPanelColorsContent(t *testing.T) {
 		"Output", false, lines, 0, false, true, panelStyle,
 	)
 	screen := &panelTestScreen{width: 10, height: 3}
-	taiui.Render(taiui.Root{Element: element}, screen)
+	taiui.Render(element, screen)
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
 	}
@@ -1726,7 +1728,7 @@ func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
 	}
 	element := taiui.LinesElement(lines, taiui.Box{Top: 0, Left: 0, Bottom: 5, Right: 40})
 	screen := &panelTestScreen{width: 40, height: 5}
-	taiui.Render(taiui.Root{Element: element}, screen)
+	taiui.Render(element, screen)
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
 	}

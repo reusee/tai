@@ -7,7 +7,7 @@ import (
 	"github.com/gdamore/tcell/v3/vt"
 )
 
-func Render(root Root, screens ...Screen) {
+func Render(e Element, screens ...Screen) {
 	options := DisplayWidthOptions()
 	for _, screen := range screens {
 		width := screen.Width()
@@ -17,7 +17,7 @@ func Render(root Root, screens ...Screen) {
 		}
 		frame := newFrame(width, height)
 		box := Box{Top: 0, Left: 0, Bottom: height, Right: width}
-		renderElement(root.Element, box, vt.BaseStyle, frame.setCell, frame.setCursor, options)
+		renderElement(e, box, vt.BaseStyle, frame.setCell, frame.setCursor, options)
 		screen.Present(frame)
 		if releaser, ok := screen.(FrameReleaser); ok {
 			releaser.ReleaseFrame(frame)
