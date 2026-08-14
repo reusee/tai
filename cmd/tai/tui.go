@@ -867,6 +867,11 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	originalRun := dscope.Get[loops.Run](scope)
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
+		// Command-level output (ping verdicts, goal banners, applied
+		// notices) goes to the Output tab via the dscope-resolved Output
+		// writer. Generation output is captured separately and never
+		// routed here. See TheoryOfCommandOutput.
+		func() Output { return Output(tui.Writer()) },
 		func() loops.Run {
 			return withTUIOutputObserver(originalRun, tui)
 		},

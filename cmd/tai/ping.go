@@ -31,8 +31,8 @@ blocks.TheoryOfNestedBlockParsing), so identical delimiters cannot pass the
 test. Validation reads the blocks collected in loops.Result.RemainingBlocks:
 ping runs without components, so no block kind is consumed. A validation
 failure prints the observed outcome and exits with status 1, making the
-command scriptable; on success the verdict is printed to stdout after the
-streamed output.
+command scriptable; on success the verdict is printed to the command Output
+writer after the streamed output.
 
 The command requires a model to be specified via -model; without it, the
 generator provider fails during scope resolution, making the dependency on an
@@ -137,6 +137,7 @@ var PingCommand = Command{
 		modes.ForProduction(),
 	},
 	Main: func(
+		output Output,
 		recorder *records.Recorder,
 		generator generators.Generator,
 		buildGenerate phases.BuildGenerate,
@@ -203,6 +204,9 @@ var PingCommand = Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("ping ok: model emitted the required blocks (%q, %q)\n", kindA, kindB)
+		// The verdict is written to the command Output writer so it is
+		// visible in the TUI's output tab instead of being discarded with
+		// stdout. See TheoryOfCommandOutput and TheoryOfPingCommand.
+		fmt.Fprintf(output, "ping ok: model emitted the required blocks (%q, %q)\n", kindA, kindB)
 	},
 }

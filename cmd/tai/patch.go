@@ -16,6 +16,7 @@ codes.Generate without wiring the full generation pipeline.
 
 var PatchCommand = Command{
 	Main: func(
+		output Output,
 		applyDiffFile changes.ApplyDiffFile,
 	) {
 		target := ".AI"
@@ -29,7 +30,10 @@ var PatchCommand = Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Applied %s %s\n", block.Op, block.Target)
+			// The applied notice is written to the command Output writer so
+			// it is visible in the TUI's output tab. See
+			// TheoryOfCommandOutput.
+			fmt.Fprintf(output, "Applied %s %s\n", block.Op, block.Target)
 		}
 	},
 }

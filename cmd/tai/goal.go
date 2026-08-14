@@ -164,6 +164,7 @@ var GoalCommand = Command{
 		},
 	},
 	Main: func(
+		output Output,
 		reset dscope.Reset,
 		runReview codes.RunReview,
 	) {
@@ -351,7 +352,7 @@ var GoalCommand = Command{
 						// declaration: the verification loop re-read the
 						// current filesystem state, so the verdict reflects
 						// the latest files. See TheoryOfGoalCommand.
-						fmt.Fprintf(os.Stdout, "\n=== Goal Achieved after %d loop(s) ===\n", loopsRun)
+						fmt.Fprintf(output, "\n=== Goal Achieved after %d loop(s) ===\n", loopsRun)
 						achieved = true
 						return
 					}
@@ -377,7 +378,9 @@ var GoalCommand = Command{
 
 		for loopsRun < maxGoalIterations {
 			loopsRun++
-			fmt.Fprintf(os.Stdout, "\n=== Goal Loop %d/%d ===\n\n", loopsRun, maxGoalIterations)
+			// The loop banner is written to the command Output writer so it
+			// is visible in the TUI's output tab. See TheoryOfCommandOutput.
+			fmt.Fprintf(output, "\n=== Goal Loop %d/%d ===\n\n", loopsRun, maxGoalIterations)
 			if runOneLoop() {
 				break
 			}
@@ -389,12 +392,12 @@ var GoalCommand = Command{
 		// the budget. See TheoryOfGoalCommand.
 		if pendingDoneVerification && !achieved && !stopRequested {
 			loopsRun++
-			fmt.Fprintf(os.Stdout, "\n=== Goal Verification Loop %d (beyond budget) ===\n\n", loopsRun)
+			fmt.Fprintf(output, "\n=== Goal Verification Loop %d (beyond budget) ===\n\n", loopsRun)
 			runOneLoop()
 		}
 
 		if !achieved && !stopRequested {
-			fmt.Fprintf(os.Stdout, "\n=== Goal Not Achieved after %d loops ===\n", loopsRun)
+			fmt.Fprintf(output, "\n=== Goal Not Achieved after %d loops ===\n", loopsRun)
 		}
 
 		// Review all changes made during the goal after the goal completes.
@@ -409,7 +412,7 @@ var GoalCommand = Command{
 		// column identifies which goal loop produced each round.
 		// See codes.TheoryOfRoundStatistics.
 		if len(allStats) > 0 {
-			codes.PrintRoundStats(os.Stdout, allStats, "Goal Loop Statistics")
+			codes.PrintRoundStats(output, allStats, "Goal Loop Statistics")
 		}
 	},
 }

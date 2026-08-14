@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
@@ -33,6 +32,7 @@ var RecordCommand = Command{
 		modes.ForProduction(),
 	},
 	Main: func(
+		output Output,
 		recorder *records.Recorder,
 		sessionID records.SessionID,
 		analyze records.Analyze,
@@ -45,15 +45,15 @@ var RecordCommand = Command{
 		if bool(analyze) {
 			generator, err := getDefaultGenerator()
 			ce(err)
-			ce(records.RunAnalysis(ctx, generator, buildGenerate, recorder, int64(sessionID), os.Stdout))
+			ce(records.RunAnalysis(ctx, generator, buildGenerate, recorder, int64(sessionID), output))
 			return
 		}
 
 		if int64(sessionID) != 0 {
-			ce(records.ShowSession(recorder, int64(sessionID), os.Stdout))
+			ce(records.ShowSession(recorder, int64(sessionID), output))
 			return
 		}
 
-		ce(records.ListSessions(recorder, int(limit), os.Stdout))
+		ce(records.ListSessions(recorder, int(limit), output))
 	},
 }

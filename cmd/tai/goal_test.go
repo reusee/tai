@@ -106,8 +106,8 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -163,8 +163,8 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	os.Stdout = wOut
 	os.Stderr = wErr
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -222,8 +222,8 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-		mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+		mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 			return nil
 		}))
 
@@ -298,8 +298,8 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-		mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+		mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 			return nil
 		}))
 
@@ -370,8 +370,8 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -442,8 +442,8 @@ func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(dscope.Reset, codes.RunReview))
-	mainFn(reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
+	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
