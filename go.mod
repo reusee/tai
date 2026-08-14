@@ -1,6 +1,6 @@
 module github.com/reusee/tai
 
-go 1.26.1
+go 1.27
 
 require (
 	cuelang.org/go v0.17.1
@@ -10,7 +10,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/peterh/liner v1.2.2
-	github.com/reusee/dscope v0.0.0-20260811023023-5846d01453f6
+	github.com/reusee/dscope v0.0.0-20260813171226-187f42d2c03f
 	github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104
 	github.com/reusee/prompts v0.0.0-20260813071809-3b55f482c44f
 	github.com/reusee/starlarkutil v0.0.0-20250731094927-719b21b7d2d5

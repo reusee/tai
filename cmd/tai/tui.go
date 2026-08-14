@@ -106,12 +106,27 @@ at the bottom of the screen, and a second press quits; any other key cancels
 the confirmation and is processed normally, so an accidental q press never
 loses the session.
 
-- Rendering reuses a dscope base scope: the base scope is built once in
-newTUI, and each render forks it with the current root element. The render
-hot path therefore never constructs a fresh scope from scratch; the fork is
-the only per-render dscope cost. The zero-value base scope (dscope.Universe)
-is a valid fallback: forking it is equivalent to dscope.New, so a TUI
-constructed without a base scope still renders correctly.
+- Rendering is declarative, following the taiuidemo pattern: the view is a
+dscope provider tree (TUIView) that unifies UI elements and state in one
+scope. State providers carry the display buffers' content (TUIOutputLines,
+TUILogsLines, TUISignals), the terminal size (TUISize), the tab layout
+(TUITabs), the per-tab scroll offsets (TUIScrolls), and the session flags
+(TUIFinished, TUIGenerating, TUIConfirmQuit). A display provider
+(TUIDisplays) derives the wrapped, colored lines for every tab from content
+plus layout, so a panel rebuild does not re-wrap; element providers
+(OutputPanel, SummaryPanel, LogsPanel) turn a tab's display and scroll
+state into a taiui.Panel or taiui.CollapsedPanel; Root composes the panels
+with the optional quit-confirmation bar. The TUI holds nothing but the raw
+state values — line buffers, tab machine, scroll offsets, signals, and
+session flags. render() builds a fresh view scope on every call: it forks
+each state value as a provider into a scope constructed from TUIView and
+presents the resolved Root. dscope recomputes every derived provider
+(Displays, panels, Root) from its declared dependencies, so no dirty flags,
+cached forks, or manual change tracking are needed: state declaration,
+dependency wiring, and update propagation are entirely the provider graph's
+responsibility. Scroll offsets are updated against the freshly derived
+display lengths before the scroll providers are forked, so the panels read
+post-update offsets.
 `
 
 // Tui enables the terminal UI mode.
@@ -199,11 +214,169 @@ func (s tuiOutputState) Unwrap() generators.State {
 	return s.upstream
 }
 
-// tuiState is the display state of the TUI. The content lines, tab state
-// machine, and scroll state live in the taiui library; this command wires
-// them with tai-specific capture (summary parsing, request lifecycle).
-// See TheoryOfTUI.
-type tuiState struct {
+func (t *TUI) write(p []byte) {
+	t.writeColored(taiui.NoColor, p)
+}
+
+func (t *TUI) writeColored(color taiui.Color, p []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(p) == 0 {
+		return
+	}
+	if t.tabs.AutoExpand(0) {
+		t.scrolls[0].Follow = true
+	}
+	// Summary blocks are parsed before finish signals so signals sharing
+	// one stream chunk keep their chronological order: the model's
+	// summary block precedes the round's finish line. See TheoryOfTUI.
+	t.parseSummaries(p)
+	t.output.Append(color, string(p))
+}
+
+func (t *TUI) finishReason(reason string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if reason == "" {
+		return
+	}
+	if t.tabs.AutoExpand(1) {
+		t.scrolls[1].Follow = true
+	}
+	// The finish reason marks the end of the generation request: the
+	// Output tab's "generating..." hint clears once the request has
+	// returned. A new request's "generating" log re-sets it.
+	// See TheoryOfTUI.
+	t.generating = false
+	t.signals = append(t.signals, taiui.Line{Text: "[Finish: " + reason + "]", Color: outputColorLogLine})
+	if len(t.signals) > maxTUISignals {
+		t.signals = append([]taiui.Line(nil), t.signals[len(t.signals)-maxTUISignals:]...)
+	}
+}
+
+func (t *TUI) writeLogs(p []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(p) == 0 {
+		return
+	}
+	if t.tabs.AutoExpand(2) {
+		t.scrolls[2].Follow = true
+	}
+	for _, line := range t.logs.Append(p) {
+		if isGeneratingLog(line) {
+			t.generating = true
+		}
+	}
+}
+
+// isGeneratingLog reports whether a log line marks the start of a
+// generation request. The generators package logs a record with message
+// "generating" at the start of every API request, before any output is
+// streamed (see gemini.go and open_ai.go). slog's TextHandler renders
+// the message value bare ("msg=generating") when it contains no spaces
+// and quoted (`msg="generating"`) when it does; both forms are accepted.
+// The value is required to be followed by a space (the next field) or
+// the line end, so a message that merely starts with "generating" is
+// not mistaken for the request-start record. See TheoryOfTUI.
+func isGeneratingLog(line string) bool {
+	return strings.HasSuffix(line, "msg=generating") ||
+		strings.Contains(line, "msg=generating ") ||
+		strings.HasSuffix(line, `msg="generating"`) ||
+		strings.Contains(line, `msg="generating" `)
+}
+
+func (t *TUI) parseSummaries(p []byte) {
+	t.parseBuf = append(t.parseBuf, p...)
+	for {
+		block, _, end, ok, err := blocks.ParseFirstBlock(t.parseBuf)
+		if err != nil {
+			// An unclosed or malformed block may still be streaming (its
+			// closing line has not arrived yet), so the buffer is kept while
+			// no complete block exists beyond the fragment's opening line.
+			// When a complete block does exist beyond it, the fragment cannot
+			// be a live block — its closing line would have arrived before
+			// that block's opening marker. Such a fragment is a truncated
+			// round, a malformed block, or prose that merely resembles an
+			// opener; skipping it un-wedges the buffer so summaries emitted
+			// after it are still extracted. See TheoryOfTUI.
+			if end > 0 && end < len(t.parseBuf) {
+				if _, _, _, tailOK, tailErr := blocks.ParseFirstBlock(t.parseBuf[end:]); tailErr == nil && tailOK {
+					t.parseBuf = t.parseBuf[end:]
+					continue
+				}
+			}
+			return // still streaming: wait for more output
+		}
+		if !ok {
+			// No block marker in the buffer. A block opener can be split
+			// across chunk boundaries at any byte position, so a trailing
+			// line that could become an opener ("<" or "<<"-prefixed) is
+			// retained until the next chunk completes it; otherwise the
+			// buffer holds only prose and is cleared. See TheoryOfTUI.
+			retain := 0
+			tail := t.parseBuf
+			if i := bytes.LastIndexByte(t.parseBuf, '\n'); i >= 0 {
+				tail = t.parseBuf[i+1:]
+			}
+			if len(tail) == 1 && tail[0] == '<' ||
+				len(tail) >= 2 && tail[0] == '<' && tail[1] == '<' {
+				retain = len(tail)
+			}
+			if retain > 0 {
+				t.parseBuf = t.parseBuf[len(t.parseBuf)-retain:]
+			} else {
+				t.parseBuf = nil
+			}
+			return
+		}
+		if block.Kind == "summary" {
+			body := strings.TrimSpace(block.Body)
+			if body != "" {
+				// A collapsed Summary tab expands automatically on the first
+				// summary block; the output text carrying the block
+				// already expanded the Output tab. See TheoryOfTUI.
+				if t.tabs.AutoExpand(1) {
+					t.scrolls[1].Follow = true
+				}
+				for _, line := range strings.Split(body, "\n") {
+					t.signals = append(t.signals, taiui.Line{Text: line})
+				}
+				t.signals = append(t.signals, taiui.Line{})
+				if len(t.signals) > maxTUISignals {
+					t.signals = append([]taiui.Line(nil), t.signals[len(t.signals)-maxTUISignals:]...)
+				}
+			}
+		}
+		t.parseBuf = t.parseBuf[end:]
+		if len(t.parseBuf) == 0 {
+			return
+		}
+	}
+}
+
+type tuiWriter struct{ t *TUI }
+
+type logsWriter struct{ t *TUI }
+
+func (w tuiWriter) Write(p []byte) (int, error) {
+	w.t.write(p)
+	w.t.notify()
+	return len(p), nil
+}
+
+func (w logsWriter) Write(p []byte) (int, error) {
+	w.t.writeLogs(p)
+	w.t.notify()
+	return len(p), nil
+}
+
+// TUI is the terminal UI for tai commands. It holds the raw display state
+// — line buffers, tab state machine, scroll states, signals, and session
+// flags — and presents it declaratively: render() forks the current state
+// values into a fresh dscope view scope (TUIView), and the provider graph
+// derives the panels from them. See TheoryOfTUI.
+type TUI struct {
 	mu       sync.Mutex
 	output   *taiui.LineBuffer
 	logs     *taiui.StringBuffer
@@ -244,225 +417,13 @@ type tuiState struct {
 	// Output tab. It is false until the first part is written, so the
 	// first output never gets a leading blank line separator.
 	hasOutput bool
-}
 
-// write appends uncolored output (stderr, panics) to the Output tab.
-func (s *tuiState) write(p []byte) {
-	s.writeColored(taiui.NoColor, p)
-}
-
-// writeColored appends output with the given display color, extracting
-// summary blocks and collecting finish lines into the Summary tab's signals.
-// A collapsed Output tab expands automatically on the first streamed output.
-// The color is carried per line, so wrapped lines keep their role color.
-// See TheoryOfTUI.
-func (s *tuiState) writeColored(color taiui.Color, p []byte) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(p) == 0 {
-		return
-	}
-	if s.tabs.AutoExpand(0) {
-		s.scrolls[0].Follow = true
-	}
-	// Summary blocks are parsed before finish signals so signals sharing
-	// one stream chunk keep their chronological order: the model's
-	// summary block precedes the round's finish line. See TheoryOfTUI.
-	s.parseSummaries(p)
-	s.output.Append(color, string(p))
-}
-
-func (s *tuiState) finishReason(reason string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if reason == "" {
-		return
-	}
-	if s.tabs.AutoExpand(1) {
-		s.scrolls[1].Follow = true
-	}
-	// The finish reason marks the end of the generation request: the
-	// Output tab's "generating..." hint clears once the request has
-	// returned. A new request's "generating" log re-sets it.
-	// See TheoryOfTUI.
-	s.generating = false
-	s.signals = append(s.signals, taiui.Line{Text: "[Finish: " + reason + "]", Color: outputColorLogLine})
-	if len(s.signals) > maxTUISignals {
-		s.signals = append([]taiui.Line(nil), s.signals[len(s.signals)-maxTUISignals:]...)
-	}
-}
-
-// writeLogs appends log output to the logs buffer, splitting it into lines
-// and retaining the incomplete trailing line for the next chunk. The
-// generator logs a record at the start of each request; detecting it
-// marks the request as in flight, so the Output tab's generating hint
-// appears before the first output byte and persists for the whole
-// request — including silent thinking phases. A collapsed Logs tab
-// expands automatically on the first log record. See TheoryOfTUI.
-func (s *tuiState) writeLogs(p []byte) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(p) == 0 {
-		return
-	}
-	if s.tabs.AutoExpand(2) {
-		s.scrolls[2].Follow = true
-	}
-	for _, line := range s.logs.Append(p) {
-		if isGeneratingLog(line) {
-			s.generating = true
-		}
-	}
-}
-
-// isGeneratingLog reports whether a log line marks the start of a
-// generation request. The generators package logs a record with message
-// "generating" at the start of every API request, before any output is
-// streamed (see gemini.go and open_ai.go). slog's TextHandler renders
-// the message value bare ("msg=generating") when it contains no spaces
-// and quoted (`msg="generating"`) when it does; both forms are accepted.
-// The value is required to be followed by a space (the next field) or
-// the line end, so a message that merely starts with "generating" is
-// not mistaken for the request-start record. See TheoryOfTUI.
-func isGeneratingLog(line string) bool {
-	return strings.HasSuffix(line, "msg=generating") ||
-		strings.Contains(line, "msg=generating ") ||
-		strings.HasSuffix(line, `msg="generating"`) ||
-		strings.Contains(line, `msg="generating" `)
-}
-
-// requesting reports whether a generation request is in flight: the
-// session has not finished and the request-start log has been observed
-// without a finish line (or the session ending) having cleared it. The
-// hint therefore persists for the whole request — including silent
-// thinking phases without streamed output — and clears when the request
-// returns. Callers must hold mu (render does) or be single-threaded.
-// See TheoryOfTUI.
-func (s *tuiState) requesting() bool {
-	if s.finished {
-		return false
-	}
-	return s.generating
-}
-
-// outputTabLabel returns the Output tab's title with the session-state
-// hint: "Output (generating...)" while the model is actively generating,
-// "Output (done)" after the session ends, and "Output" otherwise. The
-// highlight result reports whether the title should be drawn in
-// tabActiveLabelFg. Callers must hold mu (render does) or be
-// single-threaded. See TheoryOfTUI.
-func (s *tuiState) outputTabLabel() (label string, highlight bool) {
-	label = tabNames[0]
-	switch {
-	case s.finished:
-		label = "Output (done)"
-	case s.requesting():
-		label = "Output (generating...)"
-		highlight = true
-	}
-	return
-}
-
-func (s *tuiState) parseSummaries(p []byte) {
-	s.parseBuf = append(s.parseBuf, p...)
-	for {
-		block, _, end, ok, err := blocks.ParseFirstBlock(s.parseBuf)
-		if err != nil {
-			// An unclosed or malformed block may still be streaming (its
-			// closing line has not arrived yet), so the buffer is kept while
-			// no complete block exists beyond the fragment's opening line.
-			// When a complete block does exist beyond it, the fragment cannot
-			// be a live block — its closing line would have arrived before
-			// that block's opening marker. Such a fragment is a truncated
-			// round, a malformed block, or prose that merely resembles an
-			// opener; skipping it un-wedges the buffer so summaries emitted
-			// after it are still extracted. See TheoryOfTUI.
-			if end > 0 && end < len(s.parseBuf) {
-				if _, _, _, tailOK, tailErr := blocks.ParseFirstBlock(s.parseBuf[end:]); tailErr == nil && tailOK {
-					s.parseBuf = s.parseBuf[end:]
-					continue
-				}
-			}
-			return // still streaming: wait for more output
-		}
-		if !ok {
-			// No block marker in the buffer. A block opener can be split
-			// across chunk boundaries at any byte position, so a trailing
-			// line that could become an opener ("<" or "<<"-prefixed) is
-			// retained until the next chunk completes it; otherwise the
-			// buffer holds only prose and is cleared. See TheoryOfTUI.
-			retain := 0
-			tail := s.parseBuf
-			if i := bytes.LastIndexByte(s.parseBuf, '\n'); i >= 0 {
-				tail = s.parseBuf[i+1:]
-			}
-			if len(tail) == 1 && tail[0] == '<' ||
-				len(tail) >= 2 && tail[0] == '<' && tail[1] == '<' {
-				retain = len(tail)
-			}
-			if retain > 0 {
-				s.parseBuf = s.parseBuf[len(s.parseBuf)-retain:]
-			} else {
-				s.parseBuf = nil
-			}
-			return
-		}
-		if block.Kind == "summary" {
-			body := strings.TrimSpace(block.Body)
-			if body != "" {
-				// A collapsed Summary tab expands automatically on the first
-				// summary block; the output text carrying the block
-				// already expanded the Output tab. See TheoryOfTUI.
-				if s.tabs.AutoExpand(1) {
-					s.scrolls[1].Follow = true
-				}
-				for _, line := range strings.Split(body, "\n") {
-					s.signals = append(s.signals, taiui.Line{Text: line})
-				}
-				s.signals = append(s.signals, taiui.Line{})
-				if len(s.signals) > maxTUISignals {
-					s.signals = append([]taiui.Line(nil), s.signals[len(s.signals)-maxTUISignals:]...)
-				}
-			}
-		}
-		s.parseBuf = s.parseBuf[end:]
-		if len(s.parseBuf) == 0 {
-			return
-		}
-	}
-}
-
-type tuiWriter struct{ t *TUI }
-
-type logsWriter struct{ t *TUI }
-
-func (w tuiWriter) Write(p []byte) (int, error) {
-	w.t.write(p)
-	w.t.notify()
-	return len(p), nil
-}
-
-func (w logsWriter) Write(p []byte) (int, error) {
-	w.t.writeLogs(p)
-	w.t.notify()
-	return len(p), nil
-}
-
-type TUI struct {
-	tuiState
 	tty      tty.Tty
 	screen   *taiui.TerminalScreen
 	updateCh chan struct{}
 	width    int
 	height   int
 	runErr   error
-	// baseScope is the dscope base scope for rendering. It is built once
-	// in newTUI and forked per render with the current root element, so
-	// the render hot path never constructs a fresh scope from scratch.
-	// The zero value (dscope.Universe) is a valid fallback: forking it
-	// is equivalent to dscope.New, so a TUI constructed without a base
-	// scope still renders correctly. See TheoryOfTUI.
-	baseScope taiui.Scope
 }
 
 func newTUI() (*TUI, error) {
@@ -481,29 +442,23 @@ func newTUI() (*TUI, error) {
 		width, height = ws.Width, ws.Height
 	}
 	return &TUI{
-		tuiState: tuiState{
-			output: taiui.NewLineBuffer(maxTUILines),
-			logs:   taiui.NewStringBuffer(maxTUILines),
-			tabs:   taiui.NewTabs(3),
-			// All tabs are collapsed by default; a tab expands automatically
-			// the first time content for it arrives, without changing the
-			// focus. The scroll offsets start at the tail sentinel so the
-			// first render sticks to the latest content. See TheoryOfTUI.
-			scrolls: [3]taiui.ScrollState{
-				{Offset: 1 << 30},
-				{Offset: 1 << 30},
-				{Offset: 1 << 30},
-			},
+		output: taiui.NewLineBuffer(maxTUILines),
+		logs:   taiui.NewStringBuffer(maxTUILines),
+		tabs:   taiui.NewTabs(3),
+		// All tabs are collapsed by default; a tab expands automatically
+		// the first time content for it arrives, without changing the
+		// focus. The scroll offsets start at the tail sentinel so the
+		// first render sticks to the latest content. See TheoryOfTUI.
+		scrolls: [3]taiui.ScrollState{
+			{Offset: 1 << 30},
+			{Offset: 1 << 30},
+			{Offset: 1 << 30},
 		},
 		tty:      t,
 		screen:   taiui.NewTerminalScreen(t, width, height),
 		updateCh: make(chan struct{}, 1),
 		width:    width,
 		height:   height,
-		// The base scope is built once and forked per render with the
-		// current root element, so the render hot path never constructs
-		// a fresh scope from scratch. See TheoryOfTUI.
-		baseScope: taiui.NewBaseScope(),
 	}, nil
 }
 
@@ -804,121 +759,72 @@ func (t *TUI) scrollTo(top int) {
 	t.scrolls[idx].ScrollTo(top)
 }
 
+// render presents the current state through a fresh dscope view. Every
+// display state piece is declared as a provider in TUIView; render forks
+// the current state values into a scope constructed from TUIView, and
+// dscope recomputes the derived providers (Displays, panels, Root) from
+// their declared dependencies. No dirty flags or change tracking are
+// needed. Scroll offsets are updated against the freshly derived display
+// lengths before the scroll providers are forked, so the panels read
+// post-update offsets. See TheoryOfTUI.
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	outputLines := t.output.Lines()
-	logsLines := t.logs.Lines()
-	height := t.height
-	if height < 1 {
-		height = 1
-	}
-	width := t.width
-	if width < 1 {
-		width = 1
+	// The terminal size is clamped so the layout always has a usable
+	// extent; the clamped values flow into the provider tree via TUISize.
+	width := max(t.width, 1)
+	height := max(t.height, 1)
+	size := TUISize{Width: width, Height: height}
+	tabs := TUITabs{
+		Expanded:      [3]bool(t.tabs.Expanded),
+		Focus:         t.tabs.Focus,
+		SplitVertical: t.tabs.SplitVertical,
 	}
 
-	// Compute the panel box of each tab. Collapsed tabs take one column
-	// (vertical split) or one row (horizontal split); expanded tabs share
-	// the remaining space proportionally to their weights. See
-	// taiui.Tabs.Boxes and TheoryOfTUI.
-	panelBoxes := t.tabs.Boxes(width, height)
+	// Fork the raw state values as providers into a fresh view scope. The
+	// content slices are copied so later appends to the display buffers do
+	// not alias the forked values. See TheoryOfTUI.
+	var scope taiui.Scope = dscope.New(new(TUIView))
+	scope = scope.Fork(
+		func() TUISize { return size },
+		func() TUITabs { return tabs },
+		func() TUIOutputLines {
+			return TUIOutputLines(append([]taiui.Line(nil), t.output.Lines()...))
+		},
+		func() TUILogsLines {
+			return TUILogsLines(append([]string(nil), t.logs.Lines()...))
+		},
+		func() TUISignals {
+			return TUISignals(append([]taiui.Line(nil), t.signals...))
+		},
+	)
 
-	// Render each tab: expanded tabs show the label strip and scroll
-	// view; collapsed tabs show a thin strip with the key and title.
-	// The focused tab occupies three times the space of each non-focused tab.
-	// See TheoryOfTUI.
-	//
-	// The logs tab alternates line backgrounds derived from its tab
-	// background, so consecutive log entries are visually distinct. The
-	// base is the focused or unfocused tab background, whichever the
-	// logs tab currently has. See taiui.PlainLines.
-	logsBase := panelStyle.BaseBG
-	if t.tabs.Focus == 2 {
-		logsBase = panelStyle.FocusBG
-	}
-	contentByTab := [3][]taiui.Line{
-		outputLines,
-		t.signals,
-		taiui.PlainLines(logsLines, logsBase),
-	}
-	var panels []taiui.Element
+	// Resolve the derived displays so the scroll offsets below update
+	// against the FRESH display lengths. See TheoryOfTUI.
+	displays := dscope.Get[TUIDisplays](scope)
+
+	// Update the authoritative scroll offsets against the fresh display
+	// lengths. Collapsed (or degenerate) tabs are skipped: their scroll
+	// state stays frozen until they expand. See TheoryOfTUI.
+	boxes := t.tabs.Boxes(width, height)
 	for idx := 0; idx < 3; idx++ {
-		box := panelBoxes[idx]
-		if box.Width() <= 0 || box.Height() <= 0 {
+		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
 		}
-		if !t.tabs.Expanded[idx] {
-			panels = append(panels, taiui.CollapsedPanel(
-				box,
-				fmt.Sprintf("%d %s", idx+1, tabNames[idx]),
-				t.tabs.Focus == idx,
-				panelStyle,
-			))
-			continue
-		}
-		// Each tab's content width reserves one column for its scrollbar,
-		// matching the scroll's visible-width rendering. In the weighted
-		// layout the tabs have different widths — the focused tab is three
-		// times as wide as the others — so each tab's content wraps at its
-		// own width. See TheoryOfTUI.
-		tabContentWidth := max(box.Width()-1, 1)
-		display := taiui.WrapLinesColored(contentByTab[idx], tabContentWidth)
-
-		// The scroll offset is clamped against the ACTUAL scroll view height
-		// — the panel height minus the one-row label strip. In horizontal
-		// split (stacked) each panel is height/N tall, so its scroll view is
-		// far shorter than a full-height pane; clamping against a full-height
-		// pane would stop the scroll before the content tail became visible.
-		// While a tab follows the latest content, its offset is stuck to the
-		// newest row before clamping; a view manually placed at the latest
-		// row resumes following. See TheoryOfTUI.
-		paneHeight := max(box.Height()-1, 1)
-		t.scrolls[idx].Update(len(display), paneHeight)
-
-		label := tabNames[idx]
-		highlight := false
-		if idx == 0 {
-			// The Output tab's title carries the session-state hint:
-			// "generating..." while the model is actively working and
-			// "(done)" after the session ends. The generating hint also
-			// switches the title to the active-request highlight color.
-			// See TheoryOfTUI.
-			label, highlight = t.outputTabLabel()
-		}
-		panels = append(panels, taiui.Panel(
-			box,
-			label,
-			highlight,
-			display,
-			t.scrolls[idx].Offset,
-			t.tabs.Focus == idx,
-			t.scrolls[idx].Follow,
-			panelStyle,
-		))
+		t.scrolls[idx].Update(len(displays[idx]), max(boxes[idx].Height()-1, 1))
 	}
 
-	overlaySpecs := make([]any, len(panels))
-	for i, p := range panels {
-		overlaySpecs[i] = p
-	}
-	if t.confirmQuit {
-		// A pending quit confirmation draws a confirmation bar over the
-		// bottom row of the screen, on top of every tab, so it is always
-		// visible. The first quit key press sets confirmQuit; a second
-		// quit key press quits, and any other key cancels. See
-		// TheoryOfTUI.
-		overlaySpecs = append(overlaySpecs, taiui.Rect(
-			taiui.Box{Top: height - 1, Left: 0, Bottom: height, Right: width},
-			taiui.Fill(true),
-			taiui.BGColor(taiui.HexColor(0x800000)),
-			taiui.Bold(true),
-			taiui.Text(" Quit? Press q again to confirm, any other key to cancel "),
-		))
-	}
-	root := taiui.Root{Element: taiui.Overlay(overlaySpecs...)}
-	taiui.Render(t.baseScope.Fork(func() taiui.Root { return root }), t.screen)
+	// Fork the scrolls and the session flags, then present the view.
+	// See TheoryOfTUI.
+	scope = scope.Fork(
+		func() TUIScrolls { return TUIScrolls(t.scrolls) },
+		func() TUIFinished { return TUIFinished(t.finished) },
+		func() TUIGenerating { return TUIGenerating(t.generating) },
+		func() TUIConfirmQuit { return TUIConfirmQuit(t.confirmQuit) },
+	)
+
+	taiui.Render(scope, t.screen)
 }
 
 var (

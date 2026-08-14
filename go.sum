@@ -96,8 +96,8 @@ github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 h1:Mckui8
 github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5/go.mod h1:JSbkp0BviKovYYt9XunS95M3mLPibE9bGg+Y95DsEEY=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
-github.com/reusee/dscope v0.0.0-20260811023023-5846d01453f6 h1:Y/ZgLUh8oHMC4PsYOrKMq7ANLrasTqY38jODn1eZGeU=
-github.com/reusee/dscope v0.0.0-20260811023023-5846d01453f6/go.mod h1:JtHKpPh9/rknocu2RAouG90FkXc+nPmvG5matoIrJtw=
+github.com/reusee/dscope v0.0.0-20260813171226-187f42d2c03f h1:A2INP6DcwIc+zNH3hpMrvU/13v1u8hakssuil16bwFY=
+github.com/reusee/dscope v0.0.0-20260813171226-187f42d2c03f/go.mod h1:JtHKpPh9/rknocu2RAouG90FkXc+nPmvG5matoIrJtw=
 github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104 h1:GfPb/TN1XHHuPsaCwTt2rxXlbekrbeBzjlF0jLOuHeY=
 github.com/reusee/e5 v0.0.0-20240926110821-c066ba825104/go.mod h1:L24cJjkVA/jMvaVhLLb1dY+S/BR48tEL2a4qFqXHXso=
 github.com/reusee/pr3 v0.0.0-20240520031754-49012a37a83e h1:zruB8DlyrCAps7tvlFcM1O/ld/KL21BSx5TcVexqUQI=

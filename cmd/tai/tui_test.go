@@ -15,8 +15,13 @@ import (
 	"github.com/reusee/tai/taiui"
 )
 
-func newTUIState() *tuiState {
-	return &tuiState{
+// newTUIForTest constructs a TUI with the display state initialized for
+// tests: small line buffers, no terminal attached, and default tabs and
+// scrolls. Tests that render set t.screen, t.width, and t.height before
+// calling render(); rendering itself forks the current state values into a
+// fresh dscope view scope. See TheoryOfTUI.
+func newTUIForTest() *TUI {
+	return &TUI{
 		output:  taiui.NewLineBuffer(0),
 		logs:    taiui.NewStringBuffer(0),
 		tabs:    taiui.NewTabs(3),
@@ -51,16 +56,16 @@ func TestTuiFlagHandle(t *testing.T) {
 }
 
 func TestTuiStateWriteLines(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("hello\nworld\n"))
-	lines := st.output.Lines()
+	tui := newTUIForTest()
+	tui.write([]byte("hello\nworld\n"))
+	lines := tui.output.Lines()
 	if len(lines) != 2 || lines[0].Text != "hello" || lines[1].Text != "world" {
 		t.Fatalf("unexpected lines: %v", lines)
 	}
 }
 
 func TestDisplayChatInput(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	displayChatInput(tui, flags.Chats{"hello", "world"})
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -86,7 +91,7 @@ func TestDisplayChatInput(t *testing.T) {
 }
 
 func TestDisplayChatInputEmpty(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	displayChatInput(tui, nil)
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -99,38 +104,47 @@ func TestDisplayChatInputEmpty(t *testing.T) {
 }
 
 func TestTuiStateWriteLogs(t *testing.T) {
-	st := newTUIState()
-	st.writeLogs([]byte("hello\nworld\n"))
-	logs := st.logs.Lines()
+	tui := newTUIForTest()
+	tui.writeLogs([]byte("hello\nworld\n"))
+	logs := tui.logs.Lines()
 	if len(logs) != 2 || logs[0] != "hello" || logs[1] != "world" {
 		t.Fatalf("unexpected logs: %v", logs)
 	}
 }
 
 func TestTuiStateRequesting(t *testing.T) {
-	st := newTUIState()
-	if st.requesting() {
-		t.Fatal("expected not requesting with no activity")
+	tui := newTUIForTest()
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
+		t.Fatalf("expected plain Output label before any activity, got label %q highlight %v", label, highlight)
 	}
-	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if !st.requesting() {
-		t.Fatal("expected requesting after the generating log")
+	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
+	if !tui.generating {
+		t.Fatal("expected generating after the generating log")
 	}
-	st.finishReason("stop")
-	if st.requesting() {
-		t.Fatal("expected not requesting after the finish reason")
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
+		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
-	st.finished = true
-	if st.requesting() {
-		t.Fatal("expected not requesting when finished")
+	tui.finishReason("stop")
+	if tui.generating {
+		t.Fatal("expected not generating after the finish reason")
+	}
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
+		t.Fatalf("expected plain Output label after the finish reason, got label %q highlight %v", label, highlight)
+	}
+	tui.finished = true
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (done)" || highlight {
+		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
 	}
 }
 
 func TestTuiStateRequestingLogsWrite(t *testing.T) {
-	st := newTUIState()
-	st.writeLogs([]byte("msg=\"generating\"\n"))
-	if !st.requesting() {
-		t.Fatal("expected requesting after log write")
+	tui := newTUIForTest()
+	tui.writeLogs([]byte("msg=\"generating\"\n"))
+	if !tui.generating {
+		t.Fatal("expected generating after log write")
+	}
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
+		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
 }
 
@@ -154,35 +168,38 @@ func TestIsGeneratingLog(t *testing.T) {
 }
 
 func TestTuiStateRequestingClearedByFinish(t *testing.T) {
-	st := newTUIState()
-	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if !st.requesting() {
-		t.Fatal("expected requesting after the generating log")
+	tui := newTUIForTest()
+	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
+	if !tui.generating {
+		t.Fatal("expected generating after the generating log")
 	}
-	st.finishReason("stop")
-	if st.requesting() {
-		t.Fatal("expected not requesting after the finish reason")
+	tui.finishReason("stop")
+	if tui.generating {
+		t.Fatal("expected not generating after the finish reason")
+	}
+	if label, _ := outputTabLabel(tui.finished, tui.generating); label != "Output" {
+		t.Fatalf("expected plain Output label after the finish reason, got %q", label)
 	}
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
-	st := newTUIState()
-	if label, highlight := st.outputTabLabel(); label != "Output" || highlight {
+	tui := newTUIForTest()
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
 	}
-	st.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if label, highlight := st.outputTabLabel(); label != "Output (generating...)" || !highlight {
+	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
-	st.finished = true
-	if label, highlight := st.outputTabLabel(); label != "Output (done)" || highlight {
+	tui.finished = true
+	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (done)" || highlight {
 		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
 	}
 }
 
 func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
-		label, highlight := tui.outputTabLabel()
+		label, highlight := outputTabLabel(tui.finished, tui.generating)
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
 			label, highlight,
@@ -199,7 +216,7 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 		return screen.frames[len(screen.frames)-1]
 	}
 
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	frame := renderTitle(tui, false)
 	cell := frame.Cells[2]
@@ -211,7 +228,7 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 		t.Fatalf("expected highlighted title foreground %#x %#x %#x, got %#x %#x %#x", wantR, wantG, wantB, r, g, b)
 	}
 
-	idle := &TUI{tuiState: *newTUIState()}
+	idle := newTUIForTest()
 	idleFrame := renderTitle(idle, false)
 	idleCell := idleFrame.Cells[2]
 	if idleCell.Rune != 'O' {
@@ -223,28 +240,28 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 }
 
 func TestTuiStateLogsPartialLines(t *testing.T) {
-	st := newTUIState()
-	st.writeLogs([]byte("foo"))
-	st.writeLogs([]byte("bar\n"))
-	logs := st.logs.Lines()
+	tui := newTUIForTest()
+	tui.writeLogs([]byte("foo"))
+	tui.writeLogs([]byte("bar\n"))
+	logs := tui.logs.Lines()
 	if len(logs) != 1 || logs[0] != "foobar" {
 		t.Fatalf("unexpected logs: %v", logs)
 	}
-	if st.logs.HasPartial() {
-		t.Fatalf("unexpected partial: %q", st.logs.Lines())
+	if tui.logs.HasPartial() {
+		t.Fatalf("unexpected partial: %q", tui.logs.Lines())
 	}
-	st.writeLogs([]byte("baz"))
-	if !st.logs.HasPartial() {
+	tui.writeLogs([]byte("baz"))
+	if !tui.logs.HasPartial() {
 		t.Fatal("expected partial line")
 	}
-	lines := st.logs.Lines()
+	lines := tui.logs.Lines()
 	if len(lines) != 2 || lines[1] != "baz" {
 		t.Fatalf("unexpected rendered log lines: %v", lines)
 	}
 }
 
 func TestTuiLogsWriterWritesToLogs(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	writer := logsWriter{t: tui}
 	if _, err := writer.Write([]byte("hello\n")); err != nil {
 		t.Fatal(err)
@@ -327,75 +344,75 @@ func TestColoredTextAlternatingBackgrounds(t *testing.T) {
 }
 
 func TestTuiStatePartialLines(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("foo"))
-	st.write([]byte("bar\n"))
-	lines := st.output.Lines()
+	tui := newTUIForTest()
+	tui.write([]byte("foo"))
+	tui.write([]byte("bar\n"))
+	lines := tui.output.Lines()
 	if len(lines) != 1 || lines[0].Text != "foobar" {
 		t.Fatalf("unexpected lines: %v", lines)
 	}
-	if st.output.HasPartial() {
-		t.Fatalf("unexpected partial: %q", st.output.Lines())
+	if tui.output.HasPartial() {
+		t.Fatalf("unexpected partial: %q", tui.output.Lines())
 	}
-	st.write([]byte("baz"))
-	if !st.output.HasPartial() {
+	tui.write([]byte("baz"))
+	if !tui.output.HasPartial() {
 		t.Fatal("expected partial line")
 	}
-	lines = st.output.Lines()
+	lines = tui.output.Lines()
 	if len(lines) != 2 || lines[1].Text != "baz" {
 		t.Fatalf("unexpected rendered lines: %v", lines)
 	}
 }
 
 func TestTuiStateParsesSummaries(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n"))
-	if len(st.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n"))
+	if len(tui.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "- one" || st.signals[1].Text != "- two" || st.signals[2].Text != "" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	if tui.signals[0].Text != "- one" || tui.signals[1].Text != "- two" || tui.signals[2].Text != "" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesAcrossChunks(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<徕珑龘 <summary>\n- one\n- tw"))
-	st.write([]byte("o\n徕珑龘\n"))
-	if len(st.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<徕珑龘 <summary>\n- one\n- tw"))
+	tui.write([]byte("o\n徕珑龘\n"))
+	if len(tui.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "- one" || st.signals[1].Text != "- two" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	if tui.signals[0].Text != "- one" || tui.signals[1].Text != "- two" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
-	st := newTUIState()
+	tui := newTUIForTest()
 	text := "<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n" +
 		"<<徕珑龘 <summary>\n- s\n徕珑龘\n"
-	st.write([]byte(text))
-	if len(st.signals) != 2 || st.signals[0].Text != "- s" || st.signals[1].Text != "" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	tui.write([]byte(text))
+	if len(tui.signals) != 2 || tui.signals[0].Text != "- s" || tui.signals[1].Text != "" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
-	st.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-	if len(st.signals) != 2 {
-		t.Fatalf("expected 2 signal lines, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
+	tui.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+	if len(tui.signals) != 2 {
+		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "- done" || st.signals[1].Text != "" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	if tui.signals[0].Text != "- done" || tui.signals[1].Text != "" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiOutputPreservesIndentation(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("    func main() {\n        fmt.Println(1)\n    }\n"))
-	lines := st.output.Lines()
+	tui := newTUIForTest()
+	tui.write([]byte("    func main() {\n        fmt.Println(1)\n    }\n"))
+	lines := tui.output.Lines()
 	wrapped := taiui.WrapLinesColored(lines, 80)
 	want := []string{
 		"    func main() {",
@@ -413,61 +430,61 @@ func TestTuiOutputPreservesIndentation(t *testing.T) {
 }
 
 func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
-	if len(st.signals) != 0 {
-		t.Fatalf("expected no signals while the block is incomplete, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
+	if len(tui.signals) != 0 {
+		t.Fatalf("expected no signals while the block is incomplete, got %v", tui.signals)
 	}
-	st.write([]byte("\n黿鼍爩\n"))
-	if len(st.signals) != 2 || st.signals[0].Text != "- not yet complete" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	tui.write([]byte("\n黿鼍爩\n"))
+	if len(tui.signals) != 2 || tui.signals[0].Text != "- not yet complete" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
 	t.Run("PartialDoubleLeftChevrons", func(t *testing.T) {
-		st := newTUIState()
-		st.write([]byte("prose\n<<"))
-		st.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.signals) != 2 || st.signals[0].Text != "- done" {
-			t.Fatalf("unexpected signals: %v", st.signals)
+		tui := newTUIForTest()
+		tui.write([]byte("prose\n<<"))
+		tui.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
+			t.Fatalf("unexpected signals: %v", tui.signals)
 		}
 	})
 	t.Run("SingleLeftChevron", func(t *testing.T) {
-		st := newTUIState()
-		st.write([]byte("prose\n<"))
-		st.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
-		if len(st.signals) != 2 || st.signals[0].Text != "- done" {
-			t.Fatalf("unexpected signals: %v", st.signals)
+		tui := newTUIForTest()
+		tui.write([]byte("prose\n<"))
+		tui.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
+			t.Fatalf("unexpected signals: %v", tui.signals)
 		}
 	})
 }
 
 func TestTuiStateCollectsFinishSignals(t *testing.T) {
-	st := newTUIState()
-	st.finishReason("stop")
-	if len(st.signals) != 1 {
-		t.Fatalf("expected 1 finish signal, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.finishReason("stop")
+	if len(tui.signals) != 1 {
+		t.Fatalf("expected 1 finish signal, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "[Finish: stop]" {
-		t.Fatalf("unexpected signal: %q", st.signals[0].Text)
+	if tui.signals[0].Text != "[Finish: stop]" {
+		t.Fatalf("unexpected signal: %q", tui.signals[0].Text)
 	}
 }
 
 func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
-	st.finishReason("stop")
-	if len(st.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	tui.finishReason("stop")
+	if len(tui.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "- done" || st.signals[1].Text != "" || st.signals[2].Text != "[Finish: stop]" {
-		t.Fatalf("unexpected signals: %v", st.signals)
+	if tui.signals[0].Text != "- done" || tui.signals[1].Text != "" || tui.signals[2].Text != "[Finish: stop]" {
+		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
 }
 
 func TestTuiStateFinishSignalExpandsSummaryTab(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -605,7 +622,7 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 }
 
 func TestTUINumberKeySemantics(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.AutoExpand(0)
 	tui.tabs.AutoExpand(1)
 	if tui.tabs.Focus != 0 {
@@ -654,7 +671,7 @@ func TestTUINumberKeySemantics(t *testing.T) {
 }
 
 func TestTuiStateCollapseFocusLastExpanded(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.AutoExpand(0)
 	tui.tabs.AutoExpand(1)
 	tui.tabs.AutoExpand(2)
@@ -676,7 +693,7 @@ func TestTuiStateCollapseFocusLastExpanded(t *testing.T) {
 }
 
 func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.AutoExpand(0)
 	tui.tabs.AutoExpand(1)
 	tui.scrolls[0].Follow = false
@@ -704,7 +721,7 @@ func TestTUINumberKeySwitchKeepsFollowState(t *testing.T) {
 }
 
 func TestTUICycleFocusSkipsCollapsedTabs(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, true}
 	tui.tabs.Focus = 0
 	tui.cycleFocus()
@@ -858,7 +875,7 @@ func TestTabPanelBoxClampMatchesScrollView(t *testing.T) {
 }
 
 func TestTUISticksToTail(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -902,7 +919,7 @@ func TestTUISticksToTail(t *testing.T) {
 }
 
 func TestTUIReopenResumesFollow(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -958,7 +975,7 @@ func TestTUIReopenResumesFollow(t *testing.T) {
 }
 
 func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -1018,7 +1035,7 @@ func TestTUIStopsFollowingWhenScrolledAway(t *testing.T) {
 }
 
 func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -1058,7 +1075,7 @@ func TestTUIPageScrollUsesPaneHeight(t *testing.T) {
 }
 
 func TestTUIDownAtEndKeepsFollow(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -1085,7 +1102,7 @@ func TestTUIDownAtEndKeepsFollow(t *testing.T) {
 
 func TestTUIQuitConfirmation(t *testing.T) {
 	t.Run("FirstPressShowsConfirmationSecondPressQuits", func(t *testing.T) {
-		tui := &TUI{tuiState: *newTUIState()}
+		tui := newTUIForTest()
 		if tui.handleQuitKey() {
 			t.Fatal("the first quit key press must not quit")
 		}
@@ -1098,7 +1115,7 @@ func TestTUIQuitConfirmation(t *testing.T) {
 	})
 
 	t.Run("AnyOtherKeyCancels", func(t *testing.T) {
-		tui := &TUI{tuiState: *newTUIState()}
+		tui := newTUIForTest()
 		tui.handleQuitKey()
 		if !tui.confirmQuit {
 			t.Fatal("expected the confirmation state after the first quit key")
@@ -1114,7 +1131,7 @@ func TestTUIQuitConfirmation(t *testing.T) {
 
 	t.Run("ConfirmationBarRendered", func(t *testing.T) {
 		var sb strings.Builder
-		tui := &TUI{tuiState: *newTUIState()}
+		tui := newTUIForTest()
 		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
 		tui.width = 80
 		tui.height = 10
@@ -1132,39 +1149,27 @@ func TestTUIQuitConfirmation(t *testing.T) {
 	})
 }
 
-func TestTUIRenderBaseScope(t *testing.T) {
-	// The render hot path forks a pre-built dscope base scope with the
-	// current root element instead of constructing a fresh scope from
-	// scratch. The zero-value base scope (dscope.Universe) is a valid
-	// fallback: forking it is equivalent to dscope.New, so a TUI
-	// constructed without a base scope still renders correctly.
-	// See TheoryOfTUI.
-	render := func(t *testing.T, baseScope taiui.Scope) string {
-		t.Helper()
-		var sb strings.Builder
-		tui := &TUI{tuiState: *newTUIState()}
-		tui.baseScope = baseScope
-		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
-		tui.width = 80
-		tui.height = 10
-		tui.write([]byte("hello\n"))
-		tui.render()
-		return sb.String()
+func TestTUIRenderBuildsViewFromState(t *testing.T) {
+	// render() forks the current TUI state values into a fresh dscope view
+	// scope on every call and lets the provider graph derive the panels;
+	// there is no cached scope or lazy initialization to manage. A second
+	// render after new output shows the updated content. See TheoryOfTUI.
+	var sb strings.Builder
+	tui := newTUIForTest()
+	tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
+	tui.width = 80
+	tui.height = 10
+	tui.write([]byte("hello\n"))
+	tui.render()
+	if !strings.Contains(sb.String(), "hello") {
+		t.Fatalf("expected rendered output, got: %q", sb.String())
 	}
-
-	t.Run("Prebuilt", func(t *testing.T) {
-		output := render(t, taiui.NewBaseScope())
-		if !strings.Contains(output, "hello") {
-			t.Fatalf("expected rendered output, got: %q", output)
-		}
-	})
-
-	t.Run("ZeroValueFallback", func(t *testing.T) {
-		output := render(t, taiui.Scope{})
-		if !strings.Contains(output, "hello") {
-			t.Fatalf("expected rendered output, got: %q", output)
-		}
-	})
+	sb.Reset()
+	tui.write([]byte("world\n"))
+	tui.render()
+	if !strings.Contains(sb.String(), "world") {
+		t.Fatalf("expected updated rendered output, got: %q", sb.String())
+	}
 }
 
 func TestTabPanelBoxWeighted(t *testing.T) {
@@ -1365,7 +1370,7 @@ func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 }
 
 func TestTuiStateAutoExpandTabs(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.write([]byte("model output\n"))
 	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on streamed output")
@@ -1393,7 +1398,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("expected the summary signals, got %v", tui.signals)
 	}
 
-	tui2 := &TUI{tuiState: *newTUIState()}
+	tui2 := newTUIForTest()
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
@@ -1404,7 +1409,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 }
 
 func TestTuiStateAutoExpandPreservesFocus(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.tabs.Expanded = []bool{true, false, false}
 	tui.tabs.HasContent = []bool{true, false, false}
 	tui.tabs.Focus = 0
@@ -1425,21 +1430,21 @@ func TestTuiStateAutoExpandPreservesFocus(t *testing.T) {
 }
 
 func TestTuiStateEmptyWriteDoesNotExpandTabs(t *testing.T) {
-	st := newTUIState()
-	st.write(nil)
-	st.writeLogs(nil)
+	tui := newTUIForTest()
+	tui.write(nil)
+	tui.writeLogs(nil)
 	for i := 0; i < 3; i++ {
-		if st.tabs.Expanded[i] {
+		if tui.tabs.Expanded[i] {
 			t.Fatalf("tab %d must not expand on empty writes", i)
 		}
 	}
-	if st.tabs.Focus != -1 {
-		t.Fatalf("expected no focus change on empty writes, got %d", st.tabs.Focus)
+	if tui.tabs.Focus != -1 {
+		t.Fatalf("expected no focus change on empty writes, got %d", tui.tabs.Focus)
 	}
 }
 
 func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	tui.write([]byte("first output\n"))
 	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on first content")
@@ -1455,7 +1460,7 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 }
 
 func TestWithTUIOutputObserver(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	var gotOpts loops.RunOptions
 	run := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		gotOpts = opts
@@ -1531,7 +1536,8 @@ func TestWithTUIOutputObserver(t *testing.T) {
 }
 
 func TestTUICaptureContentNotifies(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState(), updateCh: make(chan struct{}, 1)}
+	tui := newTUIForTest()
+	tui.updateCh = make(chan struct{}, 1)
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	if _, err := s.AppendContent(&generators.Content{
@@ -1567,7 +1573,7 @@ func TestRoleColor(t *testing.T) {
 }
 
 func TestTUICaptureContentRoleColors(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	for _, c := range []struct {
@@ -1615,7 +1621,7 @@ func TestTUICaptureContentRoleColors(t *testing.T) {
 }
 
 func TestTUICaptureContentThoughtColor(t *testing.T) {
-	tui := &TUI{tuiState: *newTUIState()}
+	tui := newTUIForTest()
 	state := generators.NewPrompts("", nil)
 	s := tuiOutputState{upstream: state, tui: tui}
 	if _, err := s.AppendContent(&generators.Content{
@@ -1652,24 +1658,24 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 }
 
 func TestTuiStateFinishReasonColor(t *testing.T) {
-	st := newTUIState()
-	st.finishReason("stop")
-	if len(st.signals) != 1 {
-		t.Fatalf("expected 1 finish signal, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.finishReason("stop")
+	if len(tui.signals) != 1 {
+		t.Fatalf("expected 1 finish signal, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "[Finish: stop]" || st.signals[0].Color != outputColorLogLine {
-		t.Fatalf("unexpected signal: %+v", st.signals[0])
+	if tui.signals[0].Text != "[Finish: stop]" || tui.signals[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected signal: %+v", tui.signals[0])
 	}
 }
 
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
-	st := newTUIState()
-	st.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
-	if len(st.signals) != 2 {
-		t.Fatalf("expected 2 signal lines, got %v", st.signals)
+	tui := newTUIForTest()
+	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	if len(tui.signals) != 2 {
+		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
 	}
-	if st.signals[0].Text != "- done" || st.signals[0].Color != taiui.NoColor {
-		t.Fatalf("unexpected signal: %+v", st.signals[0])
+	if tui.signals[0].Text != "- done" || tui.signals[0].Color != taiui.NoColor {
+		t.Fatalf("unexpected signal: %+v", tui.signals[0])
 	}
 }
 
