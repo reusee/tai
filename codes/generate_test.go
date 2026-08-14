@@ -530,6 +530,7 @@ type summarizeRetryMockGenerator struct {
 	calls     int
 	responses []string
 	errs      []error
+	thoughts  []string
 }
 
 func (g *summarizeRetryMockGenerator) Spec() generators.Spec {
@@ -547,12 +548,15 @@ func (g *summarizeRetryMockGenerator) Generate(ctx context.Context, state genera
 		return state, err
 	}
 	response := g.responses[g.calls]
+	var parts []generators.Part
+	if g.calls < len(g.thoughts) && g.thoughts[g.calls] != "" {
+		parts = append(parts, generators.Thought(g.thoughts[g.calls]))
+	}
+	parts = append(parts, generators.Text(response))
 	g.calls++
 	return state.AppendContent(&generators.Content{
-		Role: generators.RoleModel,
-		Parts: []generators.Part{
-			generators.Text(response),
-		},
+		Role:  generators.RoleModel,
+		Parts: parts,
 	})
 }
 
@@ -748,11 +752,12 @@ func TestSummarizeIncompleteOutputProvider(t *testing.T) {
 }
 
 // fakeRecorderForSummarize is a minimal InteractionRecorder for testing
-// that summarize requests are recorded. It captures contents appended via
-// Content.
+// that summarize requests, responses, and decision events are recorded.
+// Contents and events are tracked separately so tests can assert both.
 type fakeRecorderForSummarize struct {
 	enabled  bool
 	contents []*generators.Content
+	events   []string
 }
 
 func TestSummarizeIncompleteOutputRecords(t *testing.T) {
@@ -786,6 +791,10 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "summary") {
 			t.Fatalf("expected second content to include the summary response, got %v", rec.contents[1].Parts[0])
 		}
+		// A successful attempt records no decision event.
+		if len(rec.events) != 0 {
+			t.Fatalf("expected no decision events on success, got %v", rec.events)
+		}
 	})
 
 	t.Run("Disabled", func(t *testing.T) {
@@ -802,6 +811,9 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		if len(rec.contents) != 0 {
 			t.Fatalf("expected no recorded contents when disabled, got %d", len(rec.contents))
+		}
+		if len(rec.events) != 0 {
+			t.Fatalf("expected no recorded events when disabled, got %v", rec.events)
 		}
 	})
 
@@ -841,7 +853,140 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		if rec.contents[3].Role != generators.RoleModel {
 			t.Fatalf("expected content 3 role model, got %s", rec.contents[3].Role)
 		}
+		// The failed generation attempt records its reason as a decision
+		// event with the attempt number.
+		if len(rec.events) != 1 {
+			t.Fatalf("expected 1 decision event, got %d: %v", len(rec.events), rec.events)
+		}
+		if !strings.Contains(rec.events[0], "generation error") || !strings.Contains(rec.events[0], "failure") {
+			t.Fatalf("unexpected decision event: %s", rec.events[0])
+		}
 	})
+}
+
+func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
+	// When the summarize response cannot be parsed into summary and
+	// continue blocks, the raw response must be recorded into the same
+	// session's interaction record together with the failure reason as a
+	// decision event, so the model's actual output is visible for
+	// optimizing the summarization prompt. See
+	// TheoryOfIncompleteOutputSummarization.
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	recordedResponses := func(rec *fakeRecorderForSummarize) []string {
+		var responses []string
+		for _, c := range rec.contents {
+			if c.Role != generators.RoleModel {
+				continue
+			}
+			if text, ok := c.Parts[0].(generators.Text); ok {
+				responses = append(responses, string(text))
+			}
+		}
+		return responses
+	}
+
+	t.Run("MissingBlocksRecordsRawResponseAndReason", func(t *testing.T) {
+		gen := &summarizeRetryMockGenerator{
+			responses: []string{
+				"no blocks in this response",
+				"<<徕珑龘 <summary>\nonly the summary block\n徕珑龘\n",
+				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			},
+		}
+		rec := &fakeRecorderForSummarize{enabled: true}
+		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retrySummary == nil {
+			t.Fatal("expected retry summary")
+		}
+
+		// Each raw response is recorded before parsing, including the two
+		// that failed to produce both blocks.
+		responses := recordedResponses(rec)
+		if len(responses) != 3 {
+			t.Fatalf("expected 3 recorded responses, got %d: %v", len(responses), responses)
+		}
+		if !strings.Contains(responses[0], "no blocks in this response") {
+			t.Fatalf("expected the first raw response recorded, got %q", responses[0])
+		}
+		if !strings.Contains(responses[1], "only the summary block") {
+			t.Fatalf("expected the second raw response recorded, got %q", responses[1])
+		}
+
+		// Each failed attempt records its reason as a decision event,
+		// stating which block was missing.
+		if len(rec.events) != 2 {
+			t.Fatalf("expected 2 decision events, got %d: %v", len(rec.events), rec.events)
+		}
+		if !strings.Contains(rec.events[0], "missing summary or continue block") ||
+			!strings.Contains(rec.events[0], "summary block found: false") {
+			t.Fatalf("unexpected first event: %s", rec.events[0])
+		}
+		if !strings.Contains(rec.events[1], "continue block found: false") {
+			t.Fatalf("unexpected second event: %s", rec.events[1])
+		}
+	})
+
+	t.Run("AllAttemptsFailRecordsFinalFailure", func(t *testing.T) {
+		gen := &summarizeRetryMockGenerator{
+			responses: []string{"one", "two", "three"},
+		}
+		rec := &fakeRecorderForSummarize{enabled: true}
+		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		if err == nil {
+			t.Fatal("expected error after all summarize attempts fail")
+		}
+		if retrySummary != nil {
+			t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+		}
+		if len(rec.events) != maxSummarizeRetries+1 {
+			t.Fatalf("expected %d decision events (one per attempt plus the final failure), got %d: %v",
+				maxSummarizeRetries+1, len(rec.events), rec.events)
+		}
+		last := rec.events[len(rec.events)-1]
+		if !strings.Contains(last, "summarize incomplete output failed after") {
+			t.Fatalf("expected the final failure event, got %s", last)
+		}
+	})
+}
+
+func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
+	// The Output capture buffer excludes thoughts, so the recorded
+	// response must append them separately: when a reasoning model puts
+	// its summary attempt into thoughts while the visible text fails to
+	// parse, the thoughts are the only signal of what the model actually
+	// produced. See TheoryOfIncompleteOutputSummarization.
+	gen := &summarizeRetryMockGenerator{
+		thoughts: []string{"the model reasoned about the summary here"},
+		responses: []string{
+			"",
+			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+		},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	rec := &fakeRecorderForSummarize{enabled: true}
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retrySummary == nil {
+		t.Fatal("expected retry summary")
+	}
+	var firstResponse string
+	for _, c := range rec.contents {
+		if c.Role == generators.RoleModel {
+			if text, ok := c.Parts[0].(generators.Text); ok {
+				firstResponse = string(text)
+			}
+			break
+		}
+	}
+	if !strings.Contains(firstResponse, "[thought]\nthe model reasoned about the summary here") {
+		t.Fatalf("expected the model thoughts in the recorded response, got %q", firstResponse)
+	}
 }
 
 func (f *fakeRecorderForSummarize) Enabled() bool { return f.enabled }
@@ -869,10 +1014,7 @@ func (f *fakeRecorderForSummarize) Block(blocks.Block) {}
 func (f *fakeRecorderForSummarize) ParseError(*blocks.BlockParseError) {}
 
 func (f *fakeRecorderForSummarize) Event(typ string, detail string) {
-	f.contents = append(f.contents, &generators.Content{
-		Role:  generators.RoleLog,
-		Parts: []generators.Part{generators.Text("[" + typ + "] " + detail)},
-	})
+	f.events = append(f.events, typ+": "+detail)
 }
 
 func (debugOutputMockGenerator) Spec() generators.Spec {

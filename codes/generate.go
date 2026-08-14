@@ -428,6 +428,11 @@ The package-level implementation remains a plain function so tests can
 call it directly.
 `
 
+// summarizeIncompleteOutput summarizes truncated or failed generation output
+// before retry. Each attempt's request input, raw model response (including
+// thoughts), and failure reason are written into the same session's
+// interaction record, so an unparseable response is diagnosable from the
+// transcript alone. See TheoryOfIncompleteOutputSummarization.
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	logger logs.Logger,
@@ -439,36 +444,33 @@ func summarizeIncompleteOutput(
 		return nil, nil
 	}
 
-	systemPrompt := retrySummarizationSystemPrompt
+	// recordContent and recordEvent write the summarize attempt's details
+	// into the same session's interaction record. The recorder is the one
+	// bound to the running session, so the entries land in the round that
+	// triggered the summarization.
+	recordContent := func(content *generators.Content) {
+		if recorder != nil && recorder.Enabled() {
+			recorder.Content(content)
+		}
+	}
+	recordEvent := func(format string, args ...any) {
+		if recorder != nil && recorder.Enabled() {
+			recorder.Event("decision", fmt.Sprintf(format, args...))
+		}
+	}
+
 	var lastErr error
 	for attempt := range maxSummarizeRetries {
-		var state generators.State
-		state = generators.NewPrompts(systemPrompt, []*generators.Content{
-			{
-				Role: generators.RoleUser,
-				Parts: []generators.Part{
-					generators.Text(incompleteText),
-				},
-			},
-		})
-		var buf bytes.Buffer
-		state = generators.NewOutput(state, &buf, false)
-		options := &generators.GenerateOptions{
-			NonStreaming: true,
-		}
-
 		// Record the summarize request. The input is recorded per attempt so
 		// the interaction transcript shows each retry of the summarization.
-		if recorder != nil && recorder.Enabled() {
-			recorder.Content(&generators.Content{
-				Role: generators.RoleUser,
-				Parts: []generators.Part{
-					generators.Text(fmt.Sprintf("Summarize request (attempt %d):\n\n%s", attempt+1, incompleteText)),
-				},
-			})
-		}
+		recordContent(&generators.Content{
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.Text(fmt.Sprintf("Summarize request (attempt %d):\n\n%s", attempt+1, incompleteText)),
+			},
+		})
 
-		_, err := generator.Generate(ctx, state, options)
+		outputText, thoughts, err := runSummarizeAttempt(ctx, generator, incompleteText)
 		if err != nil {
 			lastErr = err
 			logger.WarnContext(ctx, "summarize incomplete output: generation failed",
@@ -477,28 +479,28 @@ func summarizeIncompleteOutput(
 				"err", err,
 			)
 			// Record the failure so the transcript shows why the attempt failed.
-			if recorder != nil && recorder.Enabled() {
-				recorder.Content(&generators.Content{
-					Role: generators.RoleLog,
-					Parts: []generators.Part{
-						generators.Error{Error: err},
-					},
-				})
-			}
+			recordContent(&generators.Content{
+				Role: generators.RoleLog,
+				Parts: []generators.Part{
+					generators.Error{Error: err},
+				},
+			})
+			recordEvent("summarize attempt %d/%d failed: generation error: %v",
+				attempt+1, maxSummarizeRetries, err)
 			continue
 		}
-		outputText := buf.String()
 
 		// Record the summarize response. The raw output is recorded before
 		// parsing, so even a malformed response is visible in the transcript.
-		if recorder != nil && recorder.Enabled() {
-			recorder.Content(&generators.Content{
-				Role: generators.RoleModel,
-				Parts: []generators.Part{
-					generators.Text(fmt.Sprintf("Summarize response (attempt %d):\n\n%s", attempt+1, outputText)),
-				},
-			})
-		}
+		// The model's thoughts are appended because the capture buffer
+		// excludes them; when the response fails to parse they are often the
+		// only signal of what the model actually produced.
+		recordContent(&generators.Content{
+			Role: generators.RoleModel,
+			Parts: []generators.Part{
+				generators.Text(summarizeResponseDetail(attempt+1, outputText, thoughts)),
+			},
+		})
 
 		parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
 		if err != nil {
@@ -508,6 +510,8 @@ func summarizeIncompleteOutput(
 				"max_attempts", maxSummarizeRetries,
 				"err", err,
 			)
+			recordEvent("summarize attempt %d/%d failed: parse error: %v",
+				attempt+1, maxSummarizeRetries, err)
 			continue
 		}
 		var summary, continueContent string
@@ -530,6 +534,8 @@ func summarizeIncompleteOutput(
 			"attempt", attempt+1,
 			"max_attempts", maxSummarizeRetries,
 		)
+		recordEvent("summarize attempt %d/%d failed: response missing summary or continue block (summary block found: %v, continue block found: %v)",
+			attempt+1, maxSummarizeRetries, summary != "", continueContent != "")
 	}
 	if lastErr != nil {
 		err := fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
@@ -537,9 +543,75 @@ func summarizeIncompleteOutput(
 			"max_attempts", maxSummarizeRetries,
 			"err", err,
 		)
+		recordEvent("summarize incomplete output failed after %d attempts: %v", maxSummarizeRetries, lastErr)
 		return nil, err
 	}
 	return nil, fmt.Errorf("summarize incomplete output failed after %d attempts", maxSummarizeRetries)
+}
+
+// runSummarizeAttempt executes one summarize generation and returns the
+// captured output text together with the model's thoughts.
+func runSummarizeAttempt(
+	ctx context.Context,
+	generator generators.Generator,
+	incompleteText string,
+) (string, []string, error) {
+	var state generators.State
+	state = generators.NewPrompts(retrySummarizationSystemPrompt, []*generators.Content{
+		{
+			Role: generators.RoleUser,
+			Parts: []generators.Part{
+				generators.Text(incompleteText),
+			},
+		},
+	})
+	var buf bytes.Buffer
+	state = generators.NewOutput(state, &buf, false)
+	newState, err := generator.Generate(ctx, state, &generators.GenerateOptions{
+		NonStreaming: true,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return buf.String(), extractModelThoughts(newState), nil
+}
+
+// extractModelThoughts collects the Thought parts of the model contents
+// produced by one summarize attempt. The Output capture buffer excludes
+// thoughts (showThoughts=false), so the recorded response needs them
+// appended separately; when a response fails to parse, the thoughts are
+// often the only signal of what the model actually produced.
+// See TheoryOfIncompleteOutputSummarization.
+func extractModelThoughts(state generators.State) []string {
+	if state == nil {
+		return nil
+	}
+	var thoughts []string
+	for content := range state.Contents() {
+		if content.Role != generators.RoleModel && content.Role != generators.RoleAssistant {
+			continue
+		}
+		for _, part := range content.Parts {
+			if thought, ok := part.(generators.Thought); ok && len(thought) > 0 {
+				thoughts = append(thoughts, string(thought))
+			}
+		}
+	}
+	return thoughts
+}
+
+// summarizeResponseDetail renders the recorded detail of one summarize
+// attempt: the raw output text followed by the model's thoughts under a
+// [thought] marker. The thoughts are appended only when present, so a
+// successful plain-text response records exactly as before.
+func summarizeResponseDetail(attempt int, outputText string, thoughts []string) string {
+	var detail strings.Builder
+	fmt.Fprintf(&detail, "Summarize response (attempt %d):\n\n%s", attempt, outputText)
+	for _, thought := range thoughts {
+		detail.WriteString("\n[thought]\n")
+		detail.WriteString(thought)
+	}
+	return detail.String()
 }
 
 // summarizeRetryState prepares the retry state for a phase error. When the
@@ -692,7 +764,14 @@ operator must see the failure and intervene.
 
 Each failed summarize attempt is logged with the attempt number and the error,
 and the final failure is logged as an error, so the operator can diagnose why a
-round aborted.
+round aborted. Every attempt is also written into the same session's interaction
+record: the request input and the raw model response — including the model's
+thoughts, which the parse buffer excludes — are recorded as contents, and each
+attempt's failure reason (generation error, parse error, or a missing
+summary/continue block, with which blocks were found) plus the final failure are
+recorded as decision events. When a response cannot be parsed into the two
+blocks, the record therefore shows exactly what the summarize model produced,
+so the summarization prompt can be optimized from real failures.
 `
 
 const TheoryOfSummaryRetryOnError = `
