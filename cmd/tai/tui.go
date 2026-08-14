@@ -18,6 +18,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/loops"
+	"github.com/reusee/tai/states"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -42,8 +43,9 @@ lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Summary tab collects the round completion
-signals — the bodies of summary blocks and the finish reasons ("[Finish: ...]")
-— and the Logs tab collects log records. The Logs tab renders consecutive
+signals — the bodies of summary blocks, the finish reasons ("[Finish: ...]"),
+and the periodic thought summaries when -summarize-thoughts is enabled —
+and the Logs tab collects log records. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
 alternation stays subtle in either state. Model output is captured from the
@@ -51,7 +53,14 @@ generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
 by a blank line, tool calls render as markers, and finish reasons are read
-directly from the state's FinishReason parts. The tuiOutputState's Flush
+directly from the state's FinishReason parts. Raw thoughts are suppressed
+from the Output tab only when -no-thoughts is set; when
+-summarize-thoughts is enabled, the raw stream keeps flowing to the
+Output tab while the periodic summaries stream to the Summary tab through
+the forked states.ThoughtSummaryWriter. Suppressing the raw stream under
+-summarize-thoughts would blank the focused Output tab during long
+thinking phases — leaving no live feedback and making the session look
+stalled — so the two tabs show both streams concurrently. The tuiOutputState's Flush
 terminates a partial last line of the Output tab: streamed model output
 often ends without a trailing newline, and without termination a later
 write to the Output tab — e.g., command output written via the Output
@@ -83,8 +92,9 @@ already-expanded tab keeps its current view; re-expanding a collapsed tab
 resumes following the live tail. All tabs are collapsed by default; a
 collapsed tab expands automatically the FIRST time content for it arrives —
 the Output tab on any streamed output, the Summary tab on a parsed summary
-block or a finish reason, the Logs tab on any log record — so the interface
-surfaces panes only when they have something to show. Subsequent content
+block, a finish reason, or a thought summary, the Logs tab on any log
+record — so the interface surfaces panes only when they have something
+to show. Subsequent content
 arrivals do not re-expand a tab the user collapsed. Auto-expansion never
 changes an existing focus: a tab popping open cannot steal attention from the
 pane the user is reading, and it resumes following the tail; only when
@@ -287,6 +297,34 @@ func (t *TUI) writeLogs(p []byte) {
 	}
 }
 
+// writeThoughtSummary appends a periodic thought summary to the Summary
+// tab. The states writer prefixes each summary with a "[Thought
+// Summary]:" header line; the header line is colored with the thought
+// color to distinguish thought summaries from round summaries and finish
+// signals, and a blank separator terminates the entry. The summary
+// bypasses the Output tab entirely: the Output tab's write path parses
+// blocks (parseSummaries), and thought summaries are plain text destined
+// for the Summary tab, not the output stream. See TheoryOfTUI.
+func (t *TUI) writeThoughtSummary(p []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	text := strings.TrimSpace(string(p))
+	if text == "" {
+		return
+	}
+	if t.tabs.AutoExpand(1) {
+		t.scrolls[1].Follow = true
+	}
+	for i, line := range strings.Split(text, "\n") {
+		color := taiui.NoColor
+		if i == 0 {
+			color = outputColorThoughtLine
+		}
+		t.signals = append(t.signals, taiui.Line{Text: line, Color: color})
+	}
+	t.signals = append(t.signals, taiui.Line{})
+}
+
 // isGeneratingLog reports whether a log line marks the start of a
 // generation request. The generators package logs a record with message
 // "generating" at the start of every API request, before any output is
@@ -373,6 +411,8 @@ type tuiWriter struct{ t *TUI }
 
 type logsWriter struct{ t *TUI }
 
+type thoughtSummaryWriter struct{ t *TUI }
+
 func (w tuiWriter) Write(p []byte) (int, error) {
 	w.t.write(p)
 	w.t.notify()
@@ -381,6 +421,12 @@ func (w tuiWriter) Write(p []byte) (int, error) {
 
 func (w logsWriter) Write(p []byte) (int, error) {
 	w.t.writeLogs(p)
+	w.t.notify()
+	return len(p), nil
+}
+
+func (w thoughtSummaryWriter) Write(p []byte) (int, error) {
+	w.t.writeThoughtSummary(p)
 	w.t.notify()
 	return len(p), nil
 }
@@ -416,6 +462,16 @@ type TUI struct {
 	// quit confirmation bar: toggling showHelp re-renders the overlay.
 	// See TheoryOfTUI.
 	showHelp bool
+
+	// showThoughts reports whether raw reasoning thoughts are displayed
+	// in the Output tab. It is false only when -no-thoughts is set;
+	// -summarize-thoughts never suppresses the raw stream in the TUI —
+	// the periodic summaries stream to the Summary tab concurrently, so
+	// the focused Output tab keeps live feedback during long thinking
+	// phases. runWithTUI sets it before the generation goroutine starts;
+	// it is read only by captureContent on the generation goroutine. See
+	// TheoryOfTUI.
+	showThoughts bool
 
 	// lastOutputRole is the role of the last content written to the
 	// Output tab. It is used with lastWasThought to insert a blank line
@@ -493,17 +549,15 @@ func (t *TUI) LogsWriter() io.Writer {
 	return logsWriter{t}
 }
 
-// captureContent forwards the visible parts of a content to the TUI,
-// coloring them by role to match the non-TUI output colors.
-// Text parts stream to the Output tab colored by the content role;
-// thoughts stream colored distinctly, separated from non-thought
-// content by a blank line; function calls, call results, and errors
-// render as markers colored by role; finish reasons go to the Summary
-// tab colored as log lines. Internal metadata parts (Usage) are
-// skipped. It is called from the generation goroutine via
-// tuiOutputState.AppendContent, the only goroutine that reads or
-// writes the output-section state (lastOutputRole, lastWasThought,
-// hasOutput). See TheoryOfTUI.
+// ThoughtSummaryWriter returns the writer that appends periodic thought
+// summaries (-summarize-thoughts) to the Summary tab. runWithTUI forks
+// the states.ThoughtSummaryWriter provider to this writer so the
+// condensed reasoning appears in the Summary tab alongside the round
+// summaries and finish signals, not in the Output tab. See TheoryOfTUI.
+func (t *TUI) ThoughtSummaryWriter() io.Writer {
+	return thoughtSummaryWriter{t}
+}
+
 func (t *TUI) captureContent(content *generators.Content) {
 	role := content.Role
 	for _, part := range content.Parts {
@@ -513,6 +567,13 @@ func (t *TUI) captureContent(content *generators.Content) {
 				t.writeOutputPart(role, roleColor(role), false, string(p))
 			}
 		case generators.Thought:
+			if !t.showThoughts {
+				// Raw thoughts are suppressed when -no-thoughts is set.
+				// With -summarize-thoughts they keep streaming here while
+				// the periodic summaries go to the Summary tab. See
+				// TheoryOfTUI.
+				continue
+			}
 			if len(p) > 0 {
 				t.writeOutputPart(role, outputColorThoughtLine, true, string(p))
 			}
@@ -950,6 +1011,19 @@ func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
 	}
 }
 
+// tuiShowThoughts returns whether the TUI's Output tab displays raw
+// reasoning thoughts. Only the -thoughts flag governs it:
+// -summarize-thoughts adds periodic summaries in the Summary tab but never
+// suppresses the raw stream, because blanking the focused Output tab during
+// long thinking phases leaves no live feedback and makes the session look
+// stalled. See TheoryOfTUI.
+func tuiShowThoughts(thoughts flags.Thoughts) bool {
+	if thoughts.Value != nil {
+		return *thoughts.Value
+	}
+	return true
+}
+
 func runWithTUI(command Command, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
@@ -1001,6 +1075,14 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// and the wrapper appends the decorator to the options before
 	// delegating. See TheoryOfTUI.
 	originalRun := dscope.Get[loops.Run](scope)
+	// The TUI's raw-thought display is governed by -no-thoughts alone:
+	// -summarize-thoughts adds periodic summaries in the Summary tab but
+	// never suppresses the raw stream, because blanking the focused
+	// Output tab during long thinking phases leaves no live feedback and
+	// makes the session look stalled. The flag is resolved from the
+	// scope before the generation goroutine starts, so the policy is
+	// fixed for the session. See TheoryOfTUI.
+	tui.showThoughts = tuiShowThoughts(dscope.Get[flags.Thoughts](scope))
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
 		// Command-level output (ping verdicts, goal banners, applied
@@ -1008,6 +1090,12 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		// writer. Generation output is captured separately and never
 		// routed here. See TheoryOfCommandOutput.
 		func() Output { return Output(tui.Writer()) },
+		// Periodic thought summaries are routed to the Summary tab so
+		// the condensed reasoning appears alongside the round summaries
+		// and finish signals, while the Output tab keeps streaming the
+		// raw thoughts. See states.TheoryOfThoughtsSummarize and
+		// TheoryOfTUI.
+		func() states.ThoughtSummaryWriter { return states.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
 		func() loops.Run {
 			return withTUIOutputObserver(originalRun, tui)
 		},

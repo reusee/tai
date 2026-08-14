@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/states"
 )
 
 const TheoryOfNextCommand = `
@@ -39,6 +41,14 @@ consistency on failure. The handler is built by
 changes.BuildChangeBlockHandler, sharing the change-application logic with
 the codes module. The -no-apply flag disables change block application,
 causing blocks to be parsed but not applied to disk.
+
+The -summarize-thoughts flag wires states.NewThoughtsSummarize around the
+output layer, mirroring the codes pipeline: when enabled (and thoughts are
+not hidden), the stdout Output layer suppresses raw thoughts and the
+summarizer writes periodic summaries to states.ThoughtSummaryWriter —
+os.Stdout by default, or the TUI's Summary-tab writer when -tui forks the
+provider. In TUI mode the tuiOutputState decorator still streams raw
+thoughts to the Output tab. See states.TheoryOfThoughtsSummarize.
 `
 
 type SystemPrompt string
@@ -107,6 +117,9 @@ var NextCommand = Command{
 		loopRun loops.Run,
 		recorder *records.Recorder,
 		writeTimes *changes.FileWriteTimes,
+		getDefaultSummarizer states.GetDefaultSummarizer,
+		summarizeThoughts flags.SummarizeThoughts,
+		thoughtSummaryWriter states.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
@@ -140,7 +153,25 @@ var NextCommand = Command{
 		if flagThoughts.Value != nil {
 			showThoughts = *flagThoughts.Value
 		}
-		state = generators.NewOutput(state, os.Stdout, showThoughts)
+		// When -summarize-thoughts is enabled, the Output layer suppresses
+		// raw thoughts and the summarizer writes periodic summaries in their
+		// place, mirroring the codes pipeline. In TUI mode os.Stdout is
+		// discarded and the tuiOutputState decorator streams raw thoughts to
+		// the Output tab while the forked states.ThoughtSummaryWriter routes
+		// summaries to the Summary tab. See TheoryOfNextCommand and
+		// states.TheoryOfThoughtsSummarize.
+		if showThoughts && bool(summarizeThoughts) {
+			summarizer, err := getDefaultSummarizer()
+			ce(err)
+			state = generators.NewOutput(state, os.Stdout, false)
+			summaryWriter := io.Writer(os.Stdout)
+			if thoughtSummaryWriter != nil {
+				summaryWriter = thoughtSummaryWriter
+			}
+			state = states.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
+		} else {
+			state = generators.NewOutput(state, os.Stdout, showThoughts)
+		}
 
 		// BlockHandler applies change blocks immediately to the
 		// MemoryStore as they are parsed during streaming, enabling

@@ -740,6 +740,7 @@ func (Module) GenerateWithResultWithStats(
 	loopRun loops.Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
+	thoughtSummaryWriter states.ThoughtSummaryWriter,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
@@ -877,7 +878,17 @@ func (Module) GenerateWithResultWithStats(
 				return loops.Result{}, nil, err
 			}
 			state = generators.NewOutput(state, output, false)
-			state = states.NewThoughtsSummarize(ctx, state, summarizer, output)
+			// The summary writer defaults to the generation output
+			// stream — the same stream the raw thoughts would have
+			// used. A display front-end (e.g., the TUI) routes the
+			// summaries to its own display by forking
+			// states.ThoughtSummaryWriter. See
+			// states.TheoryOfThoughtsSummarize.
+			summaryWriter := output
+			if thoughtSummaryWriter != nil {
+				summaryWriter = thoughtSummaryWriter
+			}
+			state = states.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
 		} else {
 			state = generators.NewOutput(state, output, showThoughts)
 		}

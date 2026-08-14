@@ -12,7 +12,11 @@ import (
 const TheoryOfThoughtsSummarize = `
 ThoughtsSummarize is a State layer that periodically condenses accumulated
 reasoning thoughts into concise summaries, writing them to a designated writer.
-As models produce increasingly long reasoning traces, users struggle to extract
+The designated writer is the ThoughtSummaryWriter provider when non-nil,
+otherwise the generation output writer — the same stream the raw thoughts would
+have used. A display front-end such as tai's TUI forks ThoughtSummaryWriter to
+route the summaries to its own display. As models produce increasingly long
+reasoning traces, users struggle to extract
 key information from raw thought streams. ThoughtsSummarize addresses this by
 summarizing at a configurable interval (default 3 seconds), enabling users to
 quickly assess whether the model's thinking direction is correct and interrupt

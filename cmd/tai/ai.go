@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
+	"github.com/reusee/tai/states"
 	"github.com/reusee/tai/vars"
 )
 
@@ -35,8 +37,10 @@ each generation round to merge newly learned items into the profile.
 The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
 is excluded from the buffer used for memory block parsing. Thoughts may contain
 illustrative block markers that would interfere with memory block extraction.
-The terminal Output (os.Stdout) retains showThoughts=true so the user still
-sees reasoning content on screen.
+The terminal Output (os.Stdout) shows reasoning content on screen unless
+-summarize-thoughts is enabled, in which case the stdout layer suppresses raw
+thoughts and periodic summaries replace them (see the Thought Summarization
+paragraph below).
 
 Shell Blocks and Interactive Input:
 Shell blocks allow the model to execute shell commands and receive the output
@@ -92,6 +96,18 @@ current time at the end of the system prompt (see AISystemPrompt) and the
 memory profile at the end of the system prompt sections (see
 TheoryOfAIComponents). See TheoryOfPrefixCaching in
 generators/state_func_map.go.
+
+Thought Summarization:
+The -summarize-thoughts flag wires states.NewThoughtsSummarize around the
+output layers, mirroring the codes pipeline: when enabled, the stdout Output
+layer suppresses raw thoughts and the summarizer writes periodic summaries
+to states.ThoughtSummaryWriter — os.Stdout by default, or the TUI's
+Summary-tab writer when -tui forks the provider. In TUI mode the
+tuiOutputState decorator still streams raw thoughts to the Output tab, so
+both streams are visible concurrently. The buf layer that captures
+assistant text for memory parsing always excludes thoughts, so
+summarization never interferes with memory block extraction. See
+states.TheoryOfThoughtsSummarize.
 `
 
 var AICommand = Command{
@@ -113,6 +129,9 @@ var AICommand = Command{
 		noHuman NoHuman,
 		loopRun loops.Run,
 		recorder *records.Recorder,
+		getDefaultSummarizer states.GetDefaultSummarizer,
+		summarizeThoughts flags.SummarizeThoughts,
+		thoughtSummaryWriter states.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
@@ -180,11 +199,28 @@ var AICommand = Command{
 			},
 		)
 		buf := new(strings.Builder)
-		baseState = generators.NewOutput(baseState, os.Stdout, true).WithTools(false)
+		// When -summarize-thoughts is enabled, the stdout Output layer
+		// suppresses raw thoughts and the summarizer writes periodic
+		// summaries in their place, mirroring the codes pipeline. In TUI
+		// mode os.Stdout is discarded and the tuiOutputState decorator
+		// streams raw thoughts to the Output tab while the forked
+		// states.ThoughtSummaryWriter routes summaries to the Summary
+		// tab. See TheoryOfAiCommand and states.TheoryOfThoughtsSummarize.
+		outputShowThoughts := !bool(summarizeThoughts)
+		baseState = generators.NewOutput(baseState, os.Stdout, outputShowThoughts).WithTools(false)
 		// buf captures assistant text for memory block parsing.
 		// showThoughts=false excludes Thought parts so model reasoning
 		// does not interfere with memory block extraction.
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
+		if bool(summarizeThoughts) {
+			summarizer, err := getDefaultSummarizer()
+			ce(err)
+			summaryWriter := io.Writer(os.Stdout)
+			if thoughtSummaryWriter != nil {
+				summaryWriter = thoughtSummaryWriter
+			}
+			baseState = states.NewThoughtsSummarize(ctx, baseState, summarizer, summaryWriter)
+		}
 
 		// Memory is updated after each generation round via the OnRoundSuccess
 		// hook, before the user is prompted for the next input (OnIdle). This

@@ -15,17 +15,16 @@ import (
 	"github.com/reusee/tai/taiui"
 )
 
-// newTUIForTest constructs a TUI with the display state initialized for
-// tests: small line buffers, no terminal attached, and default tabs and
-// scrolls. Tests that render set t.screen, t.width, and t.height before
-// calling render(); rendering itself forks the current state values into a
-// fresh dscope view scope. See TheoryOfTUI.
 func newTUIForTest() *TUI {
 	return &TUI{
 		output:  taiui.NewLineBuffer(0),
 		logs:    taiui.NewStringBuffer(0),
 		tabs:    taiui.NewTabs(3),
 		scrolls: [3]taiui.ScrollState{},
+		// The default display policy shows raw thoughts, matching the
+		// non-TUI default; tests that exercise thought suppression set
+		// showThoughts to false explicitly. See TheoryOfTUI.
+		showThoughts: true,
 	}
 }
 
@@ -337,6 +336,26 @@ func TestTuiStateLogsPartialLines(t *testing.T) {
 	}
 }
 
+func TestTUICaptureContentShowsThoughtsByDefault(t *testing.T) {
+	// The default display policy shows raw thoughts, matching the
+	// non-TUI default. newTUIForTest sets showThoughts to true.
+	tui := newTUIForTest()
+	state := generators.NewPrompts("", nil)
+	s := tuiOutputState{upstream: state, tui: tui}
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("deep thinking\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	lines := tui.output.Lines()
+	if len(lines) != 1 || lines[0].Text != "deep thinking" {
+		t.Fatalf("expected the thought line, got %v", lines)
+	}
+}
+
 func TestTuiLogsWriterWritesToLogs(t *testing.T) {
 	tui := newTUIForTest()
 	writer := logsWriter{t: tui}
@@ -572,6 +591,57 @@ func TestTuiStateFinishSignalExpandsSummaryTab(t *testing.T) {
 	}
 	if len(tui.signals) != 1 {
 		t.Fatalf("expected the finish signal, got %v", tui.signals)
+	}
+}
+
+func TestTUICaptureContentSuppressesThoughtsWhenNotShown(t *testing.T) {
+	// The TUI must mirror the non-TUI Output layer's display policy:
+	// when -no-thoughts is set or -summarize-thoughts is enabled
+	// (showThoughts false), raw reasoning thoughts must not appear in
+	// the Output tab; they are replaced by periodic summaries routed
+	// through the thought summary writer. See TheoryOfTUI.
+	tui := newTUIForTest()
+	tui.showThoughts = false
+	state := generators.NewPrompts("", nil)
+	s := tuiOutputState{upstream: state, tui: tui}
+
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Thought("deep thinking\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Non-thought content still streams to the Output tab.
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("the answer\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	lines := tui.output.Lines()
+	if len(lines) != 1 || lines[0].Text != "the answer" {
+		t.Fatalf("expected only the answer line, got %v", lines)
+	}
+}
+
+func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
+	// The TUI's raw-thought display is governed by -no-thoughts alone:
+	// -summarize-thoughts adds periodic summaries in the Summary tab but
+	// never blanks the Output tab's raw thought stream. The helper takes
+	// only flags.Thoughts, so -st cannot affect it. See TheoryOfTUI.
+	if !tuiShowThoughts(flags.Thoughts{}) {
+		t.Fatal("raw thoughts must display by default")
+	}
+	shown := true
+	if !tuiShowThoughts(flags.Thoughts{Value: &shown}) {
+		t.Fatal("raw thoughts must display when -thoughts is set")
+	}
+	hidden := false
+	if tuiShowThoughts(flags.Thoughts{Value: &hidden}) {
+		t.Fatal("raw thoughts must be suppressed when -no-thoughts is set")
 	}
 }
 
@@ -2190,5 +2260,73 @@ func TestTUIHelpOverlay(t *testing.T) {
 	}
 	if !strings.Contains(output, "1 / 2 / 3") {
 		t.Fatalf("expected the key bindings in the rendered output, got: %q", output)
+	}
+}
+
+func TestTuiStateWriteThoughtSummary(t *testing.T) {
+	// Thought summaries (-summarize-thoughts) go to the Summary tab, not
+	// the Output tab. The entry keeps the states writer's "[Thought
+	// Summary]:" header — colored with the thought color to distinguish
+	// it from round summaries and finish signals — followed by the
+	// summary lines and a blank separator. See TheoryOfTUI.
+	tui := newTUIForTest()
+	tui.writeThoughtSummary([]byte("\n[Thought Summary]:\n- point one\n- point two\n\n"))
+	if len(tui.output.Lines()) != 0 {
+		t.Fatalf("thought summary must not enter the Output tab, got %v", tui.output.Lines())
+	}
+	if len(tui.signals) != 4 {
+		t.Fatalf("expected 4 signal lines (header, two points, blank), got %d: %v", len(tui.signals), tui.signals)
+	}
+	if tui.signals[0].Text != "[Thought Summary]:" || tui.signals[0].Color != outputColorThoughtLine {
+		t.Fatalf("unexpected header line: %+v", tui.signals[0])
+	}
+	if tui.signals[1].Text != "- point one" || tui.signals[2].Text != "- point two" {
+		t.Fatalf("unexpected summary lines: %v", tui.signals)
+	}
+	if tui.signals[3].Text != "" {
+		t.Fatalf("expected a blank separator, got %q", tui.signals[3].Text)
+	}
+	if !tui.tabs.Expanded[1] {
+		t.Fatal("summary tab should auto-expand on a thought summary")
+	}
+	if tui.tabs.Focus != 1 {
+		t.Fatalf("with no established focus, the first auto-expanded tab becomes the focus, got %d", tui.tabs.Focus)
+	}
+}
+
+func TestTuiStateWriteThoughtSummaryEmpty(t *testing.T) {
+	// An empty or whitespace-only summary produces no entry and does not
+	// expand the Summary tab.
+	tui := newTUIForTest()
+	tui.writeThoughtSummary(nil)
+	tui.writeThoughtSummary([]byte("\n\n"))
+	if len(tui.signals) != 0 {
+		t.Fatalf("expected no signals for empty thought summaries, got %v", tui.signals)
+	}
+	if tui.tabs.Expanded[1] {
+		t.Fatal("summary tab must not expand for an empty thought summary")
+	}
+}
+
+func TestTuiThoughtSummaryWriter(t *testing.T) {
+	// The writer returned by ThoughtSummaryWriter appends to the Summary
+	// tab's signals and notifies the render loop, mirroring tuiWriter and
+	// logsWriter.
+	tui := newTUIForTest()
+	tui.updateCh = make(chan struct{}, 1)
+	writer := tui.ThoughtSummaryWriter()
+	if _, err := writer.Write([]byte("[Thought Summary]:\n- done\n")); err != nil {
+		t.Fatal(err)
+	}
+	if len(tui.signals) != 3 {
+		t.Fatalf("expected 3 signal lines, got %d: %v", len(tui.signals), tui.signals)
+	}
+	if len(tui.output.Lines()) != 0 {
+		t.Fatal("thought summary writer must not write to the Output tab")
+	}
+	select {
+	case <-tui.updateCh:
+	default:
+		t.Fatal("expected a notification when a thought summary is written")
 	}
 }
