@@ -34,6 +34,18 @@ func newTUIForTest() *TUI {
 	}
 }
 
+// writeModelOutput feeds a text chunk through captureContent as model
+// output — the TUI's only summary-extraction path. Summary-body
+// extraction is role-aware: user-role content (retry feedback), command
+// output, and chat input are displayed but never scanned. See
+// TheoryOfSummaryExtraction.
+func writeModelOutput(tui *TUI, text string) {
+	tui.captureContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text(text)},
+	})
+}
+
 func plainLines(lines []string) []taiui.Line {
 	out := make([]taiui.Line, 0, len(lines))
 	for _, line := range lines {
@@ -123,7 +135,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 	for i := 0; i < lines; i++ {
 		fmt.Fprintf(&body, "- line %d\n", i)
 	}
-	tui.write([]byte("<<黿鼍爩 <summary>\n" + body.String() + "黿鼍爩\n"))
+	writeModelOutput(tui, "<<黿鼍爩 <summary>\n"+body.String()+"黿鼍爩\n")
 	if len(tui.signals) != lines+1 {
 		t.Fatalf("expected %d signal lines, got %d", lines+1, len(tui.signals))
 	}
@@ -466,7 +478,7 @@ func TestTuiStatePartialLines(t *testing.T) {
 
 func TestTuiStateParsesSummaries(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n"))
+	writeModelOutput(tui, "<<徕珑龘 <summary>\n- one\n- two\n徕珑龘\n")
 	if len(tui.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
 	}
@@ -477,8 +489,8 @@ func TestTuiStateParsesSummaries(t *testing.T) {
 
 func TestTuiStateParsesSummariesAcrossChunks(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<徕珑龘 <summary>\n- one\n- tw"))
-	tui.write([]byte("o\n徕珑龘\n"))
+	writeModelOutput(tui, "<<徕珑龘 <summary>\n- one\n- tw")
+	writeModelOutput(tui, "o\n徕珑龘\n")
 	if len(tui.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
 	}
@@ -491,7 +503,7 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 	tui := newTUIForTest()
 	text := "<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n" +
 		"<<徕珑龘 <summary>\n- s\n徕珑龘\n"
-	tui.write([]byte(text))
+	writeModelOutput(tui, text)
 	if len(tui.signals) != 2 || tui.signals[0].Text != "- s" || tui.signals[1].Text != "" {
 		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
@@ -499,8 +511,8 @@ func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
 
 func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n"))
-	tui.write([]byte("round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+	writeModelOutput(tui, "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/x.go\">\nfunc Foo() {\n")
+	writeModelOutput(tui, "round 2 output\n<<黿鼍爩 <summary>\n- done\n黿鼍爩\n")
 	if len(tui.signals) != 2 {
 		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
 	}
@@ -531,11 +543,11 @@ func TestTuiOutputPreservesIndentation(t *testing.T) {
 
 func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<黿鼍爩 <summary>\n- not yet complete"))
+	writeModelOutput(tui, "<<黿鼍爩 <summary>\n- not yet complete")
 	if len(tui.signals) != 0 {
 		t.Fatalf("expected no signals while the block is incomplete, got %v", tui.signals)
 	}
-	tui.write([]byte("\n黿鼍爩\n"))
+	writeModelOutput(tui, "\n黿鼍爩\n")
 	if len(tui.signals) != 2 || tui.signals[0].Text != "- not yet complete" {
 		t.Fatalf("unexpected signals: %v", tui.signals)
 	}
@@ -544,16 +556,16 @@ func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
 func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
 	t.Run("PartialDoubleLeftChevrons", func(t *testing.T) {
 		tui := newTUIForTest()
-		tui.write([]byte("prose\n<<"))
-		tui.write([]byte("黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		writeModelOutput(tui, "prose\n<<")
+		writeModelOutput(tui, "黿鼍爩 <summary>\n- done\n黿鼍爩\n")
 		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
 			t.Fatalf("unexpected signals: %v", tui.signals)
 		}
 	})
 	t.Run("SingleLeftChevron", func(t *testing.T) {
 		tui := newTUIForTest()
-		tui.write([]byte("prose\n<"))
-		tui.write([]byte("<黿鼍爩 <summary>\n- done\n黿鼍爩\n"))
+		writeModelOutput(tui, "prose\n<")
+		writeModelOutput(tui, "<黿鼍爩 <summary>\n- done\n黿鼍爩\n")
 		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
 			t.Fatalf("unexpected signals: %v", tui.signals)
 		}
@@ -573,7 +585,7 @@ func TestTuiStateCollectsFinishSignals(t *testing.T) {
 
 func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	writeModelOutput(tui, "<<徕珑龘 <summary>\n- done\n徕珑龘\n")
 	tui.finishReason("stop")
 	if len(tui.signals) != 3 {
 		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
@@ -1774,7 +1786,7 @@ func TestComputeTabBoxesAllCollapsed(t *testing.T) {
 
 func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("model output\n"))
+	writeModelOutput(tui, "model output\n")
 	if !tui.tabs.Expanded[0] {
 		t.Fatal("output tab should auto-expand on streamed output")
 	}
@@ -1790,7 +1802,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	writeModelOutput(tui, "<<徕珑龘 <summary>\n- done\n徕珑龘\n")
 	if !tui.tabs.Expanded[1] {
 		t.Fatal("summary tab should auto-expand on a summary block")
 	}
@@ -1805,7 +1817,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
-	tui2.write([]byte("<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n"))
+	writeModelOutput(tui2, "<<龘靐齉 <change op=\"MODIFY\" target=\"Foo\" file-path=\"x.go\">\nfunc Foo() {}\n龘靐齉\n")
 	if tui2.tabs.Expanded[1] {
 		t.Fatal("summary tab must not expand without a summary block or finish line")
 	}
@@ -2166,7 +2178,7 @@ func TestTransitionBoundaries(t *testing.T) {
 
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
 	tui := newTUIForTest()
-	tui.write([]byte("<<徕珑龘 <summary>\n- done\n徕珑龘\n"))
+	writeModelOutput(tui, "<<徕珑龘 <summary>\n- done\n徕珑龘\n")
 	if len(tui.signals) != 2 {
 		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
 	}
@@ -2601,5 +2613,60 @@ func TestTuiThoughtSummaryWriter(t *testing.T) {
 	case <-tui.updateCh:
 	default:
 		t.Fatal("expected a notification when a thought summary is written")
+	}
+}
+
+func TestTuiStateDoesNotParseSummariesFromUserContent(t *testing.T) {
+	// The loop's retry feedback is user-role content that embeds the
+	// synthesized summary as a summary block for the model's benefit. It
+	// is prompt text, not a round completion signal: extracting it would
+	// duplicate the same summary in the Summary tab when a truncated
+	// round is retried. The feedback is still displayed in the Output
+	// tab. See TheoryOfSummaryExtraction.
+	tui := newTUIForTest()
+	tui.captureContent(&generators.Content{
+		Role: generators.RoleUser,
+		Parts: []generators.Part{
+			generators.Text("[System note: The previous generation was truncated...]\n<<黿鼍爩 <summary>\n- retry summary\n黿鼍爩\n<<灪麤爨 <continue>\nretry content\n灪麤爨\n"),
+		},
+	})
+	if len(tui.signals) != 0 {
+		t.Fatalf("user-role retry feedback must not be extracted into the Summary tab, got %v", tui.signals)
+	}
+	if len(tui.output.Lines()) == 0 {
+		t.Fatal("user-role retry feedback must still be displayed in the Output tab")
+	}
+}
+
+func TestTuiStateParsesSummariesFromSynthesizedCompletion(t *testing.T) {
+	// When a round exhausts its retries without a model summary, the
+	// loop appends the synthesized summary as a log-role summary block —
+	// the round's completion signal. It must appear in the Summary tab.
+	// See TheoryOfSummaryExtraction.
+	tui := newTUIForTest()
+	tui.captureContent(&generators.Content{
+		Role: generators.RoleLog,
+		Parts: []generators.Part{
+			generators.Text("<<黿鼍爩 <summary>\n- synthesized\n黿鼍爩\n"),
+		},
+	})
+	if len(tui.signals) != 2 || tui.signals[0].Text != "- synthesized" || tui.signals[1].Text != "" {
+		t.Fatalf("log-role synthesized summary must be extracted, got %v", tui.signals)
+	}
+}
+
+func TestTuiStateDoesNotParseSummariesFromCommandOutput(t *testing.T) {
+	// Command output via the tuiWriter (the Output writer and the stderr
+	// copy in TUI mode) is displayed but never scanned for summary
+	// blocks: only the model's response stream and the loop's
+	// synthesized completion signals are round completion signals. See
+	// TheoryOfSummaryExtraction.
+	tui := newTUIForTest()
+	tui.write([]byte("<<黿鼍爩 <summary>\n- command output\n黿鼍爩\n"))
+	if len(tui.signals) != 0 {
+		t.Fatalf("command output must not be scanned for summaries, got %v", tui.signals)
+	}
+	if len(tui.output.Lines()) == 0 {
+		t.Fatal("command output must still be displayed in the Output tab")
 	}
 }

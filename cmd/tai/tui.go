@@ -141,6 +141,21 @@ adding a provider layer to read and reason about. See
 taiui.TheoryOfTaiUI.)
 `
 
+const TheoryOfSummaryExtraction = `
+taiui summary extraction theory:
+- Summary blocks are extracted into the Summary tab only from the model's
+  response stream (assistant/model roles) and from the loop's synthesized
+  completion signals (log-role summary blocks).
+- User-role content is displayed in the Output tab but never extracted:
+  the loop's retry feedback embeds the synthesized summary as a summary
+  block for the model's benefit, and extracting it would duplicate the
+  same summary content in the Summary tab whenever a truncated round is
+  retried (the retry prompt's summary plus the retry round's own summary
+  or the final synthesized completion signal).
+- Command output and the user's chat input are displayed but not scanned:
+  they are not model completion signals.
+`
+
 const TheoryOfTUINoTruncation = `
 Display buffers are unbounded and no information is ever truncated: the
 Output tab retains every streamed line, the Logs tab every log record, and
@@ -292,10 +307,13 @@ func (t *TUI) writeColored(color taiui.Color, p []byte) {
 	if t.tabs.AutoExpand(0) {
 		t.scrolls[0].Follow = true
 	}
-	// Summary blocks are parsed before finish signals so signals sharing
-	// one stream chunk keep their chronological order: the model's
-	// summary block precedes the round's finish line. See TheoryOfTUI.
-	t.parseSummaries(p)
+	// Summary blocks are not parsed here: extraction happens only for
+	// the model's response stream and the loop's synthesized completion
+	// signals in captureContent, so user-role retry feedback and command
+	// output never duplicate summary content into the Summary tab. The
+	// display order still matches the stream: captureContent parses each
+	// text part before the finish reason of the same content is
+	// processed. See TheoryOfSummaryExtraction.
 	t.output.Append(color, string(p))
 }
 
@@ -611,7 +629,26 @@ func (t *TUI) captureContent(content *generators.Content) {
 		switch p := part.(type) {
 		case generators.Text:
 			if len(p) > 0 {
-				t.writeOutputPart(role, roleColor(role), false, string(p))
+				text := string(p)
+				// Summary blocks are extracted only from the model's
+				// response stream (model/assistant roles) and from the
+				// loop's synthesized completion signals (log-role summary
+				// blocks). User-role content — notably the retry feedback,
+				// which embeds the synthesized summary as a summary block
+				// for the model's benefit — is displayed in the Output tab
+				// but never extracted, so a truncated round's retry does
+				// not duplicate the same summary in the Summary tab. The
+				// parse runs under the state lock, like every other write
+				// to the display buffers, because render reads t.signals
+				// concurrently. See TheoryOfSummaryExtraction.
+				if role == generators.RoleModel ||
+					role == generators.RoleAssistant ||
+					role == generators.RoleLog {
+					t.mu.Lock()
+					t.parseSummaries([]byte(text))
+					t.mu.Unlock()
+				}
+				t.writeOutputPart(role, roleColor(role), false, text)
 			}
 		case generators.Thought:
 			if !t.showThoughts {
