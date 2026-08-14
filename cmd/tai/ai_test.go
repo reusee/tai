@@ -54,8 +54,8 @@ func TestAISystemPromptExcludesRestatePrompts(t *testing.T) {
 		if !strings.Contains(restate, "Block format (CRITICAL)") {
 			t.Fatal("restate prompts must include block format restate prompt")
 		}
-		if !strings.Contains(restate, "Continue block:") {
-			t.Fatal("restate prompts must include continue block restate prompt")
+		if strings.Contains(restate, "Continue block:") {
+			t.Fatal("restate prompts must not include continue block restate prompt; the ai command does not process continue blocks")
 		}
 		if !strings.Contains(restate, "Memory block:") {
 			t.Fatal("restate prompts must include memory block restate prompt")
@@ -148,4 +148,29 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	if strings.Contains(memoryBlockRestatePrompt, "<<MEMEND") {
 		t.Fatal("memoryBlockRestatePrompt must not display the legacy MEMEND example delimiter")
 	}
+}
+
+func TestAIComponentsExcludesContinueComponent(t *testing.T) {
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.Generator { return aiMockGenerator{} },
+	).Call(func(
+		comps AIComponents,
+	) {
+		// The interactive ai chat receives user input through OnIdle, so a
+		// continue component would only feed the model's own body back as
+		// user content, allowing meaningless self-prompts (e.g., "Please
+		// provide the next task or user input") to bypass the prompt.
+		// See TheoryOfAIComponents.
+		if strings.Contains(comps.PromptSections(), "Continue Block Kind") {
+			t.Fatal("ai command must not include the continue block prompt section")
+		}
+		for _, comp := range comps.Processable() {
+			if comp.Kind == "continue" {
+				t.Fatal("ai command must not include a processable continue component")
+			}
+		}
+	})
 }

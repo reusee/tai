@@ -38,22 +38,25 @@ illustrative block markers that would interfere with memory block extraction.
 The terminal Output (os.Stdout) retains showThoughts=true so the user still
 sees reasoning content on screen.
 
-Shell and Continue Blocks:
+Shell Blocks and Interactive Input:
 Shell blocks allow the model to execute shell commands and receive the output
 as part of the next generation round, enabling autonomous testing, build
 verification, and codebase exploration. Shell block execution is disabled by
-default for safety; the -shell flag enables it. Continue blocks allow the
-model to self-drive multi-turn generation by emitting a continue block when
-the task is not yet complete: the system parses the continue block, extracts
-its body as the next user message, and automatically starts a new generation
-round, so the model can produce arbitrarily long outputs by chaining rounds.
+default for safety; the -shell flag enables it.
 
-All block kinds are wired through the Component mechanism (see
+The continue block is deliberately not part of the ai command. In an
+interactive chat the user's next input arrives through OnIdle
+(phases.BuildChatIdle) after the round ends; a continue component would feed
+the model's own body back as user content, bypassing the prompt and allowing
+the model to emit meaningless self-prompts such as "Please provide the next
+task or user input." See TheoryOfAIComponents.
+
+Shell and memory blocks are wired through the Component mechanism (see
 TheoryOfAIComponents), which couples each block kind's system prompt with its
 processing function. The component list is shared between AISystemPrompt (prompt
 assembly) and this generation loop (output processing), ensuring that any block
-kind introduced in the prompt always has a matching processor. Shell and continue
-blocks are processed in the loop via components.ProcessComponents, which
+kind introduced in the prompt always has a matching processor. Shell blocks
+are processed in the loop via components.ProcessComponents, which
 accumulates Parts into a single user message for the next round; memory blocks
 are processed after each generation round via the OnRoundSuccess hook, which calls
 memories.UpdateMemoryFromBlock before the user is prompted for the next input.
@@ -69,14 +72,13 @@ between the state chain and block storage. See blocks.TheoryOfParserState and
 components.TheoryOfComponents.
 
 Automated Actions Before Interactive Input:
-The generation loop processes automated actions (continue, shell) and persists
+The generation loop processes automated actions (shell blocks) and persists
 memory updates before prompting the user for interactive input. The PhaseBuilder includes only
 the generate phase (not chat); the chat prompt is handled by OnIdle, which is
 invoked by the loop as a fallback when no component triggers. This ensures the
-model can chain multiple rounds of automated execution (shell commands, continue
-block self-prompting, test verification) without user intervention, and the user
-is only prompted when the model has no pending automated actions. See
-phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
+model can chain multiple rounds of autonomous shell execution without user
+intervention, and the user is only prompted when the model has no pending
+automated actions. See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
 The user prompt places file context first, then the static restate prompts,

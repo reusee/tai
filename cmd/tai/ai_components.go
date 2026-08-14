@@ -10,9 +10,9 @@ import (
 )
 
 const TheoryOfAIComponents = `
-The ai command uses the Component mechanism for shell, continue, and memory
-blocks. Shell and continue components are processed in the generation loop,
-while memory blocks are processed after the loop by
+The ai command uses the Component mechanism for shell and memory
+blocks. Shell components are processed in the generation loop, while memory
+blocks are processed after the loop by
 memories.UpdateMemoryFromBlock. The memory component's prompt includes the
 dynamic user profile text, read at Component construction time (provider
 resolution) rather than at prompt assembly time. BlockFormatSystemPrompt is a
@@ -24,23 +24,33 @@ prompt-only Components, unifying all system prompt contributions under the
 Component framework. AISystemPrompt assembles only the dynamic current time,
 which must be computed at call time.
 
-The memory component is appended last, after the static shell/continue and
+The memory component is appended last, after the static shell and
 extra prompt components, so that the dynamic user profile text — which
 changes across sessions as the profile accumulates — never shifts the
 position of static system prompt sections. When the profile changes, only
-the final memory section changes; the base, block-format, shell, continue,
+the final memory section changes; the base, block-format, shell,
 and extra prompt sections remain byte-identical and fully cacheable. This
 applies the dynamic-content-last principle to the system prompt; the same
 principle places the current time at the end of the system prompt and the
 user input at the end of the user prompt (see TheoryOfAiCommand). See
 TheoryOfPrefixCaching in generators/state_func_map.go.
 
-Shell and continue components are reused from components.CommonComponents.
+The shell component is reused from components.CommonComponents. The continue
+component is deliberately excluded. In the interactive ai chat, the user's
+next input is provided through phases.BuildChatIdle (OnIdle), invoked by the
+generation loop when no component triggers. A continue block would have its
+body fed back as user content without a human supplying it, letting the model
+drive an unlimited self-prompt loop and emit meaningless content such as
+"Please provide the next task or user input." Because OnIdle is the single
+gateway for interactive input, no continue component is configured: the model
+never sees continue-block instructions, and any stray continue block is not
+processed.
+
 AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the codes module's CodesComponents
 provider.
 
-RestatePrompts are included for the block format, memory, shell, and continue
+RestatePrompts are included for the block format, memory, and shell
 components. Each RestatePrompt provides a short critical reminder that
 reinforces the block format rules. Restate prompts are placed at the end of the
 user prompt via ComponentSet.UserPromptParts(), not in the system prompt.
@@ -85,11 +95,21 @@ func (Module) AIComponents(
 		RestatePrompt: blocks.BlockFormatRestatePrompt,
 	})
 
-	// Common components: shell (conditional on flagShell) and continue.
-	// Reused from components.CommonComponents so that shell and continue
-	// configuration is shared across all generation commands.
-	// See TheoryOfCommonComponents in components/common_components.go.
-	comps = append(comps, components.CommonComponents(bool(flagShell))...)
+	// Common components: shell (conditional on flagShell) only. The
+	// continue component is deliberately filtered out: in the interactive
+	// ai chat the user's next input arrives through OnIdle
+	// (phases.BuildChatIdle) after the round ends, so a continue block
+	// would only feed the model's own body back as user content, allowing
+	// meaningless self-prompts such as "Please provide the next task or
+	// user input" to bypass the user prompt. Shell output remains useful:
+	// it is real feedback that triggers the next round without user
+	// input. See TheoryOfAIComponents and TheoryOfAiCommand.
+	for _, comp := range components.CommonComponents(bool(flagShell)) {
+		if comp.Kind == "continue" {
+			continue
+		}
+		comps = append(comps, comp)
+	}
 
 	// Extra system prompt from configuration: prompt-only Component.
 	// Each entry is added as a separate prompt-only Component so that
@@ -107,8 +127,8 @@ func (Module) AIComponents(
 	// which changes across sessions as the profile accumulates — never
 	// shifts the position of the static components above. When the profile
 	// changes, only this final section changes; the base, block-format,
-	// shell/continue, and extra prompt sections remain byte-identical and
-	// fully cacheable. Processing is done post-loop in ai.go via
+	// shell, and extra prompt sections remain byte-identical and fully
+	// cacheable. Processing is done post-loop in ai.go via
 	// memories.UpdateMemoryFromBlock, not in the generation loop.
 	// RestatePrompt reinforces the memory block format.
 	// See TheoryOfAIComponents.
