@@ -1539,6 +1539,77 @@ func TestTUICaptureContentNotifies(t *testing.T) {
 	}
 }
 
+func TestTuiStateFlushTerminatesPartialOutputLine(t *testing.T) {
+	tui := newTUIForTest()
+	state := generators.NewPrompts("", nil)
+	s := tuiOutputState{upstream: state, tui: tui}
+
+	// Stream model output that ends without a trailing newline.
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("model output")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tui.mu.Lock()
+	partial := tui.output.HasPartial()
+	tui.mu.Unlock()
+	if !partial {
+		t.Fatal("expected a partial line before flush")
+	}
+
+	// Flush terminates the partial line.
+	if _, err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	tui.mu.Lock()
+	hasPartial := tui.output.HasPartial()
+	tui.mu.Unlock()
+	if hasPartial {
+		t.Fatal("flush must terminate a partial output line")
+	}
+
+	// A subsequent write — e.g., command output via the Output writer —
+	// must start on a fresh line instead of being merged into the model's
+	// final line.
+	tui.write([]byte("command output\n"))
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	lines := tui.output.Lines()
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
+	}
+	if lines[0].Text != "model output" || lines[1].Text != "command output" {
+		t.Fatalf("unexpected lines: %v", lines)
+	}
+}
+
+func TestTuiStateFlushKeepsCompleteLine(t *testing.T) {
+	tui := newTUIForTest()
+	state := generators.NewPrompts("", nil)
+	s := tuiOutputState{upstream: state, tui: tui}
+
+	// Stream model output that already ends with a newline.
+	if _, err := s.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("model output\n")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	lines := tui.output.Lines()
+	if len(lines) != 1 || lines[0].Text != "model output" {
+		t.Fatalf("unexpected lines: %v", lines)
+	}
+	if tui.output.HasPartial() {
+		t.Fatal("flush must not leave a partial line when output already ends with a newline")
+	}
+}
+
 func TestRoleColor(t *testing.T) {
 	cases := []struct {
 		role generators.Role

@@ -53,8 +53,14 @@ alternation stays subtle in either state. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
-by a blank line, tool calls render as markers, and finish reasons are
-read directly from the state's FinishReason parts. Only content appended
+by a blank line, tool calls render as markers, and finish reasons are read
+directly from the state's FinishReason parts. The tuiOutputState's Flush
+terminates a partial last line of the Output tab: streamed model output
+often ends without a trailing newline, and without termination a later
+write to the Output tab — e.g., command output written via the Output
+writer after generation completes — would be merged into the model's final
+line. Because Flush is the completion signal of each generation round, the
+termination also separates the output of consecutive rounds. Only content appended
 after the decorator wraps the state is displayed; initial contents are not
 re-parsed or re-displayed, because unstructured text must not be
 imperfectly parsed. The one exception is the user's chat input: runWithTUI
@@ -200,6 +206,14 @@ func (s tuiOutputState) Flush() (generators.State, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Streamed model output often ends without a trailing newline.
+	// Terminating the last output line here ensures that any subsequent
+	// write to the Output tab — e.g., command output via the Output
+	// writer (fmt.Fprintf) after generation completes — starts on a new
+	// line instead of being merged into the model's final line. Flush is
+	// the completion signal of one generation round, so the output of
+	// consecutive rounds is separated as well. See TheoryOfTUI.
+	s.tui.ensureOutputNewline()
 	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
 
@@ -537,6 +551,24 @@ func (t *TUI) separateOutput() {
 	if t.output.HasPartial() {
 		t.output.Append(taiui.NoColor, "\n\n")
 	} else {
+		t.output.Append(taiui.NoColor, "\n")
+	}
+}
+
+// ensureOutputNewline terminates a partial last line in the Output tab.
+// The streamed model output frequently ends without a trailing newline;
+// without termination, a subsequent write to the Output tab — e.g.,
+// command output written via the Output writer after generation
+// completes — would be merged into the model's final line. It is called
+// from tuiOutputState.Flush, the completion signal of each generation
+// round, so the termination also separates the output of consecutive
+// rounds. The display content is unchanged: a partial line and its
+// completed form render identically, only the line-boundary state
+// differs.
+func (t *TUI) ensureOutputNewline() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.output.HasPartial() {
 		t.output.Append(taiui.NoColor, "\n")
 	}
 }
