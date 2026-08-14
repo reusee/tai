@@ -7,6 +7,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -149,6 +150,40 @@ the TUI's record of the session incomplete and shifting a scrolled-back
 view by one row on each new line. Whatever the volume, losing information
 is unacceptable; the memory cost of unbounded retention is accepted in
 exchange for a complete browsable session record.
+`
+
+const TheoryOfMouseSupport = `
+Mouse support extends the TUI's keyboard model with wheel scrolling,
+click-based tab switching, and drag scrolling.
+
+Wheel events scroll the tab whose panel is under the cursor, without
+changing the focus: the user can read any pane while keyboard navigation
+stays put, and a wheel over a collapsed tab is a no-op.
+
+A left press on a collapsed tab's strip expands it and takes the focus,
+resuming the live tail — the same as pressing its number key. A press on
+an expanded tab's label strip toggles it like its number key: pressing
+the focused tab's strip collapses it and moves the focus to the expanded
+tab that was last focused; pressing another tab's strip takes the focus
+without collapsing and keeps that tab's current view. A press inside an
+expanded tab's scroll area focuses the tab (when it was not already
+focused) and records the origin of a drag-scroll. Presses outside every
+panel, middle and right presses, and no-button motion (mode 1003) are
+ignored.
+
+Drag-scrolling follows the pointer: holding the left button inside a
+scroll area and dragging up reveals earlier content, dragging down
+reveals the tail. The drag is anchored to the press origin, so the
+content moves with the pointer rather than tracking incremental motion
+deltas that would be lost when a motion event is skipped. The release
+that ends the drag carries no button number; any release ends it.
+
+Mouse reporting is enabled on start and disabled on every exit path
+(MouseEnableSequence and MouseDisableSequence in the taiui package), so
+the terminal returns to ordinary input handling when the TUI stops. The
+message parser in taiui.ReadKeys decodes the SGR mouse sequences into
+key names carrying the cell coordinates; the TUI routes those names
+through handleMouseKey. See taiui.TheoryOfMouseInput.
 `
 
 // Tui enables the terminal UI mode.
@@ -488,6 +523,15 @@ type TUI struct {
 	// first output never gets a leading blank line separator.
 	hasOutput bool
 
+	// mouseDragTab is the tab whose scroll view a drag-scroll is
+	// attached to, or -1 when the mouse is not dragging. mouseDragStartY
+	// and mouseDragStartOffset anchor the drag to the press origin, so
+	// the content moves with the pointer even when motion events are
+	// skipped. See TheoryOfMouseSupport.
+	mouseDragTab         int
+	mouseDragStartY      int
+	mouseDragStartOffset int
+
 	tty      tty.Tty
 	screen   *taiui.TerminalScreen
 	updateCh chan struct{}
@@ -529,11 +573,14 @@ func newTUI() (*TUI, error) {
 			{Offset: 1 << 30},
 			{Offset: 1 << 30},
 		},
-		tty:      t,
-		screen:   taiui.NewTerminalScreen(t, width, height),
-		updateCh: make(chan struct{}, 1),
-		width:    width,
-		height:   height,
+		// No drag-scroll is in progress until a mouse press starts one.
+		// See TheoryOfMouseSupport.
+		mouseDragTab: -1,
+		tty:          t,
+		screen:       taiui.NewTerminalScreen(t, width, height),
+		updateCh:     make(chan struct{}, 1),
+		width:        width,
+		height:       height,
 	}, nil
 }
 
@@ -732,6 +779,12 @@ func (t *TUI) Stop() error {
 func (t *TUI) Run(gen func()) error {
 	io.WriteString(t.tty, "\x1b[?25l")
 	defer t.Stop()
+	// Enable SGR mouse reporting (button events, button-held motion, and
+	// SGR extended coordinates) so wheel, click, and drag events arrive
+	// as input, and disable it on every exit path so the terminal returns
+	// to ordinary input handling. See TheoryOfMouseSupport.
+	t.enableMouse()
+	defer t.disableMouse()
 
 	resizeCh := make(chan bool, 4)
 	t.tty.NotifyResize(resizeCh)
@@ -770,38 +823,40 @@ func (t *TUI) Run(gen func()) error {
 			if key != "quit" {
 				t.cancelConfirmQuit()
 			}
-			switch key {
-			case "tab":
+			switch {
+			case strings.HasPrefix(key, taiui.MouseKeyPrefix):
+				t.handleMouseKey(key)
+			case key == "tab":
 				t.cycleFocus()
-			case "1":
+			case key == "1":
 				t.toggleTab(0)
-			case "2":
+			case key == "2":
 				t.toggleTab(1)
-			case "3":
+			case key == "3":
 				t.toggleTab(2)
-			case "split":
+			case key == "split":
 				t.mu.Lock()
 				t.tabs.SplitVertical = !t.tabs.SplitVertical
 				t.mu.Unlock()
-			case "prev-transition":
+			case key == "prev-transition":
 				t.jumpToTransition(-1)
-			case "next-transition":
+			case key == "next-transition":
 				t.jumpToTransition(1)
-			case "up":
+			case key == "up":
 				t.scroll(-1)
-			case "down":
+			case key == "down":
 				t.scroll(1)
-			case "pageup":
+			case key == "pageup":
 				t.pageScroll(-1)
-			case "pagedown":
+			case key == "pagedown":
 				t.pageScroll(1)
-			case "home":
+			case key == "home":
 				t.scrollTo(0)
-			case "end":
+			case key == "end":
 				t.scrollTo(1 << 30)
-			case "help":
+			case key == "help":
 				t.toggleHelp()
-			case "quit":
+			case key == "quit":
 				// The first quit key press shows a confirmation bar; a
 				// second press confirms the quit. See TheoryOfTUI.
 				if t.handleQuitKey() {
@@ -824,6 +879,157 @@ func (t *TUI) Run(gen func()) error {
 			}
 		}
 	}
+}
+
+// enableMouse switches the terminal into SGR mouse reporting (button
+// events, button-held motion, and extended coordinates). It is called
+// when the TUI starts, so wheel, click, and drag events arrive as input.
+// See TheoryOfMouseSupport.
+func (t *TUI) enableMouse() {
+	io.WriteString(t.tty, taiui.MouseEnableSequence)
+}
+
+// disableMouse restores the terminal to ordinary input handling. It is
+// deferred from every path out of TUI.Run, so mouse reporting never
+// leaks after the TUI stops. See TheoryOfMouseSupport.
+func (t *TUI) disableMouse() {
+	io.WriteString(t.tty, taiui.MouseDisableSequence)
+}
+
+// tabAt returns the index of the tab whose panel box contains the given
+// 0-based cell coordinates, or -1 when the point is outside every panel.
+// The tab boxes tile the screen (expanded panels and collapsed strips are
+// laid out without gaps), so a point normally falls in exactly one panel.
+// See TheoryOfMouseSupport.
+func (t *TUI) tabAt(x, y int) int {
+	boxes := t.tabs.Boxes(t.width, t.height)
+	for idx, box := range boxes {
+		if x >= box.Left && x < box.Right && y >= box.Top && y < box.Bottom {
+			return idx
+		}
+	}
+	return -1
+}
+
+// parseMouseKey splits a mouse key name emitted by taiui.ReadKeys into its
+// event kind and 0-based cell coordinates: "mouse-left@12,34" returns
+// ("left", 12, 34, true). See taiui.TheoryOfMouseInput.
+func parseMouseKey(key string) (button string, x, y int, ok bool) {
+	name, coord, found := strings.Cut(key, "@")
+	if !found || name == "" {
+		return "", 0, 0, false
+	}
+	button = strings.TrimPrefix(name, taiui.MouseKeyPrefix)
+	if button == "" || button == name {
+		return "", 0, 0, false
+	}
+	xStr, yStr, found := strings.Cut(coord, ",")
+	if !found {
+		return "", 0, 0, false
+	}
+	var err error
+	if x, err = strconv.Atoi(xStr); err != nil {
+		return "", 0, 0, false
+	}
+	if y, err = strconv.Atoi(yStr); err != nil {
+		return "", 0, 0, false
+	}
+	return button, x, y, true
+}
+
+// handleMouseKey routes a mouse key name to the tab interaction it
+// describes. Wheel events scroll the pane under the cursor; a left press
+// switches or collapses tabs and starts a drag-scroll; a release ends it.
+// Middle and right presses, no-button motion, and wheel releases are
+// ignored. See TheoryOfMouseSupport.
+func (t *TUI) handleMouseKey(key string) {
+	button, x, y, ok := parseMouseKey(key)
+	if !ok {
+		return
+	}
+	switch button {
+	case "wheel-up":
+		t.mouseScroll(x, y, -1)
+	case "wheel-down":
+		t.mouseScroll(x, y, 1)
+	case "left":
+		t.mousePress(x, y)
+	case "release":
+		t.mouseRelease()
+	case "leftdrag":
+		t.mouseDrag(x, y)
+	}
+}
+
+// mousePress handles a left-button press at the given cell. A press on a
+// collapsed tab's strip expands and focuses it, resuming the live tail. A
+// press on an expanded tab's label strip toggles it like its number key:
+// pressing the focused tab collapses it, pressing another tab's strip
+// takes the focus without collapsing. A press inside an expanded tab's
+// scroll area focuses the tab and records the drag origin for
+// drag-scrolling. See TheoryOfMouseSupport.
+func (t *TUI) mousePress(x, y int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// A new press always ends any previous drag interaction.
+	t.mouseDragTab = -1
+	idx := t.tabAt(x, y)
+	if idx < 0 {
+		return
+	}
+	box := t.tabs.Boxes(t.width, t.height)[idx]
+	if !t.tabs.Expanded[idx] {
+		t.tabs.Toggle(idx)
+		t.scrolls[idx].Follow = true
+		return
+	}
+	if y == box.Top {
+		t.tabs.Toggle(idx)
+		return
+	}
+	if t.tabs.Focus != idx {
+		t.tabs.Toggle(idx)
+	}
+	t.mouseDragTab = idx
+	t.mouseDragStartY = y
+	t.mouseDragStartOffset = t.scrolls[idx].Offset
+}
+
+// mouseScroll scrolls the tab whose panel is under the given cell by delta
+// rows in response to a wheel event. The wheel targets the pane under the
+// cursor without changing the focus, so the user can read any pane while
+// keyboard navigation stays put; scrolling a collapsed tab is a no-op. See
+// TheoryOfMouseSupport.
+func (t *TUI) mouseScroll(x, y, delta int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	idx := t.tabAt(x, y)
+	if idx < 0 || !t.tabs.Expanded[idx] {
+		return
+	}
+	t.scrolls[idx].Scroll(delta)
+}
+
+// mouseDrag scrolls the tab that the press started in by the pointer's
+// movement since the press: dragging up reveals earlier content, dragging
+// down reveals the tail. The scroll offset is anchored to the press origin
+// so the content follows the pointer even when motion events are skipped.
+// See TheoryOfMouseSupport.
+func (t *TUI) mouseDrag(x, y int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.mouseDragTab < 0 || !t.tabs.Expanded[t.mouseDragTab] {
+		return
+	}
+	offset := t.mouseDragStartOffset + (t.mouseDragStartY - y)
+	t.scrolls[t.mouseDragTab].ScrollTo(offset)
+}
+
+// mouseRelease ends an in-progress drag-scroll.
+func (t *TUI) mouseRelease() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.mouseDragTab = -1
 }
 
 func (t *TUI) scroll(delta int) {

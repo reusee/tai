@@ -157,9 +157,6 @@ func logsPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 	)
 }
 
-// tuiHelpLines lists the TUI key bindings shown by the ? help overlay.
-// The leading tabs align the descriptions when Text renders with the
-// TabWidth spec.
 var tuiHelpLines = []string{
 	"1 / 2 / 3\tselect tab; pressing the focused tab again collapses it",
 	"tab\tcycle focus among the expanded tabs",
@@ -168,6 +165,8 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll the focused pane by a page",
 	"home / end\tjump to the start / end of the focused pane",
 	"[ / ]\tjump to the previous / next output section",
+	"mouse: click selects a tab",
+	"mouse: wheel / drag scrolls",
 	"q / Ctrl-C\tquit (confirmation bar: press again to confirm)",
 	"?\tthis help",
 }

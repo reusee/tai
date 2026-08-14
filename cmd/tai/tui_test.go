@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"iter"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v3/color"
+	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
@@ -25,6 +28,9 @@ func newTUIForTest() *TUI {
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
 		showThoughts: true,
+		// No drag-scroll is in progress until a mouse press starts one.
+		// See TheoryOfMouseSupport.
+		mouseDragTab: -1,
 	}
 }
 
@@ -742,6 +748,47 @@ func TestReadTUIKeys(t *testing.T) {
 	}
 }
 
+func TestReadTUIMouseKeys(t *testing.T) {
+	// SGR mouse sequences: ESC [ < Cb ; Cx ; Cy M for press, drag, and
+	// wheel events, m for releases. Wire coordinates are 1-based and
+	// emitted 0-based. See taiui.TheoryOfMouseInput.
+	input := "\x1b[<0;11;6M" + // left press at (10,5)
+		"\x1b[<3;11;6m" + // release (no button number) at (10,5)
+		"\x1b[<64;8;9M" + // wheel up at (7,8)
+		"\x1b[<65;8;9M" + // wheel down at (7,8)
+		"\x1b[<32;5;5M" + // left drag at (4,4)
+		"\x1b[<35;5;5M" // no-button motion: ignored
+	ch := make(chan string, 10)
+	go taiui.ReadKeys(strings.NewReader(input), ch)
+	var got []string
+	for len(got) < 5 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for mouse keys")
+		}
+	}
+	want := []string{
+		"mouse-left@10,5",
+		"mouse-release@10,5",
+		"mouse-wheel-up@7,8",
+		"mouse-wheel-down@7,8",
+		"mouse-leftdrag@4,4",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+	// The no-button motion event must be ignored.
+	select {
+	case k := <-ch:
+		t.Fatalf("unexpected key for ignored motion: %q", k)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	ch := make(chan string, 10)
 	go taiui.ReadKeys(strings.NewReader("123sS"), ch)
@@ -762,6 +809,29 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	}
 }
 
+func TestReadTUIMouseKeysStreamed(t *testing.T) {
+	// A mouse sequence may arrive split across reads; the parser must
+	// wait for the terminator before emitting. See
+	// taiui.TheoryOfMouseInput.
+	pr, pw := io.Pipe()
+	ch := make(chan string, 10)
+	go taiui.ReadKeys(pr, ch)
+	go func() {
+		pw.Write([]byte("\x1b[<0;1"))
+		time.Sleep(10 * time.Millisecond)
+		pw.Write([]byte("1;6M"))
+		pw.Close()
+	}()
+	select {
+	case k := <-ch:
+		if k != "mouse-left@10,5" {
+			t.Fatalf("unexpected key: %q", k)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for the streamed mouse key")
+	}
+}
+
 func TestReadTUIKeysTransitions(t *testing.T) {
 	ch := make(chan string, 10)
 	go taiui.ReadKeys(strings.NewReader("[]"), ch)
@@ -778,6 +848,32 @@ func TestReadTUIKeysTransitions(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestParseMouseKey(t *testing.T) {
+	button, x, y, ok := parseMouseKey("mouse-left@12,34")
+	if !ok || button != "left" || x != 12 || y != 34 {
+		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
+	}
+	button, x, y, ok = parseMouseKey("mouse-release@12,34")
+	if !ok || button != "release" || x != 12 || y != 34 {
+		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
+	}
+	button, x, y, ok = parseMouseKey("mouse-leftdrag@4,4")
+	if !ok || button != "leftdrag" || x != 4 || y != 4 {
+		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
+	}
+	for _, bad := range []string{
+		"plain@1,2",      // missing the mouse prefix
+		"mouse-left",     // missing coordinates
+		"mouse-left@a,b", // non-numeric coordinates
+		"mouse-left@1",   // missing the y coordinate
+		"mouse-@1,2",     // empty event kind
+	} {
+		if _, _, _, ok := parseMouseKey(bad); ok {
+			t.Fatalf("expected %q to be invalid", bad)
 		}
 	}
 }
@@ -829,6 +925,99 @@ func TestTUINumberKeySemantics(t *testing.T) {
 	if tui.tabs.Focus != -1 {
 		t.Fatalf("focus should be -1 when no tab is expanded, got %d", tui.tabs.Focus)
 	}
+}
+
+func TestTUIMousePress(t *testing.T) {
+	t.Run("CollapsedStripExpandsAndFocuses", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		// Horizontal split: the output tab occupies rows 0..42, the
+		// collapsed summary tab row 43, the collapsed logs tab row 44.
+		tui.mousePress(5, 43)
+		if !tui.tabs.Expanded[1] {
+			t.Fatal("pressing a collapsed tab's strip must expand it")
+		}
+		if tui.tabs.Focus != 1 {
+			t.Fatalf("expected the focus on the pressed tab, got %d", tui.tabs.Focus)
+		}
+	})
+
+	t.Run("FocusedStripCollapses", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		tui.mousePress(5, 0)
+		if tui.tabs.Expanded[0] {
+			t.Fatal("pressing the focused tab's label strip must collapse it")
+		}
+		if tui.tabs.Focus != -1 {
+			t.Fatalf("expected no focused tab after collapsing, got %d", tui.tabs.Focus)
+		}
+	})
+
+	t.Run("NonFocusedStripFocuses", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, true, false}
+		tui.tabs.HasContent = []bool{true, true, false}
+		tui.tabs.Focus = 0
+		// The summary tab's label strip is its top row (row 33); the
+		// output tab occupies rows 0..32.
+		tui.mousePress(5, 33)
+		if !tui.tabs.Expanded[1] {
+			t.Fatal("the summary tab must stay expanded")
+		}
+		if tui.tabs.Focus != 1 {
+			t.Fatalf("expected the focus on the summary tab, got %d", tui.tabs.Focus)
+		}
+	})
+
+	t.Run("ScrollAreaFocusesAndDragScrolls", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, true, false}
+		tui.tabs.HasContent = []bool{true, true, false}
+		tui.tabs.Focus = 1
+		tui.scrolls[0].MaxOffset = 100
+		tui.scrolls[0].Offset = 10
+
+		tui.mousePress(5, 10)
+		if tui.tabs.Focus != 0 {
+			t.Fatalf("expected the focus on the output tab, got %d", tui.tabs.Focus)
+		}
+		if tui.mouseDragTab != 0 {
+			t.Fatalf("expected a drag attached to the output tab, got %d", tui.mouseDragTab)
+		}
+		// Dragging up reveals earlier content.
+		tui.mouseDrag(5, 5)
+		if tui.scrolls[0].Offset != 15 {
+			t.Fatalf("expected offset 15 after dragging up, got %d", tui.scrolls[0].Offset)
+		}
+		// Dragging down reveals the tail.
+		tui.mouseDrag(5, 15)
+		if tui.scrolls[0].Offset != 5 {
+			t.Fatalf("expected offset 5 after dragging down, got %d", tui.scrolls[0].Offset)
+		}
+		// The drag offset clamps at the content extent.
+		tui.mouseDrag(5, 200)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected offset 0 after clamping, got %d", tui.scrolls[0].Offset)
+		}
+		tui.mouseRelease()
+		if tui.mouseDragTab != -1 {
+			t.Fatalf("expected the drag ended, got %d", tui.mouseDragTab)
+		}
+		// A drag after the release is a no-op.
+		tui.mouseDrag(5, 0)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the offset unchanged after release, got %d", tui.scrolls[0].Offset)
+		}
+	})
 }
 
 func TestTuiStateCollapseFocusLastExpanded(t *testing.T) {
@@ -924,6 +1113,20 @@ func TestScrollClamp(t *testing.T) {
 	}
 	if got := taiui.ClampOffset(1<<30, 2, 3); got != 0 {
 		t.Fatalf("tail sentinel with fitted content should clamp to 0, got %d", got)
+	}
+}
+
+func TestTUIMouseReportingSequences(t *testing.T) {
+	ft := &fakeTty{}
+	tui := &TUI{tty: ft, mouseDragTab: -1}
+	tui.enableMouse()
+	if got := ft.written.String(); got != taiui.MouseEnableSequence {
+		t.Fatalf("unexpected enable sequence: %q", got)
+	}
+	ft.written.Reset()
+	tui.disableMouse()
+	if got := ft.written.String(); got != taiui.MouseDisableSequence {
+		t.Fatalf("unexpected disable sequence: %q", got)
 	}
 }
 
@@ -1302,6 +1505,51 @@ func TestTUIQuitConfirmation(t *testing.T) {
 		tui.render()
 		if strings.Contains(sb.String(), "Quit?") {
 			t.Fatalf("expected no confirmation bar without a pending confirmation, got: %q", sb.String())
+		}
+	})
+}
+
+func TestTUIMouseWheel(t *testing.T) {
+	t.Run("ScrollsTabUnderCursorWithoutChangingFocus", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, false, true}
+		tui.tabs.HasContent = []bool{true, false, true}
+		tui.tabs.Focus = 0
+		tui.scrolls[2].MaxOffset = 100
+		tui.scrolls[2].Offset = 50
+		// Horizontal split: the output tab occupies rows 0..32, the
+		// collapsed summary tab row 33, the logs tab rows 34..44. A
+		// wheel event over the logs tab scrolls its view without
+		// changing the focus.
+		tui.handleMouseKey("mouse-wheel-down@5,40")
+		if tui.scrolls[2].Offset != 51 {
+			t.Fatalf("expected offset 51, got %d", tui.scrolls[2].Offset)
+		}
+		if tui.tabs.Focus != 0 {
+			t.Fatalf("wheel must not change the focus, got %d", tui.tabs.Focus)
+		}
+		tui.handleMouseKey("mouse-wheel-up@5,40")
+		if tui.scrolls[2].Offset != 50 {
+			t.Fatalf("expected offset 50, got %d", tui.scrolls[2].Offset)
+		}
+	})
+
+	t.Run("CollapsedTabIsNoOp", func(t *testing.T) {
+		tui := newTUIForTest()
+		tui.width, tui.height = 80, 45
+		tui.tabs.Expanded = []bool{true, false, true}
+		tui.tabs.HasContent = []bool{true, false, true}
+		tui.tabs.Focus = 0
+		tui.scrolls[1].MaxOffset = 100
+		tui.scrolls[1].Offset = 10
+		// A wheel event over the collapsed summary row (33) is a no-op.
+		tui.handleMouseKey("mouse-wheel-down@5,33")
+		if tui.scrolls[2].Offset != 0 {
+			t.Fatal("wheel must not affect another tab")
+		}
+		if tui.scrolls[1].Offset != 10 || tui.tabs.Focus != 0 {
+			t.Fatal("wheel over a collapsed tab must be a no-op")
 		}
 	})
 }
@@ -2307,6 +2555,31 @@ func TestTuiStateWriteThoughtSummaryEmpty(t *testing.T) {
 		t.Fatal("summary tab must not expand for an empty thought summary")
 	}
 }
+
+// fakeTty is a minimal tty.Tty implementation for testing the TUI's
+// terminal writes, such as the mouse reporting sequences. Reads return
+// io.EOF as if the terminal delivered no input.
+type fakeTty struct {
+	written bytes.Buffer
+}
+
+func (f *fakeTty) Start() error { return nil }
+
+func (f *fakeTty) Stop() error { return nil }
+
+func (f *fakeTty) Drain() error { return nil }
+
+func (f *fakeTty) NotifyResize(chan<- bool) {}
+
+func (f *fakeTty) WindowSize() (tty.WindowSize, error) {
+	return tty.WindowSize{Width: 80, Height: 24}, nil
+}
+
+func (f *fakeTty) Read([]byte) (int, error) { return 0, io.EOF }
+
+func (f *fakeTty) Write(p []byte) (int, error) { return f.written.Write(p) }
+
+func (f *fakeTty) Close() error { return nil }
 
 func TestTuiThoughtSummaryWriter(t *testing.T) {
 	// The writer returned by ThoughtSummaryWriter appends to the Summary
