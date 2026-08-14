@@ -5,104 +5,122 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/reusee/dscope"
-	"github.com/reusee/tai/taiui"
 )
 
 func TestHandleKeyScrollClamp(t *testing.T) {
-	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
-	changed, quit := handleKey("up")
+	s := &State{Toggle: true, W1Weight: 1}
+	changed, quit := s.HandleKey("up")
 	if quit {
 		t.Fatal("up must not quit the demo")
 	}
-	if len(changed) != 0 {
-		t.Fatalf("expected no provider for clamped up, got %d", len(changed))
+	if changed {
+		t.Fatalf("expected no change for clamped up, got %v", changed)
 	}
-	changed, quit = handleKey("down")
+	changed, quit = s.HandleKey("down")
 	if quit {
 		t.Fatal("down must not quit the demo")
 	}
-	if got := dscope.Get[Scroll](dscope.New(changed...)); got != 1 {
-		t.Fatalf("expected scroll 1 after down, got %d", got)
+	if !changed {
+		t.Fatal("expected a change for down")
 	}
-	changed, quit = handleKey("space")
+	if s.Scroll != 1 {
+		t.Fatalf("expected scroll 1 after down, got %d", s.Scroll)
+	}
+	changed, quit = s.HandleKey("space")
 	if quit {
 		t.Fatal("space must not quit the demo")
 	}
-	if got := dscope.Get[Toggle](dscope.New(changed...)); got {
+	if !changed {
+		t.Fatal("expected a change for space")
+	}
+	if s.Toggle {
 		t.Fatal("expected toggle flipped by space")
 	}
-	_, quit = handleKey("quit")
+	_, quit = s.HandleKey("quit")
 	if !quit {
 		t.Fatal("quit must stop the demo")
 	}
 }
 
 func TestHandleKeyW1Weight(t *testing.T) {
-	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
-	changed, quit := handleKey("left")
+	s := &State{Toggle: true, W1Weight: 1}
+	changed, quit := s.HandleKey("left")
 	if quit {
 		t.Fatal("left must not quit the demo")
 	}
-	if len(changed) != 0 {
-		t.Fatalf("expected no provider for clamped left, got %d", len(changed))
+	if changed {
+		t.Fatalf("expected no change for clamped left, got %v", changed)
 	}
-	changed, quit = handleKey("right")
+	changed, quit = s.HandleKey("right")
 	if quit {
 		t.Fatal("right must not quit the demo")
 	}
-	if got := dscope.Get[W1Weight](dscope.New(changed...)); got != 2 {
-		t.Fatalf("expected w1 weight 2 after right, got %d", got)
+	if !changed {
+		t.Fatal("expected a change for right")
+	}
+	if s.W1Weight != 2 {
+		t.Fatalf("expected w1 weight 2 after right, got %d", s.W1Weight)
 	}
 	for i := 0; i < maxW1Weight; i++ {
-		handleKey("right")
+		s.HandleKey("right")
 	}
-	changed, quit = handleKey("right")
+	changed, quit = s.HandleKey("right")
 	if quit {
 		t.Fatal("right must not quit the demo")
 	}
-	if len(changed) != 0 {
-		t.Fatalf("expected no provider at upper clamp, got %d", len(changed))
+	if changed {
+		t.Fatalf("expected no change at upper clamp, got %v", changed)
 	}
 }
 
 func TestHandleKeyModal(t *testing.T) {
-	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
-	changed, quit := handleKey("modal")
+	s := &State{Toggle: true, W1Weight: 1}
+	changed, quit := s.HandleKey("modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
-	if got := dscope.Get[Modal](dscope.New(changed...)); !got {
+	if !changed {
+		t.Fatal("expected a change for modal")
+	}
+	if !s.Modal {
 		t.Fatal("expected modal toggled by m")
 	}
-	changed, quit = handleKey("modal")
+	changed, quit = s.HandleKey("modal")
 	if quit {
 		t.Fatal("modal must not quit the demo")
 	}
-	if got := dscope.Get[Modal](dscope.New(changed...)); got {
+	if !changed {
+		t.Fatal("expected a change for modal")
+	}
+	if s.Modal {
 		t.Fatal("expected modal toggled back by m")
 	}
 }
 
 func TestHandleKeyRotation(t *testing.T) {
-	handleKey := (&App{}).HandleKey(0, true, 1, false, 0)
-	changed, quit := handleKey("tab")
+	s := &State{Toggle: true, W1Weight: 1}
+	changed, quit := s.HandleKey("tab")
 	if quit {
 		t.Fatal("tab must not quit the demo")
 	}
-	if got := dscope.Get[Rotation](dscope.New(changed...)); got != 1 {
-		t.Fatalf("expected rotation 1 after tab, got %d", got)
+	if !changed {
+		t.Fatal("expected a change for tab")
+	}
+	if s.Rotation != 1 {
+		t.Fatalf("expected rotation 1 after tab, got %d", s.Rotation)
 	}
 	// Three more presses wrap the rotation back to 0.
 	for i := 0; i < 3; i++ {
-		changed, quit = handleKey("tab")
+		changed, quit = s.HandleKey("tab")
 		if quit {
 			t.Fatal("tab must not quit the demo")
 		}
+		if !changed {
+			t.Fatal("expected a change for tab")
+		}
 	}
-	if got := dscope.Get[Rotation](dscope.New(changed...)); got != 0 {
-		t.Fatalf("expected rotation wrapped to 0, got %d", got)
+	if s.Rotation != 0 {
+		t.Fatalf("expected rotation wrapped to 0, got %d", s.Rotation)
 	}
 }
 
@@ -195,15 +213,19 @@ func TestBounce(t *testing.T) {
 	}
 }
 
-func TestScopeConstruction(t *testing.T) {
-	// The App's providers depend on the dynamic state (Width, Height,
-	// Frame, Now). dscope validates that every definition's dependencies
-	// are resolvable at fork time, so the App methods must provide the
-	// initial values; the event loop forks the real values later.
-	// Resolving the root exercises every provider's dependency chain.
-	scope := dscope.New(new(App))
-	root := dscope.Get[taiui.Root](scope)
+func TestBuildRoot(t *testing.T) {
+	// BuildRoot turns the current state into a root element tree,
+	// including the small-screen banner and the modal overlay.
+	root := BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1})
 	if root.Element == nil {
 		t.Fatal("expected a root element")
+	}
+	root = BuildRoot(State{Width: 80, Height: 24, Toggle: true, W1Weight: 1, Modal: true})
+	if root.Element == nil {
+		t.Fatal("expected a root element with the modal open")
+	}
+	root = BuildRoot(State{Width: 10, Height: 10, Toggle: true, W1Weight: 1})
+	if root.Element == nil {
+		t.Fatal("expected a root element for a small screen")
 	}
 }

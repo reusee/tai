@@ -8,7 +8,6 @@ import (
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/dscope"
 )
 
 type fakeScreen struct {
@@ -37,10 +36,6 @@ func (s *fakeScreen) lastCell(x, y int) FrameCell {
 	return frame.Cells[y*frame.Width+x]
 }
 
-func newRootScope(root Root) Scope {
-	return dscope.New(func() Root { return root })
-}
-
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -55,8 +50,7 @@ func sameStrings(a, b []string) bool {
 
 func TestRender(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(Fill(true), Text("Hello"))})
-	Render(scope, screen)
+	Render(Root{Element: Rect(Fill(true), Text("Hello"))}, screen)
 
 	if r := screen.cell(0, 0); r != 'H' {
 		t.Fatalf("expected 'H' at cell 0, got %v", r)
@@ -65,15 +59,14 @@ func TestRender(t *testing.T) {
 
 func TestNestedRect(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Fill(true),
 		Rect(
 			Margin(2),
 			Padding(1),
 			Text("Nested"),
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 
 	// "Nested" should appear at row 3 (margin 2 + padding 1), col 3.
 	if r := screen.cell(3, 3); r != 'N' {
@@ -85,8 +78,8 @@ func TestCanvas(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	content := NewCanvasContent(10, 10)
 	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
-	scope := newRootScope(Root{Element: Canvas(content)})
-	Render(scope, screen)
+	root := Root{Element: Canvas(content)}
+	Render(root, screen)
 
 	if r := screen.cell(0, 0); r != 'X' {
 		t.Fatalf("expected 'X' at cell 0, got %v", r)
@@ -95,7 +88,7 @@ func TestCanvas(t *testing.T) {
 	// Canvas content is state: mutating it and re-rendering yields the
 	// updated UI without any element-update call.
 	content.SetContent(0, 0, 'Y', nil, vt.BaseStyle)
-	Render(scope, screen)
+	Render(root, screen)
 
 	if r := screen.cell(0, 0); r != 'Y' {
 		t.Fatalf("expected 'Y' at cell 0 after content change, got %v", r)
@@ -112,8 +105,7 @@ func TestCanvasContentBounds(t *testing.T) {
 	content.SetContent(0, 10, 'X', nil, vt.BaseStyle)
 
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Canvas(content)})
-	Render(scope, screen)
+	Render(Root{Element: Canvas(content)}, screen)
 
 	// Every write was out of bounds, so all cells are blank.
 	if r := screen.cell(0, 0); r != 0 {
@@ -129,8 +121,7 @@ func TestCanvasClear(t *testing.T) {
 	content.SetContent(0, 0, 'X', nil, vt.BaseStyle)
 	content.Clear(vt.BaseStyle.WithBg(HexColor(0x101010)))
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Canvas(content)})
-	Render(scope, screen)
+	Render(Root{Element: Canvas(content)}, screen)
 	// Clear resets every cell to a blank cell with the given style.
 	cell := screen.lastCell(0, 0)
 	if !cell.Set || cell.Rune != ' ' {
@@ -150,41 +141,18 @@ func namedBox() Box { return Box{Top: 0, Left: 0, Bottom: 25, Right: 80} }
 
 func TestNamedFunctionSpec(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(namedBox, Fill(true), Text("n"))})
-	Render(scope, screen)
+	Render(Root{Element: Rect(namedBox, Fill(true), Text("n"))}, screen)
 
 	if r := screen.cell(0, 0); r != 'n' {
 		t.Fatalf("expected 'n' at cell 0, got %v", r)
 	}
 }
 
-func TestStateUpdateViaFork(t *testing.T) {
-	screen := newFakeScreen(80, 25)
-	scope := dscope.New(
-		func() string { return "a" },
-		func(s string) Root { return Root{Element: Text(s)} },
-	)
-	Render(scope, screen)
-
-	if r := screen.cell(0, 0); r != 'a' {
-		t.Fatalf("expected 'a' at cell 0, got %v", r)
-	}
-
-	// A state change is a scope fork: the root element re-evaluates and the
-	// next render reflects the new state.
-	scope = scope.Fork(func() string { return "b" })
-	Render(scope, screen)
-
-	if r := screen.cell(0, 0); r != 'b' {
-		t.Fatalf("expected 'b' at cell 0 after fork, got %v", r)
-	}
-}
-
 func TestRenderToMultipleScreens(t *testing.T) {
 	screen1 := newFakeScreen(80, 25)
 	screen2 := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("m")})
-	Render(scope, screen1, screen2)
+	root := Root{Element: Text("m")}
+	Render(root, screen1, screen2)
 
 	for i, screen := range []*fakeScreen{screen1, screen2} {
 		if r := screen.cell(0, 0); r != 'm' {
@@ -195,11 +163,10 @@ func TestRenderToMultipleScreens(t *testing.T) {
 
 func TestVerticalScroll(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
 		VerticalScroll(Text("a", "b", "c"), 0),
-	)})
-	Render(scope, screen)
+	)}, screen)
 
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at cell 0, got %v", r)
@@ -213,11 +180,10 @@ func TestVerticalScroll(t *testing.T) {
 
 func TestVerticalScrollOffsetBeyondShortContent(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(Text("a", "b", "c"), 1000),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The offset is far beyond the content: the first collection range
 	// misses the window, and a second pass re-collects the window cells.
 	// The view clamps to the content start, showing "a" at row 0.
@@ -240,11 +206,10 @@ func TestVerticalScrollOffsetIsFirstVisibleRow(t *testing.T) {
 	for i := 1; i <= 20; i++ {
 		lines = append(lines, fmt.Sprintf("line %02d", i))
 	}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 6, Right: 80},
 		VerticalScroll(Text(lines), 10),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The first visible content row is line 11; its '1' digit is at
 	// column 6.
 	if r := screen.cell(6, 0); r != '1' {
@@ -263,15 +228,14 @@ func TestVerticalScrollWrapWithScrollbar(t *testing.T) {
 	// scrollbar.
 	screen := newFakeScreen(80, 25)
 	lines := []string{"abcdefghij", "abcdefghij", "abcdefghij"}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 5},
 		VerticalScroll(
 			Text(lines, Wrap(true)),
 			0,
 			Scrollbar(true),
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Each source line wraps at the visible width (4 columns: 5 minus
 	// the scrollbar column): "abcd", "efgh", "ij". The second visible
 	// line starts with 'e'. Without visible-width rendering, the line
@@ -291,8 +255,7 @@ func TestVerticalScrollWrapWithScrollbar(t *testing.T) {
 
 func TestTextCombiningCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("e\u0301x")})
-	Render(scope, screen)
+	Render(Root{Element: Text("e\u0301x")}, screen)
 
 	// e + combining acute is one grapheme cluster: one cell carrying the
 	// base rune and its combining rune, advancing by one column.
@@ -310,8 +273,7 @@ func TestTextCombiningCluster(t *testing.T) {
 
 func TestTextZWJEmojiCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("x\U0001F469\u200d\U0001F4BBy")})
-	Render(scope, screen)
+	Render(Root{Element: Text("x\U0001F469\u200d\U0001F4BBy")}, screen)
 
 	// Woman + ZWJ + laptop is one grapheme cluster; the ZWJ and laptop are
 	// combining runes of the cluster, and the cluster spans two columns.
@@ -331,18 +293,18 @@ func TestTextZWJEmojiCluster(t *testing.T) {
 }
 
 func TestAmbiguousRunewidthEnv(t *testing.T) {
-	scope := newRootScope(Root{Element: Text("\u00A1x")})
+	root := Root{Element: Text("\u00A1x")}
 
 	t.Setenv("RUNEWIDTH_EASTASIAN", "")
 	s1 := newFakeScreen(80, 25)
-	Render(scope, s1)
+	Render(root, s1)
 	if r := s1.cell(1, 0); r != 'x' {
 		t.Fatalf("expected ambiguous rune narrow by default, got %v at col 1", r)
 	}
 
 	t.Setenv("RUNEWIDTH_EASTASIAN", "1")
 	s2 := newFakeScreen(80, 25)
-	Render(scope, s2)
+	Render(root, s2)
 	if r := s2.cell(1, 0); r != 0 {
 		t.Fatalf("expected wide ambiguous rune to skip col 1, got %v", r)
 	}
@@ -355,8 +317,7 @@ func TestCanvasCombc(t *testing.T) {
 	content := NewCanvasContent(5, 5)
 	content.SetContent(0, 0, 'e', []rune{'\u0301'}, vt.BaseStyle)
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Canvas(content)})
-	Render(scope, screen)
+	Render(Root{Element: Canvas(content)}, screen)
 
 	cell := screen.lastCell(0, 0)
 	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
@@ -368,11 +329,10 @@ func TestCanvasClipWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 1, Right: 3},
 		Canvas(content),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster at the box's right edge would extend past it; it
 	// must be clipped, so neither its base column nor the spill column
 	// is drawn.
@@ -385,11 +345,10 @@ func TestCanvasWideClusterFits(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 1, Right: 5},
 		Canvas(content),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster fits within the box: it is drawn at its base
 	// column, and the trailing column is blank.
 	if r := screen.cell(2, 0); r != '\U0001F469' {
@@ -405,8 +364,7 @@ func TestCanvasWideClusterTrailingCell(t *testing.T) {
 	content := NewCanvasContent(4, 1)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
 	content.SetContent(3, 0, 'x', nil, vt.BaseStyle)
-	scope := newRootScope(Root{Element: Canvas(content)})
-	Render(scope, screen)
+	Render(Root{Element: Canvas(content)}, screen)
 	// The wide cluster at (2,0) covers its trailing column (3,0); the
 	// cell at (3,0) is part of the cluster's visual space and must not
 	// be drawn over it.
@@ -485,11 +443,10 @@ func TestFrameDirty(t *testing.T) {
 
 func TestVerticalScrollCombc(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(Text("a", "e\u0301"), 0),
-	)})
-	Render(scope, screen)
+	)}, screen)
 
 	cell := screen.lastCell(0, 1)
 	if cell.Rune != 'e' || !sameCombc(cell.Combc, []rune{'\u0301'}) {
@@ -603,8 +560,7 @@ func TestWrapLineTab(t *testing.T) {
 
 func TestTextTabWidth(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\tb", TabWidth(4))})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\tb", TabWidth(4))}, screen)
 	// TabWidth(4) places 'b' at col 4.
 	if r := screen.cell(4, 0); r != 'b' {
 		t.Fatalf("expected 'b' at (4,0), got %v", r)
@@ -613,8 +569,7 @@ func TestTextTabWidth(t *testing.T) {
 
 func TestTextTabExpansionFill(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\tb", Fill(true))})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\tb", Fill(true))}, screen)
 	// With fill, the tab's skipped cells are painted with the background.
 	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
 		t.Fatalf("expected filled tab gap at (1,0), got %+v", cell)
@@ -626,8 +581,7 @@ func TestTextTabExpansionFill(t *testing.T) {
 
 func TestTextTabExpansion(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\tb")})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\tb")}, screen)
 	// A tab advances to the next tab stop (default 8): 'a' at col 0,
 	// 'b' at col 8. The skipped cells are unset without fill.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -647,10 +601,10 @@ func TestTextFastPathMatchesGeneralPath(t *testing.T) {
 	// path without changing the output.
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB"} {
 		fast := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text)}), fast)
+		Render(Root{Element: Text(text)}, fast)
 
 		general := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+		Render(Root{Element: Text(text, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 			t.Fatalf("fast path output differs from general path for %q", text)
@@ -662,10 +616,10 @@ func TestTextFastPathEmptyBoxCursor(t *testing.T) {
 	// An empty box override with a cursor: the fast path must not set a
 	// cursor, matching the general path's early return.
 	fast := newFakeScreen(80, 25)
-	Render(newRootScope(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10})}), fast)
+	Render(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10})}, fast)
 
 	general := newFakeScreen(80, 25)
-	Render(newRootScope(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10}, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+	Render(Root{Element: Text("a", Cursor(true), Box{Top: 5, Left: 0, Bottom: 5, Right: 10}, OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 	if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 		t.Fatal("fast path empty-box cursor output differs from general path")
@@ -678,10 +632,10 @@ func TestTextFastPathCursorMatchesGeneralPath(t *testing.T) {
 	// general path without changing the output.
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
 		fast := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Cursor(true))}), fast)
+		Render(Root{Element: Text(text, Cursor(true))}, fast)
 
 		general := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+		Render(Root{Element: Text(text, Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 			t.Fatalf("fast path cursor output differs from general path for %q", text)
@@ -696,10 +650,10 @@ func TestTextFastPathCursorAtMatchesGeneralPath(t *testing.T) {
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
 		for _, offset := range []int{0, 1, 2, 10} {
 			fast := newFakeScreen(80, 25)
-			Render(newRootScope(Root{Element: Text(text, CursorAt(offset))}), fast)
+			Render(Root{Element: Text(text, CursorAt(offset))}, fast)
 
 			general := newFakeScreen(80, 25)
-			Render(newRootScope(Root{Element: Text(text, CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+			Render(Root{Element: Text(text, CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 				t.Fatalf("fast path cursor-at output differs from general path for %q at offset %d", text, offset)
@@ -714,10 +668,10 @@ func TestTextFastPathFillMatchesGeneralPath(t *testing.T) {
 	// forces the general path without changing the output.
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
 		fast := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Fill(true))}), fast)
+		Render(Root{Element: Text(text, Fill(true))}, fast)
 
 		general := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Fill(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+		Render(Root{Element: Text(text, Fill(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 			t.Fatalf("fast path fill output differs from general path for %q", text)
@@ -731,10 +685,10 @@ func TestTextFastPathFillCursorMatchesGeneralPath(t *testing.T) {
 	// style forces the general path without changing the output.
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
 		fast := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Fill(true), Cursor(true))}), fast)
+		Render(Root{Element: Text(text, Fill(true), Cursor(true))}, fast)
 
 		general := newFakeScreen(80, 25)
-		Render(newRootScope(Root{Element: Text(text, Fill(true), Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+		Render(Root{Element: Text(text, Fill(true), Cursor(true), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 		if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 			t.Fatalf("fast path fill cursor output differs from general path for %q", text)
@@ -750,10 +704,10 @@ func TestTextFastPathFillCursorAtMatchesGeneralPath(t *testing.T) {
 	for _, text := range []string{"hello", "a\tb", "e\u0301x", "\U0001F469\u200d\U0001F4BB", ""} {
 		for _, offset := range []int{0, 1, 2, 10} {
 			fast := newFakeScreen(80, 25)
-			Render(newRootScope(Root{Element: Text(text, Fill(true), CursorAt(offset))}), fast)
+			Render(Root{Element: Text(text, Fill(true), CursorAt(offset))}, fast)
 
 			general := newFakeScreen(80, 25)
-			Render(newRootScope(Root{Element: Text(text, Fill(true), CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}), general)
+			Render(Root{Element: Text(text, Fill(true), CursorAt(offset), OffsetStyleFunc(func(int) StyleFunc { return SameStyle }))}, general)
 
 			if !fast.frames[len(fast.frames)-1].Equal(general.frames[len(general.frames)-1]) {
 				t.Fatalf("fast path fill cursor-at output differs from general path for %q at offset %d", text, offset)
@@ -764,11 +718,10 @@ func TestTextFastPathFillCursorAtMatchesGeneralPath(t *testing.T) {
 
 func TestTextWrapRender(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 8},
 		Text("one two three", Wrap(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// "one two three" (13 wide) wraps in an 8-wide box: "one two" on row 0,
 	// "three" on row 1.
 	if r := screen.cell(0, 0); r != 'o' {
@@ -784,11 +737,10 @@ func TestTextWrapRender(t *testing.T) {
 
 func TestTextWrapHardBreak(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
 		Text("abcdefgh", Wrap(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// "abcdefgh" is one 8-wide word in a 4-wide box: it hard-breaks into
 	// "abcd" and "efgh".
 	if r := screen.cell(0, 0); r != 'a' {
@@ -807,11 +759,10 @@ func TestTextWrapHardBreak(t *testing.T) {
 
 func TestTextWrapPreservesIndentation(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 80},
 		Text("    func main() {", Wrap(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The indented code line keeps its indentation through the
 	// render-time wrap: a fitting indented line is returned unchanged
 	// by the wrap function, so its leading spaces reach the frame.
@@ -824,8 +775,7 @@ func TestTextWrapPreservesIndentation(t *testing.T) {
 
 func TestTextFillAligned(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("ab", AlignRight, Fill(true))})
-	Render(scope, screen)
+	Render(Root{Element: Text("ab", AlignRight, Fill(true))}, screen)
 	// Right-aligned "ab" sits at cols 78-79; fill paints the whole line,
 	// including the leading gap.
 	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
@@ -839,8 +789,7 @@ func TestTextFillAligned(t *testing.T) {
 	}
 
 	screen2 := newFakeScreen(80, 25)
-	scope2 := newRootScope(Root{Element: Text("ab", AlignCenter, Fill(true))})
-	Render(scope2, screen2)
+	Render(Root{Element: Text("ab", AlignCenter, Fill(true))}, screen2)
 	// Center-aligned "ab" sits at cols 39-40; both gaps are filled.
 	if cell := screen2.lastCell(38, 0); !cell.Set || cell.Rune != ' ' {
 		t.Fatalf("expected filled leading gap at (38,0), got %+v", cell)
@@ -858,11 +807,10 @@ func TestTextFillAligned(t *testing.T) {
 
 func TestTextClusterClip(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		Text("a\U0001F469\u200d\U0001F4BB"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// 'a' fits at col 0; the wide cluster needs cols 1-2 but only col 1
 	// remains, so it is clipped: text never spills past its box.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -875,11 +823,10 @@ func TestTextClusterClip(t *testing.T) {
 
 func TestTextFillAlignRightClippedGap(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		Text("\U0001F469\u200d\U0001F4BBa", AlignRight, Fill(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Right-aligned text wider than the box: the leading wide cluster is
 	// clipped at the left edge, and fill paints the residual gap it
 	// leaves in the content area.
@@ -906,8 +853,7 @@ func TestClusterWidth(t *testing.T) {
 
 func TestTextAlignCenterRounding(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a", AlignCenter)})
-	Render(scope, screen)
+	Render(Root{Element: Text("a", AlignCenter)}, screen)
 	// An odd-width line centers with the extra column on the right,
 	// matching the conventional (width-len)/2 rule: col 39 of 80.
 	if r := screen.cell(39, 0); r != 'a' {
@@ -920,12 +866,11 @@ func TestTextAlignCenterRounding(t *testing.T) {
 
 func TestTextAlignCenterPadding(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
 		Padding(0, 10, 0, 0),
 		Text("a", AlignCenter),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Center alignment is relative to the padded content area, which the
 	// right padding shrinks to [0, 70): the 'a' sits at (0+70-1)/2 = 34.
 	if r := screen.cell(34, 0); r != 'a' {
@@ -938,11 +883,10 @@ func TestTextAlignCenterPadding(t *testing.T) {
 
 func TestTextVAlignMiddle(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		Text("a", "b", "c", "d", VAlignMiddle),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// 4 lines in a 10-row box: middle alignment places them at rows 3..6,
 	// with 3 blank rows above and below.
 	if r := screen.cell(0, 2); r != 0 {
@@ -961,11 +905,10 @@ func TestTextVAlignMiddle(t *testing.T) {
 
 func TestTextVAlignBottom(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		Text("a", "b", "c", "d", VAlignBottom),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// 4 lines in a 10-row box: bottom alignment places them at rows 6..9.
 	if r := screen.cell(0, 5); r != 0 {
 		t.Fatalf("expected row 5 blank, got %v", r)
@@ -980,12 +923,11 @@ func TestTextVAlignBottom(t *testing.T) {
 
 func TestTextVAlignMiddlePadding(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		Padding(1, 0, 1, 0),
 		Text("a", "b", VAlignMiddle),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The padded content area is rows 1..8 (8 rows); 2 lines center at
 	// rows 4..5, with 3 blank rows above and below.
 	if r := screen.cell(0, 3); r != 0 {
@@ -1004,11 +946,10 @@ func TestTextVAlignMiddlePadding(t *testing.T) {
 
 func TestTextVAlignMiddleWrap(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 8},
 		Text("one two three four", Wrap(true), VAlignMiddle),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// "one two three four" wraps to 3 lines in an 8-wide box; middle
 	// alignment places them at rows 3..5 of the 10-row box.
 	if r := screen.cell(0, 2); r != 0 {
@@ -1027,14 +968,13 @@ func TestTextVAlignMiddleWrap(t *testing.T) {
 
 func TestBoxModelDegenerate(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		Border(true),
 		Padding(10),
 		Fill(true),
 		Text("x"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Border plus padding exceeds the box: the content box has negative
 	// dimensions. Rendering degenerates safely: the border ring paints
 	// and no content escapes the box.
@@ -1055,13 +995,12 @@ func TestBoxModelDegenerate(t *testing.T) {
 
 func TestBorderStyleOverridesChain(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		FGColor(HexColor(0x0000ff)),
 		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The border style applies after the element's style chain, so the
 	// border overrides the chain's foreground while the content keeps it.
 	cell := screen.lastCell(0, 0)
@@ -1082,11 +1021,10 @@ func TestBorderStyleOverridesChain(t *testing.T) {
 
 func TestFlexColumn(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Column(
+	Render(Root{Element: Column(
 		Rect(Fill(true), Text("a")),
 		Rect(Fill(true), Text("b")),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Two equal children split the 25-row box: the first occupies rows
 	// 0..11, the second rows 12..24.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -1102,11 +1040,10 @@ func TestFlexColumn(t *testing.T) {
 
 func TestFlexRow(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Rect(Fill(true), Text("a")),
 		Rect(Fill(true), Text("b")),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
 	}
@@ -1120,11 +1057,10 @@ func TestFlexRow(t *testing.T) {
 
 func TestFlexWeighted(t *testing.T) {
 	screen := newFakeScreen(90, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Rect(Fill(true), Text("a")),
 		Weighted(2, Rect(Fill(true), Text("b"))),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Weights 1 and 2 divide the 90 columns into 30 and 60.
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
@@ -1139,12 +1075,11 @@ func TestFlexWeighted(t *testing.T) {
 
 func TestFlexRounding(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Rect(Fill(true), Text("a")),
 		Rect(Fill(true), Text("b")),
 		Rect(Fill(true), Text("c")),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// 80 / 3 = 26, so the first and second children get 26 columns and
 	// the last child absorbs the remaining 28.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -1163,14 +1098,13 @@ func TestFlexRounding(t *testing.T) {
 
 func TestFlexBoxModel(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Margin(1),
 		Padding(1),
 		Fill(true),
 		Rect(Fill(true), Text("a")),
 		Rect(Fill(true), Text("b")),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The Row's margin and padding shrink the content area to x 2..77.
 	// The children split it evenly: first covers x 2..39, second x 40..77;
 	// the padding ring is filled, the outer margin stays unset.
@@ -1190,7 +1124,7 @@ func TestFlexBoxModel(t *testing.T) {
 
 func TestFlexFillNegativeMargin(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 6, Right: 6},
 		Margin(1),
 		Padding(1),
@@ -1202,8 +1136,7 @@ func TestFlexFillNegativeMargin(t *testing.T) {
 			FGColor(HexColor(0xff0000)),
 			Rect(Fill(true), Text("a")),
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The Row's negative margin pushes its outer box past its own box;
 	// its fill must clip to its box, so the Rect's padding ring keeps the
 	// Rect's fill style instead of the Row's red background.
@@ -1241,8 +1174,7 @@ func TestStyleHelpers(t *testing.T) {
 
 func TestStyleSpecsRender(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a", Italic(true), Reverse(true))})
-	Render(scope, screen)
+	Render(Root{Element: Text("a", Italic(true), Reverse(true))}, screen)
 	cell := screen.lastCell(0, 0)
 	if cell.Style.Attr()&vt.Italic == 0 {
 		t.Fatal("Italic(true) spec had no effect")
@@ -1258,11 +1190,10 @@ func TestVerticalScrollEndClamp(t *testing.T) {
 	for i := 1; i <= 19; i++ {
 		lines = append(lines, fmt.Sprintf("line %02d", i))
 	}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(Text(lines), 1000),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The view clamps to the content end: rows show lines 16..19.
 	if r := screen.cell(0, 0); r != 'l' {
 		t.Fatalf("expected line 16 at (0,0), got %v", r)
@@ -1284,11 +1215,10 @@ func TestVerticalScrollScrollbar(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		lines = append(lines, fmt.Sprintf("s%02d", i))
 	}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		VerticalScroll(Text(lines), 0, Scrollbar(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(79, 0); r != '█' {
 		t.Fatalf("expected scrollbar thumb at (79,0), got %v", r)
 	}
@@ -1296,11 +1226,10 @@ func TestVerticalScrollScrollbar(t *testing.T) {
 
 func TestVerticalScrollNoScrollbarWhenFits(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		VerticalScroll(Text("a", "b", "c"), 0, Scrollbar(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(79, 0); r != 0 {
 		t.Fatalf("expected no scrollbar thumb when content fits, got %v", r)
 	}
@@ -1308,12 +1237,11 @@ func TestVerticalScrollNoScrollbarWhenFits(t *testing.T) {
 
 func TestVerticalScrollBoxSpec(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: VerticalScroll(
+	Render(Root{Element: VerticalScroll(
 		Text("a", "b", "c"),
 		0,
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 80},
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The Box override constrains the scroll view to 3 rows.
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
@@ -1332,13 +1260,12 @@ func TestVerticalScrollStyleSpec(t *testing.T) {
 	for i := 1; i <= 19; i++ {
 		lines = append(lines, fmt.Sprintf("line %02d", i))
 	}
-	scope := newRootScope(Root{Element: VerticalScroll(
+	Render(Root{Element: VerticalScroll(
 		Text(lines),
 		1000,
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		FGColor(HexColor(0xff0000)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The style chain applies to the scroll content.
 	if r, g, b := screen.lastCell(0, 0).Style.Fg().RGB(); !(r == 0xff && g == 0 && b == 0) {
 		t.Fatalf("expected red content, got %#x %#x %#x", r, g, b)
@@ -1347,13 +1274,12 @@ func TestVerticalScrollStyleSpec(t *testing.T) {
 
 func TestVerticalScrollFill(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: VerticalScroll(
+	Render(Root{Element: VerticalScroll(
 		Text("a", "b", "c"),
 		0,
 		Box{Top: 0, Left: 0, Bottom: 10, Right: 80},
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Fill paints the visible window cells the content does not occupy.
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
@@ -1368,13 +1294,12 @@ func TestVerticalScrollFill(t *testing.T) {
 
 func TestVerticalScrollFillWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: VerticalScroll(
+	Render(Root{Element: VerticalScroll(
 		Text("\U0001F469\u200d\U0001F4BB"),
 		0,
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster occupies two columns; fill must not paint the
 	// trailing column.
 	if cell := screen.lastCell(1, 0); cell.Set {
@@ -1387,8 +1312,7 @@ func TestVerticalScrollFillWideCluster(t *testing.T) {
 
 func TestRectFillWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(Fill(true), Text("\U0001F469\u200d\U0001F4BB"))})
-	Render(scope, screen)
+	Render(Root{Element: Rect(Fill(true), Text("\U0001F469\u200d\U0001F4BB"))}, screen)
 	// The wide cluster occupies two columns; fill must not paint the
 	// trailing column.
 	cell := screen.lastCell(1, 0)
@@ -1402,11 +1326,10 @@ func TestRectFillWideCluster(t *testing.T) {
 
 func TestRectFillNoChildren(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// A fill-only Rect paints every box cell without marks tracking.
 	for y := 0; y < 3; y++ {
 		for x := 0; x < 4; x++ {
@@ -1420,12 +1343,11 @@ func TestRectFillNoChildren(t *testing.T) {
 
 func TestRectFillWideClusterTrailingRow(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 1},
 		Fill(true),
 		Text("\U0001F469\u200d\U0001F4BB"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster's trailing columns must not spill the marks into
 	// the next row; row 1 stays fillable.
 	if cell := screen.lastCell(0, 1); !cell.Set || cell.Rune != ' ' {
@@ -1435,12 +1357,11 @@ func TestRectFillWideClusterTrailingRow(t *testing.T) {
 
 func TestRectFillNegativeMargin(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		Margin(-1),
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// A negative margin pushes the outer box outside the element box; the
 	// fill loop must clip to the element box and not index out of range.
 	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
@@ -1450,13 +1371,12 @@ func TestRectFillNegativeMargin(t *testing.T) {
 
 func TestRectFillNegativeMarginChild(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		Margin(-1),
 		Fill(true),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// With children, the marks path must likewise clip its fill loop.
 	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
 		t.Fatalf("expected filled ' ' at (0,0), got %+v", cell)
@@ -1509,8 +1429,7 @@ func TestDarkerOrLighterStyle(t *testing.T) {
 
 func TestUnderlineColorSpec(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("u", Underline(true), UnderlineColor(HexColor(0xff0000)))})
-	Render(scope, screen)
+	Render(Root{Element: Text("u", Underline(true), UnderlineColor(HexColor(0xff0000)))}, screen)
 	cell := screen.lastCell(0, 0)
 	if cell.Style.Attr()&vt.Underline == 0 {
 		t.Fatal("Underline(true) spec had no effect")
@@ -1523,8 +1442,7 @@ func TestUnderlineColorSpec(t *testing.T) {
 
 func TestUnderlineStyleSpec(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("u", UnderlineStyle(DoubleUnderline))})
-	Render(scope, screen)
+	Render(Root{Element: Text("u", UnderlineStyle(DoubleUnderline))}, screen)
 	cell := screen.lastCell(0, 0)
 	if cell.Style.Attr()&vt.DoubleUnderline != vt.DoubleUnderline {
 		t.Fatalf("expected double underline attr, got %v", cell.Style.Attr())
@@ -1533,12 +1451,11 @@ func TestUnderlineStyleSpec(t *testing.T) {
 
 func TestBorder(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		Padding(1),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The border ring sits at the box edges; padding pushes the content
 	// to (2,2).
 	if r := screen.cell(0, 0); r != '┌' {
@@ -1566,13 +1483,12 @@ func TestBorder(t *testing.T) {
 
 func TestBorderFill(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		Padding(1),
 		Fill(true),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Fill paints the padding ring between the border and the content;
 	// the border ring carries the glyphs.
 	if cell := screen.lastCell(1, 1); !cell.Set || cell.Rune != ' ' {
@@ -1585,12 +1501,11 @@ func TestBorderFill(t *testing.T) {
 
 func TestFlexBorder(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Border(true),
 		Rect(Fill(true), Text("a")),
 		Rect(Fill(true), Text("b")),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The border shrinks the tiling area to x 1..78; the two equal
 	// children split it into 39 columns each.
 	if r := screen.cell(0, 0); r != '┌' {
@@ -1606,12 +1521,11 @@ func TestFlexBorder(t *testing.T) {
 
 func TestBorderStyle(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	cell := screen.lastCell(0, 0)
 	if cell.Rune != '┌' {
 		t.Fatalf("expected top-left corner, got %v", cell.Rune)
@@ -1623,12 +1537,11 @@ func TestBorderStyle(t *testing.T) {
 
 func TestBorderRounded(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		BorderType(BorderRounded),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(0, 0); r != '╭' {
 		t.Fatalf("expected rounded top-left corner, got %v", r)
 	}
@@ -1645,12 +1558,11 @@ func TestBorderRounded(t *testing.T) {
 
 func TestBorderDouble(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		BorderType(BorderDouble),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(0, 0); r != '╔' {
 		t.Fatalf("expected double top-left corner, got %v", r)
 	}
@@ -1664,12 +1576,11 @@ func TestBorderDouble(t *testing.T) {
 
 func TestBorderThick(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		BorderType(BorderThick),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(0, 0); r != '┏' {
 		t.Fatalf("expected thick top-left corner, got %v", r)
 	}
@@ -1683,8 +1594,7 @@ func TestBorderThick(t *testing.T) {
 
 func TestRenderNilRoot(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: nil})
-	Render(scope, screen)
+	Render(Root{Element: nil}, screen)
 	// A nil root element renders an empty frame: the screen is cleared to
 	// blank cells, never showing stale content.
 	if cell := screen.lastCell(0, 0); cell.Set {
@@ -1695,28 +1605,19 @@ func TestRenderNilRoot(t *testing.T) {
 	}
 }
 
-func TestNewBaseScope(t *testing.T) {
-	// A base scope always provides Root: without a Root definition,
-	// Render renders an empty frame instead of panicking.
+func TestRenderEmptyRoot(t *testing.T) {
+	// Render with a zero Root renders an empty frame: the screen is
+	// cleared to blank cells, never showing stale content.
 	screen := newFakeScreen(80, 25)
-	scope := NewBaseScope()
-	Render(scope, screen)
+	Render(Root{}, screen)
 	if cell := screen.lastCell(0, 0); cell.Set {
-		t.Fatal("expected blank cell for default root")
-	}
-
-	// A Root definition overrides the default.
-	screen2 := newFakeScreen(80, 25)
-	scope2 := NewBaseScope(func() Root { return Root{Element: Text("a")} })
-	Render(scope2, screen2)
-	if r := screen2.cell(0, 0); r != 'a' {
-		t.Fatalf("expected 'a' at cell 0, got %v", r)
+		t.Fatal("expected blank cell for empty root")
 	}
 }
 
 func TestFlexFillChildOverflow(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
 		Fill(true),
 		BGColor(HexColor(0x00ff00)),
@@ -1730,8 +1631,7 @@ func TestFlexFillChildOverflow(t *testing.T) {
 				Fill(true),
 			),
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The child Rect's Box override covers the whole element box; the
 	// Row's fill must not paint over the child's cells in the padding ring.
 	if r, g, b := screen.lastCell(1, 0).Style.Bg().RGB(); !(r == 0 && g == 0xff && b == 0) {
@@ -1741,11 +1641,10 @@ func TestFlexFillChildOverflow(t *testing.T) {
 
 func TestFlexFillNoChildren(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// A fill-only Row with no children paints the whole box, matching
 	// Rect's no-children behavior: the empty content area is not left
 	// blank.
@@ -1765,12 +1664,11 @@ func TestFlexFillRingEmpty(t *testing.T) {
 	// children tile the content area; the Row's fill does not paint the
 	// content area, which is the children's responsibility.
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Fill(true),
 		Text("a"),
 		Text("b"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
 	}
@@ -1788,13 +1686,12 @@ func TestFlexFillRingNonEmpty(t *testing.T) {
 	// A Row with fill and padding has a non-empty ring: the fill paints
 	// the padding ring cells the children did not occupy.
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Row(
+	Render(Root{Element: Row(
 		Fill(true),
 		Padding(1),
 		Text("a"),
 		Text("b"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The padding ring is filled.
 	if cell := screen.lastCell(0, 0); !cell.Set || cell.Rune != ' ' {
 		t.Fatalf("expected filled padding at (0,0), got %+v", cell)
@@ -1811,14 +1708,13 @@ func TestFlexFillRingNonEmpty(t *testing.T) {
 
 func TestVerticalScrollClipLeft(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 5, Bottom: 4, Right: 10},
 		VerticalScroll(
 			Rect(Box{Top: 0, Left: 0, Bottom: 2, Right: 10}, Fill(true)),
 			0,
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The child's Box override paints beyond the window's left edge;
 	// the scroll must clip those cells so they never bleed onto the
 	// screen outside the window.
@@ -1840,12 +1736,11 @@ func TestVerticalScrollClipRightWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	content := NewCanvasContent(4, 2)
 	content.SetContent(2, 0, '\U0001F469', []rune{'\u200d', '\U0001F4BB'}, vt.BaseStyle)
-	scope := newRootScope(Root{Element: VerticalScroll(
+	Render(Root{Element: VerticalScroll(
 		Canvas(content),
 		0,
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 3},
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster at the window's right edge would extend past it;
 	// it must be clipped, so neither its base column nor the spill
 	// column is drawn.
@@ -1859,8 +1754,7 @@ func TestVerticalScrollClipRightWideCluster(t *testing.T) {
 
 func TestTextNewlineSplit(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\nb")})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\nb")}, screen)
 	// A bare string with embedded newlines is split into lines at
 	// construction, so each line renders on its own row.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -1873,8 +1767,7 @@ func TestTextNewlineSplit(t *testing.T) {
 
 func TestTextCRLFNormalized(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\r\nb")})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\r\nb")}, screen)
 	// CRLF is normalized to LF: the carriage return never reaches a
 	// cell, and the second line starts on its own row.
 	if cell := screen.lastCell(1, 0); cell.Set {
@@ -1891,11 +1784,10 @@ func TestTextBoxFullStopsEarly(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		lines = append(lines, fmt.Sprintf("line %d", i))
 	}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 80},
 		Text(lines, Wrap(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The box holds two rows; rendering stops there and the remaining
 	// lines are never processed.
 	if r := screen.cell(0, 0); r != 'l' {
@@ -1911,12 +1803,11 @@ func TestTextBoxFullStopsEarly(t *testing.T) {
 
 func TestBorderNegativeMarginClipped(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 3},
 		Border(true),
 		Margin(-1, 0, 0, 0),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The negative top margin pushes the top ring outside the element
 	// box. The remaining ring is clipped to the box: the left and right
 	// edges start at the box top, and the top edge and its corners are
@@ -1943,13 +1834,12 @@ func TestBorderNegativeMarginClipped(t *testing.T) {
 
 func TestBorderNegativeMarginFullyClipped(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 4},
 		Border(true),
 		Margin(-10),
 		Fill(true),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The negative margin pushes the whole ring outside the element box:
 	// no border glyph is drawn, and fill covers the box.
 	for y := 0; y < 4; y++ {
@@ -1964,8 +1854,7 @@ func TestBorderNegativeMarginFullyClipped(t *testing.T) {
 
 func TestTextCursor(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("ab", Cursor(true))})
-	Render(scope, screen)
+	Render(Root{Element: Text("ab", Cursor(true))}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set")
@@ -1976,8 +1865,7 @@ func TestTextCursor(t *testing.T) {
 
 	// Without the Cursor spec, no cursor is recorded.
 	screen2 := newFakeScreen(80, 25)
-	scope2 := newRootScope(Root{Element: Text("ab")})
-	Render(scope2, screen2)
+	Render(Root{Element: Text("ab")}, screen2)
 	if frame := screen2.frames[len(screen2.frames)-1]; frame.CursorSet {
 		t.Fatal("expected no cursor without Cursor spec")
 	}
@@ -1985,8 +1873,7 @@ func TestTextCursor(t *testing.T) {
 
 func TestTextCursorEmpty(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("", Cursor(true))})
-	Render(scope, screen)
+	Render(Root{Element: Text("", Cursor(true))}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set")
@@ -1998,11 +1885,10 @@ func TestTextCursorEmpty(t *testing.T) {
 
 func TestTextCursorClipped(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 3},
 		Text("abcdef", Cursor(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set")
@@ -2131,8 +2017,8 @@ func (s *releasingScreen) ReleaseFrame(frame Frame) {
 
 func TestRenderFrameReleaser(t *testing.T) {
 	screen := &releasingScreen{fakeScreen: *newFakeScreen(80, 25)}
-	scope := newRootScope(Root{Element: Text("a")})
-	Render(scope, screen)
+	root := Root{Element: Text("a")}
+	Render(root, screen)
 	if screen.released != 1 {
 		t.Fatalf("expected one release, got %d", screen.released)
 	}
@@ -2160,11 +2046,10 @@ func TestVerticalScrollCursor(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		lines = append(lines, fmt.Sprintf("line %02d", i))
 	}
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(Text(lines, Cursor(true)), 1000),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set in scroll")
@@ -2181,7 +2066,7 @@ func TestVerticalScrollCursor(t *testing.T) {
 
 func TestVerticalScrollCursorLastWins(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(
 			Overlay(
@@ -2190,8 +2075,7 @@ func TestVerticalScrollCursorLastWins(t *testing.T) {
 			),
 			0,
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set")
@@ -2205,12 +2089,11 @@ func TestVerticalScrollCursorLastWins(t *testing.T) {
 
 func TestBorderTitle(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		Title("T"),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The title is centered on the top border, replacing the edge glyph
 	// it covers: 'T' at col 39, with the edge glyphs on both sides.
 	if r := screen.cell(39, 0); r != 'T' {
@@ -2226,12 +2109,11 @@ func TestBorderTitle(t *testing.T) {
 
 func TestBorderTitleClipped(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 4},
 		Border(true),
 		Title("ABCDE"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The title is wider than the top edge: it is clipped to the visible
 	// edge range, so the corners keep their glyphs and no title rune
 	// spills past the box.
@@ -2251,13 +2133,12 @@ func TestBorderTitleClipped(t *testing.T) {
 
 func TestBorderTitleStyle(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Border(true),
 		BorderStyle(SameStyle.SetFG(HexColor(0xff0000))),
 		Title("T"),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The title uses the border style, not the element's style chain.
 	cell := screen.lastCell(39, 0)
 	if cell.Rune != 'T' {
@@ -2372,11 +2253,10 @@ func TestTextWrapCJKBreak(t *testing.T) {
 	// would move as a whole to the next row, wasting the two columns
 	// after "ab".
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 3, Right: 4},
 		Text("ab 汉字测试", Wrap(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
@@ -2456,11 +2336,10 @@ func TestWrapLines(t *testing.T) {
 
 func TestVerticalScrollEmptyContent(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(Text(""), 0, Fill(true)),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// An empty child renders no content: the window is filled with the
 	// background, and no crop indicators or scrollbar appear.
 	for y := 0; y < 4; y++ {
@@ -2475,7 +2354,7 @@ func TestVerticalScrollEmptyContent(t *testing.T) {
 
 func TestVerticalScrollOverlayLastDrawWins(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Rect(
+	Render(Root{Element: Rect(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 80},
 		VerticalScroll(
 			Overlay(
@@ -2484,8 +2363,7 @@ func TestVerticalScrollOverlayLastDrawWins(t *testing.T) {
 			),
 			0,
 		),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The overlay's later child draws over the earlier one inside the
 	// scroll: the flat cell collection replays in draw order, so the
 	// later draw wins.
@@ -2499,11 +2377,10 @@ func TestVerticalScrollOverlayLastDrawWins(t *testing.T) {
 
 func TestOverlayStacking(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Overlay(
+	Render(Root{Element: Overlay(
 		Text("a"),
 		Text("b"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Later children draw over earlier ones: 'b' wins at (0,0).
 	if r := screen.cell(0, 0); r != 'b' {
 		t.Fatalf("expected 'b' at (0,0), got %v", r)
@@ -2512,12 +2389,11 @@ func TestOverlayStacking(t *testing.T) {
 
 func TestOverlayFill(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Overlay(
+	Render(Root{Element: Overlay(
 		Fill(true),
 		BGColor(HexColor(0x101010)),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// Fill paints the background in the cells the text does not occupy.
 	if cell := screen.lastCell(1, 0); !cell.Set || cell.Rune != ' ' {
 		t.Fatalf("expected filled ' ' at (1,0), got %+v", cell)
@@ -2529,11 +2405,10 @@ func TestOverlayFill(t *testing.T) {
 
 func TestOverlayFillWideCluster(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Overlay(
+	Render(Root{Element: Overlay(
 		Fill(true),
 		Text("\U0001F469\u200d\U0001F4BB"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The wide cluster occupies two columns; fill must not paint the
 	// trailing column, matching Rect's fill semantics.
 	cell := screen.lastCell(1, 0)
@@ -2547,12 +2422,11 @@ func TestOverlayFillWideCluster(t *testing.T) {
 
 func TestOverlayBoxAndStyle(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Overlay(
+	Render(Root{Element: Overlay(
 		Box{Top: 0, Left: 0, Bottom: 2, Right: 2},
 		FGColor(HexColor(0xff0000)),
 		Text("a"),
-	)})
-	Render(scope, screen)
+	)}, screen)
 	// The Box override constrains the overlay, and the style chain
 	// applies to the content.
 	if r := screen.cell(0, 0); r != 'a' {
@@ -2568,8 +2442,7 @@ func TestOverlayBoxAndStyle(t *testing.T) {
 
 func TestCursorAt(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("abc", CursorAt(1))})
-	Render(scope, screen)
+	Render(Root{Element: Text("abc", CursorAt(1))}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	if !frame.CursorSet {
 		t.Fatal("expected cursor set")
@@ -2580,8 +2453,7 @@ func TestCursorAt(t *testing.T) {
 
 	// Offset 0 places the cursor at the start.
 	screen2 := newFakeScreen(80, 25)
-	scope2 := newRootScope(Root{Element: Text("abc", CursorAt(0))})
-	Render(scope2, screen2)
+	Render(Root{Element: Text("abc", CursorAt(0))}, screen2)
 	frame = screen2.frames[len(screen2.frames)-1]
 	if frame.CursorX != 0 || frame.CursorY != 0 {
 		t.Fatalf("expected cursor at (0,0), got (%d,%d)", frame.CursorX, frame.CursorY)
@@ -2589,8 +2461,7 @@ func TestCursorAt(t *testing.T) {
 
 	// An offset beyond the line length is clamped to the end.
 	screen3 := newFakeScreen(80, 25)
-	scope3 := newRootScope(Root{Element: Text("abc", CursorAt(10))})
-	Render(scope3, screen3)
+	Render(Root{Element: Text("abc", CursorAt(10))}, screen3)
 	frame = screen3.frames[len(screen3.frames)-1]
 	if frame.CursorX != 3 || frame.CursorY != 0 {
 		t.Fatalf("expected cursor clamped at (3,0), got (%d,%d)", frame.CursorX, frame.CursorY)
@@ -2599,8 +2470,7 @@ func TestCursorAt(t *testing.T) {
 
 func TestCursorAtAlignRight(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("abc", AlignRight, CursorAt(1))})
-	Render(scope, screen)
+	Render(Root{Element: Text("abc", AlignRight, CursorAt(1))}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	// "abc" is right-aligned: it starts at col 77. The cursor at offset 1
 	// is at col 78.
@@ -2611,8 +2481,7 @@ func TestCursorAtAlignRight(t *testing.T) {
 
 func TestCursorAtTab(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Text("a\tb", CursorAt(2))})
-	Render(scope, screen)
+	Render(Root{Element: Text("a\tb", CursorAt(2))}, screen)
 	frame := screen.frames[len(screen.frames)-1]
 	// "a\tb" renders 'a' at col 0, 'b' at col 8. The cursor at offset 2
 	// (after the tab) is at col 8, where 'b' is drawn.
@@ -2623,8 +2492,7 @@ func TestCursorAtTab(t *testing.T) {
 
 func TestInput(t *testing.T) {
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: Input("hello", 2)})
-	Render(scope, screen)
+	Render(Root{Element: Input("hello", 2)}, screen)
 	// Input renders the text with the cursor at the given offset.
 	if r := screen.cell(0, 0); r != 'h' {
 		t.Fatalf("expected 'h' at (0,0), got %v", r)
@@ -2638,8 +2506,7 @@ func TestInput(t *testing.T) {
 func TestList(t *testing.T) {
 	t.Run("Basic", func(t *testing.T) {
 		screen := newFakeScreen(80, 25)
-		scope := newRootScope(Root{Element: List([]string{"a", "b", "c"}, 0)})
-		Render(scope, screen)
+		Render(Root{Element: List([]string{"a", "b", "c"}, 0)}, screen)
 		if r := screen.cell(0, 0); r != 'a' {
 			t.Fatalf("expected 'a' at (0,0), got %v", r)
 		}
@@ -2653,12 +2520,11 @@ func TestList(t *testing.T) {
 
 	t.Run("SelectedStyle", func(t *testing.T) {
 		screen := newFakeScreen(80, 25)
-		scope := newRootScope(Root{Element: List(
+		Render(Root{Element: List(
 			[]string{"a", "b", "c"},
 			1,
 			ListStyle(SameStyle.SetBG(HexColor(0xff0000))),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// The selected item is highlighted with the ListStyle.
 		cell := screen.lastCell(0, 1)
 		if cell.Rune != 'b' {
@@ -2688,11 +2554,10 @@ func TestList(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			items = append(items, fmt.Sprintf("item %02d", i))
 		}
-		scope := newRootScope(Root{Element: Rect(
+		Render(Root{Element: Rect(
 			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
 			List(items, 50),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// The view is centered on the selected item (50) in a 5-row box:
 		// rows show items 48..52.
 		if r := screen.cell(0, 0); r != 'i' {
@@ -2712,11 +2577,10 @@ func TestList(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			items = append(items, fmt.Sprintf("item %02d", i))
 		}
-		scope := newRootScope(Root{Element: Rect(
+		Render(Root{Element: Rect(
 			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
 			List(items, 9),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// The view clamps to the content end: rows show items 5..9.
 		if r := screen.cell(0, 0); r != 'i' {
 			t.Fatalf("expected item 5 at (0,0), got %v", r)
@@ -2728,11 +2592,10 @@ func TestList(t *testing.T) {
 
 	t.Run("SelectedClamp", func(t *testing.T) {
 		screen := newFakeScreen(80, 25)
-		scope := newRootScope(Root{Element: Rect(
+		Render(Root{Element: Rect(
 			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
 			List([]string{"a", "b", "c"}, 10),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// The selected index is clamped to the last item; the view shows
 		// the last items.
 		if r := screen.cell(0, 0); r != 'a' {
@@ -2745,11 +2608,10 @@ func TestList(t *testing.T) {
 
 	t.Run("Fill", func(t *testing.T) {
 		screen := newFakeScreen(80, 25)
-		scope := newRootScope(Root{Element: Rect(
+		Render(Root{Element: Rect(
 			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
 			List([]string{"a", "b"}, 0, Fill(true)),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// The rows below the last item are filled.
 		if cell := screen.lastCell(0, 2); !cell.Set || cell.Rune != ' ' {
 			t.Fatalf("expected filled ' ' at (0,2), got %+v", cell)
@@ -2761,11 +2623,10 @@ func TestList(t *testing.T) {
 
 	t.Run("Empty", func(t *testing.T) {
 		screen := newFakeScreen(80, 25)
-		scope := newRootScope(Root{Element: Rect(
+		Render(Root{Element: Rect(
 			Box{Top: 0, Left: 0, Bottom: 5, Right: 80},
 			List(nil, 0, Fill(true)),
-		)})
-		Render(scope, screen)
+		)}, screen)
 		// An empty list renders no items; fill paints the whole box.
 		for y := 0; y < 5; y++ {
 			for x := 0; x < 80; x++ {
@@ -2782,8 +2643,7 @@ func TestListItemRendering(t *testing.T) {
 	// A tab in a list item advances to the next tab stop (default 8);
 	// the skipped cells are painted because the selected row is filled.
 	screen := newFakeScreen(80, 25)
-	scope := newRootScope(Root{Element: List([]string{"a\tb"}, 0)})
-	Render(scope, screen)
+	Render(Root{Element: List([]string{"a\tb"}, 0)}, screen)
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at (0,0), got %v", r)
 	}
@@ -2797,8 +2657,7 @@ func TestListItemRendering(t *testing.T) {
 	// A wide cluster occupies two columns: the trailing column is
 	// blank and the next rune follows it.
 	screen2 := newFakeScreen(80, 25)
-	scope2 := newRootScope(Root{Element: List([]string{"x\U0001F469\u200d\U0001F4BBy"}, 0)})
-	Render(scope2, screen2)
+	Render(Root{Element: List([]string{"x\U0001F469\u200d\U0001F4BBy"}, 0)}, screen2)
 	if r := screen2.cell(0, 0); r != 'x' {
 		t.Fatalf("expected 'x' at (0,0), got %v", r)
 	}

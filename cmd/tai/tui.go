@@ -106,27 +106,20 @@ at the bottom of the screen, and a second press quits; any other key cancels
 the confirmation and is processed normally, so an accidental q press never
 loses the session.
 
-- Rendering is declarative, following the taiuidemo pattern: the view is a
-dscope provider tree (TUIView) that unifies UI elements and state in one
-scope. State providers carry the display buffers' content (TUIOutputLines,
-TUILogsLines, TUISignals), the terminal size (TUISize), the tab layout
-(TUITabs), the per-tab scroll offsets (TUIScrolls), and the session flags
-(TUIFinished, TUIGenerating, TUIConfirmQuit). A display provider
-(TUIDisplays) derives the wrapped, colored lines for every tab from content
-plus layout, so a panel rebuild does not re-wrap; element providers
-(OutputPanel, SummaryPanel, LogsPanel) turn a tab's display and scroll
-state into a taiui.Panel or taiui.CollapsedPanel; Root composes the panels
-with the optional quit-confirmation bar. The TUI holds nothing but the raw
-state values — line buffers, tab machine, scroll offsets, signals, and
-session flags. render() builds a fresh view scope on every call: it forks
-each state value as a provider into a scope constructed from TUIView and
-presents the resolved Root. dscope recomputes every derived provider
-(Displays, panels, Root) from its declared dependencies, so no dirty flags,
-cached forks, or manual change tracking are needed: state declaration,
-dependency wiring, and update propagation are entirely the provider graph's
-responsibility. Scroll offsets are updated against the freshly derived
-display lengths before the scroll providers are forked, so the panels read
-post-update offsets.
+- Rendering is a plain function of the TUI's state, following the
+taiuidemo pattern: render() computes the wrapped display lines of each
+expanded tab (wrappedDisplay), updates the scroll offsets against the
+fresh display lengths, and builds the element tree with plain functions
+(outputPanel, summaryPanel, logsPanel, buildRoot). The TUI holds nothing
+but the raw state values — line buffers, tab machine, scroll offsets,
+signals, and session flags. There is no provider graph, no cached view
+scope, and no dirty tracking: function calls carry the state values
+through the derivation chain directly. (The view used to be a dscope
+provider tree whose per-component caching the provider graph recomputed;
+the machinery was dropped because building a Frame is cheap and the
+screens diff whole frames anyway, so the caching saved nothing while
+adding a provider layer to read and reason about. See
+taiui.TheoryOfTaiUI.)
 `
 
 // Tui enables the terminal UI mode.
@@ -759,55 +752,33 @@ func (t *TUI) scrollTo(top int) {
 	t.scrolls[idx].ScrollTo(top)
 }
 
-// render presents the current state through a fresh dscope view. Every
-// display state piece is declared as a provider in TUIView; render forks
-// the current state values into a scope constructed from TUIView, and
-// dscope recomputes the derived providers (Displays, panels, Root) from
-// their declared dependencies. No dirty flags or change tracking are
-// needed. Scroll offsets are updated against the freshly derived display
-// lengths before the scroll providers are forked, so the panels read
-// post-update offsets. See TheoryOfTUI.
+// render presents the current state through a fresh element tree. It
+// computes the wrapped display lines of each expanded tab, updates the
+// scroll offsets against the fresh display lengths, and builds the root
+// element with plain functions; there is no provider graph or cached view
+// scope. See TheoryOfTUI.
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	// The terminal size is clamped so the layout always has a usable
-	// extent; the clamped values flow into the provider tree via TUISize.
+	// extent.
 	width := max(t.width, 1)
 	height := max(t.height, 1)
-	size := TUISize{Width: width, Height: height}
-	tabs := TUITabs{
-		Expanded:      [3]bool(t.tabs.Expanded),
-		Focus:         t.tabs.Focus,
-		SplitVertical: t.tabs.SplitVertical,
-	}
 
-	// Fork the raw state values as providers into a fresh view scope. The
-	// content slices are copied so later appends to the display buffers do
-	// not alias the forked values. See TheoryOfTUI.
-	var scope taiui.Scope = dscope.New(new(TUIView))
-	scope = scope.Fork(
-		func() TUISize { return size },
-		func() TUITabs { return tabs },
-		func() TUIOutputLines {
-			return TUIOutputLines(append([]taiui.Line(nil), t.output.Lines()...))
-		},
-		func() TUILogsLines {
-			return TUILogsLines(append([]string(nil), t.logs.Lines()...))
-		},
-		func() TUISignals {
-			return TUISignals(append([]taiui.Line(nil), t.signals...))
-		},
-	)
-
-	// Resolve the derived displays so the scroll offsets below update
-	// against the FRESH display lengths. See TheoryOfTUI.
-	displays := dscope.Get[TUIDisplays](scope)
-
-	// Update the authoritative scroll offsets against the fresh display
-	// lengths. Collapsed (or degenerate) tabs are skipped: their scroll
-	// state stays frozen until they expand. See TheoryOfTUI.
+	// Compute the wrapped display lines for the expanded tabs, then
+	// update the authoritative scroll offsets against the FRESH display
+	// lengths, so the panels read post-update offsets. Collapsed (or
+	// degenerate) tabs are skipped: their scroll state stays frozen until
+	// they expand. See TheoryOfTUI.
+	var displays [3][]taiui.Line
 	boxes := t.tabs.Boxes(width, height)
+	for idx := 0; idx < 3; idx++ {
+		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
+			continue
+		}
+		displays[idx] = wrappedDisplay(t, idx, boxes[idx])
+	}
 	for idx := 0; idx < 3; idx++ {
 		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
@@ -815,16 +786,7 @@ func (t *TUI) render() {
 		t.scrolls[idx].Update(len(displays[idx]), max(boxes[idx].Height()-1, 1))
 	}
 
-	// Fork the scrolls and the session flags, then present the view.
-	// See TheoryOfTUI.
-	scope = scope.Fork(
-		func() TUIScrolls { return TUIScrolls(t.scrolls) },
-		func() TUIFinished { return TUIFinished(t.finished) },
-		func() TUIGenerating { return TUIGenerating(t.generating) },
-		func() TUIConfirmQuit { return TUIConfirmQuit(t.confirmQuit) },
-	)
-
-	taiui.Render(scope, t.screen)
+	taiui.Render(buildRoot(t, width, height, displays), t.screen)
 }
 
 var (

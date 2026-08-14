@@ -202,7 +202,7 @@ func TestPanelRenders(t *testing.T) {
 		testPanelStyle(),
 	)
 	screen := newFakeScreen(12, 4)
-	Render(NewBaseScope(func() Root { return Root{Element: element} }), screen)
+	Render(Root{Element: element}, screen)
 	if len(screen.frames) == 0 {
 		t.Fatal("expected a rendered frame")
 	}
@@ -225,7 +225,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	t.Run("Horizontal", func(t *testing.T) {
 		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, style)
 		screen := newFakeScreen(12, 1)
-		Render(NewBaseScope(func() Root { return Root{Element: element} }), screen)
+		Render(Root{Element: element}, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}
@@ -241,7 +241,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	t.Run("Vertical", func(t *testing.T) {
 		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, style)
 		screen := newFakeScreen(1, 8)
-		Render(NewBaseScope(func() Root { return Root{Element: element} }), screen)
+		Render(Root{Element: element}, screen)
 		if len(screen.frames) == 0 {
 			t.Fatal("expected a rendered frame")
 		}

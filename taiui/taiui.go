@@ -2,52 +2,48 @@ package taiui
 
 import (
 	"sync"
-
-	"github.com/reusee/dscope"
 )
 
 const TheoryOfTaiUI = `
 taiui theory: UI = pure Element value derived from state.
-- The scope stores state only: data state plus the root UI state (a Root
-  value wrapping the root element). Render context (boxes, styles, draw
-  callbacks) is never stored in the scope; screens are never bound in the
-  scope.
-- NewBaseScope creates a base scope that always provides a Root value:
-  a default empty root (rendering an empty frame) unless a definition
-  overrides it, so Render never panics on a scope created by
-  NewBaseScope.
-- A state change is a scope fork: providers re-evaluate, the root element
-  changes, and the next render reflects the change. There is no imperative
-  element-update protocol.
+- The application holds its state outside the library and derives a Root
+  value from it; Render accepts the Root directly, interprets the element
+  tree into a Frame, and presents the frame to each screen. A state change
+  is a rebuilt Root; the next render reflects the change. There is no
+  imperative element-update protocol and no dependency-injection framework:
+  dscope was dropped because per-component provider caching was not worth
+  its complexity — building a Frame is cheap and the screens diff whole
+  frames anyway. Render context (boxes, styles, draw callbacks) is never
+  stored; screens are passed per call.
 - Elements are pure values: constructors resolve spec lists at construction
   time. Zero-argument function specs are evaluated eagerly, and each result
   is itself resolved as specs, so nested zero-argument functions expand
   recursively. Each spec is interpreted immediately into typed element
   fields, so rendering reads plain data and never parses specs. Unknown
   specs fail at construction. Dynamics that depend on state are expressed
-  as providers in the scope that build the element tree.
+  as functions that build the element tree.
 - The Spec language is a marker-interface protocol for element
   construction: style and layout specs, Specs groups, and elements
   themselves all implement Spec, so spec lists compose and nest. Bare
   strings are a shorthand for text lines only and are not Specs; a string
   is split into lines at newline boundaries, with CRLF normalized to LF.
   If and Alt compose conditionally.
-- Rendering resolves the root from the scope, interprets the element tree
-  into a Frame (a styled cell grid), and presents the frame to each screen.
-  A nil root element renders an empty frame, clearing every screen. Each
-  render pass allocates a fresh frame per screen; frames are never reused
-  unless the screen opts in via FrameReleaser, because a screen may retain
-  the frame it presented. A screen that implements FrameReleaser returns
-  the frame's cells to an internal pool after Present and must not retain
-  the frame. Frame.Equal lets a screen detect an unchanged frame and skip
-  repainting, and Frame.Dirty reports the runs of changed cells so a
-  screen can repaint only the damaged regions; both compare only frames
-  of equal dimensions, mirroring change-based rendering in terminal
-  libraries. Frame.DirtyRowsInto appends the differing row indices to a
-  caller buffer, so a screen that repaints whole rows can reuse a buffer
-  across presents and allocate nothing per frame. An element with an empty
-  box is skipped entirely: no child is rendered and no cursor is recorded,
-  because there is no visible area to draw into.
+- Rendering interprets the element tree into a Frame (a styled cell grid)
+  and presents the frame to each screen. A nil root element renders an
+  empty frame, clearing every screen. Each render pass allocates a fresh
+  frame per screen; frames are never reused unless the screen opts in via
+  FrameReleaser, because a screen may retain the frame it presented. A
+  screen that implements FrameReleaser returns the frame's cells to an
+  internal pool after Present and must not retain the frame. Frame.Equal
+  lets a screen detect an unchanged frame and skip repainting, and
+  Frame.Dirty reports the runs of changed cells so a screen can repaint
+  only the damaged regions; both compare only frames of equal dimensions,
+  mirroring change-based rendering in terminal libraries. Frame.DirtyRowsInto
+  appends the differing row indices to a caller buffer, so a screen that
+  repaints whole rows can reuse a buffer across presents and allocate
+  nothing per frame. An element with an empty box is skipped entirely: no
+  child is rendered and no cursor is recorded, because there is no visible
+  area to draw into.
 - Rect provides box-model layout (margin, border, and padding) with
   optional fill. The border is a one-cell ring between margin and padding
   that shrinks the content box by one cell per side; Fill paints a
@@ -164,17 +160,6 @@ taiui cell comparison theory:
   Equal method is called only for distinct style values.
 `
 
-type Scope = dscope.Scope
-
-// NewBaseScope creates a base scope with the given definitions. The
-// scope always provides a Root value: a default empty root (rendering
-// an empty frame) unless a definition overrides it, so Render never
-// panics on a scope created by NewBaseScope.
-func NewBaseScope(defs ...any) Scope {
-	base := dscope.New(func() Root { return Root{} })
-	return base.Fork(defs...)
-}
-
 // Element is a pure, screen-independent description of UI state.
 // Implementations are data values: they describe what to render and never
 // interact with a screen or a scope.
@@ -183,11 +168,10 @@ type Element interface {
 	element()
 }
 
-// Root is the root UI state in the scope: a wrapper around the root UI
-// element. The scope must provide exactly one Root value; Render resolves it
-// and renders its element to each screen. When the scope is forked with new
-// state, the Root provider re-evaluates, so the next Render reflects the
-// change.
+// Root is the root UI state: a wrapper around the root UI element. An
+// application builds a Root from its state and passes it to Render; Render
+// renders its element to each screen. Rebuilding the Root with new state
+// makes the next Render reflect the change.
 type Root struct {
 	Element Element
 }

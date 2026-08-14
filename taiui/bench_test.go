@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/dscope"
 )
 
 // Benchmarks for the render hot path. The screen discards presented
@@ -24,64 +23,54 @@ func (benchmarkReleasingScreen) ReleaseFrame(frame Frame) {
 }
 
 func BenchmarkRenderText(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Text("hello world")}
-	})
+	root := Root{Element: Text("hello world")}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
 func BenchmarkRenderTextFill(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Text("hello world", Fill(true))}
-	})
+	root := Root{Element: Text("hello world", Fill(true))}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
 func BenchmarkRenderTextWrapped(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Rect(
-			Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
-			Text("one two three four five six seven eight nine ten eleven twelve", Wrap(true)),
-		)}
-	})
+	root := Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
+		Text("one two three four five six seven eight nine ten eleven twelve", Wrap(true)),
+	)}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
 func BenchmarkRenderRectFill(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Rect(
-			Fill(true),
-			BGColor(HexColor(0x141414)),
-			Text("content"),
-		)}
-	})
+	root := Root{Element: Rect(
+		Fill(true),
+		BGColor(HexColor(0x141414)),
+		Text("content"),
+	)}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
 func BenchmarkRenderInput(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Input("hello world", 5)}
-	})
+	root := Root{Element: Input("hello world", 5)}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
@@ -90,31 +79,27 @@ func BenchmarkRenderList(b *testing.B) {
 	for i := range items {
 		items[i] = fmt.Sprintf("item %02d", i)
 	}
-	scope := dscope.New(func() Root {
-		return Root{Element: Rect(
-			Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
-			List(items, 50),
-		)}
-	})
+	root := Root{Element: Rect(
+		Box{Top: 0, Left: 0, Bottom: 25, Right: 40},
+		List(items, 50),
+	)}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 
 func BenchmarkRenderBorderTitle(b *testing.B) {
-	scope := dscope.New(func() Root {
-		return Root{Element: Rect(
-			Border(true),
-			Title("Title"),
-			Text("content"),
-		)}
-	})
+	root := Root{Element: Rect(
+		Border(true),
+		Title("Title"),
+		Text("content"),
+	)}
 	screen := benchmarkReleasingScreen{}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Render(scope, screen)
+		Render(root, screen)
 	}
 }
 

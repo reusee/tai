@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/dscope"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -14,183 +13,110 @@ const (
 	minHeight = 24
 )
 
-const TheoryOfProviders = `
-taiuidemo provider theory:
-- App is the provider container: every provider is a method on App, so
-  dscope.New(new(App)) creates a scope with all of them. App has no
-  fields; state lives in the scope, and the event loop forks changes.
-- State and UI are split into providers: each piece of state is its own
-  provider type, and each component is its own provider type. dscope caches
-  each provider result and recomputes only the providers whose dependencies
-  changed, so a state change recomputes exactly the components that depend
-  on it.
-- The event loop forks the current scope with only the providers that
-  changed. Forking from the current scope preserves the cached results of
-  unchanged providers; forking from the base scope would discard them and
-  recompute everything. dscope compacts the definition chain internally,
-  so the scope stack stays flat no matter how many forks the event loop
-  performs, and resolutions stay O(1). The event loop renders only when
-  state changed, so a key press that changes nothing skips the render
-  entirely.
-- The key handler is a provider: it injects the current state and returns
-  the providers that carry the new state, so the event loop forks only the
-  changed pieces. The key-handled state lives in the handler's closure,
-  and dscope re-creates the handler whenever a state provider changes.
-- The canvas content is derived state: the CanvasContent method
-  builds it from the frame counter, so the ball is a pure function of
-  state and the event loop never mutates the content in place.
-- The Root method composes the component providers; it is the only
-  provider that depends on all of them, so it is recomputed on every state
-  change, but the components themselves are recomputed only when their own
-  dependencies change.
+const TheoryOfDemoArchitecture = `
+taiuidemo architecture theory:
+- The demo state lives in one State struct; BuildRoot is a plain function
+  that turns the current state into a Root element tree, and the event
+  loop mutates the State and calls Render only when something changed.
+- The demo used to be built on dscope providers: every provider was a
+  method on App, each piece of state was its own provider type, each
+  panel its own provider, and forking a scope preserved the cached
+  results of the unchanged providers so a state change recomputed exactly
+  the components that depended on it. The machinery was not worth it: the
+  demo rebuilds a full Frame per render and the screens diff whole
+  frames, so per-component caching saved nothing while adding a provider
+  layer to read and reason about. The simplification removes the scope
+  entirely: state is a struct, UI is a function.
+- The state split remains in the struct: the key-handled state (scroll,
+  toggle, w1 weight, modal, rotation) is mutated by HandleKey; the
+  dynamic state (terminal size, frame counter, clock) is updated by the
+  event loop. HandleKey reports whether the state changed, so a key
+  press that changes nothing (e.g., up at the scroll clamp) skips the
+  render entirely.
+- The canvas content is derived state: buildCanvas builds it from the
+  frame counter, so the ball is a pure function of state and the event
+  loop never mutates the content in place. Rebuilding the canvas per
+  render is cheap: it is an fbWidth by fbHeight cell grid.
 `
 
-// State providers: each piece of demo state is its own provider type, so
-// forking one piece recomputes only the components that depend on it.
-type Width int
-type Height int
-type Scroll int
-type Toggle bool
-type Frame int64
-type Now time.Time
-
-// W1Weight is the flex weight of the w1 box in the Box panel. The left
-// and right arrow keys adjust it, changing the w1:w2 ratio.
-type W1Weight int
-
-// Modal is the demo's modal state: when true, an Overlay stacks a modal
-// over the main UI. The m key toggles it.
-type Modal bool
-
-// Rotation is the clockwise rotation of the four panel contents: the tab
-// key advances it, moving each panel one position clockwise.
-type Rotation int
-
-// App is the provider container: every provider is a method on App, so
-// dscope.New(new(App)) creates a scope with all of them. App has no
-// fields; state lives in the scope, and the event loop forks changes.
-type App struct {
-	dscope.Module
+// State is the demo's state. The key-handled state lives in the fields
+// mutated by HandleKey; the dynamic state (terminal size, frame counter,
+// clock) is updated by the event loop. See TheoryOfDemoArchitecture.
+type State struct {
+	Width    int
+	Height   int
+	Scroll   int
+	Toggle   bool
+	W1Weight int
+	Modal    bool
+	Rotation int
+	Frame    int64
+	Now      time.Time
 }
-
-// The static state providers: the key handler forks overrides when the
-// state changes, so these methods provide only the initial values.
-func (a *App) Scroll() Scroll { return 0 }
-
-func (a *App) Toggle() Toggle { return true }
-
-func (a *App) W1Weight() W1Weight { return 1 }
-
-func (a *App) Modal() Modal { return false }
-
-func (a *App) Rotation() Rotation { return 0 }
-
-// The dynamic state (terminal size, frame counter, clock) is external:
-// the event loop forks the real values as closures over its local
-// variables. These methods provide the initial values so the scope is
-// constructible before the first fork.
-func (a *App) Width() Width { return 80 }
-
-func (a *App) Height() Height { return 24 }
-
-func (a *App) Frame() Frame { return 0 }
-
-func (a *App) Now() Now { return Now(time.Now()) }
-
-// Component providers: each panel is its own provider type, so dscope can
-// cache it independently and recompute it only when its dependencies change.
-type Header taiui.Element
-type Footer taiui.Element
-type PanelText taiui.Element
-type PanelScroll taiui.Element
-type PanelBox taiui.Element
-type PanelDynamic taiui.Element
-
-// HandleKey is the key handler provided by the scope: it injects the
-// current state and returns the providers that carry the new state.
-type HandleKey func(key string) (changed []any, quit bool)
 
 // maxW1Weight bounds the w1 flex weight adjustable with the left and
 // right arrow keys; the weight must stay positive for Weighted.
 const maxW1Weight = 10
 
-// HandleKey builds the key handler from the current state. The handler
-// mutates its captured state and returns a provider for each changed
-// piece, so the event loop forks only the changed pieces and dscope
-// recomputes only the components that depend on them.
-func (a *App) HandleKey(
-	scroll Scroll,
-	toggle Toggle,
-	w1Weight W1Weight,
-	modal Modal,
-	rotation Rotation,
-) HandleKey {
-	return func(key string) (changed []any, quit bool) {
-		switch key {
-		case "up":
-			// The scroll offset never goes negative: the view clamps at the
-			// content start.
-			if scroll > 0 {
-				scroll--
-				changed = append(changed, func() Scroll { return scroll })
-			}
-		case "down":
-			scroll++
-			changed = append(changed, func() Scroll { return scroll })
-		case "left":
-			// The w1 weight never drops below 1: Weighted requires a positive
-			// weight, so the w1 box always keeps a share of the row.
-			if w1Weight > 1 {
-				w1Weight--
-				changed = append(changed, func() W1Weight { return w1Weight })
-			}
-		case "right":
-			if w1Weight < maxW1Weight {
-				w1Weight++
-				changed = append(changed, func() W1Weight { return w1Weight })
-			}
-		case "space":
-			toggle = !toggle
-			changed = append(changed, func() Toggle { return toggle })
-		case "modal":
-			// The modal is part of the element tree, derived from state: an
-			// Overlay stacks it over the main UI.
-			modal = !modal
-			changed = append(changed, func() Modal { return modal })
-		case "tab":
-			// The rotation cycles 0..3, so four presses return to the
-			// original arrangement.
-			rotation = (rotation + 1) % 4
-			changed = append(changed, func() Rotation { return rotation })
-		case "quit":
-			return nil, true
+// HandleKey processes one key and mutates the state. It reports whether
+// anything changed, so the event loop skips the render for a key that had
+// no effect (e.g., up at the scroll clamp), and whether the key quits the
+// demo.
+func (s *State) HandleKey(key string) (changed bool, quit bool) {
+	switch key {
+	case "up":
+		// The scroll offset never goes negative: the view clamps at the
+		// content start.
+		if s.Scroll > 0 {
+			s.Scroll--
+			changed = true
 		}
-		return changed, false
+	case "down":
+		s.Scroll++
+		changed = true
+	case "left":
+		// The w1 weight never drops below 1: Weighted requires a positive
+		// weight, so the w1 box always keeps a share of the row.
+		if s.W1Weight > 1 {
+			s.W1Weight--
+			changed = true
+		}
+	case "right":
+		if s.W1Weight < maxW1Weight {
+			s.W1Weight++
+			changed = true
+		}
+	case "space":
+		s.Toggle = !s.Toggle
+		changed = true
+	case "modal":
+		// The modal is part of the element tree, derived from state: an
+		// Overlay stacks it over the main UI.
+		s.Modal = !s.Modal
+		changed = true
+	case "tab":
+		// The rotation cycles 0..3, so four presses return to the
+		// original arrangement.
+		s.Rotation = (s.Rotation + 1) % 4
+		changed = true
+	case "quit":
+		return false, true
 	}
+	return
 }
 
-func (a *App) Root(
-	w Width,
-	h Height,
-	modal Modal,
-	rotation Rotation,
-	hdr Header,
-	ftr Footer,
-	pt PanelText,
-	ps PanelScroll,
-	pb PanelBox,
-	pd PanelDynamic,
-) taiui.Root {
-	if int(w) < minWidth || int(h) < minHeight {
+// BuildRoot builds the root element tree from the current state.
+func BuildRoot(s State) taiui.Root {
+	if s.Width < minWidth || s.Height < minHeight {
 		return taiui.Root{Element: taiui.Rect(
 			// A Box override pins the banner to the middle third of the
 			// screen regardless of the box the parent would assign.
-			taiui.Box{Top: int(h) / 3, Left: 0, Bottom: 2 * int(h) / 3, Right: int(w)},
+			taiui.Box{Top: s.Height / 3, Left: 0, Bottom: 2 * s.Height / 3, Right: s.Width},
 			taiui.Border(true),
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(0x300000)),
 			taiui.Text(
-				fmt.Sprintf("too small: %dx%d, need %dx%d", int(w), int(h), minWidth, minHeight),
+				fmt.Sprintf("too small: %dx%d, need %dx%d", s.Width, s.Height, minWidth, minHeight),
 				taiui.AlignCenter,
 			),
 		)}
@@ -198,9 +124,15 @@ func (a *App) Root(
 	// The four panels are arranged in clockwise order (top-left,
 	// top-right, bottom-right, bottom-left) and rotated by the rotation
 	// state, so the tab key moves each panel one position clockwise.
-	rotated := rotatePanels(pt, pb, pd, ps, rotation)
+	rotated := rotatePanels(
+		panelText(),
+		panelBox(s.Toggle, s.W1Weight),
+		panelDynamic(s.Frame, s.Toggle, buildCanvas(s.Frame)),
+		panelScroll(s.Scroll),
+		s.Rotation,
+	)
 	root := taiui.Root{Element: taiui.Column(
-		taiui.Weighted(1, taiui.Element(hdr)),
+		taiui.Weighted(1, header(s.Toggle, s.Now)),
 		taiui.Weighted(22, taiui.Row(
 			taiui.Weighted(1, taiui.Column(
 				taiui.Weighted(1, rotated[0]),
@@ -211,16 +143,16 @@ func (a *App) Root(
 				taiui.Weighted(1, rotated[2]),
 			)),
 		)),
-		taiui.Weighted(1, taiui.Element(ftr)),
+		taiui.Weighted(1, footer()),
 	)}
-	if bool(modal) {
+	if s.Modal {
 		// The modal is part of the element tree, derived from state: an
 		// Overlay stacks it over the main UI, so toggling the modal state
 		// re-renders the overlay without any imperative layer management.
 		root.Element = taiui.Overlay(
 			root.Element,
 			taiui.Rect(
-				taiui.Box{Top: int(h) / 4, Left: int(w) / 4, Bottom: 3 * int(h) / 4, Right: 3 * int(w) / 4},
+				taiui.Box{Top: s.Height / 4, Left: s.Width / 4, Bottom: 3 * s.Height / 4, Right: 3 * s.Width / 4},
 				taiui.Border(true),
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x202020)),
@@ -239,16 +171,11 @@ func (a *App) Root(
 // The panels are given in clockwise order (top-left, top-right,
 // bottom-right, bottom-left); position p shows the panel originally at
 // (p - rotation) mod 4.
-func rotatePanels(pt PanelText, pb PanelBox, pd PanelDynamic, ps PanelScroll, rotation Rotation) [4]taiui.Element {
-	panels := [...]taiui.Element{
-		taiui.Element(pt),
-		taiui.Element(pb),
-		taiui.Element(pd),
-		taiui.Element(ps),
-	}
+func rotatePanels(pt, pb, pd, ps taiui.Element, rotation int) [4]taiui.Element {
+	panels := [...]taiui.Element{pt, pb, pd, ps}
 	var rotated [4]taiui.Element
 	for p := 0; p < 4; p++ {
-		rotated[p] = panels[rotatedPanelIndex(p, int(rotation))]
+		rotated[p] = panels[rotatedPanelIndex(p, rotation)]
 	}
 	return rotated
 }
@@ -259,35 +186,10 @@ func rotatedPanelIndex(p, rotation int) int {
 	return (p - rotation%4 + 4) % 4
 }
 
-func (a *App) Header(t Toggle, now Now) Header {
-	return Header(header(t, now))
-}
-
-func (a *App) Footer() Footer {
-	return Footer(footer())
-}
-
-func (a *App) PanelText() PanelText {
-	return PanelText(panelText())
-}
-
-func (a *App) PanelScroll(scroll Scroll) PanelScroll {
-	return PanelScroll(panelScroll(scroll))
-}
-
-func (a *App) PanelBox(t Toggle, w1 W1Weight) PanelBox {
-	return PanelBox(panelBox(t, w1))
-}
-
-func (a *App) PanelDynamic(frame Frame, toggle Toggle, fb *taiui.CanvasContent) PanelDynamic {
-	return PanelDynamic(panelDynamic(frame, toggle, fb))
-}
-
-// CanvasContent derives the canvas content from the frame
-// counter: the ball position is a pure function of state, so the content
-// is rebuilt by dscope when the frame changes, and the event loop never
-// mutates it in place.
-func (a *App) CanvasContent(frame Frame) *taiui.CanvasContent {
+// buildCanvas builds the canvas content from the frame counter: the ball
+// position is a pure function of state, so the content is rebuilt on every
+// render and the event loop never mutates it in place.
+func buildCanvas(frame int64) *taiui.CanvasContent {
 	fb := taiui.NewCanvasContent(fbWidth, fbHeight)
 	fb.Clear(vt.BaseStyle.WithBg(taiui.HexColor(0x101010)))
 	bx := bounce(int(frame*2), fbWidth-1)
@@ -296,16 +198,16 @@ func (a *App) CanvasContent(frame Frame) *taiui.CanvasContent {
 	return fb
 }
 
-func header(t Toggle, now Now) taiui.Element {
+func header(toggle bool, now time.Time) taiui.Element {
 	return taiui.Row(
 		taiui.Weighted(3, taiui.Text(
 			" taiui demo ",
 			taiui.Bold(true),
-			taiui.Alt(bool(t), taiui.BGColor(taiui.HexColor(0x303030)), taiui.BGColor(taiui.HexColor(0x202020))),
+			taiui.Alt(toggle, taiui.BGColor(taiui.HexColor(0x303030)), taiui.BGColor(taiui.HexColor(0x202020))),
 			taiui.Fill(true),
 		)),
 		taiui.Weighted(2, taiui.Text(
-			fmt.Sprintf("%s \u00b7 %s", runeWidthEnv(), time.Time(now).Format("15:04:05")),
+			fmt.Sprintf("%s \u00b7 %s", runeWidthEnv(), now.Format("15:04:05")),
 			taiui.AlignRight,
 			taiui.Fill(true),
 			taiui.BGColor(taiui.HexColor(0x202020)),
@@ -358,23 +260,23 @@ func rainbowStyle(offset int) taiui.StyleFunc {
 	return taiui.SameStyle.SetFG(taiui.HexColor(rainbowColors[offset%len(rainbowColors)]))
 }
 
-func panelBox(t Toggle, w1 W1Weight) taiui.Element {
+func panelBox(toggle bool, w1 int) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x141414)),
 		taiui.Column(
-			taiui.Weighted(1, panelTitle(fmt.Sprintf("Box \u00b7 Flex \u00b7 w1:w2 = %d:2", int(w1)))),
+			taiui.Weighted(1, panelTitle(fmt.Sprintf("Box \u00b7 Flex \u00b7 w1:w2 = %d:2", w1))),
 			taiui.Weighted(5, taiui.Rect(
 				taiui.Margin(1),
 				taiui.Border(true),
 				taiui.BorderType(taiui.BorderRounded),
-				bigBoxBorder(t), // zero-arg function spec
+				bigBoxBorder(toggle), // zero-arg function spec
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x181818)),
 				taiui.Row(
-					taiui.Weighted(int(w1), fillRect("w1", 0x800000)),
+					taiui.Weighted(w1, fillRect("w1", 0x800000)),
 					taiui.Weighted(2, fillRect("w2", 0x008000)),
 				),
 			)),
@@ -385,9 +287,9 @@ func panelBox(t Toggle, w1 W1Weight) taiui.Element {
 // bigBoxBorder is a zero-argument function spec: element constructors
 // evaluate such specs eagerly at construction, so the border color follows
 // the toggle state on every rebuild.
-func bigBoxBorder(t Toggle) func() taiui.Spec {
+func bigBoxBorder(toggle bool) func() taiui.Spec {
 	return func() taiui.Spec {
-		if bool(t) {
+		if toggle {
 			return taiui.BorderStyle(taiui.SameStyle.SetFG(taiui.HexColor(0xff8800)))
 		}
 		return taiui.BorderStyle(taiui.SameStyle.SetFG(taiui.HexColor(0x0088ff)))
@@ -402,14 +304,14 @@ func fillRect(label string, bg int32) taiui.Element {
 	)
 }
 
-func panelScroll(scroll Scroll) taiui.Element {
+func panelScroll(scroll int) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
 		taiui.Fill(true),
 		taiui.BGColor(taiui.HexColor(0x141414)),
 		taiui.Column(
-			taiui.Weighted(1, panelTitle(fmt.Sprintf("Scroll (\u2191\u2193) \u00b7 offset %d", int(scroll)))),
+			taiui.Weighted(1, panelTitle(fmt.Sprintf("Scroll (\u2191\u2193) \u00b7 offset %d", scroll))),
 			taiui.Weighted(5, taiui.VerticalScroll(
 				taiui.Rect(
 					// The right padding keeps wrapped lines clear of the
@@ -417,7 +319,7 @@ func panelScroll(scroll Scroll) taiui.Element {
 					taiui.Padding(0, 1, 0, 0),
 					taiui.Text(scrollLines(), taiui.Wrap(true)),
 				),
-				int(scroll),
+				scroll,
 				taiui.Scrollbar(true),
 				taiui.Fill(true),
 			)),
@@ -441,7 +343,7 @@ func scrollLines() []string {
 	return lines
 }
 
-func panelDynamic(frame Frame, toggle Toggle, fb *taiui.CanvasContent) taiui.Element {
+func panelDynamic(frame int64, toggle bool, fb *taiui.CanvasContent) taiui.Element {
 	return taiui.Rect(
 		taiui.Border(true),
 		taiui.Padding(1),
@@ -451,9 +353,9 @@ func panelDynamic(frame Frame, toggle Toggle, fb *taiui.CanvasContent) taiui.Ele
 			taiui.Weighted(1, panelTitle("State \u00b7 Canvas")),
 			taiui.Weighted(3, taiui.Canvas(fb)),
 			taiui.Weighted(2, taiui.Text(
-				fmt.Sprintf("frame %d \u00b7 toggle %v", int64(frame), bool(toggle)),
+				fmt.Sprintf("frame %d \u00b7 toggle %v", frame, toggle),
 				taiui.Fill(true),
-				taiui.If(bool(toggle), taiui.BGColor(taiui.HexColor(0x103010))),
+				taiui.If(toggle, taiui.BGColor(taiui.HexColor(0x103010))),
 			)),
 		),
 	)

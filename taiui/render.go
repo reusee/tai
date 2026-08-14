@@ -5,11 +5,9 @@ import (
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/vt"
-	"github.com/reusee/dscope"
 )
 
-func Render(scope Scope, screens ...Screen) {
-	root := dscope.Get[Root](scope)
+func Render(root Root, screens ...Screen) {
 	options := DisplayWidthOptions()
 	for _, screen := range screens {
 		width := screen.Width()
