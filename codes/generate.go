@@ -881,8 +881,12 @@ func (Module) GenerateWithResultWithStats(
 		}
 
 		if debug {
-			fmt.Printf("system prompt: %s\n", systemPrompt)
-			fmt.Printf("user prompt: %s\n", userPromptParts)
+			// The debug dump goes to the generation output writer, never to
+			// os.Stdout directly: a direct stdout write would bypass the
+			// writer that the TUI mode forks (see TheoryOfCommandOutput and
+			// TheoryOfTUI in cmd/tai/tui.go).
+			fmt.Fprintf(output, "system prompt: %s\n", systemPrompt)
+			fmt.Fprintf(output, "user prompt: %s\n", userPromptParts)
 		}
 
 		// initial state

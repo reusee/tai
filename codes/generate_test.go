@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -514,6 +516,16 @@ func TestRunReviewUsesModelFlagValue(t *testing.T) {
 	}
 }
 
+// debugOutputMockGenerator is a generator stub that reports a usable
+// context window so the token-budget computation in
+// GenerateWithResultWithStats succeeds, and delegates CountTokens and
+// Generate to the embedded summarizeRetryMockGenerator. The fake loop
+// run in TestGenerateDebugPromptsWrittenToOutput never invokes
+// Generate.
+type debugOutputMockGenerator struct {
+	summarizeRetryMockGenerator
+}
+
 type summarizeRetryMockGenerator struct {
 	calls     int
 	responses []string
@@ -860,5 +872,54 @@ func (f *fakeRecorderForSummarize) Event(typ string, detail string) {
 	f.contents = append(f.contents, &generators.Content{
 		Role:  generators.RoleLog,
 		Parts: []generators.Part{generators.Text("[" + typ + "] " + detail)},
+	})
+}
+
+func (debugOutputMockGenerator) Spec() generators.Spec {
+	return generators.Spec{ContextTokens: 100000}
+}
+
+func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
+	// With -debug-codes, the assembled system and user prompts are dumped
+	// to the generation output writer, never to os.Stdout directly: a
+	// direct stdout write would bypass the writer that TUI mode forks,
+	// and a library cannot know whether stdout is the terminal, a pipe,
+	// or the null device. The test captures the provided writer and
+	// asserts the dump lands there; before the fix the dump went to
+	// os.Stdout and the captured writer stayed empty. See TheoryOfTUI
+	// in cmd/tai/tui.go.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() flags.Chats { return flags.Chats{"hello"} },
+		func() Debug { return Debug(true) },
+		func() *records.Recorder { return nil },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return &debugOutputMockGenerator{}, nil
+			}
+		},
+		func() loops.Run {
+			return func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+				return func(yield func(error) bool) {}
+			}
+		},
+	).Call(func(
+		generateWithResultWithStats GenerateWithResultWithStats,
+	) {
+		var buf bytes.Buffer
+		_, _, err := generateWithResultWithStats(context.Background(), &buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := buf.String()
+		if !strings.Contains(output, "system prompt:") {
+			t.Fatalf("expected the system prompt in the debug output, got: %q", output)
+		}
+		if !strings.Contains(output, "user prompt:") {
+			t.Fatalf("expected the user prompt in the debug output, got: %q", output)
+		}
 	})
 }
