@@ -204,8 +204,10 @@ func TestVerticalScroll(t *testing.T) {
 	if r := screen.cell(0, 0); r != 'a' {
 		t.Fatalf("expected 'a' at cell 0, got %v", r)
 	}
-	if r := screen.cell(0, 1); r != ' ' {
-		t.Fatalf("expected bottom crop indicator at row 1, got %v", r)
+	// The window is two rows high and shows the first two content rows;
+	// the third row is cropped without an indicator.
+	if r := screen.cell(0, 1); r != 'b' {
+		t.Fatalf("expected 'b' at row 1, got %v", r)
 	}
 }
 
@@ -229,12 +231,10 @@ func TestVerticalScrollOffsetBeyondShortContent(t *testing.T) {
 
 func TestVerticalScrollOffsetIsFirstVisibleRow(t *testing.T) {
 	// The offset is the first visible content row: offset 10 in a
-	// 6-row window shows "line 11" at the window's first row. Under the
-	// old center-based semantics the view centered on row 10, showing
-	// "line 08" at the first row. The top and bottom crop indicators
-	// cover the first six columns of the first and last rows, so the
-	// line-number digit at column 6 identifies the visible rows: '1'
-	// for line 11 rather than '8' for line 08.
+	// 6-row window shows "line 11" at the window's first row, not
+	// "line 08" as under the old center-based semantics. The line-number
+	// digit at column 6 identifies the visible rows: '1' for line 11
+	// rather than '8' for line 08.
 	screen := newFakeScreen(80, 25)
 	var lines []string
 	for i := 1; i <= 20; i++ {
@@ -245,13 +245,12 @@ func TestVerticalScrollOffsetIsFirstVisibleRow(t *testing.T) {
 		VerticalScroll(Text(lines), 10),
 	)})
 	Render(scope, screen)
-	// The first visible content row is line 11; its '1' digit survives
-	// past the top crop indicator.
+	// The first visible content row is line 11; its '1' digit is at
+	// column 6.
 	if r := screen.cell(6, 0); r != '1' {
 		t.Fatalf("expected line 11 at (6,0), got %v", r)
 	}
-	// The last visible row is line 16; its '6' digit survives past the
-	// bottom crop indicator.
+	// The last visible row is line 16; its '6' digit is at column 6.
 	if r := screen.cell(6, 5); r != '6' {
 		t.Fatalf("expected line 16 at (6,5), got %v", r)
 	}
@@ -1054,31 +1053,6 @@ func TestBoxModelDegenerate(t *testing.T) {
 	}
 }
 
-func TestVerticalScrollCropClippedToScrollbar(t *testing.T) {
-	screen := newFakeScreen(80, 25)
-	lines := make([]string, 2000)
-	for i := range lines {
-		lines[i] = "x"
-	}
-	scope := newRootScope(Root{Element: VerticalScroll(
-		Text(lines),
-		2000,
-		Box{Top: 0, Left: 0, Bottom: 4, Right: 3},
-		Scrollbar(true),
-		Fill(true),
-	)})
-	Render(scope, screen)
-	// The top crop indicator " 1996.. " is wider than the window's
-	// content area; it must be clipped at the scrollbar column, so the
-	// scrollbar column keeps the fill background instead of a digit.
-	if r := screen.cell(2, 0); r != ' ' {
-		t.Fatalf("expected crop clipped at the scrollbar column, got %v", r)
-	}
-	if r := screen.cell(2, 3); r != '█' {
-		t.Fatalf("expected scrollbar thumb at (2,3), got %v", r)
-	}
-}
-
 func TestBorderStyleOverridesChain(t *testing.T) {
 	screen := newFakeScreen(80, 25)
 	scope := newRootScope(Root{Element: Rect(
@@ -1289,13 +1263,12 @@ func TestVerticalScrollEndClamp(t *testing.T) {
 		VerticalScroll(Text(lines), 1000),
 	)})
 	Render(scope, screen)
-	// The view clamps to the content end: rows show lines 16..19. The top
-	// crop indicator " 15.. " covers the first columns of row 0.
-	if r := screen.cell(0, 0); r != ' ' {
-		t.Fatalf("expected top crop indicator at (0,0), got %v", r)
+	// The view clamps to the content end: rows show lines 16..19.
+	if r := screen.cell(0, 0); r != 'l' {
+		t.Fatalf("expected line 16 at (0,0), got %v", r)
 	}
 	if r := screen.cell(6, 0); r != '6' {
-		t.Fatalf("expected line 16 visible after the crop indicator, got %v", r)
+		t.Fatalf("expected line 16 at (6,0), got %v", r)
 	}
 	if r := screen.cell(0, 3); r != 'l' {
 		t.Fatalf("expected line 19 at row 3, got %v", r)

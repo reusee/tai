@@ -2,7 +2,6 @@ package taiui
 
 import (
 	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/clipperhouse/displaywidth"
@@ -141,8 +140,8 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 
 	// collect renders the child and stores the cells in the given row
 	// range. maxY tracks the true content extent across passes, so the
-	// view window and the crop counts are computed from the full content
-	// even when the stored cells are a sub-range.
+	// view window is computed from the full content even when the stored
+	// cells are a sub-range.
 	collect := func(from, to int) {
 		cells = cells[:0]
 		sub := drawFunc(func(x, y int, mainc rune, combc []rune, st Style) {
@@ -253,14 +252,6 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 			}
 		}
 	}
-	numTopCrop := fromY - box.Top
-	numBottomCrop := maxY - (fromY + box.Height()) + 1
-	if numTopCrop > 0 {
-		drawCropIndicator(draw, box.Left, box.Top, clipRight, numTopCrop, withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold))
-	}
-	if numBottomCrop > 0 {
-		drawCropIndicator(draw, box.Left, box.Bottom-1, clipRight, numBottomCrop, withAttrOn(DarkerOrLighterStyle(style, 15), true, vt.Bold))
-	}
 	if showScrollbar {
 		// The thumb position maps the visible window onto the track.
 		thumbSize := max(1, box.Height()*box.Height()/contentHeight)
@@ -276,22 +267,5 @@ func renderVerticalScroll(v _VerticalScroll, box Box, style Style, draw drawFunc
 		if cursorX >= box.Left && cursorX < clipRight && wy >= box.Top && wy < box.Bottom {
 			cursor(cursorX, wy)
 		}
-	}
-}
-
-// drawCropIndicator draws a " N.. " crop indicator at the given row,
-// clipped to the window's content area so it never paints the scrollbar
-// column. The indicator is ASCII, so the stack buffer is written byte by
-// byte without allocating.
-func drawCropIndicator(draw drawFunc, x, y, clipRight, n int, style Style) {
-	var buf [16]byte
-	b := append(buf[:0], ' ')
-	b = strconv.AppendInt(b, int64(n), 10)
-	b = append(b, '.', '.', ' ')
-	for i, c := range b {
-		if x+i >= clipRight {
-			break
-		}
-		draw(x+i, y, rune(c), nil, style)
 	}
 }

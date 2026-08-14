@@ -101,13 +101,11 @@ taiui theory: UI = pure Element value derived from state.
   a cluster that would extend past the right edge is not drawn, so
   content never spills onto the screen. It accepts the common specs: a
   Box override, the style chain, and Fill, which paints the visible
-  window's unoccupied cells. Crop-count indicators at the window edges
-  draw over the fill, clipped to the window's content area so they never
-  paint the scrollbar column; the Scrollbar thumb at the right edge
-  draws last. With the Scrollbar spec, the child renders at the visible
-  width (the window width minus the scrollbar column), so wrapped text
-  wraps within the visible area instead of hiding behind the scrollbar;
-  content that fits without a scrollbar re-renders at the full width.
+  window's unoccupied cells. With the Scrollbar spec, the child renders
+  at the visible width (the window width minus the scrollbar column), so
+  wrapped text wraps within the visible area instead of hiding behind
+  the scrollbar; content that fits without a scrollbar re-renders at the
+  full width.
 - The scroll collects only the cells of the expected window: the
   collection range spans one window height, and a second pass re-collects
   the window cells when the view falls outside the range, so a tall
