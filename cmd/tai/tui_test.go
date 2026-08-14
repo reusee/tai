@@ -2109,3 +2109,55 @@ func TestTUIJumpToTransition(t *testing.T) {
 		}
 	})
 }
+
+func TestReadTUIKeysHelp(t *testing.T) {
+	ch := make(chan string, 10)
+	go taiui.ReadKeys(strings.NewReader("?\x1b[A"), ch)
+	var got []string
+	for len(got) < 2 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for keys")
+		}
+	}
+	want := []string{"help", "up"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestTUIHelpToggle(t *testing.T) {
+	tui := newTUIForTest()
+	if tui.showHelp {
+		t.Fatal("help must start hidden")
+	}
+	tui.toggleHelp()
+	if !tui.showHelp {
+		t.Fatal("toggleHelp must show the help overlay")
+	}
+	tui.toggleHelp()
+	if tui.showHelp {
+		t.Fatal("toggleHelp must hide the help overlay on the second press")
+	}
+}
+
+func TestTUIHelpOverlay(t *testing.T) {
+	var sb strings.Builder
+	tui := newTUIForTest()
+	tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
+	tui.width = 80
+	tui.height = 10
+	tui.showHelp = true
+	tui.render()
+	output := sb.String()
+	if !strings.Contains(output, "Help") {
+		t.Fatalf("expected the help title in the rendered output, got: %q", output)
+	}
+	if !strings.Contains(output, "1 / 2 / 3") {
+		t.Fatalf("expected the key bindings in the rendered output, got: %q", output)
+	}
+}

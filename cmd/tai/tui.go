@@ -386,11 +386,6 @@ func (w logsWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// TUI is the terminal UI for tai commands. It holds the raw display state
-// — line buffers, tab state machine, scroll states, signals, and session
-// flags — and presents it declaratively: render() forks the current state
-// values into a fresh dscope view scope (TUIView), and the provider graph
-// derives the panels from them. See TheoryOfTUI.
 type TUI struct {
 	mu       sync.Mutex
 	output   *taiui.LineBuffer
@@ -417,6 +412,11 @@ type TUI struct {
 	// silent (e.g., long thinking phases without streamed output).
 	// See TheoryOfTUI.
 	generating bool
+	// showHelp reports whether the operation help overlay is visible.
+	// The ? key toggles it. The overlay is derived from state like the
+	// quit confirmation bar: toggling showHelp re-renders the overlay.
+	// See TheoryOfTUI.
+	showHelp bool
 
 	// lastOutputRole is the role of the last content written to the
 	// Output tab. It is used with lastWasThought to insert a blank line
@@ -624,6 +624,15 @@ func (t *TUI) toggleTab(idx int) {
 	}
 }
 
+// toggleHelp shows or hides the operation help overlay. The ? key
+// controls it; the overlay is part of the element tree, derived from
+// the showHelp state, so no imperative layer management is needed.
+func (t *TUI) toggleHelp() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.showHelp = !t.showHelp
+}
+
 // cycleFocus advances the focus to the next expanded tab after the
 // current one, wrapping around. Collapsed tabs are skipped.
 func (t *TUI) cycleFocus() {
@@ -730,6 +739,8 @@ func (t *TUI) Run(gen func()) error {
 				t.scrollTo(0)
 			case "end":
 				t.scrollTo(1 << 30)
+			case "help":
+				t.toggleHelp()
 			case "quit":
 				// The first quit key press shows a confirmation bar; a
 				// second press confirms the quit. See TheoryOfTUI.

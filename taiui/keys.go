@@ -14,20 +14,18 @@ taiui key input theory:
   grows into a sequence is discarded. ESC followed by a non-sequence byte
   is treated as a stray ESC and the byte is processed normally. Arrow,
   home/end, page-up/page-down, tab, the digit keys 1-3, the bracket keys
-  '[' and ']', s, and q (plus Ctrl-C) map to the names "up", "down",
-  "home", "end", "pageup", "pagedown", "tab", "1", "2", "3",
-  "prev-transition", "next-transition", "split", and "quit". The bracket
-  keys name section-transition navigation: a TUI jumps its Output pane to
-  the previous or next role or thinking-state transition.
+  '[' and ']', the question-mark key '?', s, and q (plus Ctrl-C) map to
+  the names "up", "down", "home", "end", "pageup", "pagedown", "tab",
+  "1", "2", "3", "prev-transition", "next-transition", "help", "split",
+  and "quit". The bracket keys name section-transition navigation: a TUI
+  jumps its Output pane to the previous or next role or thinking-state
+  transition. The question-mark key toggles the operation help overlay.
 - The function is intentionally transport-agnostic: it accepts an
   io.Reader, so it works with tcell's tty, terminal state files, pipes,
   and test buffers. It does no terminal mode management; the caller
   owns starting and stopping raw mode.
 `
 
-// ReadKeys reads raw bytes from r and sends decoded key names to ch.
-// It runs until the reader fails. Unknown escape sequences are skipped
-// byte-by-byte as needed. See TheoryOfKeyInput.
 func ReadKeys(r io.Reader, ch chan<- string) {
 	var buf [64]byte
 	var pending []byte
@@ -114,6 +112,8 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 				ch <- "prev-transition"
 			case ']':
 				ch <- "next-transition"
+			case '?':
+				ch <- "help"
 			case 's', 'S':
 				ch <- "split"
 			case 'q', 'Q', 0x03:

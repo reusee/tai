@@ -156,6 +156,21 @@ func logsPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 	)
 }
 
+// tuiHelpLines lists the TUI key bindings shown by the ? help overlay.
+// The leading tabs align the descriptions when Text renders with the
+// TabWidth spec.
+var tuiHelpLines = []string{
+	"1 / 2 / 3\tselect tab; pressing the focused tab again collapses it",
+	"tab\tcycle focus among the expanded tabs",
+	"s\ttoggle vertical / horizontal split",
+	"up / down\tscroll the focused pane",
+	"page up / down\tscroll the focused pane by a page",
+	"home / end\tjump to the start / end of the focused pane",
+	"[ / ]\tjump to the previous / next output section",
+	"q / Ctrl-C\tquit (confirmation bar: press again to confirm)",
+	"?\tthis help",
+}
+
 func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Element {
 	boxes := t.tabs.Boxes(width, height)
 	var elements []any
@@ -169,6 +184,28 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 	}
 	root := taiui.Overlay(elements...)
+	if t.showHelp {
+		// The help overlay is centered over the tabs and lists the key
+		// bindings. It is derived from state like the quit confirmation
+		// bar: toggling showHelp re-renders the overlay.
+		root = taiui.Overlay(
+			root,
+			taiui.Rect(
+				taiui.Box{
+					Top:    height / 4,
+					Left:   width / 4,
+					Bottom: 3 * height / 4,
+					Right:  3 * width / 4,
+				},
+				taiui.Border(true),
+				taiui.Fill(true),
+				taiui.BGColor(taiui.HexColor(0x202020)),
+				taiui.Title(" Help "),
+				taiui.Padding(1),
+				taiui.Text(tuiHelpLines, taiui.TabWidth(18)),
+			),
+		)
+	}
 	if t.confirmQuit {
 		// A pending quit confirmation draws a confirmation bar over the
 		// bottom row of the screen, on top of every tab, so it is always
