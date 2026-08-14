@@ -65,8 +65,9 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 // WrapLinesColored carries a source line's color onto every wrapped
 // display line, so transitions are identified in display coordinates,
 // matching the scroll offsets. The first display line is never a
-// boundary: there is no previous section to transition from. See
-// TheoryOfTUI.
+// boundary: there is no previous section to transition from, so the
+// backward jump in jumpToTransition falls back to the very beginning of
+// the content to reach the first section's start. See TheoryOfTUI.
 func transitionBoundaries(display []taiui.Line) []int {
 	var indices []int
 	for i := 1; i < len(display); i++ {

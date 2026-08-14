@@ -2026,9 +2026,17 @@ func TestTUIJumpToTransition(t *testing.T) {
 		if tui.scrolls[0].Offset != 20 {
 			t.Fatalf("expected offset 20 after the third prev-jump, got %d", tui.scrolls[0].Offset)
 		}
+		// Past the first transition the [ key must reach the very
+		// beginning of the content: the first display line is never a
+		// boundary, so without the fallback the start of the first
+		// section would be unreachable.
 		tui.jumpToTransition(-1)
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected the view to stay at 20 past the first transition, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the view to reach the very beginning, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the view to stay at 0 at the very beginning, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2106,6 +2114,29 @@ func TestTUIJumpToTransition(t *testing.T) {
 		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 0 {
 			t.Fatalf("expected the view unchanged without transitions, got %d", tui.scrolls[0].Offset)
+		}
+	})
+
+	t.Run("PreviousWithoutTransitions", func(t *testing.T) {
+		// With no section transitions in the output, the [ key must
+		// still reach the very beginning of the content: the whole
+		// output is one section, so its start is the previous-navigation
+		// target.
+		tui := newTUIForTest()
+		tui.tabs.Expanded = []bool{true, false, false}
+		tui.tabs.HasContent = []bool{true, false, false}
+		tui.tabs.Focus = 0
+		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
+		tui.width = 80
+		tui.height = 10
+		// All lines share the default color: no transitions to jump to.
+		for i := 0; i < 20; i++ {
+			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+		}
+		tui.scrolls[0].Offset = 5
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 0 {
+			t.Fatalf("expected the [ key to reach the very beginning without transitions, got %d", tui.scrolls[0].Offset)
 		}
 	})
 }

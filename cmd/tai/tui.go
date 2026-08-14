@@ -98,17 +98,16 @@ remainder; collapsed tabs take one column (vertical split) or one row
 side by side, a vertical split line) and horizontal splitting (tabs
 stacked, a horizontal split line). The default is horizontal splitting: the
 tabs are stacked vertically, one above the other. Tab cycles the focus among
-the expanded tabs, skipping collapsed ones; the [ and ] keys jump the Output
-tab's view to the previous and next section transition — a role change or a
+the expanded tabs, skipping collapsed ones; the [ and ] keys jump
+the Output tab's view to the previous and next section transition — a role change or a
 thought/non-thought change — so the user can quickly browse the whole output:
 the Output tab colors each section by its role and thinking state, so a
-transition is a color change between consecutive wrapped display lines. The
+transition is a color change between consecutive wrapped display lines. A
+backward jump with no earlier transition falls back to the very beginning of
+the output, so the start of the first section — a display line that is never
+itself a transition — is always reachable by section navigation. The
 jump stops following the tail, and a collapsed Output tab expands and takes
-the focus so the jump result is visible. up/down and page up/down scroll
-the focused pane; home/end jump to the start/end. Rendering is event-driven:
-every path that appends display content — model output captured by the state
-decorator, stderr pipe writes, and log records — notifies the render loop,
-so streamed output appears live without user input. When the generation
+the focus so the jump result is visible. When the generation
 finishes, the TUI stays open so the output can be browsed, and q (or Ctrl-C)
 quits the TUI after a confirmation: the first press shows a confirmation bar
 at the bottom of the screen, and a second press quits; any other key cancels
@@ -821,7 +820,10 @@ func (t *TUI) scrollTo(top int) {
 // display line. The jump targets the same display-line coordinate space
 // as the scroll offsets. A collapsed Output tab expands on the jump, and
 // the jump takes the focus so the result is visible; the jump stops
-// following the tail. See TheoryOfTUI.
+// following the tail. A backward jump with no earlier transition falls
+// back to the very beginning of the content, so the [ key always reaches
+// the start of the first section — a display line that is never itself a
+// transition (see transitionBoundaries). See TheoryOfTUI.
 func (t *TUI) jumpToTransition(direction int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -856,6 +858,14 @@ func (t *TUI) jumpToTransition(direction int) {
 				target = boundaries[i]
 				break
 			}
+		}
+		// When no boundary precedes the view start — the view is at or
+		// before the first section's transition — jump to the very
+		// beginning of the content. The first display line is never a
+		// boundary (see transitionBoundaries), so without this fallback
+		// the [ key could not reach the start of the first section.
+		if target < 0 {
+			target = 0
 		}
 	} else {
 		// next: the smallest boundary after the view start
