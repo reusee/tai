@@ -41,12 +41,24 @@ type Gemini struct {
 	TemperatureFlag dscope.Inject[TemperatureFlag]
 	Debug           dscope.Inject[DebugGemini]
 	FuncDecls       dscope.Inject[FuncDecls]
+	EventRecorder   dscope.Inject[EventRecorder]
 }
 
 var _ Generator = Gemini{}
 
 func (g Gemini) Spec() Spec {
 	return g.spec
+}
+
+// recordEvent records an API-level event in the interaction transcript
+// when interaction recording is active. The recorder is injected as a
+// dscope dependency when the generator is constructed; the tai command
+// forks the EventRecorder provider with the records.Recorder value. See
+// generators.TheoryOfEventRecorder.
+func (g Gemini) recordEvent(typ string, detail string) {
+	if rec := g.EventRecorder(); rec != nil && rec.Enabled() {
+		rec.Event(typ, detail)
+	}
 }
 
 func (g Gemini) CountTokens(text string) (int, error) {
@@ -258,7 +270,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		nonStreaming = true
 	}
 
-	ret, err = doWithRetry(ctx, g.Logger(), func() (State, error) {
+	ret, err = doWithRetry(ctx, g.Logger(), g.EventRecorder(), func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
 			"name", g.spec.Name,
@@ -266,6 +278,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			"effort", g.spec.ReasoningEffort,
 			"non_streaming", nonStreaming,
 		)
+		g.recordEvent("api_call", fmt.Sprintf("gemini generate content: model=%s effort=%s non_streaming=%v", g.spec.Model, g.spec.ReasoningEffort, nonStreaming))
 
 		newState := ret
 		hasContent := false
@@ -338,6 +351,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		if nonStreaming {
 			resp, err := client.Models.GenerateContent(ctx, g.spec.Model, contents, config)
 			if err != nil {
+				g.recordEvent("api_error", fmt.Sprintf("gemini non-streaming API call failed: %v", err))
 				return ret, wrap(err)
 			}
 			if err := handleResponse(resp); err != nil {
@@ -350,6 +364,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 					if errors.Is(err, io.EOF) {
 						break
 					}
+					g.recordEvent("api_error", fmt.Sprintf("gemini streaming API call failed: %v", err))
 					return ret, wrap(err)
 				}
 				if err := handleResponse(msg); err != nil {
@@ -360,8 +375,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 		if !hasContent {
 			if terminalReason != "" {
+				g.recordEvent("api_error", fmt.Sprintf("gemini terminal finish reason: %s", terminalReason))
 				return ret, fmt.Errorf("terminal finish reason: %s", terminalReason)
 			}
+			g.recordEvent("api_error", "gemini returned no output")
 			// no output
 			return ret, fmt.Errorf("no output")
 		}
@@ -391,6 +408,7 @@ delays while production callers use a meaningful delay.
 func doWithRetry[T any](
 	ctx context.Context,
 	logger logs.Logger,
+	eventRecorder EventRecorder,
 	fn func() (T, error),
 	backoff ...time.Duration,
 ) (ret T, err error) {
@@ -409,6 +427,15 @@ func doWithRetry[T any](
 			logger.WarnContext(ctx, "retry",
 				"attempt", i+1, "error", err,
 			)
+			// Each retryable API error is recorded so the interaction
+			// transcript shows the raw API errors even when a later
+			// attempt succeeds. The recorder is passed as a parameter by
+			// the caller, which obtains it from its injected
+			// dscope.Inject[EventRecorder] field. See
+			// generators.TheoryOfEventRecorder.
+			if eventRecorder != nil && eventRecorder.Enabled() {
+				eventRecorder.Event("api_error", fmt.Sprintf("retryable API error (attempt %d/%d): %v", i+1, maxRetries, err))
+			}
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
@@ -425,6 +452,9 @@ func doWithRetry[T any](
 	// phases/generate.go) from re-triggering indefinitely.
 	// See TheoryOfGenerateRetry in phases/generate.go.
 	if errors.Is(err, ErrRetryable) {
+		if eventRecorder != nil && eventRecorder.Enabled() {
+			eventRecorder.Event("api_error", fmt.Sprintf("API retry exhausted after %d attempts: %v", maxRetries, err))
+		}
 		err = fmt.Errorf("retry exhausted after %d attempts: %v", maxRetries, err)
 	}
 	return

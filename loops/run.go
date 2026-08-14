@@ -242,9 +242,6 @@ type loopState struct {
 	logger logs.Logger
 }
 
-// runRound executes one generation round: the phase chain, summary
-// extraction, and block processing. It returns the round's outcome.
-// See TheoryOfLoops.
 func (ls *loopState) runRound() (roundResult, error) {
 	// Round start: report to the interaction recorder and reset
 	// per-round state (e.g., MemoryStore.Reset).
@@ -347,6 +344,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 					// interaction recorder.
 					if ls.rec != nil && ls.rec.Enabled() {
 						ls.rec.RoundError(roundErr)
+						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, roundErr))
 					}
 
 					var retryParts []generators.Part
@@ -468,6 +466,11 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// recorder.
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.RoundTruncated()
+			if isAbnormalFinish {
+				ls.rec.Event("decision", fmt.Sprintf("abnormal finish reason %q triggered retry: attempt %d/%d", finishReason, retry+1, ls.maxRetries))
+			} else {
+				ls.rec.Event("decision", fmt.Sprintf("missing completion (no summary block) triggered retry: attempt %d/%d", retry+1, ls.maxRetries))
+			}
 		}
 
 		// Summarize incomplete output and retry. The retry process
@@ -596,6 +599,13 @@ func (ls *loopState) runRound() (roundResult, error) {
 	if len(roundUncorrected) > 0 {
 		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, roundUncorrected)
 	}
+	if ls.rec != nil && ls.rec.Enabled() {
+		if len(parseErrorParts) > 0 {
+			ls.rec.Event("decision", fmt.Sprintf("parse error correction attempt %d/%d: %d malformed block(s) fed back to the model", ls.parseErrorCorrectionRounds, maxParseErrorRounds, len(roundParseErrors)))
+		} else if len(roundUncorrected) > 0 {
+			ls.rec.Event("decision", fmt.Sprintf("parse error correction budget exhausted: %d malformed block(s) recorded as uncorrected", len(roundUncorrected)))
+		}
+	}
 
 	// Single-shot mode: no component processing. When parse errors
 	// were collected, feed them back and continue with a
@@ -664,6 +674,9 @@ func (ls *loopState) runRound() (roundResult, error) {
 				return roundResult{state: ls.state}, aerr
 			}
 		}
+		if ls.rec != nil && ls.rec.Enabled() {
+			ls.rec.Event("decision", fmt.Sprintf("components triggered a new generation round: %d user part(s)", len(combinedParts)))
+		}
 		return roundResult{
 			state:        ls.state,
 			summaries:    roundSummaries,
@@ -687,6 +700,9 @@ func (ls *loopState) runRound() (roundResult, error) {
 			return roundResult{state: ls.state}, cerr
 		}
 		if idleContinue {
+			if ls.rec != nil && ls.rec.Enabled() {
+				ls.rec.Event("decision", "idle handler returned user input; starting a new round")
+			}
 			return roundResult{
 				state:        ls.state,
 				summaries:    roundSummaries,
@@ -781,11 +797,6 @@ func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Bl
 // streaming stops immediately. See TheoryOfLoops.
 type BlockHandler func(block blocks.Block) (consumed bool, err error)
 
-// InteractionRecorder receives generation events for interaction recording
-// and self-improvement analysis. The records package implements it with a
-// sqlite-backed recorder (see records.TheoryOfInteractionRecording) that
-// persists sessions and events to a single database file. When the recorder
-// is disabled, Enabled returns false and the loop skips all recording work.
 type InteractionRecorder interface {
 	// Enabled reports whether recording is active. When false, the loop
 	// does not wrap the state, record contents, or call the lifecycle
@@ -816,6 +827,14 @@ type InteractionRecorder interface {
 	Block(block blocks.Block)
 	// ParseError records a malformed block that could not be parsed.
 	ParseError(parseErr *blocks.BlockParseError)
+	// Event records an arbitrary session event with the current round
+	// number, carrying a type and a free-form detail. The generation loop
+	// uses it for flow decisions (retries, parse-error corrections,
+	// component-triggered rounds, session metadata), and generator
+	// implementations use it through generators.EventRecorderFromContext
+	// for API-level events (api_call, api_error). The transcript renders
+	// each event by its type. See records.TheoryOfEventRecording.
+	Event(typ string, detail string)
 }
 
 type RunOptions struct {
@@ -1097,6 +1116,15 @@ func (Module) Run(
 				defer func() {
 					rec.EndSession(ls.runErr)
 				}()
+				// Session-level metadata is recorded as events so the
+				// transcript identifies the invocation and the model that
+				// powered it. See records.TheoryOfEventRecording.
+				rec.Event("decision", fmt.Sprintf("command line: %s", strings.Join(os.Args, " ")))
+				if opts.Generator != nil {
+					spec := opts.Generator.Spec()
+					rec.Event("decision", fmt.Sprintf("generator selected: name=%q model=%q family=%q effort=%q",
+						spec.Name, spec.Model, spec.Family, spec.ReasoningEffort))
+				}
 			}
 
 			// Report the initial system prompt and contents, then wrap the

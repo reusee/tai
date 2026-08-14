@@ -392,26 +392,16 @@ Output ONLY these two blocks as your final text, with no other text before or af
 // TheoryOfIncompleteOutputSummarization.
 const maxSummarizeRetries = 3
 
-// summarizeRecorderKey is the context key carrying the interaction recorder
-// to summarize requests. Summarize requests run outside the main generation
-// loop, so the recorder is carried in the context for summarizeIncompleteOutput
-// to pick up, keeping the summarize call sites unchanged. See
-// records.TheoryOfInteractionRecording.
-type summarizeRecorderKey struct{}
-
 func summarizeIncompleteOutput(
 	ctx context.Context,
 	logger logs.Logger,
+	recorder loops.InteractionRecorder,
 	generator generators.Generator,
 	incompleteText string,
 ) (*loops.RetrySummary, error) {
 	if incompleteText == "" {
 		return nil, nil
 	}
-	// The interaction recorder is carried in the context so summarize
-	// requests are recorded alongside the main generation session. See
-	// records.TheoryOfInteractionRecording.
-	recorder, _ := ctx.Value(summarizeRecorderKey{}).(loops.InteractionRecorder)
 
 	systemPrompt := retrySummarizationSystemPrompt
 	var lastErr error
@@ -773,11 +763,17 @@ func (Module) GenerateWithResultWithStats(
 			"model", spec.Model,
 			"effort", spec.ReasoningEffort,
 		)
+		if recorder != nil && recorder.Enabled() {
+			recorder.Event("decision", fmt.Sprintf("generator selected: name=%q family=%q model=%q effort=%q", spec.Name, spec.Family, spec.Model, spec.ReasoningEffort))
+		}
 
 		// summarize generator
 		summarizeGenerator, err := getSummarizeGenerator()
 		if err != nil {
 			return loops.Result{}, nil, err
+		}
+		if recorder != nil && recorder.Enabled() {
+			recorder.Event("decision", fmt.Sprintf("summarize generator selected: model=%s", summarizeGenerator.Spec().Model))
 		}
 
 		// Calculate basic limits
@@ -820,6 +816,9 @@ func (Module) GenerateWithResultWithStats(
 			"functions", funcTokens,
 			"max user content", maxUserPromptTokens,
 		)
+		if recorder != nil && recorder.Enabled() {
+			recorder.Event("decision", fmt.Sprintf("token limits computed: max_input=%d system=%d functions=%d user_capacity=%d", maxInputTokens, systemPromptTokens, funcTokens, maxUserPromptTokens))
+		}
 
 		// user prompt
 		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
@@ -843,6 +842,9 @@ func (Module) GenerateWithResultWithStats(
 			"tokens", userPromptTokens,
 			"parts", len(userPromptParts),
 		)
+		if recorder != nil && recorder.Enabled() {
+			recorder.Event("decision", fmt.Sprintf("user prompt assembled: parts=%d tokens=%d", len(userPromptParts), userPromptTokens))
+		}
 
 		if debug {
 			fmt.Printf("system prompt: %s\n", systemPrompt)
@@ -973,11 +975,7 @@ func (Module) GenerateWithResultWithStats(
 		// callback that cannot return an error (OnPhaseError). fatalErr
 		// records the serious error; after the loop it overrides the
 		// loop's terminal error. See TheoryOfIncompleteOutputSummarization.
-		// The interaction recorder is carried in the context so summarize
-		// requests are recorded alongside the main generation session.
-		// See records.TheoryOfInteractionRecording.
-		ctxWithRecorder := context.WithValue(ctx, summarizeRecorderKey{}, recorder)
-		runCtx, cancel := context.WithCancel(ctxWithRecorder)
+		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var fatalErr error
 
@@ -1009,6 +1007,9 @@ func (Module) GenerateWithResultWithStats(
 				if err := memStore.Flush(); err != nil {
 					return err
 				}
+				if recorder != nil && recorder.Enabled() {
+					recorder.Event("decision", "round succeeded: in-memory changes flushed to disk")
+				}
 
 				// Compute the round duration from the start time recorded by
 				// OnRoundStart. The duration covers the full round including
@@ -1030,7 +1031,7 @@ func (Module) GenerateWithResultWithStats(
 					// Round tab. See TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
 						var retrySummary *loops.RetrySummary
-						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, logger, summarizeGenerator, incompleteText)
+						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, incompleteText)
 						if summarizeErr == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
 						}
@@ -1089,7 +1090,7 @@ func (Module) GenerateWithResultWithStats(
 					phaseErr,
 					prevContentCount,
 					func(text string) (*loops.RetrySummary, error) {
-						return summarizeIncompleteOutput(runCtx, logger, summarizeGenerator, text)
+						return summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
@@ -1114,7 +1115,7 @@ func (Module) GenerateWithResultWithStats(
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
-				retrySummary, err := summarizeIncompleteOutput(runCtx, logger, summarizeGenerator, incompleteText)
+				retrySummary, err := summarizeIncompleteOutput(runCtx, logger, recorder, summarizeGenerator, incompleteText)
 				if err != nil {
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a

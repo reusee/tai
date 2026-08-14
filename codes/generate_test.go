@@ -549,7 +549,7 @@ func TestSummarizeIncompleteOutputRetriesOnParseFailure(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize attempts fail")
 	}
@@ -603,7 +603,7 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +628,7 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 		responses: []string{"", "", ""},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize generations fail")
 	}
@@ -661,7 +661,7 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, gen, "incomplete text")
+	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize generations fail")
 	}
@@ -710,8 +710,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
-		retrySummary, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -743,8 +742,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: false}
-		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
-		_, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		_, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -765,8 +763,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		ctx := context.WithValue(context.Background(), summarizeRecorderKey{}, rec)
-		retrySummary, err := summarizeIncompleteOutput(ctx, logger, gen, "incomplete text")
+		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -816,3 +813,10 @@ func (f *fakeRecorderForSummarize) Content(content *generators.Content) {
 func (f *fakeRecorderForSummarize) Block(blocks.Block) {}
 
 func (f *fakeRecorderForSummarize) ParseError(*blocks.BlockParseError) {}
+
+func (f *fakeRecorderForSummarize) Event(typ string, detail string) {
+	f.contents = append(f.contents, &generators.Content{
+		Role:  generators.RoleLog,
+		Parts: []generators.Part{generators.Text("[" + typ + "] " + detail)},
+	})
+}

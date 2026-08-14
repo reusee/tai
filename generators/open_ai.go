@@ -34,12 +34,24 @@ type OpenAI struct {
 	Debug                dscope.Inject[DebugOpenAI]
 	TapFlag              dscope.Inject[TapOpenAI]
 	FuncDecls            dscope.Inject[FuncDecls]
+	EventRecorder        dscope.Inject[EventRecorder]
 }
 
 var _ Generator = new(OpenAI)
 
 func (o *OpenAI) Spec() Spec {
 	return o.spec
+}
+
+// recordEvent records an API-level event in the interaction transcript
+// when interaction recording is active. The recorder is injected as a
+// dscope dependency when the generator is constructed; the tai command
+// forks the EventRecorder provider with the records.Recorder value. See
+// generators.TheoryOfEventRecorder.
+func (o *OpenAI) recordEvent(typ string, detail string) {
+	if rec := o.EventRecorder(); rec != nil && rec.Enabled() {
+		rec.Event(typ, detail)
+	}
 }
 
 func (o *OpenAI) CountTokens(text string) (int, error) {
@@ -171,6 +183,8 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 
+	o.recordEvent("api_call", fmt.Sprintf("openai-compatible chat completion: model=%s effort=%s non_streaming=%v", o.spec.Model, reasoningEffort, nonStreaming))
+
 	if options != nil && options.ResponseSchema != nil {
 		req.ResponseFormat = &ResponseFormat{
 			Type: "json_schema",
@@ -224,6 +238,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		o.recordEvent("api_error", fmt.Sprintf("openai request failed: %v", err))
 		return ret, OpenAIError{
 			Err:     err,
 			Request: req,
@@ -233,6 +248,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		statusMsg := fmt.Sprintf("openai http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		var errResp ErrorResponse
 		// Check both unmarshal failure and nil Error field: some providers
 		// return valid JSON without an "error" field (e.g. {"message": "..."}),
@@ -240,6 +256,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		// line when setting HTTPStatusCode.
 		if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == nil {
 			err := fmt.Errorf("bad status: %d, body: %s", resp.StatusCode, string(body))
+			o.recordEvent("api_error", statusMsg)
 			if resp.StatusCode == http.StatusTooManyRequests {
 				return ret, errors.Join(err, ErrRetryable)
 			}
@@ -250,6 +267,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 
 		errResp.Error.HTTPStatusCode = resp.StatusCode
+		o.recordEvent("api_error", statusMsg)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return ret, errors.Join(errResp.Error, ErrRetryable)
 		}
@@ -286,6 +304,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if nonStreaming {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			o.recordEvent("api_error", fmt.Sprintf("openai non-streaming response read failed: %v", err))
 			return ret, err
 		}
 		if o.Debug() {
@@ -295,6 +314,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 		var response ChatCompletionResponse
 		if err := json.Unmarshal(body, &response); err != nil {
+			o.recordEvent("api_error", fmt.Sprintf("openai non-streaming unmarshal failed: %v", err))
 			return ret, err
 		}
 
@@ -326,6 +346,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				var arguments map[string]any
 				if call.Function.Arguments != "" {
 					if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+						o.recordEvent("api_error", fmt.Sprintf("openai tool call arguments unmarshal failed: %v", err))
 						return ret, err
 					}
 				}
@@ -349,6 +370,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if choice.FinishReason == "error" {
+					o.recordEvent("api_error", fmt.Sprintf("openai finish reason: %s", choice.FinishReason))
 					return ret, errors.New(string(choice.FinishReason))
 				}
 			}
@@ -358,6 +380,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		parser := new(OpenAIParser)
 		finish := func() error {
 			if contents, err := parser.End(); err != nil {
+				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return err
 			} else {
 				for _, content := range contents {
@@ -393,6 +416,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 			var streamResp ChatCompletionStreamResponse
 			if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				o.recordEvent("api_error", fmt.Sprintf("openai stream unmarshal failed: %v", err))
 				return ret, fmt.Errorf("error unmarshalling stream response: %w", err)
 			}
 
@@ -412,6 +436,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 
 			newContents, err := parser.Input(streamResp.Choices[0].Delta)
 			if err != nil {
+				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return ret, err
 			}
 
@@ -443,12 +468,14 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 					return ret, err
 				}
 				if reason == "error" {
+					o.recordEvent("api_error", fmt.Sprintf("openai finish reason: %s", reason))
 					return ret, errors.New(string(reason))
 				}
 			}
 
 		}
 		if err := scanner.Err(); err != nil {
+			o.recordEvent("api_error", fmt.Sprintf("openai stream read failed: %v", err))
 			return ret, fmt.Errorf("error reading stream: %w", err)
 		}
 

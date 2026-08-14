@@ -338,3 +338,33 @@ func TestSessionNotFound(t *testing.T) {
 		}
 	})
 }
+
+func TestRecorderEvent(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.RoundStart()
+		recorder.Event("api_call", "openai-compatible chat completion: model=test-model")
+		recorder.Event("api_error", "openai http status 503: upstream unavailable")
+		recorder.Event("decision", "missing completion (no summary block) triggered retry: attempt 1/3")
+		recorder.RoundSuccess(nil)
+		recorder.EndSession(nil)
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"round 1 [api_call]", "model=test-model",
+			"round 1 [api_error]", "openai http status 503",
+			"round 1 [decision]", "retry: attempt 1/3",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("transcript missing %q:\n%s", want, text)
+			}
+		}
+	})
+}

@@ -19,7 +19,7 @@ func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
 	}
 
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	result, err := doWithRetry(context.Background(), logger, fn, 0)
+	result, err := doWithRetry(context.Background(), logger, nil, fn, 0)
 
 	if err == nil {
 		t.Fatal("expected error after retry exhaustion")
@@ -49,7 +49,7 @@ func TestDoWithRetrySuccessOnRetry(t *testing.T) {
 	}
 
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	result, err := doWithRetry(context.Background(), logger, fn, 0)
+	result, err := doWithRetry(context.Background(), logger, nil, fn, 0)
 
 	if err != nil {
 		t.Fatalf("expected success on third attempt, got: %v", err)
@@ -71,7 +71,7 @@ func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
 	}
 
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	_, err := doWithRetry(context.Background(), logger, fn, 0)
+	_, err := doWithRetry(context.Background(), logger, nil, fn, 0)
 
 	if err == nil {
 		t.Fatal("expected error")
@@ -81,5 +81,40 @@ func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("expected 1 call (no retry for non-retryable), got %d", calls)
+	}
+}
+
+func TestDoWithRetryRecordsAPIErrors(t *testing.T) {
+	// Each retryable API error is recorded as an api_error event so the
+	// interaction transcript shows the raw API errors even when a later
+	// attempt succeeds. The recorder is a parameter of doWithRetry, not a
+	// context value. See generators.TheoryOfEventRecorder.
+	rec := &fakeEventRecorder{enabled: true}
+	calls := 0
+	fn := func() (int, error) {
+		calls++
+		if calls < 3 {
+			return 0, errors.Join(errors.New("transient"), ErrRetryable)
+		}
+		return 42, nil
+	}
+
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	result, err := doWithRetry(context.Background(), logger, rec, fn, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != 42 {
+		t.Fatalf("expected 42, got %d", result)
+	}
+	// Two retryable errors, two recorded events.
+	if len(rec.events) != 2 {
+		t.Fatalf("expected 2 api_error events, got %d: %v", len(rec.events), rec.events)
+	}
+	if !strings.Contains(rec.events[0], "retryable API error (attempt 1/10)") {
+		t.Fatalf("unexpected event: %s", rec.events[0])
+	}
+	if !strings.Contains(rec.events[1], "retryable API error (attempt 2/10)") {
+		t.Fatalf("unexpected event: %s", rec.events[1])
 	}
 }

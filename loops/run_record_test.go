@@ -50,6 +50,10 @@ func (f *fakeInteractionRecorder) ParseError(parseErr *blocks.BlockParseError) {
 	f.events = append(f.events, "parse_error")
 }
 
+func (f *fakeInteractionRecorder) Event(typ string, detail string) {
+	f.events = append(f.events, "event_"+typ)
+}
+
 func TestRunRecordsRound(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
@@ -183,6 +187,52 @@ func TestRunRecordsParseError(t *testing.T) {
 		joined := strings.Join(rec.events, ",")
 		if !strings.Contains(joined, "parse_error") {
 			t.Fatalf("expected parse_error event, got %s", joined)
+		}
+	})
+}
+
+func TestRunRecordsDecisionEvents(t *testing.T) {
+	// The generation loop must record flow decisions as events: the
+	// command line and generator selection at session start, and retry
+	// decisions with attempt counts when a round is truncated. See
+	// records.TheoryOfEventRecording.
+	withRun(t, func(run Run) {
+		rec := &fakeInteractionRecorder{enabled: true}
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("incomplete output without summary")
+			}
+			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+		}
+
+		_, err := runOnce(run, RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               nil,
+			InteractionRecorder:      rec,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
+			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
+				return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
+		}
+		joined := strings.Join(rec.events, ",")
+		// Session metadata decision (command line) plus the truncation
+		// retry decision.
+		if !strings.Contains(joined, "event_decision") {
+			t.Fatalf("expected decision events, got: %s", joined)
+		}
+		if !strings.Contains(joined, "round_truncated") {
+			t.Fatalf("expected round_truncated event, got: %s", joined)
 		}
 	})
 }

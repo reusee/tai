@@ -355,6 +355,60 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 	})
 }
 
+func TestOpenAIRecordsAPIErrorThroughInjectedRecorder(t *testing.T) {
+	// API errors are recorded through the dscope-injected EventRecorder,
+	// not through a context value: the recorder is bound in the scope,
+	// and the generator's Inject[EventRecorder] field receives it at
+	// construction. See generators.TheoryOfEventRecorder.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message": "something went wrong"}`)
+	}))
+	defer server.Close()
+
+	rec := &fakeEventRecorder{enabled: true}
+
+	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+		func() EventRecorder { return rec },
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		disableTools := true
+		openai := newOpenAI(Spec{
+			BaseURL:      server.URL,
+			Model:        "test-model",
+			DisableTools: &disableTools,
+		}, "test-key")
+
+		state := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
+
+		_, err := openai.Generate(context.Background(), state, nil)
+		if err == nil {
+			t.Fatal("expected error for non-200 status without error field")
+		}
+	})
+
+	foundAPIError := false
+	for _, e := range rec.events {
+		if strings.HasPrefix(e, "api_error:") && strings.Contains(e, "openai http status 500") {
+			foundAPIError = true
+		}
+	}
+	if !foundAPIError {
+		t.Fatalf("expected an api_error event recorded through the injected recorder, got %v", rec.events)
+	}
+}
+
 func TestChatCompletionMessageUnmarshalArrayContent(t *testing.T) {
 	var msg ChatCompletionMessage
 	if err := json.Unmarshal([]byte(`{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"image_url","image_url":{"url":"x"}}]}`), &msg); err != nil {

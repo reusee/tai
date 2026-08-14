@@ -66,6 +66,19 @@ thoughts, tool calls, file attachments (binary content encoded as base64),
 structured blocks, parse errors, and retry feedback.
 `
 
+const TheoryOfEventRecording = `
+The event stream is open-ended: Recorder.Event captures arbitrary typed
+events (type + detail) alongside the structured lifecycle events. The
+generation loop records flow decisions — retries with attempt counts,
+parse-error corrections, component-triggered rounds, generator selection,
+and the command line — and generator implementations record API-level
+events (api_call, api_error) through the dscope-injected
+generators.EventRecorder (see generators.TheoryOfEventRecorder). Together
+these capture errors returned by model APIs and important pipeline
+decisions that would otherwise be visible only in logs, giving the
+analysis pass a complete view of what happened during the interaction.
+`
+
 // DBPath is the path of the interaction sqlite database file. The default
 // provider places it in the user config directory so it persists across
 // sessions; tests override it with a temporary directory.
@@ -358,6 +371,22 @@ func (r *Recorder) ParseError(parseErr *blocks.BlockParseError) {
 		b.WriteString("\ncontent:\n" + parseErr.Content)
 	}
 	r.insertEventLocked(r.round, "parse_error", b.String())
+}
+
+// Event records an arbitrary session event with the current round number.
+// The generation loop uses it for flow decisions (retries, parse-error
+// corrections, component-triggered rounds, session metadata), and generator
+// implementations use it through generators.EventRecorderFromContext for
+// API-level events (api_call, api_error). The event carries a type and a
+// free-form detail; the transcript renders each event by its type. An
+// empty detail is skipped. See TheoryOfEventRecording.
+func (r *Recorder) Event(typ string, detail string) {
+	if !r.Enabled() {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.insertEventLocked(r.round, typ, detail)
 }
 
 func (r *Recorder) insertEventLocked(round int, typ, detail string) {
