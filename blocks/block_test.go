@@ -1160,3 +1160,24 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockFormatPromptsNoNegativeExamples(t *testing.T) {
+	// Negative examples are deliberately omitted from the block format
+	// prompts: a model may imitate a displayed bad pattern, so the
+	// prompts state the rules directly and show only a correct example.
+	// See TheoryOfBlockFormatGeneral.
+	if !strings.Contains(BlockFormatSystemPrompt, "Do this") {
+		t.Fatal("BlockFormatSystemPrompt must keep the correct example")
+	}
+	for name, prompt := range map[string]string{
+		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
+		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
+	} {
+		if strings.Contains(prompt, "NOT this") {
+			t.Fatalf("%s must not display a negative example", name)
+		}
+		if strings.Contains(prompt, "Writing \"<<DELIMITER\"") {
+			t.Fatalf("%s must not display the forbidden literal pattern", name)
+		}
+	}
+}

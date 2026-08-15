@@ -29,11 +29,13 @@ script.
 
 Line-start requirement: the opening marker must appear at the beginning of a line;
 the closing marker (the delimiter alone) must be on its own line. A ` + "`<<`" + ` not at the
-start of a line is regular content and will not start a block — models tend to glue
-the marker to the end of a preceding prose line, so the system prompt emphasizes the
-rule with explicit correct/incorrect examples. No blank lines are required around
-blocks: a block may sit directly adjacent to other text or blocks; the only
-structural requirements are the line-start opening and the own-line closing marker.
+start of a line is regular content and will not start a block — models tend to glue the
+marker to the end of a preceding prose line, so the system prompt states the rule
+directly and shows a correct example. Negative examples are deliberately omitted:
+a model may imitate a displayed bad pattern, so the prompt never shows one. No
+blank lines are required around blocks: a block may sit directly adjacent to
+other text or blocks; the only structural requirements are the line-start opening
+and the own-line closing marker.
 
 Unclosed block detection: an opening marker at line start without a matching closing
 line is a malformed block; the parser reports an error rather than silently skipping
@@ -211,10 +213,6 @@ DELIMITER
   <<徕珑龘 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
   徕珑龘
-- NOT this (marker glued to the end of the prose line — the block will NOT be parsed and the changes will be lost):
-  Some explanation text.<<徕珑龘 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
-  <code here>
-  徕珑龘
 
 **Delimiter Uniqueness (CRITICAL):**
 - Generate a fresh delimiter for each block: exactly three uncommon Chinese characters (e.g., 龘靐齉).
@@ -230,7 +228,7 @@ DELIMITER
 
 const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
 - **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly three uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the EXACT SAME delimiter alone on its own line.
-- **The DELIMITER MUST be exactly three uncommon Chinese characters** (e.g., 徕珑龘, 龘靐齉, 齉爩龖), NEVER the literal text "<DELIMITER>" or a common word. Writing "<<DELIMITER" literally causes the parser to fail to recognize the block and the changes will be silently lost.
+- **The DELIMITER MUST be exactly three uncommon Chinese characters** (e.g., 徕珑龘, 龘靐齉, 齉爩龖), NEVER the literal text "<DELIMITER>" or a common word.
 - Generate a fresh trio of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Three uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen trio is absent from the body before emitting the block.
