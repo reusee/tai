@@ -101,14 +101,13 @@ finish reason (e.g., "length" from max-token truncation), was truncated mid-stre
 — the generation limit hit before the model emitted its closing summary block, or
 the model emitted a summary and continued until cut off. The round is retried from
 the original pre-generation State. The retry process (SummarizeIncomplete)
-produces both a summary of the truncated output and a continue block whose content
-is the summarizer's extraction of the truncated thinking's valuable conclusions —
+produces a summary of the truncated output that also serves as the retry prompt:
+the summarizer's extraction of the truncated thinking's valuable conclusions —
 discoveries, decisions, facts. The summary is recorded via OnRoundTruncated, so
-the truncated round appears as a separate loop in round statistics; the continue
-block's content is fed to the retry round as user input, framing the retry as a
-continuation consistent with the model's own continue block mechanism, letting the
-retry round adopt those conclusions instead of re-deriving them — reducing the
-thinking needed and lowering the chance of truncating again. See
+the truncated round appears as a separate loop in round statistics; the same text
+is fed to the retry round as user input, letting the retry round adopt those
+conclusions instead of re-deriving them — reducing the thinking needed and
+lowering the chance of truncating again. See
 TheoryOfIncompleteOutputSummarization in codes/generate.go.
 
 When the retry budget is exhausted and the final attempt still lacks a summary
@@ -166,7 +165,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. The continue block below carries the valuable conclusions already reached in the truncated thinking: discoveries, decisions, facts, completed work, and next steps. Adopt these conclusions and continue from where you left off; do not re-derive them, so this round needs less thinking than the truncated attempt.]\n\n"
+const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. The text below carries the valuable conclusions already reached in the truncated thinking: discoveries, decisions, facts, completed work, and next steps. Adopt these conclusions and continue from where you left off; do not re-derive them, so this round needs less thinking than the truncated attempt.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The
@@ -952,9 +951,13 @@ func FormatSummaryBlock(summary string) string {
 	return states.FormatSummaryBlock(summary)
 }
 
+// formatRetryPrompt formats the retry user prompt. The summary parameter
+// is retained for call-site compatibility; the retry prompt is the
+// summarizer's output, used directly without block wrapping. See
+// states.TheoryOfIncompleteOutputSummarization.
 func formatRetryPrompt(summary, retryPrompt string, attempt, maxAttempts int) string {
 	prefix := fmt.Sprintf(incompleteOutputSummaryPrefix, attempt, maxAttempts)
-	return states.FormatRetryPrompt(prefix, summary, retryPrompt)
+	return states.FormatRetryPrompt(prefix, retryPrompt)
 }
 
 // Result holds the outcome of a generation loop.

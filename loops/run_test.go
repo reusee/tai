@@ -1307,7 +1307,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 	})
 }
 
-func TestRunRetryPromptIsContinueBlock(t *testing.T) {
+func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -1336,54 +1336,39 @@ func TestRunRetryPromptIsContinueBlock(t *testing.T) {
 			t.Fatalf("expected 2 calls, got %d", callCount)
 		}
 
-		// The retry prompt must be a continue block containing the
-		// compressed content.
-		foundContinue := false
+		// The retry prompt is the summarizer's output, included directly
+		// as user content without block wrapping.
+		foundContent := false
 		for c := range result.FinalState.Contents() {
 			if c.Role == generators.RoleUser {
 				for _, p := range c.Parts {
 					if text, ok := p.(generators.Text); ok {
-						if strings.Contains(string(text), "<continue>") &&
-							strings.Contains(string(text), "compressed content") {
-							foundContinue = true
+						if strings.Contains(string(text), "compressed content") {
+							foundContent = true
 						}
 					}
 				}
 			}
 		}
-		if !foundContinue {
-			t.Fatal("expected retry prompt to be a continue block with compressed content")
+		if !foundContent {
+			t.Fatal("expected the retry prompt content in the user content")
 		}
 	})
 }
 
-func TestFormatRetryPromptIncludesSummaryBlock(t *testing.T) {
-	msg := formatRetryPrompt("synthesized summary", "retry content", 1, 3)
-	if !strings.Contains(msg, "<summary>") {
-		t.Fatal("expected a summary block in the retry prompt")
-	}
-	if !strings.Contains(msg, "synthesized summary") {
-		t.Fatal("expected the summary text in the retry prompt")
-	}
-	if !strings.Contains(msg, "<continue>") {
-		t.Fatal("expected a continue block in the retry prompt")
+func TestFormatRetryPrompt(t *testing.T) {
+	msg := formatRetryPrompt("", "retry content", 1, 3)
+	if !strings.Contains(msg, "retry attempt 1 of 3") {
+		t.Fatalf("expected the retry attempt number, got: %s", msg)
 	}
 	if !strings.Contains(msg, "retry content") {
-		t.Fatal("expected the retry content in the continue block")
+		t.Fatalf("expected the retry content, got: %s", msg)
 	}
-	summaryIdx := strings.Index(msg, "<summary>")
-	continueIdx := strings.Index(msg, "<continue>")
-	if summaryIdx == -1 || continueIdx == -1 || summaryIdx > continueIdx {
-		t.Fatalf("expected the summary block before the continue block, got: %s", msg)
-	}
-
-	// An empty summary omits the summary block.
-	msg = formatRetryPrompt("", "retry content", 1, 3)
 	if strings.Contains(msg, "<summary>") {
-		t.Fatal("expected no summary block when the summary is empty")
+		t.Fatalf("expected no summary block in the retry prompt, got: %s", msg)
 	}
-	if !strings.Contains(msg, "<continue>") {
-		t.Fatal("expected a continue block in the retry prompt")
+	if strings.Contains(msg, "<continue>") {
+		t.Fatalf("expected no continue block in the retry prompt, got: %s", msg)
 	}
 }
 

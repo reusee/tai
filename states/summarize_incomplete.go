@@ -7,54 +7,54 @@ import (
 	"math/rand/v2"
 	"strings"
 
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 )
 
 const TheoryOfIncompleteOutputSummarization = `
 When a round is truncated (no summary block) or errors after producing partial
-output, the incomplete output is summarized before retrying. The retry process has
-two tasks: producing a summary of the truncated output (recorded as the truncated
-round's summary in round statistics) and producing the content fed to the retry
-round as user input, framed as a continue block. The summary provides context for
-the retry; the continue block carries what the retry round should adopt.
+output, the incomplete output is summarized before retrying. The retry process
+produces a single text: the summarizer's extraction of the truncated output's
+valuable conclusions. The same text serves as both the summary of the truncated
+round (recorded in round statistics) and the retry prompt fed to the retry round
+as user input.
 
 Truncation most often happens when the model thinks too long. The truncated
 reasoning is not wasted: it has already produced valuable results — discoveries,
 decisions, and facts. Discarding these results and letting the retry round
-re-derive them from scratch would spend the thinking budget a second time, risking
-the same truncation. The retry summarization therefore extracts the thinking
-results from the truncated output — the conclusions, not the reasoning that led to
-them — and carries them into the continue block fed to the retry round. The
-extraction prioritizes the most valuable content: important discoveries and
-insights, important decisions, important facts about the codebase or task, the
-state of completed work, and the next steps the model was about to take. The retry
-round adopts these pre-established conclusions and continues from where the model
+re-derive them from scratch would spend the thinking budget a second time,
+risking the same truncation. The retry summarization therefore extracts the
+thinking results from the truncated output — the conclusions, not the reasoning
+that led to them — and carries them into the retry round. The extraction
+prioritizes the most valuable content: important discoveries and insights,
+important decisions, important facts about the codebase or task, the state of
+completed work, and the next steps the model was about to take. The retry round
+adopts these pre-established conclusions and continues from where the model
 left off, so it needs less thinking than the truncated attempt.
 
-The same extraction serves both retry paths: missing-completion retries (truncated
-output) and error retries (partial output followed by an error). See
+The same extraction serves both retry paths: missing-completion retries
+(truncated output) and error retries (partial output followed by an error). See
 TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
 
 The summarization model follows SummarizeModel, falling back to the fast model
 and then the default model (see states.TheoryOfSummarizeModel). The summary is
 appended as user content with a system note explaining the retry.
 
-The summarization system prompt (RetrySummarizationSystemPrompt) shows a complete
-example of the summary and continue block format with concrete delimiters, so
-the model emits parseable blocks rather than plain text.
+The summarization system prompt (RetrySummarizationSystemPrompt) instructs the
+model to output a concise plain-text summary. The model's raw output is used
+directly as the retry prompt, without block wrapping or parsing: the model
+cannot reliably produce structured blocks on demand, so requiring two blocks
+(summary and continue) would risk a malformed response that fails to parse.
 
-The summarization itself is retried when its response cannot be parsed into
-summary and continue blocks, or when the summarize generation fails: a malformed
-or incomplete summarize response would otherwise leave the retry round without a
-summary or with a degraded retry prompt, and a transient API error would leave
-the round without any summary at all. The retry is bounded by maxSummarizeRetries;
-when all attempts fail, the summarization returns an error instead of falling
-back to the incomplete text. A fallback that substitutes the raw incomplete text
-as both the summary and the retry prompt would feed the model unstructured,
-possibly truncated reasoning as if it were a distilled summary, degrading the
-retry prompt's quality and masking the summarization failure. The summarization
+The summarization itself is retried when the summarize generation fails or
+produces an empty response: a transient API error would leave the round without
+any summary at all, and an empty response would leave the retry round without a
+retry prompt. The retry is bounded by maxSummarizeRetries; when all attempts
+fail, the summarization returns an error instead of falling back to the
+incomplete text. A fallback that substitutes the raw incomplete text as both
+the summary and the retry prompt would feed the model unstructured, possibly
+truncated reasoning as if it were a distilled summary, degrading the retry
+prompt's quality and masking the summarization failure. The summarization
 failure is a serious error, not a soft "no summary available" condition: it
 propagates as a generation error and aborts the run. Continuing without a
 synthesized summary would hide the truncation, leave the retry round without the
@@ -65,12 +65,11 @@ Each failed summarize attempt is logged with the attempt number and the error,
 and the final failure is logged as an error, so the operator can diagnose why a
 round aborted. Every attempt is also written into the same session's interaction
 record: the request input and the raw model response — including the model's
-thoughts, which the parse buffer excludes — are recorded as contents, and each
-attempt's failure reason (generation error, parse error, or a missing
-summary/continue block, with which blocks were found) plus the final failure are
-recorded as decision events. When a response cannot be parsed into the two
-blocks, the record therefore shows exactly what the summarize model produced,
-so the summarization prompt can be optimized from real failures.
+thoughts, which the capture buffer excludes — are recorded as contents, and each
+attempt's failure reason (generation error or empty response) plus the final
+failure are recorded as decision events. When a response is empty, the record
+therefore shows exactly what the summarize model produced, so the summarization
+prompt can be optimized from real failures.
 `
 
 // RetrySummary holds the outcome of summarizing truncated output for retry.
@@ -95,41 +94,33 @@ type SummarizeRecorder interface {
 	Event(typ string, detail string)
 }
 
-// RetrySummarizationSystemPrompt is the system prompt for the retry
-// summarization model. It shows a complete example of the summary and
-// continue block format with concrete delimiters, so the model emits
-// parseable blocks rather than plain text.
-const RetrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce exactly two blocks, and ONLY these two blocks:
+const RetrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
 
-1. A summary block (kind "summary") whose body is a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
+Truncation most often happens when thinking is too long, and the truncated thinking has already produced valuable results. The summary must carry these results over — the conclusions, not the reasoning that led to them — so the next round adopts them instead of re-deriving them and needs less thinking.
 
-2. A continue block (kind "continue") whose body is the retry prompt: the essence of the truncated output that the next round needs to continue from where the model left off. Truncation most often happens when thinking is too long, and the truncated thinking has already produced valuable results. The retry prompt must carry these results over — the conclusions, not the reasoning that led to them — so the next round adopts them instead of re-deriving them and needs less thinking.
-
-Both blocks MUST have non-empty bodies. The continue block body MUST carry the valuable conclusions from the truncated thinking whenever any exist — discoveries, decisions, facts, completed work, next steps.
-
-Prioritize the following valuable content in the retry prompt:
+Prioritize the following valuable content:
 - Important discoveries and insights the model reached
 - Important decisions the model made
 - Important facts the model established about the codebase, the task, or the environment
 - The state of the work: what was completed and what remains
 - The next steps the model was about to take
 
-` + blocks.BlockFormatSystemPrompt + `
-
-Output ONLY these two blocks as your final text, with no other text before or after them.`
+Output ONLY the summary text as your final text, with no other text before or after it.`
 
 // maxSummarizeRetries bounds the number of attempts to summarize
-// incomplete output when the summarize response cannot be parsed into
-// summary and continue blocks. When all attempts fail, the summarization
-// returns an error instead of falling back to the incomplete text. See
+// incomplete output when the summarize generation fails or produces an
+// empty response. When all attempts fail, the summarization returns an
+// error instead of falling back to the incomplete text. See
 // TheoryOfIncompleteOutputSummarization.
 const maxSummarizeRetries = 3
 
 // SummarizeIncomplete summarizes truncated or failed generation output
 // before retry. Each attempt's request input, raw model response
 // (including thoughts), and failure reason are written into the same
-// session's interaction record, so an unparseable response is diagnosable
-// from the transcript alone. See TheoryOfIncompleteOutputSummarization.
+// session's interaction record, so an empty response is diagnosable
+// from the transcript alone. The model's raw output is used directly
+// as the retry prompt, without block wrapping or parsing. See
+// TheoryOfIncompleteOutputSummarization.
 func SummarizeIncomplete(
 	ctx context.Context,
 	logger logs.Logger,
@@ -188,10 +179,10 @@ func SummarizeIncomplete(
 		}
 
 		// Record the summarize response. The raw output is recorded before
-		// parsing, so even a malformed response is visible in the transcript.
+		// trimming, so even an empty response is visible in the transcript.
 		// The model's thoughts are appended because the capture buffer
-		// excludes them; when the response fails to parse they are often the
-		// only signal of what the model actually produced.
+		// excludes them; when the response is empty they are often the only
+		// signal of what the model actually produced.
 		recordContent(&generators.Content{
 			Role: generators.RoleModel,
 			Parts: []generators.Part{
@@ -199,40 +190,24 @@ func SummarizeIncomplete(
 			},
 		})
 
-		parsedBlocks, err := blocks.ParseBlocks([]byte(outputText))
-		if err != nil {
-			lastErr = err
-			logger.WarnContext(ctx, "summarize incomplete output: parse failed",
-				"attempt", attempt+1,
-				"max_attempts", maxSummarizeRetries,
-				"err", err,
-			)
-			recordEvent("summarize attempt %d/%d failed: parse error: %v",
-				attempt+1, maxSummarizeRetries, err)
-			continue
-		}
-		var summary, continueContent string
-		for _, block := range parsedBlocks {
-			switch block.Kind {
-			case "summary":
-				summary = block.Body
-			case "continue":
-				continueContent = block.Body
-			}
-		}
-		if summary != "" && continueContent != "" {
+		// The model's raw output is used directly as the retry prompt,
+		// without block wrapping or parsing: the model cannot reliably
+		// produce structured blocks on demand. An empty response is a
+		// failed attempt and is retried.
+		text := strings.TrimSpace(outputText)
+		if text != "" {
 			return &RetrySummary{
-				Summary:     summary,
-				RetryPrompt: continueContent,
+				Summary:     text,
+				RetryPrompt: text,
 			}, nil
 		}
-		lastErr = fmt.Errorf("summarize response missing summary or continue block")
-		logger.WarnContext(ctx, "summarize incomplete output: response missing summary or continue block",
+		lastErr = fmt.Errorf("summarize response is empty")
+		logger.WarnContext(ctx, "summarize incomplete output: response is empty",
 			"attempt", attempt+1,
 			"max_attempts", maxSummarizeRetries,
 		)
-		recordEvent("summarize attempt %d/%d failed: response missing summary or continue block (summary block found: %v, continue block found: %v)",
-			attempt+1, maxSummarizeRetries, summary != "", continueContent != "")
+		recordEvent("summarize attempt %d/%d failed: response is empty",
+			attempt+1, maxSummarizeRetries)
 	}
 	if lastErr != nil {
 		err := fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
@@ -320,19 +295,11 @@ func FormatSummaryBlock(summary string) string {
 }
 
 // FormatRetryPrompt formats the retry user prompt: the prefix (a system
-// note explaining why the retry is happening), the summary block (when a
-// summary exists), and the continue block carrying the retry content.
-// The summary block carries the synthesized summary so the TUI's Summary
-// tab can display it as the truncated or failed round's completion
-// signal. See TheoryOfIncompleteOutputSummarization.
-func FormatRetryPrompt(prefix, summary, retryPrompt string) string {
-	delimiter := freshDelimiter()
-	msg := prefix
-	if summary != "" {
-		msg += FormatSummaryBlock(summary) + "\n\n"
-	}
-	return msg +
-		"<<" + delimiter + " <continue>\n" + retryPrompt + "\n" + delimiter
+// note explaining why the retry is happening) followed by the retry
+// prompt — the summarizer's output, used directly without block
+// wrapping. See TheoryOfIncompleteOutputSummarization.
+func FormatRetryPrompt(prefix, retryPrompt string) string {
+	return prefix + retryPrompt
 }
 
 // freshDelimiter returns a fresh trio of uncommon Chinese characters for

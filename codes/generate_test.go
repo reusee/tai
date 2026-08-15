@@ -24,6 +24,14 @@ import (
 	"github.com/reusee/tai/states"
 )
 
+// maxSummarizeRetries bounds the number of attempts to summarize
+// incomplete output when the summarize generation fails or produces an
+// empty response. It mirrors the constant in
+// states/summarize_incomplete.go; the codes package's own constant was
+// removed with the dead summarize code. See
+// states.TheoryOfIncompleteOutputSummarization.
+const maxSummarizeRetries = 3
+
 func TestPrintRoundStats(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -114,13 +122,13 @@ func TestSummarizeRetryState(t *testing.T) {
 		if count != generators.CountContents(state) {
 			t.Fatalf("expected count %d, got %d", generators.CountContents(state), count)
 		}
-		foundSummaryBlock := false
+		foundRetryPrompt := false
 		foundError := false
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
 				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "condensed") {
-						foundSummaryBlock = true
+					if strings.Contains(string(text), "condensed") {
+						foundRetryPrompt = true
 					}
 					if strings.Contains(string(text), "boom") {
 						foundError = true
@@ -128,8 +136,8 @@ func TestSummarizeRetryState(t *testing.T) {
 				}
 			}
 		}
-		if !foundSummaryBlock {
-			t.Fatal("expected summary block in state")
+		if !foundRetryPrompt {
+			t.Fatal("expected retry prompt in state")
 		}
 		if !foundError {
 			t.Fatal("expected error in state")
@@ -219,8 +227,6 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 	// instead of re-deriving them and needs less thinking. See
 	// states.TheoryOfIncompleteOutputSummarization.
 	for _, want := range []string{
-		`(kind "summary")`,
-		`(kind "continue")`,
 		"discoveries",
 		"decisions",
 		"facts",
@@ -233,35 +239,15 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 	}
 }
 
-func TestRetrySummarizationSystemPromptShowsBlockFormat(t *testing.T) {
-	// The summarization prompt embeds the unified block format prompt so
-	// the model knows the heredoc format without the kind prompt
-	// restating it. It describes the two required kinds; the block format
-	// rules come from blocks.BlockFormatSystemPrompt. See
+func TestRetrySummarizationSystemPromptRequiresPlainText(t *testing.T) {
+	// The retry summarization prompt must require a concise plain-text
+	// summary and nothing else: the model's raw output is used directly
+	// as the retry prompt without block wrapping or parsing, so the
+	// prompt must not ask for structured blocks. See
 	// states.TheoryOfIncompleteOutputSummarization.
-	if !strings.Contains(states.RetrySummarizationSystemPrompt, blocks.BlockFormatSystemPrompt) {
-		t.Fatal("states.RetrySummarizationSystemPrompt must embed the unified BlockFormatSystemPrompt")
-	}
-	if !strings.Contains(states.RetrySummarizationSystemPrompt, `(kind "summary")`) {
-		t.Fatal("states.RetrySummarizationSystemPrompt must describe the summary kind")
-	}
-	if !strings.Contains(states.RetrySummarizationSystemPrompt, `(kind "continue")`) {
-		t.Fatal("states.RetrySummarizationSystemPrompt must describe the continue kind")
-	}
-}
-
-func TestRetrySummarizationSystemPromptRequiresNonEmptyBlocks(t *testing.T) {
-	// The retry summarization prompt must require non-empty block bodies,
-	// delimiter-body disjointness, and a response containing only the two
-	// blocks. These requirements make the summarizer's parse robust: an
-	// empty or missing block, a body colliding with the delimiter, or
-	// surrounding prose would fail to produce a usable retry summary.
-	// The delimiter selection rules come from the embedded
-	// BlockFormatSystemPrompt. See states.TheoryOfIncompleteOutputSummarization.
 	for _, want := range []string{
-		"Both blocks MUST have non-empty bodies",
-		"The delimiter MUST NOT appear anywhere in the block body",
-		"Output ONLY these two blocks as your final text",
+		"concise summary",
+		"Output ONLY the summary text",
 	} {
 		if !strings.Contains(states.RetrySummarizationSystemPrompt, want) {
 			t.Fatalf("states.RetrySummarizationSystemPrompt must contain %q", want)
@@ -556,36 +542,9 @@ func (g *summarizeRetryMockGenerator) Generate(ctx context.Context, state genera
 	})
 }
 
-func TestSummarizeIncompleteOutputRetriesOnParseFailure(t *testing.T) {
+func TestSummarizeIncompleteOutputErrorsAfterEmptyResponses(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
-		responses: []string{
-			"unparseable response without blocks",
-			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
-		},
-	}
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gen.calls != 2 {
-		t.Fatalf("expected 2 summarize calls, got %d", gen.calls)
-	}
-	if retrySummary.Summary != "summary" {
-		t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
-	}
-	if retrySummary.RetryPrompt != "retry prompt" {
-		t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
-	}
-}
-
-func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
-	gen := &summarizeRetryMockGenerator{
-		responses: []string{
-			"unparseable 1",
-			"unparseable 2",
-			"unparseable 3",
-		},
+		responses: []string{"", "", ""},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
@@ -605,7 +564,7 @@ func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
 
 func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 	// A failed summarize generation is a failed summarize attempt: it
-	// must be retried like a parsing failure, so a transient API error
+	// must be retried like an empty response, so a transient API error
 	// does not leave the round without a summary. See
 	// states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
@@ -614,7 +573,7 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 		},
 		responses: []string{
 			"", // unused (first call errors)
-			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			"retry prompt text",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -625,11 +584,11 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 	if gen.calls != 2 {
 		t.Fatalf("expected 2 summarize calls, got %d", gen.calls)
 	}
-	if retrySummary.Summary != "summary" {
-		t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
+	if retrySummary.Summary != "retry prompt text" {
+		t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
 	}
-	if retrySummary.RetryPrompt != "retry prompt" {
-		t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
+	if retrySummary.RetryPrompt != "retry prompt text" {
+		t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
 	}
 }
 
@@ -718,7 +677,7 @@ func TestSummarizeIncompleteOutputProvider(t *testing.T) {
 	// states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
-			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			"retry prompt text",
 		},
 	}
 	dscope.New(
@@ -738,11 +697,11 @@ func TestSummarizeIncompleteOutputProvider(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if retrySummary.Summary != "summary" {
-			t.Fatalf("expected summary 'summary', got %q", retrySummary.Summary)
+		if retrySummary.Summary != "retry prompt text" {
+			t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
 		}
-		if retrySummary.RetryPrompt != "retry prompt" {
-			t.Fatalf("expected retry prompt 'retry prompt', got %q", retrySummary.RetryPrompt)
+		if retrySummary.RetryPrompt != "retry prompt text" {
+			t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
 		}
 	})
 }
@@ -760,7 +719,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+				"retry prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -784,8 +743,8 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		if rec.contents[1].Role != generators.RoleModel {
 			t.Fatalf("expected second content role model, got %s", rec.contents[1].Role)
 		}
-		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "summary") {
-			t.Fatalf("expected second content to include the summary response, got %v", rec.contents[1].Parts[0])
+		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "retry prompt text") {
+			t.Fatalf("expected second content to include the retry prompt text, got %v", rec.contents[1].Parts[0])
 		}
 		// A successful attempt records no decision event.
 		if len(rec.events) != 0 {
@@ -796,7 +755,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+				"retry prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -820,7 +779,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 			},
 			responses: []string{
 				"", // unused (first call errors)
-				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+				"retry prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -860,75 +819,17 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 	})
 }
 
-func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
-	// When the summarize response cannot be parsed into summary and
-	// continue blocks, the raw response must be recorded into the same
-	// session's interaction record together with the failure reason as a
-	// decision event, so the model's actual output is visible for
-	// optimizing the summarization prompt. See
+func TestSummarizeIncompleteOutputRecordsEmptyResponses(t *testing.T) {
+	// When the summarize response is empty, the raw response must be
+	// recorded into the same session's interaction record together with
+	// the failure reason as a decision event, so the model's actual
+	// output is visible for optimizing the summarization prompt. See
 	// states.TheoryOfIncompleteOutputSummarization.
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	recordedResponses := func(rec *fakeRecorderForSummarize) []string {
-		var responses []string
-		for _, c := range rec.contents {
-			if c.Role != generators.RoleModel {
-				continue
-			}
-			if text, ok := c.Parts[0].(generators.Text); ok {
-				responses = append(responses, string(text))
-			}
-		}
-		return responses
-	}
-
-	t.Run("MissingBlocksRecordsRawResponseAndReason", func(t *testing.T) {
-		gen := &summarizeRetryMockGenerator{
-			responses: []string{
-				"no blocks in this response",
-				"<<徕珑龘 <summary>\nonly the summary block\n徕珑龘\n",
-				"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
-			},
-		}
-		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if retrySummary == nil {
-			t.Fatal("expected retry summary")
-		}
-
-		// Each raw response is recorded before parsing, including the two
-		// that failed to produce both blocks.
-		responses := recordedResponses(rec)
-		if len(responses) != 3 {
-			t.Fatalf("expected 3 recorded responses, got %d: %v", len(responses), responses)
-		}
-		if !strings.Contains(responses[0], "no blocks in this response") {
-			t.Fatalf("expected the first raw response recorded, got %q", responses[0])
-		}
-		if !strings.Contains(responses[1], "only the summary block") {
-			t.Fatalf("expected the second raw response recorded, got %q", responses[1])
-		}
-
-		// Each failed attempt records its reason as a decision event,
-		// stating which block was missing.
-		if len(rec.events) != 2 {
-			t.Fatalf("expected 2 decision events, got %d: %v", len(rec.events), rec.events)
-		}
-		if !strings.Contains(rec.events[0], "missing summary or continue block") ||
-			!strings.Contains(rec.events[0], "summary block found: false") {
-			t.Fatalf("unexpected first event: %s", rec.events[0])
-		}
-		if !strings.Contains(rec.events[1], "continue block found: false") {
-			t.Fatalf("unexpected second event: %s", rec.events[1])
-		}
-	})
-
 	t.Run("AllAttemptsFailRecordsFinalFailure", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
-			responses: []string{"one", "two", "three"},
+			responses: []string{"", "", ""},
 		}
 		rec := &fakeRecorderForSummarize{enabled: true}
 		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
@@ -952,14 +853,14 @@ func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
 func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
 	// The Output capture buffer excludes thoughts, so the recorded
 	// response must append them separately: when a reasoning model puts
-	// its summary attempt into thoughts while the visible text fails to
-	// parse, the thoughts are the only signal of what the model actually
+	// its summary attempt into thoughts while the visible text is empty,
+	// the thoughts are the only signal of what the model actually
 	// produced. See states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		thoughts: []string{"the model reasoned about the summary here"},
 		responses: []string{
 			"",
-			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
+			"retry prompt text",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -970,6 +871,12 @@ func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
 	}
 	if retrySummary == nil {
 		t.Fatal("expected retry summary")
+	}
+	if retrySummary.Summary != "retry prompt text" {
+		t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
+	}
+	if retrySummary.RetryPrompt != "retry prompt text" {
+		t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
 	}
 	var firstResponse string
 	for _, c := range rec.contents {
