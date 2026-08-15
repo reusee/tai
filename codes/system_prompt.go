@@ -2,7 +2,6 @@ package codes
 
 import (
 	"github.com/reusee/prompts"
-	"github.com/reusee/tai/codes/codetypes"
 )
 
 const TheoryOfReadOnlyFiles = `
@@ -229,7 +228,6 @@ type SystemPrompt string
 
 func (Module) SystemPrompt(
 	comps CodesComponents,
-	codeProvider codetypes.CodeProvider,
 ) (ret SystemPrompt) {
 	// Base prompt (prompts.Codes) and code provider prompt are prepended
 	// directly. All block-format, component, and extra prompts come from

@@ -29,7 +29,7 @@ var (
 	_ configs.Config = OpenRouterEndpoint("")
 )
 
-type NewOpenRouter func(sepc Spec) *OpenAI
+type NewOpenRouter func(spec Spec) *OpenAI
 
 type NewAzure func(spec Spec) *OpenAI
 

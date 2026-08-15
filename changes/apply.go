@@ -161,7 +161,7 @@ func (info *BodyInfo) extractEntitySource(target string) string {
 		return ""
 	}
 	for _, decl := range info.Decls {
-		node, _, match := matchDecl(info.Fset, decl, target)
+		node, _, match := matchDecl(decl, target)
 		if match {
 			start := info.Fset.Position(node.Pos()).Offset
 			end := info.Fset.Position(node.End()).Offset
@@ -203,13 +203,7 @@ type rangeItem struct {
 	isPrimary  bool
 }
 
-// buildRangeItems constructs the ordered list of range items for the modified
-// source, including the primary item and duplicate-removal items for
-// multi-entity change blocks. Items are sorted by start offset and may have
-// package prefixes stripped. This is a pure function with no dscope
-// dependencies.
 func buildRangeItems(
-	src []byte,
 	start, end int,
 	finalBody string,
 	h ChangeBlock,
@@ -377,7 +371,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 		// Look for target's kind in body
 		found := false
 		for _, d := range bodyInfo.Decls {
-			node, _, match := matchDecl(bodyInfo.Fset, d, h.Target)
+			node, _, match := matchDecl(d, h.Target)
 			if match {
 				bodyKind = getDeclKind(node)
 				found = true
@@ -405,7 +399,7 @@ func findTargetRange(fset *token.FileSet, f *ast.File, h ChangeBlock, bodyInfo *
 	var candidateBody string
 
 	for _, decl := range f.Decls {
-		node, parent, match := matchDecl(fset, decl, h.Target)
+		node, parent, match := matchDecl(decl, h.Target)
 		if !match {
 			continue
 		}
@@ -626,24 +620,21 @@ func applyTextEdit(src []byte, h ChangeBlock) ([]byte, error) {
 	return []byte(content), nil
 }
 
-func matchDecl(fset *token.FileSet, decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {
+func matchDecl(decl ast.Decl, target string) (ast.Node, ast.Decl, bool) {
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
 		funcName := d.Name.Name
 		possible := []string{funcName}
 		if d.Recv != nil && len(d.Recv.List) > 0 {
 			recv := d.Recv.List[0].Type
-			isPtr := false
 			if star, ok := recv.(*ast.StarExpr); ok {
 				recv = star.X
-				isPtr = true
 			}
 			if ident, ok := recv.(*ast.Ident); ok {
 				// Both value and pointer forms are valid for matching;
 				// go allows calling pointer methods on values and vice versa.
 				possible = append(possible, ident.Name+"."+funcName)
 				possible = append(possible, "*"+ident.Name+"."+funcName)
-				_ = isPtr
 			}
 		}
 		if slices.Contains(possible, target) {

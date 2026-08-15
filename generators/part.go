@@ -19,38 +19,32 @@ type Part interface {
 	isPart()
 }
 
-// partToGemini converts a Part to a *genai.Part for the Gemini API.
-// Returns nil for Part types that have no Gemini representation
-// (Thought, FinishReason, Usage, Error). Thought is handled separately
-// by the caller (PreservedThinking), and the others are internal
-// metadata types carried in RoleLog content that is filtered out before
-// reaching this function. See TheoryOfPartInterface.
-func partToGemini(part Part) (*genai.Part, error) {
+func partToGemini(part Part) *genai.Part {
 	switch p := part.(type) {
 	case Text:
 		if len(p) == 0 {
-			return nil, nil
+			return nil
 		}
 		return &genai.Part{
 			Text: string(p),
-		}, nil
+		}
 	case FileURL:
 		return &genai.Part{
 			FileData: &genai.FileData{
 				FileURI: string(p),
 			},
-		}, nil
+		}
 	case FileContent:
 		return &genai.Part{
 			InlineData: &genai.Blob{
 				MIMEType: p.MimeType,
 				Data:     p.Content,
 			},
-		}, nil
+		}
 	case FuncCall:
 		if p.Origin != nil {
 			if part, ok := p.Origin.(*genai.Part); ok {
-				return part, nil
+				return part
 			}
 		}
 		return &genai.Part{
@@ -59,7 +53,7 @@ func partToGemini(part Part) (*genai.Part, error) {
 				Name: p.Name,
 				Args: p.Arguments,
 			},
-		}, nil
+		}
 	case CallResult:
 		return &genai.Part{
 			FunctionResponse: &genai.FunctionResponse{
@@ -67,9 +61,9 @@ func partToGemini(part Part) (*genai.Part, error) {
 				Name:     p.Name,
 				Response: p.Results,
 			},
-		}, nil
+		}
 	}
-	return nil, nil
+	return nil
 }
 
 type Text string
@@ -137,12 +131,12 @@ type Error struct {
 
 func (Error) isPart() {}
 
-func PartFromGemini(part *genai.Part) (Part, error) {
+func PartFromGemini(part *genai.Part) Part {
 	if part.Text != "" || part.Thought {
 		if part.Thought {
-			return Thought(part.Text), nil
+			return Thought(part.Text)
 		} else {
-			return Text(part.Text), nil
+			return Text(part.Text)
 		}
 	}
 
@@ -151,7 +145,7 @@ func PartFromGemini(part *genai.Part) (Part, error) {
 			ID:      part.FunctionResponse.ID,
 			Name:    part.FunctionResponse.Name,
 			Results: part.FunctionResponse.Response,
-		}, nil
+		}
 	}
 
 	if part.FunctionCall != nil {
@@ -160,28 +154,28 @@ func PartFromGemini(part *genai.Part) (Part, error) {
 			Name:      part.FunctionCall.Name,
 			Arguments: part.FunctionCall.Args,
 			Origin:    part,
-		}, nil
+		}
 	}
 
 	if part.InlineData != nil {
 		return FileContent{
 			Content:  part.InlineData.Data,
 			MimeType: part.InlineData.MIMEType,
-		}, nil
+		}
 	}
 
 	if part.FileData != nil {
-		return FileURL(part.FileData.FileURI), nil
+		return FileURL(part.FileData.FileURI)
 	}
 
 	if part.ExecutableCode != nil {
-		return Text(part.ExecutableCode.Code), nil
+		return Text(part.ExecutableCode.Code)
 	}
 
 	if part.CodeExecutionResult != nil {
-		return Text(part.CodeExecutionResult.Output), nil
+		return Text(part.CodeExecutionResult.Output)
 	}
 
 	// Unknown or metadata-only part, ignore
-	return nil, nil
+	return nil
 }

@@ -16,7 +16,6 @@ import (
 
 type CodeProvider struct {
 	GetFiles        dscope.Inject[GetFiles]
-	GetFileSet      dscope.Inject[GetFileSet]
 	SimplifyFiles   dscope.Inject[SimplifyFiles]
 	Logger          dscope.Inject[logs.Logger]
 	AnyTexts        dscope.Inject[anytexts.CodeProvider]

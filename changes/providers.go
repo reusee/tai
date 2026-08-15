@@ -309,8 +309,6 @@ func (Module) ApplyTextLevelOp(
 	}
 }
 
-// ApplyGoModification provider: captures CallWriteErrorLog, ParseAndFormat,
-// and ApplySpecialTargetModify from the dscope scope.
 func (Module) ApplyGoModification(
 	callWriteErrorLog CallWriteErrorLog,
 	parseAndFormat ParseAndFormat,
@@ -376,7 +374,7 @@ func (Module) ApplyGoModification(
 		}
 
 		// Build range items (includes multi-entity duplicate removal)
-		items := buildRangeItems(src, start, end, finalBody, h, bodyInfo, f, fset, prefixLen)
+		items := buildRangeItems(start, end, finalBody, h, bodyInfo, f, fset, prefixLen)
 
 		// Build modified source
 		newSrc := buildModifiedSource(src, items, h)

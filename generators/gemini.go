@@ -218,11 +218,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				}
 				continue
 			}
-			pbPart, err := partToGemini(part)
-			if err != nil {
-				return ret, err
-			}
-			if pbPart != nil {
+			if pbPart := partToGemini(part); pbPart != nil {
 				pbContent.Parts = append(pbContent.Parts, pbPart)
 			}
 		}
@@ -322,9 +318,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 					Role: Role(candidate.Content.Role),
 				}
 				for _, part := range candidate.Content.Parts {
-					if p, err := PartFromGemini(part); err != nil {
-						return err
-					} else if p != nil {
+					if p := PartFromGemini(part); p != nil {
 						hasContent = true
 						newContent.Parts = append(newContent.Parts, p)
 					}

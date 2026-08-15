@@ -5,9 +5,7 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
-	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gocodes"
@@ -68,14 +66,12 @@ type CodesComponents struct {
 }
 
 func (Module) CodesComponents(
-	codeProvider codetypes.CodeProvider,
 	extra flags.ExtraSystemPrompt,
 	goExtra gocodes.ExtraSystemPrompt,
 	dynamicContext DynamicContext,
 	apply flags.Apply,
 	plan flags.Plan,
 	flagShell flags.Shell,
-	writeErrorLog debugs.WriteErrorLog,
 	applyChangeBlocks changes.ApplyChangeBlocks,
 ) CodesComponents {
 	var comps components.ComponentSet
