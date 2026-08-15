@@ -36,6 +36,10 @@ instructs the model to produce a concise, plain-text summary without block
 wrapping. Handoff generation is retried up to maxHandoffRetries times on
 failure or empty response; a persistent failure aborts the run to ensure
 the failure is visible.
+
+The fixed instructional prompt (HandoffSystemPrompt) is placed in the
+system prompt; the user content carries only the dynamic incomplete
+output. The same split applies to thought summarization.
 `
 
 // Handoff holds the outcome of summarizing interrupted or truncated output
@@ -52,10 +56,9 @@ type Handoff struct {
 // directly without handoff. See TheoryOfHandoff.
 const minHandoffLength = 100
 
-// HandoffRecorder is the minimal recorder interface used by CreateHandoff.
-// The records package's Recorder implements it.
 type HandoffRecorder interface {
 	Enabled() bool
+	SystemPrompt(prompt string)
 	Content(content *generators.Content)
 	Event(typ string, detail string)
 }
@@ -79,10 +82,6 @@ Output ONLY the concise handoff summary as plain text, with no preamble or extra
 // when generation fails or produces an empty response. See TheoryOfHandoff.
 const maxHandoffRetries = 3
 
-// CreateHandoff summarizes truncated or failed generation output into a
-// self-contained handoff for retry. When incompleteText is shorter than
-// minHandoffLength, handoff is skipped and (nil, nil) is returned for a
-// direct retry. See TheoryOfHandoff.
 func CreateHandoff(
 	ctx context.Context,
 	logger logs.Logger,
@@ -106,13 +105,24 @@ func CreateHandoff(
 			recorder.Event("decision", fmt.Sprintf(format, args...))
 		}
 	}
+	recordSystemPrompt := func(prompt string) {
+		if recorder != nil && recorder.Enabled() {
+			recorder.SystemPrompt(prompt)
+		}
+	}
+
+	// The fixed instructional prompt (HandoffSystemPrompt) is recorded as
+	// the system prompt; the user content carries only the dynamic
+	// incomplete output, so the transcript mirrors the actual generation.
+	// See TheoryOfHandoff.
+	recordSystemPrompt(HandoffSystemPrompt)
 
 	var lastErr error
 	for attempt := range maxHandoffRetries {
 		recordContent(&generators.Content{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
-				generators.Text(fmt.Sprintf("Handoff request (attempt %d):\n\n%s", attempt+1, incompleteText)),
+				generators.Text(incompleteText),
 			},
 		})
 
