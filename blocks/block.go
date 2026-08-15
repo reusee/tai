@@ -107,7 +107,7 @@ delimiter. When a same-delimiter nested block is unclosed, the outer block is al
 unclosed, because the stack never returns to empty.
 
 The same-delimiter restriction prevents false positives from body content that
-incidentally matches the <<HanHanHan <tag> pattern: if a different-delimiter opening
+incidentally matches the <<HanHan <tag> pattern: if a different-delimiter opening
 were pushed, the outer block's closing marker would not match the new stack top and
 the block would be incorrectly reported as unclosed. By only tracking same-delimiter
 openings, stack pushes are reserved for genuine nesting scenarios where the inner
@@ -577,6 +577,12 @@ func findDelimiterCollisionHints(content []byte, bodyStart int, delimiter string
 	return hints
 }
 
+// extractDelimiter extracts the delimiter from an opening marker line: the
+// text from the start of the trimmed line up to the first whitespace or
+// '<', whichever comes first. The delimiter must be exactly two Unicode
+// Han characters; any other length or non-Han character returns an empty
+// string, so the marker is skipped and the line is treated as regular
+// content. See TheoryOfBoundaryUniqueness.
 func extractDelimiter(s string) string {
 	s = strings.TrimSpace(s)
 	delimiter := s
