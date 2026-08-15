@@ -43,8 +43,8 @@ Architectural constraints:
 
 - No conversation compression. Old dialogue is never summarized to free
   token budget; context is managed solely by pruning, AST-level
-  simplification, and deterministic file ordering. Retry summarization
-  (TheoryOfSummaryCompletionRetry in codes/generate.go) condenses truncated
+  simplification, and deterministic file ordering. Handoff
+  (TheoryOfHandoff in states/summarize_incomplete.go) condenses truncated
   output for one-shot error recovery, not persistent history. Thought
   summarization (TheoryOfThoughtsSummarize in states/summarizer.go) writes
   to the user's screen for readability; it never feeds back as compressed
@@ -96,41 +96,27 @@ chain within the same round, triggered by a missing completion (no summary
 block) or an error after content output. Retries count as loops in round
 statistics.
 
-Retry on missing completion: a round without a summary block, or with an abnormal
-finish reason (e.g., "length" from max-token truncation), was truncated mid-stream
-— the generation limit hit before the model emitted its closing summary block, or
-the model emitted a summary and continued until cut off. The round is retried from
-the original pre-generation State. The retry process (SummarizeIncomplete)
-produces a summary of the truncated output that also serves as the retry prompt:
-the summarizer's extraction of the truncated thinking's valuable conclusions —
-discoveries, decisions, facts. The summary is recorded via OnRoundTruncated, so
-the truncated round appears as a separate loop in round statistics; the same text
-is fed to the retry round as user input, letting the retry round adopt those
-conclusions instead of re-deriving them — reducing the thinking needed and
-lowering the chance of truncating again. See
-TheoryOfIncompleteOutputSummarization in codes/generate.go.
+Retry on missing completion and handoff: a round without a summary block,
+or with an abnormal finish reason (e.g., "length" from max-token truncation),
+was truncated mid-stream — the generation limit hit before the model emitted
+its closing summary block, or the model emitted a summary and continued until
+cut off. The round is retried from the original pre-generation State. When
+output meets the minimum threshold, the handoff process creates a self-contained
+summary carrying forward established conclusions and next steps, mitigating
+overthinking in the retry attempt. Short or empty outputs are retried directly.
+See states.TheoryOfHandoff.
 
 When the retry budget is exhausted and the final attempt still lacks a summary
 block, the loop synthesizes a summary from the round's output and appends it to
 the state as a summary block, so the round has a completion signal for the round
-statistics and the TUI's Summary tab. When the summarization itself fails (see
-TheoryOfIncompleteOutputSummarization in codes/generate.go), the round proceeds
-without a synthesized summary.
+statistics and the TUI's Summary tab.
 
 Retry on error: an error after content output retries from the state that includes
-the partial output, appending the error context and a summary of the partial output
-as user content. Errors before any content output do not retry.
+the partial output, appending the error context and the handoff summary as user content.
+Errors before any content output do not retry.
 
 Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3") so
-the model knows how much budget remains and can prioritize correcting the error —
-critical in unattended operation, where no human can intervene once the budget is
-exhausted.
-
-The retry message carries the synthesized summary as a boundary-delimited summary
-block before the continue block, so the TUI's Summary tab displays it as the
-truncated or failed round's completion signal. A round's summary is either parsed
-from the model's own output or synthesized by the retry process; when the
-summarization fails, the round proceeds without a synthesized summary.
+the model knows how much budget remains and can prioritize correcting the error.
 `
 
 const TheoryOfUsageLogging = `
@@ -165,7 +151,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputSummaryPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect. The text below carries the valuable conclusions already reached in the truncated thinking: discoveries, decisions, facts, completed work, and next steps. Adopt these conclusions and continue from where you left off; do not re-derive them, so this round needs less thinking than the truncated attempt.]\n\n"
+const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Below is the self-contained handoff summary from the previous attempt: discoveries, decisions, established facts, completed work, and actionable next steps. Adopt these conclusions and proceed directly to execution; do not repeat preliminary analysis or overthink.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The
@@ -363,20 +349,15 @@ func (ls *loopState) runRound() (roundResult, error) {
 							"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
 					}
 
-					// Summarize the failed attempt's output. The
-					// retry process produces both a summary
-					// (recorded as the failed round's summary in
-					// round statistics) and the compressed content
-					// fed to the retry round as user input.
 					summary := ""
 					retryPrompt := ""
-					if ls.opts.SummarizeIncomplete != nil {
+					if ls.opts.Handoff != nil {
 						incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
 						if incompleteText != "" {
-							retrySummary, summaryErr := ls.opts.SummarizeIncomplete(incompleteText)
-							if summaryErr == nil && retrySummary != nil {
-								summary = retrySummary.Summary
-								retryPrompt = retrySummary.RetryPrompt
+							handoff, handoffErr := ls.opts.Handoff(incompleteText)
+							if handoffErr == nil && handoff != nil {
+								summary = handoff.Summary
+								retryPrompt = handoff.Prompt
 							}
 						}
 					}
@@ -392,14 +373,10 @@ func (ls *loopState) runRound() (roundResult, error) {
 					}
 
 					// Append the summary block and the continue
-					// block as the retry user prompt. The summary
-					// block carries the synthesized summary so the
-					// TUI's Summary tab can display it as the failed
-					// round's completion signal.
-					// See TheoryOfLoops.
+					// block as the retry user prompt.
 					if retryPrompt != "" || summary != "" {
 						retryParts = append(retryParts, generators.Text(
-							formatRetryPrompt(summary, retryPrompt, retry+1, ls.maxRetries)))
+							formatHandoffPrompt(summary, retryPrompt, retry+1, ls.maxRetries)))
 					}
 
 					var appendErr error
@@ -411,11 +388,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 						break
 					}
 					roundErr = nil
-					// Reset for retry: OnRoundStart resets the
-					// MemoryStore, discarding all changes from the
-					// failed attempt. This preserves filesystem
-					// consistency — the disk is never left in a
-					// partially modified state by a failed attempt.
 					if ls.opts.OnRoundStart != nil {
 						ls.opts.OnRoundStart()
 					}
@@ -472,30 +444,21 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		}
 
-		// Summarize incomplete output and retry. The retry process
-		// produces both a summary of the truncated output (recorded
-		// as the truncated round's summary in round statistics) and
-		// a continue block whose content is the compressed version
-		// of the truncated output, fed to the retry round as user
-		// input. The feedback states the current attempt number so
-		// the model knows how much retry budget remains.
-		// See TheoryOfLoops.
+		// Perform handoff summary on incomplete output if threshold met.
 		summary := ""
 		retryPrompt := ""
-		if ls.opts.SummarizeIncomplete != nil {
+		if ls.opts.Handoff != nil {
 			incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
 			if incompleteText != "" {
-				retrySummary, rerr := ls.opts.SummarizeIncomplete(incompleteText)
-				if rerr == nil && retrySummary != nil {
-					summary = retrySummary.Summary
-					retryPrompt = retrySummary.RetryPrompt
+				handoff, rerr := ls.opts.Handoff(incompleteText)
+				if rerr == nil && handoff != nil {
+					summary = handoff.Summary
+					retryPrompt = handoff.Prompt
 				}
 			}
 		}
 
-		// Record the truncated round in round statistics so it
-		// appears as a separate loop. The summary is synthesized
-		// by the retry process. See TheoryOfRoundStatistics.
+		// Record the truncated round in round statistics.
 		if ls.opts.OnRoundTruncated != nil {
 			if rerr := ls.opts.OnRoundTruncated(phaseState, ls.state, summary); rerr != nil {
 				roundErr = rerr
@@ -503,17 +466,13 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		}
 
-		// Append the summary block and the continue block as the
-		// retry user prompt. The summary block carries the
-		// synthesized summary so the TUI's Summary tab can display
-		// it as the truncated round's completion signal.
-		// See TheoryOfLoops.
+		// Append the retry prompt.
 		if retryPrompt != "" || summary != "" {
 			var appendErr error
 			ls.state, appendErr = ls.state.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
-					generators.Text(formatRetryPrompt(summary, retryPrompt, retry+1, ls.maxRetries)),
+					generators.Text(formatHandoffPrompt(summary, retryPrompt, retry+1, ls.maxRetries)),
 				},
 			})
 			if appendErr != nil {
@@ -538,18 +497,16 @@ func (ls *loopState) runRound() (roundResult, error) {
 	// When the retry budget is exhausted and the final attempt
 	// still produced no summary block, synthesize a summary from
 	// the round's output and append it to the state as a summary
-	// block, so every round has a completion signal for the round
-	// statistics and the TUI's Summary tab. See
-	// TheoryOfIncompleteOutputSummarization.
-	if len(roundSummaries) == 0 && ls.opts.SummarizeIncomplete != nil {
+	// block.
+	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
 		if incompleteText != "" {
-			if retrySummary, serr := ls.opts.SummarizeIncomplete(incompleteText); serr == nil && retrySummary != nil {
+			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
 				var appendErr error
 				phaseState, appendErr = phaseState.AppendContent(&generators.Content{
 					Role: generators.RoleLog,
 					Parts: []generators.Part{
-						generators.Text(FormatSummaryBlock(retrySummary.Summary)),
+						generators.Text(FormatSummaryBlock(handoff.Summary)),
 					},
 				})
 				if appendErr != nil {
@@ -559,7 +516,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 					}
 					return roundResult{state: phaseState}, appendErr
 				}
-				roundSummaries = append(roundSummaries, retrySummary.Summary)
+				roundSummaries = append(roundSummaries, handoff.Summary)
 			}
 		}
 	}
@@ -580,17 +537,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 
 	ls.state = phaseState
 
-	// Parse error handling: feed parse errors back to the model
-	// for self-correction in the next round. A round that
-	// produced parse errors always triggers another round (within
-	// the maxParseErrorRounds correction budget), so the model can
-	// re-emit the malformed blocks in corrected form. The changes
-	// from blocks that parsed successfully were already flushed
-	// by OnRoundSuccess; skipOnRoundStart prevents the correction
-	// round from resetting per-round state that would discard
-	// them. When the budget is exhausted, feedback stops and the
-	// uncorrected parse errors are recorded in the Result.
-	// See TheoryOfParseErrorCollection.
+	// Parse error handling.
 	var parseErrorParts []generators.Part
 	var roundUncorrected []*blocks.BlockParseError
 	parseErrorParts, ls.parseErrorCorrectionRounds, ls.skipOnRoundStart, roundUncorrected =
@@ -606,9 +553,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 		}
 	}
 
-	// Single-shot mode: no component processing. When parse errors
-	// were collected, feed them back and continue with a
-	// correction round instead of ending the loop.
+	// Single-shot mode: no component processing.
 	if len(ls.opts.Components) == 0 {
 		if len(parseErrorParts) > 0 {
 			var aerr error
@@ -634,11 +579,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}
 
 	// Process components.
-	// Unmatched blocks are accumulated across rounds so that
-	// blocks not consumed by any component (e.g., a goal done
-	// block emitted in a round that also triggers another round)
-	// remain available in Result.RemainingBlocks. See
-	// TheoryOfGoalCommand in cmd/tai/goal.go.
 	var roundRemaining []blocks.Block
 	var combinedParts []generators.Part
 	var triggered bool
@@ -653,9 +593,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}
 	ls.remainingBlocks = append(ls.remainingBlocks, roundRemaining...)
 
-	// Prepend parse error feedback to component output parts so
-	// the model corrects malformed blocks alongside processing
-	// component results. Parse errors always trigger a new round.
 	if len(parseErrorParts) > 0 {
 		combinedParts = append(parseErrorParts, combinedParts...)
 		triggered = true
@@ -684,13 +621,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 		}, nil
 	}
 
-	// No component triggered. Try OnIdle (e.g., chat prompt) to
-	// allow interactive user input before ending the loop.
-	// Automated actions (continue, shell, go-test,
-	// request-context) are processed first via component
-	// processing above; OnIdle is only invoked when no
-	// automated action is pending.
-	// See phases.TheoryOfIdleHandler.
 	if ls.opts.OnIdle != nil {
 		var idleContinue bool
 		ls.state, idleContinue, cerr = ls.opts.OnIdle(ls.ctx, ls.state)
@@ -910,7 +840,7 @@ type RunOptions struct {
 	RetryOnMissingCompletion bool
 	// RetryOnError enables retry when any error occurs after the model
 	// has output content during a round. The loop summarizes the
-	// incomplete output (using SummarizeIncomplete if available),
+	// incomplete output (using Handoff if available),
 	// appends both the error context and the summary as user content,
 	// resets per-round state via OnRoundStart (which resets the
 	// MemoryStore), and retries from the updated state. Errors that
@@ -921,12 +851,10 @@ type RunOptions struct {
 	// or RetryOnError is true. Defaults to 3 when either is true
 	// and MaxRetries is 0.
 	MaxRetries int
-	// SummarizeIncomplete summarizes incomplete output before retrying.
-	// The retry process produces both a summary of the truncated output
-	// (used as the truncated round's summary in round statistics) and
-	// the compressed content fed to the retry round as user input. If
-	// nil, retry proceeds without a summary.
-	SummarizeIncomplete func(incompleteText string) (*states.RetrySummary, error)
+	// Handoff summarizes incomplete output into a self-contained handoff
+	// before retrying. If output is below the threshold or handoff is nil,
+	// retry proceeds directly.
+	Handoff func(incompleteText string) (*states.Handoff, error)
 
 	// OnIdle is called when no component triggers after a round. It allows
 	// the caller to provide interactive input (e.g., chat prompt) and
@@ -937,12 +865,8 @@ type RunOptions struct {
 	OnIdle phases.IdleHandler
 }
 
-// RetrySummary holds the outcome of summarizing truncated output for retry.
-// The retry process has two tasks: producing a summary of the truncated output
-// (recorded as the truncated round's summary in round statistics) and producing
-// the compressed content fed to the retry round as user input, framed as a
-// continue block. See states.TheoryOfIncompleteOutputSummarization.
-type RetrySummary = states.RetrySummary
+// Handoff is an alias for states.Handoff. See states.TheoryOfHandoff.
+type Handoff = states.Handoff
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
 // block with a fresh delimiter, so the TUI's Round tab can display it
@@ -951,13 +875,11 @@ func FormatSummaryBlock(summary string) string {
 	return states.FormatSummaryBlock(summary)
 }
 
-// formatRetryPrompt formats the retry user prompt. The summary parameter
-// is retained for call-site compatibility; the retry prompt is the
-// summarizer's output, used directly without block wrapping. See
-// states.TheoryOfIncompleteOutputSummarization.
-func formatRetryPrompt(summary, retryPrompt string, attempt, maxAttempts int) string {
-	prefix := fmt.Sprintf(incompleteOutputSummaryPrefix, attempt, maxAttempts)
-	return states.FormatRetryPrompt(prefix, retryPrompt)
+// formatHandoffPrompt formats the retry user prompt with the handoff content.
+// See states.TheoryOfHandoff.
+func formatHandoffPrompt(summary, retryPrompt string, attempt, maxAttempts int) string {
+	prefix := fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts)
+	return states.FormatHandoffPrompt(prefix, retryPrompt)
 }
 
 // Result holds the outcome of a generation loop.

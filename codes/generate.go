@@ -351,31 +351,29 @@ func collectRoundStats(
 	return roundStats, contentIndex
 }
 
-// SummarizeIncompleteOutput summarizes truncated or failed generation
-// output before retry, producing both a summary of the truncated output
-// and the retry prompt carried into the next round. The summarize
-// generator, logger, and interaction recorder are bound from the dscope
-// scope, so callers pass only the runtime values (context and the
-// incomplete text). See states.TheoryOfIncompleteOutputSummarization.
-type SummarizeIncompleteOutput func(
+// CreateHandoff summarizes truncated or failed generation output before
+// retry, producing a self-contained handoff carried into the next round.
+// The summarize generator, logger, and interaction recorder are bound from
+// the dscope scope. See states.TheoryOfHandoff.
+type CreateHandoff func(
 	ctx context.Context,
 	incompleteText string,
-) (*states.RetrySummary, error)
+) (*states.Handoff, error)
 
-func (Module) SummarizeIncompleteOutput(
+func (Module) CreateHandoff(
 	logger logs.Logger,
 	recorder *records.Recorder,
 	getSummarizeGenerator states.GetSummarizeGenerator,
-) SummarizeIncompleteOutput {
+) CreateHandoff {
 	return func(
 		ctx context.Context,
 		incompleteText string,
-	) (*states.RetrySummary, error) {
+	) (*states.Handoff, error) {
 		generator, err := getSummarizeGenerator()
 		if err != nil {
 			return nil, err
 		}
-		return states.SummarizeIncomplete(ctx, logger, recorder, generator, incompleteText)
+		return states.CreateHandoff(ctx, logger, recorder, generator, incompleteText)
 	}
 }
 
@@ -389,33 +387,28 @@ The package-level implementation remains a plain function so tests can
 call it directly.
 `
 
-// summarizeRetryState prepares the retry state for a phase error. When the
-// partial output can be summarized, the summary and retry prompt are appended
-// as user content. When summarization fails, the error is propagated so the
+// handoffRetryState prepares the retry state for a phase error. When the
+// partial output can be summarized, the handoff summary is appended
+// as user content. When handoff fails, the error is propagated so the
 // caller aborts the run; a fallback state is still returned for validity.
-// See states.TheoryOfIncompleteOutputSummarization.
-func summarizeRetryState(
+// See states.TheoryOfHandoff.
+func handoffRetryState(
 	errState generators.State,
 	phaseErr error,
 	prevContentCount int,
-	summarize func(string) (*states.RetrySummary, error),
+	createHandoff func(string) (*states.Handoff, error),
 ) (newState generators.State, contentCount int, summary string, err error) {
 	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
-		if retrySummary, summarizeErr := summarize(partialText); summarizeErr != nil {
-			// The summarization failure is a serious error: propagate it so
-			// the caller aborts the run instead of continuing without a
-			// synthesized summary. The fallback state is still returned so
-			// the caller has a valid state while aborting. See
-			// states.TheoryOfIncompleteOutputSummarization.
+		if handoff, handoffErr := createHandoff(partialText); handoffErr != nil {
 			fallbackState, fallbackCount, fallbackSummary := fallbackRetryState(errState, phaseErr)
-			return fallbackState, fallbackCount, fallbackSummary, summarizeErr
-		} else if retrySummary != nil {
+			return fallbackState, fallbackCount, fallbackSummary, handoffErr
+		} else if handoff != nil {
 			prefix := fmt.Sprintf(
 				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
 				phaseErr,
 			)
-			msg := states.FormatRetryPrompt(prefix, retrySummary.RetryPrompt)
+			msg := states.FormatHandoffPrompt(prefix, handoff.Prompt)
 			newState, appendErr := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
@@ -423,7 +416,7 @@ func summarizeRetryState(
 				},
 			})
 			if appendErr == nil {
-				return newState, generators.CountContents(newState), retrySummary.Summary, nil
+				return newState, generators.CountContents(newState), handoff.Summary, nil
 			}
 		}
 	}
@@ -480,92 +473,54 @@ retry, the collected blocks are reset alongside the MemoryStore in the onPhaseSt
 callback, ensuring both external states are consistent with the rolled-back State
 (see TheoryOfParserState in blocks/parser_state.go).
 
-This retry is transient error recovery for truncated output. The summarized
-content does not persist as compressed history. Each retry regenerates from the
-original context, supplemented by the conclusions extracted from the truncated
-thinking (see states.TheoryOfIncompleteOutputSummarization), not from accumulated
-dialogue. See TheoryOfContextPhilosophy in loops/run.go.
+This retry uses handoff (TheoryOfHandoff in states/summarize_incomplete.go) to
+carry forward established conclusions into the next round without retaining
+unstructured conversation history.
 `
 
-const TheoryOfIncompleteOutputSummarization = `
-When a round is truncated (no summary block) or errors after producing partial
-output, the incomplete output is summarized before retrying. The retry process
-produces a single text: the summarizer's extraction of the truncated output's
-valuable conclusions. The same text serves as both the summary of the truncated
-round (recorded in round statistics) and the retry prompt fed to the retry round
-as user input.
+const TheoryOfHandoff = `
+When a generation round is truncated (no summary block) or errors after
+producing partial output, a handoff summary is constructed before retrying.
+The handoff condenses valuable conclusions from the interrupted thinking
+(discoveries, decisions, established facts, completed work, and next steps)
+into a single self-contained text.
 
-Truncation most often happens when the model thinks too long. The truncated
-reasoning is not wasted: it has already produced valuable results — discoveries,
-decisions, and facts. Discarding these results and letting the retry round
-re-derive them from scratch would spend the thinking budget a second time,
-risking the same truncation. The retry summarization therefore extracts the
-thinking results from the truncated output — the conclusions, not the reasoning
-that led to them — and carries them into the retry round. The extraction
-prioritizes the most valuable content: important discoveries and insights,
-important decisions, important facts about the codebase or task, the state of
-completed work, and the next steps the model was about to take. The retry round
-adopts these pre-established conclusions and continues from where the model
-left off, so it needs less thinking than the truncated attempt.
+The handoff must not assume the next round can see the interrupted output,
+as the raw partial output is discarded and will not appear in conversation
+history. The handoff notes must therefore be completely self-contained.
+The handoff focuses on guiding the direction of the next generation round
+and mitigating the model's tendency to overthink: by providing clear
+settled conclusions and concrete next steps, the next round can proceed
+directly to action rather than re-deriving preliminary analysis.
 
-The same extraction serves both retry paths: missing-completion retries
-(truncated output) and error retries (partial output followed by an error). See
-TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
+Handoff is executed only when the model has produced a non-trivial amount
+of output (at least minHandoffLength characters). If output is very short or
+empty, handoff is skipped and a direct retry is performed.
 
-The summarization model follows SummarizeModel, falling back to the fast model
-and then the default model (see states.TheoryOfSummarizeModel). The summary is
-appended as user content with a system note explaining the retry.
-
-The summarization system prompt (RetrySummarizationSystemPrompt) instructs the
-model to output a concise plain-text summary. The model's raw output is used
-directly as the retry prompt, without block wrapping or parsing: the model
-cannot reliably produce structured blocks on demand, so requiring two blocks
-(summary and continue) would risk a malformed response that fails to parse.
-
-The summarization itself is retried when the summarize generation fails or
-produces an empty response: a transient API error would leave the round without
-any summary at all, and an empty response would leave the retry round without a
-retry prompt. The retry is bounded by maxSummarizeRetries; when all attempts
-fail, the summarization returns an error instead of falling back to the
-incomplete text. A fallback that substitutes the raw incomplete text as both
-the summary and the retry prompt would feed the model unstructured, possibly
-truncated reasoning as if it were a distilled summary, degrading the retry
-prompt's quality and masking the summarization failure. The summarization
-failure is a serious error, not a soft "no summary available" condition: it
-propagates as a generation error and aborts the run. Continuing without a
-synthesized summary would hide the truncation, leave the retry round without the
-distilled conclusions it needs, and degrade the retry prompt's quality; the
-operator must see the failure and intervene.
-
-Each failed summarize attempt is logged with the attempt number and the error,
-and the final failure is logged as an error, so the operator can diagnose why a
-round aborted. Every attempt is also written into the same session's interaction
-record: the request input and the raw model response — including the model's
-thoughts, which the capture buffer excludes — are recorded as contents, and each
-attempt's failure reason (generation error or empty response) plus the final
-failure are recorded as decision events. When a response is empty, the record
-therefore shows exactly what the summarize model produced, so the summarization
-prompt can be optimized from real failures.
+The handoff model follows SummarizeModel, falling back to the fast model
+and then the default model (see TheoryOfSummarizeModel). The handoff prompt
+instructs the model to produce a concise, plain-text summary without block
+wrapping. Handoff generation is retried up to maxHandoffRetries times on
+failure or empty response; a persistent failure aborts the run to ensure
+the failure is visible.
 `
 
 const TheoryOfSummaryRetryOnError = `
 Generation errors that occur after the model has already produced partial output
-(thoughts or body text) are retried with a summarized version of that output.
-Summarizing condenses the partial output into a compact user message that
+(thoughts or body text) are retried with a handoff summary of that output.
+Handoff condenses the partial output into a compact user message that
 preserves context while freeing budget, and changes the input so the retry produces
 a different response. All generation-phase errors — including missing completion
 and change-block apply errors — are routed through the same OnPhaseError retry path
-with summarization, ensuring consistent retry behavior regardless of the error
-type.
+with handoff, ensuring consistent retry behavior regardless of the error type.
 
-The summarization extracts the valuable content of the partial output — the
+The handoff extracts the valuable content of the partial output — the
 discoveries, decisions, and facts the model had already established — and presents
 them to the retry round. The retry therefore continues from the model's conclusions
 instead of re-deriving them, reducing the thinking it needs and lowering the chance
-of failing again. The extraction is the same one used for truncated output; see
-states.TheoryOfIncompleteOutputSummarization.
+of failing again. See states.TheoryOfHandoff.
 
-This summarization is transient error recovery. The condensed content is injected
+This handoff is transient error recovery. The condensed content is injected
 into one retry request and does not persist as compressed history. The system does
 not compress conversation. See TheoryOfContextPhilosophy in loops/run.go.
 `
@@ -617,7 +572,7 @@ func (Module) GenerateWithResultWithStats(
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
 	thoughtSummaryWriter states.ThoughtSummaryWriter,
-	summarizeIncompleteOutput SummarizeIncompleteOutput,
+	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
@@ -717,9 +672,6 @@ func (Module) GenerateWithResultWithStats(
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
 
 		// Concatenate the text parts with strings.Builder for token counting.
-		// Repeated += over the file context parts is quadratic in the total
-		// context size: each iteration copies the accumulated string. The
-		// builder accumulates linearly. See buildUserPromptText.
 		userPromptText := buildUserPromptText(userPromptParts)
 		userPromptTokens, err := generator.CountTokens(userPromptText)
 		if err != nil {
@@ -734,10 +686,6 @@ func (Module) GenerateWithResultWithStats(
 		}
 
 		if debug {
-			// The debug dump goes to the generation output writer, never to
-			// os.Stdout directly: a direct stdout write would bypass the
-			// writer that the TUI mode forks (see TheoryOfCommandOutput and
-			// TheoryOfTUI in cmd/tai/tui.go).
 			fmt.Fprintf(output, "system prompt: %s\n", systemPrompt)
 			fmt.Fprintf(output, "user prompt: %s\n", userPromptParts)
 		}
@@ -762,21 +710,12 @@ func (Module) GenerateWithResultWithStats(
 			showThoughts = *flagThoughts.Value
 		}
 
-		// By default, raw thoughts are displayed to the user. The
-		// -summarize-thoughts flag enables periodic summarization.
-		// See states.TheoryOfThoughtsSummarize.
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
 				return loops.Result{}, nil, err
 			}
 			state = generators.NewOutput(state, output, false)
-			// The summary writer defaults to the generation output
-			// stream — the same stream the raw thoughts would have
-			// used. A display front-end (e.g., the TUI) routes the
-			// summaries to its own display by forking
-			// states.ThoughtSummaryWriter. See
-			// states.TheoryOfThoughtsSummarize.
 			summaryWriter := output
 			if thoughtSummaryWriter != nil {
 				summaryWriter = thoughtSummaryWriter
@@ -786,37 +725,15 @@ func (Module) GenerateWithResultWithStats(
 			state = generators.NewOutput(state, output, showThoughts)
 		}
 
-		// The state is NOT wrapped with ParserState here; loops.Run wraps
-		// it internally. See loops.TheoryOfLoops.
-
-		// Track per-round token statistics for end-of-session reporting.
-		// The stats are returned via GenerateWithResultWithStats so callers
-		// that run multiple sessions (e.g., goal) can aggregate them, and
-		// printed here via a deferred call so the per-session report is
-		// shown even when the session ends early due to an error.
-		// See TheoryOfRoundStatistics.
 		var roundStats []RoundStat
 		defer func() {
 			PrintRoundStats(output, roundStats)
 		}()
 
-		// roundStartTime records the start of the current round, set by
-		// OnRoundStart before generation and used to compute the round
-		// duration in OnRoundSuccess.
 		var roundStartTime time.Time
 
-		// Set up initial phase: if an action argument is present, append it
-		// as user content and run generation; otherwise there is nothing to do.
 		var hasChats bool
 		if chats := strings.Join(flagChats, "\n"); chats != "" {
-			// Wrap the chat in user-input markers so the TUI can extract
-			// it from the merged user prompt (stripFileContext), matching
-			// the ai command's structure. Without the markers, the chat
-			// is a bare Text part that Prompts.AppendContent may merge
-			// with the preceding file-context or restate-prompt text,
-			// and the TUI cannot distinguish it from context, so the
-			// user's input never appears in the Output tab.
-			// See TheoryOfTUI.
 			state, err = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
@@ -833,39 +750,14 @@ func (Module) GenerateWithResultWithStats(
 			return loops.Result{}, nil, nil
 		}
 
-		// Track content count for statistics collection in OnRoundSuccess.
 		prevContentCount := generators.CountContents(state)
 
-		// Build the change block handler when apply is enabled. The handler
-		// applies change blocks immediately to the MemoryStore as they are
-		// parsed during streaming, enabling early error detection. Apply
-		// errors are returned as *changes.ApplyError so the loop can retry,
-		// resetting the MemoryStore to discard failed changes. The handler
-		// is built by changes.BuildChangeBlockHandler so the change-
-		// application logic is shared with the next command. When apply is
-		// disabled, no handler is set and all blocks are collected for
-		// component processing. See changes.TheoryOfInMemoryApply and
-		// loops.TheoryOfLoops.
 		var blockHandler loops.BlockHandler
 		if bool(apply) {
 			handler := buildChangeBlockHandler(memStore)
 			blockHandler = loops.BlockHandler(handler)
 		}
 
-		// Run the unified generation loop. See loops.TheoryOfLoops.
-		// The loop handles ParserState wrapping, phase execution, retry
-		// on missing completion and errors, and component processing
-		// between rounds. The interaction recorder is passed explicitly
-		// so every round, content, and block is captured when -record is
-		// enabled. The result is filled into result as the run
-		// progresses; the iterator yields the terminal error, if any.
-		// See records.TheoryOfInteractionRecording.
-		//
-		// runCtx is cancellable so a serious error — a failure to
-		// summarize incomplete output — can abort the run from within a
-		// callback that cannot return an error (OnPhaseError). fatalErr
-		// records the serious error; after the loop it overrides the
-		// loop's terminal error. See states.TheoryOfIncompleteOutputSummarization.
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var fatalErr error
@@ -886,15 +778,10 @@ func (Module) GenerateWithResultWithStats(
 
 			OnRoundStart: func() {
 				memStore.Reset()
-				// Record the round start time for duration statistics.
-				// See TheoryOfRoundStatistics.
 				roundStartTime = time.Now()
 			},
 
 			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
-				// Flush in-memory changes to disk before the component loop
-				// runs. This ensures go-test and other components see the
-				// updated files on disk. See TheoryOfStreamingApply.
 				if err := memStore.Flush(); err != nil {
 					return err
 				}
@@ -902,29 +789,18 @@ func (Module) GenerateWithResultWithStats(
 					recorder.Event("decision", "round succeeded: in-memory changes flushed to disk")
 				}
 
-				// Compute the round duration from the start time recorded by
-				// OnRoundStart. The duration covers the full round including
-				// retries. See TheoryOfRoundStatistics.
 				elapsed := time.Since(roundStartTime)
 
-				// Collect round statistics from newly appended contents and
-				// associate summary blocks with the current round.
-				// See TheoryOfRoundStatistics.
 				summaryText := ""
 				var summarizeErr error
 				if len(summaries) > 0 {
 					summaryText = strings.Join(summaries, "\n")
 				} else {
-					// The round produced no summary blocks (e.g., retries
-					// were exhausted and the final attempt still lacked a
-					// summary). Summarize the round's output so every round
-					// has a summary for the round statistics and the TUI's
-					// Round tab. See states.TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
-						var retrySummary *states.RetrySummary
-						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, incompleteText)
-						if summarizeErr == nil && retrySummary != nil {
-							summaryText = retrySummary.Summary
+						var handoff *states.Handoff
+						handoff, summarizeErr = createHandoff(runCtx, incompleteText)
+						if summarizeErr == nil && handoff != nil {
+							summaryText = handoff.Summary
 						}
 					}
 				}
@@ -933,30 +809,16 @@ func (Module) GenerateWithResultWithStats(
 				)
 
 				if summarizeErr != nil {
-					// A failure to summarize incomplete output is a serious
-					// error: abort the run instead of continuing without a
-					// synthesized summary. See
-					// states.TheoryOfIncompleteOutputSummarization.
 					fatalErr = summarizeErr
 					cancel()
 					return nil
 				}
 
-				// If OnRoundStart is skipped for the next round (parse-error
-				// correction rounds), the duration is measured from here,
-				// approximating the next round's start time. See
-				// TheoryOfParseErrorCollection in blocks/parser_state.go.
 				roundStartTime = time.Now()
 				return nil
 			},
 
 			OnRoundTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
-				// Record the truncated round in round statistics so it
-				// appears as a separate loop. The summary is synthesized
-				// by the retry process. The retry base state's content
-				// count becomes the new prevContentCount, so the retry
-				// round's statistics collection starts after the retry
-				// prompt. See TheoryOfRoundStatistics.
 				elapsed := time.Since(roundStartTime)
 				roundStats, _ = collectRoundStats(
 					roundStats, truncatedState, prevContentCount, elapsed, summary,
@@ -966,33 +828,24 @@ func (Module) GenerateWithResultWithStats(
 			},
 
 			OnPhaseError: func(errState generators.State, phaseErr error) generators.State {
-				// If a serious error already aborted the run, do not
-				// attempt further summarization or retry preparation.
 				if fatalErr != nil {
 					return errState
 				}
 
-				// Record the failed round in round statistics so it appears
-				// as a separate loop. The failed round's summary is
-				// synthesized by the retry process. See TheoryOfRoundStatistics.
 				elapsed := time.Since(roundStartTime)
-				newState, newContentCount, summary, summarizeErr := summarizeRetryState(
+				newState, newContentCount, summary, handoffErr := handoffRetryState(
 					errState,
 					phaseErr,
 					prevContentCount,
-					func(text string) (*states.RetrySummary, error) {
-						return summarizeIncompleteOutput(runCtx, text)
+					func(text string) (*states.Handoff, error) {
+						return createHandoff(runCtx, text)
 					},
 				)
 				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
 				prevContentCount = newContentCount
 
-				if summarizeErr != nil {
-					// A failure to summarize the partial output is a serious
-					// error: abort the run instead of retrying without a
-					// synthesized summary. See
-					// states.TheoryOfIncompleteOutputSummarization.
-					fatalErr = summarizeErr
+				if handoffErr != nil {
+					fatalErr = handoffErr
 					cancel()
 				}
 
@@ -1002,48 +855,31 @@ func (Module) GenerateWithResultWithStats(
 			RetryOnMissingCompletion: true,
 			RetryOnError:             true,
 			MaxRetries:               maxRetriesForMissingSummary,
-			SummarizeIncomplete: func(incompleteText string) (*states.RetrySummary, error) {
+			Handoff: func(incompleteText string) (*states.Handoff, error) {
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
-				retrySummary, err := summarizeIncompleteOutput(runCtx, incompleteText)
+				handoff, err := createHandoff(runCtx, incompleteText)
 				if err != nil {
-					// A failure to summarize incomplete output is a serious
-					// error: abort the run instead of continuing without a
-					// synthesized summary. See
-					// states.TheoryOfIncompleteOutputSummarization.
 					fatalErr = err
 					cancel()
 				}
-				return retrySummary, err
+				return handoff, err
 			},
 		}, &result) {
 			err = e
 		}
 
-		// A serious error that aborted the run (e.g., a failure to
-		// summarize incomplete output) overrides the loop's terminal
-		// error, which may be a context cancellation caused by the abort.
-		// See states.TheoryOfIncompleteOutputSummarization.
 		if fatalErr != nil {
 			err = fatalErr
 		}
 
-		// Surface uncorrected malformed blocks in unattended operation:
-		// when the parse-error correction budget is exhausted, the
-		// malformed blocks are silently not applied. Logging the count
-		// makes the change loss visible. See TheoryOfLoops.
 		if err == nil && len(result.ParseErrors) > 0 {
 			logger.WarnContext(ctx, "uncorrected malformed blocks",
 				"count", len(result.ParseErrors),
 			)
 		}
 
-		// Session diffs are attached to the result for the review loop.
-		// On error, the failed round's in-memory changes were never flushed
-		// to disk; resetting the store keeps the diffs limited to changes
-		// actually written, so the review loop never sees phantom changes.
-		// See TheoryOfReviewLoop and changes.TheoryOfInMemoryApply.
 		if err != nil {
 			memStore.Reset()
 		}

@@ -16,32 +16,32 @@ The designated writer is the ThoughtSummaryWriter provider when non-nil,
 otherwise the generation output writer — the same stream the raw thoughts would
 have used. A display front-end such as tai's TUI forks ThoughtSummaryWriter to
 route the summaries to its own display. As models produce increasingly long
-reasoning traces, users struggle to extract
-key information from raw thought streams. ThoughtsSummarize addresses this by
-summarizing at a configurable interval (default 3 seconds), enabling users to
-quickly assess whether the model's thinking direction is correct and interrupt
-early if it diverges. When the interval elapses, only complete paragraphs are
-summarized; any incomplete trailing text is retained for the next cycle to avoid
-sending truncated sentences to the summarizer. When content containing
-non-thought parts (e.g., the model's final answer, or a streaming chunk that
-mixes reasoning with answer text) arrives, all accumulated thoughts — including
-any thoughts in that same content — are flushed immediately before the content
-is propagated to upstream, regardless of interval or paragraph boundaries,
-ensuring the summary appears before the main text output rather than after it.
-The flush is triggered by the presence of non-thought parts, so a mixed content
-with both Thought and Text parts correctly flushes before the text is printed.
-The summarization model follows SummarizeModel, falling back to the fast model
-and then the default model (see TheoryOfSummarizeModel). The GetDefaultSummarizer
-provider wires the selected generator into a Summarizer. On Flush, any
-remaining accumulated thoughts are summarized before propagating the flush
-upstream. The summarization system prompt is designed to extract only the most
-important points and direction of reasoning, not to reproduce the full thought
-content. The summary is formatted as a bullet list of at most 2 key points,
-each item being a single concise sentence. The Summarize method prompts the
-summarization model to wrap its output in a boundary-delimited summary block
-and parses the block body via blocks.ParseFirstBlock, ensuring the returned
-text contains only the clean bullet-list summary without model preamble or
-trailing prose; if no block is found the raw text is returned as a fallback.
+reasoning traces, users struggle to extract key information from raw thought
+streams. ThoughtsSummarize addresses this by summarizing at a configurable
+interval (default 3 seconds), enabling users to quickly assess whether the
+model's thinking direction is correct and interrupt early if it diverges.
+When the interval elapses, only complete paragraphs are summarized; any
+incomplete trailing text is retained for the next cycle to avoid sending
+truncated sentences to the summarizer. When content containing non-thought parts
+(e.g., the model's final answer, or a streaming chunk that mixes reasoning with
+answer text) arrives, all accumulated thoughts — including any thoughts in that
+same content — are flushed immediately before the content is propagated to
+upstream, regardless of interval or paragraph boundaries, ensuring the summary
+appears before the main text output rather than after it. The flush is triggered
+by the presence of non-thought parts, so a mixed content with both Thought and
+Text parts correctly flushes before the text is printed. The summarization model
+follows SummarizeModel, falling back to the fast model and then the default model
+(see TheoryOfSummarizeModel). The GetDefaultSummarizer provider wires the selected
+generator into a Summarizer. On Flush, any remaining accumulated thoughts are
+summarized before propagating the flush upstream. The summarization system prompt
+is designed to extract only the most important points and direction of reasoning,
+not to reproduce the full thought content. The summary is formatted as a bullet
+list of at most 2 key points, each item being a single concise sentence. The
+Summarize method prompts the summarization model to wrap its output in a
+boundary-delimited summary block and parses the block body via
+blocks.ParseFirstBlock, ensuring the returned text contains only the clean
+bullet-list summary without model preamble or trailing prose; if no block is
+found the raw text is returned as a fallback.
 
 Thought summarization serves user readability, not context compression.
 Summaries go to the output writer for the human reader; they are never fed

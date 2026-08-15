@@ -150,8 +150,8 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -215,8 +215,8 @@ func TestRunRecordsDecisionEvents(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -226,8 +226,6 @@ func TestRunRecordsDecisionEvents(t *testing.T) {
 			t.Fatalf("expected 2 calls (retry once), got %d", callCount)
 		}
 		joined := strings.Join(rec.events, ",")
-		// Session metadata decision (command line) plus the truncation
-		// retry decision.
 		if !strings.Contains(joined, "event_decision") {
 			t.Fatalf("expected decision events, got: %s", joined)
 		}

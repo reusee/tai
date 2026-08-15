@@ -15,11 +15,9 @@ tai summarization model theory:
   fails with an error rather than silently falling back, so
   misconfiguration is surfaced.
 - GetSummarizeGenerator provides the selection as a dscope provider. Both
-  thought summarization (GetDefaultSummarizer) and retry summarization
+  thought summarization (GetDefaultSummarizer) and handoff generation
   (codes.GenerateWithResultWithStats) consume it, so one flag configures
-  every summarization path. Previously the main generation model was used
-  for all summarization; the option to use a faster model reduces cost and
-  latency when the summarizing model is capable enough.
+  every summarization and handoff path.
 `
 
 // GetSummarizeGenerator returns the generator used for summarization. The

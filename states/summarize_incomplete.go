@@ -11,131 +11,91 @@ import (
 	"github.com/reusee/tai/logs"
 )
 
-const TheoryOfIncompleteOutputSummarization = `
-When a round is truncated (no summary block) or errors after producing partial
-output, the incomplete output is summarized before retrying. The retry process
-produces a single text: the summarizer's extraction of the truncated output's
-valuable conclusions. The same text serves as both the summary of the truncated
-round (recorded in round statistics) and the retry prompt fed to the retry round
-as user input.
+const TheoryOfHandoff = `
+When a generation round is truncated (no summary block) or errors after
+producing partial output, a handoff summary is constructed before retrying.
+The handoff condenses valuable conclusions from the interrupted thinking
+(discoveries, decisions, established facts, completed work, and next steps)
+into a single self-contained text.
 
-Truncation most often happens when the model thinks too long. The truncated
-reasoning is not wasted: it has already produced valuable results — discoveries,
-decisions, and facts. Discarding these results and letting the retry round
-re-derive them from scratch would spend the thinking budget a second time,
-risking the same truncation. The retry summarization therefore extracts the
-thinking results from the truncated output — the conclusions, not the reasoning
-that led to them — and carries them into the retry round. The extraction
-prioritizes the most valuable content: important discoveries and insights,
-important decisions, important facts about the codebase or task, the state of
-completed work, and the next steps the model was about to take. The retry round
-adopts these pre-established conclusions and continues from where the model
-left off, so it needs less thinking than the truncated attempt.
+The handoff must not assume the next round can see the interrupted output,
+as the raw partial output is discarded and will not appear in conversation
+history. The handoff notes must therefore be completely self-contained.
+The handoff focuses on guiding the direction of the next generation round
+and mitigating the model's tendency to overthink: by providing clear
+settled conclusions and concrete next steps, the next round can proceed
+directly to action rather than re-deriving preliminary analysis.
 
-The same extraction serves both retry paths: missing-completion retries
-(truncated output) and error retries (partial output followed by an error). See
-TheoryOfSummaryCompletionRetry and TheoryOfSummaryRetryOnError.
+Handoff is executed only when the model has produced a non-trivial amount
+of output (at least minHandoffLength characters). If output is very short or
+empty, handoff is skipped and a direct retry is performed.
 
-The summarization model follows SummarizeModel, falling back to the fast model
-and then the default model (see states.TheoryOfSummarizeModel). The summary is
-appended as user content with a system note explaining the retry.
-
-The summarization system prompt (RetrySummarizationSystemPrompt) instructs the
-model to output a concise plain-text summary. The model's raw output is used
-directly as the retry prompt, without block wrapping or parsing: the model
-cannot reliably produce structured blocks on demand, so requiring two blocks
-(summary and continue) would risk a malformed response that fails to parse.
-
-The summarization itself is retried when the summarize generation fails or
-produces an empty response: a transient API error would leave the round without
-any summary at all, and an empty response would leave the retry round without a
-retry prompt. The retry is bounded by maxSummarizeRetries; when all attempts
-fail, the summarization returns an error instead of falling back to the
-incomplete text. A fallback that substitutes the raw incomplete text as both
-the summary and the retry prompt would feed the model unstructured, possibly
-truncated reasoning as if it were a distilled summary, degrading the retry
-prompt's quality and masking the summarization failure. The summarization
-failure is a serious error, not a soft "no summary available" condition: it
-propagates as a generation error and aborts the run. Continuing without a
-synthesized summary would hide the truncation, leave the retry round without the
-distilled conclusions it needs, and degrade the retry prompt's quality; the
-operator must see the failure and intervene.
-
-Each failed summarize attempt is logged with the attempt number and the error,
-and the final failure is logged as an error, so the operator can diagnose why a
-round aborted. Every attempt is also written into the same session's interaction
-record: the request input and the raw model response — including the model's
-thoughts, which the capture buffer excludes — are recorded as contents, and each
-attempt's failure reason (generation error or empty response) plus the final
-failure are recorded as decision events. When a response is empty, the record
-therefore shows exactly what the summarize model produced, so the summarization
-prompt can be optimized from real failures.
+The handoff model follows SummarizeModel, falling back to the fast model
+and then the default model (see TheoryOfSummarizeModel). The handoff prompt
+instructs the model to produce a concise, plain-text summary without block
+wrapping. Handoff generation is retried up to maxHandoffRetries times on
+failure or empty response; a persistent failure aborts the run to ensure
+the failure is visible.
 `
 
-// RetrySummary holds the outcome of summarizing truncated output for retry.
-// The retry process has two tasks: producing a summary of the truncated output
-// (recorded as the truncated round's summary in round statistics) and producing
-// the compressed content fed to the retry round as user input, framed as a
-// continue block. See TheoryOfIncompleteOutputSummarization.
-type RetrySummary struct {
-	// Summary is the summary of the truncated output, used as the
-	// truncated round's summary in round statistics.
+// Handoff holds the outcome of summarizing interrupted or truncated output
+// for a self-contained handoff to the next round. See TheoryOfHandoff.
+type Handoff struct {
+	// Summary is the summary of the truncated output, recorded in round statistics.
 	Summary string
-	// RetryPrompt is the compressed version of the truncated output,
-	// fed to the retry round as user input.
-	RetryPrompt string
+	// Prompt is the self-contained summary fed to the retry round as user input.
+	Prompt string
 }
 
-// SummarizeRecorder is the minimal recorder interface used by
-// SummarizeIncomplete. The records package's Recorder implements it.
-type SummarizeRecorder interface {
+// minHandoffLength is the minimum number of characters of incomplete output
+// required to warrant a handoff summary. Output shorter than this is retried
+// directly without handoff. See TheoryOfHandoff.
+const minHandoffLength = 100
+
+// HandoffRecorder is the minimal recorder interface used by CreateHandoff.
+// The records package's Recorder implements it.
+type HandoffRecorder interface {
 	Enabled() bool
 	Content(content *generators.Content)
 	Event(typ string, detail string)
 }
 
-const RetrySummarizationSystemPrompt = `You are a summarization assistant. The previous model output was truncated before completion. Produce a concise summary of the truncated output: what the model was doing, what it had produced, and where it was interrupted.
+const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Your task is to produce a concise, self-contained handoff summary that guides the next generation round to take over and complete the task efficiently.
 
-Truncation most often happens when thinking is too long, and the truncated thinking has already produced valuable results. The summary must carry these results over — the conclusions, not the reasoning that led to them — so the next round adopts them instead of re-deriving them and needs less thinking.
+CRITICAL CONSTRAINTS:
+- Do NOT assume the next generation round can see the previous truncated output or its reasoning. The previous raw output is DISCARDED and will NOT appear in conversation history. Your handoff notes are the ONLY information passed forward.
+- Everything necessary to continue must be SELF-CONTAINED in your summary.
+- Guide the next round to ACT DIRECTLY and avoid overthinking. State established facts, decisions, and next steps clearly so the model does not repeat lengthy preliminary analysis or re-derive conclusions.
 
-Prioritize the following valuable content:
-- Important discoveries and insights the model reached
-- Important decisions the model made
-- Important facts the model established about the codebase, the task, or the environment
-- The state of the work: what was completed and what remains
-- The next steps the model was about to take
+Prioritize:
+- Important discoveries and insights established about the codebase or problem
+- Key decisions made
+- State of work: what was completed and what remains
+- Actionable next steps: concrete, direct instructions for immediate execution
 
-Output ONLY the summary text as your final text, with no other text before or after it.`
+Output ONLY the concise handoff summary as plain text, with no preamble or extra commentary.`
 
-// maxSummarizeRetries bounds the number of attempts to summarize
-// incomplete output when the summarize generation fails or produces an
-// empty response. When all attempts fail, the summarization returns an
-// error instead of falling back to the incomplete text. See
-// TheoryOfIncompleteOutputSummarization.
-const maxSummarizeRetries = 3
+// maxHandoffRetries bounds the number of attempts to generate a handoff summary
+// when generation fails or produces an empty response. See TheoryOfHandoff.
+const maxHandoffRetries = 3
 
-// SummarizeIncomplete summarizes truncated or failed generation output
-// before retry. Each attempt's request input, raw model response
-// (including thoughts), and failure reason are written into the same
-// session's interaction record, so an empty response is diagnosable
-// from the transcript alone. The model's raw output is used directly
-// as the retry prompt, without block wrapping or parsing. See
-// TheoryOfIncompleteOutputSummarization.
-func SummarizeIncomplete(
+// CreateHandoff summarizes truncated or failed generation output into a
+// self-contained handoff for retry. When incompleteText is shorter than
+// minHandoffLength, handoff is skipped and (nil, nil) is returned for a
+// direct retry. See TheoryOfHandoff.
+func CreateHandoff(
 	ctx context.Context,
 	logger logs.Logger,
-	recorder SummarizeRecorder,
+	recorder HandoffRecorder,
 	generator generators.Generator,
 	incompleteText string,
-) (*RetrySummary, error) {
-	if incompleteText == "" {
+) (*Handoff, error) {
+	if len(strings.TrimSpace(incompleteText)) < minHandoffLength {
 		return nil, nil
 	}
 
-	// recordContent and recordEvent write the summarize attempt's details
-	// into the same session's interaction record. The recorder is the one
-	// bound to the running session, so the entries land in the round that
-	// triggered the summarization.
+	// recordContent and recordEvent write the handoff attempt's details
+	// into the same session's interaction record.
 	recordContent := func(content *generators.Content) {
 		if recorder != nil && recorder.Enabled() {
 			recorder.Content(content)
@@ -148,88 +108,75 @@ func SummarizeIncomplete(
 	}
 
 	var lastErr error
-	for attempt := range maxSummarizeRetries {
-		// Record the summarize request. The input is recorded per attempt so
-		// the interaction transcript shows each retry of the summarization.
+	for attempt := range maxHandoffRetries {
 		recordContent(&generators.Content{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
-				generators.Text(fmt.Sprintf("Summarize request (attempt %d):\n\n%s", attempt+1, incompleteText)),
+				generators.Text(fmt.Sprintf("Handoff request (attempt %d):\n\n%s", attempt+1, incompleteText)),
 			},
 		})
 
-		outputText, thoughts, err := runSummarizeAttempt(ctx, generator, incompleteText)
+		outputText, thoughts, err := runHandoffAttempt(ctx, generator, incompleteText)
 		if err != nil {
 			lastErr = err
-			logger.WarnContext(ctx, "summarize incomplete output: generation failed",
+			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
 				"attempt", attempt+1,
-				"max_attempts", maxSummarizeRetries,
+				"max_attempts", maxHandoffRetries,
 				"err", err,
 			)
-			// Record the failure so the transcript shows why the attempt failed.
 			recordContent(&generators.Content{
 				Role: generators.RoleLog,
 				Parts: []generators.Part{
 					generators.Error{Error: err},
 				},
 			})
-			recordEvent("summarize attempt %d/%d failed: generation error: %v",
-				attempt+1, maxSummarizeRetries, err)
+			recordEvent("handoff attempt %d/%d failed: generation error: %v",
+				attempt+1, maxHandoffRetries, err)
 			continue
 		}
 
-		// Record the summarize response. The raw output is recorded before
-		// trimming, so even an empty response is visible in the transcript.
-		// The model's thoughts are appended because the capture buffer
-		// excludes them; when the response is empty they are often the only
-		// signal of what the model actually produced.
 		recordContent(&generators.Content{
 			Role: generators.RoleModel,
 			Parts: []generators.Part{
-				generators.Text(summarizeResponseDetail(attempt+1, outputText, thoughts)),
+				generators.Text(handoffResponseDetail(attempt+1, outputText, thoughts)),
 			},
 		})
 
-		// The model's raw output is used directly as the retry prompt,
-		// without block wrapping or parsing: the model cannot reliably
-		// produce structured blocks on demand. An empty response is a
-		// failed attempt and is retried.
 		text := strings.TrimSpace(outputText)
 		if text != "" {
-			return &RetrySummary{
-				Summary:     text,
-				RetryPrompt: text,
+			return &Handoff{
+				Summary: text,
+				Prompt:  text,
 			}, nil
 		}
-		lastErr = fmt.Errorf("summarize response is empty")
-		logger.WarnContext(ctx, "summarize incomplete output: response is empty",
+		lastErr = fmt.Errorf("handoff response is empty")
+		logger.WarnContext(ctx, "handoff incomplete output: response is empty",
 			"attempt", attempt+1,
-			"max_attempts", maxSummarizeRetries,
+			"max_attempts", maxHandoffRetries,
 		)
-		recordEvent("summarize attempt %d/%d failed: response is empty",
-			attempt+1, maxSummarizeRetries)
+		recordEvent("handoff attempt %d/%d failed: response is empty",
+			attempt+1, maxHandoffRetries)
 	}
 	if lastErr != nil {
-		err := fmt.Errorf("summarize incomplete output failed after %d attempts: %w", maxSummarizeRetries, lastErr)
-		logger.ErrorContext(ctx, "summarize incomplete output failed",
-			"max_attempts", maxSummarizeRetries,
+		err := fmt.Errorf("handoff incomplete output failed after %d attempts: %w", maxHandoffRetries, lastErr)
+		logger.ErrorContext(ctx, "handoff incomplete output failed",
+			"max_attempts", maxHandoffRetries,
 			"err", err,
 		)
-		recordEvent("summarize incomplete output failed after %d attempts: %v", maxSummarizeRetries, lastErr)
+		recordEvent("handoff incomplete output failed after %d attempts: %v", maxHandoffRetries, lastErr)
 		return nil, err
 	}
-	return nil, fmt.Errorf("summarize incomplete output failed after %d attempts", maxSummarizeRetries)
+	return nil, fmt.Errorf("handoff incomplete output failed after %d attempts", maxHandoffRetries)
 }
 
-// runSummarizeAttempt executes one summarize generation and returns the
-// captured output text together with the model's thoughts.
-func runSummarizeAttempt(
+// runHandoffAttempt executes one handoff generation attempt.
+func runHandoffAttempt(
 	ctx context.Context,
 	generator generators.Generator,
 	incompleteText string,
 ) (string, []string, error) {
 	var state generators.State
-	state = generators.NewPrompts(RetrySummarizationSystemPrompt, []*generators.Content{
+	state = generators.NewPrompts(HandoffSystemPrompt, []*generators.Content{
 		{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
@@ -272,13 +219,10 @@ func extractModelThoughts(state generators.State) []string {
 	return thoughts
 }
 
-// summarizeResponseDetail renders the recorded detail of one summarize
-// attempt: the raw output text followed by the model's thoughts under a
-// [thought] marker. The thoughts are appended only when present, so a
-// successful plain-text response records exactly as before.
-func summarizeResponseDetail(attempt int, outputText string, thoughts []string) string {
+// handoffResponseDetail renders the recorded detail of one handoff attempt.
+func handoffResponseDetail(attempt int, outputText string, thoughts []string) string {
 	var detail strings.Builder
-	fmt.Fprintf(&detail, "Summarize response (attempt %d):\n\n%s", attempt, outputText)
+	fmt.Fprintf(&detail, "Handoff response (attempt %d):\n\n%s", attempt, outputText)
 	for _, thought := range thoughts {
 		detail.WriteString("\n[thought]\n")
 		detail.WriteString(thought)
@@ -294,12 +238,10 @@ func FormatSummaryBlock(summary string) string {
 	return "<<" + delimiter + " <summary>\n" + summary + "\n" + delimiter
 }
 
-// FormatRetryPrompt formats the retry user prompt: the prefix (a system
-// note explaining why the retry is happening) followed by the retry
-// prompt — the summarizer's output, used directly without block
-// wrapping. See TheoryOfIncompleteOutputSummarization.
-func FormatRetryPrompt(prefix, retryPrompt string) string {
-	return prefix + retryPrompt
+// FormatHandoffPrompt formats the retry user prompt with the handoff content.
+// See TheoryOfHandoff.
+func FormatHandoffPrompt(prefix, handoffPrompt string) string {
+	return prefix + handoffPrompt
 }
 
 // freshDelimiter returns a fresh pair of uncommon Chinese characters for

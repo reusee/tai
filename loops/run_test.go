@@ -535,8 +535,8 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary of incomplete", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary of incomplete", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -549,11 +549,6 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 }
 
 func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
-	// When the retry budget is exhausted and the final attempt still
-	// produced no summary block, the loop must synthesize a summary from
-	// the round's output and append it to the state as a summary block,
-	// so every round has a completion signal for the round statistics and
-	// the TUI's Round tab. See TheoryOfIncompleteOutputSummarization.
 	withRun(t, func(run Run) {
 		callCount := 0
 		var successSummaries [][]string
@@ -573,8 +568,8 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 				successSummaries = append(successSummaries, summaries)
 				return nil
 			},
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "synthesized summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "synthesized summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -629,8 +624,8 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary of truncated output", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary of truncated output", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -657,8 +652,8 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -685,8 +680,8 @@ func TestRunRetryMaxRetries(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               2,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -957,8 +952,8 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 			PhaseBuilder: phaseBuilder,
 			RetryOnError: true,
 			MaxRetries:   3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary of partial output", RetryPrompt: "retry prompt content"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary of partial output", Prompt: "retry prompt content"}, nil
 			},
 		})
 		if err != nil {
@@ -1094,8 +1089,8 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				PhaseBuilder:             phaseBuilder,
 				RetryOnMissingCompletion: true,
 				MaxRetries:               1,
-				SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-					return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 				},
 			})
 			if err != nil {
@@ -1139,8 +1134,8 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				PhaseBuilder: phaseBuilder,
 				RetryOnError: true,
 				MaxRetries:   1,
-				SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-					return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 				},
 			})
 			if err != nil {
@@ -1188,8 +1183,8 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				PhaseBuilder:             phaseBuilder,
 				RetryOnMissingCompletion: true,
 				MaxRetries:               1,
-				SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-					return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 				},
 			})
 			if err != nil {
@@ -1233,8 +1228,8 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				PhaseBuilder: phaseBuilder,
 				RetryOnError: true,
 				MaxRetries:   1,
-				SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-					return &RetrySummary{Summary: "summary", RetryPrompt: "retry prompt"}, nil
+				Handoff: func(text string) (*Handoff, error) {
+					return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
 				},
 			})
 			if err != nil {
@@ -1288,8 +1283,8 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
 			OnRoundTruncated:         onRoundTruncated,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "truncated summary", RetryPrompt: "retry prompt"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "truncated summary", Prompt: "retry prompt"}, nil
 			},
 		})
 		if err != nil {
@@ -1325,8 +1320,8 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			SummarizeIncomplete: func(text string) (*RetrySummary, error) {
-				return &RetrySummary{Summary: "summary", RetryPrompt: "compressed content"}, nil
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "compressed content"}, nil
 			},
 		})
 		if err != nil {
@@ -1336,8 +1331,6 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 			t.Fatalf("expected 2 calls, got %d", callCount)
 		}
 
-		// The retry prompt is the summarizer's output, included directly
-		// as user content without block wrapping.
 		foundContent := false
 		for c := range result.FinalState.Contents() {
 			if c.Role == generators.RoleUser {
@@ -1356,8 +1349,8 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 	})
 }
 
-func TestFormatRetryPrompt(t *testing.T) {
-	msg := formatRetryPrompt("", "retry content", 1, 3)
+func TestFormatHandoffPrompt(t *testing.T) {
+	msg := formatHandoffPrompt("", "retry content", 1, 3)
 	if !strings.Contains(msg, "retry attempt 1 of 3") {
 		t.Fatalf("expected the retry attempt number, got: %s", msg)
 	}

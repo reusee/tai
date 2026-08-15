@@ -93,25 +93,22 @@ func TestPrintRoundStats(t *testing.T) {
 	})
 }
 
-func TestSummarizeRetryState(t *testing.T) {
+func TestHandoffRetryState(t *testing.T) {
 	base := generators.NewPrompts("", []*generators.Content{
 		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("question")}},
 	})
 	partial, err := base.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("partial output")},
+		Parts: []generators.Part{generators.Text(strings.Repeat("partial output words ", 10))},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	phaseErr := errors.New("boom")
 
-	t.Run("Summarized", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
-			if text != "partial output" {
-				t.Fatalf("expected partial output, got %q", text)
-			}
-			return &states.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
+	t.Run("HandoffSuccess", func(t *testing.T) {
+		state, count, summary, err := handoffRetryState(partial, phaseErr, 1, func(text string) (*states.Handoff, error) {
+			return &states.Handoff{Summary: "condensed", Prompt: "condensed"}, nil
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -144,15 +141,15 @@ func TestSummarizeRetryState(t *testing.T) {
 		}
 	})
 
-	t.Run("SummarizeError", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
-			return nil, errors.New("summarize failed")
+	t.Run("HandoffError", func(t *testing.T) {
+		state, count, summary, err := handoffRetryState(partial, phaseErr, 1, func(text string) (*states.Handoff, error) {
+			return nil, errors.New("handoff failed")
 		})
 		if err == nil {
-			t.Fatal("expected error when summarize fails")
+			t.Fatal("expected error when handoff fails")
 		}
-		if !strings.Contains(err.Error(), "summarize failed") {
-			t.Fatalf("expected summarize error, got %v", err)
+		if !strings.Contains(err.Error(), "handoff failed") {
+			t.Fatalf("expected handoff error, got %v", err)
 		}
 		if summary != "[Error: boom]" {
 			t.Fatalf("expected summary '[Error: boom]', got %q", summary)
@@ -183,8 +180,8 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("NoPartial", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(base, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
-			t.Fatal("summarize should not be called")
+		state, count, summary, err := handoffRetryState(base, phaseErr, 1, func(text string) (*states.Handoff, error) {
+			t.Fatal("handoff should not be called")
 			return nil, nil
 		})
 		if err != nil {
@@ -219,38 +216,34 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 }
 
-func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
-	// The retry summarization prompt must instruct the summarizer to
-	// extract the valuable conclusions of the truncated thinking — important
-	// discoveries, decisions, and facts — rather than reproducing the
-	// reasoning that led to them, so the retry round adopts the conclusions
-	// instead of re-deriving them and needs less thinking. See
-	// states.TheoryOfIncompleteOutputSummarization.
+func TestHandoffSystemPromptSelfContainedAndActionOriented(t *testing.T) {
+	// The handoff prompt must emphasize self-contained extraction,
+	// direct action, avoiding overthinking, and discarding previous output.
+	// See states.TheoryOfHandoff.
 	for _, want := range []string{
+		"SELF-CONTAINED",
+		"DISCARDED",
+		"ACT DIRECTLY",
+		"overthinking",
 		"discoveries",
 		"decisions",
-		"facts",
-		"conclusions",
-		"re-deriving",
+		"next steps",
 	} {
-		if !strings.Contains(states.RetrySummarizationSystemPrompt, want) {
-			t.Fatalf("states.RetrySummarizationSystemPrompt must mention %q", want)
+		if !strings.Contains(states.HandoffSystemPrompt, want) {
+			t.Fatalf("states.HandoffSystemPrompt must mention %q", want)
 		}
 	}
 }
 
-func TestRetrySummarizationSystemPromptRequiresPlainText(t *testing.T) {
-	// The retry summarization prompt must require a concise plain-text
-	// summary and nothing else: the model's raw output is used directly
-	// as the retry prompt without block wrapping or parsing, so the
-	// prompt must not ask for structured blocks. See
-	// states.TheoryOfIncompleteOutputSummarization.
+func TestHandoffSystemPromptRequiresPlainText(t *testing.T) {
+	// The handoff prompt must require concise plain text without preamble.
+	// See states.TheoryOfHandoff.
 	for _, want := range []string{
-		"concise summary",
-		"Output ONLY the summary text",
+		"plain text",
+		"Output ONLY the concise handoff summary",
 	} {
-		if !strings.Contains(states.RetrySummarizationSystemPrompt, want) {
-			t.Fatalf("states.RetrySummarizationSystemPrompt must contain %q", want)
+		if !strings.Contains(states.HandoffSystemPrompt, want) {
+			t.Fatalf("states.HandoffSystemPrompt must contain %q", want)
 		}
 	}
 }
@@ -542,57 +535,55 @@ func (g *summarizeRetryMockGenerator) Generate(ctx context.Context, state genera
 	})
 }
 
-func TestSummarizeIncompleteOutputErrorsAfterEmptyResponses(t *testing.T) {
+func TestCreateHandoffErrorsAfterEmptyResponses(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{"", "", ""},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
 	if err == nil {
-		t.Fatal("expected error after all summarize attempts fail")
+		t.Fatal("expected error after all handoff attempts fail")
 	}
-	if retrySummary != nil {
-		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	if handoff != nil {
+		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	if gen.calls != maxSummarizeRetries {
-		t.Fatalf("expected %d summarize calls, got %d", maxSummarizeRetries, gen.calls)
+		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
 	}
-	if !strings.Contains(err.Error(), "summarize incomplete output failed") {
+	if !strings.Contains(err.Error(), "handoff incomplete output failed") {
 		t.Fatalf("expected failure message, got: %v", err)
 	}
 }
 
-func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
-	// A failed summarize generation is a failed summarize attempt: it
-	// must be retried like an empty response, so a transient API error
-	// does not leave the round without a summary. See
-	// states.TheoryOfIncompleteOutputSummarization.
+func TestCreateHandoffRetriesOnGenerationFailure(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		errs: []error{
-			errors.New("summarize generation failed"),
+			errors.New("handoff generation failed"),
 		},
 		responses: []string{
 			"", // unused (first call errors)
-			"retry prompt text",
+			"handoff prompt text",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gen.calls != 2 {
-		t.Fatalf("expected 2 summarize calls, got %d", gen.calls)
+		t.Fatalf("expected 2 handoff calls, got %d", gen.calls)
 	}
-	if retrySummary.Summary != "retry prompt text" {
-		t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
+	if handoff.Summary != "handoff prompt text" {
+		t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
 	}
-	if retrySummary.RetryPrompt != "retry prompt text" {
-		t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
+	if handoff.Prompt != "handoff prompt text" {
+		t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
 	}
 }
 
-func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
+func TestCreateHandoffErrorsAfterGenerationFailures(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		errs: []error{
 			errors.New("failure 1"),
@@ -602,17 +593,18 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 		responses: []string{"", "", ""},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
 	if err == nil {
-		t.Fatal("expected error after all summarize generations fail")
+		t.Fatal("expected error after all handoff generations fail")
 	}
-	if retrySummary != nil {
-		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	if handoff != nil {
+		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	if gen.calls != maxSummarizeRetries {
-		t.Fatalf("expected %d summarize calls, got %d", maxSummarizeRetries, gen.calls)
+		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
 	}
-	if !strings.Contains(err.Error(), "summarize incomplete output failed") {
+	if !strings.Contains(err.Error(), "handoff incomplete output failed") {
 		t.Fatalf("expected failure message, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "failure 3") {
@@ -620,11 +612,7 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 	}
 }
 
-func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
-	// Each failed summarize attempt must be logged with the attempt
-	// number and the error, and the final failure must be logged as an
-	// error, so the operator can diagnose why a round lacks a
-	// synthesized summary. See states.TheoryOfIncompleteOutputSummarization.
+func TestCreateHandoffLogsErrors(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		errs: []error{
 			errors.New("failure 1"),
@@ -635,18 +623,18 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
 	if err == nil {
-		t.Fatal("expected error after all summarize generations fail")
+		t.Fatal("expected error after all handoff generations fail")
 	}
-	if retrySummary != nil {
-		t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+	if handoff != nil {
+		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	output := buf.String()
-	// Each failed attempt is logged as a warning with the attempt number.
 	for _, want := range []string{
 		"level=WARN",
-		"summarize incomplete output: generation failed",
+		"handoff incomplete output: generation failed",
 		"attempt=1",
 		"attempt=2",
 		"attempt=3",
@@ -658,26 +646,18 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 			t.Fatalf("expected %q in log output, got: %s", want, output)
 		}
 	}
-	// The final failure is logged as an error.
 	if !strings.Contains(output, "level=ERROR") {
 		t.Fatalf("expected an error-level log for the final failure, got: %s", output)
 	}
-	if !strings.Contains(output, "summarize incomplete output failed") {
+	if !strings.Contains(output, "handoff incomplete output failed") {
 		t.Fatalf("expected the final failure message in the log, got: %s", output)
 	}
 }
 
-func TestSummarizeIncompleteOutputProvider(t *testing.T) {
-	// The SummarizeIncompleteOutput provider binds the summarize
-	// generator, logger, and interaction recorder from the dscope scope,
-	// so the caller passes only the runtime values (context and the
-	// incomplete text). The recorder is overridden to nil so the test
-	// does not open the interaction database, and the summarize
-	// generator is overridden to the mock. See
-	// states.TheoryOfIncompleteOutputSummarization.
+func TestCreateHandoffProvider(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
-			"retry prompt text",
+			"handoff prompt text",
 		},
 	}
 	dscope.New(
@@ -691,17 +671,18 @@ func TestSummarizeIncompleteOutputProvider(t *testing.T) {
 		},
 		func() *records.Recorder { return nil },
 	).Call(func(
-		summarizeIncompleteOutput SummarizeIncompleteOutput,
+		createHandoff CreateHandoff,
 	) {
-		retrySummary, err := summarizeIncompleteOutput(context.Background(), "incomplete text")
+		longInput := strings.Repeat("long incomplete text ", 10)
+		handoff, err := createHandoff(context.Background(), longInput)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if retrySummary.Summary != "retry prompt text" {
-			t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
+		if handoff.Summary != "handoff prompt text" {
+			t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
 		}
-		if retrySummary.RetryPrompt != "retry prompt text" {
-			t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
+		if handoff.Prompt != "handoff prompt text" {
+			t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
 		}
 	})
 }
@@ -715,21 +696,23 @@ type fakeRecorderForSummarize struct {
 	events   []string
 }
 
-func TestSummarizeIncompleteOutputRecords(t *testing.T) {
+func TestCreateHandoffRecords(t *testing.T) {
+	longInput := strings.Repeat("long incomplete text ", 10)
+
 	t.Run("Enabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"retry prompt text",
+				"handoff prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if retrySummary == nil {
-			t.Fatal("expected retry summary")
+		if handoff == nil {
+			t.Fatal("expected handoff summary")
 		}
 		if len(rec.contents) != 2 {
 			t.Fatalf("expected 2 recorded contents, got %d", len(rec.contents))
@@ -737,16 +720,15 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		if rec.contents[0].Role != generators.RoleUser {
 			t.Fatalf("expected first content role user, got %s", rec.contents[0].Role)
 		}
-		if text, ok := rec.contents[0].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "incomplete text") {
+		if text, ok := rec.contents[0].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "long incomplete text") {
 			t.Fatalf("expected first content to include the incomplete text, got %v", rec.contents[0].Parts[0])
 		}
 		if rec.contents[1].Role != generators.RoleModel {
 			t.Fatalf("expected second content role model, got %s", rec.contents[1].Role)
 		}
-		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "retry prompt text") {
-			t.Fatalf("expected second content to include the retry prompt text, got %v", rec.contents[1].Parts[0])
+		if text, ok := rec.contents[1].Parts[0].(generators.Text); !ok || !strings.Contains(string(text), "handoff prompt text") {
+			t.Fatalf("expected second content to include the handoff prompt text, got %v", rec.contents[1].Parts[0])
 		}
-		// A successful attempt records no decision event.
 		if len(rec.events) != 0 {
 			t.Fatalf("expected no decision events on success, got %v", rec.events)
 		}
@@ -755,12 +737,12 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"retry prompt text",
+				"handoff prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: false}
-		_, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
+		_, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -779,20 +761,18 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 			},
 			responses: []string{
 				"", // unused (first call errors)
-				"retry prompt text",
+				"handoff prompt text",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if retrySummary == nil {
-			t.Fatal("expected retry summary")
+		if handoff == nil {
+			t.Fatal("expected handoff summary")
 		}
-		// Attempt 1: user input, then a failure log. Attempt 2: user
-		// input, then the successful model response. Total: 4 contents.
 		if len(rec.contents) != 4 {
 			t.Fatalf("expected 4 recorded contents, got %d", len(rec.contents))
 		}
@@ -808,8 +788,6 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		if rec.contents[3].Role != generators.RoleModel {
 			t.Fatalf("expected content 3 role model, got %s", rec.contents[3].Role)
 		}
-		// The failed generation attempt records its reason as a decision
-		// event with the attempt number.
 		if len(rec.events) != 1 {
 			t.Fatalf("expected 1 decision event, got %d: %v", len(rec.events), rec.events)
 		}
@@ -819,64 +797,56 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 	})
 }
 
-func TestSummarizeIncompleteOutputRecordsEmptyResponses(t *testing.T) {
-	// When the summarize response is empty, the raw response must be
-	// recorded into the same session's interaction record together with
-	// the failure reason as a decision event, so the model's actual
-	// output is visible for optimizing the summarization prompt. See
-	// states.TheoryOfIncompleteOutputSummarization.
+func TestCreateHandoffRecordsEmptyResponses(t *testing.T) {
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	longInput := strings.Repeat("long incomplete text ", 10)
 
 	t.Run("AllAttemptsFailRecordsFinalFailure", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{"", "", ""},
 		}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
 		if err == nil {
-			t.Fatal("expected error after all summarize attempts fail")
+			t.Fatal("expected error after all handoff attempts fail")
 		}
-		if retrySummary != nil {
-			t.Fatalf("expected nil summary on failure, got %+v", retrySummary)
+		if handoff != nil {
+			t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 		}
 		if len(rec.events) != maxSummarizeRetries+1 {
-			t.Fatalf("expected %d decision events (one per attempt plus the final failure), got %d: %v",
+			t.Fatalf("expected %d decision events, got %d: %v",
 				maxSummarizeRetries+1, len(rec.events), rec.events)
 		}
 		last := rec.events[len(rec.events)-1]
-		if !strings.Contains(last, "summarize incomplete output failed after") {
-			t.Fatalf("expected the final failure event, got %s", last)
+		if !strings.Contains(last, "handoff incomplete output failed after") {
+			t.Fatalf("expected final failure event, got %s", last)
 		}
 	})
 }
 
-func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
-	// The Output capture buffer excludes thoughts, so the recorded
-	// response must append them separately: when a reasoning model puts
-	// its summary attempt into thoughts while the visible text is empty,
-	// the thoughts are the only signal of what the model actually
-	// produced. See states.TheoryOfIncompleteOutputSummarization.
+func TestCreateHandoffRecordsThoughts(t *testing.T) {
+	longInput := strings.Repeat("long incomplete text ", 10)
 	gen := &summarizeRetryMockGenerator{
-		thoughts: []string{"the model reasoned about the summary here"},
+		thoughts: []string{"the model reasoned about the handoff here"},
 		responses: []string{
 			"",
-			"retry prompt text",
+			"handoff prompt text",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	rec := &fakeRecorderForSummarize{enabled: true}
-	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
+	handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retrySummary == nil {
-		t.Fatal("expected retry summary")
+	if handoff == nil {
+		t.Fatal("expected handoff")
 	}
-	if retrySummary.Summary != "retry prompt text" {
-		t.Fatalf("expected summary 'retry prompt text', got %q", retrySummary.Summary)
+	if handoff.Summary != "handoff prompt text" {
+		t.Fatalf("expected summary 'handoff prompt text', got %q", handoff.Summary)
 	}
-	if retrySummary.RetryPrompt != "retry prompt text" {
-		t.Fatalf("expected retry prompt 'retry prompt text', got %q", retrySummary.RetryPrompt)
+	if handoff.Prompt != "handoff prompt text" {
+		t.Fatalf("expected prompt 'handoff prompt text', got %q", handoff.Prompt)
 	}
 	var firstResponse string
 	for _, c := range rec.contents {
@@ -887,8 +857,28 @@ func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(firstResponse, "[thought]\nthe model reasoned about the summary here") {
-		t.Fatalf("expected the model thoughts in the recorded response, got %q", firstResponse)
+	if !strings.Contains(firstResponse, "[thought]\nthe model reasoned about the handoff here") {
+		t.Fatalf("expected model thoughts in recorded response, got %q", firstResponse)
+	}
+}
+
+func TestCreateHandoffSkipsShortOutput(t *testing.T) {
+	// When incomplete output is shorter than minHandoffLength (100 chars),
+	// CreateHandoff returns (nil, nil) without calling the generator.
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{"handoff text"},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	shortInput := "too short"
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, shortInput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("expected nil handoff for short output, got %+v", handoff)
+	}
+	if gen.calls != 0 {
+		t.Fatalf("expected 0 generator calls for short output, got %d", gen.calls)
 	}
 }
 
