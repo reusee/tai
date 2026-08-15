@@ -79,11 +79,14 @@ func TestPingBlockPrompt(t *testing.T) {
 			t.Fatalf("prompt must contain required kind %q", kind)
 		}
 	}
-	if !strings.Contains(prompt, "uncommon Chinese two-character word") {
-		t.Fatal("prompt must mandate the uncommon-Chinese-two-character-word delimiter policy")
+	// The block-format description lives in the system prompt
+	// (blocks.BlockFormatSystemPrompt); the user prompt must not repeat
+	// it. See TheoryOfPingCommand.
+	if strings.Contains(prompt, "uncommon Chinese two-character word") {
+		t.Fatal("user prompt must not repeat the delimiter policy; it lives in the system prompt")
 	}
-	if !strings.Contains(prompt, "different delimiter") {
-		t.Fatal("prompt must require a distinct delimiter per block")
+	if strings.Contains(prompt, "heredoc-delimited format") {
+		t.Fatal("user prompt must not repeat the block format description; it lives in the system prompt")
 	}
 }
 
@@ -197,6 +200,9 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 	if gotOpts.InitialState == nil {
 		t.Fatal("expected non-nil initial state")
 	}
+	if !strings.Contains(gotOpts.InitialState.SystemPrompt(), "uncommon Chinese two-character word") {
+		t.Fatal("expected the block format prompt in the ping system prompt")
+	}
 	var prompt strings.Builder
 	for c := range gotOpts.InitialState.Contents() {
 		for _, p := range c.Parts {
@@ -269,6 +275,9 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		t.Fatal("expected non-nil initial state")
 	}
 	systemPrompt := gotOpts.InitialState.SystemPrompt()
+	if !strings.Contains(systemPrompt, "uncommon Chinese two-character word") {
+		t.Fatalf("expected the block format prompt in the ping system prompt, got %q", systemPrompt)
+	}
 	if !strings.Contains(systemPrompt, "generic extra prompt") {
 		t.Fatalf("expected the generic extra system prompt in the ping system prompt, got %q", systemPrompt)
 	}

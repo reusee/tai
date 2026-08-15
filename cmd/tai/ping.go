@@ -26,23 +26,25 @@ kind must appear exactly once, and no other block may appear. The random
 kinds — short lowercase letter strings from RandomBlockKinds — are unknown
 before each run, so a correct result demonstrates genuine instruction
 following and format ability rather than pattern memory. The block-format
-instructions live in the user message (pingBlockPrompt); the system prompt
-carries the user-configured extra system prompts (extra_system_prompt and
+instructions live in the system prompt (blocks.BlockFormatSystemPrompt); the
+user message (pingBlockPrompt) states only the test requirements without
+repeating the format description. The system prompt also carries the
+user-configured extra system prompts (extra_system_prompt and
 family_extra_system_prompt), so ping honors the same configuration as the
-other generation commands. The prompt requires a distinct delimiter per
-block: two blocks sharing a delimiter would be mis-parsed as nested (see
-blocks.TheoryOfNestedBlockParsing), so identical delimiters cannot pass the
-test. Validation reads the blocks collected in loops.Result.RemainingBlocks:
-ping runs without components, so no block kind is consumed. A validation
-failure prints the observed outcome and exits with status 1, making the
-command scriptable; on success the verdict is printed to the command Output
-writer after the streamed output.
+other generation commands. The block format prompt requires a distinct
+delimiter per block: two blocks sharing a delimiter would be mis-parsed as
+nested (see blocks.TheoryOfNestedBlockParsing), so identical delimiters
+cannot pass the test. Validation reads the blocks collected in
+loops.Result.RemainingBlocks: ping runs without components, so no block kind
+is consumed. A validation failure prints the observed outcome and exits with
+status 1, making the command scriptable; on success the verdict is printed
+to the command Output writer after the streamed output.
 
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
 selection explicit. The command performs a single generation round with no
-chat loop and no file context; its system prompt carries only the
-user-configured extra system prompts.
+chat loop and no file context; its system prompt carries the block-format
+prompt and the user-configured extra system prompts.
 `
 
 // RandomBlockKinds returns the two block kinds the ping command asks the
@@ -73,19 +75,16 @@ func (Module) RandomBlockKinds() RandomBlockKinds {
 }
 
 func pingBlockPrompt(kindA, kindB string) string {
-	return fmt.Sprintf(`This is a block-generation test. Emit exactly two blocks in the heredoc-delimited format defined below.
+	return fmt.Sprintf(`This is a block-generation test. Emit exactly two blocks.
 
 The two required block kinds (each used exactly once, in any order):
 1. %s
 2. %s
 
 Rules:
-- Each of the two blocks MUST use a different delimiter; never reuse a delimiter.
 - The <kind> must be one of the two required kinds listed above.
 - The body may be any short text.
-- Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.
-
-%s`, kindA, kindB, blocks.BlockFormatSystemPrompt)
+- Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.`, kindA, kindB)
 }
 
 // validatePingBlocks checks that the model emitted exactly one block of each
@@ -145,12 +144,15 @@ var PingCommand = Command{
 		// See TheoryOfPingCommand.
 		kindA, kindB := randomBlockKinds()
 
-		// The system prompt carries the user-configured extra system
-		// prompts (extra_system_prompt and family_extra_system_prompt),
-		// so ping honors the same configuration as the other generation
-		// commands. The block-format instructions live in the user
-		// message (pingBlockPrompt). See TheoryOfPingCommand.
-		systemPrompt := ""
+		// The block-format instructions live in the system prompt
+		// (blocks.BlockFormatSystemPrompt), so the user message
+		// (pingBlockPrompt) states only the test requirements without
+		// repeating the format description. The system prompt also
+		// carries the user-configured extra system prompts
+		// (extra_system_prompt and family_extra_system_prompt), so ping
+		// honors the same configuration as the other generation
+		// commands. See TheoryOfPingCommand.
+		systemPrompt := blocks.BlockFormatSystemPrompt + "\n"
 		for _, e := range extra {
 			if e != "" {
 				systemPrompt += e + "\n"
