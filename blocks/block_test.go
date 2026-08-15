@@ -21,7 +21,7 @@ func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
 
 	// Non-Han delimiter followed by a valid Han-delimited block:
 	// the parser should skip the non-Han block and find the valid one.
-	content2 := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n<<徕珑龘 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n徕珑龘\n")
+	content2 := []byte("<<DELIM1 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nDELIM1\n<<龘靐 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -29,42 +29,42 @@ func TestParseFirstBlockRejectsNonHanDelimiter(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block with Han delimiter after skipping non-Han delimiter")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 }
 
-func TestParseFirstBlockRejectsTwoCharDelimiter(t *testing.T) {
-	// A two-character Han delimiter does not satisfy the three-character
+func TestParseFirstBlockRejectsThreeCharDelimiter(t *testing.T) {
+	// A three-character Han delimiter does not satisfy the two-character
 	// delimiter policy and must not be recognized as a block delimiter.
 	// The parser skips it and continues searching for a valid block.
-	content := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑\n")
+	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
-		t.Fatal("expected no block for two-character Han delimiter")
+		t.Fatal("expected no block for three-character Han delimiter")
 	}
 
-	// Two-character delimiter followed by a valid three-character block:
-	// the parser should skip the two-character marker and find the valid one.
-	content2 := []byte("<<徕珑 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑\n<<徕珑龘 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n徕珑龘\n")
+	// Three-character delimiter followed by a valid two-character block:
+	// the parser should skip the three-character marker and find the valid one.
+	content2 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n<<龘靐 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected block with three-character delimiter after skipping two-character delimiter")
+		t.Fatal("expected block with two-character delimiter after skipping three-character delimiter")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 }
 
 func TestBoundaryBlockLineStart(t *testing.T) {
 	// << not at beginning of line should not be recognized as a block start
-	content1 := []byte("some text <<徕珑龘 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n徕珑龘\n")
+	content1 := []byte("some text <<龘靐 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n龘靐\n")
 	_, _, _, ok, err := ParseFirstBlock(content1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -76,7 +76,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 	// closing delimiter embedded in a line (not alone on its own line):
 	// opening marker is valid but no matching closing line exists, so
 	// this is an unclosed block error.
-	content2 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody text徕珑龘\n")
+	content2 := []byte("<<龘靐 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody text龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with embedded delimiter")
@@ -86,7 +86,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 	}
 
 	// Properly placed markers should succeed
-	content3 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n徕珑龘\n")
+	content3 := []byte("<<龘靐 <change op=\"MODIFY\" target=\"x\" file-path=\"/x.go\">\nbody\n龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -98,7 +98,7 @@ func TestBoundaryBlockLineStart(t *testing.T) {
 
 func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	// Content with a malformed block (marker not at line start) followed by a valid block
-	content := []byte("some text <<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\ninvalid body\n徕珑龘\n\n<<龘靐齉 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\">\nfunc Bar() {}\n龘靐齉\n")
+	content := []byte("some text <<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\ninvalid body\n龘靐\n\n<<齉爩 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/b.go\">\nfunc Bar() {}\n齉爩\n")
 	block, start, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,8 +109,8 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
 	}
-	if block.Boundary != "龘靐齉" {
-		t.Fatalf("expected boundary 龘靐齉, got %s", block.Boundary)
+	if block.Boundary != "齉爩" {
+		t.Fatalf("expected boundary 齉爩, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Bar() {}") {
 		t.Fatalf("expected body to contain 'func Bar() {}': %s", block.Body)
@@ -125,7 +125,7 @@ func TestParseFirstBlockSkipMalformed(t *testing.T) {
 
 func TestParseFirstBlockUnclosed(t *testing.T) {
 	// Opening marker at line start with no end marker at all
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with no end marker")
@@ -137,14 +137,14 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑龘" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑龘, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if e.BlockKind != "change" || e.Boundary != "龘靐" {
+		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 
 	// Opening marker found but end marker has a different delimiter.
-	// The non-matching 龘靐齉 line is treated as body content. Since no
-	// matching 徕珑龘 line exists, the block is unclosed.
-	content2 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nbody\n龘靐齉\n")
+	// The non-matching 齉爩 line is treated as body content. Since no
+	// matching 龘靐 line exists, the block is unclosed.
+	content2 := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nbody\n齉爩\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker")
@@ -156,15 +156,15 @@ func TestParseFirstBlockUnclosed(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑龘" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑龘, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if e.BlockKind != "change" || e.Boundary != "龘靐" {
+		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 }
 
 func TestParseFirstBlockUnclosedReturnsPositions(t *testing.T) {
 	// Verify that start and end are set even for unclosed blocks, so
 	// callers can skip past the opening marker and continue scanning.
-	content := []byte("prose\n<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
+	content := []byte("prose\n<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
 	_, start, end, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -193,7 +193,7 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 	// When an unclosed block is detected, the BlockParseError must include
 	// the full content from the opening marker to the end of the available
 	// content, providing context for debugging truncated output.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {\n\treturn\n}\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {\n\treturn\n}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -208,7 +208,7 @@ func TestParseFirstBlockUnclosedIncludesContent(t *testing.T) {
 	if e.Content == "" {
 		t.Fatal("expected non-empty Content in BlockParseError")
 	}
-	if !strings.Contains(e.Content, "<<徕珑龘") {
+	if !strings.Contains(e.Content, "<<龘靐") {
 		t.Fatalf("Content should include the opening marker: %q", e.Content)
 	}
 	if !strings.Contains(e.Content, "func Foo()") {
@@ -228,7 +228,7 @@ func TestBlockParseErrorLineNumber(t *testing.T) {
 	// marker so the model can locate the malformed block in its output,
 	// especially when the content is truncated. See
 	// TheoryOfParseErrorCollection.
-	content := []byte("prose line\n<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
+	content := []byte("prose line\n<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n")
 	_, _, _, _, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -251,7 +251,7 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 	// line, which cannot exist after EOF. The parser must report an
 	// unclosed-block error instead of silently treating the marker as
 	// prose. See TheoryOfBlockFormat.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for truncated opening line at EOF")
@@ -263,12 +263,12 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑龘" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑龘, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if e.BlockKind != "change" || e.Boundary != "龘靐" {
+		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 
 	// A kindless opening marker at EOF is also a truncated block.
-	content2 := []byte("<<徕珑龘")
+	content2 := []byte("<<龘靐")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for truncated kindless opening at EOF")
@@ -290,11 +290,11 @@ func TestParseFirstBlockUnclosedOpeningLineAtEOF(t *testing.T) {
 }
 
 func TestParseFirstBlockMalformedOpeningTag(t *testing.T) {
-	// A line with a valid three-character Han delimiter followed by a
+	// A line with a valid two-character Han delimiter followed by a
 	// malformed XML opening tag (missing '>') is a malformed block, not
 	// prose. It must be reported as a parse error so the model can
 	// correct it. See TheoryOfParseErrorCollection.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\"\nfunc Foo() {}\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\"\nfunc Foo() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for malformed opening tag")
@@ -306,8 +306,8 @@ func TestParseFirstBlockMalformedOpeningTag(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %q", e.Boundary)
+	if e.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %q", e.Boundary)
 	}
 	if e.BlockKind != "change" {
 		t.Fatalf("expected block kind change, got %q", e.BlockKind)
@@ -331,7 +331,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 	// valid closing marker. The unclosed-block error should include a
 	// hint pointing at the malformed line so the model can locate it
 	// without scanning the entire body. See TheoryOfBoundaryUniqueness.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘 extra\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐 extra\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with malformed closing line")
@@ -346,7 +346,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 	if len(e.Hints) != 1 {
 		t.Fatalf("expected 1 hint, got %d: %v", len(e.Hints), e.Hints)
 	}
-	if !strings.Contains(e.Hints[0], "徕珑龘 extra") {
+	if !strings.Contains(e.Hints[0], "龘靐 extra") {
 		t.Fatalf("hint should contain the malformed line: %q", e.Hints[0])
 	}
 	if !strings.Contains(err.Error(), "hint:") {
@@ -355,7 +355,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 
 	// A line where the delimiter appears with leading text is also a
 	// malformed closing marker.
-	content2 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nend 徕珑龘\n")
+	content2 := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\nend 龘靐\n")
 	_, _, _, ok, err = ParseFirstBlock(content2)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with malformed closing line")
@@ -369,7 +369,7 @@ func TestBlockParseErrorCollisionHints(t *testing.T) {
 	}
 
 	// No lines with the delimiter at the start or end: no hints.
-	content3 := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+	content3 := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 	_, _, _, ok, err = ParseFirstBlock(content3)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -430,7 +430,7 @@ func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 	// context when fed back to the model for self-correction.
 	middleMarker := "MIDDLE_CONTENT_MARKER"
 	largeBody := strings.Repeat("x", 5000) + middleMarker + strings.Repeat("y", 5000)
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\n" + largeBody)
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\n" + largeBody)
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block")
@@ -447,7 +447,7 @@ func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 		t.Fatalf("error message should indicate truncation: %s", err.Error())
 	}
 	// The opening marker must be preserved (it identifies the block).
-	if !strings.Contains(err.Error(), "<<徕珑龘") {
+	if !strings.Contains(err.Error(), "<<龘靐") {
 		t.Fatalf("error message should preserve the opening marker: %s", err.Error())
 	}
 	// The tail must be preserved so the model sees where the content ended.
@@ -459,9 +459,9 @@ func TestBlockParseErrorTruncatesLargeContent(t *testing.T) {
 func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	// A body containing a line with a different delimiter
 	// is treated as body content. The block closes at the matching
-	// 徕珑龘 line, and the non-matching 龘靐齉 line is
+	// 龘靐 line, and the non-matching 齉爩 line is
 	// preserved in the body.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n龘靐齉\nbody line 2\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n齉爩\nbody line 2\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -469,10 +469,10 @@ func TestParseFirstBlockNonMatchingEndIsBodyContent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Kind != "change" || block.Boundary != "徕珑龘" {
+	if block.Kind != "change" || block.Boundary != "龘靐" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", block.Kind, block.Boundary)
 	}
-	if !strings.Contains(block.Body, "龘靐齉") {
+	if !strings.Contains(block.Body, "齉爩") {
 		t.Fatalf("body should contain non-matching delimiter line as content: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "body line 1") || !strings.Contains(block.Body, "body line 2") {
@@ -485,21 +485,21 @@ func TestExtractDelimiter(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"徕珑龘", "徕珑龘"},
-		{"徕珑龘 extra", "徕珑龘"},
-		{" 徕珑龘 ", "徕珑龘"},
-		{"徕珑龘\trest", "徕珑龘"},
-		{"徕珑龘<change", "徕珑龘"},
-		{"龘靐齉", "龘靐齉"},
-		{"龘靐齉 <change op=\"MODIFY\"", "龘靐齉"},
-		{"齉爩龖", "齉爩龖"},
+		{"龘靐", "龘靐"},
+		{"龘靐 extra", "龘靐"},
+		{" 龘靐 ", "龘靐"},
+		{"龘靐\trest", "龘靐"},
+		{"龘靐<change", "龘靐"},
+		{"齉爩", "齉爩"},
+		{"齉爩 <change op=\"MODIFY\"", "齉爩"},
+		{"麤黿", "麤黿"},
 		{"", ""},
-		// Two-character Han delimiters are rejected (empty string returned)
-		{"徕珑", ""},
-		{"徕珑 extra", ""},
-		{" 徕珑 ", ""},
-		{"徕珑\trest", ""},
-		{"徕珑<change", ""},
+		// Three-character Han delimiters are rejected (empty string returned)
+		{"徕珑龘", ""},
+		{"徕珑龘 extra", ""},
+		{" 徕珑龘 ", ""},
+		{"徕珑龘\trest", ""},
+		{"徕珑龘<change", ""},
 		// Four-character Han delimiters are rejected
 		{"徕珑龘靐", ""},
 		{" 徕珑龘靐 ", ""},
@@ -526,7 +526,7 @@ func TestParseFirstBlockTrailingContent(t *testing.T) {
 	// Trailing content after the delimiter on the opening line is ignored;
 	// the delimiter is the text up to the first space or <.
 	// The closing line must be the delimiter alone (with optional whitespace).
-	content := []byte("<<徕珑龘 extra <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 extra <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -537,8 +537,8 @@ func TestParseFirstBlockTrailingContent(t *testing.T) {
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %q", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %q", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
@@ -550,7 +550,7 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 	// must be parsed correctly. extractDelimiter trims the input, so
 	// the rest-of-line computation must also use the trimmed string
 	// to avoid slicing into the middle of a multi-byte rune.
-	content := []byte("<< 徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("<< 龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -561,15 +561,15 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %q", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %q", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
 
 	// Multiple leading spaces.
-	content2 := []byte("<<   龘靐齉 <summary>\n- done\n龘靐齉\n")
+	content2 := []byte("<<   齉爩 <summary>\n- done\n齉爩\n")
 	block2, _, _, ok2, err2 := ParseFirstBlock(content2)
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
@@ -580,15 +580,15 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 	if block2.Kind != "summary" {
 		t.Fatalf("expected kind summary, got %s", block2.Kind)
 	}
-	if block2.Boundary != "龘靐齉" {
-		t.Fatalf("expected boundary 龘靐齉, got %q", block2.Boundary)
+	if block2.Boundary != "齉爩" {
+		t.Fatalf("expected boundary 齉爩, got %q", block2.Boundary)
 	}
 	if block2.Body != "- done" {
 		t.Fatalf("expected body '- done', got %q", block2.Body)
 	}
 
 	// Kindless block with leading whitespace.
-	content3 := []byte("<< 齉爩龖\nbody text\n齉爩龖\n")
+	content3 := []byte("<< 麤黿\nbody text\n麤黿\n")
 	block3, _, _, ok3, err3 := ParseFirstBlock(content3)
 	if err3 != nil {
 		t.Fatalf("unexpected error: %v", err3)
@@ -599,8 +599,8 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 	if block3.Kind != "" {
 		t.Fatalf("expected empty kind, got %q", block3.Kind)
 	}
-	if block3.Boundary != "齉爩龖" {
-		t.Fatalf("expected boundary 齉爩龖, got %q", block3.Boundary)
+	if block3.Boundary != "麤黿" {
+		t.Fatalf("expected boundary 麤黿, got %q", block3.Boundary)
 	}
 	if block3.Body != "body text" {
 		t.Fatalf("expected body 'body text', got %q", block3.Body)
@@ -610,7 +610,7 @@ func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
 	// The closing line must be the delimiter alone. Trailing content
 	// causes the line to not match the delimiter, leaving the block unclosed.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘 extra\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐 extra\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with trailing content on closing line")
@@ -623,7 +623,7 @@ func TestParseFirstBlockClosingLineWithTrailingContent(t *testing.T) {
 func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	// End marker at the very end of content without a trailing newline.
 	// The block should be correctly parsed during streaming (non-final).
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐")
 	block, _, end, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -634,13 +634,13 @@ func TestParseFirstBlockEndMarkerNoTrailingNewline(t *testing.T) {
 	if block.Kind != "change" {
 		t.Fatalf("expected kind change, got %s", block.Kind)
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
-	if strings.Contains(block.Body, "徕珑龘") {
+	if strings.Contains(block.Body, "龘靐") {
 		t.Fatalf("body should not contain the end marker: %q", block.Body)
 	}
 	if end != len(content) {
@@ -652,7 +652,7 @@ func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
 	// A block whose opening marker omits the XML opening tag is parsed
 	// with an empty Kind. Such blocks can only be located by iterating
 	// all blocks, not by filtering by kind. See TheoryOfKindlessBlocks.
-	content := []byte("<<徕珑龘\nsummary body\n徕珑龘\n")
+	content := []byte("<<龘靐\nsummary body\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -663,8 +663,8 @@ func TestParseFirstBlockWithoutXMLHeader(t *testing.T) {
 	if block.Kind != "" {
 		t.Fatalf("expected empty kind, got %q", block.Kind)
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %q", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %q", block.Boundary)
 	}
 	if block.Body != "summary body" {
 		t.Fatalf("expected body 'summary body', got %q", block.Body)
@@ -680,7 +680,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	// See TheoryOfBareKinds.
 
 	t.Run("Change", func(t *testing.T) {
-		content := []byte("<<徕珑龘 change\nfunc Foo() {}\n徕珑龘\n")
+		content := []byte("<<龘靐 change\nfunc Foo() {}\n龘靐\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -700,7 +700,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 
 	t.Run("Summary", func(t *testing.T) {
-		content := []byte("<<龘靐齉 summary\n- done\n龘靐齉\n")
+		content := []byte("<<齉爩 summary\n- done\n齉爩\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -717,7 +717,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 
 	t.Run("HyphenatedKind", func(t *testing.T) {
-		content := []byte("<<黿鼍爩 go-test\n-run\nTestFoo\n黿鼍爩\n")
+		content := []byte("<<爨虋 go-test\n-run\nTestFoo\n爨虋\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -737,7 +737,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 		// A marker line with trailing text after the bare kind still
 		// yields that kind; the trailing text is ignored, matching the
 		// lenient handling of trailing content after an XML opening tag.
-		content := []byte("<<徕珑龘 summary be brief\n- done\n徕珑龘\n")
+		content := []byte("<<龘靐 summary be brief\n- done\n龘靐\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -756,7 +756,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	t.Run("NonNameTokenStaysKindless", func(t *testing.T) {
 		// A first token containing a non-XML-name character (Han text,
 		// punctuation) does not become a kind; the block stays kindless.
-		content := []byte("<<徕珑龘 中文\nbody\n徕珑龘\n")
+		content := []byte("<<龘靐 中文\nbody\n龘靐\n")
 		block, _, _, ok, err := ParseFirstBlock(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -772,7 +772,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	t.Run("ParseBlocks", func(t *testing.T) {
 		// Bare-kind blocks compose with XML-kind blocks and are found in
 		// order by ParseBlocks, each with its own kind.
-		content := []byte("<<徕珑龘 summary\nfirst\n徕珑龘\n<<龘靐齉 change\nfunc Bar() {}\n龘靐齉\n")
+		content := []byte("<<龘靐 summary\nfirst\n龘靐\n<<齉爩 change\nfunc Bar() {}\n齉爩\n")
 		blocks, err := ParseBlocks(content)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -791,7 +791,7 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	// Two blocks, the second ending without a trailing newline.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n徕珑龘\n<<龘靐齉 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n龘靐齉")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n<<齉爩 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n齉爩")
 
 	// First block
 	block, _, end, ok, err := ParseFirstBlock(content)
@@ -801,8 +801,8 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	if !ok {
 		t.Fatal("expected first block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected first boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected first boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("first body should contain code: %q", block.Body)
@@ -817,13 +817,13 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	if !ok2 {
 		t.Fatal("expected second block to be found")
 	}
-	if block2.Boundary != "龘靐齉" {
-		t.Fatalf("expected second boundary 龘靐齉, got %s", block2.Boundary)
+	if block2.Boundary != "齉爩" {
+		t.Fatalf("expected second boundary 齉爩, got %s", block2.Boundary)
 	}
 	if !strings.Contains(block2.Body, "func Bar() {}") {
 		t.Fatalf("second body should contain code: %q", block2.Body)
 	}
-	if strings.Contains(block2.Body, "龘靐齉") {
+	if strings.Contains(block2.Body, "齉爩") {
 		t.Fatalf("second body should not contain end marker: %q", block2.Body)
 	}
 	if end2 != len(remaining) {
@@ -832,7 +832,7 @@ func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 }
 
 func TestParseBlocks(t *testing.T) {
-	content := []byte("<<徕珑龘 <summary>\nfirst\n徕珑龘\n<<龘靐齉\nsecond\n龘靐齉\n")
+	content := []byte("<<龘靐 <summary>\nfirst\n龘靐\n<<齉爩\nsecond\n齉爩\n")
 	blocks, err := ParseBlocks(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -851,7 +851,7 @@ func TestParseBlocks(t *testing.T) {
 func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	// A non-matching end marker at the end without a trailing newline.
 	// The block should remain unclosed because no matching closing line exists.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n龘靐齉")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n齉爩")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed block with non-matching end marker at EOF")
@@ -863,13 +863,13 @@ func TestParseFirstBlockNonMatchingEndNoTrailingNewline(t *testing.T) {
 	if !isParseErr {
 		t.Fatalf("expected BlockParseError, got %T: %v", err, err)
 	}
-	if e.BlockKind != "change" || e.Boundary != "徕珑龘" {
-		t.Fatalf("expected unclosed block kind=change boundary=徕珑龘, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
+	if e.BlockKind != "change" || e.Boundary != "龘靐" {
+		t.Fatalf("expected unclosed block kind=change boundary=龘靐, got kind=%q boundary=%q", e.BlockKind, e.Boundary)
 	}
 }
 
 func TestParseBlocksSkipsUnclosed(t *testing.T) {
-	content := []byte("<<徕珑龘 <summary>\nunclosed\n<<龘靐齉\nclosed body\n龘靐齉\n")
+	content := []byte("<<龘靐 <summary>\nunclosed\n<<齉爩\nclosed body\n齉爩\n")
 	blocks, err := ParseBlocks(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -886,7 +886,7 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 	// When the body contains a nested block with the same delimiter,
 	// the nested block's closing marker must not prematurely close
 	// the outer block. See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<徕珑龘 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n徕珑龘\nfunc Outer() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -894,8 +894,8 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Inner() {}") {
 		t.Fatalf("body should contain inner block body: %q", block.Body)
@@ -903,7 +903,7 @@ func TestParseFirstBlockNestedSameDelimiter(t *testing.T) {
 	if !strings.Contains(block.Body, "func Outer() {}") {
 		t.Fatalf("body should contain outer block body: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<徕珑龘") {
+	if !strings.Contains(block.Body, "<<龘靐") {
 		t.Fatalf("body should contain inner block opening marker: %q", block.Body)
 	}
 }
@@ -913,7 +913,7 @@ func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
 	// same delimiter as the outer block — must not prematurely close the
 	// outer block, mirroring the XML opening tag form.
 	// See TheoryOfBareKinds.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<徕珑龘 summary\n- inner\n徕珑龘\nfunc Outer() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐 summary\n- inner\n龘靐\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -921,13 +921,13 @@ func TestParseFirstBlockNestedSameDelimiterBareKind(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Kind != "change" || block.Boundary != "徕珑龘" {
+	if block.Kind != "change" || block.Boundary != "龘靐" {
 		t.Fatalf("unexpected block: kind=%s boundary=%s", block.Kind, block.Boundary)
 	}
 	if !strings.Contains(block.Body, "- inner") {
 		t.Fatalf("body should contain the inner block body: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<徕珑龘 summary") {
+	if !strings.Contains(block.Body, "<<龘靐 summary") {
 		t.Fatalf("body should contain the inner opening marker: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Outer() {}") {
@@ -941,7 +941,7 @@ func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
 	// rather than pushed onto the stack. The different-delimiter closing
 	// line is also body content. The outer block closes at its own
 	// delimiter. See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐齉 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n龘靐齉\nfunc Outer() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<齉爩 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -949,8 +949,8 @@ func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Inner() {}") {
 		t.Fatalf("body should contain inner block body: %q", block.Body)
@@ -958,7 +958,7 @@ func TestParseFirstBlockNestedDifferentDelimiter(t *testing.T) {
 	if !strings.Contains(block.Body, "func Outer() {}") {
 		t.Fatalf("body should contain outer block body: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "龘靐齉") {
+	if !strings.Contains(block.Body, "齉爩") {
 		t.Fatalf("body should contain different-delimiter lines as content: %q", block.Body)
 	}
 }
@@ -970,7 +970,7 @@ func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing
 	// onto the stack, the outer block's closing marker would not match
 	// the stack top and the block would be incorrectly reported as
 	// unclosed. See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<龘靐齉 <tag>\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<齉爩 <tag>\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -978,10 +978,10 @@ func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
-	if !strings.Contains(block.Body, "<<龘靐齉 <tag>") {
+	if !strings.Contains(block.Body, "<<齉爩 <tag>") {
 		t.Fatalf("body should contain the different-delimiter opening as content: %q", block.Body)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
@@ -992,7 +992,7 @@ func TestParseFirstBlockNestedDifferentDelimiterOpeningWithoutClosing(t *testing
 func TestParseFirstBlockNestedMultipleLevels(t *testing.T) {
 	// Multiple levels of nesting: outer > middle > inner. Each level's
 	// closing marker pops one level. See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐齉 <change op=\"MODIFY\" target=\"Middle\" file-path=\"/middle.go\">\n<<齉爩龖 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n齉爩龖\nfunc Middle() {}\n龘靐齉\nfunc Outer() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<齉爩 <change op=\"MODIFY\" target=\"Middle\" file-path=\"/middle.go\">\n<<麤黿 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n麤黿\nfunc Middle() {}\n齉爩\nfunc Outer() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1000,8 +1000,8 @@ func TestParseFirstBlockNestedMultipleLevels(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Inner() {}") {
 		t.Fatalf("body should contain innermost body: %q", block.Body)
@@ -1018,7 +1018,7 @@ func TestParseFirstBlockNestedNotTriggeredByNonBlockContent(t *testing.T) {
 	// A body line starting with "<<" that is not a valid block opening
 	// (no XML tag after the delimiter) must not trigger nesting.
 	// See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text without xml tag\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text without xml tag\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1038,7 +1038,7 @@ func TestParseFirstBlockNestedNotTriggeredByInvalidXML(t *testing.T) {
 	// A body line starting with "<<" followed by text containing "<"
 	// but not forming a valid XML opening tag must not trigger nesting.
 	// See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text with < chars> and stuff\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<some text with < chars> and stuff\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1055,12 +1055,12 @@ func TestParseFirstBlockNestedNotTriggeredByTrailingContent(t *testing.T) {
 	// A body line starting with "<<" followed by a valid XML tag but
 	// with trailing content must not trigger nesting. The trailing
 	// content indicates this is prose or code, not a real block opening.
-	// Without the trailing-content check, "黿鼍爩" would be pushed onto the
-	// stack, and the outer block's closing marker "徕珑龘" would be
-	// treated as body content (because stack top is "黿鼍爩", not "徕珑龘"),
+	// Without the trailing-content check, "爨虋" would be pushed onto the
+	// stack, and the outer block's closing marker "龘靐" would be
+	// treated as body content (because stack top is "爨虋", not "龘靐"),
 	// causing the block to be incorrectly reported as unclosed.
 	// See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<黿鼍爩 <bar attr=\"value\"> some text\nfunc Foo() {}\n徕珑龘\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<爨虋 <bar attr=\"value\"> some text\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1068,13 +1068,13 @@ func TestParseFirstBlockNestedNotTriggeredByTrailingContent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected block to be found")
 	}
-	if block.Boundary != "徕珑龘" {
-		t.Fatalf("expected boundary 徕珑龘, got %s", block.Boundary)
+	if block.Boundary != "龘靐" {
+		t.Fatalf("expected boundary 龘靐, got %s", block.Boundary)
 	}
 	if !strings.Contains(block.Body, "func Foo() {}") {
 		t.Fatalf("body should contain the code: %q", block.Body)
 	}
-	if !strings.Contains(block.Body, "<<黿鼍爩") {
+	if !strings.Contains(block.Body, "<<爨虋") {
 		t.Fatalf("body should contain the non-block line: %q", block.Body)
 	}
 }
@@ -1083,7 +1083,7 @@ func TestParseFirstBlockNestedUnclosedInnerBlock(t *testing.T) {
 	// When the inner block is unclosed, the outer block is also
 	// unclosed because the stack never returns to empty.
 	// See TheoryOfNestedBlockParsing.
-	content := []byte("<<徕珑龘 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<徕珑龘 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n")
+	content := []byte("<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n")
 	_, _, _, ok, err := ParseFirstBlock(content)
 	if err == nil {
 		t.Fatal("expected error for unclosed inner block")
@@ -1120,7 +1120,7 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 }
 
 func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
-	// The delimiter policy mandates exactly three uncommon Chinese characters
+	// The delimiter policy mandates an uncommon Chinese two-character word
 	// per block. Only the unified block format prompts state the policy;
 	// kind prompts reference the general format and must not restate it.
 	// See TheoryOfBlockFormatGeneral.
@@ -1129,8 +1129,8 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
 	}
 	for name, prompt := range policyPrompts {
-		if !strings.Contains(prompt, "three uncommon Chinese characters") {
-			t.Fatalf("%s must mandate the three-uncommon-Chinese-characters delimiter policy", name)
+		if !strings.Contains(prompt, "uncommon Chinese two-character word") {
+			t.Fatalf("%s must mandate the uncommon-Chinese-two-character-word delimiter policy", name)
 		}
 	}
 	kindPrompts := map[string]string{
@@ -1146,13 +1146,13 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"RequestContextRestatePrompt": RequestContextRestatePrompt,
 	}
 	for name, prompt := range kindPrompts {
-		if strings.Contains(prompt, "three uncommon Chinese characters") {
+		if strings.Contains(prompt, "uncommon Chinese two-character word") {
 			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)
 		}
 		for _, legacy := range []string{
 			"<<DELIM1", "<<BLOCK1", "<<ENDBLOCK", "<<TESTEND",
 			"<<SHELLEND", "<<ENDSUM", "<<CTXEND", "<<CHG1", "<<MEMEND",
-			"<<徕珑 ", "<<龘靐 ", "<<黿鼍 ", "<<齉爩 ",
+			"<<徕珑龘 ", "<<龘靐齉 ", "<<黿鼍爩 ", "<<齉爩龖 ",
 		} {
 			if strings.Contains(prompt, legacy) {
 				t.Fatalf("%s must not display legacy example delimiter %s", name, legacy)

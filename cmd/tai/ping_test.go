@@ -78,8 +78,8 @@ func TestPingBlockPrompt(t *testing.T) {
 			t.Fatalf("prompt must contain required kind %q", kind)
 		}
 	}
-	if !strings.Contains(prompt, "uncommon Chinese characters") {
-		t.Fatal("prompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(prompt, "uncommon Chinese two-character word") {
+		t.Fatal("prompt must mandate the uncommon-Chinese-two-character-word delimiter policy")
 	}
 	if !strings.Contains(prompt, "different delimiter") {
 		t.Fatal("prompt must require a distinct delimiter per block")

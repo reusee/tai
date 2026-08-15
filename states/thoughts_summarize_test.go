@@ -53,11 +53,11 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 	var blockOutput string
 	switch {
 	case m.prefixBlock:
-		blockOutput = "<<徕珑龘 <continue>\ncontinue\n徕珑龘\n<<龘靐齉 <summary>\n" + m.summary + "\n龘靐齉"
+		blockOutput = "<<龘靐 <continue>\ncontinue\n龘靐\n<<齉爩 <summary>\n" + m.summary + "\n齉爩"
 	case m.noHeader:
-		blockOutput = "<<徕珑龘\n" + m.summary + "\n徕珑龘"
+		blockOutput = "<<龘靐\n" + m.summary + "\n龘靐"
 	default:
-		blockOutput = "<<徕珑龘 <summary>\n" + m.summary + "\n徕珑龘"
+		blockOutput = "<<龘靐 <summary>\n" + m.summary + "\n龘靐"
 	}
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,
@@ -491,10 +491,10 @@ func TestSplitAtLastCompleteParagraph(t *testing.T) {
 }
 
 func TestSummarizeSystemPromptUsesUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly three uncommon Chinese characters
+	// The delimiter policy mandates an uncommon Chinese two-character word
 	// per block. See TheoryOfBlockFormatGeneral in blocks/block.go.
-	if !strings.Contains(SummarizeSystemPrompt, "uncommon Chinese characters") {
-		t.Fatal("SummarizeSystemPrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(SummarizeSystemPrompt, "uncommon Chinese two-character word") {
+		t.Fatal("SummarizeSystemPrompt must mandate the uncommon-Chinese-two-character-word delimiter policy")
 	}
 	if strings.Contains(SummarizeSystemPrompt, "<<ENDSUM") {
 		t.Fatal("SummarizeSystemPrompt must not display the legacy ENDSUM example delimiter")

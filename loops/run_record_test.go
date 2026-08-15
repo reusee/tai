@@ -64,7 +64,7 @@ func TestRunRecordsRound(t *testing.T) {
 			InteractionRecorder: rec,
 			Command:             "test-command",
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -96,7 +96,7 @@ func TestRunRecordsDisabled(t *testing.T) {
 			Components:          nil,
 			InteractionRecorder: rec,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -139,7 +139,7 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("no summary")
 			}
-			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -171,7 +171,7 @@ func TestRunRecordsParseError(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
 		phaseBuilder := func(g generators.Generator) phases.Phase {
-			return appendPhaseWithFlush("<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+			return appendPhaseWithFlush("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -204,7 +204,7 @@ func TestRunRecordsDecisionEvents(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
 			}
-			return appendPhase("<<徕珑龘 <summary>\nDone.\n徕珑龘\n")
+			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{

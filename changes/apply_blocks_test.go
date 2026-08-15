@@ -55,7 +55,7 @@ func TestApplyChangeBlocks(t *testing.T) {
 		changeBlocks := []blocks.Block{
 			{
 				Kind:       "change",
-				Boundary:   "徕珑",
+				Boundary:   "龘靐",
 				Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
 				Body:       "func New() {}",
 			},
@@ -92,7 +92,7 @@ func TestApplyChangeBlocksUnparseable(t *testing.T) {
 		changeBlocks := []blocks.Block{
 			{
 				Kind:       "change",
-				Boundary:   "徕珑",
+				Boundary:   "龘靐",
 				Attributes: map[string]string{"target": "Foo", "file-path": "test.go"},
 				Body:       "func Foo() {}",
 			},
@@ -120,7 +120,7 @@ func TestApplyChangeBlocksApplyError(t *testing.T) {
 		changeBlocks := []blocks.Block{
 			{
 				Kind:       "change",
-				Boundary:   "徕珑",
+				Boundary:   "龘靐",
 				Attributes: map[string]string{"op": "WRITE", "file-path": "../../../etc/passwd"},
 				Body:       "content",
 			},

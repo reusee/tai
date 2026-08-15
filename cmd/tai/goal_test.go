@@ -141,7 +141,7 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
 				return loops.Result{
 					ParseErrors: []*blocks.BlockParseError{
-						{BlockKind: "change", Boundary: "徕珑龘"},
+						{BlockKind: "change", Boundary: "龘靐"},
 					},
 				}, nil, nil
 			}

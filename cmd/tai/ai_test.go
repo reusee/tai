@@ -143,7 +143,7 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	if strings.Contains(prompt, "<<MEMEND") {
 		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
 	}
-	if strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese characters") {
+	if strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese two-character word") {
 		t.Fatal("memoryBlockRestatePrompt must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it")
 	}
 	if strings.Contains(memoryBlockRestatePrompt, "<<MEMEND") {
@@ -155,7 +155,7 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 		modes.ForTest(t),
 		func() generators.Generator { return aiMockGenerator{} },
 	).Call(func(comps AIComponents) {
-		if !strings.Contains(comps.PromptSections(), "uncommon Chinese characters") {
+		if !strings.Contains(comps.PromptSections(), "uncommon Chinese two-character word") {
 			t.Fatal("AIComponents must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
 		}
 	})

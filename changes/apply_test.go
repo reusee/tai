@@ -764,7 +764,7 @@ func TestApplyUnclosedBlockError(t *testing.T) {
 		}
 		defer root.Close()
 
-		content := "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
+		content := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/f.go\">\nfunc Foo() {}\n"
 		diffPath := filepath.Join(dir, "diff.txt")
 		if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
@@ -822,7 +822,7 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 				t.Fatal(err)
 			}
 			remainingStr := string(remaining)
-			if strings.Contains(remainingStr, "徕珑") {
+			if strings.Contains(remainingStr, "龘靐") {
 				t.Fatalf("applied change block should be removed from diff file:\n%s", remainingStr)
 			}
 			if !strings.Contains(remainingStr, "Renamed Old to New.") {
@@ -842,8 +842,8 @@ func TestApplyPreservesNonChangeBlocks(t *testing.T) {
 			}
 		}
 
-		changeBlock := "<<徕珑龘 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n徕珑龘\n"
-		summaryBlock := "<<龘靐齉 <summary>\n- Renamed Old to New.\n龘靐齉\n"
+		changeBlock := "<<龘靐 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\n龘靐\n"
+		summaryBlock := "<<齉爩 <summary>\n- Renamed Old to New.\n齉爩\n"
 
 		t.Run("ChangeThenSummary", func(t *testing.T) {
 			run(t, changeBlock+"\n"+summaryBlock)
@@ -1359,7 +1359,7 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 			}
 
 			diffPath := filepath.Join(dir, "diff.txt")
-			content := "<<徕珑龘 <change op=\"INSERT_BEFORE\" find=\"## Section\" file-path=\"readme.md\">\n## New Section\n徕珑龘\n"
+			content := "<<龘靐 <change op=\"INSERT_BEFORE\" find=\"## Section\" file-path=\"readme.md\">\n## New Section\n龘靐\n"
 			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -1393,7 +1393,7 @@ func TestApplyChangeBlockInsertKeepsLinesSeparated(t *testing.T) {
 			}
 
 			diffPath := filepath.Join(dir, "diff.txt")
-			content := "<<徕珑龘 <change op=\"INSERT_AFTER\" find=\"[dependencies]\" file-path=\"Cargo.toml\">\nserde = { version = \"1.0\", features = [\"derive\"] }\n徕珑龘\n"
+			content := "<<龘靐 <change op=\"INSERT_AFTER\" find=\"[dependencies]\" file-path=\"Cargo.toml\">\nserde = { version = \"1.0\", features = [\"derive\"] }\n龘靐\n"
 			if err := os.WriteFile(diffPath, []byte(content), 0644); err != nil {
 				t.Fatal(err)
 			}

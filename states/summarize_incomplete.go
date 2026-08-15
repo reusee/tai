@@ -302,7 +302,7 @@ func FormatRetryPrompt(prefix, retryPrompt string) string {
 	return prefix + retryPrompt
 }
 
-// freshDelimiter returns a fresh trio of uncommon Chinese characters for
+// freshDelimiter returns a fresh pair of uncommon Chinese characters for
 // use as a block delimiter in system-generated blocks. The delimiter is
 // chosen randomly from a set of uncommon Chinese characters so it is
 // unlikely to appear in the block body.
@@ -310,7 +310,6 @@ func freshDelimiter() string {
 	const uncommonChars = "龘靐齉爩麤黿鼍爨灪虋齾齑靁齌齍齎齏爞齔齕"
 	chars := []rune(uncommonChars)
 	return string([]rune{
-		chars[rand.IntN(len(chars))],
 		chars[rand.IntN(len(chars))],
 		chars[rand.IntN(len(chars))],
 	})

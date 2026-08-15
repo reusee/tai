@@ -17,12 +17,12 @@ the delimiter string and the XML element structure are unified; the body content
 defined by the specific kind. The format leverages familiar heredoc syntax for
 parsing reliability.
 
-Delimiter selection policy: every delimiter MUST be exactly three uncommon Chinese
-characters (e.g., 徕珑龘). Content — source code, prompts, and configuration text —
-is overwhelmingly ASCII or common-script writing, so a rare Han trio has negligible
+Delimiter selection policy: every delimiter MUST be an uncommon Chinese two-character
+word (e.g., 龃龉). Content — source code, prompts, and configuration text —
+is overwhelmingly ASCII or common-script writing, so a rare Han pair has negligible
 probability of appearing in a block body, satisfying the body-disjointness guarantee
 without requiring the model to scan its output for collisions. The fixed
-three-character length keeps the delimiter visually distinct and its token cost
+two-character length keeps the delimiter visually distinct and its token cost
 constant. The model must never emit the literal placeholder "DELIMITER", must never
 reuse an example delimiter, and must never use a delimiter of any other length or
 script.
@@ -63,25 +63,25 @@ last content in the buffer, the parser extracts it from the remaining content, a
 an incomplete (still streaming) delimiter — a shorter extracted string — will not
 match, so the block remains unclosed until the full delimiter arrives.
 
-The delimiter must be freshly chosen as exactly three uncommon Chinese characters,
+The delimiter must be freshly chosen as an uncommon Chinese two-character word,
 never copied from the illustrative examples. The example blocks in the system prompt
 deliberately use distinct delimiters to demonstrate this rule, and those exact
-strings are forbidden for reuse. Rarity is the integrity guarantee: a trio of
+strings are forbidden for reuse. Rarity is the integrity guarantee: a pair of
 uncommon Chinese characters is effectively absent from code and prose, so the chance
 of a body line accidentally matching the delimiter is negligible, while reusing an
 example delimiter would cause a subsequent real block opened with that same
 delimiter to close at the wrong marker. The parser enforces the Han requirement at
-extraction time: extractDelimiter validates that the delimiter is exactly three
+extraction time: extractDelimiter validates that the delimiter is exactly two
 Unicode Han characters, rejecting ASCII, other scripts, and any other length, so
-only three-character Chinese delimiters are recognized as block markers.
+only two-character Chinese delimiters are recognized as block markers.
 
 The delimiter must also be disjoint from the block body; this is a hard requirement,
 not an optional suggestion. Because the parser closes the block at the first line
 matching the delimiter, a body line that matches the delimiter would prematurely
 terminate the block and discard all remaining content. The model must therefore
 select a delimiter that does not appear anywhere in the code or text it is about to
-emit. Three uncommon Chinese characters satisfy this by construction for code and
-prose, but the model must verify the chosen trio is absent from the body before
+emit. Two uncommon Chinese characters satisfy this by construction for code and
+prose, but the model must verify the chosen pair is absent from the body before
 emitting the block. Body-disjointness is as important as the anti-reuse guarantee:
 both are integrity guarantees of the format, and violating either corrupts the
 block.
@@ -143,7 +143,7 @@ exist after EOF. The parser parses the line as an opening marker and reports an
 unclosed-block error, surfacing the truncation instead of silently treating the
 marker as prose.
 
-An opening line with a valid three-character Han delimiter followed by an invalid or
+An opening line with a valid two-character Han delimiter followed by an invalid or
 incomplete XML opening tag (e.g., a missing ">") is a malformed block, not prose: the
 delimiter marks the line as an intended block opening. The parser reports it as a
 parse error so the model can correct it, rather than silently dropping the intended
@@ -196,7 +196,7 @@ This format avoids escaping issues and is easy to parse.
 <kind-specific content>
 DELIMITER
 
-- DELIMITER: Exactly three uncommon Chinese characters (e.g., 徕珑龘) that do not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different trio of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
+- DELIMITER: An uncommon Chinese two-character word (e.g., 龃龉) that does not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
 - <kind>: The type of block, specified as an XML element name. The valid kinds and their content formats are defined by the specific kind documentation. Attributes on the opening tag provide kind-specific metadata.
 - Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
@@ -210,28 +210,28 @@ DELIMITER
 - Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and the changes will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<徕珑龘 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  <<龃龉 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
   <code here>
-  徕珑龘
+  龃龉
 
 **Delimiter Uniqueness (CRITICAL):**
-- Generate a fresh delimiter for each block: exactly three uncommon Chinese characters (e.g., 龘靐齉).
+- Generate a fresh delimiter for each block: an uncommon Chinese two-character word (e.g., 彳亍).
 - **Never reuse a delimiter that appears in any example in this prompt.** The example delimiters are illustrative only; copying them causes the parser to mismatch closing markers and corrupt blocks.
-- Each block in a response must use a distinct trio of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Three uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen trio is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
+- Each block in a response must use a distinct pair of uncommon Chinese characters so the parser can unambiguously pair each opening marker with its closing line.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<徕珑龘 <change ...> MUST be closed with the EXACT same delimiter string 徕珑龘, never 龘靐齉 or any other delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 <change ...> MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
 - A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
 - Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 `
 
 const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly three uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the EXACT SAME delimiter alone on its own line.
-- **The DELIMITER MUST be exactly three uncommon Chinese characters** (e.g., 徕珑龘, 龘靐齉, 齉爩龖), NEVER the literal text "<DELIMITER>" or a common word.
-- Generate a fresh trio of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
+- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the opening tag '<kind ...>' ending with '>'. Closing marker: the EXACT SAME delimiter alone on its own line.
+- **The DELIMITER MUST be an uncommon Chinese two-character word** (e.g., 龃龉, 彳亍, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word.
+- Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
-- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Three uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen trio is absent from the body before emitting the block.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen pair is absent from the body before emitting the block.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.
@@ -577,16 +577,6 @@ func findDelimiterCollisionHints(content []byte, bodyStart int, delimiter string
 	return hints
 }
 
-// extractDelimiter extracts the delimiter string from the opening line.
-// The delimiter is the text from the start of the (trimmed) line up to the
-// first whitespace or '<' character, whichever comes first. The delimiter
-// must be exactly three Unicode Han characters; any other length or any
-// non-Han character causes an empty string to be returned, so the marker is
-// skipped and the line is treated as regular content. This enforces the
-// policy that block delimiters are trios of uncommon Chinese characters. A
-// line with no characters before whitespace or '<' also yields an empty
-// string.
-// See TheoryOfBoundaryUniqueness.
 func extractDelimiter(s string) string {
 	s = strings.TrimSpace(s)
 	delimiter := s
@@ -596,13 +586,13 @@ func extractDelimiter(s string) string {
 			break
 		}
 	}
-	// The delimiter must consist of exactly three Unicode Han characters.
+	// The delimiter must consist of exactly two Unicode Han characters.
 	// Non-Han delimiters and delimiters of any other length are rejected so
-	// that only three-character Chinese delimiters are recognized as block
+	// that only two-character Chinese delimiters are recognized as block
 	// markers.
 	// See TheoryOfBoundaryUniqueness.
 	runes := []rune(delimiter)
-	if len(runes) != 3 {
+	if len(runes) != 2 {
 		return ""
 	}
 	for _, r := range runes {
