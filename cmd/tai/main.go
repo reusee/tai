@@ -21,7 +21,7 @@ func main() {
 	// types implementing configs.Config in the scope, reads their CUE
 	// paths from the loader, and forks the scope with the resolved values.
 	// See configs.Config and configs.Load.
-	loader := dscope.Get[configs.Loader](scope)
+	loader := scope.Get[configs.Loader]()
 	scope, err := configs.Load(loader, scope)
 	if err != nil {
 		ce(err)
@@ -36,7 +36,7 @@ func main() {
 		ce(err)
 	}
 
-	command := dscope.Get[Command](scope)
+	command := scope.Get[Command]()
 	if command.Main == nil {
 		return
 	}
@@ -50,7 +50,7 @@ func main() {
 	// generators.TheoryOfEventRecorder.
 	scope = scope.Fork(eventRecorderDef)
 
-	if bool(dscope.Get[Tui](scope)) {
+	if bool(scope.Get[Tui]()) {
 		runWithTUI(command, scope)
 		return
 	}

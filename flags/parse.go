@@ -61,11 +61,7 @@ func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
 		if !t.Implements(flagType) {
 			continue
 		}
-		flagValue, ok := scope.Get(t)
-		if !ok {
-			return dscope.Scope{}, fmt.Errorf("flag type not found in scope: %v", t)
-		}
-		flag := flagValue.Interface().(Flag)
+		flag := scope.GetType(t).Interface().(Flag)
 		for key, desc := range flag.Keys() {
 			if existing, dup := flagTypes[key]; dup {
 				return dscope.Scope{}, fmt.Errorf("duplicate flag key %q registered by both %v and %v", key, existing, t)
@@ -95,11 +91,7 @@ func Parse(scope dscope.Scope, args []string) (dscope.Scope, error) {
 		if !ok {
 			return dscope.Scope{}, fmt.Errorf("unknown flag: %s\n\n%s", key, FormatUsage(flagDescriptions))
 		}
-		flagValue, ok := scope.Get(t)
-		if !ok {
-			return dscope.Scope{}, fmt.Errorf("flag type not found in scope: %v", t)
-		}
-		flag := flagValue.Interface().(Flag)
+		flag := scope.GetType(t).Interface().(Flag)
 		newDef, remainArgs, err := flag.Handle(key, args[1:])
 		if err != nil {
 			return dscope.Scope{}, err
@@ -142,11 +134,7 @@ func Usage(scope dscope.Scope) string {
 		if !t.Implements(flagType) {
 			continue
 		}
-		flagValue, ok := scope.Get(t)
-		if !ok {
-			continue
-		}
-		flag := flagValue.Interface().(Flag)
+		flag := scope.GetType(t).Interface().(Flag)
 		maps.Copy(descriptions, flag.Keys())
 	}
 	// Add help keys so they appear in usage output.

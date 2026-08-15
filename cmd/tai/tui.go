@@ -1317,7 +1317,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// loops.Run provider: the original Run is resolved before the fork,
 	// and the wrapper appends the decorator to the options before
 	// delegating. See TheoryOfTUI.
-	originalRun := dscope.Get[loops.Run](scope)
+	originalRun := scope.Get[loops.Run]()
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
 	// -summarize-thoughts adds periodic summaries in the Summary tab but
 	// never suppresses the raw stream, because blanking the focused
@@ -1325,7 +1325,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// makes the session look stalled. The flag is resolved from the
 	// scope before the generation goroutine starts, so the policy is
 	// fixed for the session. See TheoryOfTUI.
-	tui.showThoughts = tuiShowThoughts(dscope.Get[flags.Thoughts](scope))
+	tui.showThoughts = tuiShowThoughts(scope.Get[flags.Thoughts]())
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
 		// Command-level output (ping verdicts, goal banners, applied
@@ -1348,7 +1348,7 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// the initial generation state, which the tuiOutputState decorator
 	// does not display; writing it here gives the user a clear view of
 	// what the model was asked. See TheoryOfTUI.
-	displayChatInput(tui, dscope.Get[flags.Chats](scope))
+	displayChatInput(tui, scope.Get[flags.Chats]())
 	runErr := tui.Run(func() {
 		scope.Fork(command.Defs...).Call(command.Main)
 	})

@@ -25,24 +25,6 @@ unchanged when no config path yields a value, preserving Module-provided
 defaults.
 `
 
-// Load reads configuration values from the loader and forks the scope
-// with the resolved values. It discovers all types implementing Config
-// in the scope, looks up their CUE paths in the loader, and calls
-// HandleConfig to produce new values.
-//
-// For regular Config types, the resolved value is forked as a static
-// value. For DynamicPathsConfig types, Load constructs a provider
-// function (via reflect.MakeFunc) whose parameters mirror the
-// ConfigPathsFunc function's parameters; dscope re-evaluates the
-// provider when its dependencies change, so the config value tracks
-// dynamic path changes.
-//
-// Load should be called before flags.Parse so that command-line flags
-// can override config file values. The call order in main is:
-//
-//	scope := dscope.New(...)     // Module methods provide defaults
-//	scope, _ = configs.Load(...)  // config file values override defaults
-//	scope, _ = flags.Parse(...)   // CLI flags override config values
 func Load(loader Loader, scope dscope.Scope) (dscope.Scope, error) {
 	// Discover all Config types and their paths. AllTypes iteration
 	// order is non-deterministic, but this is acceptable: each Config
@@ -82,10 +64,7 @@ func Load(loader Loader, scope dscope.Scope) (dscope.Scope, error) {
 		// already set a value. This guarantees "last non-zero wins"
 		// semantics: later paths always override earlier ones.
 		// See TheoryOfConfigPathPrecedence.
-		value, ok := scope.Get(entry.typ)
-		if !ok {
-			continue
-		}
+		value := scope.GetType(entry.typ)
 		config := value.Interface().(Config)
 
 		if entry.isDynamic {

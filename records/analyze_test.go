@@ -45,6 +45,10 @@ func TestRunAnalysis(t *testing.T) {
 			}
 		},
 		func() phases.BuildGenerate {
+			// The stub's phase must invoke generator.Generate, mirroring
+			// phases.BuildGenerate: runAnalysis drives the returned phase
+			// chain, and the mock generator's output reaches the buffer
+			// through the Output state layer only when Generate runs.
 			return func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
 				return func(cont phases.Phase) phases.Phase {
 					return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
@@ -52,7 +56,7 @@ func TestRunAnalysis(t *testing.T) {
 						if err != nil {
 							return nil, state, err
 						}
-						return nil, newState, nil
+						return cont, newState, nil
 					}
 				}
 			}
