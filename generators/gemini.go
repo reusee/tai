@@ -280,6 +280,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		newState := ret
 		hasContent := false
 		var terminalReason string
+		var lastUsage *Usage
 
 		handleResponse := func(resp *genai.GenerateContentResponse) error {
 			if g.Debug() {
@@ -289,18 +290,24 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 
 			if metadata := resp.UsageMetadata; metadata != nil {
-				var usage Usage
-				usage.Prompt.TokenCount = int(metadata.PromptTokenCount)
-				usage.Prompt.TokenCountCached = int(metadata.CachedContentTokenCount)
-				usage.Candidates.TokenCount = int(metadata.CandidatesTokenCount)
-				usage.Thoughts.TokenCount = int(metadata.ThoughtsTokenCount)
-				var err error
-				newState, err = newState.AppendContent(&Content{
-					Role:  RoleLog,
-					Parts: []Part{usage},
-				})
-				if err != nil {
-					return err
+				lastUsage = &Usage{
+					Prompt: struct {
+						TokenCount       int
+						TokenCountCached int
+					}{
+						TokenCount:       int(metadata.PromptTokenCount),
+						TokenCountCached: int(metadata.CachedContentTokenCount),
+					},
+					Candidates: struct {
+						TokenCount int
+					}{
+						TokenCount: int(metadata.CandidatesTokenCount),
+					},
+					Thoughts: struct {
+						TokenCount int
+					}{
+						TokenCount: int(metadata.ThoughtsTokenCount),
+					},
 				}
 			}
 
@@ -330,6 +337,16 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			}
 
 			if reason := candidate.FinishReason; reason != "" {
+				if lastUsage != nil {
+					var err error
+					if newState, err = newState.AppendContent(&Content{
+						Role:  RoleLog,
+						Parts: []Part{*lastUsage},
+					}); err != nil {
+						return err
+					}
+					lastUsage = nil
+				}
 				var err error
 				if newState, err = newState.AppendContent(&Content{
 					Role: RoleLog,
@@ -366,6 +383,17 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 					return ret, err
 				}
 			}
+		}
+
+		if lastUsage != nil {
+			var err error
+			if newState, err = newState.AppendContent(&Content{
+				Role:  RoleLog,
+				Parts: []Part{*lastUsage},
+			}); err != nil {
+				return ret, err
+			}
+			lastUsage = nil
 		}
 
 		if !hasContent {

@@ -194,15 +194,18 @@ func buildUserPromptText(parts []generators.Part) string {
 
 const TheoryOfRoundStatistics = `
 Round statistics are collected per round to provide visibility into token usage
-and duration. Each round produces a RoundStat entry with the 1-based round number;
-prompt, completion, thought, and cached token counts; the duration (from
-OnRoundStart to OnRoundSuccess); and the summary from the round's summary blocks.
-Truncated rounds (no summary block) that are retried are recorded via
-OnRoundTruncated with the summary synthesized by the retry process, so they appear
-as separate loops in the statistics; the retry round itself is recorded by
-OnRoundSuccess when it completes successfully. The statistics are printed at the
-end of the session via a deferred call, so they are shown even when the session
-ends early due to an error.
+and duration. Each round produces a single RoundStat entry with the 1-based round
+number; prompt, completion, thought, and cached token counts from the round's
+final usage; the duration (from OnRoundStart to OnRoundSuccess); and the summary
+from the round's summary blocks. Round management is decoupled from usage parts:
+intermediate usage snapshots emitted during streaming (e.g., Gemini's streaming
+UsageMetadata) do not create duplicate round entries. Truncated rounds (no
+summary block) that are retried are recorded via OnRoundTruncated with the
+summary synthesized by the retry process, so they appear as separate loops in the
+statistics; the retry round itself is recorded by OnRoundSuccess when it
+completes successfully. The statistics are printed at the end of the session
+via a deferred call, so they are shown even when the session ends early due to
+an error.
 `
 
 // RoundStat records per-round token usage (prompt, completion, thoughts,
@@ -304,11 +307,6 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 	}
 }
 
-// collectRoundStats scans newly appended contents (after prevContentCount)
-// for Usage parts and appends RoundStat entries, assigning the given
-// duration and summary. It returns the updated stats and the new content
-// count of the scanned state. Used by OnRoundSuccess and OnRoundTruncated
-// to record round statistics. See TheoryOfRoundStatistics.
 func collectRoundStats(
 	roundStats []RoundStat,
 	state generators.State,
@@ -316,38 +314,28 @@ func collectRoundStats(
 	elapsed time.Duration,
 	summary string,
 ) ([]RoundStat, int) {
-	statsStartIdx := len(roundStats)
+	var lastUsage generators.Usage
 	contentIndex := 0
 	for c := range state.Contents() {
 		if contentIndex >= prevContentCount {
 			for _, part := range c.Parts {
 				if usage, ok := part.(generators.Usage); ok {
-					roundStats = append(roundStats, RoundStat{
-						Round:            len(roundStats) + 1,
-						PromptTokens:     usage.Prompt.TokenCount,
-						CompletionTokens: usage.Candidates.TokenCount,
-						ThoughtTokens:    usage.Thoughts.TokenCount,
-						CachedTokens:     usage.Prompt.TokenCountCached,
-					})
+					lastUsage = usage
 				}
 			}
 		}
 		contentIndex++
 	}
-	for i := statsStartIdx; i < len(roundStats); i++ {
-		roundStats[i].Duration = elapsed
-	}
-	if summary != "" {
-		if len(roundStats) > 0 {
-			roundStats[len(roundStats)-1].Summary = summary
-		} else {
-			roundStats = append(roundStats, RoundStat{
-				Round:    len(roundStats) + 1,
-				Duration: elapsed,
-				Summary:  summary,
-			})
-		}
-	}
+
+	roundStats = append(roundStats, RoundStat{
+		Round:            len(roundStats) + 1,
+		PromptTokens:     lastUsage.Prompt.TokenCount,
+		CompletionTokens: lastUsage.Candidates.TokenCount,
+		ThoughtTokens:    lastUsage.Thoughts.TokenCount,
+		CachedTokens:     lastUsage.Prompt.TokenCountCached,
+		Duration:         elapsed,
+		Summary:          summary,
+	})
 	return roundStats, contentIndex
 }
 

@@ -120,22 +120,20 @@ the model knows how much budget remains and can prioritize correcting the error.
 `
 
 const TheoryOfUsageLogging = `
-The aggregated token usage of each generation round is recorded to the
-logger by the Run loop itself, not by individual commands. After each
-round, a "usage" log record carries the 1-based round number and the
-prompt, cached, completion, and thought token counts of the contents
-appended during the round, so every generation command — codes, ai,
-next, ping — shows token consumption in its logs, and in the TUI's Logs
-pane when the logs writer is routed there. A round that ends with an
-error is logged with outcome="error", so token consumption is
-traceable for every attempt, including retries. Rounds that record no
-token usage emit no record.
+The token usage of each generation round is recorded to the logger by the Run
+loop itself, not by individual commands. After each round, a "usage" log
+record carries the 1-based round number and the prompt, cached, completion, and
+thought token counts from the round's final usage, so every generation command
+— codes, ai, next, ping — shows token consumption in its logs, and in the
+TUI's Logs pane when the logs writer is routed there. A round that ends with an
+error is logged with outcome="error", so token consumption is traceable for
+every attempt, including retries. Rounds that record no token usage emit no
+record.
 
-The aggregation scans the state's contents appended since the start of
-the round and sums every generators.Usage part. It runs in the Run
-loop after each round, so it covers the round's retries as well: the
-recorded total is the token consumption of the round as a whole,
-matching the round statistics table.
+The usage is extracted by scanning the state's contents appended since the
+start of the round and taking the final Usage part, rather than summing
+intermediate usage snapshots that may be emitted by streaming providers
+(e.g., Gemini's streaming UsageMetadata).
 `
 
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
@@ -646,15 +644,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}, nil
 }
 
-// logRoundUsage aggregates the token usage of the contents appended
-// since roundBaseCount and records it to the logger as a single "usage"
-// log record. The record carries the 1-based round number and the
-// prompt, cached, completion, and thought token counts, so token
-// consumption is visible in log output and in the TUI's Logs pane, not
-// only in the end-of-session statistics table. The optional outcome
-// distinguishes rounds that ended with an error, so token consumption
-// is traceable for every attempt, including retries. Rounds that
-// record no token usage emit no record. See TheoryOfUsageLogging.
 func (ls *loopState) logRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
 	var usage generators.Usage
 	i := 0
@@ -665,10 +654,7 @@ func (ls *loopState) logRoundUsage(state generators.State, roundBaseCount int, r
 		}
 		for _, p := range c.Parts {
 			if u, ok := p.(generators.Usage); ok {
-				usage.Prompt.TokenCount += u.Prompt.TokenCount
-				usage.Prompt.TokenCountCached += u.Prompt.TokenCountCached
-				usage.Candidates.TokenCount += u.Candidates.TokenCount
-				usage.Thoughts.TokenCount += u.Thoughts.TokenCount
+				usage = u
 			}
 		}
 		i++

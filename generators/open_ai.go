@@ -277,19 +277,25 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 	}
 
-	handleUsage := func(u *OpenAIUsage) error {
-		if u == nil {
+	var lastUsage *OpenAIUsage
+	handleUsage := func(u *OpenAIUsage) {
+		if u != nil {
+			lastUsage = u
+		}
+	}
+	emitUsage := func() error {
+		if lastUsage == nil {
 			return nil
 		}
 		var usage Usage
-		usage.Prompt.TokenCount = u.PromptTokens
-		if u.PromptTokensDetails != nil {
-			usage.Prompt.TokenCountCached = u.PromptTokensDetails.CachedTokens
+		usage.Prompt.TokenCount = lastUsage.PromptTokens
+		if lastUsage.PromptTokensDetails != nil {
+			usage.Prompt.TokenCountCached = lastUsage.PromptTokensDetails.CachedTokens
 		}
-		usage.Candidates.TokenCount = u.CompletionTokens
-		if u.CompletionTokensDetails != nil {
-			usage.Candidates.TokenCount -= u.CompletionTokensDetails.ReasoningTokens
-			usage.Thoughts.TokenCount = u.CompletionTokensDetails.ReasoningTokens
+		usage.Candidates.TokenCount = lastUsage.CompletionTokens
+		if lastUsage.CompletionTokensDetails != nil {
+			usage.Candidates.TokenCount -= lastUsage.CompletionTokensDetails.ReasoningTokens
+			usage.Thoughts.TokenCount = lastUsage.CompletionTokensDetails.ReasoningTokens
 		}
 		var err error
 		if ret, err = ret.AppendContent(&Content{
@@ -298,6 +304,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}); err != nil {
 			return err
 		}
+		lastUsage = nil
 		return nil
 	}
 
@@ -318,8 +325,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			return ret, err
 		}
 
-		if err := handleUsage(response.Usage); err != nil {
-			return ret, err
+		if response.Usage != nil {
+			handleUsage(response.Usage)
+			if err := emitUsage(); err != nil {
+				return ret, err
+			}
 		}
 
 		if len(response.Choices) > 0 {
@@ -426,9 +436,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				)
 			}
 
-			if err := handleUsage(streamResp.Usage); err != nil {
-				return ret, err
-			}
+			handleUsage(streamResp.Usage)
 
 			if len(streamResp.Choices) == 0 {
 				continue
@@ -459,6 +467,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				if err := finish(); err != nil {
 					return ret, err
 				}
+				if err := emitUsage(); err != nil {
+					return ret, err
+				}
 				if ret, err = ret.AppendContent(&Content{
 					Role: RoleLog,
 					Parts: []Part{
@@ -480,6 +491,9 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		}
 
 		if err := finish(); err != nil {
+			return ret, err
+		}
+		if err := emitUsage(); err != nil {
 			return ret, err
 		}
 	}

@@ -821,6 +821,71 @@ func TestRunLogsRoundUsage(t *testing.T) {
 	})
 }
 
+func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
+	// If a generator emits multiple Usage parts during streaming (e.g. Gemini),
+	// logRoundUsage must take the final Usage snapshot rather than summing them.
+	var buf bytes.Buffer
+	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	dscope.New(
+		modes.ForTest(t),
+		&loader,
+		new(Module),
+	).Fork(
+		func() logs.Writer { return logs.Writer(&buf) },
+	).Call(func(run Run) {
+		usage1 := generators.Usage{}
+		usage1.Prompt.TokenCount = 100
+		usage1.Candidates.TokenCount = 10
+
+		usage2 := generators.Usage{}
+		usage2.Prompt.TokenCount = 100
+		usage2.Candidates.TokenCount = 50
+
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) phases.Phase {
+				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+					s, err := state.AppendContent(&generators.Content{
+						Role:  generators.RoleLog,
+						Parts: []generators.Part{usage1},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					s, err = s.AppendContent(&generators.Content{
+						Role:  generators.RoleAssistant,
+						Parts: []generators.Part{generators.Text("output")},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					s, err = s.AppendContent(&generators.Content{
+						Role:  generators.RoleLog,
+						Parts: []generators.Part{usage2},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					return nil, s, nil
+				}
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "prompt=100") {
+			t.Fatalf("expected prompt=100 (final snapshot, not 200 sum), got: %s", output)
+		}
+		if !strings.Contains(output, "completion=50") {
+			t.Fatalf("expected completion=50 (final snapshot, not 60 sum), got: %s", output)
+		}
+	})
+}
+
 func TestRunOnRoundSuccessError(t *testing.T) {
 	withRun(t, func(run Run) {
 		expectedErr := errors.New("flush failed")

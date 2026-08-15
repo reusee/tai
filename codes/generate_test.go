@@ -958,3 +958,108 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestCollectRoundStats(t *testing.T) {
+	t.Run("MultipleUsagePartsSingleRound", func(t *testing.T) {
+		// Simulating Gemini streaming which emits multiple Usage parts in one round.
+		// collectRoundStats must produce exactly 1 RoundStat entry with the last usage values.
+		var state generators.State = generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hi")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100, TokenCountCached: 10},
+				Candidates: struct{ TokenCount int }{TokenCount: 5},
+				Thoughts:   struct{ TokenCount int }{TokenCount: 2},
+			}}},
+			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("chunk 1")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100, TokenCountCached: 10},
+				Candidates: struct{ TokenCount int }{TokenCount: 25},
+				Thoughts:   struct{ TokenCount int }{TokenCount: 10},
+			}}},
+			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("chunk 2")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100, TokenCountCached: 10},
+				Candidates: struct{ TokenCount int }{TokenCount: 50},
+				Thoughts:   struct{ TokenCount int }{TokenCount: 20},
+			}}},
+		})
+
+		stats, nextCount := collectRoundStats(nil, state, 1, 500*time.Millisecond, "round 1 summary")
+		if len(stats) != 1 {
+			t.Fatalf("expected exactly 1 RoundStat, got %d", len(stats))
+		}
+		if stats[0].Round != 1 {
+			t.Fatalf("expected Round 1, got %d", stats[0].Round)
+		}
+		if stats[0].PromptTokens != 100 || stats[0].CachedTokens != 10 || stats[0].CompletionTokens != 50 || stats[0].ThoughtTokens != 20 {
+			t.Fatalf("expected final usage tokens (100, 10, 50, 20), got (%d, %d, %d, %d)",
+				stats[0].PromptTokens, stats[0].CachedTokens, stats[0].CompletionTokens, stats[0].ThoughtTokens)
+		}
+		if stats[0].Summary != "round 1 summary" {
+			t.Fatalf("expected summary 'round 1 summary', got %q", stats[0].Summary)
+		}
+		if stats[0].Duration != 500*time.Millisecond {
+			t.Fatalf("expected duration 500ms, got %v", stats[0].Duration)
+		}
+		if nextCount != 6 {
+			t.Fatalf("expected nextCount 6, got %d", nextCount)
+		}
+	})
+
+	t.Run("MultipleRoundsSequential", func(t *testing.T) {
+		var state generators.State = generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("r1")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100},
+				Candidates: struct{ TokenCount int }{TokenCount: 30},
+			}}},
+		})
+		stats, count1 := collectRoundStats(nil, state, 0, time.Second, "r1 summary")
+
+		state, _ = state.AppendContent(&generators.Content{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text("r2")},
+		})
+		state, _ = state.AppendContent(&generators.Content{
+			Role: generators.RoleLog,
+			Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 200},
+				Candidates: struct{ TokenCount int }{TokenCount: 60},
+			}},
+		})
+		stats, count2 := collectRoundStats(stats, state, count1, 2*time.Second, "r2 summary")
+
+		if len(stats) != 2 {
+			t.Fatalf("expected 2 RoundStats, got %d", len(stats))
+		}
+		if stats[0].Round != 1 || stats[1].Round != 2 {
+			t.Fatalf("expected Rounds 1 and 2, got %d and %d", stats[0].Round, stats[1].Round)
+		}
+		if stats[0].Summary != "r1 summary" || stats[1].Summary != "r2 summary" {
+			t.Fatalf("unexpected summaries: %q, %q", stats[0].Summary, stats[1].Summary)
+		}
+		if count2 != 4 {
+			t.Fatalf("expected count2 4, got %d", count2)
+		}
+	})
+
+	t.Run("RoundWithoutUsage", func(t *testing.T) {
+		var state generators.State = generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("no usage")}},
+			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("reply")}},
+		})
+		stats, _ := collectRoundStats(nil, state, 0, time.Second, "no usage summary")
+		if len(stats) != 1 {
+			t.Fatalf("expected 1 RoundStat, got %d", len(stats))
+		}
+		if stats[0].Round != 1 {
+			t.Fatalf("expected Round 1, got %d", stats[0].Round)
+		}
+		if stats[0].PromptTokens != 0 || stats[0].CompletionTokens != 0 {
+			t.Fatalf("expected zero token counts, got prompt=%d completion=%d", stats[0].PromptTokens, stats[0].CompletionTokens)
+		}
+		if stats[0].Summary != "no usage summary" {
+			t.Fatalf("expected summary 'no usage summary', got %q", stats[0].Summary)
+		}
+	})
+}
