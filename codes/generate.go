@@ -466,33 +466,6 @@ carry forward established conclusions into the next round without retaining
 unstructured conversation history.
 `
 
-const TheoryOfHandoff = `
-When a generation round is truncated (no summary block) or errors after
-producing partial output, a handoff summary is constructed before retrying.
-The handoff condenses valuable conclusions from the interrupted thinking
-(discoveries, decisions, established facts, completed work, and next steps)
-into a single self-contained text.
-
-The handoff must not assume the next round can see the interrupted output,
-as the raw partial output is discarded and will not appear in conversation
-history. The handoff notes must therefore be completely self-contained.
-The handoff focuses on guiding the direction of the next generation round
-and mitigating the model's tendency to overthink: by providing clear
-settled conclusions and concrete next steps, the next round can proceed
-directly to action rather than re-deriving preliminary analysis.
-
-Handoff is executed only when the model has produced a non-trivial amount
-of output (at least minHandoffLength characters). If output is very short or
-empty, handoff is skipped and a direct retry is performed.
-
-The handoff model follows SummarizeModel, falling back to the fast model
-and then the default model (see TheoryOfSummarizeModel). The handoff prompt
-instructs the model to produce a concise, plain-text summary without block
-wrapping. Handoff generation is retried up to maxHandoffRetries times on
-failure or empty response; a persistent failure aborts the run to ensure
-the failure is visible.
-`
-
 const TheoryOfSummaryRetryOnError = `
 Generation errors that occur after the model has already produced partial output
 (thoughts or body text) are retried with a handoff summary of that output.

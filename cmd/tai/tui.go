@@ -531,9 +531,10 @@ type TUI struct {
 	// lastOutputRole is the role of the last content written to the
 	// Output tab. It is used with lastWasThought to insert a blank line
 	// separator when the output switches roles or switches between
-	// thinking and non-thinking content. It is only accessed by the
-	// generation goroutine via captureContent, so it is never accessed
-	// concurrently. See TheoryOfTUI.
+	// thinking and non-thinking content. It is written by the generation
+	// goroutine via captureContent; displayChatInput initializes it on
+	// the main goroutine before the generation goroutine starts, so it
+	// is never accessed concurrently. See TheoryOfTUI.
 	lastOutputRole generators.Role
 	// lastWasThought reports whether the last content written to the
 	// Output tab was a thought. See lastOutputRole.

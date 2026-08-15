@@ -370,11 +370,10 @@ func (ls *loopState) runRound() (roundResult, error) {
 						}
 					}
 
-					// Append the summary block and the continue
-					// block as the retry user prompt.
-					if retryPrompt != "" || summary != "" {
+					// Append the handoff prompt as the retry user input.
+					if retryPrompt != "" {
 						retryParts = append(retryParts, generators.Text(
-							formatHandoffPrompt(summary, retryPrompt, retry+1, ls.maxRetries)))
+							formatHandoffPrompt(retryPrompt, retry+1, ls.maxRetries)))
 					}
 
 					var appendErr error
@@ -465,12 +464,12 @@ func (ls *loopState) runRound() (roundResult, error) {
 		}
 
 		// Append the retry prompt.
-		if retryPrompt != "" || summary != "" {
+		if retryPrompt != "" {
 			var appendErr error
 			ls.state, appendErr = ls.state.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
-					generators.Text(formatHandoffPrompt(summary, retryPrompt, retry+1, ls.maxRetries)),
+					generators.Text(formatHandoffPrompt(retryPrompt, retry+1, ls.maxRetries)),
 				},
 			})
 			if appendErr != nil {
@@ -863,7 +862,7 @@ func FormatSummaryBlock(summary string) string {
 
 // formatHandoffPrompt formats the retry user prompt with the handoff content.
 // See states.TheoryOfHandoff.
-func formatHandoffPrompt(summary, retryPrompt string, attempt, maxAttempts int) string {
+func formatHandoffPrompt(retryPrompt string, attempt, maxAttempts int) string {
 	prefix := fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts)
 	return states.FormatHandoffPrompt(prefix, retryPrompt)
 }

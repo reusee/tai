@@ -24,12 +24,11 @@ import (
 	"github.com/reusee/tai/states"
 )
 
-// maxSummarizeRetries bounds the number of attempts to summarize
-// incomplete output when the summarize generation fails or produces an
-// empty response. It mirrors the constant in
-// states/summarize_incomplete.go; the codes package's own constant was
-// removed with the dead summarize code. See
-// states.TheoryOfIncompleteOutputSummarization.
+// maxSummarizeRetries mirrors maxHandoffRetries from
+// states/summarize_incomplete.go: the handoff generation is retried up to
+// this many times on failure or an empty response before the run aborts.
+// The constant is restated here because the states constant is unexported.
+// See states.TheoryOfHandoff.
 const maxSummarizeRetries = 3
 
 func TestPrintRoundStats(t *testing.T) {

@@ -204,6 +204,26 @@ func (c ComponentSet) Processable() []Component {
 	return result
 }
 
+// ProcessComponents iterates over processable components in registration order,
+// filtering blocks by each component's Kind and calling the component's Process
+// function with the matching blocks. It returns the remaining blocks (not
+// matched by any component), the updated State (if any component modified it),
+// combined Parts from all components, whether any component triggered a new
+// round (produced Parts or modified State), and an error if any component
+// failed. When enforceMaxRounds is true and roundCounts is non-nil, per-
+// component MaxRounds limits are enforced, preventing infinite loops from
+// components that keep producing output.
+//
+// BackgroundParts from non-triggering components are collected during iteration
+// and prepended to combinedParts when any component triggers a new round. This
+// ensures the model receives informational output (e.g., "tests passed") from
+// non-triggering components alongside the triggering content, preventing
+// unnecessary re-emission of blocks in subsequent rounds. When no component
+// triggers, BackgroundParts are discarded.
+//
+// Both the ai command and the codes module call this function, so the
+// component processing loop is identical across all generation commands —
+// only the ComponentSet and block list differ. See TheoryOfComponents.
 func ProcessComponents(
 	ctx context.Context,
 	comps ComponentSet,

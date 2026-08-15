@@ -229,8 +229,8 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	comps CodesComponents,
 ) (ret SystemPrompt) {
-	// Base prompt (prompts.Codes) and code provider prompt are prepended
-	// directly. All block-format, component, and extra prompts come from
+	// The base prompt (prompts.Codes) is prepended directly. All
+	// block-format, component, and extra prompts come from
 	// comps.PromptSections(). Restate prompts are placed at the end of
 	// the user prompt via ComponentSet.UserPromptParts(), not in the
 	// system prompt.

@@ -1415,7 +1415,7 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 }
 
 func TestFormatHandoffPrompt(t *testing.T) {
-	msg := formatHandoffPrompt("", "retry content", 1, 3)
+	msg := formatHandoffPrompt("retry content", 1, 3)
 	if !strings.Contains(msg, "retry attempt 1 of 3") {
 		t.Fatalf("expected the retry attempt number, got: %s", msg)
 	}

@@ -59,6 +59,23 @@ Mouse input theory:
   the parser waits for the sequence terminator before emitting.
 `
 
+// MouseKeyPrefix is the prefix of the key names ReadKeys emits for mouse
+// events. Each name is the prefix followed by the event kind and the
+// 0-based cell coordinates, e.g. "mouse-left@12,34". Consumers recognize
+// mouse keys by the prefix and split the name at the '@' to recover the
+// event kind and coordinates. See TheoryOfMouseInput.
+//
+// MouseEnableSequence switches the terminal into SGR mouse reporting:
+// DECSET 1000 reports button events, DECSET 1002 adds button-held motion
+// events (drag), and DECSET 1006 switches coordinate reporting to the
+// SGR extended form so columns beyond 223 are reported correctly.
+// MouseDisableSequence restores the terminal to ordinary input handling.
+//
+// The motion and wheel flags are bits of the SGR button code: motion or
+// drag events add mouseMotionFlag to the button value, and wheel events
+// add mouseWheelFlag. Wheel events separated by less than
+// mouseWheelInterval are dropped, bounding the wheel event rate at 50 Hz.
+// See TheoryOfMouseInput.
 const (
 	MouseKeyPrefix       = "mouse-"
 	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"

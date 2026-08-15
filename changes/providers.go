@@ -309,6 +309,8 @@ func (Module) ApplyTextLevelOp(
 	}
 }
 
+// ApplyGoModification provider: captures CallWriteErrorLog, ParseAndFormat,
+// and ApplySpecialTargetModify from the dscope scope.
 func (Module) ApplyGoModification(
 	callWriteErrorLog CallWriteErrorLog,
 	parseAndFormat ParseAndFormat,
