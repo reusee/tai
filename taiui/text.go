@@ -804,16 +804,6 @@ func nextTabStop(x, contentLeft, tabWidth int) int {
 	return contentLeft + (q+1)*tabWidth
 }
 
-// textCursorX returns the x position of the cursor at the given rune
-// offset within a line: the line start plus the width of the text
-// before the offset, with tabs expanded to tab stops, clamped to the
-// content area.
-func textCursorX(line string, offset, lineLeft, contentLeft, right, tabWidth int, options displaywidth.Options) int {
-	iter := getGraphemeIter()
-	defer putGraphemeIter(iter)
-	return textCursorXIter(line, offset, lineLeft, contentLeft, right, tabWidth, options, iter)
-}
-
 // textCursorXIter is textCursorX with a caller-provided grapheme
 // iterator, so a render pass shares one pooled iterator across the
 // line loop and the cursor placement.

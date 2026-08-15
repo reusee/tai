@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"math/rand/v2"
 	"os"
 	"strings"
 
@@ -945,20 +944,6 @@ type RunOptions struct {
 // the compressed content fed to the retry round as user input, framed as a
 // continue block. See states.TheoryOfIncompleteOutputSummarization.
 type RetrySummary = states.RetrySummary
-
-// freshDelimiter returns a fresh trio of uncommon Chinese characters for
-// use as a block delimiter in system-generated blocks. The delimiter is
-// chosen randomly from a set of uncommon Chinese characters so it is
-// unlikely to appear in the block body.
-func freshDelimiter() string {
-	const uncommonChars = "龘靐齉爩麤黿鼍爨灪虋齾齑靁齌齍齎齏爞齔齕"
-	chars := []rune(uncommonChars)
-	return string([]rune{
-		chars[rand.IntN(len(chars))],
-		chars[rand.IntN(len(chars))],
-		chars[rand.IntN(len(chars))],
-	})
-}
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
 // block with a fresh delimiter, so the TUI's Round tab can display it

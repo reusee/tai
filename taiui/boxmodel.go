@@ -127,15 +127,6 @@ func (m *boxModel) contentBox(box Box) Box {
 	}
 }
 
-// The box-drawing glyphs of a full border.
-const (
-	borderVertical          = '│'
-	borderTopLeftCorner     = '┌'
-	borderTopRightCorner    = '┐'
-	borderBottomLeftCorner  = '└'
-	borderBottomRightCorner = '┘'
-)
-
 func (m *boxModel) drawBorder(outer, box Box, style Style, draw drawFunc, options displaywidth.Options) {
 	if !m.border {
 		return
