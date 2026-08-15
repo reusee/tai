@@ -15,14 +15,16 @@ taiui key input theory:
   is expected to be in non-blocking raw mode: a read that returns 0 bytes
   is polled with a short sleep instead of spinning. A lone ESC that never
   grows into a sequence is discarded. ESC followed by a non-sequence byte
-  is treated as a stray ESC and the byte is processed normally. Arrow,
-  home/end, page-up/page-down, tab, the digit keys 1-3, the bracket keys
-  '[' and ']', the question-mark key '?', s, and q (plus Ctrl-C) map to
-  the names "up", "down", "home", "end", "pageup", "pagedown", "tab",
-  "1", "2", "3", "prev-transition", "next-transition", "help", "split",
-  and "quit". The bracket keys name section-transition navigation: a TUI
-  jumps its Output pane to the previous or next role or thinking-state
-  transition. The question-mark key toggles the operation help overlay.
+  is treated as a stray ESC and the byte is processed normally. Standard
+  CSI escape sequences (ESC [ ...), SS3 application cursor sequences (ESC O ...),
+  and VT220 tilde sequences (ESC [ n ~) decode arrow keys, home/end,
+  page-up/page-down, tab, digit keys 1-3, bracket keys '[' and ']',
+  question-mark '?', s, and q (plus Ctrl-C) into the logical names "up",
+  "down", "home", "end", "pageup", "pagedown", "tab", "1", "2", "3",
+  "prev-transition", "next-transition", "help", "split", and "quit".
+  The bracket keys name section-transition navigation: a TUI jumps its
+  Output pane to the previous or next role or thinking-state transition.
+  The question-mark key toggles the operation help overlay.
 - The function is intentionally transport-agnostic: it accepts an
   io.Reader, so it works with tcell's tty, terminal state files, pipes,
   and test buffers. It does no terminal mode management; the caller
@@ -89,6 +91,24 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 			if pending[0] == 0x1b {
 				if len(pending) == 1 {
 					break
+				}
+				if pending[1] == 'O' {
+					// SS3 application cursor mode: ESC O A|B|H|F
+					if len(pending) < 3 {
+						break
+					}
+					switch pending[2] {
+					case 'A':
+						ch <- "up"
+					case 'B':
+						ch <- "down"
+					case 'H':
+						ch <- "home"
+					case 'F':
+						ch <- "end"
+					}
+					pending = pending[3:]
+					continue
 				}
 				if pending[1] != '[' {
 					// ESC followed by a non-sequence byte: the ESC
@@ -183,6 +203,10 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 						}
 						seq := string(pending[:idx+1])
 						switch seq {
+						case "\x1b[1~":
+							ch <- "home"
+						case "\x1b[4~":
+							ch <- "end"
 						case "\x1b[5~":
 							ch <- "pageup"
 						case "\x1b[6~":

@@ -714,22 +714,13 @@ func (t *TUI) separateOutput() {
 	}
 }
 
-// ensureOutputNewline terminates a partial last line in the Output tab.
-// The streamed model output frequently ends without a trailing newline;
-// without termination, a subsequent write to the Output tab — e.g.,
-// command output written via the Output writer after generation
-// completes — would be merged into the model's final line. It is called
-// from tuiOutputState.Flush, the completion signal of each generation
-// round, so the termination also separates the output of consecutive
-// rounds. The display content is unchanged: a partial line and its
-// completed form render identically, only the line-boundary state
-// differs.
 func (t *TUI) ensureOutputNewline() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.output.HasPartial() {
 		t.output.Append(taiui.NoColor, "\n")
 	}
+	t.mu.Unlock()
+	t.notify()
 }
 
 // roleColor maps a content role to the display color used in the TUI,
@@ -817,7 +808,10 @@ func (t *TUI) Stop() error {
 
 func (t *TUI) Run(gen func()) error {
 	io.WriteString(t.tty, "\x1b[?25l")
-	defer t.Stop()
+	defer func() {
+		io.WriteString(t.tty, "\x1b[0m\x1b[?25h")
+		t.Stop()
+	}()
 	// Enable SGR mouse reporting (button events, button-held motion, and
 	// SGR extended coordinates) so wheel, click, and drag events arrive
 	// as input, and disable it on every exit path so the terminal returns
@@ -899,9 +893,7 @@ func (t *TUI) Run(gen func()) error {
 				// The first quit key press shows a confirmation bar; a
 				// second press confirms the quit. See TheoryOfTUI.
 				if t.handleQuitKey() {
-					io.WriteString(t.tty, "\x1b[0m")
 					fmt.Fprintf(t.tty, "\x1b[%d;1H", t.height)
-					io.WriteString(t.tty, "\x1b[?25h")
 					t.mu.Lock()
 					err := t.runErr
 					t.mu.Unlock()
@@ -1365,15 +1357,14 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	}
 }
 
-// displayChatInput writes the user's chat input (flags.Chats) to the
-// Output tab, colored as user input. The chat content lives in the
-// initial generation state, which the tuiOutputState decorator does not
-// display (only content appended after the decorator wraps the state is
-// shown). Writing it before the command starts gives the user a clear
-// view of what the model was asked. See TheoryOfTUI.
 func displayChatInput(tui *TUI, chats flags.Chats) {
 	if len(chats) == 0 {
 		return
 	}
+	tui.mu.Lock()
+	tui.lastOutputRole = generators.RoleUser
+	tui.lastWasThought = false
+	tui.hasOutput = true
+	tui.mu.Unlock()
 	tui.writeColored(outputColorUserLine, []byte(strings.Join(chats, "\n")+"\n"))
 }

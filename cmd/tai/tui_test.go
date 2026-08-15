@@ -199,6 +199,25 @@ func TestDisplayChatInputEmpty(t *testing.T) {
 	}
 }
 
+func TestDisplayChatInputSetsOutputRole(t *testing.T) {
+	tui := newTUIForTest()
+	displayChatInput(tui, flags.Chats{"prompt text"})
+	if !tui.hasOutput {
+		t.Fatal("expected hasOutput to be true")
+	}
+	if tui.lastOutputRole != generators.RoleUser {
+		t.Fatalf("expected lastOutputRole to be RoleUser, got %v", tui.lastOutputRole)
+	}
+	tui.captureContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text("response text\n")},
+	})
+	lines := tui.output.Lines()
+	if len(lines) != 3 || lines[0].Text != "prompt text" || lines[1].Text != "" || lines[2].Text != "response text" {
+		t.Fatalf("expected proper separation between user and model output, got %v", lines)
+	}
+}
+
 func TestTuiStateWriteLogs(t *testing.T) {
 	tui := newTUIForTest()
 	tui.writeLogs([]byte("hello\nworld\n"))
@@ -2563,6 +2582,26 @@ func TestTUIHelpOverlay(t *testing.T) {
 	}
 	if !strings.Contains(output, "1 / 2 / 3") {
 		t.Fatalf("expected the key bindings in the rendered output, got: %q", output)
+	}
+}
+
+func TestReadTUIKeysSS3AndVT220(t *testing.T) {
+	ch := make(chan string, 10)
+	go taiui.ReadKeys(strings.NewReader("\x1bOA\x1bOB\x1bOH\x1bOF\x1b[1~\x1b[4~"), ch)
+	var got []string
+	for len(got) < 6 {
+		select {
+		case k := <-ch:
+			got = append(got, k)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for keys")
+		}
+	}
+	want := []string{"up", "down", "home", "end", "home", "end"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
 	}
 }
 

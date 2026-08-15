@@ -158,17 +158,17 @@ func logsPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 }
 
 var tuiHelpLines = []string{
-	"1 / 2 / 3\tselect tab; pressing the focused tab again collapses it",
-	"tab\tcycle focus among the expanded tabs",
+	"1 / 2 / 3\tselect tab; press focused tab again to collapse",
+	"tab\tcycle focus among expanded tabs",
 	"s\ttoggle vertical / horizontal split",
-	"up / down\tscroll the focused pane",
-	"page up / down\tscroll the focused pane by a page",
-	"home / end\tjump to the start / end of the focused pane",
-	"[ / ]\tjump to the previous / next output section",
-	"mouse: click selects a tab",
-	"mouse: wheel / drag scrolls",
-	"q / Ctrl-C\tquit (confirmation bar: press again to confirm)",
-	"?\tthis help",
+	"up / down\tscroll focused pane",
+	"page up / down\tscroll focused pane by page",
+	"home / end\tjump to start / end of focused pane",
+	"[ / ]\tjump to previous / next section",
+	"click\tselect / toggle tab under cursor",
+	"wheel / drag\tscroll pane under cursor",
+	"q / Ctrl-C\tquit (press again to confirm)",
+	"?\ttoggle this help overlay",
 }
 
 func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Element {
@@ -188,21 +188,25 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		// The help overlay is centered over the tabs and lists the key
 		// bindings. It is derived from state like the quit confirmation
 		// bar: toggling showHelp re-renders the overlay.
+		helpHeight := min(len(tuiHelpLines)+4, max(height-2, 1))
+		helpWidth := min(72, max(width-4, 1))
+		top := max((height-helpHeight)/2, 0)
+		left := max((width-helpWidth)/2, 0)
 		root = taiui.Overlay(
 			root,
 			taiui.Rect(
 				taiui.Box{
-					Top:    height / 4,
-					Left:   width / 4,
-					Bottom: 3 * height / 4,
-					Right:  3 * width / 4,
+					Top:    top,
+					Left:   left,
+					Bottom: top + helpHeight,
+					Right:  left + helpWidth,
 				},
 				taiui.Border(true),
 				taiui.Fill(true),
 				taiui.BGColor(taiui.HexColor(0x202020)),
 				taiui.Title(" Help "),
 				taiui.Padding(1),
-				taiui.Text(tuiHelpLines, taiui.TabWidth(18)),
+				taiui.Text(tuiHelpLines, taiui.TabWidth(16)),
 			),
 		)
 	}
