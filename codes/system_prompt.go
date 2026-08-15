@@ -69,8 +69,10 @@ strategy suffices for all tasks; the model must select and blend strategies
 based on task shape, risk profile, and observed progress.
 
 Structural strategies determine how work is divided: by input partition (e.g.,
-one round per focus-file group), by logical step sequence, or by architectural
-layer (interface definition before implementation before caller updates).
+one round per focus-file group), by logical step sequence, by architectural
+layer (interface definition before implementation before caller updates), or by
+independent units (decoupling tasks with no mutual dependencies to maximize
+parallel execution).
 
 Adaptive strategies determine how the model responds during generation:
 truncate immediately and continue in the next round if output is already long;
@@ -176,6 +178,9 @@ Structural strategies determine how work is divided:
 - Interface-first: for architectural changes, split as "define interface,
   implement, update callers" so each layer is reviewed before the next depends
   on it.
+- Independence-driven: split into independent, order-agnostic units of work
+  with no mutual dependencies, maximizing decoupling and enabling parallel or
+  out-of-order execution.
 
 Adaptive strategies determine how the model responds during generation:
 - Output-length-driven: if output is already long (reasoning or code),

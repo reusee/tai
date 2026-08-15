@@ -188,6 +188,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 			"Input-driven",
 			"Logical-step-driven",
 			"Interface-first",
+			"Independence-driven",
 			"Output-length-driven",
 			"Progressive refinement",
 			"Error recovery",
