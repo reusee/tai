@@ -14,15 +14,21 @@ import (
 	"github.com/reusee/tai/modes"
 )
 
-func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
+// discardLogger returns a logger that drops every record, for tests that
+// only assert on retry behavior.
+func discardLogger() logs.Logger {
+	return logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+func TestRetrierExhaustionStripsErrRetryable(t *testing.T) {
 	calls := 0
 	fn := func() (int, error) {
 		calls++
 		return 0, errors.Join(errors.New("transient api failure"), ErrRetryable)
 	}
 
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	result, err := doWithRetry(context.Background(), logger, nil, fn, 0)
+	retrier := Retrier{logger: discardLogger()}
+	result, err := retrier.Do(context.Background(), fn, 0)
 
 	if err == nil {
 		t.Fatal("expected error after retry exhaustion")
@@ -41,7 +47,7 @@ func TestDoWithRetryExhaustionStripsErrRetryable(t *testing.T) {
 	}
 }
 
-func TestDoWithRetrySuccessOnRetry(t *testing.T) {
+func TestRetrierSuccessOnRetry(t *testing.T) {
 	calls := 0
 	fn := func() (int, error) {
 		calls++
@@ -51,8 +57,8 @@ func TestDoWithRetrySuccessOnRetry(t *testing.T) {
 		return 42, nil
 	}
 
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	result, err := doWithRetry(context.Background(), logger, nil, fn, 0)
+	retrier := Retrier{logger: discardLogger()}
+	result, err := retrier.Do(context.Background(), fn, 0)
 
 	if err != nil {
 		t.Fatalf("expected success on third attempt, got: %v", err)
@@ -65,7 +71,7 @@ func TestDoWithRetrySuccessOnRetry(t *testing.T) {
 	}
 }
 
-func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
+func TestRetrierNonRetryableImmediateReturn(t *testing.T) {
 	calls := 0
 	testErr := errors.New("fatal error")
 	fn := func() (int, error) {
@@ -73,8 +79,8 @@ func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
 		return 0, testErr
 	}
 
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	_, err := doWithRetry(context.Background(), logger, nil, fn, 0)
+	retrier := Retrier{logger: discardLogger()}
+	_, err := retrier.Do(context.Background(), fn, 0)
 
 	if err == nil {
 		t.Fatal("expected error")
@@ -87,11 +93,11 @@ func TestDoWithRetryNonRetryableImmediateReturn(t *testing.T) {
 	}
 }
 
-func TestDoWithRetryRecordsAPIErrors(t *testing.T) {
+func TestRetrierRecordsAPIErrors(t *testing.T) {
 	// Each retryable API error is recorded as an api_error event so the
 	// interaction transcript shows the raw API errors even when a later
-	// attempt succeeds. The recorder is a parameter of doWithRetry, not a
-	// context value. See generators.TheoryOfEventRecorder.
+	// attempt succeeds. The recorder is bound on the Retrier value. See
+	// generators.TheoryOfEventRecorder.
 	rec := &fakeEventRecorder{enabled: true}
 	calls := 0
 	fn := func() (int, error) {
@@ -102,8 +108,8 @@ func TestDoWithRetryRecordsAPIErrors(t *testing.T) {
 		return 42, nil
 	}
 
-	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	result, err := doWithRetry(context.Background(), logger, rec, fn, 0)
+	retrier := Retrier{logger: discardLogger(), eventRecorder: rec}
+	result, err := retrier.Do(context.Background(), fn, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,22 +128,23 @@ func TestDoWithRetryRecordsAPIErrors(t *testing.T) {
 	}
 }
 
-func TestDoWithRetryProvider(t *testing.T) {
-	// The DoWithRetry provider binds the logger and event recorder from
-	// the dscope scope, so the caller passes only the runtime values
-	// (context, the function, and the optional backoff). The generic
-	// doWithRetry remains the underlying implementation; this test
-	// exercises the State-bound provider. See TheoryOfRetry.
+func TestRetrierProvider(t *testing.T) {
+	// The Retrier provider binds the logger and event recorder from the
+	// dscope scope, so the caller passes only the runtime values
+	// (context, the function, and the optional backoff). The generic Do
+	// method infers T from the function's result type, so the same
+	// dscope-provided value serves State-returning and other callers
+	// without a monomorphic wrapper. See TheoryOfRetry.
 	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
 		&loader,
 		new(Module),
 	).Call(func(
-		doWithRetry DoWithRetry,
+		retrier Retrier,
 	) {
 		calls := 0
-		result, err := doWithRetry(context.Background(), func() (State, error) {
+		result, err := retrier.Do(context.Background(), func() (State, error) {
 			calls++
 			if calls < 2 {
 				return nil, errors.Join(errors.New("transient"), ErrRetryable)

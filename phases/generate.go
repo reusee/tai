@@ -11,9 +11,9 @@ import (
 const TheoryOfGenerateRetry = `
 The generate phase retries on ErrRetryable errors, with a retry count bounded
 to 3 attempts to prevent infinite output loops. Generators that need finer-
-grained retry control (e.g., Gemini's doWithRetry with exponential backoff)
+grained retry control (e.g., Gemini's Retrier.Do with exponential backoff)
 handle their own internal retries; the BuildGenerate bound acts as an outer
-safety net. doWithRetry in gemini.go strips ErrRetryable from its return error
+safety net. Retrier.Do in gemini.go strips ErrRetryable from its return error
 after exhausting its own retries, so the outer loop does not re-trigger on the
 same exhausted error.
 

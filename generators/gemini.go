@@ -42,7 +42,7 @@ type Gemini struct {
 	Debug           dscope.Inject[DebugGemini]
 	FuncDecls       dscope.Inject[FuncDecls]
 	EventRecorder   dscope.Inject[EventRecorder]
-	DoWithRetry     dscope.Inject[DoWithRetry]
+	Retrier         dscope.Inject[Retrier]
 }
 
 var _ Generator = Gemini{}
@@ -271,7 +271,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		nonStreaming = true
 	}
 
-	ret, err = g.DoWithRetry()(ctx, func() (State, error) {
+	ret, err = g.Retrier().Do(ctx, func() (State, error) {
 
 		g.Logger().InfoContext(ctx, "generating",
 			"name", g.spec.Name,
@@ -404,37 +404,44 @@ exhausting all retries, ErrRetryable is stripped from the returned error to
 break outer retry loops that would otherwise re-trigger indefinitely. The
 initial backoff duration is parameterized so tests can run without real-time
 delays while production callers use a meaningful delay.
+
+Retrier carries this logic as a Go 1.27 generic method: Do is generic over
+the result type, so one dscope-provided value serves every caller. Before
+generic methods, the same shape required a package-level generic function
+plus a non-generic function type that fixed the type parameter to State;
+the method subsumes both, and callers pass only the runtime values
+(context, the function, and the optional backoff).
 `
 
-// DoWithRetry runs a State-returning function with retry and exponential
-// backoff. The logger and event recorder are bound from the dscope scope,
-// so callers pass only the runtime values (context, the function, and the
-// optional backoff). The generic doWithRetry remains the underlying
-// implementation; this type fixes T to generators.State, the only
-// production caller (Gemini.Generate). See TheoryOfRetry.
-type DoWithRetry func(
-	ctx context.Context,
-	fn func() (State, error),
-	backoff ...time.Duration,
-) (State, error)
+// Retrier carries the retry dependencies — the logger and the interaction
+// event recorder — bound from the dscope scope at provider resolution time.
+// Its Do method is generic over the result type, so the same retry logic
+// serves every caller; Gemini.Generate uses it with State. Callers pass
+// only the runtime values. See TheoryOfRetry.
+type Retrier struct {
+	logger        logs.Logger
+	eventRecorder EventRecorder
+}
 
-func (Module) DoWithRetry(
+// Retrier provider: binds the logger and the interaction event recorder
+// from the dscope scope. See TheoryOfRetry and TheoryOfEventRecorder.
+func (Module) Retrier(
 	logger logs.Logger,
 	eventRecorder EventRecorder,
-) DoWithRetry {
-	return func(
-		ctx context.Context,
-		fn func() (State, error),
-		backoff ...time.Duration,
-	) (State, error) {
-		return doWithRetry(ctx, logger, eventRecorder, fn, backoff...)
+) Retrier {
+	return Retrier{
+		logger:        logger,
+		eventRecorder: eventRecorder,
 	}
 }
 
-func doWithRetry[T any](
+// Do runs fn with retry and exponential backoff. The result type is
+// inferred from fn, so the method is called without explicit
+// instantiation. After exhausting all retries, ErrRetryable is stripped
+// from the returned error to break outer retry loops.
+// See TheoryOfRetry.
+func (r Retrier) Do[T any](
 	ctx context.Context,
-	logger logs.Logger,
-	eventRecorder EventRecorder,
 	fn func() (T, error),
 	backoff ...time.Duration,
 ) (ret T, err error) {
@@ -450,17 +457,15 @@ func doWithRetry[T any](
 			return
 		}
 		if isRetryable(err) {
-			logger.WarnContext(ctx, "retry",
+			r.logger.WarnContext(ctx, "retry",
 				"attempt", i+1, "error", err,
 			)
 			// Each retryable API error is recorded so the interaction
 			// transcript shows the raw API errors even when a later
-			// attempt succeeds. The recorder is passed as a parameter by
-			// the caller, which obtains it from its injected
-			// dscope.Inject[EventRecorder] field. See
-			// generators.TheoryOfEventRecorder.
-			if eventRecorder != nil && eventRecorder.Enabled() {
-				eventRecorder.Event("api_error", fmt.Sprintf("retryable API error (attempt %d/%d): %v", i+1, maxRetries, err))
+			// attempt succeeds. The recorder is bound at provider
+			// resolution. See generators.TheoryOfEventRecorder.
+			if r.eventRecorder != nil && r.eventRecorder.Enabled() {
+				r.eventRecorder.Event("api_error", fmt.Sprintf("retryable API error (attempt %d/%d): %v", i+1, maxRetries, err))
 			}
 			select {
 			case <-ctx.Done():
@@ -478,8 +483,8 @@ func doWithRetry[T any](
 	// phases/generate.go) from re-triggering indefinitely.
 	// See TheoryOfGenerateRetry in phases/generate.go.
 	if errors.Is(err, ErrRetryable) {
-		if eventRecorder != nil && eventRecorder.Enabled() {
-			eventRecorder.Event("api_error", fmt.Sprintf("API retry exhausted after %d attempts: %v", maxRetries, err))
+		if r.eventRecorder != nil && r.eventRecorder.Enabled() {
+			r.eventRecorder.Event("api_error", fmt.Sprintf("API retry exhausted after %d attempts: %v", maxRetries, err))
 		}
 		err = fmt.Errorf("retry exhausted after %d attempts: %v", maxRetries, err)
 	}
