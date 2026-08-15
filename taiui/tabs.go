@@ -287,9 +287,11 @@ func Panel(box Box, label string, highlight bool, lines []Line, offset int, focu
 }
 
 func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
-	if p.box.Width() > 0 && p.box.Height() > 0 {
-		box = p.box
-	}
+	// The constructor box is authoritative, like a Box spec override: a
+	// degenerate box (zero width or height) renders nothing. Falling back
+	// to the parent-assigned box would draw the panel over regions the
+	// caller did not assign to it.
+	box = p.box
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}

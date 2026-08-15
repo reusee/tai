@@ -287,3 +287,31 @@ func TestPanelLargeOutput(t *testing.T) {
 		t.Fatalf("expected '5' at row 1 col 6 for line 50000, got %v", digit.Rune)
 	}
 }
+
+func TestPanelDegenerateBoxRendersNothing(t *testing.T) {
+	// The constructor box is authoritative: a Panel with a degenerate box
+	// (zero width or height) must render nothing rather than falling back
+	// to the parent-assigned box, which would paint over unrelated
+	// regions. See TheoryOfTabs.
+	element := Panel(
+		Box{Top: 2, Left: 2, Bottom: 2, Right: 8},
+		"Output",
+		false,
+		[]Line{{Text: "content"}},
+		0,
+		false,
+		true,
+		testPanelStyle(),
+	)
+	screen := newFakeScreen(10, 4)
+	Render(element, screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	for i, cell := range frame.Cells {
+		if cell.Set {
+			t.Fatalf("expected no cells set for a degenerate panel box, got cell %d set to %q", i, string(cell.Rune))
+		}
+	}
+}
