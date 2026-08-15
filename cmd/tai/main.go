@@ -8,6 +8,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/security"
 )
 
@@ -49,6 +50,16 @@ func main() {
 	// instead of receiving the recorder through the context. See
 	// generators.TheoryOfEventRecorder.
 	scope = scope.Fork(eventRecorderDef)
+
+	// The model family is resolved from the default generator so
+	// family-specific extra system prompts can be selected. The
+	// generators module provides an empty default; this fork overrides it
+	// with the resolved generator's family. See
+	// codes.TheoryOfFamilyExtraSystemPrompt.
+	baseScope := scope
+	scope = scope.Fork(func() generators.ModelFamily {
+		return generators.ModelFamily(baseScope.Get[generators.Generator]().Spec().Family)
+	})
 
 	if bool(scope.Get[Tui]()) {
 		runWithTUI(command, scope)

@@ -135,3 +135,58 @@ func TestExtraSystemPromptHandleConfigSkipsEmptyString(t *testing.T) {
 		t.Fatalf("expected 0 prompts for empty string, got %d: %v", len(*ret), *ret)
 	}
 }
+
+func TestFamilyExtraSystemPromptHandleConfig(t *testing.T) {
+	ctx := cuecontext.New()
+
+	v := ctx.CompileString(`{
+		gemini: "gemini prompt"
+		deepseek: ["deepseek one", "deepseek two"]
+	}`)
+
+	f := FamilyExtraSystemPrompt(nil)
+	result, err := f.HandleConfig("family_extra_system_prompt", []*cue.Value{&v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret, ok := result.(*FamilyExtraSystemPrompt)
+	if !ok {
+		t.Fatalf("expected *FamilyExtraSystemPrompt, got %T", result)
+	}
+	if len(*ret) != 2 {
+		t.Fatalf("expected 2 families, got %d: %v", len(*ret), *ret)
+	}
+	if got := (*ret)["gemini"]; len(got) != 1 || got[0] != "gemini prompt" {
+		t.Fatalf("unexpected gemini prompts: %v", got)
+	}
+	if got := (*ret)["deepseek"]; len(got) != 2 || got[0] != "deepseek one" || got[1] != "deepseek two" {
+		t.Fatalf("unexpected deepseek prompts: %v", got)
+	}
+}
+
+func TestFamilyExtraSystemPromptHandleConfigAccumulates(t *testing.T) {
+	ctx := cuecontext.New()
+
+	v1 := ctx.CompileString(`{gemini: "one"}`)
+	v2 := ctx.CompileString(`{gemini: "two", deepseek: "three"}`)
+
+	f := FamilyExtraSystemPrompt(nil)
+	result, err := f.HandleConfig("family_extra_system_prompt", []*cue.Value{&v1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret1 := result.(*FamilyExtraSystemPrompt)
+
+	result2, err := ret1.HandleConfig("family_extra_system_prompt", []*cue.Value{&v2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret2 := result2.(*FamilyExtraSystemPrompt)
+
+	if got := (*ret2)["gemini"]; len(got) != 2 || got[0] != "one" || got[1] != "two" {
+		t.Fatalf("expected accumulated gemini prompts, got %v", got)
+	}
+	if got := (*ret2)["deepseek"]; len(got) != 1 || got[0] != "three" {
+		t.Fatalf("unexpected deepseek prompts: %v", got)
+	}
+}

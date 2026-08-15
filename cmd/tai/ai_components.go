@@ -6,6 +6,7 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
 )
 
@@ -75,6 +76,8 @@ func (Module) AIComponents(
 	flagShell flags.Shell,
 	currentMemory memories.CurrentMemory,
 	extra flags.ExtraSystemPrompt,
+	familyExtra flags.FamilyExtraSystemPrompt,
+	modelFamily generators.ModelFamily,
 	noMemory NoMemory,
 ) (ret AIComponents) {
 	var comps components.ComponentSet
@@ -116,6 +119,19 @@ func (Module) AIComponents(
 	// multiple config sources are all included.
 	// See TheoryOfAIComponents.
 	for _, prompt := range extra {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
+	}
+
+	// Family-specific extra system prompts: top-level prompts keyed by
+	// the model family. The family is resolved from the scope via
+	// generators.ModelFamily; when the family matches a key, the
+	// corresponding prompts are appended as prompt-only components after
+	// the generic extra prompts. See codes.TheoryOfFamilyExtraSystemPrompt.
+	for _, prompt := range familyExtra[string(modelFamily)] {
 		if prompt != "" {
 			comps = append(comps, components.Component{
 				PromptSection: prompt,

@@ -9,7 +9,9 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/gocodes"
 	"github.com/reusee/tai/modes"
 )
 
@@ -114,5 +116,46 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 			return
 		}
 		t.Fatal("go-test component not found")
+	})
+}
+
+func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() generators.ModelFamily { return "gemini" },
+		func() flags.FamilyExtraSystemPrompt {
+			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
+		},
+		func() gocodes.FamilyExtraSystemPrompt {
+			return gocodes.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
+		},
+	).Call(func(comps CodesComponents) {
+		prompt := comps.PromptSections()
+		if !strings.Contains(prompt, "gemini family prompt") {
+			t.Fatal("expected top-level family prompt in system prompt")
+		}
+		if !strings.Contains(prompt, "go gemini family prompt") {
+			t.Fatal("expected go-specific family prompt in system prompt")
+		}
+	})
+}
+
+func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() generators.ModelFamily { return "other" },
+		func() flags.FamilyExtraSystemPrompt {
+			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
+		},
+	).Call(func(comps CodesComponents) {
+		if strings.Contains(comps.PromptSections(), "gemini family prompt") {
+			t.Fatal("non-matching family prompt must not be included")
+		}
 	})
 }

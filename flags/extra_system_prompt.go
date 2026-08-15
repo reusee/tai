@@ -15,7 +15,64 @@ import (
 // replaced. Each config value may be a single string or a list of strings.
 // See flags.TheoryOfConfigFlagParity.
 
-var _ configs.Config = ExtraSystemPrompt(nil)
+// FamilyExtraSystemPrompt configs.Config implementation. It maps model
+// family names to additional system prompt sections. Values from multiple
+// config files and config paths are aggregated additively per family.
+// See flags.TheoryOfConfigFlagParity and
+// codes.TheoryOfFamilyExtraSystemPrompt.
+
+var _ configs.Config = FamilyExtraSystemPrompt(nil)
+
+// FamilyExtraSystemPrompt is a map from model family names to additional
+// system prompt sections. The prompts for the resolved generator's family
+// are appended after the generic extra system prompts. Each config value
+// may be a single string or a list of strings; values from multiple config
+// files are aggregated additively per family.
+type FamilyExtraSystemPrompt map[string][]string
+
+func (Module) FamilyExtraSystemPrompt() FamilyExtraSystemPrompt {
+	return nil
+}
+
+func (f FamilyExtraSystemPrompt) ConfigPaths() []string {
+	return []string{"family_extra_system_prompt"}
+}
+
+func (f FamilyExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) (any, error) {
+	ret := make(FamilyExtraSystemPrompt, len(f))
+	for family, prompts := range f {
+		ret[family] = slices.Clone(prompts)
+	}
+	for _, v := range values {
+		iter, err := v.Fields()
+		if err != nil {
+			return nil, err
+		}
+		for iter.Next() {
+			family := iter.Selector().Unquoted()
+			val := iter.Value()
+			switch val.Kind() {
+			case cue.StringKind:
+				var s string
+				if err := val.Decode(&s); err != nil {
+					return nil, err
+				}
+				if s != "" {
+					ret[family] = append(ret[family], s)
+				}
+			case cue.ListKind:
+				var list []string
+				if err := val.Decode(&list); err != nil {
+					return nil, err
+				}
+				ret[family] = append(ret[family], list...)
+			default:
+				return nil, fmt.Errorf("expected string or list for family %q, got %v", family, val.Kind())
+			}
+		}
+	}
+	return &ret, nil
+}
 
 // ExtraSystemPrompt is a list of additional system prompt sections that are
 // appended to the base system prompt. Values from multiple config files and

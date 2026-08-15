@@ -377,3 +377,19 @@ func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {
 		}
 	})
 }
+
+func TestSystemPromptIncludesFamilyExtraSystemPrompt(t *testing.T) {
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.ModelFamily { return "gemini" },
+		func() flags.FamilyExtraSystemPrompt {
+			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
+		},
+	).Call(func(systemPrompt SystemPrompt) {
+		if !strings.Contains(string(systemPrompt), "gemini family prompt") {
+			t.Fatal("expected family prompt in next system prompt")
+		}
+	})
+}

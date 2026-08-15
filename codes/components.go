@@ -57,6 +57,22 @@ the generation loop checks for its presence to distinguish a normally ended
 round from truncated output.
 `
 
+const TheoryOfFamilyExtraSystemPrompt = `
+Family-specific extra system prompts extend the generic extra_system_prompt
+mechanism with prompts keyed by the model family. The top-level
+family_extra_system_prompt applies to every generation command (codes, ai,
+next); the go.family_extra_system_prompt applies only when the codes
+generation pipeline is active (go, any, goal), mirroring the split between
+extra_system_prompt and go.extra_system_prompt. Prompts are selected by the
+family of the resolved default generator (generators.Spec.Family) and are
+appended as prompt-only components after the generic extra prompts, so a
+family-specific prompt refines or extends the generic instructions without
+replacing them. The family is resolved through the generators.ModelFamily
+provider: the generators module provides an empty default, and the tai
+command forks it with the resolved generator's family, so tests and
+non-generation commands see no family-specific prompts.
+`
+
 // CodesComponents is the component set type for the codes module. It embeds
 // components.ComponentSet as an anonymous struct field so that dscope can
 // resolve it independently from other modules' ComponentSet providers.
@@ -68,6 +84,9 @@ type CodesComponents struct {
 func (Module) CodesComponents(
 	extra flags.ExtraSystemPrompt,
 	goExtra gocodes.ExtraSystemPrompt,
+	familyExtra flags.FamilyExtraSystemPrompt,
+	goFamilyExtra gocodes.FamilyExtraSystemPrompt,
+	modelFamily generators.ModelFamily,
 	dynamicContext DynamicContext,
 	apply flags.Apply,
 	plan flags.Plan,
@@ -228,6 +247,27 @@ func (Module) CodesComponents(
 	// commands). The ai command uses AIComponents and is unaffected.
 	// See gocodes.ExtraSystemPrompt.
 	for _, prompt := range goExtra {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
+	}
+
+	// Family-specific extra system prompts: top-level and go-specific
+	// prompts keyed by the model family. The family is resolved from the
+	// scope via generators.ModelFamily; when the family matches a key,
+	// the corresponding prompts are appended as prompt-only components
+	// after the generic extra prompts. See
+	// TheoryOfFamilyExtraSystemPrompt.
+	for _, prompt := range familyExtra[string(modelFamily)] {
+		if prompt != "" {
+			comps = append(comps, components.Component{
+				PromptSection: prompt,
+			})
+		}
+	}
+	for _, prompt := range goFamilyExtra[string(modelFamily)] {
 		if prompt != "" {
 			comps = append(comps, components.Component{
 				PromptSection: prompt,

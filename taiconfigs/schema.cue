@@ -28,6 +28,11 @@ max_context_tokens?: int
 // extra_system_prompt provides additional instructions to the AI.
 // Accepts a single string or a list of strings; values from multiple
 // config files are aggregated additively.
+// family_extra_system_prompt provides additional instructions to the AI
+// keyed by model family. Accepts a map from family name to a single string
+// or a list of strings; values from multiple config files are aggregated
+// additively per family.
+family_extra_system_prompt?: {[string]: string | [...string]}
 extra_system_prompt?: string | [...string]
 
 // match provides a regex to filter files by path.
@@ -125,6 +130,9 @@ go?: {
 	// the AI. Unlike the top-level extra_system_prompt, these are
 	// introduced whenever the codes generation pipeline is active (go,
 	// any, goal commands); the ai command is unaffected.
+// family_extra_system_prompt provides Go-specific additional
+// instructions to the AI keyed by model family.
+family_extra_system_prompt?: {[string]: string | [...string]}
 	
 	extra_system_prompt?: string | [...string]
 }

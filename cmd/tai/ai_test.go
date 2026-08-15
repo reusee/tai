@@ -185,3 +185,20 @@ func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 		}
 	})
 }
+
+func TestAIComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.ModelFamily { return "gemini" },
+		func() flags.FamilyExtraSystemPrompt {
+			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
+		},
+	).Call(func(comps AIComponents) {
+		if !strings.Contains(comps.PromptSections(), "gemini family prompt") {
+			t.Fatal("expected family prompt in AI system prompt")
+		}
+	})
+}

@@ -56,6 +56,8 @@ type SystemPrompt string
 func (Module) SystemPrompt(
 	logger logs.Logger,
 	extra flags.ExtraSystemPrompt,
+	familyExtra flags.FamilyExtraSystemPrompt,
+	modelFamily generators.ModelFamily,
 	hasFiles HasFiles,
 	flagFocus flags.Focus,
 	flagIgnore flags.Ignore,
@@ -71,6 +73,17 @@ func (Module) SystemPrompt(
 	for _, e := range extra {
 		if e != "" {
 			ret += "\n\n" + SystemPrompt(e) + "\n"
+		}
+	}
+
+	// Family-specific extra system prompts: top-level prompts keyed by
+	// the model family. The family is resolved from the scope via
+	// generators.ModelFamily; when the family matches a key, the
+	// corresponding prompts are appended after the generic extra prompts.
+	// See codes.TheoryOfFamilyExtraSystemPrompt.
+	for _, prompt := range familyExtra[string(modelFamily)] {
+		if prompt != "" {
+			ret += "\n\n" + SystemPrompt(prompt) + "\n"
 		}
 	}
 
