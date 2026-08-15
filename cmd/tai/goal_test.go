@@ -54,8 +54,8 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	if strings.Contains(GoalSystemPrompt, ".GOAL_COMPLETE") {
 		t.Fatal("GoalSystemPrompt must not reference .GOAL_COMPLETE marker file")
 	}
-	if !strings.Contains(GoalSystemPrompt, "uncommon Chinese characters") {
-		t.Fatal("GoalSystemPrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(GoalSystemPrompt, `(kind "done")`) {
+		t.Fatal("GoalSystemPrompt must describe the done block kind")
 	}
 }
 

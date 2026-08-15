@@ -27,14 +27,6 @@ Use the "continue" kind to signal that the current generation round is over and 
 
 The continue block is a generic self-prompting mechanism with no prescribed content. Conventions layered on top of it (for example, the mandatory planning mandate, which carries the evolving task list in the body) define what the body should contain; the mechanism itself imposes none.
 
-**Continue Block Format (complete example):**
-
-<<灪麤爨 <continue>
-Continue the task: apply the remaining changes and verify them with tests.
-灪麤爨
-
-The delimiter 灪麤爨 in the example is illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
-
 **Rules:**
 - The body is fed back verbatim as the next user message and triggers a new generation round.
 - Use a continue block whenever another generation round is needed — for example, when the remaining output would exceed a single response's capacity.
@@ -42,11 +34,7 @@ The delimiter 灪麤爨 in the example is illustrative only: in every block emit
 - The continue block MUST be the last block in the response, after the summary block; no other blocks may appear after it.
 `
 
-const ContinueBlockRestatePrompt = `- Continue block: when another generation round is needed, emit:
-<<龖爨齾 <continue>
-<next user message content>
-龖爨齾
-It MUST be the last block in the response. The body is fed back verbatim as the next user message to trigger a new round. The example delimiter 龖爨齾 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+const ContinueBlockRestatePrompt = `- Continue block: when another generation round is needed, emit a continue block whose body is the next user message content. It MUST be the last block in the response, after the summary block. The body is fed back verbatim as the next user message to trigger a new round.`
 
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Only blocks with Kind "continue" are processed.

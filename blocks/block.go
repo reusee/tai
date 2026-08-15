@@ -42,17 +42,13 @@ it, so incomplete AI output is surfaced to the user.
 Delimiter rule centralization: the delimiter rules (selection, uniqueness,
 body-disjointness, matching) live only in BlockFormatSystemPrompt and
 BlockFormatRestatePrompt. Individual kind prompts (continue, shell, go-test, summary,
-memory) must not restate the full rule set; they reference the general format and
-focus on their kind-specific semantics. Kind prompts do display structurally complete
-examples with illustrative concrete delimiters, because showing the literal marker
-"<<DELIMITER" inside a kind template teaches the model to emit that placeholder
-verbatim, producing blocks with a non-unique delimiter. Each kind prompt may carry
-one pointed reminder tied to its example — choose a fresh trio of uncommon Chinese
-characters, repeat the same delimiter on the closing line, never write the
-placeholder literally — without restating the full rules. This keeps redundant
-delimiter description near zero while giving the format-error-prone kinds (notably
-go-test and summary) correct imitation targets for both their opening and closing
-markers.
+memory, request-context, change, done) must not restate any format rule, template,
+or example delimiter; they reference the general format and describe only their
+kind-specific semantics — which kind to emit and what content the body carries.
+Every component set that processes blocks MUST include BlockFormatSystemPrompt as a
+prompt-only component; a kind prompt that assumes the block format is present
+without the component set carrying it is a bug. This keeps redundant delimiter
+description at zero and gives the format rules a single authoritative source.
 `
 
 const TheoryOfBoundaryUniqueness = `
@@ -227,16 +223,16 @@ DELIMITER
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Three uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen trio is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The closing line MUST use the EXACT same delimiter string as the opening marker. A block opened with <<徕珑龘 <change ...> MUST be closed with 徕珑龘, never 龘靐齉 or any other delimiter.
-- A line that does not match the delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter. If no matching closing line is found, the block is unclosed. Always close a block with the same delimiter used to open it.
-- Before writing each closing line, verify its delimiter matches the corresponding opening marker of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<徕珑龘 <change ...> MUST be closed with the EXACT same delimiter string 徕珑龘, never 龘靐齉 or any other delimiter.
+- A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
+- Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 `
 
 const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers — never omit either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly three uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the SAME delimiter alone on its own line. Never swap or alter either marker.
+- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (exactly three uncommon Chinese characters) and the opening tag '<kind ...>' ending with '>'. Closing marker: the EXACT SAME delimiter alone on its own line.
 - **The DELIMITER MUST be exactly three uncommon Chinese characters** (e.g., 徕珑龘, 龘靐齉, 齉爩龖), NEVER the literal text "<DELIMITER>" or a common word. Writing "<<DELIMITER" literally causes the parser to fail to recognize the block and the changes will be silently lost.
 - Generate a fresh trio of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
-- The closing line MUST use the EXACT same delimiter as the opening marker.
+- **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Three uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen trio is absent from the body before emitting the block.
 - No blank lines are required before or after a block.`
 

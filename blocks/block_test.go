@@ -1121,13 +1121,19 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 
 func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 	// The delimiter policy mandates exactly three uncommon Chinese characters
-	// per block. Every prompt that shows a block example must state this
-	// policy, and must not display legacy example delimiters (English or
-	// two-character Chinese) that the model would imitate verbatim.
+	// per block. Only the unified block format prompts state the policy;
+	// kind prompts reference the general format and must not restate it.
 	// See TheoryOfBlockFormatGeneral.
-	prompts := map[string]string{
-		"BlockFormatSystemPrompt":     BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt":    BlockFormatRestatePrompt,
+	policyPrompts := map[string]string{
+		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
+		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
+	}
+	for name, prompt := range policyPrompts {
+		if !strings.Contains(prompt, "three uncommon Chinese characters") {
+			t.Fatalf("%s must mandate the three-uncommon-Chinese-characters delimiter policy", name)
+		}
+	}
+	kindPrompts := map[string]string{
 		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
 		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
 		"GoTestBlockSystemPrompt":     GoTestBlockSystemPrompt,
@@ -1139,9 +1145,9 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"RequestContextSystemPrompt":  RequestContextSystemPrompt,
 		"RequestContextRestatePrompt": RequestContextRestatePrompt,
 	}
-	for name, prompt := range prompts {
-		if !strings.Contains(prompt, "three uncommon Chinese characters") {
-			t.Fatalf("%s must mandate the three-uncommon-Chinese-characters delimiter policy", name)
+	for name, prompt := range kindPrompts {
+		if strings.Contains(prompt, "three uncommon Chinese characters") {
+			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)
 		}
 		for _, legacy := range []string{
 			"<<DELIM1", "<<BLOCK1", "<<ENDBLOCK", "<<TESTEND",

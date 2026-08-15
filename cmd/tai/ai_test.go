@@ -131,23 +131,34 @@ func TestAIRestatePromptsExcludeMemoryWhenNoMemory(t *testing.T) {
 }
 
 func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly three uncommon Chinese characters
-	// per block. Both memory prompts must state the policy and must not
-	// display the legacy MEMEND example delimiter. See
+	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt,
+	// which AIComponents embeds as a prompt-only component. The memory
+	// prompts describe only the memory kind and must not restate the
+	// policy or display the legacy MEMEND example delimiter. See
 	// TheoryOfBlockFormatGeneral in blocks/block.go.
 	prompt := memoryBlockSystemPrompt("")
-	if !strings.Contains(prompt, "非常用汉字") {
-		t.Fatal("memoryBlockSystemPrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if strings.Contains(prompt, "非常用汉字") {
+		t.Fatal("memoryBlockSystemPrompt must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it")
 	}
 	if strings.Contains(prompt, "<<MEMEND") {
 		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
 	}
-	if !strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese characters") {
-		t.Fatal("memoryBlockRestatePrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese characters") {
+		t.Fatal("memoryBlockRestatePrompt must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it")
 	}
 	if strings.Contains(memoryBlockRestatePrompt, "<<MEMEND") {
 		t.Fatal("memoryBlockRestatePrompt must not display the legacy MEMEND example delimiter")
 	}
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.Generator { return aiMockGenerator{} },
+	).Call(func(comps AIComponents) {
+		if !strings.Contains(comps.PromptSections(), "uncommon Chinese characters") {
+			t.Fatal("AIComponents must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
+		}
+	})
 }
 
 func TestAIComponentsExcludesContinueComponent(t *testing.T) {

@@ -316,15 +316,19 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 			t.Fatal("system prompt must include change block prompt when focus files are present")
 		}
 		// Restate prompt must NOT be in the system prompt (it is in the
-		// user prompt now).
-		if strings.Contains(s, "a summary block is still required") {
+		// user prompt now). "Prefer precise modifications over WRITE"
+		// appears only in the change restate prompt; the system prompt's
+		// ChangeBlockPrompt has "Prefer Precise Modifications" with a
+		// parenthetical between "modifications" and "over WRITE", so the
+		// exact phrase is restate-only.
+		if strings.Contains(s, "Prefer precise modifications over WRITE") {
 			t.Fatal("system prompt must not include change block restate prompt")
 		}
 		// User prompt must include the restate prompt at the end.
 		foundRestate := false
 		for _, part := range userPrompt {
 			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "a summary block is still required") {
+				if strings.Contains(string(text), "Prefer precise modifications over WRITE") {
 					foundRestate = true
 				}
 			}

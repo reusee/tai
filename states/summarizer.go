@@ -57,14 +57,9 @@ Output at most 2 bullet points. Each list item must be a single, short sentence 
 
 Pick only the most essential points. Do not be exhaustive. The user reads this to decide whether to let the model continue or interrupt — highlight any signs of wrong direction, circular reasoning, or irrelevant tangents. Do not reproduce the raw thoughts; extract only the essential trajectory.
 
-Wrap the output in a summary block using the heredoc-delimited block format. Output ONLY the block, no other text before or after:
+Wrap the output in a summary block whose body is the bullet list. Output ONLY the block, no other text before or after.
 
-<<爩麤黿 <summary>
-- first key point
-- second key point
-爩麤黿
-
-The delimiter 爩麤黿 in the example is illustrative only: choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+` + blocks.BlockFormatSystemPrompt
 
 // ThoughtsSummarizeLanguage is an alias for flags.ThoughtsSummarizeLanguage.
 type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage

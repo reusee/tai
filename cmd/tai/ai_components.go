@@ -153,16 +153,12 @@ func memoryBlockSystemPrompt(profileText string) string {
 在每一轮对话中，按以下流程执行：
 1. 首先，根据现有的用户画像，生成对用户当前输入的回应。这是首要任务。
 2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或深化现有用户画像的新信息。
-3. 如果发现了新信息，生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的格式为：
+3. 如果发现了新信息，生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的正文为 XML 结构：
 
-<<爨齉龘 <memory>
 <memory>
   <memory-item>用户画像项1</memory-item>
   <memory-item>用户画像项2</memory-item>
 </memory>
-爨齉龘
-
-其中 爨齉龘 是一个示例分隔符。每次生成时选择三个新的非常用汉字作为分隔符，并确保分隔符不会与内容冲突。
 
 - 如果没有发现任何新信息，则不要生成此块。
 - 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。
@@ -174,8 +170,4 @@ func memoryBlockSystemPrompt(profileText string) string {
 ` + profileText
 }
 
-const memoryBlockRestatePrompt = `- Memory block: emit <<麐黿龘 <memory>
-<memory>
-  <memory-item>user profile fact</memory-item>
-</memory>
-麐黿龘 only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block. The example delimiter 麐黿龘 is illustrative: choose your own three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line.`
+const memoryBlockRestatePrompt = `- Memory block: emit a memory block whose body is <memory><memory-item>user profile fact</memory-item></memory>, only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`

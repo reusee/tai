@@ -84,17 +84,6 @@ Go-Test Block Kind:
 
 Use the "go-test" kind to run Go tests and receive the output as part of the next generation round. After making code changes (especially new or modified test files), emit a go-test block to verify the changes. The system will run go test and feed the results back.
 
-**Go-Test Block Format (complete example):**
-
-<<齾麐黿 <go-test>
--run
-TestFoo
--v
-/absolute/path/to/pkg/...
-齾麐黿
-
-The delimiter 齾麐黿 in the example is illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
-
 **Rules:**
 - Use go-test blocks to verify code changes by running Go tests. Only use go-test blocks in Go projects.
 - The body contains ONLY the go test arguments, one per line, with no prose. Each non-empty line is passed as a separate argument to the go test command via exec.Command, bypassing the shell to avoid injection. If empty, all tests in the current directory tree (./...) are run.
@@ -107,17 +96,13 @@ The delimiter 齾麐黿 in the example is illustrative only: in every block emit
 - The go-test block should appear before the summary block in the response.
 `
 
-const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block to verify:
-<<虋灩黿 <go-test>
-<optional go test arguments, one per line>
-虋灩黿
+const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block whose body contains the go test arguments, one per line.
 - Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). The current working directory is not known, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so correct absolute paths can be constructed. If the working directory is not yet known, use an empty body to run all tests (./...).
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
 - If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
 - Only use go-test blocks in Go projects.
-- A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
-- The example delimiter 虋灩黿 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.`
 
 const goTestTimeout = 120 * time.Second
 

@@ -109,13 +109,7 @@ You are working toward a goal that may require multiple independent loops to ach
 - If the goal IS achieved, emit a done block, then end with a summary block.
 
 **Goal Completion Signal:**
-When you determine the goal is fully achieved, emit a done block:
-
-<<龘靐齉 <done>
-goal achieved
-龘靐齉
-
-The delimiter 龘靐齉 is illustrative only: choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line.
+When you determine the goal is fully achieved, emit a done block (kind "done") whose body states the goal achievement.
 
 - A done block is a completion declaration, not a verdict. The next loop starts fresh, re-reads the current filesystem state — which may have changed while this loop ran (e.g., todo.md may have gained new tasks) — and verifies the declaration. Only when a second consecutive loop also emits a done block is the goal confirmed.
 - Only emit a done block when the goal is genuinely achieved. If unsure, do NOT emit it; continue working in the next loop.

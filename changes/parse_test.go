@@ -499,23 +499,25 @@ func TestValidateChangeBlockNonGoFileTextLevelOpsAllowed(t *testing.T) {
 }
 
 func TestChangeBlockPromptsUseUncommonChineseDelimiter(t *testing.T) {
-	// The delimiter policy mandates exactly three uncommon Chinese characters
-	// per block. Both the change block prompt and its restate prompt must
-	// state the policy and must not display legacy English example
-	// delimiters, which the model would imitate verbatim.
-	// See TheoryOfBlockFormatGeneral in blocks/block.go.
+	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt.
+	// The change block prompts reference the general format and must not
+	// restate the delimiter policy; ChangeBlockSystemPrompt() embeds the
+	// unified format prompt. See TheoryOfBlockFormatGeneral.
 	for name, prompt := range map[string]string{
 		"ChangeBlockPrompt":        ChangeBlockPrompt,
 		"ChangeBlockRestatePrompt": ChangeBlockRestatePromptText,
 	} {
-		if !strings.Contains(prompt, "uncommon Chinese characters") {
-			t.Fatalf("%s must mandate the three-uncommon-Chinese-characters delimiter policy", name)
+		if strings.Contains(prompt, "uncommon Chinese characters") {
+			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)
 		}
 		for _, legacy := range []string{"<<CHG1", "<<ENDRT", "<<DELIM1", "<<BLOCK1"} {
 			if strings.Contains(prompt, legacy) {
 				t.Fatalf("%s must not display legacy example delimiter %s", name, legacy)
 			}
 		}
+	}
+	if !strings.Contains(ChangeBlockSystemPrompt(), "uncommon Chinese characters") {
+		t.Fatal("ChangeBlockSystemPrompt must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
 	}
 }
 

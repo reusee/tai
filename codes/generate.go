@@ -368,18 +368,7 @@ Prioritize the following valuable content in the retry prompt:
 - The state of the work: what was completed and what remains
 - The next steps the model was about to take
 
-**Block Format (complete example):**
-
-<<黿鼍爩 <summary>
-- The model was analyzing the parser and had identified the root cause
-- It was interrupted before writing the fix
-黿鼍爩
-
-<<灪麤爨 <continue>
-The root cause is the missing boundary check in the parser. Next: add the boundary check, then update the tests.
-灪麤爨
-
-The delimiters 黿鼍爩 and 灪麤爨 in the example are illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, use a DIFFERENT trio for each block, and use the same delimiter on the closing line. The delimiter MUST NOT appear anywhere in the block body. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
+` + blocks.BlockFormatSystemPrompt + `
 
 Output ONLY these two blocks as your final text, with no other text before or after them.`
 

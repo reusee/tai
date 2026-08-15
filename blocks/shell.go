@@ -43,14 +43,6 @@ Shell Block Kind:
 
 Use the "shell" kind to execute shell commands and receive the output as part of the next generation round. Use shell blocks to run tests, check build status, explore the codebase, and verify changes autonomously.
 
-**Shell Block Format (complete example):**
-
-<<爞齌黿 <shell>
-go test ./...
-爞齌黿
-
-The delimiter 爞齌黿 in the example is illustrative only: in every block you emit, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
-
 **Rules:**
 - Use shell blocks to run tests, check build status, explore the codebase, or verify changes.
 - The command is executed with ` + "`" + `sh -c` + "`" + ` in the project root directory.
@@ -87,13 +79,8 @@ The delimiter 爞齌黿 in the example is illustrative only: in every block you 
 - Shell output triggers a new generation round so the model can act on the results.
 `
 
-const ShellBlockRestatePrompt = `- Shell block: emit
-<<齑靁虋 <shell>
-<shell command>
-齑靁虋
-to execute a command. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
-- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or request-context blocks that depend on the shell output until the results arrive.
-- The example delimiter 齑靁虋 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+const ShellBlockRestatePrompt = `- Shell block: emit a shell block whose body is the shell command to execute. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
+- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or request-context blocks that depend on the shell output until the results arrive.`
 
 const shellTimeout = 30 * time.Second
 

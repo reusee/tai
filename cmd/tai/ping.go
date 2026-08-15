@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
@@ -75,12 +76,6 @@ func (Module) RandomBlockKinds() RandomBlockKinds {
 	}
 }
 
-// pingBlockPrompt builds the user message for the block-generation test. It
-// carries the full block-format instructions because ping uses no system
-// prompt. The delimiter policy — exactly three uncommon Chinese characters,
-// distinct per block — is restated here because the block parser rejects any
-// other delimiter, and two blocks sharing a delimiter would be mis-parsed as
-// nested. See TheoryOfPingCommand.
 func pingBlockPrompt(kindA, kindB string) string {
 	return fmt.Sprintf(`This is a block-generation test. Emit exactly two blocks in the heredoc-delimited format defined below.
 
@@ -88,17 +83,13 @@ The two required block kinds (each used exactly once, in any order):
 1. %s
 2. %s
 
-Format of each block:
-<<DELIMITER <kind>
-<body>
-DELIMITER
-
 Rules:
-- In the opening marker, replace DELIMITER with exactly three uncommon Chinese characters (for example, a rare trio of Han characters). The closing line of the block must be the same delimiter alone on its own line.
 - Each of the two blocks MUST use a different delimiter; never reuse a delimiter.
 - The <kind> must be one of the two required kinds listed above.
 - The body may be any short text.
-- Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.`, kindA, kindB)
+- Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.
+
+%s`, kindA, kindB, blocks.BlockFormatSystemPrompt)
 }
 
 // validatePingBlocks checks that the model emitted exactly one block of each

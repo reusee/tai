@@ -102,9 +102,6 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		if !strings.Contains(string(prompt), "Continue Block Kind") {
 			t.Fatal("system prompt must include continue block section")
 		}
-		if !strings.Contains(string(prompt), "<continue>") {
-			t.Fatal("system prompt must include continue block format")
-		}
 		if !strings.Contains(string(prompt), "Task Decomposition") {
 			t.Fatal("system prompt must include task decomposition strategy for complex tasks")
 		}
@@ -223,8 +220,8 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		if !strings.Contains(string(prompt), "Summary Block Kind") {
 			t.Fatal("system prompt must include summary block section")
 		}
-		if !strings.Contains(string(prompt), "<summary>") {
-			t.Fatal("system prompt must include summary block format")
+		if !strings.Contains(string(prompt), "bullet list") {
+			t.Fatal("system prompt must describe the summary body as a bullet list")
 		}
 	})
 }

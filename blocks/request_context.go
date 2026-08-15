@@ -50,16 +50,6 @@ const RequestContextSystemPrompt = `
 
 Use the "request-context" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a request-context block. The system will fetch the requested data and provide it as user input for the next generation turn.
 
-**Request-Context Block Format (complete example):**
-
-<<龘靐齉 <request-context>
-<file path="src/main.go" />
-<fetch addr="https://example.com/api" />
-<glob pattern="src/**/*.go" />
-龘靐齉
-
-The delimiter 龘靐齉 in the example is illustrative only: in every block emitted, choose exactly three uncommon Chinese characters as the delimiter, and use the same delimiter on the closing line. The opening marker must start at the beginning of a line, and the closing line is the delimiter alone on its own line. Never write the placeholder text "DELIMITER" or reuse an example delimiter in a real marker.
-
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
 - ` + "`<fetch addr=\"...\" user-agent=\"...\" referer=\"...\" cookie=\"...\" />`" + `: Fetch content from a network address (HTTP GET). The addr should be a valid URL. The user-agent, referer, and cookie attributes are optional and set the corresponding HTTP headers on the request.
@@ -71,36 +61,18 @@ The delimiter 龘靐齉 in the example is illustrative only: in every block emit
 - After emitting a request-context block, stop generating and wait for the system to provide the requested context.
 - Do not include request-context blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
 
-**Example:**
-
-Need to see the content of a file to proceed...
-<<齉爩龖 <request-context>
-<file path="src/main.go" />
-齉爩龖
-
-Need to fetch a web page that requires a custom user-agent and cookie...
-<<黿鼍爩 <request-context>
-<fetch addr="https://example.com/api" user-agent="MyBot/1.0" cookie="session=abc123" />
-黿鼍爩
-
-Need to discover files matching a pattern...
-<<龖爨齾 <request-context>
-<glob pattern="src/**/*.go" />
-龖爨齾
+**Example use:**
+- To read a file: emit a request-context block whose body contains <file path="..." />.
+- To fetch a web page with custom headers: emit a request-context block whose body contains <fetch addr="..." user-agent="..." referer="..." cookie="..." />.
+- To discover files: emit a request-context block whose body contains <glob pattern="..." />.
 `
 
-const RequestContextRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a request-context block:
-<<齾麐黿 <request-context>
-<file path="..." />
-<fetch addr="..." user-agent="..." referer="..." cookie="..." />
-<glob pattern="..." />
-齾麐黿
+const RequestContextRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a request-context block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
 - After emitting a request-context block, stop and wait for the system to provide the context.
 - The request-context block is read-only: never use it for writes or side effects.
-- Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.
-- The example delimiter 齾麐黿 is illustrative: choose three uncommon Chinese characters as the delimiter, the SAME delimiter on the closing line. The opening marker starts at the beginning of a line; the closing line is the delimiter alone. Never write the placeholder text "DELIMITER" or reuse an example delimiter literally.`
+- Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.`
 
 // RequestContextRequest represents a single context request parsed from the block body.
 type RequestContextRequest struct {

@@ -24,6 +24,11 @@ request-context) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
 (prompt-only).
 
+The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
+as the first prompt-only component: every block-using component set must carry
+it, and the kind prompts describe only their kind-specific semantics without
+restating the heredoc format. See blocks.TheoryOfBlockFormatGeneral.
+
 The go-test component runs Go tests after change blocks are applied. Test
 output is fed back to the model only when tests fail, producing Parts that
 trigger a new round for debugging with MaxRounds bounding the test-fix loop.
@@ -75,16 +80,24 @@ func (Module) CodesComponents(
 ) CodesComponents {
 	var comps components.ComponentSet
 
+	// The unified block format prompt is the first prompt-only component:
+	// it teaches the heredoc-delimited block format that every kind prompt
+	// below assumes. Kind prompts describe only their kind-specific
+	// semantics without restating the format. See
+	// blocks.TheoryOfBlockFormatGeneral.
+	comps = append(comps, components.Component{
+		PromptSection: blocks.BlockFormatSystemPrompt,
+		RestatePrompt: blocks.BlockFormatRestatePrompt,
+	})
+
 	// Change component: prompt always included (from the change block
-	// system prompt, which includes BlockFormatSystemPrompt and
-	// ChangeBlockPrompt). Processing is conditional on the apply flag.
-	// RestatePrompt carries the change block restate prompt, making the
-	// previously orphaned restate prompt functional. See
-	// TheoryOfCodesComponents.
+	// prompt, which describes only the change-kind semantics; the unified
+	// block format is the first component above). Processing is
+	// conditional on the apply flag. See TheoryOfCodesComponents.
 	if bool(apply) {
 		comps = append(comps, components.Component{
 			Kind:          "change",
-			PromptSection: changes.ChangeBlockSystemPrompt(),
+			PromptSection: changes.ChangeBlockPrompt,
 			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 				err := applyChangeBlocks(pctx.Blocks, pctx.Root)
@@ -96,7 +109,7 @@ func (Module) CodesComponents(
 		// prompt is still included so the model knows the format.
 		comps = append(comps, components.Component{
 			Kind:          "change",
-			PromptSection: changes.ChangeBlockSystemPrompt(),
+			PromptSection: changes.ChangeBlockPrompt,
 			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 		})
 	}

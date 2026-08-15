@@ -234,36 +234,32 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 }
 
 func TestRetrySummarizationSystemPromptShowsBlockFormat(t *testing.T) {
-	// The summarization prompt must show a complete example of the
-	// heredoc-delimited block format with concrete delimiters. Without
-	// an example, the model does not know the format and produces plain
-	// text that cannot be parsed into summary and continue blocks,
-	// causing the retry to proceed without a synthesized summary. See
+	// The summarization prompt embeds the unified block format prompt so
+	// the model knows the heredoc format without the kind prompt
+	// restating it. It describes the two required kinds; the block format
+	// rules come from blocks.BlockFormatSystemPrompt. See
 	// TheoryOfIncompleteOutputSummarization.
-	if strings.Contains(retrySummarizationSystemPrompt, "<<DELIMITER") {
-		t.Fatal("retrySummarizationSystemPrompt must not display the literal template marker '<<DELIMITER'")
+	if !strings.Contains(retrySummarizationSystemPrompt, blocks.BlockFormatSystemPrompt) {
+		t.Fatal("retrySummarizationSystemPrompt must embed the unified BlockFormatSystemPrompt")
 	}
-	if !strings.Contains(retrySummarizationSystemPrompt, "<summary>") {
-		t.Fatal("retrySummarizationSystemPrompt must show a summary block example")
+	if !strings.Contains(retrySummarizationSystemPrompt, `(kind "summary")`) {
+		t.Fatal("retrySummarizationSystemPrompt must describe the summary kind")
 	}
-	if !strings.Contains(retrySummarizationSystemPrompt, "<continue>") {
-		t.Fatal("retrySummarizationSystemPrompt must show a continue block example")
-	}
-	if !strings.Contains(retrySummarizationSystemPrompt, "uncommon Chinese characters") {
-		t.Fatal("retrySummarizationSystemPrompt must mandate the three-uncommon-Chinese-characters delimiter policy")
+	if !strings.Contains(retrySummarizationSystemPrompt, `(kind "continue")`) {
+		t.Fatal("retrySummarizationSystemPrompt must describe the continue kind")
 	}
 }
 
 func TestRetrySummarizationSystemPromptRequiresNonEmptyBlocks(t *testing.T) {
 	// The retry summarization prompt must require non-empty block bodies,
-	// distinct delimiters per block, delimiter-body disjointness, and a
-	// response containing only the two blocks. These requirements make the
-	// summarizer's parse robust: an empty or missing block, a reused
-	// delimiter, or surrounding prose would fail to produce a usable
-	// retry summary. See TheoryOfIncompleteOutputSummarization.
+	// delimiter-body disjointness, and a response containing only the two
+	// blocks. These requirements make the summarizer's parse robust: an
+	// empty or missing block, a body colliding with the delimiter, or
+	// surrounding prose would fail to produce a usable retry summary.
+	// The delimiter selection rules come from the embedded
+	// BlockFormatSystemPrompt. See TheoryOfIncompleteOutputSummarization.
 	for _, want := range []string{
 		"Both blocks MUST have non-empty bodies",
-		"DIFFERENT trio for each block",
 		"The delimiter MUST NOT appear anywhere in the block body",
 		"Output ONLY these two blocks as your final text",
 	} {
