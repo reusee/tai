@@ -30,8 +30,8 @@ Handoff is executed only when the model has produced a non-trivial amount
 of output (at least minHandoffLength characters). If output is very short or
 empty, handoff is skipped and a direct retry is performed.
 
-The handoff model follows SummarizeModel, falling back to the fast model
-and then the default model (see TheoryOfSummarizeModel). The handoff prompt
+The handoff model follows HandoffModel, falling back to the fast model
+and then the default model (see TheoryOfHandoffModel). The handoff prompt
 instructs the model to produce a concise, plain-text summary without block
 wrapping. Handoff generation is retried up to maxHandoffRetries times on
 failure or empty response; a persistent failure aborts the run to ensure

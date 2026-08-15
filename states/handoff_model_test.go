@@ -8,7 +8,7 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
-func TestGetSummarizeGeneratorSelection(t *testing.T) {
+func TestGetHandoffGeneratorSelection(t *testing.T) {
 	m := new(Module)
 
 	var names []string
@@ -21,10 +21,10 @@ func TestGetSummarizeGeneratorSelection(t *testing.T) {
 		return &mockSummarizerGenerator{}, nil
 	}
 
-	t.Run("SummarizeModelConfigured", func(t *testing.T) {
+	t.Run("HandoffModelConfigured", func(t *testing.T) {
 		names = nil
-		fn := m.GetSummarizeGenerator(
-			flags.SummarizeModel("sum-model"),
+		fn := m.GetHandoffGenerator(
+			flags.HandoffModel("handoff-model"),
 			flags.FastModelName(""),
 			defaultGen,
 			get,
@@ -32,15 +32,15 @@ func TestGetSummarizeGeneratorSelection(t *testing.T) {
 		if _, err := fn(); err != nil {
 			t.Fatal(err)
 		}
-		if len(names) != 1 || names[0] != "sum-model" {
-			t.Fatalf("expected sum-model, got %v", names)
+		if len(names) != 1 || names[0] != "handoff-model" {
+			t.Fatalf("expected handoff-model, got %v", names)
 		}
 	})
 
 	t.Run("FastModelConfigured", func(t *testing.T) {
 		names = nil
-		fn := m.GetSummarizeGenerator(
-			flags.SummarizeModel(""),
+		fn := m.GetHandoffGenerator(
+			flags.HandoffModel(""),
 			flags.FastModelName("fast-model"),
 			defaultGen,
 			get,
@@ -55,8 +55,8 @@ func TestGetSummarizeGeneratorSelection(t *testing.T) {
 
 	t.Run("DefaultModel", func(t *testing.T) {
 		names = nil
-		fn := m.GetSummarizeGenerator(
-			flags.SummarizeModel(""),
+		fn := m.GetHandoffGenerator(
+			flags.HandoffModel(""),
 			flags.FastModelName(""),
 			defaultGen,
 			get,
@@ -75,8 +75,8 @@ func TestGetSummarizeGeneratorSelection(t *testing.T) {
 			names = append(names, name)
 			return nil, errors.New("bad model")
 		}
-		fn := m.GetSummarizeGenerator(
-			flags.SummarizeModel("bad"),
+		fn := m.GetHandoffGenerator(
+			flags.HandoffModel("bad"),
 			flags.FastModelName(""),
 			defaultGen,
 			get,
@@ -87,28 +87,28 @@ func TestGetSummarizeGeneratorSelection(t *testing.T) {
 	})
 }
 
-func TestGetDefaultSummarizerUsesSummarizeGenerator(t *testing.T) {
+func TestGetDefaultSummarizerUsesHandoffGenerator(t *testing.T) {
 	m := new(Module)
 	called := false
-	getSummarize := func() (generators.Generator, error) {
+	getHandoff := func() (generators.Generator, error) {
 		called = true
 		return &mockSummarizerGenerator{}, nil
 	}
 
-	fn := m.GetDefaultSummarizer(getSummarize, true, "")
+	fn := m.GetDefaultSummarizer(getHandoff, true, "")
 	s, err := fn()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !called {
-		t.Fatal("expected the summarize generator to be used")
+		t.Fatal("expected the handoff generator to be used")
 	}
 	if s == nil {
 		t.Fatal("expected a Summarizer")
 	}
 
 	called = false
-	fn = m.GetDefaultSummarizer(getSummarize, false, "")
+	fn = m.GetDefaultSummarizer(getHandoff, false, "")
 	s, err = fn()
 	if err != nil {
 		t.Fatal(err)

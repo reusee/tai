@@ -663,7 +663,7 @@ func TestCreateHandoffProvider(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() states.GetSummarizeGenerator {
+		func() states.GetHandoffGenerator {
 			return func() (generators.Generator, error) {
 				return gen, nil
 			}

@@ -351,13 +351,13 @@ type CreateHandoff func(
 func (Module) CreateHandoff(
 	logger logs.Logger,
 	recorder *records.Recorder,
-	getSummarizeGenerator states.GetSummarizeGenerator,
+	getHandoffGenerator states.GetHandoffGenerator,
 ) CreateHandoff {
 	return func(
 		ctx context.Context,
 		incompleteText string,
 	) (*states.Handoff, error) {
-		generator, err := getSummarizeGenerator()
+		generator, err := getHandoffGenerator()
 		if err != nil {
 			return nil, err
 		}
@@ -517,7 +517,7 @@ func (Module) GenerateWithResultWithStats(
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
 	getDefaultSummarizer states.GetDefaultSummarizer,
-	getSummarizeGenerator states.GetSummarizeGenerator,
+	getHandoffGenerator states.GetHandoffGenerator,
 	buildGenerate phases.BuildGenerate,
 	maxTokens flags.MaxTokens,
 	buildChangeBlockHandler changes.BuildChangeBlockHandler,
@@ -570,13 +570,13 @@ func (Module) GenerateWithResultWithStats(
 			recorder.Event("decision", fmt.Sprintf("generator selected: name=%q family=%q model=%q effort=%q", spec.Name, spec.Family, spec.Model, spec.ReasoningEffort))
 		}
 
-		// summarize generator
-		summarizeGenerator, err := getSummarizeGenerator()
+		// handoff generator
+		handoffGenerator, err := getHandoffGenerator()
 		if err != nil {
 			return loops.Result{}, nil, err
 		}
 		if recorder != nil && recorder.Enabled() {
-			recorder.Event("decision", fmt.Sprintf("summarize generator selected: model=%s", summarizeGenerator.Spec().Model))
+			recorder.Event("decision", fmt.Sprintf("handoff generator selected: model=%s", handoffGenerator.Spec().Model))
 		}
 
 		// Calculate basic limits
@@ -753,14 +753,14 @@ func (Module) GenerateWithResultWithStats(
 				elapsed := time.Since(roundStartTime)
 
 				summaryText := ""
-				var summarizeErr error
+				var handoffErr error
 				if len(summaries) > 0 {
 					summaryText = strings.Join(summaries, "\n")
 				} else {
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
 						var handoff *states.Handoff
-						handoff, summarizeErr = createHandoff(runCtx, incompleteText)
-						if summarizeErr == nil && handoff != nil {
+						handoff, handoffErr = createHandoff(runCtx, incompleteText)
+						if handoffErr == nil && handoff != nil {
 							summaryText = handoff.Summary
 						}
 					}
@@ -769,8 +769,8 @@ func (Module) GenerateWithResultWithStats(
 					roundStats, roundState, prevContentCount, elapsed, summaryText,
 				)
 
-				if summarizeErr != nil {
-					fatalErr = summarizeErr
+				if handoffErr != nil {
+					fatalErr = handoffErr
 					cancel()
 					return nil
 				}
