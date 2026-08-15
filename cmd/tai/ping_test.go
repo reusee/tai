@@ -10,6 +10,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/phases"
@@ -146,7 +147,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -172,6 +173,9 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		},
 		fakeRun,
 		func() (string, string) { return kindA, kindB },
+		nil,
+		nil,
+		"",
 	)
 	w.Close()
 	os.Stdout = oldStdout
@@ -205,6 +209,71 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		if !strings.Contains(prompt.String(), kind) {
 			t.Fatalf("expected required kind %q in the user prompt", kind)
 		}
+	}
+	if !strings.Contains(string(output), "ping ok") {
+		t.Fatalf("expected the success verdict on stdout, got %q", string(output))
+	}
+}
+
+func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
+	// The ping command must inject the user-configured extra system
+	// prompts (extra_system_prompt and family_extra_system_prompt) into
+	// its system prompt, honoring the same configuration as the other
+	// generation commands. See TheoryOfPingCommand.
+	const kindA = "abc"
+	const kindB = "xyz"
+	var gotOpts loops.RunOptions
+	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+		gotOpts = opts
+		result.RemainingBlocks = []blocks.Block{{Kind: kindA}, {Kind: kindB}}
+		return func(yield func(error) bool) {}
+	}
+
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	if !ok {
+		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
+	}
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	mainFn(
+		Output(os.Stdout),
+		nil,
+		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
+		func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
+			return func(cont phases.Phase) phases.Phase {
+				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+					return nil, state, nil
+				}
+			}
+		},
+		fakeRun,
+		func() (string, string) { return kindA, kindB },
+		flags.ExtraSystemPrompt{"generic extra prompt"},
+		flags.FamilyExtraSystemPrompt{"test-family": {"family extra prompt"}},
+		generators.ModelFamily("test-family"),
+	)
+	w.Close()
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	if gotOpts.InitialState == nil {
+		t.Fatal("expected non-nil initial state")
+	}
+	systemPrompt := gotOpts.InitialState.SystemPrompt()
+	if !strings.Contains(systemPrompt, "generic extra prompt") {
+		t.Fatalf("expected the generic extra system prompt in the ping system prompt, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "family extra prompt") {
+		t.Fatalf("expected the family extra system prompt in the ping system prompt, got %q", systemPrompt)
 	}
 	if !strings.Contains(string(output), "ping ok") {
 		t.Fatalf("expected the success verdict on stdout, got %q", string(output))

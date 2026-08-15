@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
@@ -25,8 +26,10 @@ kind must appear exactly once, and no other block may appear. The random
 kinds — short lowercase letter strings from RandomBlockKinds — are unknown
 before each run, so a correct result demonstrates genuine instruction
 following and format ability rather than pattern memory. The block-format
-instructions live entirely in the user message (pingBlockPrompt) because
-ping uses no system prompt. The prompt requires a distinct delimiter per
+instructions live in the user message (pingBlockPrompt); the system prompt
+carries the user-configured extra system prompts (extra_system_prompt and
+family_extra_system_prompt), so ping honors the same configuration as the
+other generation commands. The prompt requires a distinct delimiter per
 block: two blocks sharing a delimiter would be mis-parsed as nested (see
 blocks.TheoryOfNestedBlockParsing), so identical delimiters cannot pass the
 test. Validation reads the blocks collected in loops.Result.RemainingBlocks:
@@ -38,15 +41,8 @@ writer after the streamed output.
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
 selection explicit. The command performs a single generation round with no
-chat loop, no system prompt, and no file context.
-
-Ping runs through the unified generation loop (loops.Run) in single-shot
-mode (no components), so it participates in the same mechanisms as the
-other generation commands: the TUI's finish-reason observer is applied
-via RunOptions.StateDecorators when -tui is enabled, the "generating"
-log record drives the TUI's in-flight hint, and interaction recording
-is handled by the loop when -record is enabled. See TheoryOfTUI and
-loops.TheoryOfLoops.
+chat loop and no file context; its system prompt carries only the
+user-configured extra system prompts.
 `
 
 // RandomBlockKinds returns the two block kinds the ping command asks the
@@ -134,6 +130,9 @@ var PingCommand = Command{
 		buildGenerate phases.BuildGenerate,
 		loopRun loops.Run,
 		randomBlockKinds RandomBlockKinds,
+		extra flags.ExtraSystemPrompt,
+		familyExtra flags.FamilyExtraSystemPrompt,
+		modelFamily generators.ModelFamily,
 	) {
 		ctx := context.Background()
 
@@ -146,9 +145,26 @@ var PingCommand = Command{
 		// See TheoryOfPingCommand.
 		kindA, kindB := randomBlockKinds()
 
+		// The system prompt carries the user-configured extra system
+		// prompts (extra_system_prompt and family_extra_system_prompt),
+		// so ping honors the same configuration as the other generation
+		// commands. The block-format instructions live in the user
+		// message (pingBlockPrompt). See TheoryOfPingCommand.
+		systemPrompt := ""
+		for _, e := range extra {
+			if e != "" {
+				systemPrompt += e + "\n"
+			}
+		}
+		for _, prompt := range familyExtra[string(modelFamily)] {
+			if prompt != "" {
+				systemPrompt += prompt + "\n"
+			}
+		}
+
 		var state generators.State
 		state = generators.NewPrompts(
-			"",
+			systemPrompt,
 			[]*generators.Content{
 				{
 					Role: generators.RoleUser,
