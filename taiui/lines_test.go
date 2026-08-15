@@ -153,3 +153,33 @@ func TestLinesElementGroupsColors(t *testing.T) {
 		t.Fatalf("expected alternate background %#x, got %#x %#x %#x", alt, r, g, b)
 	}
 }
+
+func TestWrapLinesColoredIntoAndPlain(t *testing.T) {
+	lines := []Line{
+		{Text: "hello world", Color: color.PaletteColor(12)},
+		{Text: "test line", Color: NoColor},
+	}
+	out := WrapLinesColoredInto(lines, 6, nil)
+	if len(out) != 4 {
+		t.Fatalf("expected 4 wrapped lines, got %d: %v", len(out), out)
+	}
+	if out[0].Text != "hello" || out[0].Color != color.PaletteColor(12) {
+		t.Fatalf("unexpected line 0: %+v", out[0])
+	}
+	if out[1].Text != "world" || out[1].Color != color.PaletteColor(12) {
+		t.Fatalf("unexpected line 1: %+v", out[1])
+	}
+
+	base := HexColor(0x0a1428)
+	plain := []string{"first", "second"}
+	plainOut := WrapPlainLinesInto(plain, base, 10, 0, nil)
+	if len(plainOut) != 2 {
+		t.Fatalf("expected 2 plain wrapped lines, got %d", len(plainOut))
+	}
+	if plainOut[0].BGColor != base {
+		t.Fatalf("expected base background on line 0, got %#x", plainOut[0].BGColor)
+	}
+	if plainOut[1].BGColor != AltBG(base) {
+		t.Fatalf("expected alt background on line 1, got %#x", plainOut[1].BGColor)
+	}
+}

@@ -1,5 +1,10 @@
 package taiui
 
+import (
+	"github.com/clipperhouse/displaywidth"
+	"github.com/gdamore/tcell/v3/vt"
+)
+
 const TheoryOfTabs = `
 taiui tabs theory:
 - Tabs is the tab state machine of a terminal UI: each tab is expanded
@@ -26,7 +31,9 @@ taiui tabs theory:
   out in index order, so a collapsed tab stays in its original position
   rather than being pushed to the edge.
 - Panel renders an expanded tab: a one-row label strip pinned to the
-  top and a scroll view spanning the remaining rows. The scrollbar is
+  top and a scroll view spanning the remaining rows. Panel is a first-class
+  Element (_Panel) that renders only the visible lines in O(window) time,
+  avoiding virtual-column overhead when content is large. The scrollbar is
   hidden while the pane follows the tail, because at the latest position
   there is nothing left to scroll toward. CollapsedPanel renders the
   thin strip: the label is written vertically in a narrow column and
@@ -247,43 +254,135 @@ type PanelStyle struct {
 	ActiveLabelFG Color
 }
 
+var _ Element = _Panel{}
+
+// _Panel is an expanded tab panel rendered in O(window) time.
+type _Panel struct {
+	box       Box
+	label     string
+	highlight bool
+	lines     []Line
+	offset    int
+	focus     bool
+	follow    bool
+	style     PanelStyle
+}
+
+func (_Panel) element() {}
+
 // Panel renders an expanded tab: a one-row label strip pinned to the
-// top and a scroll view spanning the remaining rows. The scrollbar is
-// hidden while the pane follows the tail. See TheoryOfTabs.
-func Panel(box Box, label string, highlight bool, lines []Line, offset int, focus, follow bool, style PanelStyle) Element {
-	base := style.BaseBG
-	if focus {
-		base = style.FocusBG
+// top and a scroll view spanning the remaining rows. It renders visible
+// items directly in O(window) time. See TheoryOfTabs.
+func Panel(box Box, label string, highlight bool, lines []Line, offset int, focus, follow bool, style PanelStyle) _Panel {
+	return _Panel{
+		box:       box,
+		label:     label,
+		highlight: highlight,
+		lines:     lines,
+		offset:    offset,
+		focus:     focus,
+		follow:    follow,
+		style:     style,
 	}
-	labelFg := style.LabelFG
-	if highlight {
-		labelFg = style.ActiveLabelFG
-	} else if focus {
-		labelFg = style.FocusLabelFG
+}
+
+func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFunc, options displaywidth.Options) {
+	if p.box.Width() > 0 && p.box.Height() > 0 {
+		box = p.box
 	}
-	headerBox := box
-	headerBox.Bottom = box.Top + 1
-	scrollBox := box
-	scrollBox.Top = box.Top + 1
-	scrollSpecs := []any{Box(scrollBox), Fill(true), BGColor(base)}
-	if !follow {
-		scrollSpecs = append(scrollSpecs, Scrollbar(true))
+	if box.Width() <= 0 || box.Height() <= 0 {
+		return
 	}
-	return Overlay(
-		Text(
-			"  "+label+"  ",
-			Box(headerBox),
-			Fill(true),
-			BGColor(base),
-			Bold(focus),
-			FGColor(labelFg),
-		),
-		VerticalScroll(
-			LinesElement(lines, scrollBox),
-			offset,
-			scrollSpecs...,
-		),
-	)
+
+	base := p.style.BaseBG
+	if p.focus {
+		base = p.style.FocusBG
+	}
+	labelFg := p.style.LabelFG
+	if p.highlight {
+		labelFg = p.style.ActiveLabelFG
+	} else if p.focus {
+		labelFg = p.style.FocusLabelFG
+	}
+
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+
+	// Header row
+	headerStyle := style.WithBg(base).WithFg(labelFg)
+	if p.focus {
+		headerStyle = withAttrOn(headerStyle, true, vt.Bold)
+	}
+	renderListLine("  "+p.label+"  ", Box{
+		Top:    box.Top,
+		Left:   box.Left,
+		Bottom: box.Top + 1,
+		Right:  box.Right,
+	}, headerStyle, true, draw, options, iter)
+
+	scrollHeight := box.Height() - 1
+	if scrollHeight <= 0 {
+		return
+	}
+
+	contentHeight := len(p.lines)
+	fromY := p.offset
+	if fromY < 0 {
+		fromY = 0
+	}
+	maxFromY := max(contentHeight-scrollHeight, 0)
+	if fromY > maxFromY {
+		fromY = maxFromY
+	}
+
+	showScrollbar := !p.follow && contentHeight > scrollHeight
+	contentRight := box.Right
+	if showScrollbar {
+		contentRight = box.Right - 1
+	}
+
+	toY := min(fromY+scrollHeight, contentHeight)
+	for i := fromY; i < toY; i++ {
+		row := box.Top + 1 + (i - fromY)
+		line := p.lines[i]
+		lineStyle := style.WithBg(base)
+		if line.BGColor != NoColor && line.BGColor != 0 {
+			lineStyle = lineStyle.WithBg(line.BGColor)
+		}
+		if line.Color != NoColor && line.Color != 0 {
+			lineStyle = lineStyle.WithFg(line.Color)
+		}
+		renderListLine(line.Text, Box{
+			Top:    row,
+			Left:   box.Left,
+			Bottom: row + 1,
+			Right:  contentRight,
+		}, lineStyle, true, draw, options, iter)
+	}
+
+	// Empty rows below content
+	emptyStyle := style.WithBg(base)
+	for y := box.Top + 1 + max(0, contentHeight-fromY); y < box.Bottom; y++ {
+		for x := box.Left; x < contentRight; x++ {
+			draw(x, y, ' ', nil, emptyStyle)
+		}
+	}
+
+	// Scrollbar
+	if showScrollbar {
+		thumbSize := max(1, scrollHeight*scrollHeight/contentHeight)
+		thumbY := fromY * (scrollHeight - thumbSize) / (contentHeight - scrollHeight)
+		thumbStyle := withAttrOn(DarkerOrLighterStyle(style.WithBg(base), 15), true, vt.Bold)
+		trackStyle := style.WithBg(base)
+		for row := 0; row < scrollHeight; row++ {
+			y := box.Top + 1 + row
+			if row >= thumbY && row < thumbY+thumbSize {
+				draw(box.Right-1, y, '█', nil, thumbStyle)
+			} else {
+				draw(box.Right-1, y, ' ', nil, trackStyle)
+			}
+		}
+	}
 }
 
 // CollapsedPanel renders a collapsed tab as a thin strip showing the

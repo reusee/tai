@@ -129,16 +129,13 @@ loses the session.
 taiuidemo pattern: render() computes the wrapped display lines of each
 expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
-(outputPanel, summaryPanel, logsPanel, buildRoot). The TUI holds nothing
-but the raw state values — line buffers, tab machine, scroll offsets,
-signals, and session flags. There is no provider graph, no cached view
-scope, and no dirty tracking: function calls carry the state values
-through the derivation chain directly. (The view used to be a dscope
-provider tree whose per-component caching the provider graph recomputed;
-the machinery was dropped because building a Frame is cheap and the
-screens diff whole frames anyway, so the caching saved nothing while
-adding a provider layer to read and reason about. See
-taiui.TheoryOfTaiUI.)
+(outputPanel, summaryPanel, logsPanel, buildRoot). wrappedDisplay uses
+an incremental wrapping cache so that when new output streams in, only
+the newly arrived completed lines and the trailing partial line are
+wrapped, avoiding O(N) full re-wrapping of large buffers on every frame.
+When the display width or tab background changes, the cache is reset
+and recomputed. The TUI holds nothing but the raw state values — line
+buffers, tab machine, scroll offsets, signals, and session flags.
 `
 
 const TheoryOfSummaryExtraction = `
@@ -486,6 +483,13 @@ func (w thoughtSummaryWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+type wrappedDisplayCache struct {
+	width int
+	base  taiui.Color
+	count int
+	lines []taiui.Line
+}
+
 type TUI struct {
 	mu       sync.Mutex
 	output   *taiui.LineBuffer
@@ -494,6 +498,11 @@ type TUI struct {
 	scrolls  [3]taiui.ScrollState
 	signals  []taiui.Line
 	parseBuf []byte
+
+	outputCache  wrappedDisplayCache
+	summaryCache wrappedDisplayCache
+	logsCache    wrappedDisplayCache
+	displayBuf   [3][]taiui.Line
 
 	// finished reports whether the generation session has ended. It
 	// clears the Output tab's "generating..." hint.

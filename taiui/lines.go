@@ -15,17 +15,21 @@ taiui TUI content lines theory:
   retaining the incomplete trailing line and the color of the chunk that
   started it. Newlines split lines; a partial line keeps its color until
   the next newline arrives. Lines are bounded by a maximum count, so a
-  runaway stream cannot grow the buffer without limit.
+  runaway stream cannot grow the buffer without limit. CompletedLines and
+  Partial provide zero-copy access for incremental processing.
 - StringBuffer accumulates plain text (log output) the same way, exposing
   newly completed lines to the caller for line-oriented inspection.
 - WrapLinesColored wraps each source line at the given width and carries
   the line's foreground and background colors onto every wrapped display
-  line, so a wrapped line keeps its role color.
+  line, so a wrapped line keeps its role color. WrapLinesColoredInto
+  appends wrapped lines to an existing slice, reusing a single grapheme
+  iterator across lines to minimize allocations.
 - PlainLines converts plain text lines into Lines with alternating
   background shades so consecutive log entries are visually distinct. The
   alternate shade shifts each channel of the base background toward the
   mid-gray, so the alternation stays visible on both light and dark tab
-  backgrounds.
+  backgrounds. WrapPlainLinesInto wraps plain lines with alternating
+  backgrounds directly into an output slice.
 - LinesElement renders Lines as a single element: consecutive lines with
   identical colors are grouped into one Text with the group's foreground
   and background, so a wrapped log line keeps one background across its
@@ -96,6 +100,17 @@ func (b *LineBuffer) Lines() []Line {
 	return ret
 }
 
+// CompletedLines returns the slice of completed lines directly, without
+// copying.
+func (b *LineBuffer) CompletedLines() []Line {
+	return b.lines
+}
+
+// Partial returns the incomplete trailing line.
+func (b *LineBuffer) Partial() Line {
+	return b.partial
+}
+
 // HasPartial reports whether an incomplete trailing line exists.
 func (b *LineBuffer) HasPartial() bool {
 	return b.partial.Text != ""
@@ -150,6 +165,17 @@ func (b *StringBuffer) Lines() []string {
 	return ret
 }
 
+// CompletedLines returns the slice of completed lines directly, without
+// copying.
+func (b *StringBuffer) CompletedLines() []string {
+	return b.lines
+}
+
+// Partial returns the incomplete trailing line.
+func (b *StringBuffer) Partial() string {
+	return b.partial
+}
+
 // HasPartial reports whether an incomplete trailing line exists.
 func (b *StringBuffer) HasPartial() bool {
 	return b.partial != ""
@@ -159,10 +185,50 @@ func (b *StringBuffer) HasPartial() bool {
 // the line's foreground and background colors onto every wrapped display
 // line.
 func WrapLinesColored(lines []Line, width int) []Line {
-	var out []Line
+	return WrapLinesColoredInto(lines, width, make([]Line, 0, len(lines)))
+}
+
+// WrapLinesColoredInto wraps each source line at the given width and
+// appends the wrapped display lines to out, reusing a single grapheme
+// iterator across all lines.
+func WrapLinesColoredInto(lines []Line, width int, out []Line) []Line {
+	if len(lines) == 0 {
+		return out
+	}
+	options := DisplayWidthOptions()
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	var wrapped []string
 	for _, line := range lines {
-		for _, text := range WrapLines([]string{line.Text}, width) {
+		wrapped = wrapLineLimitedIter(line.Text, width, -1, options, iter, defaultTabWidth, wrapped[:0])
+		for _, text := range wrapped {
 			out = append(out, Line{Text: text, Color: line.Color, BGColor: line.BGColor})
+		}
+	}
+	return out
+}
+
+// WrapPlainLinesInto wraps plain text lines with alternating background
+// shades and appends the wrapped display lines to out. startIdx is the
+// logical line index of the first line in lines, ensuring alternating
+// background continuity across batches.
+func WrapPlainLinesInto(lines []string, base Color, width int, startIdx int, out []Line) []Line {
+	if len(lines) == 0 {
+		return out
+	}
+	options := DisplayWidthOptions()
+	iter := getGraphemeIter()
+	defer putGraphemeIter(iter)
+	alt := AltBG(base)
+	var wrapped []string
+	for i, line := range lines {
+		bg := base
+		if (startIdx+i)%2 == 1 {
+			bg = alt
+		}
+		wrapped = wrapLineLimitedIter(line, width, -1, options, iter, defaultTabWidth, wrapped[:0])
+		for _, text := range wrapped {
+			out = append(out, Line{Text: text, BGColor: bg, Color: NoColor})
 		}
 	}
 	return out

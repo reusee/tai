@@ -116,3 +116,28 @@ func BenchmarkFrameDirtyRowsInto(b *testing.B) {
 		buf = a.DirtyRowsInto(c, buf[:0])
 	}
 }
+
+func BenchmarkRenderPanelLargeOutput(b *testing.B) {
+	lines := make([]Line, 100000)
+	for i := range lines {
+		lines[i] = Line{Text: fmt.Sprintf("line %06d", i)}
+	}
+	element := Panel(
+		Box{Top: 0, Left: 0, Bottom: 25, Right: 80},
+		"Output",
+		false,
+		lines,
+		50000,
+		false,
+		false,
+		PanelStyle{
+			BaseBG:  HexColor(0x0a1428),
+			FocusBG: HexColor(0x2e2e2e),
+		},
+	)
+	screen := benchmarkReleasingScreen{}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		Render(element, screen)
+	}
+}

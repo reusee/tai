@@ -112,7 +112,8 @@ taiui theory: UI = pure Element value derived from state.
   The view scrolls to keep the selected item visible, clamped to the
   content extent. List renders only the visible items, so it is
   O(window) per render, unlike a VerticalScroll of a Column of Text,
-  which renders the whole content into a virtual column.
+  which renders the whole content into a virtual column. Panel applies
+  the same O(window) principle to tab panes.
 - Canvas renders offscreen content: the content is data state, and
   rendering is a pure read of it. Cells are stored by value, so a write
   allocates nothing. Rendering snapshots the visible cells under the

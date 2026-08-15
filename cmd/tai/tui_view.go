@@ -30,29 +30,65 @@ func outputTabLabel(finished bool, generating bool) (label string, highlight boo
 }
 
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
-// from its content and box. The content width reserves one column for the
-// scrollbar, matching the scroll's visible-width rendering. See
+// from its content and box using an incremental wrapping cache. See
 // TheoryOfTUI.
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	contentWidth := max(box.Width()-1, 1)
 	switch idx {
 	case 0:
-		return taiui.WrapLinesColored(t.output.Lines(), contentWidth)
+		if t.outputCache.width != contentWidth {
+			t.outputCache = wrappedDisplayCache{width: contentWidth}
+		}
+		completed := t.output.CompletedLines()
+		if len(completed) > t.outputCache.count {
+			newLines := completed[t.outputCache.count:]
+			t.outputCache.lines = taiui.WrapLinesColoredInto(newLines, contentWidth, t.outputCache.lines)
+			t.outputCache.count = len(completed)
+		}
+		partial := t.output.Partial()
+		if partial.Text == "" {
+			return t.outputCache.lines
+		}
+		t.displayBuf[0] = append(t.displayBuf[0][:0], t.outputCache.lines...)
+		t.displayBuf[0] = taiui.WrapLinesColoredInto([]taiui.Line{partial}, contentWidth, t.displayBuf[0])
+		return t.displayBuf[0]
+
 	case 1:
-		return taiui.WrapLinesColored(t.signals, contentWidth)
+		if t.summaryCache.width != contentWidth {
+			t.summaryCache = wrappedDisplayCache{width: contentWidth}
+		}
+		if len(t.signals) > t.summaryCache.count {
+			newSignals := t.signals[t.summaryCache.count:]
+			t.summaryCache.lines = taiui.WrapLinesColoredInto(newSignals, contentWidth, t.summaryCache.lines)
+			t.summaryCache.count = len(t.signals)
+		}
+		return t.summaryCache.lines
+
 	case 2:
-		// The logs tab alternates line backgrounds derived from its tab
-		// background, so consecutive log entries are visually distinct.
-		// The base is the focused or unfocused tab background, whichever
-		// the logs tab currently has. See taiui.PlainLines.
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {
 			base = panelStyle.FocusBG
 		}
-		return taiui.WrapLinesColored(
-			taiui.PlainLines(t.logs.Lines(), base),
-			contentWidth,
-		)
+		if t.logsCache.width != contentWidth || t.logsCache.base != base {
+			t.logsCache = wrappedDisplayCache{width: contentWidth, base: base}
+		}
+		completed := t.logs.CompletedLines()
+		if len(completed) > t.logsCache.count {
+			newLogs := completed[t.logsCache.count:]
+			t.logsCache.lines = taiui.WrapPlainLinesInto(newLogs, base, contentWidth, t.logsCache.count, t.logsCache.lines)
+			t.logsCache.count = len(completed)
+		}
+		partial := t.logs.Partial()
+		if partial == "" {
+			return t.logsCache.lines
+		}
+		bg := base
+		if len(completed)%2 == 1 {
+			bg = taiui.AltBG(base)
+		}
+		t.displayBuf[2] = append(t.displayBuf[2][:0], t.logsCache.lines...)
+		t.displayBuf[2] = taiui.WrapLinesColoredInto([]taiui.Line{{Text: partial, BGColor: bg, Color: taiui.NoColor}}, contentWidth, t.displayBuf[2])
+		return t.displayBuf[2]
 	}
 	return nil
 }

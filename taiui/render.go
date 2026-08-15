@@ -60,6 +60,8 @@ func renderElement(e Element, box Box, style Style, draw drawFunc, cursor cursor
 		renderOverlay(e, box, style, draw, cursor, options)
 	case _List:
 		renderList(e, box, style, draw, cursor, options)
+	case _Panel:
+		renderPanel(e, box, style, draw, cursor, options)
 	default:
 		panic(fmt.Errorf("unknown element %#v", e))
 	}

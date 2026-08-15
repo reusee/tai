@@ -1,6 +1,7 @@
 package taiui
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/gdamore/tcell/v3/color"
@@ -253,4 +254,36 @@ func TestCollapsedPanelRendering(t *testing.T) {
 			t.Fatalf("expected 'O' at (0,2), got %v", cell.Rune)
 		}
 	})
+}
+
+func TestPanelLargeOutput(t *testing.T) {
+	lines := make([]Line, 100000)
+	for i := range lines {
+		lines[i] = Line{Text: fmt.Sprintf("line %06d", i)}
+	}
+	element := Panel(
+		Box{Top: 0, Left: 0, Bottom: 10, Right: 40},
+		"Output",
+		false,
+		lines,
+		50000,
+		false,
+		false,
+		testPanelStyle(),
+	)
+	screen := newFakeScreen(40, 10)
+	Render(element, screen)
+	if len(screen.frames) == 0 {
+		t.Fatal("expected a rendered frame")
+	}
+	frame := screen.frames[len(screen.frames)-1]
+	// Row 1 should be line 50000: 'l' 'i' 'n' 'e' ' ' '0' '5' '0' '0' '0' '0'
+	cell := frame.Cells[1*frame.Width]
+	if cell.Rune != 'l' {
+		t.Fatalf("expected 'l' at row 1 col 0, got %v", cell.Rune)
+	}
+	digit := frame.Cells[1*frame.Width+6]
+	if digit.Rune != '5' {
+		t.Fatalf("expected '5' at row 1 col 6 for line 50000, got %v", digit.Rune)
+	}
 }

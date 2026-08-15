@@ -2752,3 +2752,73 @@ func TestTuiStateDoesNotParseSummariesFromCommandOutput(t *testing.T) {
 		t.Fatal("command output must still be displayed in the Output tab")
 	}
 }
+
+func TestTUIWrappedDisplayCache(t *testing.T) {
+	tui := newTUIForTest()
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 40}
+
+	tui.write([]byte("hello\n"))
+	display1 := wrappedDisplay(tui, 0, box)
+	if len(display1) != 1 || display1[0].Text != "hello" {
+		t.Fatalf("unexpected display1: %v", display1)
+	}
+	if tui.outputCache.count != 1 {
+		t.Fatalf("expected cached count 1, got %d", tui.outputCache.count)
+	}
+
+	tui.write([]byte("partial text"))
+	display2 := wrappedDisplay(tui, 0, box)
+	if len(display2) != 2 || display2[1].Text != "partial text" {
+		t.Fatalf("unexpected display2: %v", display2)
+	}
+	// Completed count in cache stays 1 while partial line is appended on the fly.
+	if tui.outputCache.count != 1 {
+		t.Fatalf("expected cached count 1, got %d", tui.outputCache.count)
+	}
+
+	tui.write([]byte("\nworld\n"))
+	display3 := wrappedDisplay(tui, 0, box)
+	if len(display3) != 3 || display3[1].Text != "partial text" || display3[2].Text != "world" {
+		t.Fatalf("unexpected display3: %v", display3)
+	}
+	if tui.outputCache.count != 3 {
+		t.Fatalf("expected cached count 3, got %d", tui.outputCache.count)
+	}
+
+	// Width resize resets the cache.
+	boxWider := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
+	displayWider := wrappedDisplay(tui, 0, boxWider)
+	if len(displayWider) != 3 {
+		t.Fatalf("expected 3 lines after resize, got %d", len(displayWider))
+	}
+	if tui.outputCache.width != 79 {
+		t.Fatalf("expected cache width 79, got %d", tui.outputCache.width)
+	}
+}
+
+func TestTUIWrappedDisplayLargeOutputPerformance(t *testing.T) {
+	tui := newTUIForTest()
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 25, Right: 80}
+
+	for i := 0; i < 50000; i++ {
+		tui.output.Append(taiui.NoColor, fmt.Sprintf("line %d\n", i))
+	}
+
+	display := wrappedDisplay(tui, 0, box)
+	if len(display) != 50000 {
+		t.Fatalf("expected 50000 display lines, got %d", len(display))
+	}
+	if tui.outputCache.count != 50000 {
+		t.Fatalf("expected 50000 cached lines, got %d", tui.outputCache.count)
+	}
+
+	// Appending one new line wraps incrementally.
+	tui.output.Append(taiui.NoColor, "new final line\n")
+	display2 := wrappedDisplay(tui, 0, box)
+	if len(display2) != 50001 {
+		t.Fatalf("expected 50001 display lines, got %d", len(display2))
+	}
+	if tui.outputCache.count != 50001 {
+		t.Fatalf("expected 50001 cached lines, got %d", tui.outputCache.count)
+	}
+}
