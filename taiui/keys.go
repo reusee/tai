@@ -48,36 +48,28 @@ Mouse input theory:
   and is emitted as "mouse-release@12,34"; the consumer tracks which
   button the release ends. No-button motion (code 35) and malformed
   sequences are ignored.
+- Wheel events are throttled to at most 50 Hz (20ms interval): trackpads
+  and free-spinning wheels can flood the terminal with hundreds of events
+  per second, causing excessive render passes and making the interface
+  unresponsive. Wheel events arriving within the interval since the last
+  emitted wheel event are dropped.
 - Like keyboard input, a mouse sequence may arrive split across reads;
   the parser waits for the sequence terminator before emitting.
 `
 
-// MouseKeyPrefix is the prefix of the key names ReadKeys emits for mouse
-// events. Each name is the prefix followed by the event kind and the
-// 0-based cell coordinates, e.g. "mouse-left@12,34". Consumers recognize
-// mouse keys by the prefix and split the name at the '@' to recover the
-// event kind and coordinates. See TheoryOfMouseInput.
-//
-// MouseEnableSequence switches the terminal into SGR mouse reporting:
-// DECSET 1000 reports button events, DECSET 1002 adds button-held motion
-// events (drag), and DECSET 1006 switches coordinate reporting to the
-// SGR extended form so columns beyond 223 are reported correctly.
-// MouseDisableSequence restores the terminal to ordinary input handling.
-//
-// The motion and wheel flags are bits of the SGR button code: motion or
-// drag events add mouseMotionFlag to the button value, and wheel events
-// add mouseWheelFlag. See TheoryOfMouseInput.
 const (
 	MouseKeyPrefix       = "mouse-"
 	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
 	MouseDisableSequence = "\x1b[?1000l\x1b[?1002l\x1b[?1006l"
 	mouseMotionFlag      = 32
 	mouseWheelFlag       = 64
+	mouseWheelInterval   = time.Second / 50
 )
 
 func ReadKeys(r io.Reader, ch chan<- string) {
 	var buf [64]byte
 	var pending []byte
+	var lastWheel time.Time
 	for {
 		n, err := r.Read(buf[:])
 		if err != nil {
@@ -143,6 +135,17 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 						if parseErr == nil && x >= 1 && y >= 1 {
 							// The SGR protocol sends 1-based coordinates;
 							// the TUI uses 0-based cell coordinates.
+							if button&mouseWheelFlag != 0 {
+								now := time.Now()
+								if !lastWheel.IsZero() && now.Sub(lastWheel) < mouseWheelInterval {
+									// Throttle wheel events to 50 Hz to prevent
+									// event flooding from high-frequency trackpads or
+									// free-spinning wheels from overwhelming the system.
+									pending = pending[end+1:]
+									continue
+								}
+								lastWheel = now
+							}
 							if key := mouseKeyName(button, x-1, y-1, release); key != "" {
 								ch <- key
 							}
