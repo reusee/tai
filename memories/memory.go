@@ -64,7 +64,7 @@ type CurrentMemory func() (*MemoryEntry, error)
 type AppendMemory func(*MemoryEntry) error
 
 func (Module) Memory(
-	generator generators.Generator,
+	getDefaultGenerator generators.GetDefaultGenerator,
 ) (CurrentMemory, AppendMemory) {
 
 	const fileName = "ai-memory.json"
@@ -179,6 +179,10 @@ func (Module) Memory(
 	}
 
 	currentMemory := func() (*MemoryEntry, error) {
+		generator, err := getDefaultGenerator()
+		if err != nil {
+			return nil, err
+		}
 		filePath, err := resolvePath()
 		if err != nil {
 			return nil, err

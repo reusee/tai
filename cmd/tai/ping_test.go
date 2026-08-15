@@ -146,7 +146,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.Generator, phases.BuildGenerate, loops.Run, RandomBlockKinds))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -162,7 +162,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 	mainFn(
 		Output(os.Stdout),
 		nil,
-		aiMockGenerator{},
+		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
 		func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
 			return func(cont phases.Phase) phases.Phase {
 				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {

@@ -28,7 +28,11 @@ func TestAISystemPromptExcludesRestatePrompts(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 	).Call(func(
 		getSystemPrompt AISystemPrompt,
 		comps AIComponents,
@@ -81,7 +85,11 @@ func TestAIRestatePromptsIncludeShellWhenEnabled(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 		func() flags.Shell { return flags.Shell(true) },
 	).Call(func(
 		comps AIComponents,
@@ -98,7 +106,11 @@ func TestAIRestatePromptsExcludeShellWhenDisabled(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 	).Call(func(
 		comps AIComponents,
 	) {
@@ -114,7 +126,11 @@ func TestAIRestatePromptsExcludeMemoryWhenNoMemory(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 		func() NoMemory { return NoMemory(true) },
 	).Call(func(
 		comps AIComponents,
@@ -153,7 +169,11 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 	).Call(func(comps AIComponents) {
 		if !strings.Contains(comps.PromptSections(), "uncommon Chinese two-character word") {
 			t.Fatal("AIComponents must embed the unified BlockFormatSystemPrompt, which states the delimiter policy")
@@ -166,7 +186,11 @@ func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 	).Call(func(
 		comps AIComponents,
 	) {
@@ -191,7 +215,11 @@ func TestAIComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 		func() generators.ModelFamily { return "gemini" },
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}

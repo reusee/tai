@@ -35,10 +35,10 @@ failure prints the observed outcome and exits with status 1, making the
 command scriptable; on success the verdict is printed to the command Output
 writer after the streamed output.
 
-The command requires a model to be specified via -model; without it, the
-generator provider fails during scope resolution, making the dependency on an
-explicit model selection explicit. The command performs a single generation
-round with no chat loop, no system prompt, and no file context.
+The command requires a model to be specified via -model; without it, resolving
+the default generator fails, making the dependency on an explicit model
+selection explicit. The command performs a single generation round with no
+chat loop, no system prompt, and no file context.
 
 Ping runs through the unified generation loop (loops.Run) in single-shot
 mode (no components), so it participates in the same mechanisms as the
@@ -130,12 +130,15 @@ var PingCommand = Command{
 	Main: func(
 		output Output,
 		recorder *records.Recorder,
-		generator generators.Generator,
+		getDefaultGenerator generators.GetDefaultGenerator,
 		buildGenerate phases.BuildGenerate,
 		loopRun loops.Run,
 		randomBlockKinds RandomBlockKinds,
 	) {
 		ctx := context.Background()
+
+		generator, err := getDefaultGenerator()
+		ce(err)
 
 		// Two block kinds are chosen at random on every run so the model
 		// cannot match the request from pattern memory; a correct emission
@@ -166,7 +169,6 @@ var PingCommand = Command{
 		// result as the run progresses; the iterator yields the terminal
 		// error, if any. See loops.TheoryOfLoops and TheoryOfTUI.
 		var result loops.Result
-		var err error
 		for e := range loopRun(ctx, loops.RunOptions{
 			Generator:           generator,
 			InitialState:        state,

@@ -24,9 +24,11 @@ func TestSystemPrompt(t *testing.T) {
 		},
 		new(flags.ModelName("deepseek-flash")),
 	).Call(func(
-		generator generators.Generator,
+		getDefaultGenerator generators.GetDefaultGenerator,
 		systemPrompt SystemPrompt,
 	) {
+		generator, err := getDefaultGenerator()
+		ce(err)
 
 		t.Run("English", func(t *testing.T) {
 			buf := new(strings.Builder)
@@ -306,7 +308,11 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		new(Module),
 	).Fork(
 		modes.ForTest(t),
-		func() generators.Generator { return aiMockGenerator{} },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
 	).Call(func(
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,

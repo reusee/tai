@@ -15,12 +15,15 @@ type UserPrompt []generators.Part
 
 func (Module) UserPrompt(
 	codeProvider anytexts.CodeProvider,
-	generator generators.Generator,
+	getDefaultGenerator generators.GetDefaultGenerator,
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
 	hasFiles HasFiles,
 ) UserPrompt {
+
+	generator, err := getDefaultGenerator()
+	ce(err)
 
 	args := generator.Spec()
 	maxInputTokens := min(

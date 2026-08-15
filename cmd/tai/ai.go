@@ -122,7 +122,7 @@ var AICommand = Command{
 		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
 		buildGenerate phases.BuildGenerate,
 		buildChatIdle phases.BuildChatIdle,
-		generator generators.Generator,
+		getDefaultGenerator generators.GetDefaultGenerator,
 		flagFiles flags.Files,
 		flagChats flags.Chats,
 		noMemory NoMemory,
@@ -134,6 +134,9 @@ var AICommand = Command{
 		thoughtSummaryWriter states.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
+
+		generator, err := getDefaultGenerator()
+		ce(err)
 
 		input := strings.Join(flagChats, "\n")
 		logger.InfoContext(ctx, "input", "len", len(input))

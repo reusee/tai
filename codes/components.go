@@ -68,9 +68,8 @@ family of the resolved default generator (generators.Spec.Family) and are
 appended as prompt-only components after the generic extra prompts, so a
 family-specific prompt refines or extends the generic instructions without
 replacing them. The family is resolved through the generators.ModelFamily
-provider: the generators module provides an empty default, and the tai
-command forks it with the resolved generator's family, so tests and
-non-generation commands see no family-specific prompts.
+provider, which derives the family from the resolved default generator, so
+no customization is needed.
 `
 
 // CodesComponents is the component set type for the codes module. It embeds

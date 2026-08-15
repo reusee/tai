@@ -118,7 +118,7 @@ var NextCommand = Command{
 		modes.ForProduction(),
 	},
 	Main: func(
-		generator generators.Generator,
+		getDefaultGenerator generators.GetDefaultGenerator,
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,
 		logger logs.Logger,
@@ -135,6 +135,9 @@ var NextCommand = Command{
 		thoughtSummaryWriter states.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
+
+		generator, err := getDefaultGenerator()
+		ce(err)
 
 		// Open a root on the current directory to restrict all file I/O
 		// to the project tree during change block application.

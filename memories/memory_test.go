@@ -171,8 +171,12 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		modes.ForTest(t),
 		&loader,
 		new(Module),
-		func() generators.Generator { return mockGenerator{} },
 	).Fork(
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return mockGenerator{}, nil
+			}
+		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
 	).Call(func(
@@ -212,8 +216,12 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 		modes.ForTest(t),
 		&loader,
 		new(Module),
-		func() generators.Generator { return mockGenerator{} },
 	).Fork(
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return mockGenerator{}, nil
+			}
+		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
 	).Call(func(
@@ -249,8 +257,12 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 		modes.ForTest(t),
 		&loader,
 		new(Module),
-		func() generators.Generator { return mockGenerator{} },
 	).Fork(
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return mockGenerator{}, nil
+			}
+		},
 		func() CurrentMemory { return currentMemory },
 		func() AppendMemory { return appendMemory },
 	).Call(func(

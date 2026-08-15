@@ -18,13 +18,19 @@ func (Module) GetDefaultGenerator(
 type GetDefaultFastModel func() (Generator, error)
 
 // ModelFamily is the family of the resolved default generator. It selects
-// family-specific extra system prompts. The default provider returns an
-// empty family; the tai command forks this type with the resolved
-// generator's family. See codes.TheoryOfFamilyExtraSystemPrompt.
+// family-specific extra system prompts. The default provider derives the
+// family from the resolved default generator, so no customization is
+// needed. See codes.TheoryOfFamilyExtraSystemPrompt.
 type ModelFamily string
 
-func (Module) ModelFamily() ModelFamily {
-	return ""
+func (Module) ModelFamily(
+	getDefaultGenerator GetDefaultGenerator,
+) ModelFamily {
+	generator, err := getDefaultGenerator()
+	if err != nil {
+		return ""
+	}
+	return ModelFamily(generator.Spec().Family)
 }
 
 func (Module) GetDefaultFastModel(

@@ -5,14 +5,6 @@ import (
 	"github.com/reusee/tai/records"
 )
 
-func (Module) Generator(
-	getDefaultGenerator generators.GetDefaultGenerator,
-) generators.Generator {
-	ret, err := getDefaultGenerator()
-	ce(err)
-	return ret
-}
-
 // eventRecorderDef binds the interaction recorder to the generators-level
 // EventRecorder interface. It is forked into the base scope by main() so
 // every generator resolved in a command scope records API-level events
