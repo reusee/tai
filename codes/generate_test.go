@@ -99,11 +99,11 @@ func TestSummarizeRetryState(t *testing.T) {
 	phaseErr := errors.New("boom")
 
 	t.Run("Summarized", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
 			if text != "partial output" {
 				t.Fatalf("expected partial output, got %q", text)
 			}
-			return &loops.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
+			return &states.RetrySummary{Summary: "condensed", RetryPrompt: "condensed"}, nil
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -137,7 +137,7 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("SummarizeError", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(partial, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
 			return nil, errors.New("summarize failed")
 		})
 		if err == nil {
@@ -175,7 +175,7 @@ func TestSummarizeRetryState(t *testing.T) {
 	})
 
 	t.Run("NoPartial", func(t *testing.T) {
-		state, count, summary, err := summarizeRetryState(base, phaseErr, 1, func(text string) (*loops.RetrySummary, error) {
+		state, count, summary, err := summarizeRetryState(base, phaseErr, 1, func(text string) (*states.RetrySummary, error) {
 			t.Fatal("summarize should not be called")
 			return nil, nil
 		})
@@ -217,7 +217,7 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 	// discoveries, decisions, and facts — rather than reproducing the
 	// reasoning that led to them, so the retry round adopts the conclusions
 	// instead of re-deriving them and needs less thinking. See
-	// TheoryOfIncompleteOutputSummarization.
+	// states.TheoryOfIncompleteOutputSummarization.
 	for _, want := range []string{
 		`(kind "summary")`,
 		`(kind "continue")`,
@@ -227,8 +227,8 @@ func TestRetrySummarizationSystemPromptExtractsValuableContent(t *testing.T) {
 		"conclusions",
 		"re-deriving",
 	} {
-		if !strings.Contains(retrySummarizationSystemPrompt, want) {
-			t.Fatalf("retrySummarizationSystemPrompt must mention %q", want)
+		if !strings.Contains(states.RetrySummarizationSystemPrompt, want) {
+			t.Fatalf("states.RetrySummarizationSystemPrompt must mention %q", want)
 		}
 	}
 }
@@ -238,15 +238,15 @@ func TestRetrySummarizationSystemPromptShowsBlockFormat(t *testing.T) {
 	// the model knows the heredoc format without the kind prompt
 	// restating it. It describes the two required kinds; the block format
 	// rules come from blocks.BlockFormatSystemPrompt. See
-	// TheoryOfIncompleteOutputSummarization.
-	if !strings.Contains(retrySummarizationSystemPrompt, blocks.BlockFormatSystemPrompt) {
-		t.Fatal("retrySummarizationSystemPrompt must embed the unified BlockFormatSystemPrompt")
+	// states.TheoryOfIncompleteOutputSummarization.
+	if !strings.Contains(states.RetrySummarizationSystemPrompt, blocks.BlockFormatSystemPrompt) {
+		t.Fatal("states.RetrySummarizationSystemPrompt must embed the unified BlockFormatSystemPrompt")
 	}
-	if !strings.Contains(retrySummarizationSystemPrompt, `(kind "summary")`) {
-		t.Fatal("retrySummarizationSystemPrompt must describe the summary kind")
+	if !strings.Contains(states.RetrySummarizationSystemPrompt, `(kind "summary")`) {
+		t.Fatal("states.RetrySummarizationSystemPrompt must describe the summary kind")
 	}
-	if !strings.Contains(retrySummarizationSystemPrompt, `(kind "continue")`) {
-		t.Fatal("retrySummarizationSystemPrompt must describe the continue kind")
+	if !strings.Contains(states.RetrySummarizationSystemPrompt, `(kind "continue")`) {
+		t.Fatal("states.RetrySummarizationSystemPrompt must describe the continue kind")
 	}
 }
 
@@ -257,14 +257,14 @@ func TestRetrySummarizationSystemPromptRequiresNonEmptyBlocks(t *testing.T) {
 	// empty or missing block, a body colliding with the delimiter, or
 	// surrounding prose would fail to produce a usable retry summary.
 	// The delimiter selection rules come from the embedded
-	// BlockFormatSystemPrompt. See TheoryOfIncompleteOutputSummarization.
+	// BlockFormatSystemPrompt. See states.TheoryOfIncompleteOutputSummarization.
 	for _, want := range []string{
 		"Both blocks MUST have non-empty bodies",
 		"The delimiter MUST NOT appear anywhere in the block body",
 		"Output ONLY these two blocks as your final text",
 	} {
-		if !strings.Contains(retrySummarizationSystemPrompt, want) {
-			t.Fatalf("retrySummarizationSystemPrompt must contain %q", want)
+		if !strings.Contains(states.RetrySummarizationSystemPrompt, want) {
+			t.Fatalf("states.RetrySummarizationSystemPrompt must contain %q", want)
 		}
 	}
 }
@@ -564,7 +564,7 @@ func TestSummarizeIncompleteOutputRetriesOnParseFailure(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +588,7 @@ func TestSummarizeIncompleteOutputErrorsAfterMaxRetries(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize attempts fail")
 	}
@@ -607,7 +607,7 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 	// A failed summarize generation is a failed summarize attempt: it
 	// must be retried like a parsing failure, so a transient API error
 	// does not leave the round without a summary. See
-	// TheoryOfIncompleteOutputSummarization.
+	// states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		errs: []error{
 			errors.New("summarize generation failed"),
@@ -618,7 +618,7 @@ func TestSummarizeIncompleteOutputRetriesOnGenerationFailure(t *testing.T) {
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +643,7 @@ func TestSummarizeIncompleteOutputErrorsAfterGenerationFailures(t *testing.T) {
 		responses: []string{"", "", ""},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize generations fail")
 	}
@@ -665,7 +665,7 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 	// Each failed summarize attempt must be logged with the attempt
 	// number and the error, and the final failure must be logged as an
 	// error, so the operator can diagnose why a round lacks a
-	// synthesized summary. See TheoryOfIncompleteOutputSummarization.
+	// synthesized summary. See states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		errs: []error{
 			errors.New("failure 1"),
@@ -676,7 +676,7 @@ func TestSummarizeIncompleteOutputLogsErrors(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, nil, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, nil, gen, "incomplete text")
 	if err == nil {
 		t.Fatal("expected error after all summarize generations fail")
 	}
@@ -715,7 +715,7 @@ func TestSummarizeIncompleteOutputProvider(t *testing.T) {
 	// incomplete text). The recorder is overridden to nil so the test
 	// does not open the interaction database, and the summarize
 	// generator is overridden to the mock. See
-	// TheoryOfIncompleteOutputSummarization.
+	// states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
 			"<<徕珑龘 <summary>\nsummary\n徕珑龘\n<<龘靐齉 <continue>\nretry prompt\n龘靐齉\n",
@@ -765,7 +765,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -801,7 +801,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: false}
-		_, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		_, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -825,7 +825,7 @@ func TestSummarizeIncompleteOutputRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -866,7 +866,7 @@ func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
 	// session's interaction record together with the failure reason as a
 	// decision event, so the model's actual output is visible for
 	// optimizing the summarization prompt. See
-	// TheoryOfIncompleteOutputSummarization.
+	// states.TheoryOfIncompleteOutputSummarization.
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	recordedResponses := func(rec *fakeRecorderForSummarize) []string {
@@ -891,7 +891,7 @@ func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
 			},
 		}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -931,7 +931,7 @@ func TestSummarizeIncompleteOutputRecordsParseFailures(t *testing.T) {
 			responses: []string{"one", "two", "three"},
 		}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+		retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 		if err == nil {
 			t.Fatal("expected error after all summarize attempts fail")
 		}
@@ -954,7 +954,7 @@ func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
 	// response must append them separately: when a reasoning model puts
 	// its summary attempt into thoughts while the visible text fails to
 	// parse, the thoughts are the only signal of what the model actually
-	// produced. See TheoryOfIncompleteOutputSummarization.
+	// produced. See states.TheoryOfIncompleteOutputSummarization.
 	gen := &summarizeRetryMockGenerator{
 		thoughts: []string{"the model reasoned about the summary here"},
 		responses: []string{
@@ -964,7 +964,7 @@ func TestSummarizeIncompleteOutputRecordsThoughts(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	rec := &fakeRecorderForSummarize{enabled: true}
-	retrySummary, err := summarizeIncompleteOutput(context.Background(), logger, rec, gen, "incomplete text")
+	retrySummary, err := states.SummarizeIncomplete(context.Background(), logger, rec, gen, "incomplete text")
 	if err != nil {
 		t.Fatal(err)
 	}

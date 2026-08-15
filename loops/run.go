@@ -16,6 +16,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/states"
 )
 
 // TheoryOfContextPhilosophy articulates the system's single-shot context
@@ -927,7 +928,7 @@ type RunOptions struct {
 	// (used as the truncated round's summary in round statistics) and
 	// the compressed content fed to the retry round as user input. If
 	// nil, retry proceeds without a summary.
-	SummarizeIncomplete func(incompleteText string) (*RetrySummary, error)
+	SummarizeIncomplete func(incompleteText string) (*states.RetrySummary, error)
 
 	// OnIdle is called when no component triggers after a round. It allows
 	// the caller to provide interactive input (e.g., chat prompt) and
@@ -939,18 +940,11 @@ type RunOptions struct {
 }
 
 // RetrySummary holds the outcome of summarizing truncated output for retry.
-// The retry process has two tasks: producing a summary of the truncated
-// output (recorded as the truncated round's summary in round statistics)
-// and producing the compressed content fed to the retry round as user
-// input, framed as a continue block. See TheoryOfLoops.
-type RetrySummary struct {
-	// Summary is the summary of the truncated output, used as the
-	// truncated round's summary in round statistics.
-	Summary string
-	// RetryPrompt is the compressed version of the truncated output,
-	// fed to the retry round as user input.
-	RetryPrompt string
-}
+// The retry process has two tasks: producing a summary of the truncated output
+// (recorded as the truncated round's summary in round statistics) and producing
+// the compressed content fed to the retry round as user input, framed as a
+// continue block. See states.TheoryOfIncompleteOutputSummarization.
+type RetrySummary = states.RetrySummary
 
 // freshDelimiter returns a fresh trio of uncommon Chinese characters for
 // use as a block delimiter in system-generated blocks. The delimiter is
@@ -968,20 +962,14 @@ func freshDelimiter() string {
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
 // block with a fresh delimiter, so the TUI's Round tab can display it
-// as the round's completion signal. See TheoryOfLoops.
+// as the round's completion signal. See states.TheoryOfIncompleteOutputSummarization.
 func FormatSummaryBlock(summary string) string {
-	delimiter := freshDelimiter()
-	return "<<" + delimiter + " <summary>\n" + summary + "\n" + delimiter
+	return states.FormatSummaryBlock(summary)
 }
 
 func formatRetryPrompt(summary, retryPrompt string, attempt, maxAttempts int) string {
-	delimiter := freshDelimiter()
-	msg := fmt.Sprintf(incompleteOutputSummaryPrefix, attempt, maxAttempts)
-	if summary != "" {
-		msg += FormatSummaryBlock(summary) + "\n\n"
-	}
-	return msg +
-		"<<" + delimiter + " <continue>\n" + retryPrompt + "\n" + delimiter
+	prefix := fmt.Sprintf(incompleteOutputSummaryPrefix, attempt, maxAttempts)
+	return states.FormatRetryPrompt(prefix, summary, retryPrompt)
 }
 
 // Result holds the outcome of a generation loop.

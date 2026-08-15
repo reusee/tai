@@ -384,11 +384,11 @@ const maxSummarizeRetries = 3
 // and the retry prompt carried into the next round. The summarize
 // generator, logger, and interaction recorder are bound from the dscope
 // scope, so callers pass only the runtime values (context and the
-// incomplete text). See TheoryOfIncompleteOutputSummarization.
+// incomplete text). See states.TheoryOfIncompleteOutputSummarization.
 type SummarizeIncompleteOutput func(
 	ctx context.Context,
 	incompleteText string,
-) (*loops.RetrySummary, error)
+) (*states.RetrySummary, error)
 
 func (Module) SummarizeIncompleteOutput(
 	logger logs.Logger,
@@ -398,12 +398,12 @@ func (Module) SummarizeIncompleteOutput(
 	return func(
 		ctx context.Context,
 		incompleteText string,
-	) (*loops.RetrySummary, error) {
+	) (*states.RetrySummary, error) {
 		generator, err := getSummarizeGenerator()
 		if err != nil {
 			return nil, err
 		}
-		return summarizeIncompleteOutput(ctx, logger, recorder, generator, incompleteText)
+		return states.SummarizeIncomplete(ctx, logger, recorder, generator, incompleteText)
 	}
 }
 
@@ -607,12 +607,12 @@ func summarizeResponseDetail(attempt int, outputText string, thoughts []string) 
 // partial output can be summarized, the summary and retry prompt are appended
 // as user content. When summarization fails, the error is propagated so the
 // caller aborts the run; a fallback state is still returned for validity.
-// See TheoryOfIncompleteOutputSummarization.
+// See states.TheoryOfIncompleteOutputSummarization.
 func summarizeRetryState(
 	errState generators.State,
 	phaseErr error,
 	prevContentCount int,
-	summarize func(string) (*loops.RetrySummary, error),
+	summarize func(string) (*states.RetrySummary, error),
 ) (newState generators.State, contentCount int, summary string, err error) {
 	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
@@ -621,16 +621,15 @@ func summarizeRetryState(
 			// the caller aborts the run instead of continuing without a
 			// synthesized summary. The fallback state is still returned so
 			// the caller has a valid state while aborting. See
-			// TheoryOfIncompleteOutputSummarization.
+			// states.TheoryOfIncompleteOutputSummarization.
 			fallbackState, fallbackCount, fallbackSummary := fallbackRetryState(errState, phaseErr)
 			return fallbackState, fallbackCount, fallbackSummary, summarizeErr
 		} else if retrySummary != nil {
-			msg := "The previous generation attempt was interrupted by an error after producing partial output. " +
-				"A summary is provided for context; this is a retry.\n\n" +
-				loops.FormatSummaryBlock(retrySummary.Summary) + "\n\n" +
-				"Error: " + phaseErr.Error() + "\n\n" +
-				"The retry content below carries the valuable conclusions already reached in the partial output — discoveries, decisions, and facts. Adopt them; do not re-derive them, so this retry needs less thinking than the failed attempt:\n\n" +
-				retrySummary.RetryPrompt
+			prefix := fmt.Sprintf(
+				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
+				phaseErr,
+			)
+			msg := states.FormatRetryPrompt(prefix, retrySummary.Summary, retrySummary.RetryPrompt)
 			newState, appendErr := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
@@ -658,7 +657,7 @@ func fallbackRetryState(
 		Role: generators.RoleLog,
 		Parts: []generators.Part{
 			generators.Error{Error: phaseErr},
-			generators.Text(loops.FormatSummaryBlock("[Error: " + phaseErr.Error() + "]")),
+			generators.Text(states.FormatSummaryBlock("[Error: " + phaseErr.Error() + "]")),
 		},
 	})
 	if err != nil {
@@ -698,7 +697,7 @@ callback, ensuring both external states are consistent with the rolled-back Stat
 This retry is transient error recovery for truncated output. The summarized
 content does not persist as compressed history. Each retry regenerates from the
 original context, supplemented by the conclusions extracted from the truncated
-thinking (see TheoryOfIncompleteOutputSummarization), not from accumulated
+thinking (see states.TheoryOfIncompleteOutputSummarization), not from accumulated
 dialogue. See TheoryOfContextPhilosophy in loops/run.go.
 `
 
@@ -778,7 +777,7 @@ discoveries, decisions, and facts the model had already established — and pres
 them to the retry round. The retry therefore continues from the model's conclusions
 instead of re-deriving them, reducing the thinking it needs and lowering the chance
 of failing again. The extraction is the same one used for truncated output; see
-TheoryOfIncompleteOutputSummarization.
+states.TheoryOfIncompleteOutputSummarization.
 
 This summarization is transient error recovery. The condensed content is injected
 into one retry request and does not persist as compressed history. The system does
@@ -1080,7 +1079,7 @@ func (Module) GenerateWithResultWithStats(
 		// summarize incomplete output — can abort the run from within a
 		// callback that cannot return an error (OnPhaseError). fatalErr
 		// records the serious error; after the loop it overrides the
-		// loop's terminal error. See TheoryOfIncompleteOutputSummarization.
+		// loop's terminal error. See states.TheoryOfIncompleteOutputSummarization.
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var fatalErr error
@@ -1134,9 +1133,9 @@ func (Module) GenerateWithResultWithStats(
 					// were exhausted and the final attempt still lacked a
 					// summary). Summarize the round's output so every round
 					// has a summary for the round statistics and the TUI's
-					// Round tab. See TheoryOfIncompleteOutputSummarization.
+					// Round tab. See states.TheoryOfIncompleteOutputSummarization.
 					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
-						var retrySummary *loops.RetrySummary
+						var retrySummary *states.RetrySummary
 						retrySummary, summarizeErr = summarizeIncompleteOutput(runCtx, incompleteText)
 						if summarizeErr == nil && retrySummary != nil {
 							summaryText = retrySummary.Summary
@@ -1151,7 +1150,7 @@ func (Module) GenerateWithResultWithStats(
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a
 					// synthesized summary. See
-					// TheoryOfIncompleteOutputSummarization.
+					// states.TheoryOfIncompleteOutputSummarization.
 					fatalErr = summarizeErr
 					cancel()
 					return nil
@@ -1195,7 +1194,7 @@ func (Module) GenerateWithResultWithStats(
 					errState,
 					phaseErr,
 					prevContentCount,
-					func(text string) (*loops.RetrySummary, error) {
+					func(text string) (*states.RetrySummary, error) {
 						return summarizeIncompleteOutput(runCtx, text)
 					},
 				)
@@ -1206,7 +1205,7 @@ func (Module) GenerateWithResultWithStats(
 					// A failure to summarize the partial output is a serious
 					// error: abort the run instead of retrying without a
 					// synthesized summary. See
-					// TheoryOfIncompleteOutputSummarization.
+					// states.TheoryOfIncompleteOutputSummarization.
 					fatalErr = summarizeErr
 					cancel()
 				}
@@ -1217,7 +1216,7 @@ func (Module) GenerateWithResultWithStats(
 			RetryOnMissingCompletion: true,
 			RetryOnError:             true,
 			MaxRetries:               maxRetriesForMissingSummary,
-			SummarizeIncomplete: func(incompleteText string) (*loops.RetrySummary, error) {
+			SummarizeIncomplete: func(incompleteText string) (*states.RetrySummary, error) {
 				if fatalErr != nil {
 					return nil, fatalErr
 				}
@@ -1226,7 +1225,7 @@ func (Module) GenerateWithResultWithStats(
 					// A failure to summarize incomplete output is a serious
 					// error: abort the run instead of continuing without a
 					// synthesized summary. See
-					// TheoryOfIncompleteOutputSummarization.
+					// states.TheoryOfIncompleteOutputSummarization.
 					fatalErr = err
 					cancel()
 				}
@@ -1239,7 +1238,7 @@ func (Module) GenerateWithResultWithStats(
 		// A serious error that aborted the run (e.g., a failure to
 		// summarize incomplete output) overrides the loop's terminal
 		// error, which may be a context cancellation caused by the abort.
-		// See TheoryOfIncompleteOutputSummarization.
+		// See states.TheoryOfIncompleteOutputSummarization.
 		if fatalErr != nil {
 			err = fatalErr
 		}
