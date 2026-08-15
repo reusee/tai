@@ -28,9 +28,12 @@ all restate/reminder prompt contributions), UserPromptParts (concatenating all
 user prompt parts, with restate prompts appended as the last element so
 critical format reminders are the last content the model reads before
 generating), and Processable (returning the subset with Process functions for
-the generation loop). Restate prompts are placed at the end of the user prompt,
-not the system prompt, so critical format reminders are the last thing the
-model reads before generating.
+the generation loop). PromptSections and RestatePrompts join their
+contributions with a blank line (two newlines) after trimming each section's
+trailing whitespace, so adjacent prompt sections never stick together. Restate
+prompts are placed at the end of the user prompt, not the system prompt, so
+critical format reminders are the last thing the model reads before
+generating.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
@@ -142,12 +145,16 @@ type ComponentSet []Component
 
 // PromptSections returns the concatenated system prompt sections from all
 // components that have a non-empty PromptSection, in registration order.
+// Each section's trailing whitespace is trimmed and sections are joined
+// with a blank line (two newlines), so adjacent prompt sections never
+// stick together.
 func (c ComponentSet) PromptSections() string {
 	var sb strings.Builder
 	for _, comp := range c {
-		if comp.PromptSection != "" {
-			sb.WriteString(comp.PromptSection)
-			sb.WriteString("\n")
+		section := strings.TrimRight(comp.PromptSection, " \t\n\r")
+		if section != "" {
+			sb.WriteString(section)
+			sb.WriteString("\n\n")
 		}
 	}
 	return sb.String()
@@ -157,13 +164,17 @@ func (c ComponentSet) PromptSections() string {
 // from all components that have a non-empty RestatePrompt, in registration
 // order. These are short critical reminders that reinforce block format
 // rules, assembled separately from PromptSections to keep them grouped as
-// a distinct reminder section at the end of the system prompt.
+// a distinct reminder section at the end of the system prompt. Each
+// section's trailing whitespace is trimmed and sections are joined with a
+// blank line (two newlines), so adjacent restate prompts never stick
+// together.
 func (c ComponentSet) RestatePrompts() string {
 	var sb strings.Builder
 	for _, comp := range c {
-		if comp.RestatePrompt != "" {
-			sb.WriteString(comp.RestatePrompt)
-			sb.WriteString("\n")
+		restate := strings.TrimRight(comp.RestatePrompt, " \t\n\r")
+		if restate != "" {
+			sb.WriteString(restate)
+			sb.WriteString("\n\n")
 		}
 	}
 	return sb.String()

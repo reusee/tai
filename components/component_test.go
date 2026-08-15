@@ -19,7 +19,7 @@ func TestComponentSetPromptSections(t *testing.T) {
 		{Kind: "c", PromptSection: ""},
 	}
 	got := comps.PromptSections()
-	if got != "prompt-a\nprompt-b\nprompt-only\n" {
+	if got != "prompt-a\n\nprompt-b\n\nprompt-only\n\n" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -32,7 +32,7 @@ func TestComponentSetRestatePrompts(t *testing.T) {
 		{Kind: "c", RestatePrompt: "restate-c"},
 	}
 	got := comps.RestatePrompts()
-	if got != "restate-a\nrestate-only\nrestate-c\n" {
+	if got != "restate-a\n\nrestate-only\n\nrestate-c\n\n" {
 		t.Fatalf("got %q", got)
 	}
 }

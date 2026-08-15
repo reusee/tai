@@ -151,18 +151,20 @@ var PingCommand = Command{
 		// carries the user-configured extra system prompts
 		// (extra_system_prompt and family_extra_system_prompt), so ping
 		// honors the same configuration as the other generation
-		// commands. See TheoryOfPingCommand.
-		systemPrompt := blocks.BlockFormatSystemPrompt + "\n"
+		// commands. Each prompt section is separated by a blank line so
+		// adjacent sections never stick together. See TheoryOfPingCommand.
+		systemPrompt := strings.TrimRight(blocks.BlockFormatSystemPrompt, " \t\n\r")
 		for _, e := range extra {
 			if e != "" {
-				systemPrompt += e + "\n"
+				systemPrompt += "\n\n" + strings.TrimRight(e, " \t\n\r")
 			}
 		}
 		for _, prompt := range familyExtra[string(modelFamily)] {
 			if prompt != "" {
-				systemPrompt += prompt + "\n"
+				systemPrompt += "\n\n" + strings.TrimRight(prompt, " \t\n\r")
 			}
 		}
+		systemPrompt += "\n"
 
 		var state generators.State
 		state = generators.NewPrompts(
