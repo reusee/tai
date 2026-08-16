@@ -71,8 +71,6 @@ func TestConfigsLoaderIncludesGoModuleRoot(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-	).Fork(
-		ConfigsLoader,
 	).Call(func(loader configs.Loader) {
 		var name flags.ModelName
 		if err := loader.AssignFirst("model_name", &name); err != nil {

@@ -11,13 +11,11 @@ import (
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/states"
-	"github.com/reusee/tai/taiconfigs"
 )
 
 type Module struct {
 	dscope.Module
 	Generators generators.Module
-	Configs    taiconfigs.Module
 	GoCodes    gocodes.Module
 	AnyTexts   anytexts.Module
 	Phases     phases.Module

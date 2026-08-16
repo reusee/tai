@@ -19,9 +19,9 @@ func main() {
 
 	// Override the default configs.Loader (provided by configs.Module)
 	// with the tai-specific loader from taiconfigs. The taiconfigs loader
-	// includes the embedded schema and config globals; forking it here
-	// keeps the configs package self-contained with its own default.
-	scope = scope.Fork(taiconfigs.ConfigsLoader)
+	// includes the embedded schema and config globals; forking the module
+	// here keeps the configs package self-contained with its own default.
+	scope = scope.Fork(new(taiconfigs.Module))
 
 	// Load config file values before parsing flags so that command-line
 	// values can override config file values. configs.Load discovers all

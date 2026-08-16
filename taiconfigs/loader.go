@@ -13,11 +13,10 @@ import (
 var schema string
 
 // ConfigsLoader builds the tai-specific configuration loader, including the
-// embedded schema and the config globals. It is a package-level function
-// intended to be forked into a scope that already provides the default
-// configs.Loader (from configs.Module), overriding it with the tai loader.
-// See configs.Loader.
-func ConfigsLoader(
+// embedded schema and the config globals. It is a Module method, so forking
+// new(Module) provides the tai loader, overriding the default configs.Loader
+// (from configs.Module). See configs.Loader.
+func (Module) ConfigsLoader(
 	logger logs.Logger,
 	configGlobals ConfigGlobals,
 ) configs.Loader {
