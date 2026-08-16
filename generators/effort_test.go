@@ -4,16 +4,13 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/modes"
 )
 
 func TestEffortFlagInjection(t *testing.T) {
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() flags.Effort {

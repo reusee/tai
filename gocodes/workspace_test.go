@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -60,7 +59,6 @@ use (
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -151,7 +149,6 @@ func TestWorkspaceNotActivatedForUnlistedModule(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -190,7 +187,6 @@ func TestWorkspaceNotActivatedWhenLoadDirInWorkspaceRootModule(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -229,7 +225,6 @@ func TestWorkspaceNotActivatedFromModuleSubdirectory(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -266,7 +261,6 @@ func TestWorkspaceDisabledByGOWORKOff(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(

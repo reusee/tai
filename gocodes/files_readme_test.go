@@ -6,15 +6,9 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
-// TestFilesIncludesRootMarkdownWhenNoRootGoFiles verifies that README.md
-// in the module root directory is discovered and included in the context
-// even when the root directory has no direct .go files (all Go code lives
-// in subdirectories). The module root directory is added to rootPkgDirs
-// via pkg.Module.Dir so that top-level documentation is not missed.
 func TestFilesIncludesRootMarkdownWhenNoRootGoFiles(t *testing.T) {
 	root := t.TempDir()
 
@@ -42,7 +36,6 @@ func TestFilesIncludesRootMarkdownWhenNoRootGoFiles(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(

@@ -7,29 +7,15 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/modes"
 )
 
-// newTestScope creates a dscope scope for testing the changes package.
-// It is shared across all changes test files via Go's package-level
-// test visibility. Tests use .Call(func(deps...) { ... }) to resolve
-// dscope-provided types, following the pattern established in
-// anytexts.TestContextPrompt.
-// ErrorLogDir is overridden to t.TempDir() via Fork so that any error
-// log files generated during tests are written to a temporary directory
-// rather than the current working directory. Fork is required because
-// debugs.Module (embedded in changes.Module) already provides a default
-// ErrorLogDir; adding a second definition in New would cause a duplicate
-// definition panic. See debugs.TheoryOfErrorLogging.
 func newTestScope(t *testing.T) dscope.Scope {
 	t.Helper()
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	errorLogDir := t.TempDir()
 	return dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() debugs.ErrorLogDir {

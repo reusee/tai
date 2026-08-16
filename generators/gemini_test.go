@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"google.golang.org/genai"
@@ -29,10 +28,8 @@ func TestGemini(t *testing.T) {
 
 func TestGeminiListModels(t *testing.T) {
 	t.Skip()
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() nets.ProxyAddr {

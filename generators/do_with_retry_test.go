@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 )
@@ -135,10 +134,8 @@ func TestRetrierProvider(t *testing.T) {
 	// method infers T from the function's result type, so the same
 	// dscope-provided value serves State-returning and other callers
 	// without a monomorphic wrapper. See TheoryOfRetry.
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Call(func(
 		retrier Retrier,

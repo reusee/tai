@@ -2,13 +2,13 @@ package gocodes
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
@@ -18,7 +18,6 @@ func TestContextPrompt(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -94,7 +93,6 @@ func TestPartsIncludesWorkingDirectoryHint(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 	).Call(func(
@@ -127,7 +125,6 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -273,7 +270,6 @@ use (
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -344,7 +340,6 @@ func main() {}
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	// Full paths for checking file markers. main.go contains //go:embed
@@ -462,7 +457,6 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	scope.Fork(
@@ -515,14 +509,18 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The logger is forked directly so the test controls the output
+	// sink; forking the logs.Writer would be ignored when the logger
+	// provider detects a systemd service (which creates only a journal
+	// handler). See TheoryOfUsageLogging in loops/run.go.
 	var buf bytes.Buffer
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
-		func() logs.Writer { return logs.Writer(&buf) },
+		func() logs.Logger { return logger },
 	).Call(func(
 		provider CodeProvider,
 		countTokens generators.BPETokenCounter,

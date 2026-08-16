@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 )
@@ -215,11 +214,9 @@ func TestStateToOpenAIMessages(t *testing.T) {
 }
 
 func TestAzureConfiguration(t *testing.T) {
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		new(Module),
 		modes.ForTest(t),
-		&loader,
 	).Call(func(
 		newAzure NewAzure,
 	) {
@@ -270,10 +267,8 @@ func TestOpenAIStreamingPreservesPartialState(t *testing.T) {
 	// setting them with setTestOpenAIInjects. The nets.HTTPClient is
 	// forked to point at the test server. See anytexts.TestContextPrompt
 	// for the reference dscope test pattern.
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
@@ -324,10 +319,8 @@ func TestOpenAIErrorNoErrorField(t *testing.T) {
 	// properly initialized by dscope.InjectStruct. The nets.HTTPClient
 	// is forked to point at the test server. See anytexts.TestContextPrompt
 	// for the reference dscope test pattern.
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
@@ -368,10 +361,8 @@ func TestOpenAIRecordsAPIErrorThroughInjectedRecorder(t *testing.T) {
 
 	rec := &fakeEventRecorder{enabled: true}
 
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {
@@ -472,10 +463,8 @@ func TestOpenAINonStreamingArrayContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() nets.HTTPClient {

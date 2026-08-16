@@ -12,11 +12,15 @@ import (
 //go:embed schema.cue
 var schema string
 
-func (Module) ConfigsLoader(
+// ConfigsLoader builds the tai-specific configuration loader, including the
+// embedded schema and the config globals. It is a package-level function
+// intended to be forked into a scope that already provides the default
+// configs.Loader (from configs.Module), overriding it with the tai loader.
+// See configs.Loader.
+func ConfigsLoader(
 	logger logs.Logger,
 	configGlobals ConfigGlobals,
 ) configs.Loader {
-
 	var paths []string
 	defer func() {
 		if len(paths) > 0 {

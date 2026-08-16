@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -18,7 +17,6 @@ func TestFiles(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -126,7 +124,6 @@ func TestFilesGoFileContentCached(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -226,7 +223,6 @@ func Foo() {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 	scope.Fork(
 		func() LoadDir {
@@ -290,7 +286,6 @@ func main() {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	// Normalize the GOROOT path so the marker check works when GOROOT is

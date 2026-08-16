@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -166,10 +165,8 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 	text := "<<龘靐 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() generators.GetDefaultGenerator {
@@ -211,10 +208,8 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 	text := "<<龘靐 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['duplicate'])"
 
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() generators.GetDefaultGenerator {
@@ -252,10 +247,8 @@ func TestUpdateMemoryFromBlockWithPseudoCallOnly(t *testing.T) {
 
 	text := `I'll remember that. update_user_profile(items=["user likes Go"])`
 
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		func() generators.GetDefaultGenerator {

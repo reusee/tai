@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -74,7 +73,6 @@ func Foo() int { return 42 }
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/mypkg"} },
@@ -124,7 +122,6 @@ func TestCodeProviderDocErrorSurfaces(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/nonexistent"} },

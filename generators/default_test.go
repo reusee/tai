@@ -12,10 +12,8 @@ import (
 )
 
 func TestGetDefaultFastModel(t *testing.T) {
-	loader := configs.NewLoader([]string{}, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
 		new(flags.FastModelName("gemini-flash")),
@@ -57,7 +55,6 @@ func TestModelFamilyDerivesFromDefaultGenerator(t *testing.T) {
 
 	dscope.New(
 		modes.ForTest(t),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		new(Module),
 	).Fork(
 		func() configs.Loader {

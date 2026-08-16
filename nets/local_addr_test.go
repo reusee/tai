@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -15,7 +14,6 @@ func TestIsLocalAddr(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Call(func(
 		isLocalAddr IsLocalAddr,
 	) {

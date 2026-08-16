@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/components"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
@@ -20,16 +20,10 @@ import (
 	"github.com/reusee/tai/phases"
 )
 
-// withRun creates a dscope scope for testing the loops package and calls
-// fn with the resolved Run function. This follows the pattern established
-// in anytexts.TestContextPrompt: construct a real dscope instance and use
-// Call to obtain dscope-provided dependencies.
 func withRun(t *testing.T, fn func(Run)) {
 	t.Helper()
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Call(func(run Run) {
 		fn(run)
@@ -775,17 +769,17 @@ func TestRunLogsRoundUsage(t *testing.T) {
 	// The Run loop must record the aggregated token usage of each round
 	// to the logger, so token consumption is visible in log output and in
 	// the TUI's Logs pane, not only in the end-of-session statistics
-	// table. The logger is the dscope-provided one; the test redirects
-	// the logs writer to a buffer to observe the record. See
-	// TheoryOfUsageLogging.
+	// table. The logger is forked directly so the test controls the
+	// output sink; forking the logs.Writer would be ignored when the
+	// logger provider detects a systemd service (which creates only a
+	// journal handler). See TheoryOfUsageLogging.
 	var buf bytes.Buffer
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
-		func() logs.Writer { return logs.Writer(&buf) },
+		func() logs.Logger { return logger },
 	).Call(func(run Run) {
 		usage := generators.Usage{}
 		usage.Prompt.TokenCount = 100
@@ -824,14 +818,16 @@ func TestRunLogsRoundUsage(t *testing.T) {
 func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
 	// If a generator emits multiple Usage parts during streaming (e.g. Gemini),
 	// logRoundUsage must take the final Usage snapshot rather than summing them.
+	// The logger is forked directly so the test controls the output sink;
+	// forking the logs.Writer would be ignored when the logger provider
+	// detects a systemd service. See TheoryOfUsageLogging.
 	var buf bytes.Buffer
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Fork(
-		func() logs.Writer { return logs.Writer(&buf) },
+		func() logs.Logger { return logger },
 	).Call(func(run Run) {
 		usage1 := generators.Usage{}
 		usage1.Prompt.TokenCount = 100

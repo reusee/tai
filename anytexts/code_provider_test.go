@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -17,7 +16,6 @@ import (
 func TestContextPrompt(t *testing.T) {
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Fork(
 		func() FileNameOK {
@@ -65,7 +63,6 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,
@@ -112,7 +109,6 @@ func TestCodeProviderIncludesWorkingDirectoryHint(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,
@@ -179,7 +175,6 @@ func TestSymlinks(t *testing.T) {
 
 		dscope.New(
 			new(Module),
-			new(configs.NewLoader(nil, configs.LoaderConfig{})),
 			modes.ForTest(t),
 		).Call(func(
 			provider CodeProvider,
@@ -232,7 +227,6 @@ func TestSymlinks(t *testing.T) {
 
 		dscope.New(
 			new(Module),
-			new(configs.NewLoader(nil, configs.LoaderConfig{})),
 			modes.ForTest(t),
 		).Call(func(
 			provider CodeProvider,
@@ -280,7 +274,6 @@ func TestSymlinks(t *testing.T) {
 
 		dscope.New(
 			new(Module),
-			new(configs.NewLoader(nil, configs.LoaderConfig{})),
 			modes.ForTest(t),
 		).Call(func(
 			provider CodeProvider,
@@ -330,7 +323,6 @@ func TestSymlinks(t *testing.T) {
 
 		dscope.New(
 			new(Module),
-			new(configs.NewLoader(nil, configs.LoaderConfig{})),
 			modes.ForTest(t),
 		).Call(func(
 			provider CodeProvider,
@@ -376,7 +368,6 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,
@@ -432,7 +423,6 @@ func TestFileOrderingByPath(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,
@@ -488,7 +478,6 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,
@@ -592,7 +581,6 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Fork(
 		new(IncludeMimeTypes{
@@ -655,7 +643,6 @@ func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
 
 	dscope.New(
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 		modes.ForTest(t),
 	).Call(func(
 		provider CodeProvider,

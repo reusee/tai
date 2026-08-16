@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
@@ -19,7 +18,6 @@ func TestSimplify(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")
@@ -63,7 +61,6 @@ func TestSimplifySingleFile(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := t.TempDir()
@@ -610,7 +607,6 @@ func TestSimplifyContextBudget(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	root := t.TempDir()
@@ -705,7 +701,6 @@ func TestPackagesLoadOmitsNeedTypes(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 
 	dir := filepath.Join(testdataDir, "main")

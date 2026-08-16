@@ -1289,7 +1289,6 @@ func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() configs.Loader {
 			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})
@@ -1333,7 +1332,6 @@ func TestConfidentialModeRejectsNonZeroDataRetention(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() configs.Loader {
 			return configs.NewLoader([]string{configPath}, configs.LoaderConfig{})

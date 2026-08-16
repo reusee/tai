@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -26,10 +25,8 @@ func TestEventRecorderDefaultIsNil(t *testing.T) {
 	// generators resolved in a command scope record API-level events
 	// without carrying the recorder through the context. See
 	// TheoryOfEventRecorder.
-	loader := configs.NewLoader(nil, configs.LoaderConfig{})
 	dscope.New(
 		modes.ForTest(t),
-		&loader,
 		new(Module),
 	).Call(func(rec EventRecorder) {
 		if rec != nil {

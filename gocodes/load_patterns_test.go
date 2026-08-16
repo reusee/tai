@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -102,7 +101,6 @@ func TestLoadPatternsLimitsFocusPackages(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 		func() LoadPatterns { return *patterns },

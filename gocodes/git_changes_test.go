@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -273,7 +272,6 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 	scope.Fork(
 		func() LoadDir { return LoadDir(root) },
@@ -356,7 +354,6 @@ func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 	scope := dscope.New(
 		modes.ForTest(t),
 		new(Module),
-		new(configs.NewLoader(nil, configs.LoaderConfig{})),
 	)
 	scope.Fork(
 		func() LoadDir { return LoadDir(root) },
