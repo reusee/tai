@@ -102,7 +102,7 @@ was truncated mid-stream — the generation limit hit before the model emitted
 its closing summary block, or the model emitted a summary and continued until
 cut off. The round is retried from the original pre-generation State. When
 output meets the minimum threshold, the handoff process creates a self-contained
-summary carrying forward established conclusions and next steps, mitigating
+summary carrying forward established conclusions and insights, mitigating
 overthinking in the retry attempt. Short or empty outputs are retried directly.
 See states.TheoryOfHandoff.
 
@@ -149,7 +149,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Below is the self-contained handoff summary from the previous attempt: discoveries, decisions, established facts, completed work, and actionable next steps. Adopt these conclusions and proceed directly to execution; do not repeat preliminary analysis or overthink.]\n\n"
+const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work, no remaining work, and no next step to carry forward. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, and decisions about the problem. Use it as reference, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The

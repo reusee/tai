@@ -215,22 +215,36 @@ func TestHandoffRetryState(t *testing.T) {
 	})
 }
 
-func TestHandoffSystemPromptSelfContainedAndActionOriented(t *testing.T) {
-	// The handoff prompt must emphasize self-contained extraction,
-	// direct action, avoiding overthinking, and discarding previous output.
-	// See states.TheoryOfHandoff.
+func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
+	// The handoff prompt must emphasize self-contained extraction and
+	// that the handoff is reference material, not a substitute for
+	// thinking: the next round must still reason about the problem and
+	// decide how to proceed. It must also forbid reporting work status:
+	// because changes are atomic, nothing in the interrupted output was
+	// completed, so "completed work", "remaining work", and "next steps"
+	// claims are hallucinations. See states.TheoryOfHandoff.
 	for _, want := range []string{
 		"SELF-CONTAINED",
 		"DISCARDED",
-		"ACT DIRECTLY",
-		"overthinking",
+		"reference material",
+		"think for itself",
 		"discoveries",
 		"decisions",
-		"next steps",
+		"hallucinations",
+		"nothing was completed",
 	} {
 		if !strings.Contains(states.HandoffSystemPrompt, want) {
 			t.Fatalf("states.HandoffSystemPrompt must mention %q", want)
 		}
+	}
+	// The handoff must not instruct the next round to act directly
+	// without thinking, nor to re-read the filesystem: the context
+	// already carries the latest state. See states.TheoryOfHandoff.
+	if strings.Contains(states.HandoffSystemPrompt, "ACT DIRECTLY") {
+		t.Fatal("states.HandoffSystemPrompt must not instruct acting directly without thinking")
+	}
+	if strings.Contains(states.HandoffSystemPrompt, "re-read") {
+		t.Fatal("states.HandoffSystemPrompt must not instruct re-reading the filesystem")
 	}
 }
 

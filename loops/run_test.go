@@ -1418,6 +1418,20 @@ func TestFormatHandoffPrompt(t *testing.T) {
 	if !strings.Contains(msg, "retry content") {
 		t.Fatalf("expected the retry content, got: %s", msg)
 	}
+	// The retry prompt must state that nothing in the interrupted
+	// attempt was completed: changes are atomic, so the handoff carries
+	// forward thinking, not work status. See states.TheoryOfHandoff.
+	if !strings.Contains(msg, "no completed work") {
+		t.Fatalf("expected the atomicity note in the retry prompt, got: %s", msg)
+	}
+	if !strings.Contains(msg, "no next step to carry forward") {
+		t.Fatalf("expected the no-next-step note in the retry prompt, got: %s", msg)
+	}
+	// The retry prompt must not instruct re-reading the filesystem: the
+	// context already carries the latest state. See states.TheoryOfHandoff.
+	if strings.Contains(msg, "Re-read the current filesystem state") {
+		t.Fatalf("the retry prompt must not instruct re-reading the filesystem, got: %s", msg)
+	}
 	if strings.Contains(msg, "<summary>") {
 		t.Fatalf("expected no summary block in the retry prompt, got: %s", msg)
 	}

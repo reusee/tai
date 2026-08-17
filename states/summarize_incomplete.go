@@ -14,21 +14,22 @@ import (
 const TheoryOfHandoff = `
 When a generation round is truncated (no summary block) or errors after
 producing partial output, a handoff summary is constructed before retrying.
-The handoff condenses valuable conclusions from the interrupted thinking
-(discoveries, decisions, established facts, completed work, and next steps)
-into a single self-contained text.
+The handoff condenses the valuable thinking from the interrupted output —
+discoveries, insights, analysis, and decisions about the problem — into a
+single self-contained text.
 
-The handoff must not assume the next round can see the interrupted output,
-as the raw partial output is discarded and will not appear in conversation
-history. The handoff notes must therefore be completely self-contained.
-The handoff focuses on guiding the direction of the next generation round
-and mitigating the model's tendency to overthink: by providing clear
-settled conclusions and concrete next steps, the next round can proceed
-directly to action rather than re-deriving preliminary analysis.
+All changes are atomic: a truncated or failed round applies nothing, so
+there is no completed work, no remaining work, and no next step to carry
+forward. The handoff therefore never reports work status; claims about
+what was completed or what remains are hallucinations, because the output
+process failed and everything it produced was discarded.
 
-Handoff is executed only when the model has produced a non-trivial amount
-of output (at least minHandoffLength characters). If output is very short or
-empty, handoff is skipped and a direct retry is performed.
+The handoff's value is in the reasoning it preserves: it guides the
+direction of the next generation round and mitigates the model's tendency
+to overthink by carrying forward established insights and conclusions.
+The handoff is reference material, not a substitute for thinking: the
+next round must still reason about the problem and decide how to proceed,
+using the handoff to avoid re-deriving preliminary analysis.
 
 The handoff model follows HandoffModel, falling back to the fast model
 and then the default model (see TheoryOfHandoffModel). The handoff prompt
@@ -63,18 +64,21 @@ type HandoffRecorder interface {
 	Event(typ string, detail string)
 }
 
-const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Your task is to produce a concise, self-contained handoff summary that guides the next generation round to take over and complete the task efficiently.
+const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Because every change is applied atomically, nothing in the interrupted output was completed: the attempt's output was discarded and nothing it produced was applied, so there is no completed work, no remaining work, and no next step to carry forward. Claims about what was done or what remains are hallucinations — the output process failed, so nothing took effect.
+
+Your task is to extract the valuable thinking from the interrupted output — the discoveries, insights, analysis, and decisions about the problem — and condense them into a concise, self-contained handoff that improves the next generation round. The handoff's value is in the reasoning it preserves, not in any status report: it is reference material for the next round, which must still think for itself and decide how to proceed.
 
 CRITICAL CONSTRAINTS:
 - Do NOT assume the next generation round can see the previous truncated output or its reasoning. The previous raw output is DISCARDED and will NOT appear in conversation history. Your handoff notes are the ONLY information passed forward.
 - Everything necessary to continue must be SELF-CONTAINED in your summary.
-- Guide the next round to ACT DIRECTLY and avoid overthinking. State established facts, decisions, and next steps clearly so the model does not repeat lengthy preliminary analysis or re-derive conclusions.
+- Do NOT report completed work, remaining work, or next steps: nothing was completed, and such status claims are hallucinations with no value.
+- The handoff is reference material, not a substitute for thinking: the next round must still reason about the problem and apply its own judgment. State the established insights and conclusions clearly so the model does not repeat lengthy preliminary analysis or re-derive conclusions, but do not imply that it can act without thinking.
 
 Prioritize:
 - Important discoveries and insights established about the codebase or problem
-- Key decisions made
-- State of work: what was completed and what remains
-- Actionable next steps: concrete, direct instructions for immediate execution
+- Key decisions and conclusions about the problem and approach
+- Analysis that would otherwise be re-derived from scratch
+- How the thinking should be improved or redirected in the next attempt
 
 Output ONLY the concise handoff summary as plain text, with no preamble or extra commentary.`
 
