@@ -554,18 +554,15 @@ func TestCreateHandoffErrorsAfterEmptyResponses(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
-	if err == nil {
-		t.Fatal("expected error after all handoff attempts fail")
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when all handoff attempts fail, got %v", err)
 	}
 	if handoff != nil {
 		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	if gen.calls != maxSummarizeRetries {
 		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
-	}
-	if !strings.Contains(err.Error(), "handoff incomplete output failed") {
-		t.Fatalf("expected failure message, got: %v", err)
 	}
 }
 
@@ -581,7 +578,7 @@ func TestCreateHandoffRetriesOnGenerationFailure(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,21 +604,15 @@ func TestCreateHandoffErrorsAfterGenerationFailures(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
-	if err == nil {
-		t.Fatal("expected error after all handoff generations fail")
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when all handoff generations fail, got %v", err)
 	}
 	if handoff != nil {
 		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	if gen.calls != maxSummarizeRetries {
 		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
-	}
-	if !strings.Contains(err.Error(), "handoff incomplete output failed") {
-		t.Fatalf("expected failure message, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "failure 3") {
-		t.Fatalf("expected the last failure in the error message, got: %v", err)
 	}
 }
 
@@ -637,9 +628,9 @@ func TestCreateHandoffLogsErrors(t *testing.T) {
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput)
-	if err == nil {
-		t.Fatal("expected error after all handoff generations fail")
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when all handoff generations fail, got %v", err)
 	}
 	if handoff != nil {
 		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
@@ -720,7 +711,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -755,7 +746,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: false}
-		_, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
+		_, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -779,7 +770,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -819,9 +810,9 @@ func TestCreateHandoffRecordsEmptyResponses(t *testing.T) {
 			responses: []string{"", "", ""},
 		}
 		rec := &fakeRecorderForSummarize{enabled: true}
-		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
-		if err == nil {
-			t.Fatal("expected error after all handoff attempts fail")
+		handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput, nil, nil)
+		if err != nil {
+			t.Fatalf("expected nil error when all handoff attempts fail, got %v", err)
 		}
 		if handoff != nil {
 			t.Fatalf("expected nil handoff on failure, got %+v", handoff)
@@ -848,7 +839,7 @@ func TestCreateHandoffRecordsThoughts(t *testing.T) {
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	rec := &fakeRecorderForSummarize{enabled: true}
-	handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput)
+	handoff, err := states.CreateHandoff(context.Background(), logger, rec, gen, longInput, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,14 +867,12 @@ func TestCreateHandoffRecordsThoughts(t *testing.T) {
 }
 
 func TestCreateHandoffSkipsShortOutput(t *testing.T) {
-	// When incomplete output is shorter than minHandoffLength (100 chars),
-	// CreateHandoff returns (nil, nil) without calling the generator.
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{"handoff text"},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	shortInput := "too short"
-	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, shortInput)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, shortInput, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -894,6 +883,72 @@ func TestCreateHandoffSkipsShortOutput(t *testing.T) {
 		t.Fatalf("expected 0 generator calls for short output, got %d", gen.calls)
 	}
 }
+
+type fakeHandoffObserver struct {
+	started int
+	ended   int
+}
+
+func TestCreateHandoffStreamsToWriter(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{"handoff prompt text"},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var buf bytes.Buffer
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, &buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil {
+		t.Fatal("expected handoff")
+	}
+	if !strings.Contains(buf.String(), "handoff prompt text") {
+		t.Fatalf("expected handoff text in writer, got %q", buf.String())
+	}
+}
+
+func TestCreateHandoffReportsLifecycle(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{"handoff prompt text"},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	obs := &fakeHandoffObserver{}
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil {
+		t.Fatal("expected handoff")
+	}
+	if obs.started != 1 || obs.ended != 1 {
+		t.Fatalf("expected 1 start and 1 end, got %d start %d end", obs.started, obs.ended)
+	}
+}
+
+func TestCreateHandoffReportsLifecycleOnFailure(t *testing.T) {
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{"", "", ""},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	obs := &fakeHandoffObserver{}
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, gen, longInput, nil, obs)
+	if err != nil {
+		t.Fatalf("expected nil error when all handoff attempts fail, got %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
+	}
+	if obs.started != 1 || obs.ended != 1 {
+		t.Fatalf("expected 1 start and 1 end even on failure, got %d start %d end", obs.started, obs.ended)
+	}
+}
+
+func (f *fakeHandoffObserver) HandoffEnd() { f.ended++ }
+
+func (f *fakeHandoffObserver) HandoffStart() { f.started++ }
 
 func (f *fakeRecorderForSummarize) Enabled() bool { return f.enabled }
 

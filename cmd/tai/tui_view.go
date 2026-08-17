@@ -11,17 +11,14 @@ import (
 // render() holds the lock while computing the displays and building the
 // root. See TheoryOfTUI.
 
-// outputTabLabel returns the Output tab's title with the session-state
-// hint: "Output (generating...)" while the model is actively generating,
-// "Output (done)" after the session ends, and "Output" otherwise. The
-// highlight result reports whether the title should be drawn in
-// tabActiveLabelFg. Finished takes precedence over generating. See
-// TheoryOfTUI.
-func outputTabLabel(finished bool, generating bool) (label string, highlight bool) {
+func outputTabLabel(finished bool, generating bool, handoff bool) (label string, highlight bool) {
 	label = tabNames[0]
 	switch {
 	case finished:
 		label = "Output (done)"
+	case handoff:
+		label = "Output (handoff...)"
+		highlight = true
 	case generating:
 		label = "Output (generating...)"
 		highlight = true
@@ -114,10 +111,6 @@ func transitionBoundaries(display []taiui.Line) []int {
 	return indices
 }
 
-// outputPanel builds the Output tab element: a one-row label strip with
-// the session-state hint and a scroll view spanning the remaining rows,
-// or a collapsed strip when the tab is collapsed. A degenerate box yields
-// nil, which buildRoot skips.
 func outputPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
@@ -130,7 +123,7 @@ func outputPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 			panelStyle,
 		)
 	}
-	label, highlight := outputTabLabel(t.finished, t.generating)
+	label, highlight := outputTabLabel(t.finished, t.generating, t.handoff)
 	return taiui.Panel(
 		box,
 		label,

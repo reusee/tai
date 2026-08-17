@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"strings"
 
@@ -35,8 +36,18 @@ The handoff model follows HandoffModel, falling back to the fast model
 and then the default model (see TheoryOfHandoffModel). The handoff prompt
 instructs the model to produce a concise, plain-text summary without block
 wrapping. Handoff generation is retried up to maxHandoffRetries times on
-failure or empty response; a persistent failure aborts the run to ensure
-the failure is visible.
+failure or empty response; a persistent failure is logged and the caller
+retries with empty handoff content, so the run continues rather than
+aborting.
+
+Handoff generation streams to the HandoffWriter provider when one is
+configured: the display writer receives the model's text and reasoning
+thoughts as they are produced, so a TUI can show the handoff request in
+progress. The captured handoff text is read from an inner buffer that
+excludes thoughts, so the returned summary contains only the model's
+final text. The HandoffObserver provider reports the handoff lifecycle —
+HandoffStart before the first attempt and HandoffEnd after the last — so
+a TUI can reflect the handoff state in its output tab title.
 
 The fixed instructional prompt (HandoffSystemPrompt) is placed in the
 system prompt; the user content carries only the dynamic incomplete
@@ -50,6 +61,31 @@ type Handoff struct {
 	Summary string
 	// Prompt is the self-contained summary fed to the retry round as user input.
 	Prompt string
+}
+
+// HandoffWriter receives the streamed output of a handoff generation
+// request. The default provider returns nil, in which case the handoff
+// output is not displayed. A display front-end (e.g., tai's TUI) forks
+// this type to stream the handoff request's text and reasoning thoughts
+// to its own display. See TheoryOfHandoff.
+type HandoffWriter io.Writer
+
+func (Module) HandoffWriter() HandoffWriter {
+	return nil
+}
+
+// HandoffObserver reports the lifecycle of a handoff generation request.
+// HandoffStart is called before the first attempt and HandoffEnd after
+// the last attempt (success or failure). A display front-end (e.g., tai's
+// TUI) implements this interface to reflect the handoff state in its
+// output tab title. See TheoryOfHandoff.
+type HandoffObserver interface {
+	HandoffStart()
+	HandoffEnd()
+}
+
+func (Module) HandoffObserver() HandoffObserver {
+	return nil
 }
 
 // minHandoffLength is the minimum number of characters of incomplete output
@@ -92,9 +128,16 @@ func CreateHandoff(
 	recorder HandoffRecorder,
 	generator generators.Generator,
 	incompleteText string,
+	writer io.Writer,
+	observer HandoffObserver,
 ) (*Handoff, error) {
 	if len(strings.TrimSpace(incompleteText)) < minHandoffLength {
 		return nil, nil
+	}
+
+	if observer != nil {
+		observer.HandoffStart()
+		defer observer.HandoffEnd()
 	}
 
 	// recordContent and recordEvent write the handoff attempt's details
@@ -130,7 +173,7 @@ func CreateHandoff(
 			},
 		})
 
-		outputText, thoughts, err := runHandoffAttempt(ctx, generator, incompleteText)
+		outputText, thoughts, err := runHandoffAttempt(ctx, generator, incompleteText, writer)
 		if err != nil {
 			lastErr = err
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
@@ -178,16 +221,18 @@ func CreateHandoff(
 			"err", err,
 		)
 		recordEvent("handoff incomplete output failed after %d attempts: %v", maxHandoffRetries, lastErr)
-		return nil, err
 	}
-	return nil, fmt.Errorf("handoff incomplete output failed after %d attempts", maxHandoffRetries)
+	// A persistent handoff failure is not fatal: the caller retries with
+	// empty handoff content, so the run continues. The failure is logged
+	// and recorded above for visibility. See TheoryOfHandoff.
+	return nil, nil
 }
 
-// runHandoffAttempt executes one handoff generation attempt.
 func runHandoffAttempt(
 	ctx context.Context,
 	generator generators.Generator,
 	incompleteText string,
+	writer io.Writer,
 ) (string, []string, error) {
 	var state generators.State
 	state = generators.NewPrompts(HandoffSystemPrompt, []*generators.Content{
@@ -200,9 +245,10 @@ func runHandoffAttempt(
 	})
 	var buf bytes.Buffer
 	state = generators.NewOutput(state, &buf, false)
-	newState, err := generator.Generate(ctx, state, &generators.GenerateOptions{
-		NonStreaming: true,
-	})
+	if writer != nil {
+		state = generators.NewOutput(state, writer, true)
+	}
+	newState, err := generator.Generate(ctx, state, &generators.GenerateOptions{})
 	if err != nil {
 		return "", nil, err
 	}

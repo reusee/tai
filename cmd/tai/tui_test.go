@@ -229,25 +229,25 @@ func TestTuiStateWriteLogs(t *testing.T) {
 
 func TestTuiStateRequesting(t *testing.T) {
 	tui := newTUIForTest()
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label before any activity, got label %q highlight %v", label, highlight)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
 	if !tui.generating {
 		t.Fatal("expected generating after the generating log")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
 	tui.finishReason("stop")
 	if tui.generating {
 		t.Fatal("expected not generating after the finish reason")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label after the finish reason, got label %q highlight %v", label, highlight)
 	}
 	tui.finished = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (done)" || highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" || highlight {
 		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
 	}
 }
@@ -258,7 +258,7 @@ func TestTuiStateRequestingLogsWrite(t *testing.T) {
 	if !tui.generating {
 		t.Fatal("expected generating after log write")
 	}
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
 }
@@ -292,29 +292,29 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if tui.generating {
 		t.Fatal("expected not generating after the finish reason")
 	}
-	if label, _ := outputTabLabel(tui.finished, tui.generating); label != "Output" {
+	if label, _ := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
 		t.Fatalf("expected plain Output label after the finish reason, got %q", label)
 	}
 }
 
 func TestTUIOutputTabLabel(t *testing.T) {
 	tui := newTUIForTest()
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output" || highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
 		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
 	}
 	tui.writeLogs([]byte("level=INFO msg=generating name=model\n"))
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (generating...)" || !highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
 	tui.finished = true
-	if label, highlight := outputTabLabel(tui.finished, tui.generating); label != "Output (done)" || highlight {
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" || highlight {
 		t.Fatalf("expected done hint without highlight, got label %q highlight %v", label, highlight)
 	}
 }
 
 func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	renderTitle := func(tui *TUI, focus bool) taiui.Frame {
-		label, highlight := outputTabLabel(tui.finished, tui.generating)
+		label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff)
 		element := taiui.Panel(
 			taiui.Box{Top: 0, Left: 0, Bottom: 2, Right: 12},
 			label, highlight,
@@ -349,6 +349,42 @@ func TestTUIPanelTitleHighlightedDuringRequest(t *testing.T) {
 	}
 	if r, g, b := idleCell.Style.Fg().RGB(); r == wantR && g == wantG && b == wantB {
 		t.Fatal("expected the idle title to keep the ordinary foreground color")
+	}
+}
+
+func TestTUIHandoffState(t *testing.T) {
+	tui := newTUIForTest()
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
+		t.Fatalf("expected plain Output label, got label %q highlight %v", label, highlight)
+	}
+	tui.handoff = true
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" || !highlight {
+		t.Fatalf("expected handoff label with highlight, got label %q highlight %v", label, highlight)
+	}
+	// Handoff takes precedence over generating.
+	tui.generating = true
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (handoff...)" || !highlight {
+		t.Fatalf("expected handoff label to take precedence over generating, got label %q highlight %v", label, highlight)
+	}
+	tui.handoff = false
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
+		t.Fatalf("expected generating label after handoff cleared, got label %q highlight %v", label, highlight)
+	}
+	tui.generating = false
+	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
+		t.Fatalf("expected plain Output label after handoff, got label %q highlight %v", label, highlight)
+	}
+}
+
+func TestTUIHandoffLifecycle(t *testing.T) {
+	tui := newTUIForTest()
+	tui.HandoffStart()
+	if !tui.handoff {
+		t.Fatal("expected handoff flag set")
+	}
+	tui.HandoffEnd()
+	if tui.handoff {
+		t.Fatal("expected handoff flag cleared")
 	}
 }
 

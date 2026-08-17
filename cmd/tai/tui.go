@@ -138,6 +138,17 @@ and recomputed. The TUI holds nothing but the raw state values — line
 buffers, tab machine, scroll offsets, signals, and session flags.
 `
 
+const TheoryOfTUIHandoff = `
+The Output tab title reflects the handoff process: while a handoff
+request is being generated (see states.TheoryOfHandoff), the title shows
+"Output (handoff...)" with the active highlight, taking precedence over
+the "generating..." hint. The handoff request's streamed text and
+reasoning thoughts are written to the Output tab through the forked
+states.HandoffWriter, so the user sees the handoff in progress. The
+states.HandoffObserver provider drives the title state: HandoffStart sets
+the handoff flag, HandoffEnd clears it.
+`
+
 const TheoryOfSummaryExtraction = `
 taiui summary extraction theory:
 - Summary blocks are extracted into the Summary tab only from the model's
@@ -521,6 +532,11 @@ type TUI struct {
 	// silent (e.g., long thinking phases without streamed output).
 	// See TheoryOfTUI.
 	generating bool
+	// handoff reports whether a handoff generation request is in flight.
+	// It is set by HandoffStart and cleared by HandoffEnd, and takes
+	// precedence over the "generating..." hint in the Output tab title.
+	// See states.TheoryOfHandoff and TheoryOfTUIHandoff.
+	handoff bool
 	// showHelp reports whether the operation help overlay is visible.
 	// The ? key toggles it. The overlay is derived from state like the
 	// quit confirmation bar: toggling showHelp re-renders the overlay.
@@ -759,6 +775,25 @@ func (t *TUI) notify() {
 	}
 }
 
+// HandoffStart marks the beginning of a handoff generation request. It
+// is called by the handoff process (see states.TheoryOfHandoff) and sets
+// the handoff flag so the Output tab title shows "Output (handoff...)".
+func (t *TUI) HandoffStart() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.handoff = true
+}
+
+// HandoffEnd marks the end of a handoff generation request. It is called
+// by the handoff process after the last attempt, success or failure, and
+// clears the handoff flag so the Output tab title returns to its normal
+// state.
+func (t *TUI) HandoffEnd() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.handoff = false
+}
+
 // toggleTab implements the number-key semantics (keys 1, 2, 3): pressing
 // a tab's key toggles its expansion. The state machine lives in
 // taiui.Tabs; expanding a collapsed tab resumes following the live tail.
@@ -849,6 +884,7 @@ func (t *TUI) Run(gen func()) error {
 			// on. See TheoryOfTUI.
 			t.finished = true
 			t.generating = false
+			t.handoff = false
 			t.mu.Unlock()
 			t.notify()
 		}()
@@ -1343,6 +1379,12 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		// raw thoughts. See states.TheoryOfThoughtsSummarize and
 		// TheoryOfTUI.
 		func() states.ThoughtSummaryWriter { return states.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
+		// Handoff generation streams to the Output tab and reports its
+		// lifecycle through the HandoffObserver, so the title shows
+		// "Output (handoff...)" while a handoff request is in flight.
+		// See states.TheoryOfHandoff and TheoryOfTUIHandoff.
+		func() states.HandoffWriter { return states.HandoffWriter(tui.Writer()) },
+		func() states.HandoffObserver { return tui },
 		func() loops.Run {
 			return withTUIOutputObserver(originalRun, tui)
 		},
