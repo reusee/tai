@@ -32,9 +32,12 @@ The handoff is reference material, not a substitute for thinking: the
 next round must still reason about the problem and decide how to proceed,
 using the handoff to avoid re-deriving preliminary analysis.
 
-The handoff model follows HandoffModel, falling back to the fast model
-and then the default model (see TheoryOfHandoffModel). The handoff prompt
-instructs the model to produce a concise, plain-text summary without block
+The handoff model follows the HandoffModels list: each retry attempt uses
+the next model in order, cycling back to the beginning when the list is
+exhausted. This provides fault tolerance: if one model's API is down or
+returns empty responses, the next model is tried without consuming the
+full retry budget on a single model. See TheoryOfHandoffModel. The handoff
+prompt instructs the model to produce a concise, plain-text summary without block
 wrapping. Handoff generation is retried up to maxHandoffRetries times on
 failure or empty response; a persistent failure is logged and the caller
 retries with empty handoff content, so the run continues rather than
@@ -126,12 +129,21 @@ func CreateHandoff(
 	ctx context.Context,
 	logger logs.Logger,
 	recorder HandoffRecorder,
-	generator generators.Generator,
+	handoffGenerators []generators.Generator,
 	incompleteText string,
 	writer io.Writer,
 	observer HandoffObserver,
 ) (*Handoff, error) {
 	if len(strings.TrimSpace(incompleteText)) < minHandoffLength {
+		return nil, nil
+	}
+
+	// An empty handoff generator list cannot produce a summary; return
+	// nil so the caller retries without handoff content rather than
+	// panicking on a modulo-by-zero. In normal operation the provider
+	// always resolves at least one generator (the default model), so this
+	// guards only direct calls with an empty slice (e.g., tests).
+	if len(handoffGenerators) == 0 {
 		return nil, nil
 	}
 
@@ -166,6 +178,12 @@ func CreateHandoff(
 
 	var lastErr error
 	for attempt := range maxHandoffRetries {
+		// Cycle through the handoff models: each retry attempt uses the
+		// next model in the list, wrapping around when exhausted. This
+		// provides fault tolerance across multiple model providers.
+		// See TheoryOfHandoffModel.
+		generator := handoffGenerators[attempt%len(handoffGenerators)]
+
 		recordContent(&generators.Content{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
@@ -179,6 +197,7 @@ func CreateHandoff(
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
 				"attempt", attempt+1,
 				"max_attempts", maxHandoffRetries,
+				"model", generator.Spec().Model,
 				"err", err,
 			)
 			recordContent(&generators.Content{
@@ -187,8 +206,8 @@ func CreateHandoff(
 					generators.Error{Error: err},
 				},
 			})
-			recordEvent("handoff attempt %d/%d failed: generation error: %v",
-				attempt+1, maxHandoffRetries, err)
+			recordEvent("handoff attempt %d/%d failed: model=%s generation error: %v",
+				attempt+1, maxHandoffRetries, generator.Spec().Model, err)
 			continue
 		}
 
@@ -210,9 +229,10 @@ func CreateHandoff(
 		logger.WarnContext(ctx, "handoff incomplete output: response is empty",
 			"attempt", attempt+1,
 			"max_attempts", maxHandoffRetries,
+			"model", generator.Spec().Model,
 		)
-		recordEvent("handoff attempt %d/%d failed: response is empty",
-			attempt+1, maxHandoffRetries)
+		recordEvent("handoff attempt %d/%d failed: model=%s response is empty",
+			attempt+1, maxHandoffRetries, generator.Spec().Model)
 	}
 	if lastErr != nil {
 		err := fmt.Errorf("handoff incomplete output failed after %d attempts: %w", maxHandoffRetries, lastErr)

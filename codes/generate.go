@@ -351,7 +351,7 @@ type CreateHandoff func(
 func (Module) CreateHandoff(
 	logger logs.Logger,
 	recorder *records.Recorder,
-	getHandoffGenerator states.GetHandoffGenerator,
+	getHandoffGenerators states.GetHandoffGenerators,
 	handoffWriter states.HandoffWriter,
 	handoffObserver states.HandoffObserver,
 ) CreateHandoff {
@@ -359,11 +359,11 @@ func (Module) CreateHandoff(
 		ctx context.Context,
 		incompleteText string,
 	) (*states.Handoff, error) {
-		generator, err := getHandoffGenerator()
+		generators, err := getHandoffGenerators()
 		if err != nil {
 			return nil, err
 		}
-		return states.CreateHandoff(ctx, logger, recorder, generator, incompleteText, handoffWriter, handoffObserver)
+		return states.CreateHandoff(ctx, logger, recorder, generators, incompleteText, handoffWriter, handoffObserver)
 	}
 }
 

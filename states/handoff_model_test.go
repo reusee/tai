@@ -21,10 +21,10 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 		return &mockSummarizerGenerator{}, nil
 	}
 
-	t.Run("HandoffModelConfigured", func(t *testing.T) {
+	t.Run("HandoffModelsConfigured", func(t *testing.T) {
 		names = nil
 		fn := m.GetHandoffGenerator(
-			flags.HandoffModel("handoff-model"),
+			flags.HandoffModels{"model-a", "model-b"},
 			flags.FastModelName(""),
 			defaultGen,
 			get,
@@ -32,15 +32,15 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 		if _, err := fn(); err != nil {
 			t.Fatal(err)
 		}
-		if len(names) != 1 || names[0] != "handoff-model" {
-			t.Fatalf("expected handoff-model, got %v", names)
+		if len(names) != 1 || names[0] != "model-a" {
+			t.Fatalf("expected first handoff model, got %v", names)
 		}
 	})
 
 	t.Run("FastModelConfigured", func(t *testing.T) {
 		names = nil
 		fn := m.GetHandoffGenerator(
-			flags.HandoffModel(""),
+			flags.HandoffModels{},
 			flags.FastModelName("fast-model"),
 			defaultGen,
 			get,
@@ -56,7 +56,7 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 	t.Run("DefaultModel", func(t *testing.T) {
 		names = nil
 		fn := m.GetHandoffGenerator(
-			flags.HandoffModel(""),
+			flags.HandoffModels{},
 			flags.FastModelName(""),
 			defaultGen,
 			get,
@@ -76,13 +76,96 @@ func TestGetHandoffGeneratorSelection(t *testing.T) {
 			return nil, errors.New("bad model")
 		}
 		fn := m.GetHandoffGenerator(
-			flags.HandoffModel("bad"),
+			flags.HandoffModels{"bad"},
 			flags.FastModelName(""),
 			defaultGen,
 			get,
 		)
 		if _, err := fn(); err == nil {
 			t.Fatal("expected resolution error for configured model")
+		}
+	})
+}
+
+func TestGetHandoffGenerators(t *testing.T) {
+	m := new(Module)
+
+	var resolved []string
+	get := func(name string) (generators.Generator, error) {
+		resolved = append(resolved, name)
+		return &mockSummarizerGenerator{}, nil
+	}
+	defaultGen := func() (generators.Generator, error) {
+		resolved = append(resolved, "default")
+		return &mockSummarizerGenerator{}, nil
+	}
+
+	t.Run("MultipleModels", func(t *testing.T) {
+		resolved = nil
+		fn := m.GetHandoffGenerators(
+			flags.HandoffModels{"model-a", "model-b", "model-c"},
+			flags.FastModelName(""),
+			defaultGen,
+			get,
+		)
+		gens, err := fn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gens) != 3 {
+			t.Fatalf("expected 3 generators, got %d", len(gens))
+		}
+		if len(resolved) != 3 || resolved[0] != "model-a" || resolved[1] != "model-b" || resolved[2] != "model-c" {
+			t.Fatalf("expected all models resolved in order, got %v", resolved)
+		}
+	})
+
+	t.Run("SingleModelFromFast", func(t *testing.T) {
+		resolved = nil
+		fn := m.GetHandoffGenerators(
+			flags.HandoffModels{},
+			flags.FastModelName("fast-model"),
+			defaultGen,
+			get,
+		)
+		gens, err := fn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gens) != 1 {
+			t.Fatalf("expected 1 generator, got %d", len(gens))
+		}
+	})
+
+	t.Run("DefaultFallback", func(t *testing.T) {
+		resolved = nil
+		fn := m.GetHandoffGenerators(
+			flags.HandoffModels{},
+			flags.FastModelName(""),
+			defaultGen,
+			get,
+		)
+		gens, err := fn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gens) != 1 {
+			t.Fatalf("expected 1 generator from default, got %d", len(gens))
+		}
+	})
+
+	t.Run("ResolutionError", func(t *testing.T) {
+		getErr := func(name string) (generators.Generator, error) {
+			return nil, errors.New("bad")
+		}
+		fn := m.GetHandoffGenerators(
+			flags.HandoffModels{"bad"},
+			flags.FastModelName(""),
+			defaultGen,
+			getErr,
+		)
+		if _, err := fn(); err == nil {
+			t.Fatal("expected error for unresolvable model")
 		}
 	})
 }
