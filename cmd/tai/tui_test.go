@@ -818,9 +818,7 @@ func TestReadTUIKeys(t *testing.T) {
 func TestReadTUIMouseKeys(t *testing.T) {
 	// SGR mouse sequences: ESC [ < Cb ; Cx ; Cy M for press, drag, and
 	// wheel events, m for releases. Wire coordinates are 1-based and
-	// emitted 0-based. Wheel events are throttled to 50 Hz, so consecutive
-	// wheel events must be separated by the throttle interval to be
-	// emitted. See taiui.TheoryOfMouseInput.
+	// emitted 0-based. See taiui.TheoryOfMouseInput.
 	pr, pw := io.Pipe()
 	ch := make(chan string, 10)
 	go taiui.ReadKeys(pr, ch)
@@ -828,7 +826,6 @@ func TestReadTUIMouseKeys(t *testing.T) {
 		pw.Write([]byte("\x1b[<0;11;6M")) // left press at (10,5)
 		pw.Write([]byte("\x1b[<3;11;6m")) // release at (10,5)
 		pw.Write([]byte("\x1b[<64;8;9M")) // wheel up at (7,8)
-		time.Sleep(25 * time.Millisecond) // wait past the 50 Hz (20ms) throttle window
 		pw.Write([]byte("\x1b[<65;8;9M")) // wheel down at (7,8)
 		pw.Write([]byte("\x1b[<32;5;5M")) // left drag at (4,4)
 		pw.Write([]byte("\x1b[<35;5;5M")) // no-button motion: ignored
@@ -860,42 +857,6 @@ func TestReadTUIMouseKeys(t *testing.T) {
 	case k := <-ch:
 		t.Fatalf("unexpected key for ignored motion: %q", k)
 	case <-time.After(50 * time.Millisecond):
-	}
-}
-
-func TestReadTUIMouseWheelThrottling(t *testing.T) {
-	// Rapid wheel events (under 20ms apart) must be throttled to 50 Hz.
-	// Five rapid wheel events are written in a single burst: only the first is emitted.
-	// After waiting beyond the 20ms interval, another event is emitted normally.
-	pr, pw := io.Pipe()
-	ch := make(chan string, 10)
-	go taiui.ReadKeys(pr, ch)
-
-	go func() {
-		// Send 5 rapid wheel events at once.
-		fiveEvents := strings.Repeat("\x1b[<64;8;9M", 5)
-		pw.Write([]byte(fiveEvents))
-		time.Sleep(30 * time.Millisecond)
-		// Send one more wheel event after the throttle window.
-		pw.Write([]byte("\x1b[<64;8;9M"))
-		pw.Close()
-	}()
-
-	var got []string
-	for {
-		select {
-		case k, ok := <-ch:
-			if !ok {
-				goto done
-			}
-			got = append(got, k)
-		case <-time.After(100 * time.Millisecond):
-			goto done
-		}
-	}
-done:
-	if len(got) != 2 {
-		t.Fatalf("expected exactly 2 wheel events (1 initial + 1 after delay), got %d: %v", len(got), got)
 	}
 }
 

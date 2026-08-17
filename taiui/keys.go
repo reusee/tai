@@ -50,11 +50,6 @@ Mouse input theory:
   and is emitted as "mouse-release@12,34"; the consumer tracks which
   button the release ends. No-button motion (code 35) and malformed
   sequences are ignored.
-- Wheel events are throttled to at most 50 Hz (20ms interval): trackpads
-  and free-spinning wheels can flood the terminal with hundreds of events
-  per second, causing excessive render passes and making the interface
-  unresponsive. Wheel events arriving within the interval since the last
-  emitted wheel event are dropped.
 - Like keyboard input, a mouse sequence may arrive split across reads;
   the parser waits for the sequence terminator before emitting.
 `
@@ -73,22 +68,18 @@ Mouse input theory:
 //
 // The motion and wheel flags are bits of the SGR button code: motion or
 // drag events add mouseMotionFlag to the button value, and wheel events
-// add mouseWheelFlag. Wheel events separated by less than
-// mouseWheelInterval are dropped, bounding the wheel event rate at 50 Hz.
-// See TheoryOfMouseInput.
+// add mouseWheelFlag. See TheoryOfMouseInput.
 const (
 	MouseKeyPrefix       = "mouse-"
 	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
 	MouseDisableSequence = "\x1b[?1000l\x1b[?1002l\x1b[?1006l"
 	mouseMotionFlag      = 32
 	mouseWheelFlag       = 64
-	mouseWheelInterval   = time.Second / 50
 )
 
 func ReadKeys(r io.Reader, ch chan<- string) {
 	var buf [64]byte
 	var pending []byte
-	var lastWheel time.Time
 	for {
 		n, err := r.Read(buf[:])
 		if err != nil {
@@ -172,17 +163,6 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 						if parseErr == nil && x >= 1 && y >= 1 {
 							// The SGR protocol sends 1-based coordinates;
 							// the TUI uses 0-based cell coordinates.
-							if button&mouseWheelFlag != 0 {
-								now := time.Now()
-								if !lastWheel.IsZero() && now.Sub(lastWheel) < mouseWheelInterval {
-									// Throttle wheel events to 50 Hz to prevent
-									// event flooding from high-frequency trackpads or
-									// free-spinning wheels from overwhelming the system.
-									pending = pending[end+1:]
-									continue
-								}
-								lastWheel = now
-							}
 							if key := mouseKeyName(button, x-1, y-1, release); key != "" {
 								ch <- key
 							}

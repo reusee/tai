@@ -181,9 +181,7 @@ click-based tab switching, and drag scrolling.
 
 Wheel events scroll the tab whose panel is under the cursor, without
 changing the focus: the user can read any pane while keyboard navigation
-stays put, and a wheel over a collapsed tab is a no-op. Wheel events are
-throttled at the input reader (ReadKeys) to 50 Hz so rapid scrolling does
-not overwhelm the render loop.
+stays put, and a wheel over a collapsed tab is a no-op.
 
 A left press on a collapsed tab's strip expands it and takes the focus,
 resuming the live tail — the same as pressing its number key. A press on
