@@ -2703,7 +2703,7 @@ func TestReadKeysImprovements(t *testing.T) {
 	t.Run("IncompleteSequenceConsumedByFinalByte", func(t *testing.T) {
 		// ESC [ 1 q is a complete CSI sequence: the final byte q is
 		// consumed as part of the sequence, so it must not leak into
-		// the key stream as "quit".
+		// the key stream as a printable character.
 		ch := make(chan string, 8)
 		go ReadKeys(&chunkReader{chunks: [][]byte{[]byte("\x1b[1"), {}, []byte("q")}}, ch)
 		select {
@@ -2724,11 +2724,11 @@ func TestReadKeysImprovements(t *testing.T) {
 		}, ch)
 		select {
 		case k := <-ch:
-			if k != "quit" {
-				t.Fatalf("expected quit, got %q", k)
+			if k != "q" {
+				t.Fatalf("expected q, got %q", k)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for quit")
+			t.Fatal("timeout waiting for q")
 		}
 	})
 
@@ -2770,11 +2770,11 @@ func TestReadKeysImprovements(t *testing.T) {
 		go ReadKeys(strings.NewReader("\x1b[?25lq"), ch)
 		select {
 		case k := <-ch:
-			if k != "quit" {
-				t.Fatalf("expected quit, got %q", k)
+			if k != "q" {
+				t.Fatalf("expected q, got %q", k)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for quit")
+			t.Fatal("timeout waiting for q")
 		}
 	})
 }
@@ -2819,4 +2819,943 @@ func (r *delayedChunkReader) Read(p []byte) (int, error) {
 type chunkReader struct {
 	chunks [][]byte
 	idx    int
+}
+
+func TestReadKeysComprehensive(t *testing.T) {
+	t.Run("FunctionKeysSS3", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1bOP\x1bOQ\x1bOR\x1bOS"), ch)
+		var got []string
+		for len(got) < 4 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for function keys")
+			}
+		}
+		want := []string{"f1", "f2", "f3", "f4"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("FunctionKeysTilde", func(t *testing.T) {
+		ch := make(chan string, 16)
+		input := "\x1b[11~\x1b[12~\x1b[13~\x1b[14~\x1b[15~\x1b[17~\x1b[18~\x1b[19~\x1b[20~\x1b[21~\x1b[23~\x1b[24~"
+		go ReadKeys(strings.NewReader(input), ch)
+		var got []string
+		for len(got) < 12 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for function keys")
+			}
+		}
+		want := []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("InsertDelete", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[2~\x1b[3~"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for keys")
+			}
+		}
+		want := []string{"insert", "delete"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("BackspaceEnterSpace", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x7f\x0d\x0a\x20\x08"), ch)
+		var got []string
+		for len(got) < 5 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for keys")
+			}
+		}
+		want := []string{"backspace", "enter", "enter", "space", "backspace"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("ShiftTab", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[Z"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-tab" {
+				t.Fatalf("expected shift-tab, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-tab")
+		}
+	})
+
+	t.Run("CtrlLetters", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x01\x02\x05\x0c\x1a"), ch)
+		var got []string
+		for len(got) < 5 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for ctrl keys")
+			}
+		}
+		want := []string{"ctrl-a", "ctrl-b", "ctrl-e", "ctrl-l", "ctrl-z"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("CtrlC", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x03"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-c" {
+				t.Fatalf("expected ctrl-c, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-c")
+		}
+	})
+
+	t.Run("PrintableChars", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("abcXYZ"), ch)
+		var got []string
+		for len(got) < 6 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for printable chars")
+			}
+		}
+		want := []string{"a", "b", "c", "X", "Y", "Z"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("ModifiedArrows", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[1;2A\x1b[1;5C\x1b[1;3B\x1b[1;6D"), ch)
+		var got []string
+		for len(got) < 4 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for modified arrows")
+			}
+		}
+		want := []string{"shift-up", "ctrl-right", "alt-down", "shift-ctrl-left"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("AltKey", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1ba\x1bx"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for alt keys")
+			}
+		}
+		want := []string{"alt-a", "alt-x"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("ModifiedTilde", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[5;2~\x1b[2;5~"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for modified tilde keys")
+			}
+		}
+		want := []string{"shift-pageup", "ctrl-insert"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+}
+
+func TestReadKeysExtended(t *testing.T) {
+	t.Run("F13-F24", func(t *testing.T) {
+		ch := make(chan string, 16)
+		input := "\x1b[28~\x1b[29~\x1b[31~\x1b[32~\x1b[33~\x1b[34~\x1b[35~\x1b[36~\x1b[37~\x1b[38~\x1b[39~\x1b[40~"
+		go ReadKeys(strings.NewReader(input), ch)
+		var got []string
+		for len(got) < 12 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for F13-F24")
+			}
+		}
+		want := []string{"f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("BracketedPaste", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[200~hello\x1b[201~"), ch)
+		var got []string
+		for len(got) < 7 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for bracketed paste")
+			}
+		}
+		if got[0] != "paste-start" || got[6] != "paste-end" {
+			t.Fatalf("expected paste-start and paste-end, got %v", got)
+		}
+	})
+
+	t.Run("FocusEvents", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[I\x1b[O"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for focus events")
+			}
+		}
+		if got[0] != "focus-in" || got[1] != "focus-out" {
+			t.Fatalf("expected focus-in and focus-out, got %v", got)
+		}
+	})
+
+	t.Run("ExtendedControlChars", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1c\x1d\x1e\x1f"), ch)
+		var got []string
+		for len(got) < 4 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for control chars")
+			}
+		}
+		want := []string{"ctrl-\\", "ctrl-]", "ctrl-^", "ctrl-_"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("KeypadSS3", func(t *testing.T) {
+		ch := make(chan string, 16)
+		go ReadKeys(strings.NewReader("\x1bOM\x1bOj\x1bOk\x1bOm\x1bOn\x1bOo\x1bOX"), ch)
+		var got []string
+		for len(got) < 7 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for keypad keys")
+			}
+		}
+		want := []string{"kp-enter", "kp-multiply", "kp-add", "kp-subtract", "kp-decimal", "kp-divide", "kp-equal"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("BeginKey", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[E\x1bOE"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for begin key")
+			}
+		}
+		if got[0] != "begin" || got[1] != "begin" {
+			t.Fatalf("expected begin begin, got %v", got)
+		}
+	})
+
+	t.Run("KittyKeyboard", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[57358;1u\x1b[57396;1u\x1b[97;1u\x1b[57358;5u"), ch)
+		var got []string
+		for len(got) < 4 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for kitty keys")
+			}
+		}
+		want := []string{"f1", "up", "a", "ctrl-f1"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("KittyKeyboardReleaseIgnored", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57358;1;1u\x1b[57358;1;0u\x1b[97;1;1u"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for kitty keys")
+			}
+		}
+		want := []string{"f1", "a"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("KittyModePopNotMouse", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<0uq"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after mode pop, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after mode pop")
+		}
+	})
+
+	t.Run("ModOneNoPrefix", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;1A"), ch)
+		select {
+		case k := <-ch:
+			if k != "up" {
+				t.Fatalf("expected up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for up")
+		}
+	})
+}
+
+func TestReadKeysUTF8(t *testing.T) {
+	t.Run("MultiByteChars", func(t *testing.T) {
+		ch := make(chan string, 8)
+		// "é" (U+00E9 = 0xC3 0xA9), "中" (U+4E2D = 0xE4 0xB8 0xAD), "a"
+		go ReadKeys(strings.NewReader("\xc3\xa9\xe4\xb8\xada"), ch)
+		var got []string
+		for len(got) < 3 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for UTF-8 keys")
+			}
+		}
+		want := []string{"é", "中", "a"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("Emoji", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// "🎉" (U+1F389 = 0xF0 0x9F 0x8E 0x89)
+		go ReadKeys(strings.NewReader("\xf0\x9f\x8e\x89"), ch)
+		select {
+		case k := <-ch:
+			if k != "🎉" {
+				t.Fatalf("expected 🎉, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for emoji")
+		}
+	})
+
+	t.Run("AltMultiByte", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// ESC + "é" = 0x1b 0xC3 0xA9
+		go ReadKeys(strings.NewReader("\x1b\xc3\xa9"), ch)
+		select {
+		case k := <-ch:
+			if k != "alt-é" {
+				t.Fatalf("expected alt-é, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt-é")
+		}
+	})
+
+	t.Run("SplitAcrossReads", func(t *testing.T) {
+		// A UTF-8 sequence split across reads is held until it
+		// completes, matching the escape-sequence split behavior.
+		ch := make(chan string, 4)
+		go ReadKeys(&chunkReader{chunks: [][]byte{[]byte("\xe4\xb8"), {}, []byte("\xad")}}, ch)
+		select {
+		case k := <-ch:
+			if k != "中" {
+				t.Fatalf("expected 中, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for 中")
+		}
+	})
+
+	t.Run("IncompleteDroppedAfterTimeout", func(t *testing.T) {
+		// An incomplete 3-byte sequence (only 2 bytes) that never
+		// completes is dropped after the grace period.
+		ch := make(chan string, 4)
+		go ReadKeys(&delayedChunkReader{
+			chunks: [][]byte{[]byte("\xe4\xb8"), {}},
+			delay:  150 * time.Millisecond,
+		}, ch)
+		select {
+		case k := <-ch:
+			t.Fatalf("expected no key, got %q", k)
+		case <-time.After(200 * time.Millisecond):
+		}
+	})
+}
+
+func TestReadKeysSS3ModifiedAndModifyOtherKeys(t *testing.T) {
+	t.Run("SS3ShiftUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bO1;2A"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-up" {
+				t.Fatalf("expected shift-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-up")
+		}
+	})
+
+	t.Run("SS3CtrlRight", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bO1;5C"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-right" {
+				t.Fatalf("expected ctrl-right, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-right")
+		}
+	})
+
+	t.Run("SS3ShiftCtrlUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bO1;6A"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-ctrl-up" {
+				t.Fatalf("expected shift-ctrl-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-ctrl-up")
+		}
+	})
+
+	t.Run("SS3PlainStillWorks", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bOA"), ch)
+		select {
+		case k := <-ch:
+			if k != "up" {
+				t.Fatalf("expected up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for up")
+		}
+	})
+
+	t.Run("SS3KeypadStillWorks", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bOM"), ch)
+		select {
+		case k := <-ch:
+			if k != "kp-enter" {
+				t.Fatalf("expected kp-enter, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for kp-enter")
+		}
+	})
+
+	t.Run("ModifyOtherKeysEnter", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;13~"), ch)
+		select {
+		case k := <-ch:
+			if k != "enter" {
+				t.Fatalf("expected enter, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for enter")
+		}
+	})
+
+	t.Run("ModifyOtherKeysTab", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;9~"), ch)
+		select {
+		case k := <-ch:
+			if k != "tab" {
+				t.Fatalf("expected tab, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for tab")
+		}
+	})
+
+	t.Run("ModifyOtherKeysBackspace", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;127~"), ch)
+		select {
+		case k := <-ch:
+			if k != "backspace" {
+				t.Fatalf("expected backspace, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for backspace")
+		}
+	})
+
+	t.Run("ModifyOtherKeysCtrlA", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;5;97~"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-a" {
+				t.Fatalf("expected ctrl-a, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-a")
+		}
+	})
+
+	t.Run("ModifyOtherKeysShiftA", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;2;97~"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-a" {
+				t.Fatalf("expected shift-a, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-a")
+		}
+	})
+
+	t.Run("ModifyOtherKeysEsc", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;27~"), ch)
+		select {
+		case k := <-ch:
+			if k != "esc" {
+				t.Fatalf("expected esc, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for esc")
+		}
+	})
+
+	t.Run("ModifyOtherKeysUnicode", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;20013~"), ch)
+		select {
+		case k := <-ch:
+			if k != "中" {
+				t.Fatalf("expected 中, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for 中")
+		}
+	})
+}
+
+func TestReadKeysControlStrings(t *testing.T) {
+	t.Run("OSCBelTerminator", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b]0;title\x07q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after OSC, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after OSC")
+		}
+	})
+
+	t.Run("OSCSTTerminator", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b]0;title\x1b\\q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after OSC ST, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after OSC ST")
+		}
+	})
+
+	t.Run("DCSConsumed", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bP1q\x1b\\q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after DCS, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after DCS")
+		}
+	})
+
+	t.Run("SOSConsumed", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1bXdata\x1b\\q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after SOS, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after SOS")
+		}
+	})
+
+	t.Run("PMConsumed", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b^data\x1b\\q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after PM, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after PM")
+		}
+	})
+
+	t.Run("APCConsumed", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b_data\x1b\\q"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after APC, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after APC")
+		}
+	})
+
+	t.Run("OSCConsumedNoKeyAfter", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b]0;title\x07"), ch)
+		select {
+		case k := <-ch:
+			t.Fatalf("expected no key from OSC alone, got %q", k)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+
+	t.Run("OSCIncompleteThenTimeout", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(&delayedChunkReader{
+			chunks: [][]byte{[]byte("\x1b]0;title"), {}},
+			delay:  150 * time.Millisecond,
+		}, ch)
+		select {
+		case k := <-ch:
+			t.Fatalf("expected no key from incomplete OSC, got %q", k)
+		case <-time.After(200 * time.Millisecond):
+		}
+	})
+}
+
+func TestReadKeysMouseFormats(t *testing.T) {
+	t.Run("X10LeftClick", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// \x1b[M followed by 3 bytes: button+32, x+32, y+32
+		// Left click at (1,1): button=0+32=32, x=1+32=33, y=1+32=33
+		go ReadKeys(strings.NewReader("\x1b[M\x20\x21\x21"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-left@0,0" {
+				t.Fatalf("expected mouse-left@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for X10 mouse")
+		}
+	})
+
+	t.Run("X10WheelUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// Wheel up at (5,3): button=64+32=96, x=5+32=37, y=3+32=35
+		go ReadKeys(strings.NewReader("\x1b[M\x60\x25\x23"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-wheel-up@4,2" {
+				t.Fatalf("expected mouse-wheel-up@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for X10 wheel")
+		}
+	})
+
+	t.Run("URXVTLeftClick", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// Left click at (1,1): Cb=0+32=32, Cx=1, Cy=1
+		go ReadKeys(strings.NewReader("\x1b[32;1;1M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-left@0,0" {
+				t.Fatalf("expected mouse-left@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT mouse")
+		}
+	})
+
+	t.Run("URXVTWheelDown", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// Wheel down at (10,5): Cb=65+32=97, Cx=10, Cy=5
+		go ReadKeys(strings.NewReader("\x1b[97;10;5M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-wheel-down@9,4" {
+				t.Fatalf("expected mouse-wheel-down@9,4, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT wheel")
+		}
+	})
+
+	t.Run("URXVTRelease", func(t *testing.T) {
+		ch := make(chan string, 4)
+		// Release at (1,1): Cb=3+32=35, Cx=1, Cy=1
+		go ReadKeys(strings.NewReader("\x1b[35;1;1M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-release@0,0" {
+				t.Fatalf("expected mouse-release@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT release")
+		}
+	})
+}
+
+func TestReadKeysExtendedModifiers(t *testing.T) {
+	t.Run("MetaUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;9A"), ch)
+		select {
+		case k := <-ch:
+			if k != "meta-up" {
+				t.Fatalf("expected meta-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for meta-up")
+		}
+	})
+
+	t.Run("SuperUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;17A"), ch)
+		select {
+		case k := <-ch:
+			if k != "super-up" {
+				t.Fatalf("expected super-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for super-up")
+		}
+	})
+
+	t.Run("HyperUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;33A"), ch)
+		select {
+		case k := <-ch:
+			if k != "hyper-up" {
+				t.Fatalf("expected hyper-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for hyper-up")
+		}
+	})
+
+	t.Run("CtrlMetaUp", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;13A"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-meta-up" {
+				t.Fatalf("expected ctrl-meta-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-meta-up")
+		}
+	})
+
+	t.Run("KittyPrintScreen", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57388;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "print-screen" {
+				t.Fatalf("expected print-screen, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for print-screen")
+		}
+	})
+
+	t.Run("KittyScrollLock", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57389;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "scroll-lock" {
+				t.Fatalf("expected scroll-lock, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for scroll-lock")
+		}
+	})
+
+	t.Run("KittyPause", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57390;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "pause" {
+				t.Fatalf("expected pause, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for pause")
+		}
+	})
+
+	t.Run("KittyMenu", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57391;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "menu" {
+				t.Fatalf("expected menu, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for menu")
+		}
+	})
+
+	t.Run("CtrlSpace", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x00"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-space" {
+				t.Fatalf("expected ctrl-space, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-space")
+		}
+	})
+}
+
+func TestReadKeysKittyAndGeneric(t *testing.T) {
+	t.Run("KittyKeypad", func(t *testing.T) {
+		ch := make(chan string, 16)
+		go ReadKeys(strings.NewReader(
+			"\x1b[57345;1u\x1b[57348;1u\x1b[57349;1u\x1b[57350;1u"+
+				"\x1b[57351;1u\x1b[57352;1u\x1b[57353;1u\x1b[57354;1u"+
+				"\x1b[57355;1u\x1b[57356;1u\x1b[57357;1u\x1b[57344;1u",
+		), ch)
+		var got []string
+		for len(got) < 12 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for kitty keypad keys")
+			}
+		}
+		want := []string{
+			"kp-f1", "kp-f4", "kp-home", "kp-end",
+			"kp-pageup", "kp-pagedown", "kp-left", "kp-right",
+			"kp-up", "kp-down", "kp-begin", "kp-enter",
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("GenericPrintable", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("qs[]S?"), ch)
+		var got []string
+		for len(got) < 6 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for printable keys")
+			}
+		}
+		want := []string{"q", "s", "[", "]", "S", "?"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
 }

@@ -6,53 +6,82 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const TheoryOfKeyInput = `
 taiui key input theory:
 - ReadKeys decodes raw terminal input into logical key names. The reader
-  is expected to be in non-blocking raw mode: a read that returns 0 bytes
-  is polled with a short sleep instead of spinning. A zero-byte read is
-  not a completion signal: an escape sequence split across reads is held
-  until it completes, and only a partial sequence that receives no
-  further bytes within a short grace period is discarded, so a partial
-  sequence cannot swallow later input. A lone ESC that never grows is
-  emitted as "esc" before it is discarded. ESC followed by a non-sequence
-  byte is treated as a stray ESC and the byte is processed normally.
-  Standard CSI escape sequences (ESC [ ...), SS3 application cursor
-  sequences (ESC O ...), and VT220 tilde sequences (ESC [ n ~) decode the
-  arrow keys, home/end, page-up/page-down, tab, digit keys 1-3, bracket
-  keys '[' and ']', question-mark '?', s, and q (plus Ctrl-C) into the
-  logical names "up", "down", "left", "right", "home", "end", "pageup",
-  "pagedown", "tab", "1", "2", "3", "prev-transition", "next-transition",
-  "help", "split", "quit", and "esc". An unknown CSI sequence is
-  discarded as a whole: its parameter bytes never leak into the key
-  stream. The bracket keys name section-transition navigation: a TUI
-  jumps its Output pane to the previous or next role or thinking-state
-  transition. The question-mark key toggles the operation help overlay.
+  is in non-blocking raw mode: a zero-byte read is polled with a short
+  sleep. A zero-byte read is not completion: an incomplete escape
+  sequence split across reads is held until it completes or a grace
+  period expires. A lone ESC that never grows is emitted as "esc". ESC
+  followed by a printable character is "alt-<char>"; ESC followed by a
+  control byte discards the ESC and processes the byte.
+- Multi-byte UTF-8 input is decoded into its rune and emitted as the
+  character: non-ASCII text (accented characters, CJK, emoji) reaches the
+  application as the decoded character. ESC followed by a multi-byte
+  UTF-8 character is "alt-<character>", matching the single-byte
+  Alt+key rule. An incomplete multi-byte sequence that never completes
+  within the grace period is dropped.
+- CSI sequences (ESC [ ...), SS3 sequences (ESC O ...), and tilde
+  sequences (ESC [ n ~) decode arrows, home/end, page-up/down,
+  insert/delete, F1-F24, shift-tab, begin, focus events, and
+  bracketed-paste markers. Modifier-enriched CSI prefixes Shift, Alt,
+  Ctrl, Meta, Super, and Hyper; mod 1 means no modifiers. Unknown CSI
+  sequences are discarded whole.
+- Control string sequences (OSC, DCS, SOS, PM, APC) start with ESC
+  followed by ], P, X, ^, or _, and end with BEL or ST (ESC \). They
+  carry terminal metadata (window titles, clipboard, color queries)
+  that ReadKeys cannot convey as key names, so they are consumed and
+  discarded. The trade-off is that Alt+], Alt+P, Alt+X, Alt+^, and Alt+_
+  are not reported as key events; applications needing those combinations
+  should use the Kitty keyboard protocol, which disambiguates them.
+- The Kitty keyboard protocol (CSI code;mod[;event] u) maps key codes
+  to the same logical names; release events (event 0) are ignored.
+  Mode-setting sequences (CSI > flags u, CSI < flags u) are consumed
+  silently, and a CSI < ... u that is not an SGR mouse sequence is
+  distinguished from one so it does not block. Kitty key codes cover
+  F1-F24, navigation keys, arrows, the special keys print-screen,
+  scroll-lock, pause, and menu, and the keypad keys (kp-enter,
+  kp-f1..kp-f4, kp-home, kp-end, kp-pageup, kp-pagedown, kp-left,
+  kp-right, kp-up, kp-down, kp-begin).
+- SS3 sequences also decode keypad keys in application keypad mode:
+  digits (kp-0..kp-9), operators (kp-add, kp-subtract, kp-multiply,
+  kp-divide, kp-decimal, kp-comma, kp-equal), and kp-enter.
+- Single bytes cover control and printable ranges: backspace, enter,
+  space, tab, Ctrl+Space (0x00 as "ctrl-space"), Ctrl+A-Z and Ctrl+\\,
+  Ctrl+], Ctrl+^, Ctrl+_, and all printable ASCII. Key names are
+  generic, not application-specific: Ctrl+C is "ctrl-c", 'q' is "q".
+  The application maps key names to actions, so the library stays
+  reusable across projects.
 `
 
 const TheoryOfMouseInput = `
 Mouse input theory:
-- ReadKeys decodes SGR extended mouse reporting (DECSET 1006), which
-  delivers button events (mode 1000) and button-held motion events (mode
-  1002) as ESC [ < Cb ; Cx ; Cy M|m sequences. The TUI enables the
-  reporting modes on start and disables them on stop (MouseEnableSequence
-  and MouseDisableSequence); the parser accepts the sequences whenever
-  they arrive, regardless of the terminal's mode settings.
+- ReadKeys decodes three mouse reporting formats: SGR extended (DECSET
+  1006), URXVT (DECSET 1015), and X10 (DECSET 9). SGR delivers button
+  events and button-held motion as ESC [ < Cb ; Cx ; Cy M|m; URXVT
+  delivers them as ESC [ Cb ; Cx ; Cy M with the button code offset by
+  32; X10 delivers them as ESC [ M followed by 3 raw bytes (button+32,
+  x+32, y+32). The parser accepts any format whenever it arrives,
+  regardless of the terminal's mode settings.
 - The button code Cb carries the event flags in bits 5 and 6 (values 32
   and 64): motion or drag events add 32 to the button value, wheel events
   add 64, and the low two bits hold the button number (0 left, 1 middle,
   2 right; 3 means no button). Wire coordinates are 1-based and converted
-  to 0-based cell coordinates on emission.
+  to 0-based cell coordinates on emission. In X10 and URXVT formats, the
+  raw button byte includes the +32 offset; the parser subtracts it.
 - Each event is emitted as a key name carrying its 0-based coordinates:
   "mouse-left@12,34", "mouse-wheel-up@12,34", and the like. A release
   event carries no button number — the SGR release code is always 3 —
   and is emitted as "mouse-release@12,34"; the consumer tracks which
-  button the release ends. No-button motion (code 35) and malformed
-  sequences are ignored.
+  button the release ends. In X10 and URXVT, button 3 (after offset
+  subtraction) indicates release. No-button motion (code 35) and
+  malformed sequences are ignored.
 - Like keyboard input, a mouse sequence may arrive split across reads;
-  the parser waits for the sequence terminator before emitting.
+  the parser waits for the sequence terminator (or all 3 raw bytes for
+  X10) before emitting.
 `
 
 // MouseKeyPrefix is the prefix of the key names ReadKeys emits for mouse
@@ -85,6 +114,30 @@ const (
 // when the timeout expires.
 const escapeSequenceTimeout = 50 * time.Millisecond
 
+const (
+	// BracketedPasteEnableSequence switches the terminal into bracketed
+	// paste mode (DECSET 2004): pasted text is wrapped in ESC [ 200 ~ and
+	// ESC [ 201 ~ markers. ReadKeys decodes them as "paste-start" and
+	// "paste-end" keys.
+	BracketedPasteEnableSequence  = "\x1b[?2004h"
+	BracketedPasteDisableSequence = "\x1b[?2004l"
+
+	// FocusReportingEnableSequence switches the terminal into focus
+	// reporting mode (DECSET 1004): focus gain and loss are reported as
+	// ESC [ I and ESC [ O. ReadKeys decodes them as "focus-in" and
+	// "focus-out" keys.
+	FocusReportingEnableSequence  = "\x1b[?1004h"
+	FocusReportingDisableSequence = "\x1b[?1004l"
+
+	// KittyKeyboardEnableSequence pushes the Kitty keyboard protocol onto
+	// the terminal's mode stack (CSI > 1 u, discrete mode). Keys arrive as
+	// CSI code;mod[;event] u sequences. KittyKeyboardDisableSequence pops
+	// the stack (CSI < 0 u). ReadKeys decodes both key events and
+	// mode-setting sequences; the latter are consumed silently.
+	KittyKeyboardEnableSequence  = "\x1b[>1u"
+	KittyKeyboardDisableSequence = "\x1b[<0u"
+)
+
 func ReadKeys(r io.Reader, ch chan<- string) {
 	var buf [64]byte
 	var pending []byte
@@ -94,158 +147,7 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 		if n > 0 {
 			lastData = time.Now()
 			pending = append(pending, buf[:n]...)
-			for len(pending) > 0 {
-				if pending[0] == 0x1b {
-					if len(pending) == 1 {
-						break
-					}
-					if pending[1] == 'O' {
-						// SS3 application cursor mode: ESC O A|B|C|D|H|F
-						if len(pending) < 3 {
-							break
-						}
-						switch pending[2] {
-						case 'A':
-							ch <- "up"
-						case 'B':
-							ch <- "down"
-						case 'C':
-							ch <- "right"
-						case 'D':
-							ch <- "left"
-						case 'H':
-							ch <- "home"
-						case 'F':
-							ch <- "end"
-						}
-						pending = pending[3:]
-						continue
-					}
-					if pending[1] != '[' {
-						// ESC followed by a non-sequence byte: the ESC
-						// is not part of an escape sequence.
-						pending = pending[1:]
-						continue
-					}
-					if len(pending) < 3 {
-						break
-					}
-					if pending[2] == '<' {
-						// SGR mouse sequence: ESC [ < Cb ; Cx ; Cy M|m.
-						// The M terminator marks a press, drag, or wheel
-						// event; the m terminator marks a release.
-						// See TheoryOfMouseInput.
-						end := -1
-						release := false
-						for i := 3; i < len(pending); i++ {
-							if pending[i] == 'M' {
-								end = i
-								break
-							}
-							if pending[i] == 'm' {
-								end = i
-								release = true
-								break
-							}
-						}
-						if end < 0 {
-							// The terminator has not arrived yet; wait for
-							// more input.
-							break
-						}
-						payload := string(pending[3:end])
-						parts := strings.Split(payload, ";")
-						if len(parts) == 3 {
-							var button, x, y int
-							var parseErr error
-							if button, parseErr = strconv.Atoi(parts[0]); parseErr == nil {
-								if x, parseErr = strconv.Atoi(parts[1]); parseErr == nil {
-									y, parseErr = strconv.Atoi(parts[2])
-								}
-							}
-							if parseErr == nil && x >= 1 && y >= 1 {
-								// The SGR protocol sends 1-based coordinates;
-								// the TUI uses 0-based cell coordinates.
-								if key := mouseKeyName(button, x-1, y-1, release); key != "" {
-									ch <- key
-								}
-							}
-						}
-						// A malformed or unconsumed mouse sequence is skipped
-						// as a whole: dropping only its ESC would leave the
-						// rest of the sequence to be misparsed as keys.
-						pending = pending[end+1:]
-						continue
-					}
-					// Find the CSI final byte: the first byte in 0x40..0x7E
-					// after the '['. Parameter and intermediate bytes are
-					// below 0x40, so the scan stops at the final byte.
-					end := -1
-					for i := 2; i < len(pending); i++ {
-						if pending[i] >= 0x40 && pending[i] <= 0x7e {
-							end = i
-							break
-						}
-					}
-					if end < 0 {
-						// The final byte has not arrived yet; wait for more
-						// input.
-						break
-					}
-					seq := string(pending[:end+1])
-					switch seq {
-					case "\x1b[A":
-						ch <- "up"
-					case "\x1b[B":
-						ch <- "down"
-					case "\x1b[C":
-						ch <- "right"
-					case "\x1b[D":
-						ch <- "left"
-					case "\x1b[H":
-						ch <- "home"
-					case "\x1b[F":
-						ch <- "end"
-					case "\x1b[1~":
-						ch <- "home"
-					case "\x1b[4~":
-						ch <- "end"
-					case "\x1b[5~":
-						ch <- "pageup"
-					case "\x1b[6~":
-						ch <- "pagedown"
-					case "\x1b[7~":
-						ch <- "home"
-					case "\x1b[8~":
-						ch <- "end"
-					}
-					// An unknown CSI sequence is discarded as a whole: its
-					// parameter bytes never leak into the key stream.
-					pending = pending[end+1:]
-					continue
-				}
-				switch pending[0] {
-				case '1':
-					ch <- "1"
-				case '2':
-					ch <- "2"
-				case '3':
-					ch <- "3"
-				case '[':
-					ch <- "prev-transition"
-				case ']':
-					ch <- "next-transition"
-				case '?':
-					ch <- "help"
-				case 's', 'S':
-					ch <- "split"
-				case 'q', 'Q', 0x03:
-					ch <- "quit"
-				case '\t':
-					ch <- "tab"
-				}
-				pending = pending[1:]
-			}
+			pending = processKeys(pending, ch)
 		}
 		if err != nil {
 			// A lone ESC at end of input is a real key press, not a
@@ -261,17 +163,740 @@ func ReadKeys(r io.Reader, ch chan<- string) {
 			// escape sequence is held until it completes or the grace
 			// period expires, so a sequence split across reads is not
 			// lost. A lone ESC that never grows is emitted as "esc"
-			// before it is discarded.
-			if len(pending) > 0 && pending[0] == 0x1b && time.Since(lastData) > escapeSequenceTimeout {
-				if len(pending) == 1 {
-					ch <- "esc"
+			// before it is discarded. An incomplete multi-byte UTF-8
+			// sequence is likewise dropped after the grace period.
+			if len(pending) > 0 && time.Since(lastData) > escapeSequenceTimeout {
+				if pending[0] == 0x1b {
+					if len(pending) == 1 {
+						ch <- "esc"
+					}
+					pending = pending[:0]
+				} else if pending[0] >= 0x80 {
+					// An incomplete multi-byte UTF-8 sequence that
+					// never grew to a complete rune: drop it.
+					pending = pending[:0]
 				}
-				pending = pending[:0]
 			}
 			time.Sleep(2 * time.Millisecond)
 			continue
 		}
 	}
+}
+
+func processKeys(pending []byte, ch chan<- string) []byte {
+	for len(pending) > 0 {
+		if pending[0] == 0x1b {
+			if len(pending) == 1 {
+				return pending
+			}
+			if pending[1] == 'O' {
+				// SS3 application cursor mode. Standard SS3 keys are
+				// ESC O <final>, but modified SS3 keys carry
+				// parameters (e.g., ESC O 1;2A for shift-up in
+				// application cursor mode). When the byte after O is
+				// a parameter byte (0x30-0x3F), scan for the final
+				// byte as with CSI; otherwise the next byte is the
+				// final byte of a standard SS3 key.
+				if len(pending) < 3 {
+					return pending
+				}
+				if pending[2] >= 0x30 && pending[2] <= 0x3f {
+					end := -1
+					for i := 3; i < len(pending); i++ {
+						if pending[i] >= 0x40 && pending[i] <= 0x7e {
+							end = i
+							break
+						}
+					}
+					if end < 0 {
+						return pending
+					}
+					emitSS3KeyWithMods(string(pending[2:end]), string(pending[end]), ch)
+					pending = pending[end+1:]
+					continue
+				}
+				emitSS3Key(pending[2], ch)
+				pending = pending[3:]
+				continue
+			}
+			if pending[1] == '[' {
+				if len(pending) < 3 {
+					return pending
+				}
+				if pending[2] == '<' {
+					// SGR mouse sequence: ESC [ < Cb ; Cx ; Cy M|m.
+					// A CSI < ... u is a Kitty keyboard mode pop, not
+					// a mouse sequence; handleSGRMouse returns -2 and
+					// the code falls through to the CSI scan below.
+					consumed := handleSGRMouse(pending, ch)
+					if consumed == -2 {
+						// Not a mouse sequence: handle as a regular CSI.
+					} else {
+						if consumed < 0 {
+							return pending
+						}
+						pending = pending[consumed:]
+						continue
+					}
+				}
+				// Find the CSI final byte: the first byte in 0x40..0x7E
+				// after the '['. Parameter and intermediate bytes are
+				// below 0x40, so the scan stops at the final byte.
+				end := -1
+				for i := 2; i < len(pending); i++ {
+					if pending[i] >= 0x40 && pending[i] <= 0x7e {
+						end = i
+						break
+					}
+				}
+				if end < 0 {
+					return pending
+				}
+				// X10 mouse: \x1b[M followed by 3 raw bytes (button+32,
+				// x+32, y+32). M is the CSI final byte with no
+				// parameters, and 3 data bytes follow it outside the
+				// CSI syntax. No standard CSI key uses final byte M
+				// with empty parameters, so this is unambiguous.
+				if end == 2 && pending[end] == 'M' {
+					if len(pending) < end+4 {
+						return pending // need all 3 data bytes
+					}
+					handleX10Mouse(pending[end+1:end+4], ch)
+					pending = pending[end+4:]
+					continue
+				}
+				emitCSIKey(string(pending[2:end]), string(pending[end]), ch)
+				pending = pending[end+1:]
+				continue
+			}
+			// Control string sequences (OSC, DCS, SOS, PM, APC) start
+			// with ESC followed by ], P, X, ^, or _, and end with BEL
+			// (0x07) or ST (ESC \). They carry terminal metadata (window
+			// titles, clipboard, color queries) that ReadKeys cannot
+			// convey as key names, so they are consumed and discarded.
+			// The trade-off is that Alt+], Alt+P, Alt+X, Alt+^, and Alt+_
+			// are not reported as key events; applications needing those
+			// combinations should use the Kitty keyboard protocol, which
+			// disambiguates them.
+			if pending[1] == ']' || pending[1] == 'P' || pending[1] == 'X' || pending[1] == '^' || pending[1] == '_' {
+				consumed := consumeControlString(pending)
+				if consumed < 0 {
+					return pending
+				}
+				pending = pending[consumed:]
+				continue
+			}
+			// ESC followed by a multi-byte UTF-8 character is
+			// Alt+character, matching the single-byte Alt+key rule.
+			if pending[1] >= 0x80 {
+				consumed, key := decodeUTF8Key(pending[1:])
+				if consumed == 0 {
+					return pending
+				}
+				if key != "" {
+					ch <- "alt-" + key
+				}
+				pending = pending[1+consumed:]
+				continue
+			}
+			// ESC followed by a printable character is Alt+key.
+			if pending[1] >= 0x20 && pending[1] <= 0x7e {
+				ch <- "alt-" + string(rune(pending[1]))
+				pending = pending[2:]
+				continue
+			}
+			// ESC followed by a control byte: discard the ESC and
+			// process the byte normally.
+			pending = pending[1:]
+			continue
+		}
+		// A multi-byte UTF-8 sequence: collect the full rune and emit
+		// the decoded character. Terminals send text input as complete
+		// UTF-8 sequences, so a byte >= 0x80 is the start of one.
+		if pending[0] >= 0x80 {
+			consumed, key := decodeUTF8Key(pending)
+			if consumed == 0 {
+				return pending // need more bytes
+			}
+			if key != "" {
+				ch <- key
+			}
+			pending = pending[consumed:]
+			continue
+		}
+		emitSingleKey(pending[0], ch)
+		pending = pending[1:]
+	}
+	return pending
+}
+
+// consumeControlString finds the end of an OSC, DCS, SOS, PM, or APC
+// control string and returns the number of bytes consumed, including
+// the introducer and terminator. The terminator is BEL (0x07) or ST
+// (ESC \). A return of -1 means the sequence is incomplete and more
+// bytes are needed. See TheoryOfKeyInput.
+func consumeControlString(pending []byte) int {
+	for i := 2; i < len(pending); i++ {
+		switch pending[i] {
+		case 0x07:
+			return i + 1
+		case 0x1b:
+			if i+1 >= len(pending) {
+				return -1
+			}
+			if pending[i+1] == '\\' {
+				return i + 2
+			}
+		}
+	}
+	return -1
+}
+
+// decodeUTF8Key attempts to decode a multi-byte UTF-8 sequence at the
+// start of pending. It returns the number of bytes consumed and the
+// decoded character as a string. A return of (0, "") means the sequence
+// is incomplete and more bytes are needed; a return of (1, "") means the
+// leading byte is invalid and should be skipped.
+func decodeUTF8Key(pending []byte) (consumed int, key string) {
+	if len(pending) == 0 || pending[0] < 0x80 {
+		return 0, ""
+	}
+	// Determine the expected length from the leading byte.
+	var expected int
+	switch {
+	case pending[0] >= 0xF0:
+		expected = 4
+	case pending[0] >= 0xE0:
+		expected = 3
+	case pending[0] >= 0xC0:
+		expected = 2
+	default:
+		// A continuation byte (0x80-0xBF) without a start byte is
+		// invalid: skip it.
+		return 1, ""
+	}
+	if len(pending) < expected {
+		// Need more bytes to complete the sequence.
+		return 0, ""
+	}
+	r, size := utf8.DecodeRune(pending[:expected])
+	if r == utf8.RuneError {
+		// Invalid UTF-8 sequence: skip the leading byte.
+		return 1, ""
+	}
+	return size, string(r)
+}
+
+// ss3KeyName maps an SS3 final byte to its logical key name, or "" for
+// an unrecognized final byte. It is shared by the simple and modified
+// SS3 paths so both produce identical key names for the same final byte.
+func ss3KeyName(final string) string {
+	if len(final) == 0 {
+		return ""
+	}
+	switch final[0] {
+	case 'A':
+		return "up"
+	case 'B':
+		return "down"
+	case 'C':
+		return "right"
+	case 'D':
+		return "left"
+	case 'E':
+		return "begin"
+	case 'H':
+		return "home"
+	case 'F':
+		return "end"
+	case 'P':
+		return "f1"
+	case 'Q':
+		return "f2"
+	case 'R':
+		return "f3"
+	case 'S':
+		return "f4"
+	case 'M':
+		return "kp-enter"
+	case 'X':
+		return "kp-equal"
+	case 'j':
+		return "kp-multiply"
+	case 'k':
+		return "kp-add"
+	case 'l':
+		return "kp-comma"
+	case 'm':
+		return "kp-subtract"
+	case 'n':
+		return "kp-decimal"
+	case 'o':
+		return "kp-divide"
+	case 'p':
+		return "kp-0"
+	case 'q':
+		return "kp-1"
+	case 'r':
+		return "kp-2"
+	case 's':
+		return "kp-3"
+	case 't':
+		return "kp-4"
+	case 'u':
+		return "kp-5"
+	case 'v':
+		return "kp-6"
+	case 'w':
+		return "kp-7"
+	case 'x':
+		return "kp-8"
+	case 'y':
+		return "kp-9"
+	}
+	return ""
+}
+
+func emitSS3Key(b byte, ch chan<- string) {
+	if key := ss3KeyName(string(b)); key != "" {
+		ch <- key
+	}
+}
+
+// emitSS3KeyWithMods handles modified SS3 sequences (ESC O <params>
+// <final>). The last numeric parameter is the modifier bitfield, using
+// the same 1 + Shift/Alt/Ctrl convention as CSI modified keys. The key
+// name is derived from the final byte via ss3KeyName, so modified and
+// unmodified SS3 keys produce consistent names.
+func emitSS3KeyWithMods(params, final string, ch chan<- string) {
+	if params == "" {
+		if key := ss3KeyName(final); key != "" {
+			ch <- key
+		}
+		return
+	}
+	parts := strings.Split(params, ";")
+	mod, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil || mod < 1 {
+		return
+	}
+	key := ss3KeyName(final)
+	if key == "" {
+		return
+	}
+	if prefix := modifierPrefix(mod); prefix != "" {
+		ch <- prefix + "-" + key
+	} else {
+		ch <- key
+	}
+}
+
+func emitCSIKey(params, final string, ch chan<- string) {
+	if final == "u" {
+		emitKittyKey(params, ch)
+		return
+	}
+	parts := strings.Split(params, ";")
+	// xterm modifyOtherKeys format: CSI 27;<mod>;<code>~
+	// The first parameter is always 27, identifying the format; the
+	// second is the modifier bitfield; the third is the Unicode code
+	// point of the key. The code is mapped through kittyKeyName so
+	// both protocols produce consistent key names.
+	if final == "~" && len(parts) == 3 && parts[0] == "27" {
+		emitModifyOtherKeys(parts, ch)
+		return
+	}
+	// URXVT mouse format (DECSET 1015): ESC [ Cb ; Cx ; Cy M, where Cb
+	// is the button code offset by 32. No standard CSI key uses final
+	// byte M with three numeric parameters, so this is unambiguous.
+	if final == "M" && len(parts) == 3 {
+		handleURXVTMouse(parts, ch)
+		return
+	}
+	if len(parts) >= 2 {
+		keyCode := parts[0]
+		mod, err := strconv.Atoi(parts[1])
+		if err != nil || mod < 1 {
+			return
+		}
+		key := csiKeyCode(keyCode, final)
+		if key == "" {
+			return
+		}
+		if prefix := modifierPrefix(mod); prefix != "" {
+			ch <- prefix + "-" + key
+		} else {
+			ch <- key
+		}
+		return
+	}
+	if key := csiSimpleKey(params, final); key != "" {
+		ch <- key
+	}
+}
+
+// emitModifyOtherKeys decodes the xterm modifyOtherKeys format
+// (CSI 27;<mod>;<code> ~). The modifier follows the same 1 + bitfield
+// convention as other CSI modified keys, and the code is a Unicode code
+// point mapped through kittyKeyName for consistency with the Kitty
+// protocol.
+func emitModifyOtherKeys(parts []string, ch chan<- string) {
+	mod, err := strconv.Atoi(parts[1])
+	if err != nil || mod < 1 {
+		return
+	}
+	code, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return
+	}
+	key := kittyKeyName(code)
+	if key == "" {
+		return
+	}
+	if prefix := modifierPrefix(mod); prefix != "" {
+		ch <- prefix + "-" + key
+	} else {
+		ch <- key
+	}
+}
+
+func csiSimpleKey(params, final string) string {
+	switch final {
+	case "A":
+		return "up"
+	case "B":
+		return "down"
+	case "C":
+		return "right"
+	case "D":
+		return "left"
+	case "E":
+		return "begin"
+	case "H":
+		return "home"
+	case "F":
+		return "end"
+	case "I":
+		return "focus-in"
+	case "O":
+		return "focus-out"
+	case "Z":
+		return "shift-tab"
+	case "~":
+		switch params {
+		case "1", "7":
+			return "home"
+		case "2":
+			return "insert"
+		case "3":
+			return "delete"
+		case "4", "8":
+			return "end"
+		case "5":
+			return "pageup"
+		case "6":
+			return "pagedown"
+		case "11":
+			return "f1"
+		case "12":
+			return "f2"
+		case "13":
+			return "f3"
+		case "14":
+			return "f4"
+		case "15":
+			return "f5"
+		case "17":
+			return "f6"
+		case "18":
+			return "f7"
+		case "19":
+			return "f8"
+		case "20":
+			return "f9"
+		case "21":
+			return "f10"
+		case "23":
+			return "f11"
+		case "24":
+			return "f12"
+		case "28":
+			return "f13"
+		case "29":
+			return "f14"
+		case "31":
+			return "f15"
+		case "32":
+			return "f16"
+		case "33":
+			return "f17"
+		case "34":
+			return "f18"
+		case "35":
+			return "f19"
+		case "36":
+			return "f20"
+		case "37":
+			return "f21"
+		case "38":
+			return "f22"
+		case "39":
+			return "f23"
+		case "40":
+			return "f24"
+		case "200":
+			return "paste-start"
+		case "201":
+			return "paste-end"
+		}
+	}
+	return ""
+}
+
+func csiKeyCode(keyCode, final string) string {
+	switch final {
+	case "A", "B", "C", "D", "E", "H", "F", "I", "O":
+		return csiSimpleKey("", final)
+	case "~":
+		return csiSimpleKey(keyCode, final)
+	}
+	return ""
+}
+
+// modifierPrefix converts an xterm SGR modifier parameter to a
+// dash-joined prefix. The parameter is 1 + bitfield (1=Shift, 2=Alt,
+// 4=Ctrl, 8=Meta, 16=Super, 32=Hyper), so parameter 2 is "shift", 5 is
+// "ctrl", 9 is "meta", 17 is "super", and 33 is "hyper".
+func modifierPrefix(mod int) string {
+	mod--
+	var parts []string
+	if mod&1 != 0 {
+		parts = append(parts, "shift")
+	}
+	if mod&2 != 0 {
+		parts = append(parts, "alt")
+	}
+	if mod&4 != 0 {
+		parts = append(parts, "ctrl")
+	}
+	if mod&8 != 0 {
+		parts = append(parts, "meta")
+	}
+	if mod&16 != 0 {
+		parts = append(parts, "super")
+	}
+	if mod&32 != 0 {
+		parts = append(parts, "hyper")
+	}
+	return strings.Join(parts, "-")
+}
+
+func emitSingleKey(b byte, ch chan<- string) {
+	if key := singleKeyName(b); key != "" {
+		ch <- key
+	}
+}
+
+func singleKeyName(b byte) string {
+	switch b {
+	case 0x00:
+		return "ctrl-space"
+	case 0x7f, 0x08:
+		return "backspace"
+	case 0x0d, 0x0a:
+		return "enter"
+	case 0x20:
+		return "space"
+	case '\t':
+		return "tab"
+	default:
+		switch {
+		case b >= 0x01 && b <= 0x1a:
+			return "ctrl-" + string(rune('a'+b-1))
+		case b >= 0x1c && b <= 0x1f:
+			return "ctrl-" + string(rune(b|0x40))
+		case b >= 0x20 && b <= 0x7e:
+			return string(rune(b))
+		}
+		return ""
+	}
+}
+
+func emitKittyKey(params string, ch chan<- string) {
+	parts := strings.Split(params, ";")
+	if len(parts) < 1 {
+		return
+	}
+	code, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return
+	}
+	mod := 1
+	if len(parts) >= 2 {
+		if mod, err = strconv.Atoi(parts[1]); err != nil {
+			return
+		}
+	}
+	event := 1
+	if len(parts) >= 3 {
+		if event, err = strconv.Atoi(parts[2]); err != nil {
+			return
+		}
+	}
+	// Release events (event 0) are ignored: the Kitty protocol reports
+	// both press and release, and emitting both would double every key.
+	if event == 0 {
+		return
+	}
+	key := kittyKeyName(code)
+	if key == "" {
+		return
+	}
+	if mod > 1 {
+		if prefix := modifierPrefix(mod); prefix != "" {
+			ch <- prefix + "-" + key
+		} else {
+			ch <- key
+		}
+	} else {
+		ch <- key
+	}
+}
+
+func kittyKeyName(code int) string {
+	switch code {
+	case 9:
+		return "tab"
+	case 13:
+		return "enter"
+	case 27:
+		return "esc"
+	case 32:
+		return "space"
+	case 127:
+		return "backspace"
+	// Keypad keys (Kitty keyboard protocol code points in the
+	// Private Use Area, per the Kitty keyboard protocol specification).
+	case 57344:
+		return "kp-enter"
+	case 57345:
+		return "kp-f1"
+	case 57346:
+		return "kp-f2"
+	case 57347:
+		return "kp-f3"
+	case 57348:
+		return "kp-f4"
+	case 57349:
+		return "kp-home"
+	case 57350:
+		return "kp-end"
+	case 57351:
+		return "kp-pageup"
+	case 57352:
+		return "kp-pagedown"
+	case 57353:
+		return "kp-left"
+	case 57354:
+		return "kp-right"
+	case 57355:
+		return "kp-up"
+	case 57356:
+		return "kp-down"
+	case 57357:
+		return "kp-begin"
+	// Function keys F1-F24 (Kitty keyboard protocol code points in the
+	// Private Use Area, per the Kitty keyboard protocol specification).
+	case 57358:
+		return "f1"
+	case 57359:
+		return "f2"
+	case 57360:
+		return "f3"
+	case 57361:
+		return "f4"
+	case 57362:
+		return "f5"
+	case 57363:
+		return "f6"
+	case 57364:
+		return "f7"
+	case 57365:
+		return "f8"
+	case 57366:
+		return "f9"
+	case 57367:
+		return "f10"
+	case 57368:
+		return "f11"
+	case 57369:
+		return "f12"
+	case 57370:
+		return "f13"
+	case 57371:
+		return "f14"
+	case 57372:
+		return "f15"
+	case 57373:
+		return "f16"
+	case 57374:
+		return "f17"
+	case 57375:
+		return "f18"
+	case 57376:
+		return "f19"
+	case 57377:
+		return "f20"
+	case 57378:
+		return "f21"
+	case 57379:
+		return "f22"
+	case 57380:
+		return "f23"
+	case 57381:
+		return "f24"
+	// Navigation keys.
+	case 57382:
+		return "insert"
+	case 57383:
+		return "delete"
+	case 57384:
+		return "home"
+	case 57385:
+		return "end"
+	case 57386:
+		return "pageup"
+	case 57387:
+		return "pagedown"
+	// Special keys.
+	case 57388:
+		return "print-screen"
+	case 57389:
+		return "scroll-lock"
+	case 57390:
+		return "pause"
+	case 57391:
+		return "menu"
+	// Arrow keys.
+	case 57394:
+		return "left"
+	case 57395:
+		return "right"
+	case 57396:
+		return "up"
+	case 57397:
+		return "down"
+	}
+	// ASCII range: the same names as single-byte input, so the Kitty
+	// and traditional paths produce consistent key names.
+	if code >= 0 && code <= 0x7f {
+		return singleKeyName(byte(code))
+	}
+	// Non-ASCII Unicode characters: return the character itself.
+	if code > 0x7f && code <= 0x10FFFF {
+		return string(rune(code))
+	}
+	return ""
 }
 
 // mouseKeyName maps an SGR mouse button code and event type to the logical
@@ -323,4 +948,92 @@ func mouseKeyName(button, x, y int, release bool) string {
 		}
 	}
 	return fmt.Sprintf("%s%s@%d,%d", MouseKeyPrefix, kind, x, y)
+}
+
+func handleSGRMouse(pending []byte, ch chan<- string) int {
+	end := -1
+	release := false
+	for i := 3; i < len(pending); i++ {
+		if pending[i] == 'M' {
+			end = i
+			break
+		}
+		if pending[i] == 'm' {
+			end = i
+			release = true
+			break
+		}
+		if pending[i] == 'u' {
+			// Not a mouse sequence: a Kitty keyboard mode pop
+			// (CSI < flags u). Signal the caller to handle it as
+			// a regular CSI sequence.
+			return -2
+		}
+	}
+	if end < 0 {
+		return -1
+	}
+	payload := string(pending[3:end])
+	parts := strings.Split(payload, ";")
+	if len(parts) == 3 {
+		var button, x, y int
+		var parseErr error
+		if button, parseErr = strconv.Atoi(parts[0]); parseErr == nil {
+			if x, parseErr = strconv.Atoi(parts[1]); parseErr == nil {
+				y, parseErr = strconv.Atoi(parts[2])
+			}
+		}
+		if parseErr == nil && x >= 1 && y >= 1 {
+			if key := mouseKeyName(button, x-1, y-1, release); key != "" {
+				ch <- key
+			}
+		}
+	}
+	return end + 1
+}
+
+// handleX10Mouse parses the 3-byte X10 mouse format: button+32, x+32,
+// y+32. The coordinates are 1-based and converted to 0-based on
+// emission. See TheoryOfMouseInput.
+func handleX10Mouse(data []byte, ch chan<- string) {
+	if len(data) < 3 {
+		return
+	}
+	button := int(data[0]) - 32
+	x := int(data[1]) - 32
+	y := int(data[2]) - 32
+	if button < 0 || x < 1 || y < 1 {
+		return
+	}
+	release := button == 3
+	if key := mouseKeyName(button, x-1, y-1, release); key != "" {
+		ch <- key
+	}
+}
+
+// handleURXVTMouse parses the URXVT mouse format (DECSET 1015):
+// ESC [ Cb ; Cx ; Cy M, where Cb is the button code offset by 32.
+// See TheoryOfMouseInput.
+func handleURXVTMouse(parts []string, ch chan<- string) {
+	if len(parts) != 3 {
+		return
+	}
+	var cb, cx, cy int
+	var parseErr error
+	if cb, parseErr = strconv.Atoi(parts[0]); parseErr == nil {
+		if cx, parseErr = strconv.Atoi(parts[1]); parseErr == nil {
+			cy, parseErr = strconv.Atoi(parts[2])
+		}
+	}
+	if parseErr != nil {
+		return
+	}
+	button := cb - 32
+	if button < 0 || cx < 1 || cy < 1 {
+		return
+	}
+	release := button == 3
+	if key := mouseKeyName(button, cx-1, cy-1, release); key != "" {
+		ch <- key
+	}
 }
