@@ -1,7 +1,6 @@
 package taiui
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strconv"
@@ -13,22 +12,24 @@ const TheoryOfKeyInput = `
 taiui key input theory:
 - ReadKeys decodes raw terminal input into logical key names. The reader
   is expected to be in non-blocking raw mode: a read that returns 0 bytes
-  is polled with a short sleep instead of spinning. A lone ESC that never
-  grows into a sequence is discarded. ESC followed by a non-sequence byte
-  is treated as a stray ESC and the byte is processed normally. Standard
-  CSI escape sequences (ESC [ ...), SS3 application cursor sequences (ESC O ...),
-  and VT220 tilde sequences (ESC [ n ~) decode arrow keys, home/end,
-  page-up/page-down, tab, digit keys 1-3, bracket keys '[' and ']',
-  question-mark '?', s, and q (plus Ctrl-C) into the logical names "up",
-  "down", "home", "end", "pageup", "pagedown", "tab", "1", "2", "3",
-  "prev-transition", "next-transition", "help", "split", and "quit".
-  The bracket keys name section-transition navigation: a TUI jumps its
-  Output pane to the previous or next role or thinking-state transition.
-  The question-mark key toggles the operation help overlay.
-- The function is intentionally transport-agnostic: it accepts an
-  io.Reader, so it works with tcell's tty, terminal state files, pipes,
-  and test buffers. It does no terminal mode management; the caller
-  owns starting and stopping raw mode.
+  is polled with a short sleep instead of spinning. A zero-byte read is
+  not a completion signal: an escape sequence split across reads is held
+  until it completes, and only a partial sequence that receives no
+  further bytes within a short grace period is discarded, so a partial
+  sequence cannot swallow later input. A lone ESC that never grows is
+  emitted as "esc" before it is discarded. ESC followed by a non-sequence
+  byte is treated as a stray ESC and the byte is processed normally.
+  Standard CSI escape sequences (ESC [ ...), SS3 application cursor
+  sequences (ESC O ...), and VT220 tilde sequences (ESC [ n ~) decode the
+  arrow keys, home/end, page-up/page-down, tab, digit keys 1-3, bracket
+  keys '[' and ']', question-mark '?', s, and q (plus Ctrl-C) into the
+  logical names "up", "down", "left", "right", "home", "end", "pageup",
+  "pagedown", "tab", "1", "2", "3", "prev-transition", "next-transition",
+  "help", "split", "quit", and "esc". An unknown CSI sequence is
+  discarded as a whole: its parameter bytes never leak into the key
+  stream. The bracket keys name section-transition navigation: a TUI
+  jumps its Output pane to the previous or next role or thinking-state
+  transition. The question-mark key toggles the operation help overlay.
 `
 
 const TheoryOfMouseInput = `
@@ -77,171 +78,198 @@ const (
 	mouseWheelFlag       = 64
 )
 
+// escapeSequenceTimeout is the grace period a partial escape sequence is
+// held before it is discarded: a zero-byte read is not a completion
+// signal, so a sequence split across reads is kept until it completes or
+// the timeout expires. A lone ESC that never grows is emitted as "esc"
+// when the timeout expires.
+const escapeSequenceTimeout = 50 * time.Millisecond
+
 func ReadKeys(r io.Reader, ch chan<- string) {
 	var buf [64]byte
 	var pending []byte
+	lastData := time.Now()
 	for {
 		n, err := r.Read(buf[:])
-		if err != nil {
-			return
-		}
-		if n == 0 {
-			// The tty is in non-blocking raw mode; avoid a busy loop.
-			// An incomplete ESC sequence that never grew is discarded.
-			if len(pending) > 0 && pending[0] == 0x1b && len(pending) < 3 {
-				pending = pending[:0]
-			}
-			time.Sleep(2 * time.Millisecond)
-			continue
-		}
-		pending = append(pending, buf[:n]...)
-		for len(pending) > 0 {
-			if pending[0] == 0x1b {
-				if len(pending) == 1 {
-					break
-				}
-				if pending[1] == 'O' {
-					// SS3 application cursor mode: ESC O A|B|H|F
+		if n > 0 {
+			lastData = time.Now()
+			pending = append(pending, buf[:n]...)
+			for len(pending) > 0 {
+				if pending[0] == 0x1b {
+					if len(pending) == 1 {
+						break
+					}
+					if pending[1] == 'O' {
+						// SS3 application cursor mode: ESC O A|B|C|D|H|F
+						if len(pending) < 3 {
+							break
+						}
+						switch pending[2] {
+						case 'A':
+							ch <- "up"
+						case 'B':
+							ch <- "down"
+						case 'C':
+							ch <- "right"
+						case 'D':
+							ch <- "left"
+						case 'H':
+							ch <- "home"
+						case 'F':
+							ch <- "end"
+						}
+						pending = pending[3:]
+						continue
+					}
+					if pending[1] != '[' {
+						// ESC followed by a non-sequence byte: the ESC
+						// is not part of an escape sequence.
+						pending = pending[1:]
+						continue
+					}
 					if len(pending) < 3 {
 						break
 					}
-					switch pending[2] {
-					case 'A':
-						ch <- "up"
-					case 'B':
-						ch <- "down"
-					case 'H':
-						ch <- "home"
-					case 'F':
-						ch <- "end"
-					}
-					pending = pending[3:]
-					continue
-				}
-				if pending[1] != '[' {
-					// ESC followed by a non-sequence byte: the ESC
-					// is not part of an escape sequence.
-					pending = pending[1:]
-					continue
-				}
-				if len(pending) < 3 {
-					break
-				}
-				if pending[2] == '<' {
-					// SGR mouse sequence: ESC [ < Cb ; Cx ; Cy M|m.
-					// The M terminator marks a press, drag, or wheel
-					// event; the m terminator marks a release.
-					// See TheoryOfMouseInput.
-					end := -1
-					release := false
-					for i := 3; i < len(pending); i++ {
-						if pending[i] == 'M' {
-							end = i
+					if pending[2] == '<' {
+						// SGR mouse sequence: ESC [ < Cb ; Cx ; Cy M|m.
+						// The M terminator marks a press, drag, or wheel
+						// event; the m terminator marks a release.
+						// See TheoryOfMouseInput.
+						end := -1
+						release := false
+						for i := 3; i < len(pending); i++ {
+							if pending[i] == 'M' {
+								end = i
+								break
+							}
+							if pending[i] == 'm' {
+								end = i
+								release = true
+								break
+							}
+						}
+						if end < 0 {
+							// The terminator has not arrived yet; wait for
+							// more input.
 							break
 						}
-						if pending[i] == 'm' {
+						payload := string(pending[3:end])
+						parts := strings.Split(payload, ";")
+						if len(parts) == 3 {
+							var button, x, y int
+							var parseErr error
+							if button, parseErr = strconv.Atoi(parts[0]); parseErr == nil {
+								if x, parseErr = strconv.Atoi(parts[1]); parseErr == nil {
+									y, parseErr = strconv.Atoi(parts[2])
+								}
+							}
+							if parseErr == nil && x >= 1 && y >= 1 {
+								// The SGR protocol sends 1-based coordinates;
+								// the TUI uses 0-based cell coordinates.
+								if key := mouseKeyName(button, x-1, y-1, release); key != "" {
+									ch <- key
+								}
+							}
+						}
+						// A malformed or unconsumed mouse sequence is skipped
+						// as a whole: dropping only its ESC would leave the
+						// rest of the sequence to be misparsed as keys.
+						pending = pending[end+1:]
+						continue
+					}
+					// Find the CSI final byte: the first byte in 0x40..0x7E
+					// after the '['. Parameter and intermediate bytes are
+					// below 0x40, so the scan stops at the final byte.
+					end := -1
+					for i := 2; i < len(pending); i++ {
+						if pending[i] >= 0x40 && pending[i] <= 0x7e {
 							end = i
-							release = true
 							break
 						}
 					}
 					if end < 0 {
-						// The terminator has not arrived yet; wait for
-						// more input.
+						// The final byte has not arrived yet; wait for more
+						// input.
 						break
 					}
-					payload := string(pending[3:end])
-					parts := strings.Split(payload, ";")
-					if len(parts) == 3 {
-						var button, x, y int
-						var parseErr error
-						if button, parseErr = strconv.Atoi(parts[0]); parseErr == nil {
-							if x, parseErr = strconv.Atoi(parts[1]); parseErr == nil {
-								y, parseErr = strconv.Atoi(parts[2])
-							}
-						}
-						if parseErr == nil && x >= 1 && y >= 1 {
-							// The SGR protocol sends 1-based coordinates;
-							// the TUI uses 0-based cell coordinates.
-							if key := mouseKeyName(button, x-1, y-1, release); key != "" {
-								ch <- key
-							}
-						}
+					seq := string(pending[:end+1])
+					switch seq {
+					case "\x1b[A":
+						ch <- "up"
+					case "\x1b[B":
+						ch <- "down"
+					case "\x1b[C":
+						ch <- "right"
+					case "\x1b[D":
+						ch <- "left"
+					case "\x1b[H":
+						ch <- "home"
+					case "\x1b[F":
+						ch <- "end"
+					case "\x1b[1~":
+						ch <- "home"
+					case "\x1b[4~":
+						ch <- "end"
+					case "\x1b[5~":
+						ch <- "pageup"
+					case "\x1b[6~":
+						ch <- "pagedown"
+					case "\x1b[7~":
+						ch <- "home"
+					case "\x1b[8~":
+						ch <- "end"
 					}
-					// A malformed or unconsumed mouse sequence is skipped
-					// as a whole: dropping only its ESC would leave the
-					// rest of the sequence to be misparsed as keys.
+					// An unknown CSI sequence is discarded as a whole: its
+					// parameter bytes never leak into the key stream.
 					pending = pending[end+1:]
 					continue
 				}
-				switch pending[2] {
-				case 'A':
-					ch <- "up"
-					pending = pending[3:]
-					continue
-				case 'B':
-					ch <- "down"
-					pending = pending[3:]
-					continue
-				case 'H':
-					ch <- "home"
-					pending = pending[3:]
-					continue
-				case 'F':
-					ch <- "end"
-					pending = pending[3:]
-					continue
-				default:
-					if pending[2] >= '0' && pending[2] <= '9' {
-						// tilde sequence: ESC [ n ~
-						idx := bytes.IndexByte(pending, '~')
-						if idx < 0 {
-							break
-						}
-						seq := string(pending[:idx+1])
-						switch seq {
-						case "\x1b[1~":
-							ch <- "home"
-						case "\x1b[4~":
-							ch <- "end"
-						case "\x1b[5~":
-							ch <- "pageup"
-						case "\x1b[6~":
-							ch <- "pagedown"
-						case "\x1b[7~":
-							ch <- "home"
-						case "\x1b[8~":
-							ch <- "end"
-						}
-						pending = pending[idx+1:]
-						continue
-					}
-					// unknown escape sequence: discard one byte
-					pending = pending[3:]
-					continue
+				switch pending[0] {
+				case '1':
+					ch <- "1"
+				case '2':
+					ch <- "2"
+				case '3':
+					ch <- "3"
+				case '[':
+					ch <- "prev-transition"
+				case ']':
+					ch <- "next-transition"
+				case '?':
+					ch <- "help"
+				case 's', 'S':
+					ch <- "split"
+				case 'q', 'Q', 0x03:
+					ch <- "quit"
+				case '\t':
+					ch <- "tab"
 				}
+				pending = pending[1:]
 			}
-			switch pending[0] {
-			case '1':
-				ch <- "1"
-			case '2':
-				ch <- "2"
-			case '3':
-				ch <- "3"
-			case '[':
-				ch <- "prev-transition"
-			case ']':
-				ch <- "next-transition"
-			case '?':
-				ch <- "help"
-			case 's', 'S':
-				ch <- "split"
-			case 'q', 'Q', 0x03:
-				ch <- "quit"
-			case '\t':
-				ch <- "tab"
+		}
+		if err != nil {
+			// A lone ESC at end of input is a real key press, not a
+			// partial sequence: emit it before returning.
+			if err == io.EOF && len(pending) == 1 && pending[0] == 0x1b {
+				ch <- "esc"
 			}
-			pending = pending[1:]
+			return
+		}
+		if n == 0 {
+			// The tty is in non-blocking raw mode; avoid a busy loop.
+			// A zero-byte read is not a completion signal: a partial
+			// escape sequence is held until it completes or the grace
+			// period expires, so a sequence split across reads is not
+			// lost. A lone ESC that never grows is emitted as "esc"
+			// before it is discarded.
+			if len(pending) > 0 && pending[0] == 0x1b && time.Since(lastData) > escapeSequenceTimeout {
+				if len(pending) == 1 {
+					ch <- "esc"
+				}
+				pending = pending[:0]
+			}
+			time.Sleep(2 * time.Millisecond)
+			continue
 		}
 	}
 }

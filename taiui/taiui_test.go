@@ -2,8 +2,11 @@ package taiui
 
 import (
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3/color"
@@ -2660,4 +2663,160 @@ func TestListItemRendering(t *testing.T) {
 	if r := screen2.cell(3, 0); r != 'y' {
 		t.Fatalf("expected 'y' at (3,0), got %v", r)
 	}
+}
+
+func TestReadKeysImprovements(t *testing.T) {
+	t.Run("Arrows", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[C\x1b[D\x1bOC\x1bOD"), ch)
+		var got []string
+		for len(got) < 4 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for arrow keys")
+			}
+		}
+		want := []string{"right", "left", "right", "left"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("SplitSequenceAcrossZeroReads", func(t *testing.T) {
+		// A zero-byte read is not a completion signal: an escape
+		// sequence split across reads is held until it completes, so
+		// the arrow key is not lost.
+		ch := make(chan string, 8)
+		go ReadKeys(&chunkReader{chunks: [][]byte{[]byte("\x1b["), {}, []byte("A")}}, ch)
+		select {
+		case k := <-ch:
+			if k != "up" {
+				t.Fatalf("expected up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for up")
+		}
+	})
+
+	t.Run("IncompleteSequenceConsumedByFinalByte", func(t *testing.T) {
+		// ESC [ 1 q is a complete CSI sequence: the final byte q is
+		// consumed as part of the sequence, so it must not leak into
+		// the key stream as "quit".
+		ch := make(chan string, 8)
+		go ReadKeys(&chunkReader{chunks: [][]byte{[]byte("\x1b[1"), {}, []byte("q")}}, ch)
+		select {
+		case k := <-ch:
+			t.Fatalf("expected no key, got %q", k)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+
+	t.Run("IncompleteSequenceDiscardedAfterTimeout", func(t *testing.T) {
+		// A partial sequence that receives no further bytes within the
+		// grace period is discarded, so a later byte is processed
+		// normally.
+		ch := make(chan string, 8)
+		go ReadKeys(&delayedChunkReader{
+			chunks: [][]byte{[]byte("\x1b[1"), {}, []byte("q")},
+			delay:  150 * time.Millisecond,
+		}, ch)
+		select {
+		case k := <-ch:
+			if k != "quit" {
+				t.Fatalf("expected quit, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for quit")
+		}
+	})
+
+	t.Run("LoneEsc", func(t *testing.T) {
+		// A lone ESC at end of input is a real key press, not a partial
+		// sequence: it is emitted as "esc".
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b"), ch)
+		select {
+		case k := <-ch:
+			if k != "esc" {
+				t.Fatalf("expected esc, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for esc")
+		}
+	})
+
+	t.Run("LoneEscTimeout", func(t *testing.T) {
+		// A lone ESC that never grows is emitted as "esc" when the grace
+		// period expires.
+		ch := make(chan string, 8)
+		go ReadKeys(&delayedChunkReader{
+			chunks: [][]byte{[]byte("\x1b"), {}},
+			delay:  150 * time.Millisecond,
+		}, ch)
+		select {
+		case k := <-ch:
+			if k != "esc" {
+				t.Fatalf("expected esc, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for esc")
+		}
+	})
+
+	t.Run("UnknownCSIDiscarded", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[?25lq"), ch)
+		select {
+		case k := <-ch:
+			if k != "quit" {
+				t.Fatalf("expected quit, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for quit")
+		}
+	})
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if r.idx >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[r.idx]
+	r.idx++
+	if len(chunk) == 0 {
+		return 0, nil
+	}
+	return copy(p, chunk), nil
+}
+
+// delayedChunkReader returns its chunks in order; an empty chunk yields
+// zero-byte reads for at least delay before advancing, simulating a
+// non-blocking tty poll with a pause between chunks.
+type delayedChunkReader struct {
+	chunks [][]byte
+	idx    int
+	delay  time.Duration
+}
+
+func (r *delayedChunkReader) Read(p []byte) (int, error) {
+	if r.idx >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[r.idx]
+	if len(chunk) == 0 {
+		time.Sleep(r.delay)
+		r.idx++
+		return 0, nil
+	}
+	r.idx++
+	return copy(p, chunk), nil
+}
+
+// chunkReader returns its chunks in order; an empty chunk yields a
+// zero-byte read, simulating a non-blocking tty poll.
+type chunkReader struct {
+	chunks [][]byte
+	idx    int
 }
