@@ -383,3 +383,59 @@ func TestProcessComponents(t *testing.T) {
 		}
 	})
 }
+
+func TestProcessComponentsStateModificationTriggers(t *testing.T) {
+	// A component that modifies State (like request-context) must trigger
+	// a new round, just like a component that produces Parts. The modified
+	// state is returned as newState, and triggered is true. combinedParts
+	// is empty because the state was modified directly, not via Parts.
+	// See TheoryOfComponents.
+	initialState := generators.NewPrompts("", nil)
+
+	comps := ComponentSet{
+		{
+			Kind: "state-modifier",
+			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+				newState, err := pctx.State.AppendContent(&generators.Content{
+					Role:  generators.RoleUser,
+					Parts: []generators.Part{generators.Text("fetched context")},
+				})
+				if err != nil {
+					return ProcessResult{Err: err}
+				}
+				return ProcessResult{State: newState}
+			},
+		},
+	}
+
+	allBlocks := []blocks.Block{
+		{Kind: "state-modifier", Body: "request"},
+	}
+
+	remaining, newState, combinedParts, triggered, err := ProcessComponents(
+		context.Background(), comps, allBlocks, initialState, nil, nets.HTTPClient{}, nil, false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !triggered {
+		t.Fatal("expected triggered=true when component modifies State")
+	}
+	if len(combinedParts) != 0 {
+		t.Fatalf("expected 0 combined parts for state-only trigger, got %d", len(combinedParts))
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected 0 remaining blocks, got %d", len(remaining))
+	}
+	found := false
+	for c := range newState.Contents() {
+		for _, p := range c.Parts {
+			if text, ok := p.(generators.Text); ok && string(text) == "fetched context" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected fetched context in new state")
+	}
+}

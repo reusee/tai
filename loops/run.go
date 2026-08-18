@@ -106,9 +106,15 @@ summary carrying forward established conclusions and insights, mitigating
 overthinking in the retry attempt. Short or empty outputs are retried directly.
 See states.TheoryOfHandoff.
 
+Component-triggering blocks (request-context, shell, continue, go-test) also
+serve as completion signals: a round with such blocks but no summary block is
+not retried, because the model is waiting for component processing (e.g.,
+fetched context, shell output) rather than truncated. Retrying would discard
+the blocks and produce the same output again.
+
 When the retry budget is exhausted and the final attempt still lacks a summary
-block, the loop synthesizes a summary from the round's output and appends it to
-the state as a summary block, so the round has a completion signal for the round
+block, the loop synthesizes a summary from the round's output and appends it
+to the state as a summary block, so the round has a completion signal for the round
 statistics and the TUI's Summary tab.
 
 Retry on error: an error after content output retries from the state that includes
@@ -414,6 +420,14 @@ func (ls *loopState) runRound() (roundResult, error) {
 			break
 		}
 
+		// Component-triggering blocks (e.g., request-context, shell,
+		// continue) serve as completion signals: the model is waiting
+		// for component processing, not truncated. Skip the retry and
+		// proceed to component processing. See TheoryOfLoops.
+		if hasTriggeringBlocks(collectedBlocks, ls.opts.Components) {
+			break
+		}
+
 		// Check for completion: a summary block signals normal
 		// completion, but an abnormal finish reason (e.g.,
 		// "length" from max-token truncation) overrides the
@@ -494,8 +508,10 @@ func (ls *loopState) runRound() (roundResult, error) {
 	// When the retry budget is exhausted and the final attempt
 	// still produced no summary block, synthesize a summary from
 	// the round's output and append it to the state as a summary
-	// block.
-	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
+	// block. Skip synthesis when the round has component-triggering
+	// blocks: the model is waiting for component processing, not
+	// truncated. See TheoryOfLoops.
+	if len(roundSummaries) == 0 && !hasTriggeringBlocks(collectedBlocks, ls.opts.Components) && ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
 		if incompleteText != "" {
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
@@ -1127,6 +1143,25 @@ var abnormalFinishReasons = map[string]bool{
 // codes/generate.go.
 func isAbnormalFinishReason(reason string) bool {
 	return abnormalFinishReasons[strings.ToLower(reason)]
+}
+
+// hasTriggeringBlocks reports whether any block in collectedBlocks
+// matches a processable component's kind. When the model emits
+// component-triggering blocks (e.g., request-context, shell, continue)
+// without a summary block, the round is still considered complete
+// because the model is waiting for component processing — retrying
+// would discard the blocks and produce the same output again.
+// See TheoryOfLoops.
+func hasTriggeringBlocks(collectedBlocks []blocks.Block, comps components.ComponentSet) bool {
+	processable := comps.Processable()
+	for _, block := range collectedBlocks {
+		for _, comp := range processable {
+			if comp.Kind != "" && block.Kind == comp.Kind {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // formatParseErrors formats collected parse errors as user content fed

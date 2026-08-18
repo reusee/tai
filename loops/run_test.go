@@ -1806,6 +1806,67 @@ func TestRunStateDecorators(t *testing.T) {
 	})
 }
 
+func TestRunStateModificationTriggersRound(t *testing.T) {
+	// A component that modifies State (like request-context) must trigger
+	// a new generation round. When the model emits a component-triggering
+	// block without a summary block, the round must NOT be retried for
+	// missing completion — the model is waiting for component processing,
+	// not truncated. See TheoryOfLoops and TheoryOfComponents.
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) phases.Phase {
+			callCount++
+			if callCount == 1 {
+				return appendPhase("<<龘靐 <state-modifier>\nrequest\n龘靐\n")
+			}
+			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "state-modifier",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					newState, err := pctx.State.AppendContent(&generators.Content{
+						Role:  generators.RoleUser,
+						Parts: []generators.Part{generators.Text("fetched context")},
+					})
+					if err != nil {
+						return components.ProcessResult{Err: err}
+					}
+					return components.ProcessResult{State: newState}
+				},
+			},
+		}
+
+		result, err := runOnce(run, RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               comps,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Fatalf("expected 2 rounds (state modification triggers next, no retry for missing summary), got %d", callCount)
+		}
+
+		found := false
+		for c := range result.FinalState.Contents() {
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok && string(text) == "fetched context" {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("expected fetched context in final state")
+		}
+	})
+}
+
 // testObservingState is a State wrapper that records content appends,
 // for testing state decorators.
 type testObservingState struct {
