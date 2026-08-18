@@ -18,7 +18,7 @@ levels 0-2 exclude them. The distance graph uses merged logical packages.
 
 Package categorization determines the minimum visibility and priority:
 - Focus packages (from -pkg): level 3, always visible
-- Context packages (from -ctx, -dep): level 2
+- Context packages (from -ctx, -dep): level 2, always visible
 - Same-module non-focus packages: level 1
 - Direct imports of focus packages: level 1
 - Other module packages: level 0

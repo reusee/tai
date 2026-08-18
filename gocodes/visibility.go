@@ -44,7 +44,11 @@ package whose predecessor is still at level 0 is not probed, because its doc
 could not be shown without violating the priority ordering. This keeps the
 number of go doc subprocesses proportional to the number of packages that
 can actually benefit from level 1, rather than the size of the dependency
-graph.
+graph. When the minimum-visibility allocation exhausts the budget — which
+happens when a guaranteed context package costs more than the context
+budget — the water-fill phase is skipped entirely: no upgrade is affordable,
+and probing the 0→1 transition would only spawn go doc subprocesses whose
+output could not be shown.
 
 When go doc fails for a package, the doc is treated as empty rather than
 unaffordable: the level-1 cost is zero and the level-1 content is empty
@@ -86,6 +90,20 @@ affect subsequent packages. Priority still governs the order of
 allocation, so high-priority packages are allocated before the budget
 is exhausted.
 
+Context packages — those explicitly requested via -ctx or -dep — are
+guaranteed their minimum visibility (level 2, full code without test
+files): the minimum allocation deducts their cost from the budget
+unconditionally, even when it exceeds the remaining budget. An
+explicitly requested package must never be dropped in favor of its own
+dependencies, which are discovered automatically. Without the guarantee,
+a large context package could not afford its code cost at minimum
+allocation and would be out-prioritized by its smaller dependencies
+during water-fill, leaving the requested package invisible or doc-only
+while its dependencies show full code. When a guaranteed context
+package exhausts the budget, the water-fill phase is skipped entirely:
+no upgrade is affordable, and probing packages would only spawn go doc
+subprocesses whose results could not be shown.
+
 The water-fill upgrade phase retains one predecessor gate: the upgrade
 from level 0 to level 1 (package documentation) is blocked when the
 immediately preceding package is at level 0, because that transition
@@ -100,10 +118,11 @@ non-monotonic only in the presence of unaffordable packages.
 
 Focus packages are always at level 3 (all files) and do not count
 against the context budget. Non-focus packages share the context token
-budget, a hard limit: packages are initially invisible, then upgraded
-to their minimum visibility in priority order as the budget allows,
-then upgraded further by the water-filling algorithm within the
-remaining budget.
+budget, a hard limit: packages are initially invisible, then context
+packages are raised to their guaranteed minimum visibility
+unconditionally, remaining packages are upgraded to their minimum
+visibility in priority order as the budget allows, then upgraded further
+by the water-filling algorithm within the remaining budget.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -545,13 +564,18 @@ func allocateVisibility(
 		lp.Visibility = VisibilityInvisible
 	}
 
-	// Allocate minimum visibility in priority order. A package that
-	// cannot afford its minimum visibility is left invisible but does
-	// NOT block lower-priority packages: the budget is shared, and every
-	// package gets an independent chance to reach its minimum. This
-	// avoids the cascade where a single unaffordable package (e.g., a
-	// direct dependency whose go doc output exceeds the budget, or whose
-	// go doc fails) blanks out the entire context. Priority still
+	// Allocate minimum visibility in priority order. Context packages
+	// (explicitly requested via -ctx or -dep) are guaranteed their
+	// minimum visibility: their cost is deducted from the budget
+	// unconditionally, even when it exceeds the remaining budget. An
+	// explicitly requested package must never be dropped in favor of its
+	// own dependencies, which are discovered automatically. A package
+	// that cannot afford its minimum visibility is left invisible but
+	// does NOT block lower-priority packages: the budget is shared, and
+	// every package gets an independent chance to reach its minimum.
+	// This avoids the cascade where a single unaffordable package (e.g.,
+	// a direct dependency whose go doc output exceeds the budget, or
+	// whose go doc fails) blanks out the entire context. Priority still
 	// governs the order of allocation: higher-priority packages are
 	// processed first, so the most important packages are allocated
 	// before the budget is exhausted. See TheoryOfVisibilityAllocation.
@@ -578,7 +602,7 @@ func allocateVisibility(
 			}
 		}
 		cost := lp.BudgetTokensByLevel[minVis]
-		if cost <= remaining {
+		if lp.Category == CategoryContext || cost <= remaining {
 			lp.Visibility = minVis
 			remaining -= cost
 		}
@@ -599,6 +623,16 @@ func allocateVisibility(
 	// unaffordable package cannot waste the remaining budget.
 	// See TheoryOfVisibilityAllocation.
 	for {
+		// When the minimum-visibility allocation exhausted the budget
+		// (remaining <= 0, which happens when a guaranteed context
+		// package costs more than the budget), no upgrade is affordable:
+		// probing packages would only spawn go doc subprocesses whose
+		// results could not be shown. See TheoryOfVisibilityAllocation
+		// and TheoryOfLazyPackageDoc.
+		if remaining <= 0 {
+			break
+		}
+
 		upgraded := false
 		predecessorLevel := VisibilityAll
 
