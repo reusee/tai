@@ -3595,6 +3595,120 @@ func TestReadKeysMouseFormats(t *testing.T) {
 	})
 }
 
+func TestReadKeysMouseModifiers(t *testing.T) {
+	t.Run("SGRShiftLeftClick", func(t *testing.T) {
+		// Shift+left click at (5,3): Cb=0|4=4, Cx=5, Cy=3
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<4;5;3M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-shift-left@4,2" {
+				t.Fatalf("expected mouse-shift-left@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift+left click")
+		}
+	})
+
+	t.Run("SGRCtrlWheelUp", func(t *testing.T) {
+		// Ctrl+wheel up at (10,5): Cb=64|16=80, Cx=10, Cy=5
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<80;10;5M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-ctrl-wheel-up@9,4" {
+				t.Fatalf("expected mouse-ctrl-wheel-up@9,4, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl+wheel up")
+		}
+	})
+
+	t.Run("SGRShiftCtrlLeftClick", func(t *testing.T) {
+		// Shift+Ctrl+left click at (1,1): Cb=0|4|16=20, Cx=1, Cy=1
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<20;1;1M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-shift-ctrl-left@0,0" {
+				t.Fatalf("expected mouse-shift-ctrl-left@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift+ctrl+left click")
+		}
+	})
+
+	t.Run("SGRAltLeftDrag", func(t *testing.T) {
+		// Alt+left drag at (5,5): Cb=0|8|32=40, Cx=5, Cy=5
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<40;5;5M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-alt-leftdrag@4,4" {
+				t.Fatalf("expected mouse-alt-leftdrag@4,4, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt+left drag")
+		}
+	})
+
+	t.Run("SGRShiftRelease", func(t *testing.T) {
+		// Shift+release at (1,1): Cb=3|4=7, Cx=1, Cy=1, terminator 'm'
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<7;1;1m"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-shift-release@0,0" {
+				t.Fatalf("expected mouse-shift-release@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift+release")
+		}
+	})
+
+	t.Run("SGRCtrlRelease", func(t *testing.T) {
+		// Ctrl+release at (3,3): Cb=3|16=19, Cx=3, Cy=3, terminator 'm'
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<19;3;3m"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-ctrl-release@2,2" {
+				t.Fatalf("expected mouse-ctrl-release@2,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl+release")
+		}
+	})
+
+	t.Run("URXVTShiftRelease", func(t *testing.T) {
+		// Shift+release at (1,1): Cb=3+4+32=39, Cx=1, Cy=1
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[39;1;1M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-shift-release@0,0" {
+				t.Fatalf("expected mouse-shift-release@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT shift+release")
+		}
+	})
+
+	t.Run("URXVTShiftCtrlLeftClick", func(t *testing.T) {
+		// Shift+Ctrl+left click at (2,2): Cb=0+4+16+32=52, Cx=2, Cy=2
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[52;2;2M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-shift-ctrl-left@1,1" {
+				t.Fatalf("expected mouse-shift-ctrl-left@1,1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT shift+ctrl+left click")
+		}
+	})
+}
+
 func TestReadKeysExtendedModifiers(t *testing.T) {
 	t.Run("MetaUp", func(t *testing.T) {
 		ch := make(chan string, 4)
@@ -3756,6 +3870,570 @@ func TestReadKeysKittyAndGeneric(t *testing.T) {
 		want := []string{"q", "s", "[", "]", "S", "?"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+}
+
+func TestReadKeysAltControlAndCSIFunc(t *testing.T) {
+	t.Run("AltEnter", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b\x0d"), ch)
+		select {
+		case k := <-ch:
+			if k != "alt-enter" {
+				t.Fatalf("expected alt-enter, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt-enter")
+		}
+	})
+
+	t.Run("AltTab", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b\x09"), ch)
+		select {
+		case k := <-ch:
+			if k != "alt-tab" {
+				t.Fatalf("expected alt-tab, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt-tab")
+		}
+	})
+
+	t.Run("AltBackspace", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b\x7f"), ch)
+		select {
+		case k := <-ch:
+			if k != "alt-backspace" {
+				t.Fatalf("expected alt-backspace, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt-backspace")
+		}
+	})
+
+	t.Run("AltCtrlA", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b\x01"), ch)
+		select {
+		case k := <-ch:
+			if k != "alt-ctrl-a" {
+				t.Fatalf("expected alt-ctrl-a, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for alt-ctrl-a")
+		}
+	})
+
+	t.Run("CSIF1", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[P"), ch)
+		select {
+		case k := <-ch:
+			if k != "f1" {
+				t.Fatalf("expected f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for f1")
+		}
+	})
+
+	t.Run("CSIF2", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[Q"), ch)
+		select {
+		case k := <-ch:
+			if k != "f2" {
+				t.Fatalf("expected f2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for f2")
+		}
+	})
+
+	t.Run("CSIF3", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[R"), ch)
+		select {
+		case k := <-ch:
+			if k != "f3" {
+				t.Fatalf("expected f3, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for f3")
+		}
+	})
+
+	t.Run("CSIF4", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[S"), ch)
+		select {
+		case k := <-ch:
+			if k != "f4" {
+				t.Fatalf("expected f4, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for f4")
+		}
+	})
+
+	t.Run("CSIShiftF1", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;2P"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-f1" {
+				t.Fatalf("expected shift-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-f1")
+		}
+	})
+
+	t.Run("CSICtrlF1", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;5P"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-f1" {
+				t.Fatalf("expected ctrl-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-f1")
+		}
+	})
+
+	t.Run("CSIShiftF2", func(t *testing.T) {
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;2Q"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-f2" {
+				t.Fatalf("expected shift-f2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-f2")
+		}
+	})
+
+	t.Run("CSICursorPosReportIgnored", func(t *testing.T) {
+		// CSI 1;1R is a cursor position report, not Shift+F3: modified
+		// R is not decoded to avoid ambiguity with cursor position
+		// reports.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;1R\x1b[P"), ch)
+		select {
+		case k := <-ch:
+			if k != "f1" {
+				t.Fatalf("expected f1 after ignored cursor pos report, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for f1")
+		}
+	})
+}
+
+func TestReadKeysModifierKeysAndExtended(t *testing.T) {
+	t.Run("ModifierOnly", func(t *testing.T) {
+		tests := []struct {
+			code int
+			want string
+		}{
+			{57440, "left-shift"},
+			{57441, "left-ctrl"},
+			{57442, "left-alt"},
+			{57443, "left-meta"},
+			{57444, "left-hyper"},
+			{57445, "right-shift"},
+			{57446, "right-ctrl"},
+			{57447, "right-alt"},
+			{57448, "right-meta"},
+			{57449, "right-hyper"},
+			{57450, "iso-level3-shift"},
+			{57451, "iso-level5-shift"},
+			{57452, "caps-lock"},
+			{57453, "num-lock"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.want, func(t *testing.T) {
+				ch := make(chan string, 4)
+				input := fmt.Sprintf("\x1b[%d;1;1u", tc.code)
+				go ReadKeys(strings.NewReader(input), ch)
+				select {
+				case k := <-ch:
+					if k != tc.want {
+						t.Fatalf("expected %q, got %q", tc.want, k)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("timeout waiting for key")
+				}
+			})
+		}
+	})
+
+	t.Run("ModifierWithModifier", func(t *testing.T) {
+		// Ctrl+Left Shift: code 57440, mod 5 (Ctrl).
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57440;5;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-left-shift" {
+				t.Fatalf("expected ctrl-left-shift, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-left-shift")
+		}
+	})
+
+	t.Run("ModifierRelease", func(t *testing.T) {
+		// Release events (event 0) are ignored.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57440;1;0u\x1b[57440;1;1u"), ch)
+		select {
+		case k := <-ch:
+			if k != "left-shift" {
+				t.Fatalf("expected left-shift (release ignored), got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for left-shift")
+		}
+	})
+
+	t.Run("F25F36", func(t *testing.T) {
+		ch := make(chan string, 16)
+		input := "\x1b[41~\x1b[42~\x1b[43~\x1b[44~\x1b[45~\x1b[46~\x1b[47~\x1b[48~\x1b[49~\x1b[50~\x1b[51~\x1b[52~"
+		go ReadKeys(strings.NewReader(input), ch)
+		var got []string
+		for len(got) < 12 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for F25-F36")
+			}
+		}
+		want := []string{"f25", "f26", "f27", "f28", "f29", "f30", "f31", "f32", "f33", "f34", "f35", "f36"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("ModePushConsumed", func(t *testing.T) {
+		// CSI > 1 u is a Kitty keyboard mode push; it must be consumed
+		// silently, not emitted as a key event.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[>1uq"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after mode push, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after mode push")
+		}
+	})
+
+	t.Run("ModeQueryConsumed", func(t *testing.T) {
+		// CSI ? 1000 u is a Kitty keyboard mode query response; it
+		// must be consumed silently.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[?1000uq"), ch)
+		select {
+		case k := <-ch:
+			if k != "q" {
+				t.Fatalf("expected q after mode query, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for q after mode query")
+		}
+	})
+}
+
+func TestReadKeysKittyModifierEncoding(t *testing.T) {
+	// The Kitty keyboard protocol uses a different modifier bit
+	// assignment from xterm's CSI modified keys. Kitty bit 3=Super,
+	// 4=Hyper, 5=Meta; xterm bit 3=Meta, 4=Super, 5=Hyper. The same
+	// modifier value must produce different key names depending on
+	// whether the sequence is Kitty (CSI ... u) or xterm (CSI ... A).
+	t.Run("KittySuperF1", func(t *testing.T) {
+		// Kitty mod 9: bit 3 = Super
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57358;9u"), ch)
+		select {
+		case k := <-ch:
+			if k != "super-f1" {
+				t.Fatalf("expected super-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for super-f1")
+		}
+	})
+
+	t.Run("KittyHyperF1", func(t *testing.T) {
+		// Kitty mod 17: bit 4 = Hyper
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57358;17u"), ch)
+		select {
+		case k := <-ch:
+			if k != "hyper-f1" {
+				t.Fatalf("expected hyper-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for hyper-f1")
+		}
+	})
+
+	t.Run("KittyMetaF1", func(t *testing.T) {
+		// Kitty mod 33: bit 5 = Meta
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57358;33u"), ch)
+		select {
+		case k := <-ch:
+			if k != "meta-f1" {
+				t.Fatalf("expected meta-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for meta-f1")
+		}
+	})
+
+	t.Run("KittyCtrlSuperUp", func(t *testing.T) {
+		// Kitty mod 13: bits 2+3 = Ctrl+Super
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57396;13u"), ch)
+		select {
+		case k := <-ch:
+			if k != "ctrl-super-up" {
+				t.Fatalf("expected ctrl-super-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl-super-up")
+		}
+	})
+
+	t.Run("KittyShiftHyperMetaF1", func(t *testing.T) {
+		// Kitty mod 50: bits 0+4+5 = Shift+Hyper+Meta
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[57358;50u"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-hyper-meta-f1" {
+				t.Fatalf("expected shift-hyper-meta-f1, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-hyper-meta-f1")
+		}
+	})
+
+	t.Run("XtermMetaUpStillWorks", func(t *testing.T) {
+		// xterm mod 9: bit 3 = Meta (not Super)
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[1;9A"), ch)
+		select {
+		case k := <-ch:
+			if k != "meta-up" {
+				t.Fatalf("expected meta-up, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for meta-up")
+		}
+	})
+}
+
+func TestReadKeysLinuxConsoleFunctionKeys(t *testing.T) {
+	// The Linux console sends F1-F5 as ESC [ [ A-E and Shift+F1-F5
+	// as ESC [ [ a-e, using a non-standard second [ that is recognized
+	// before the generic CSI scan.
+	t.Run("F1_F5", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[[A\x1b[[B\x1b[[C\x1b[[D\x1b[[E"), ch)
+		var got []string
+		for len(got) < 5 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for function keys")
+			}
+		}
+		want := []string{"f1", "f2", "f3", "f4", "f5"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("ShiftF1_F5", func(t *testing.T) {
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[[a\x1b[[b\x1b[[c\x1b[[d\x1b[[e"), ch)
+		var got []string
+		for len(got) < 5 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for shifted function keys")
+			}
+		}
+		want := []string{"shift-f1", "shift-f2", "shift-f3", "shift-f4", "shift-f5"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("F1ThenQ", func(t *testing.T) {
+		// A Linux console F1 followed by a regular key: the F1
+		// sequence is consumed and the next key is processed
+		// normally.
+		ch := make(chan string, 8)
+		go ReadKeys(strings.NewReader("\x1b[[Aq"), ch)
+		var got []string
+		for len(got) < 2 {
+			select {
+			case k := <-ch:
+				got = append(got, k)
+			case <-time.After(time.Second):
+				t.Fatal("timeout waiting for keys")
+			}
+		}
+		want := []string{"f1", "q"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+}
+
+func TestReadKeysExtendedMouseButtons(t *testing.T) {
+	t.Run("SGRExtendedButton8", func(t *testing.T) {
+		// Button 8 at (5,3): Cb=128, Cx=5, Cy=3
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<128;5;3M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-button-8@4,2" {
+				t.Fatalf("expected mouse-button-8@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for extended button 8")
+		}
+	})
+
+	t.Run("SGRExtendedButton11", func(t *testing.T) {
+		// Button 11 at (1,1): Cb=131, Cx=1, Cy=1
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<131;1;1M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-button-11@0,0" {
+				t.Fatalf("expected mouse-button-11@0,0, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for extended button 11")
+		}
+	})
+
+	t.Run("SGRCtrlExtendedButton8", func(t *testing.T) {
+		// Ctrl+button 8 at (5,3): Cb=128|16=144, Cx=5, Cy=3
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<144;5;3M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-ctrl-button-8@4,2" {
+				t.Fatalf("expected mouse-ctrl-button-8@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for ctrl+button 8")
+		}
+	})
+
+	t.Run("SGRExtendedButtonDrag", func(t *testing.T) {
+		// Button 8 drag at (5,3): Cb=128|32=160, Cx=5, Cy=3
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<160;5;3M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-button-8-drag@4,2" {
+				t.Fatalf("expected mouse-button-8-drag@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for button 8 drag")
+		}
+	})
+
+	t.Run("SGRExtendedButtonRelease", func(t *testing.T) {
+		// Release at (5,3): Cb=3, Cx=5, Cy=3, terminator 'm'
+		// A release always carries code 3, not the extended flag.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[<3;5;3m"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-release@4,2" {
+				t.Fatalf("expected mouse-release@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for release")
+		}
+	})
+
+	t.Run("URXVTextendedButton8", func(t *testing.T) {
+		// URXVT button 8: Cb=128+32=160, Cx=5, Cy=3
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[160;5;3M"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-button-8@4,2" {
+				t.Fatalf("expected mouse-button-8@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for URXVT button 8")
+		}
+	})
+
+	t.Run("X10ExtendedButton8", func(t *testing.T) {
+		// X10 button 8: raw byte = 128+32=160, x+32=37, y+32=35
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[M\xa0%#"), ch)
+		select {
+		case k := <-ch:
+			if k != "mouse-button-8@4,2" {
+				t.Fatalf("expected mouse-button-8@4,2, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for X10 button 8")
+		}
+	})
+}
+
+func TestReadKeysModifyOtherKeysExtraParams(t *testing.T) {
+	t.Run("FourParams", func(t *testing.T) {
+		// Some terminals append an extra parameter to the
+		// modifyOtherKeys format: CSI 27;1;97;1~ should decode
+		// as 'a', ignoring the fourth parameter.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;1;97;1~"), ch)
+		select {
+		case k := <-ch:
+			if k != "a" {
+				t.Fatalf("expected a, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for a")
+		}
+	})
+
+	t.Run("FiveParams", func(t *testing.T) {
+		// Five parameters: CSI 27;2;97;1;0~ should decode as
+		// shift-a, ignoring the extra parameters.
+		ch := make(chan string, 4)
+		go ReadKeys(strings.NewReader("\x1b[27;2;97;1;0~"), ch)
+		select {
+		case k := <-ch:
+			if k != "shift-a" {
+				t.Fatalf("expected shift-a, got %q", k)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for shift-a")
 		}
 	})
 }

@@ -17,7 +17,10 @@ taiui key input theory:
   sequence split across reads is held until it completes or a grace
   period expires. A lone ESC that never grows is emitted as "esc". ESC
   followed by a printable character is "alt-<char>"; ESC followed by a
-  control byte discards the ESC and processes the byte.
+  control byte (0x00-0x1f, 0x7f) is "alt-<key>", matching the
+  Alt+printable rule: Alt+Enter is "alt-enter", Alt+Backspace is
+  "alt-backspace", Alt+Tab is "alt-tab", and Alt+Ctrl+A is "alt-ctrl-a".
+  ESC followed by ESC drops the first ESC.
 - Multi-byte UTF-8 input is decoded into its rune and emitted as the
   character: non-ASCII text (accented characters, CJK, emoji) reaches the
   application as the decoded character. ESC followed by a multi-byte
@@ -26,10 +29,16 @@ taiui key input theory:
   within the grace period is dropped.
 - CSI sequences (ESC [ ...), SS3 sequences (ESC O ...), and tilde
   sequences (ESC [ n ~) decode arrows, home/end, page-up/down,
-  insert/delete, F1-F24, shift-tab, begin, focus events, and
-  bracketed-paste markers. Modifier-enriched CSI prefixes Shift, Alt,
-  Ctrl, Meta, Super, and Hyper; mod 1 means no modifiers. Unknown CSI
-  sequences are discarded whole.
+  insert/delete, F1-F36, shift-tab, begin, focus events, and
+  bracketed-paste markers. CSI P/Q/R/S decode F1-F4, matching the SS3
+  encoding; modified P, Q, and S apply the modifier prefix (CSI 1;2P
+  is Shift+F1), but modified R is not decoded to avoid ambiguity with
+  cursor position reports. Modifier-enriched CSI and SS3 keys use
+  xterm's bit assignment: bit 3=Meta, 4=Super, 5=Hyper; mod 1 means no
+  modifiers. Unknown CSI sequences are discarded whole. Linux console
+  function keys (ESC [ [ A-E for F1-F5, ESC [ [ a-e for Shift+F1-F5)
+  use a non-standard second [ recognized as a specific pattern before
+  the generic CSI scan.
 - Control string sequences (OSC, DCS, SOS, PM, APC) start with ESC
   followed by ], P, X, ^, or _, and end with BEL or ST (ESC \). They
   carry terminal metadata (window titles, clipboard, color queries)
@@ -39,13 +48,19 @@ taiui key input theory:
   should use the Kitty keyboard protocol, which disambiguates them.
 - The Kitty keyboard protocol (CSI code;mod[;event] u) maps key codes
   to the same logical names; release events (event 0) are ignored.
-  Mode-setting sequences (CSI > flags u, CSI < flags u) are consumed
-  silently, and a CSI < ... u that is not an SGR mouse sequence is
-  distinguished from one so it does not block. Kitty key codes cover
-  F1-F24, navigation keys, arrows, the special keys print-screen,
-  scroll-lock, pause, and menu, and the keypad keys (kp-enter,
-  kp-f1..kp-f4, kp-home, kp-end, kp-pageup, kp-pagedown, kp-left,
-  kp-right, kp-up, kp-down, kp-begin).
+  The Kitty modifier encoding differs from xterm's for bits 3-5: Kitty
+  bit 3=Super, 4=Hyper, 5=Meta; xterm bit 3=Meta, 4=Super, 5=Hyper.
+  Caps Lock (bit 6) and Num Lock (bit 7) are lock states, not transient
+  modifiers, so they are not included in the key prefix.
+  Mode-setting and query-response sequences (CSI > flags u, CSI < flags
+  u, CSI ? flags u) are consumed silently: emitKittyKey checks for these
+  prefixes before parsing, and a CSI < ... u that is not an SGR mouse
+  sequence is distinguished from one so it does not block. Kitty key codes
+  cover F1-F24, navigation keys, arrows, the special keys print-screen,
+  scroll-lock, pause, and menu, the keypad keys (kp-enter, kp-f1..kp-f4,
+  kp-home, kp-end, kp-pageup, kp-pagedown, kp-left, kp-right, kp-up,
+  kp-down, kp-begin), and modifier-only key events (left-shift through
+  right-hyper, iso-level3-shift, iso-level5-shift, caps-lock, num-lock).
 - SS3 sequences also decode keypad keys in application keypad mode:
   digits (kp-0..kp-9), operators (kp-add, kp-subtract, kp-multiply,
   kp-divide, kp-decimal, kp-comma, kp-equal), and kp-enter.
@@ -58,53 +73,53 @@ taiui key input theory:
 `
 
 const TheoryOfMouseInput = `
-Mouse input theory:
+taiui mouse input theory:
 - ReadKeys decodes three mouse reporting formats: SGR extended (DECSET
   1006), URXVT (DECSET 1015), and X10 (DECSET 9). SGR delivers button
   events and button-held motion as ESC [ < Cb ; Cx ; Cy M|m; URXVT
   delivers them as ESC [ Cb ; Cx ; Cy M with the button code offset by
   32; X10 delivers them as ESC [ M followed by 3 raw bytes (button+32,
   x+32, y+32). The parser accepts any format whenever it arrives,
-  regardless of the terminal's mode settings.
-- The button code Cb carries the event flags in bits 5 and 6 (values 32
-  and 64): motion or drag events add 32 to the button value, wheel events
-  add 64, and the low two bits hold the button number (0 left, 1 middle,
-  2 right; 3 means no button). Wire coordinates are 1-based and converted
-  to 0-based cell coordinates on emission. In X10 and URXVT formats, the
-  raw button byte includes the +32 offset; the parser subtracts it.
+  regardless of the terminal's mode settings. SGR pixel mode (DECSET
+  1016) uses the same SGR format with pixel-level coordinates; the
+  reader passes coordinates through unchanged, so the application
+  converts pixel coordinates to cells when it has enabled pixel mode.
+- The button code Cb carries the event flags and modifiers: bits 2-4
+  (values 4, 8, 16) carry Shift, Alt, and Ctrl modifiers; bits 5 and 6
+  (values 32 and 64) carry the motion/drag and wheel flags; bit 7
+  (value 128) marks an extended button (buttons 8-11, encoded in the
+  low two bits as 0-3); the low two bits hold the button number (0 left,
+  1 middle, 2 right; 3 means no button). Wire coordinates are 1-based
+  and converted to 0-based cell coordinates on emission. In X10 and
+  URXVT formats, the raw button byte includes the +32 offset; the
+  parser subtracts it.
 - Each event is emitted as a key name carrying its 0-based coordinates:
-  "mouse-left@12,34", "mouse-wheel-up@12,34", and the like. A release
-  event carries no button number — the SGR release code is always 3 —
-  and is emitted as "mouse-release@12,34"; the consumer tracks which
-  button the release ends. In X10 and URXVT, button 3 (after offset
-  subtraction) indicates release. No-button motion (code 35) and
-  malformed sequences are ignored.
+  "mouse-left@12,34", "mouse-wheel-up@12,34", "mouse-button-8@12,34",
+  and the like. Extended buttons (8-11) are reported as "button-8"
+  through "button-11"; extended button drag appends "-drag". Keyboard
+  modifiers (Shift, Alt, Ctrl) are extracted from the button code and
+  prepended as a dash-joined prefix, matching the keyboard modifier
+  convention: "shift-mouse-left@12,34", "ctrl-mouse-wheel-up@12,34". A
+  release event carries no button number — the SGR release code is
+  always 3 — and is emitted as "mouse-release@12,34" with any detected
+  modifier prefix; the consumer tracks which button the release ends.
+  In X10 and URXVT, the low 2 bits set to 3 (after offset subtraction)
+  indicates release, regardless of modifier bits. No-button motion
+  (code 35) and malformed sequences are ignored.
 - Like keyboard input, a mouse sequence may arrive split across reads;
   the parser waits for the sequence terminator (or all 3 raw bytes for
   X10) before emitting.
 `
 
-// MouseKeyPrefix is the prefix of the key names ReadKeys emits for mouse
-// events. Each name is the prefix followed by the event kind and the
-// 0-based cell coordinates, e.g. "mouse-left@12,34". Consumers recognize
-// mouse keys by the prefix and split the name at the '@' to recover the
-// event kind and coordinates. See TheoryOfMouseInput.
-//
-// MouseEnableSequence switches the terminal into SGR mouse reporting:
-// DECSET 1000 reports button events, DECSET 1002 adds button-held motion
-// events (drag), and DECSET 1006 switches coordinate reporting to the
-// SGR extended form so columns beyond 223 are reported correctly.
-// MouseDisableSequence restores the terminal to ordinary input handling.
-//
-// The motion and wheel flags are bits of the SGR button code: motion or
-// drag events add mouseMotionFlag to the button value, and wheel events
-// add mouseWheelFlag. See TheoryOfMouseInput.
 const (
 	MouseKeyPrefix       = "mouse-"
 	MouseEnableSequence  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
 	MouseDisableSequence = "\x1b[?1000l\x1b[?1002l\x1b[?1006l"
 	mouseMotionFlag      = 32
 	mouseWheelFlag       = 64
+	mouseShiftFlag       = 4
+	mouseAltFlag         = 8
+	mouseCtrlFlag        = 16
 )
 
 // escapeSequenceTimeout is the grace period a partial escape sequence is
@@ -223,6 +238,17 @@ func processKeys(pending []byte, ch chan<- string) []byte {
 				if len(pending) < 3 {
 					return pending
 				}
+				// Linux console function keys: ESC [ [ A-E (F1-F5),
+				// ESC [ [ a-e (Shift+F1-F5). The second [ is not a
+				// standard CSI parameter byte, so these sequences are
+				// recognized before the generic CSI scan.
+				if len(pending) >= 4 && pending[2] == '[' {
+					if key := linuxConsoleKey(pending[3]); key != "" {
+						ch <- key
+						pending = pending[4:]
+						continue
+					}
+				}
 				if pending[2] == '<' {
 					// SGR mouse sequence: ESC [ < Cb ; Cx ; Cy M|m.
 					// A CSI < ... u is a Kitty keyboard mode pop, not
@@ -305,9 +331,20 @@ func processKeys(pending []byte, ch chan<- string) []byte {
 				pending = pending[2:]
 				continue
 			}
-			// ESC followed by a control byte: discard the ESC and
-			// process the byte normally.
-			pending = pending[1:]
+			// ESC followed by a control byte (0x00-0x1f, 0x7f) emits
+			// Alt+key, matching the Alt+printable rule: Alt+Enter is
+			// "alt-enter", Alt+Backspace is "alt-backspace", Alt+Tab
+			// is "alt-tab", and Alt+Ctrl+A is "alt-ctrl-a". ESC
+			// followed by ESC drops the first ESC: the second may
+			// start a new sequence or be a lone ESC.
+			if pending[1] == 0x1b {
+				pending = pending[1:]
+				continue
+			}
+			if key := singleKeyName(pending[1]); key != "" {
+				ch <- "alt-" + key
+			}
+			pending = pending[2:]
 			continue
 		}
 		// A multi-byte UTF-8 sequence: collect the full rune and emit
@@ -501,8 +538,9 @@ func emitCSIKey(params, final string, ch chan<- string) {
 	// The first parameter is always 27, identifying the format; the
 	// second is the modifier bitfield; the third is the Unicode code
 	// point of the key. The code is mapped through kittyKeyName so
-	// both protocols produce consistent key names.
-	if final == "~" && len(parts) == 3 && parts[0] == "27" {
+	// both protocols produce consistent key names. Some terminals
+	// append extra parameters; they are ignored.
+	if final == "~" && len(parts) >= 3 && parts[0] == "27" {
 		emitModifyOtherKeys(parts, ch)
 		return
 	}
@@ -582,6 +620,14 @@ func csiSimpleKey(params, final string) string {
 		return "focus-out"
 	case "Z":
 		return "shift-tab"
+	case "P":
+		return "f1"
+	case "Q":
+		return "f2"
+	case "R":
+		return "f3"
+	case "S":
+		return "f4"
 	case "~":
 		switch params {
 		case "1", "7":
@@ -644,6 +690,30 @@ func csiSimpleKey(params, final string) string {
 			return "f23"
 		case "40":
 			return "f24"
+		case "41":
+			return "f25"
+		case "42":
+			return "f26"
+		case "43":
+			return "f27"
+		case "44":
+			return "f28"
+		case "45":
+			return "f29"
+		case "46":
+			return "f30"
+		case "47":
+			return "f31"
+		case "48":
+			return "f32"
+		case "49":
+			return "f33"
+		case "50":
+			return "f34"
+		case "51":
+			return "f35"
+		case "52":
+			return "f36"
 		case "200":
 			return "paste-start"
 		case "201":
@@ -655,10 +725,40 @@ func csiSimpleKey(params, final string) string {
 
 func csiKeyCode(keyCode, final string) string {
 	switch final {
-	case "A", "B", "C", "D", "E", "H", "F", "I", "O":
+	case "A", "B", "C", "D", "E", "H", "F", "I", "O", "P", "Q", "S":
 		return csiSimpleKey("", final)
 	case "~":
 		return csiSimpleKey(keyCode, final)
+	}
+	return ""
+}
+
+// linuxConsoleKey maps a Linux console function key final byte to its
+// logical key name. The Linux console sends F1-F5 as ESC [ [ A-E and
+// Shift+F1-F5 as ESC [ [ a-e, using a non-standard second [ that is
+// recognized as a specific pattern before the generic CSI scan.
+func linuxConsoleKey(b byte) string {
+	switch b {
+	case 'A':
+		return "f1"
+	case 'B':
+		return "f2"
+	case 'C':
+		return "f3"
+	case 'D':
+		return "f4"
+	case 'E':
+		return "f5"
+	case 'a':
+		return "shift-f1"
+	case 'b':
+		return "shift-f2"
+	case 'c':
+		return "shift-f3"
+	case 'd':
+		return "shift-f4"
+	case 'e':
+		return "shift-f5"
 	}
 	return ""
 }
@@ -687,6 +787,38 @@ func modifierPrefix(mod int) string {
 	}
 	if mod&32 != 0 {
 		parts = append(parts, "hyper")
+	}
+	return strings.Join(parts, "-")
+}
+
+// kittyModifierPrefix converts a Kitty keyboard protocol modifier
+// parameter to a dash-joined prefix. The Kitty protocol uses a
+// different bit assignment from xterm's CSI modified keys: bit 3 is
+// Super, bit 4 is Hyper, bit 5 is Meta. Caps Lock (bit 6) and Num Lock
+// (bit 7) are lock states, not transient modifiers, so they are not
+// included in the prefix. The parameter is 1 + bitfield, so parameter
+// 2 is "shift", 5 is "ctrl", 9 is "super", 17 is "hyper", and 33 is
+// "meta".
+func kittyModifierPrefix(mod int) string {
+	mod--
+	var parts []string
+	if mod&1 != 0 {
+		parts = append(parts, "shift")
+	}
+	if mod&2 != 0 {
+		parts = append(parts, "alt")
+	}
+	if mod&4 != 0 {
+		parts = append(parts, "ctrl")
+	}
+	if mod&8 != 0 {
+		parts = append(parts, "super")
+	}
+	if mod&16 != 0 {
+		parts = append(parts, "hyper")
+	}
+	if mod&32 != 0 {
+		parts = append(parts, "meta")
 	}
 	return strings.Join(parts, "-")
 }
@@ -723,6 +855,15 @@ func singleKeyName(b byte) string {
 }
 
 func emitKittyKey(params string, ch chan<- string) {
+	// Mode-setting and query-response sequences (CSI > flags u,
+	// CSI < flags u, CSI ? flags u) are consumed silently: they
+	// are Kitty keyboard protocol mode management, not key events.
+	if len(params) > 0 {
+		switch params[0] {
+		case '<', '>', '?':
+			return
+		}
+	}
 	parts := strings.Split(params, ";")
 	if len(parts) < 1 {
 		return
@@ -753,7 +894,10 @@ func emitKittyKey(params string, ch chan<- string) {
 		return
 	}
 	if mod > 1 {
-		if prefix := modifierPrefix(mod); prefix != "" {
+		// The Kitty modifier encoding differs from xterm's: bit 3 is
+		// Super, bit 4 is Hyper, bit 5 is Meta (xterm: Meta, Super,
+		// Hyper). kittyModifierPrefix maps the Kitty encoding.
+		if prefix := kittyModifierPrefix(mod); prefix != "" {
 			ch <- prefix + "-" + key
 		} else {
 			ch <- key
@@ -886,6 +1030,38 @@ func kittyKeyName(code int) string {
 		return "up"
 	case 57397:
 		return "down"
+	// Modifier-only key events (Kitty keyboard protocol code points
+	// in the Private Use Area, per the Kitty keyboard protocol
+	// specification). These are emitted when the user presses a
+	// modifier key alone, not in combination with another key.
+	case 57440:
+		return "left-shift"
+	case 57441:
+		return "left-ctrl"
+	case 57442:
+		return "left-alt"
+	case 57443:
+		return "left-meta"
+	case 57444:
+		return "left-hyper"
+	case 57445:
+		return "right-shift"
+	case 57446:
+		return "right-ctrl"
+	case 57447:
+		return "right-alt"
+	case 57448:
+		return "right-meta"
+	case 57449:
+		return "right-hyper"
+	case 57450:
+		return "iso-level3-shift"
+	case 57451:
+		return "iso-level5-shift"
+	case 57452:
+		return "caps-lock"
+	case 57453:
+		return "num-lock"
 	}
 	// ASCII range: the same names as single-byte input, so the Kitty
 	// and traditional paths produce consistent key names.
@@ -899,13 +1075,32 @@ func kittyKeyName(code int) string {
 	return ""
 }
 
-// mouseKeyName maps an SGR mouse button code and event type to the logical
-// key name carrying the 0-based cell coordinates, or "" for events that
-// carry no usable information (no-button motion in mode 1003). A release
-// carries no button number — the SGR release code is always 3 — so every
-// release maps to the generic "release" kind; the consumer tracks which
-// button the release ends. See TheoryOfMouseInput.
+// mouseExtendedButtonFlag is bit 7 of the mouse button code: it marks
+// an extended button (buttons 8-11). The low two bits hold the button
+// number offset (0-3 → 8-11).
+const mouseExtendedButtonFlag = 128
+
 func mouseKeyName(button, x, y int, release bool) string {
+	// Keyboard modifiers (Shift, Alt, Ctrl) are encoded in bits 2-4 of
+	// the button code, matching the xterm mouse protocol. They are
+	// extracted and prepended as a dash-joined prefix to the event
+	// name, so a Shift+click is "shift-mouse-left" and a Ctrl+wheel-up
+	// is "ctrl-mouse-wheel-up", consistent with keyboard modifier names.
+	var modifiers []string
+	if button&mouseShiftFlag != 0 {
+		modifiers = append(modifiers, "shift")
+	}
+	if button&mouseAltFlag != 0 {
+		modifiers = append(modifiers, "alt")
+	}
+	if button&mouseCtrlFlag != 0 {
+		modifiers = append(modifiers, "ctrl")
+	}
+	modPrefix := ""
+	if len(modifiers) > 0 {
+		modPrefix = strings.Join(modifiers, "-") + "-"
+	}
+
 	kind := ""
 	switch {
 	case button&mouseWheelFlag != 0:
@@ -920,7 +1115,18 @@ func mouseKeyName(button, x, y int, release bool) string {
 			kind = "wheel-right"
 		}
 	case release:
-		return fmt.Sprintf("%srelease@%d,%d", MouseKeyPrefix, x, y)
+		return fmt.Sprintf("%s%srelease@%d,%d", MouseKeyPrefix, modPrefix, x, y)
+	case button&mouseExtendedButtonFlag != 0:
+		// Extended buttons (8-11): bit 7 marks an extended button.
+		// The low two bits hold the button number offset (0-3 → 8-11).
+		// A motion event with the extended flag is a drag; otherwise
+		// it is a press.
+		btn := (button & 3) + 8
+		if button&mouseMotionFlag != 0 {
+			kind = fmt.Sprintf("button-%d-drag", btn)
+		} else {
+			kind = fmt.Sprintf("button-%d", btn)
+		}
 	case button&mouseMotionFlag != 0:
 		switch button & 3 {
 		case 0:
@@ -947,7 +1153,10 @@ func mouseKeyName(button, x, y int, release bool) string {
 			return ""
 		}
 	}
-	return fmt.Sprintf("%s%s@%d,%d", MouseKeyPrefix, kind, x, y)
+	if kind == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s%s%s@%d,%d", MouseKeyPrefix, modPrefix, kind, x, y)
 }
 
 func handleSGRMouse(pending []byte, ch chan<- string) int {
@@ -992,9 +1201,6 @@ func handleSGRMouse(pending []byte, ch chan<- string) int {
 	return end + 1
 }
 
-// handleX10Mouse parses the 3-byte X10 mouse format: button+32, x+32,
-// y+32. The coordinates are 1-based and converted to 0-based on
-// emission. See TheoryOfMouseInput.
 func handleX10Mouse(data []byte, ch chan<- string) {
 	if len(data) < 3 {
 		return
@@ -1005,15 +1211,15 @@ func handleX10Mouse(data []byte, ch chan<- string) {
 	if button < 0 || x < 1 || y < 1 {
 		return
 	}
-	release := button == 3
+	// Release is indicated by the low 2 bits set to 3, not by the full
+	// button value, so modifier bits (Shift, Alt, Ctrl) do not mask the
+	// release detection.
+	release := (button & 3) == 3
 	if key := mouseKeyName(button, x-1, y-1, release); key != "" {
 		ch <- key
 	}
 }
 
-// handleURXVTMouse parses the URXVT mouse format (DECSET 1015):
-// ESC [ Cb ; Cx ; Cy M, where Cb is the button code offset by 32.
-// See TheoryOfMouseInput.
 func handleURXVTMouse(parts []string, ch chan<- string) {
 	if len(parts) != 3 {
 		return
@@ -1032,7 +1238,10 @@ func handleURXVTMouse(parts []string, ch chan<- string) {
 	if button < 0 || cx < 1 || cy < 1 {
 		return
 	}
-	release := button == 3
+	// Release is indicated by the low 2 bits set to 3, not by the full
+	// button value, so modifier bits (Shift, Alt, Ctrl) do not mask the
+	// release detection.
+	release := (button & 3) == 3
 	if key := mouseKeyName(button, cx-1, cy-1, release); key != "" {
 		ch <- key
 	}
