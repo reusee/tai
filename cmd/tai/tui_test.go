@@ -802,7 +802,7 @@ func TestReadTUIKeys(t *testing.T) {
 	for len(got) < 4 {
 		select {
 		case k := <-ch:
-			got = append(got, k)
+			got = append(got, mapTUIKey(k))
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for keys")
 		}
@@ -867,7 +867,7 @@ func TestReadTUIKeysTabAndSplit(t *testing.T) {
 	for len(got) < 5 {
 		select {
 		case k := <-ch:
-			got = append(got, k)
+			got = append(got, mapTUIKey(k))
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for keys")
 		}
@@ -910,7 +910,7 @@ func TestReadTUIKeysTransitions(t *testing.T) {
 	for len(got) < 2 {
 		select {
 		case k := <-ch:
-			got = append(got, k)
+			got = append(got, mapTUIKey(k))
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for keys")
 		}
@@ -2537,7 +2537,7 @@ func TestReadTUIKeysHelp(t *testing.T) {
 	for len(got) < 2 {
 		select {
 		case k := <-ch:
-			got = append(got, k)
+			got = append(got, mapTUIKey(k))
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for keys")
 		}
@@ -2546,6 +2546,32 @@ func TestReadTUIKeysHelp(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestMapTUIKey(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"q", "quit"},
+		{"Q", "quit"},
+		{"ctrl-c", "quit"},
+		{"s", "split"},
+		{"S", "split"},
+		{"?", "help"},
+		{"[", "prev-transition"},
+		{"]", "next-transition"},
+		// Unmapped keys pass through unchanged.
+		{"up", "up"},
+		{"down", "down"},
+		{"1", "1"},
+		{"tab", "tab"},
+		{"mouse-left@5,5", "mouse-left@5,5"},
+	}
+	for _, c := range cases {
+		if got := mapTUIKey(c.in); got != c.want {
+			t.Fatalf("mapTUIKey(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -2589,7 +2615,7 @@ func TestReadTUIKeysSS3AndVT220(t *testing.T) {
 	for len(got) < 6 {
 		select {
 		case k := <-ch:
-			got = append(got, k)
+			got = append(got, mapTUIKey(k))
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for keys")
 		}

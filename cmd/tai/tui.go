@@ -849,6 +849,43 @@ func (t *TUI) Stop() error {
 	return t.tty.Stop()
 }
 
+const TheoryOfTUIKeyMapping = `
+taiui.ReadKeys returns generic, application-independent key names ("q",
+"s", "?", "[", "]"); the TUI maps its key bindings to semantic names
+("quit", "split", "help", "prev-transition", "next-transition") so the
+key dispatch in Run reads as a table of actions rather than a table of
+characters. The mapping lives in cmd/tai, not in taiui, preserving
+taiui's reusability: key names stay generic, and each application defines
+its own binding. Unmapped keys (arrows, function keys, mouse events) pass
+through unchanged.
+`
+
+// mapTUIKey maps a generic key name from taiui.ReadKeys to the semantic
+// name the TUI uses for its key bindings. See TheoryOfTUIKeyMapping.
+func mapTUIKey(key string) string {
+	switch key {
+	case "q", "Q", "ctrl-c":
+		return "quit"
+	case "s", "S":
+		return "split"
+	case "?":
+		return "help"
+	case "[":
+		return "prev-transition"
+	case "]":
+		return "next-transition"
+	default:
+		return key
+	}
+}
+
+// toggleSplit switches between vertical and horizontal tab splitting.
+func (t *TUI) toggleSplit() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tabs.SplitVertical = !t.tabs.SplitVertical
+}
+
 func (t *TUI) Run(gen func()) error {
 	io.WriteString(t.tty, "\x1b[?25l")
 	defer func() {
@@ -893,6 +930,13 @@ func (t *TUI) Run(gen func()) error {
 		t.render()
 		select {
 		case key := <-keyCh:
+			// taiui.ReadKeys returns generic key names ("q", "s", "?",
+			// "[", "]"); mapTUIKey translates the TUI's key bindings to
+			// semantic names so the switch below reads as a table of
+			// actions, not a table of characters. Generic key names that
+			// the TUI does not bind (arrows, function keys, mouse events)
+			// pass through unchanged. See TheoryOfTUIKeyMapping.
+			key = mapTUIKey(key)
 			// Any key other than a quit key cancels a pending quit
 			// confirmation before its normal processing, so an
 			// accidental q press never loses the session. See
@@ -912,9 +956,7 @@ func (t *TUI) Run(gen func()) error {
 			case key == "3":
 				t.toggleTab(2)
 			case key == "split":
-				t.mu.Lock()
-				t.tabs.SplitVertical = !t.tabs.SplitVertical
-				t.mu.Unlock()
+				t.toggleSplit()
 			case key == "prev-transition":
 				t.jumpToTransition(-1)
 			case key == "next-transition":
@@ -937,10 +979,11 @@ func (t *TUI) Run(gen func()) error {
 				// The first quit key press shows a confirmation bar; a
 				// second press confirms the quit. See TheoryOfTUI.
 				if t.handleQuitKey() {
-					fmt.Fprintf(t.tty, "\x1b[%d;1H", t.height)
 					t.mu.Lock()
+					height := t.height
 					err := t.runErr
 					t.mu.Unlock()
+					fmt.Fprintf(t.tty, "\x1b[%d;1H", height)
 					return err
 				}
 			}
