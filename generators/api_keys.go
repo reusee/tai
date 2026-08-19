@@ -5,7 +5,6 @@ import (
 
 	"cuelang.org/go/cue"
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/vars"
 )
 
 type (
@@ -115,9 +114,9 @@ func (o OpenRouterAPIKey) HandleConfig(path string, values []*cue.Value) (any, e
 }
 
 func (Module) OpenRouterAPIKey() OpenRouterAPIKey {
-	return OpenRouterAPIKey(vars.FirstNonZero(
-		OpenRouterAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
-		OpenRouterAPIKey(os.Getenv("OPENROUTER_API_KEY")),
+	return OpenRouterAPIKey(firstNonZero(
+		os.Getenv("OPEN_ROUTER_API_KEY"),
+		os.Getenv("OPENROUTER_API_KEY"),
 	))
 }
 

@@ -19,7 +19,6 @@ import (
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
 	"github.com/reusee/tai/states"
-	"github.com/reusee/tai/vars"
 )
 
 const TheoryOfAiCommand = `
@@ -188,7 +187,7 @@ var AICommand = Command{
 		// prompt.
 		// See TheoryOfAiCommand.
 		parts = append(parts, generators.Text(
-			"\n``` begin of user input\n"+vars.FirstNonZero(input)+"\n``` end of user input\n",
+			"\n``` begin of user input\n"+input+"\n``` end of user input\n",
 		))
 
 		var baseState generators.State

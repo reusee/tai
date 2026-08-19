@@ -10,7 +10,6 @@ import (
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/vars"
 	"golang.org/x/net/proxy"
 )
 
@@ -55,15 +54,12 @@ func (Module) ProxyAddr(
 	if mode == modes.ModeDevelopment {
 		return ""
 	}
-
-	return vars.FirstNonZero(
-		ProxyAddr(os.Getenv("ALL_PROXY")),
-		ProxyAddr(os.Getenv("all_proxy")),
-		ProxyAddr(os.Getenv("HTTP_PROXY")),
-		ProxyAddr(os.Getenv("http_proxy")),
-		ProxyAddr(os.Getenv("SOCKS_PROXY")),
-		ProxyAddr(os.Getenv("socks_proxy")),
-	)
+	for _, env := range []string{"ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "SOCKS_PROXY", "socks_proxy"} {
+		if v := os.Getenv(env); v != "" {
+			return ProxyAddr(v)
+		}
+	}
+	return ""
 }
 
 type GetProxyURL func() (*url.URL, error)

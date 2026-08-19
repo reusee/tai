@@ -2,8 +2,17 @@ package generators
 
 import (
 	"github.com/reusee/tai/configs"
-	"github.com/reusee/tai/vars"
 )
+
+// firstNonZero returns the first non-empty string argument, or the empty
+// string if both are empty. It replaces the former vars.FirstNonZero for
+// the string-only use cases in this package.
+func firstNonZero(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
 
 type OpenRouterEndpoint string
 
@@ -49,10 +58,7 @@ func (Module) NewAzure(
 		spec.IsAzure = new(true)
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -69,10 +75,7 @@ func (Module) NewOpenRouter(
 		spec.IsOpenRouter = new(true)
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -89,10 +92,7 @@ func (Module) NewDeepseek(
 		}
 		ret := newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 		ret.TokenCounterOverride = DeepseekTokenCounterFn
 		return ret
@@ -111,10 +111,7 @@ func (Module) NewBaidu(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -131,10 +128,7 @@ func (Module) NewTencent(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -151,10 +145,7 @@ func (Module) NewHuoshan(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -171,10 +162,7 @@ func (Module) NewAliyun(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -191,10 +179,7 @@ func (Module) NewZhipu(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -211,10 +196,7 @@ func (Module) NewVercel(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -233,10 +215,7 @@ func (Module) NewBedrock(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -251,10 +230,7 @@ func (Module) NewNvidia(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }
@@ -271,10 +247,7 @@ func (Module) NewOpenCodeGo(
 		}
 		return newOpenAI(
 			spec,
-			vars.FirstNonZero(
-				spec.APIKey,
-				string(apiKey),
-			),
+			firstNonZero(spec.APIKey, string(apiKey)),
 		)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/vars"
 	"google.golang.org/genai"
 )
 
@@ -69,7 +68,7 @@ func (g Gemini) CountTokens(text string) (int, error) {
 func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOptions) (ret State, err error) {
 	var client *genai.Client
 	if g.spec.NoProxy != nil && *g.spec.NoProxy {
-		key := vars.FirstNonZero(
+		key := firstNonZero(
 			g.spec.APIKey,
 			string(g.APIKey()),
 		)
@@ -534,7 +533,7 @@ func (Module) GetGeminiClient(
 ) GetGeminiClient {
 	var clients sync.Map // key -> *genai.Client
 	return func(ctx context.Context, key string) (*genai.Client, error) {
-		key = vars.FirstNonZero(
+		key = firstNonZero(
 			key,
 			string(apiKey),
 		)
