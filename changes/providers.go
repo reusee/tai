@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/pathutil"
 	"golang.org/x/tools/imports"
 )
@@ -107,15 +106,14 @@ type ApplyTextLevelOp func(store FileStore, path string, src []byte, h ChangeBlo
 // scope.
 type ApplyGoModification func(store FileStore, path string, src []byte, h ChangeBlock) error
 
-// CallWriteErrorLog provider: captures WriteErrorLog from the dscope scope.
 func (Module) CallWriteErrorLog(
-	writeErrorLog debugs.WriteErrorLog,
+	writeErrorLog WriteErrorLog,
 ) CallWriteErrorLog {
 	return func(h ChangeBlock, src []byte, modified []byte, applyErr error) {
 		if writeErrorLog == nil {
 			return
 		}
-		_ = writeErrorLog(debugs.ErrorLogContext{
+		_ = writeErrorLog(ErrorLogContext{
 			Operation:    h.Op,
 			Target:       h.Target,
 			FilePath:     h.FilePath,

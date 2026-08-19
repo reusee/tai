@@ -7,7 +7,6 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/modes"
 )
 
@@ -18,8 +17,8 @@ func newTestScope(t *testing.T) dscope.Scope {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() debugs.ErrorLogDir {
-			return debugs.ErrorLogDir(errorLogDir)
+		func() ErrorLogDir {
+			return ErrorLogDir(errorLogDir)
 		},
 	)
 }

@@ -1,4 +1,4 @@
-package debugs
+package changes
 
 import (
 	"encoding/xml"
@@ -46,7 +46,7 @@ func (Module) ErrorLogDir() ErrorLogDir {
 // ErrorLogContext carries the structured context for a single error log
 // entry. The caller (typically in the changes package) flattens change
 // block fields and source/modified content into this struct so that the
-// debugs package does not depend on the changes package.
+// error log writing logic does not depend on external types.
 type ErrorLogContext struct {
 	Operation    string
 	Target       string
