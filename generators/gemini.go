@@ -117,6 +117,12 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	} else {
 		reasoningEffort := g.spec.ReasoningEffort
 		if flagEffort := string(g.Effort()); flagEffort != "" {
+			if flagEffort != reasoningEffort {
+				g.Logger().WarnContext(ctx, "effort override",
+					"spec_effort", reasoningEffort,
+					"actual_effort", flagEffort,
+				)
+			}
 			reasoningEffort = flagEffort
 		}
 		if reasoningEffort != "" {
@@ -231,6 +237,12 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		temperature = float32(*g.spec.Temperature)
 	}
 	if flag := g.TemperatureFlag(); flag.Value != nil {
+		if g.spec.Temperature == nil || *flag.Value != *g.spec.Temperature {
+			g.Logger().WarnContext(ctx, "temperature override",
+				"spec_temperature", g.spec.Temperature,
+				"actual_temperature", *flag.Value,
+			)
+		}
 		temperature = *flag.Value
 	}
 

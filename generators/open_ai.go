@@ -99,6 +99,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		temperature = &t
 	}
 	if flag := o.TemperatureFlag(); flag.Value != nil {
+		if o.spec.Temperature == nil || *flag.Value != *o.spec.Temperature {
+			o.Logger().WarnContext(ctx, "temperature override",
+				"spec_temperature", o.spec.Temperature,
+				"actual_temperature", *flag.Value,
+			)
+		}
 		temperature = flag.Value
 	}
 
@@ -158,6 +164,12 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	}
 	reasoningEffort := o.spec.ReasoningEffort
 	if flagEffort := string(o.Effort()); flagEffort != "" {
+		if flagEffort != reasoningEffort {
+			o.Logger().WarnContext(ctx, "effort override",
+				"spec_effort", reasoningEffort,
+				"actual_effort", flagEffort,
+			)
+		}
 		reasoningEffort = flagEffort
 	}
 	if reasoningEffort != "" {
