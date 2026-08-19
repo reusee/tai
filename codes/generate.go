@@ -163,7 +163,11 @@ const TheoryOfTokenBudgetStability = `
 Accurate token budgeting preserves the prefix cache by ensuring deterministic
 file inclusion across requests. Function declarations from all sources — state
 layers, code/diff providers, and configuration files — are counted together
-and sorted by name before measuring their token cost.
+and sorted by name before measuring their token cost. The input token budget
+is the full context window (or configured max tokens) without reserving space
+for max generate tokens, because most tasks complete in a single generation
+pass and reserving output space wastes context budget that could carry more
+file context.
 `
 
 func countFuncsTokens(funcs []generators.FuncDecl, count func(string) (int, error)) (int, error) {
@@ -581,15 +585,15 @@ func (Module) GenerateWithResultWithStats(
 			recorder.Event("decision", fmt.Sprintf("handoff generator selected: model=%s", handoffGenerator.Spec().Model))
 		}
 
-		// Calculate basic limits
+		// Calculate basic limits. The full context window is available for
+		// input without reserving max generate tokens: most tasks complete
+		// in a single generation pass, so reserving output space wastes
+		// context budget that could carry more file context.
+		// See TheoryOfTokenBudgetStability.
 		maxInputTokens := min(
 			spec.ContextTokens,
 			int(maxTokens),
 		)
-		if spec.MaxGenerateTokens != nil {
-			// Reserve space for reasoning and completion
-			maxInputTokens -= *spec.MaxGenerateTokens * 2
-		}
 
 		// Count tokens for fixed parts
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
