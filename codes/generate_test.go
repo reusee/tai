@@ -234,6 +234,7 @@ func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
 		"partition",
 		"continue block",
 		"output limit",
+		"boundary-delimited block",
 	} {
 		if !strings.Contains(states.HandoffSystemPrompt, want) {
 			t.Fatalf("states.HandoffSystemPrompt must mention %q", want)
@@ -250,12 +251,16 @@ func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
 	}
 }
 
-func TestHandoffSystemPromptRequiresPlainText(t *testing.T) {
-	// The handoff prompt must require concise plain text without preamble.
+func TestHandoffSystemPromptRequiresHandoffBlock(t *testing.T) {
+	// The handoff prompt must instruct the model to wrap the handoff
+	// summary in a boundary-delimited block with kind "handoff", and the
+	// system must parse the block body as the handoff content. If no
+	// valid block is found, the response is treated as empty and retried.
 	// See states.TheoryOfHandoff.
 	for _, want := range []string{
-		"plain text",
-		"Output ONLY the concise handoff summary",
+		"boundary-delimited block",
+		"kind \"handoff\"",
+		"block body must contain ONLY the handoff summary text",
 	} {
 		if !strings.Contains(states.HandoffSystemPrompt, want) {
 			t.Fatalf("states.HandoffSystemPrompt must contain %q", want)
@@ -564,7 +569,7 @@ func TestCreateHandoffErrorsAfterEmptyResponses(t *testing.T) {
 		t.Fatalf("expected nil handoff on failure, got %+v", handoff)
 	}
 	if gen.calls != maxSummarizeRetries {
-		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
+		t.Fatalf("expected %d handoff calls (maxRetries), got %d", maxSummarizeRetries, gen.calls)
 	}
 }
 
@@ -575,7 +580,7 @@ func TestCreateHandoffRetriesOnGenerationFailure(t *testing.T) {
 		},
 		responses: []string{
 			"", // unused (first call errors)
-			"handoff prompt text",
+			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -663,7 +668,7 @@ func TestCreateHandoffLogsErrors(t *testing.T) {
 func TestCreateHandoffProvider(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{
-			"handoff prompt text",
+			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	dscope.New(
@@ -708,7 +713,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 	t.Run("Enabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"handoff prompt text",
+				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -743,7 +748,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 	t.Run("Disabled", func(t *testing.T) {
 		gen := &summarizeRetryMockGenerator{
 			responses: []string{
-				"handoff prompt text",
+				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -767,7 +772,7 @@ func TestCreateHandoffRecords(t *testing.T) {
 			},
 			responses: []string{
 				"", // unused (first call errors)
-				"handoff prompt text",
+				"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 			},
 		}
 		logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -836,7 +841,7 @@ func TestCreateHandoffRecordsThoughts(t *testing.T) {
 		thoughts: []string{"the model reasoned about the handoff here"},
 		responses: []string{
 			"",
-			"handoff prompt text",
+			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
 		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -868,6 +873,59 @@ func TestCreateHandoffRecordsThoughts(t *testing.T) {
 	}
 }
 
+func TestCreateHandoffRejectsPlainTextWithoutBlock(t *testing.T) {
+	// When the model emits plain text without a handoff block, the
+	// response must be treated as empty and retried. This prevents
+	// incorrect or incomplete content from being used as handoff
+	// instructions. See states.TheoryOfHandoff.
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{
+			"this is plain text without a block",
+			"more plain text still no block",
+			"final attempt, still plain text",
+		},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when all handoff attempts fail, got %v", err)
+	}
+	if handoff != nil {
+		t.Fatalf("expected nil handoff when model emits plain text without block, got %+v", handoff)
+	}
+	if gen.calls != maxSummarizeRetries {
+		t.Fatalf("expected %d handoff calls, got %d", maxSummarizeRetries, gen.calls)
+	}
+}
+
+func TestCreateHandoffParsesHandoffBlockBody(t *testing.T) {
+	// The handoff block body is parsed and trimmed as the handoff
+	// content. Surrounding prose outside the block is ignored. See
+	// states.TheoryOfHandoff.
+	gen := &summarizeRetryMockGenerator{
+		responses: []string{
+			"I'll summarize now.\n<<黿鼍 handoff\nThis is the handoff content.\nWith multiple lines.\n黿鼍\nThat's all.",
+		},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	longInput := strings.Repeat("long incomplete text ", 10)
+	handoff, err := states.CreateHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil {
+		t.Fatal("expected handoff")
+	}
+	want := "This is the handoff content.\nWith multiple lines."
+	if handoff.Summary != want {
+		t.Fatalf("expected summary %q, got %q", want, handoff.Summary)
+	}
+	if handoff.Prompt != want {
+		t.Fatalf("expected prompt %q, got %q", want, handoff.Prompt)
+	}
+}
+
 func TestCreateHandoffSkipsShortOutput(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{"handoff text"},
@@ -893,7 +951,7 @@ type fakeHandoffObserver struct {
 
 func TestCreateHandoffStreamsToWriter(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
-		responses: []string{"handoff prompt text"},
+		responses: []string{"<<黿鼍 handoff\nhandoff prompt text\n黿鼍"},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var buf bytes.Buffer
@@ -912,7 +970,7 @@ func TestCreateHandoffStreamsToWriter(t *testing.T) {
 
 func TestCreateHandoffReportsLifecycle(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
-		responses: []string{"handoff prompt text"},
+		responses: []string{"<<黿鼍 handoff\nhandoff prompt text\n黿鼍"},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
 	obs := &fakeHandoffObserver{}

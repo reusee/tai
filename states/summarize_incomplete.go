@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"strings"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 )
@@ -41,10 +42,14 @@ the next model in order, cycling back to the beginning when the list is
 exhausted. This provides fault tolerance: if one model's API is down or
 returns empty responses, the next model is tried without consuming the
 full retry budget on a single model. See TheoryOfHandoffModel. The handoff
-prompt instructs the model to produce a concise, plain-text summary without block
-wrapping. Handoff generation is retried up to maxHandoffRetries times on
-failure or empty response; a persistent failure is logged and the caller
-retries with empty handoff content, so the run continues rather than
+prompt instructs the model to wrap the concise handoff summary in a
+boundary-delimited block with kind "handoff". The system parses the block
+body as the handoff content; if the model does not emit a valid handoff
+block (missing, malformed, or unclosed), the response is treated as empty
+and retried, preventing incorrect or incomplete content from being used as
+handoff instructions. Handoff generation is retried up to maxHandoffRetries
+times on failure or missing block; a persistent failure is logged and the
+caller retries with empty handoff content, so the run continues rather than
 aborting.
 
 Handoff generation streams to the HandoffWriter provider when one is
@@ -124,11 +129,46 @@ Prioritize:
 - Specific code modifications and change blocks that were being produced or attempted
 - Guidance on task partitioning: which changes to complete first in the upcoming round and how to use continue blocks for remaining work to avoid output truncation
 
-Output ONLY the concise handoff summary as plain text, with no preamble or extra commentary.`
+Wrap the concise handoff summary in a boundary-delimited block with kind "handoff". The block body must contain ONLY the handoff summary text. Do not output any prose before or after the block. If you fail to emit a valid, properly closed handoff block, the system will treat the response as empty and retry, so ensure the block is well-formed with a matched opening marker and closing line.`
 
 // maxHandoffRetries bounds the number of attempts to generate a handoff summary
 // when generation fails or produces an empty response. See TheoryOfHandoff.
 const maxHandoffRetries = 3
+
+// fullHandoffSystemPrompt combines the handoff-specific instructions with the
+// unified block format prompt so the model knows both what to produce (a
+// handoff block) and how to format it (the heredoc-delimited block format).
+// The block format prompt is appended after the handoff instructions so the
+// handoff guidance stays in the stable prefix and the format rules follow.
+// See TheoryOfHandoff.
+func fullHandoffSystemPrompt() string {
+	return HandoffSystemPrompt + "\n\n" + blocks.BlockFormatSystemPrompt
+}
+
+// parseHandoffBlock extracts the body of a handoff block from the model's
+// output. It parses the boundary-delimited blocks and returns the first
+// block whose kind is "handoff". If no valid handoff block is found —
+// either because the model did not emit a block, the block was malformed
+// or unclosed, or the body is empty — the function returns false, and
+// the caller treats the response as empty, triggering a retry. This
+// prevents using incorrect or incomplete handoff content as if it were
+// valid, which would feed wrong instructions to the next generation
+// round. See TheoryOfHandoff.
+func parseHandoffBlock(text string) (string, bool) {
+	parsedBlocks, err := blocks.ParseBlocks([]byte(text))
+	if err != nil {
+		return "", false
+	}
+	for _, block := range parsedBlocks {
+		if block.Kind == "handoff" {
+			body := strings.TrimSpace(block.Body)
+			if body != "" {
+				return body, true
+			}
+		}
+	}
+	return "", false
+}
 
 func CreateHandoff(
 	ctx context.Context,
@@ -175,11 +215,12 @@ func CreateHandoff(
 		}
 	}
 
-	// The fixed instructional prompt (HandoffSystemPrompt) is recorded as
-	// the system prompt; the user content carries only the dynamic
-	// incomplete output, so the transcript mirrors the actual generation.
+	// The fixed instructional prompt (HandoffSystemPrompt) combined with
+	// the unified block format prompt is recorded as the system prompt;
+	// the user content carries only the dynamic incomplete output, so
+	// the transcript mirrors the actual generation.
 	// See TheoryOfHandoff.
-	recordSystemPrompt(HandoffSystemPrompt)
+	recordSystemPrompt(fullHandoffSystemPrompt())
 
 	var lastErr error
 	for attempt := range maxHandoffRetries {
@@ -223,20 +264,26 @@ func CreateHandoff(
 			},
 		})
 
-		text := strings.TrimSpace(outputText)
-		if text != "" {
+		// Parse the handoff block from the model's output. The model is
+		// instructed to wrap the handoff summary in a boundary-delimited
+		// block with kind "handoff". If no valid block is found (missing,
+		// malformed, or unclosed), the response is treated as empty and
+		// retried, preventing incorrect or incomplete content from being
+		// used as handoff instructions. See TheoryOfHandoff.
+		handoffText, ok := parseHandoffBlock(outputText)
+		if ok {
 			return &Handoff{
-				Summary: text,
-				Prompt:  text,
+				Summary: handoffText,
+				Prompt:  handoffText,
 			}, nil
 		}
-		lastErr = fmt.Errorf("handoff response is empty")
-		logger.WarnContext(ctx, "handoff incomplete output: response is empty",
+		lastErr = fmt.Errorf("no valid handoff block found in response")
+		logger.WarnContext(ctx, "handoff incomplete output: no valid handoff block found",
 			"attempt", attempt+1,
 			"max_attempts", maxHandoffRetries,
 			"model", generator.Spec().Model,
 		)
-		recordEvent("handoff attempt %d/%d failed: model=%s response is empty",
+		recordEvent("handoff attempt %d/%d failed: model=%s no valid handoff block found",
 			attempt+1, maxHandoffRetries, generator.Spec().Model)
 	}
 	if lastErr != nil {
@@ -260,7 +307,7 @@ func runHandoffAttempt(
 	writer io.Writer,
 ) (string, []string, error) {
 	var state generators.State
-	state = generators.NewPrompts(HandoffSystemPrompt, []*generators.Content{
+	state = generators.NewPrompts(fullHandoffSystemPrompt(), []*generators.Content{
 		{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
