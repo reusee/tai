@@ -225,12 +225,14 @@ func (c ComponentSet) Processable() []Component {
 // component MaxRounds limits are enforced, preventing infinite loops from
 // components that keep producing output.
 //
-// BackgroundParts from non-triggering components are collected during iteration
-// and prepended to combinedParts when any component triggers a new round. This
-// ensures the model receives informational output (e.g., "tests passed") from
-// non-triggering components alongside the triggering content, preventing
-// unnecessary re-emission of blocks in subsequent rounds. When no component
-// triggers, BackgroundParts are discarded.
+// BackgroundParts from non-triggering components are always included in
+// combinedParts, not only when a component triggers. The caller may set
+// triggered=true after this function returns (e.g., when parse-error
+// feedback triggers a new round), and the background parts must be
+// available so informational output (e.g., go-test pass confirmations)
+// reaches the model alongside the triggering content. When triggered
+// remains false, combinedParts is not used by the caller, so the
+// background parts are harmlessly ignored.
 //
 // Both the ai command and the codes module call this function, so the
 // component processing loop is identical across all generation commands —
@@ -253,9 +255,7 @@ func ProcessComponents(
 ) {
 	// Background parts are collected from components that produce
 	// informational output (e.g., go-test pass confirmation) without
-	// triggering a new round. They are prepended to combinedParts only
-	// when some other component triggers a round, ensuring the model
-	// receives the information alongside the triggering content.
+	// triggering a new round.
 	var backgroundParts []generators.Part
 
 	for _, comp := range comps.Processable() {
@@ -316,12 +316,15 @@ func ProcessComponents(
 		}
 	}
 
-	// When a component triggered a new round, include background parts
-	// so the model receives informational output (e.g., "tests passed")
-	// from non-triggering components. Without this, the model would not
-	// know that tests passed and would re-emit go-test blocks in
-	// subsequent rounds, creating unnecessary loops.
-	if triggered && len(backgroundParts) > 0 {
+	// Include background parts in combinedParts unconditionally. The
+	// caller may set triggered=true after this function returns (e.g.,
+	// when parse-error feedback triggers a new round), and the
+	// background parts must be available so informational output (e.g.,
+	// go-test pass confirmations) from non-triggering components reaches
+	// the model alongside the triggering content. When triggered remains
+	// false, combinedParts is not used by the caller, so the background
+	// parts are harmlessly ignored.
+	if len(backgroundParts) > 0 {
 		combinedParts = append(backgroundParts, combinedParts...)
 	}
 

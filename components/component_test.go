@@ -439,3 +439,48 @@ func TestProcessComponentsStateModificationTriggers(t *testing.T) {
 		t.Fatal("expected fetched context in new state")
 	}
 }
+
+func TestProcessComponentsBackgroundPartsWithoutTrigger(t *testing.T) {
+	// When a component produces BackgroundParts but no Parts (e.g.,
+	// go-test passes), background parts must still be included in
+	// combinedParts. The caller may set triggered=true after
+	// ProcessComponents returns (e.g., when parse-error feedback
+	// triggers a new round), and the background parts must be available
+	// so the model receives the pass confirmation alongside the parse
+	// error feedback. See TheoryOfComponents.
+	comps := ComponentSet{
+		{
+			Kind: "go-test",
+			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
+				return ProcessResult{
+					BackgroundParts: []generators.Part{generators.Text("Go tests passed.")},
+				}
+			},
+		},
+	}
+
+	allBlocks := []blocks.Block{
+		{Kind: "go-test", Body: "-run\nTestFoo"},
+	}
+
+	_, _, combinedParts, triggered, err := ProcessComponents(
+		context.Background(), comps, allBlocks, nil, nil, nets.HTTPClient{}, nil, false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if triggered {
+		t.Fatal("expected triggered=false when only background parts are produced")
+	}
+	found := false
+	for _, part := range combinedParts {
+		if text, ok := part.(generators.Text); ok {
+			if strings.Contains(string(text), "Go tests passed") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected background parts in combinedParts even when triggered is false")
+	}
+}
