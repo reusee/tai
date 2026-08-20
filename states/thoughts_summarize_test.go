@@ -33,7 +33,6 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 	if m.err != nil {
 		return state, m.err
 	}
-	// Capture the input text from user content for test assertions
 	m.lastInput = ""
 	for content := range state.Contents() {
 		if content.Role == generators.RoleUser {
@@ -44,20 +43,14 @@ func (m *mockSummarizerGenerator) Generate(ctx context.Context, state generators
 			}
 		}
 	}
-	// Wrap the summary in a heredoc-delimited summary block so that
-	// Summarize can parse it via blocks.ParseBlocks. When noHeader is
-	// set, the block omits the XML opening tag, exercising the
-	// kindless-block fallback. When prefixBlock is set, a continue
-	// block precedes the summary block, exercising the summary-first
-	// lookup. See TheoryOfKindlessBlocks.
 	var blockOutput string
 	switch {
 	case m.prefixBlock:
-		blockOutput = "<<龘靐 <continue>\ncontinue\n龘靐\n<<齉爩 <summary>\n" + m.summary + "\n齉爩"
+		blockOutput = "<<龘靐 continue\ncontinue\n龘靐\n<<齉爩 summary\n" + m.summary + "\n齉爩"
 	case m.noHeader:
 		blockOutput = "<<龘靐\n" + m.summary + "\n龘靐"
 	default:
-		blockOutput = "<<龘靐 <summary>\n" + m.summary + "\n龘靐"
+		blockOutput = "<<龘靐 summary\n" + m.summary + "\n龘靐"
 	}
 	return state.AppendContent(&generators.Content{
 		Role: generators.RoleModel,

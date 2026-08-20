@@ -20,8 +20,8 @@ func (mockGenerator) Generate(context.Context, generators.State, *generators.Gen
 }
 
 func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
-	text := "<<龘靐 <continue>\ncontinue content\n龘靐\n" +
-		"<<齉爩 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
+	text := "<<龘靐 continue\ncontinue content\n龘靐\n" +
+		"<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestParseMemoryItemsSkipsNonMemoryBlocks(t *testing.T) {
 }
 
 func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
-	text := "<<龘靐 <finish>\nSome summary.\n<<齉爩 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
+	text := "<<龘靐 finish\nSome summary.\n<<齉爩 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n齉爩\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestParseMemoryItemsSkipsUnclosedBlocks(t *testing.T) {
 }
 
 func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
-	text := "<<龘靐 <continue>\ncontinue content\n龘靐\n"
+	text := "<<龘靐 continue\ncontinue content\n龘靐\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestParseMemoryItemsNoMemoryBlock(t *testing.T) {
 }
 
 func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
-	text := "<<龘靐 <memory>\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n"
+	text := "<<龘靐 memory\n<memory>\n  <memory-item>user likes Go</memory-item>\n</memory>\n龘靐\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -78,9 +78,9 @@ func TestParseMemoryItemsFirstBlockIsMemory(t *testing.T) {
 }
 
 func TestParseMemoryItemsMultipleNonMemoryBlocks(t *testing.T) {
-	text := "<<龘靐 <summary>\nsummary text\n龘靐\n" +
-		"<<齉爩 <continue>\ncontinue content\n齉爩\n" +
-		"<<麤黿 <memory>\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n"
+	text := "<<龘靐 summary\nsummary text\n龘靐\n" +
+		"<<齉爩 continue\ncontinue content\n齉爩\n" +
+		"<<麤黿 memory\n<memory>\n  <memory-item>item1</memory-item>\n  <memory-item>item2</memory-item>\n</memory>\n麤黿\n"
 
 	items, err := parseMemoryItems(text)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestUpdateMemoryFromBlockCombinesBlockAndPseudoCall(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 <memory>\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
+	text := "<<龘靐 memory\n<memory>\n  <memory-item>from block</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['from pseudo-call'])"
 
 	dscope.New(
@@ -205,7 +205,7 @@ func TestUpdateMemoryFromBlockDeduplicates(t *testing.T) {
 		return nil
 	}
 
-	text := "<<龘靐 <memory>\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
+	text := "<<龘靐 memory\n<memory>\n  <memory-item>duplicate</memory-item>\n</memory>\n龘靐\n" +
 		"update_user_profile(items=['duplicate'])"
 
 	dscope.New(

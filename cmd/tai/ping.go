@@ -82,7 +82,7 @@ The two required block kinds (each used exactly once, in any order):
 2. %s
 
 Rules:
-- The <kind> must be one of the two required kinds listed above.
+- The kind must be one of the two required kinds listed above.
 - The body may be any short text.
 - Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.`, kindA, kindB)
 }

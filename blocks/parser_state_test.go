@@ -68,7 +68,7 @@ func TestParserStateStreamParsing(t *testing.T) {
 	// Fragment 2: opening marker and partial body (no end marker yet)
 	newState, err = ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestParserStateMultipleBlocks(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n<<齉爩 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n齉爩\n<<麤黿 <summary>\n- Done.\n麤黿\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n<<齉爩 change(op=\"DELETE\", target=\"Bar\", file-path=\"/test.go\")\n齉爩\n<<麤黿 summary\n- Done.\n麤黿\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -185,7 +185,7 @@ func TestParserStateIgnoresUserRole(t *testing.T) {
 	// User role content should not be parsed for blocks
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleUser,
-		Parts: []generators.Part{generators.Text("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n")},
+		Parts: []generators.Part{generators.Text("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"),
+			generators.Thought("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"),
 		},
 	}
 	newState, err := ps.AppendContent(content)
@@ -230,8 +230,8 @@ func TestParserStateIgnoresThoughts(t *testing.T) {
 	content2 := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{
-			generators.Thought("<<齉爩 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody\n齉爩\n"),
-			generators.Text("<<麤黿 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n麤黿\n"),
+			generators.Thought("<<齉爩 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody\n齉爩\n"),
+			generators.Text("<<麤黿 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n麤黿\n"),
 		},
 	}
 	newState, err = ps.AppendContent(content2)
@@ -258,7 +258,7 @@ func TestParserStatePendingText(t *testing.T) {
 	// Append incomplete block
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("prose before\n<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody")},
+		Parts: []generators.Part{generators.Text("prose before\n<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -295,15 +295,10 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 		return nil
 	})
 
-	// The model opens a block with delimiter 龘靐. The body contains a
-	// line with a different delimiter 齉爩. This should be
-	// treated as body content, not a closing marker. Since no matching
-	// 龘靐 line exists, the block is unclosed (incomplete) and no
-	// error should be surfaced during streaming.
 	content := &generators.Content{
 		Role: generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(
-			"<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n齉爩\n",
+			"<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n齉爩\n",
 		)},
 	}
 	newState, err := ps.AppendContent(content)
@@ -311,11 +306,9 @@ func TestParserStateNonMatchingEndIsBodyContent(t *testing.T) {
 		t.Fatalf("expected no error for non-matching end marker treated as body content, got %v", err)
 	}
 	ps = newState.(*ParserState)
-	// No blocks should be produced for the incomplete block.
 	if len(collectedBlocks) != 0 {
 		t.Fatalf("expected 0 blocks for unclosed block, got %d", len(collectedBlocks))
 	}
-	// The content should remain in the buffer as pending text.
 	pending := ps.PendingText()
 	if !contains(pending, "<<龘靐") {
 		t.Fatalf("pending text should contain the opening marker: %q", pending)
@@ -330,11 +323,7 @@ func TestParserStateNonMatchingEndInBodyThenMatchingEnd(t *testing.T) {
 		return nil
 	})
 
-	// A body containing a line with a different delimiter 齉爩
-	// is treated as body content. When the matching 龘靐
-	// arrives, the block is parsed correctly with the non-matching
-	// 齉爩 preserved in the body.
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nbody line 1\n齉爩\nbody line 2\n龘靐\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nbody line 1\n齉爩\nbody line 2\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -366,10 +355,7 @@ func TestParserStateNestedBlocksSameDelimiter(t *testing.T) {
 		return nil
 	})
 
-	// The outer block contains a nested block with the same delimiter.
-	// The nested block's closing marker must not prematurely close
-	// the outer block. See TheoryOfNestedBlockParsing.
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Outer\" file-path=\"/outer.go\">\n<<龘靐 <change op=\"MODIFY\" target=\"Inner\" file-path=\"/inner.go\">\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Outer\", file-path=\"/outer.go\")\n<<龘靐 change(op=\"MODIFY\", target=\"Inner\", file-path=\"/inner.go\")\nfunc Inner() {}\n龘靐\nfunc Outer() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -404,12 +390,7 @@ func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) 
 		return nil
 	})
 
-	// A body line that starts with "<<" and contains a valid XML tag
-	// but uses a DIFFERENT delimiter from the outer block must be
-	// treated as body content, not a nested opening. The outer block
-	// should close at its own delimiter without being affected by the
-	// different-delimiter opening. See TheoryOfNestedBlockParsing.
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n<<齉爩 <tag>\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\n<<齉爩 tag\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -425,7 +406,7 @@ func TestParserStateNestedDifferentDelimiterOpeningWithoutClosing(t *testing.T) 
 	if collectedBlocks[0].Boundary != "龘靐" {
 		t.Fatalf("expected boundary 龘靐, got %s", collectedBlocks[0].Boundary)
 	}
-	if !contains(collectedBlocks[0].Body, "<<齉爩 <tag>") {
+	if !contains(collectedBlocks[0].Body, "<<齉爩 tag") {
 		t.Fatalf("body should contain the different-delimiter opening as content: %q", collectedBlocks[0].Body)
 	}
 	if !contains(collectedBlocks[0].Body, "func Foo() {}") {
@@ -441,24 +422,18 @@ func TestParserStateFlushCollectsParseErrors(t *testing.T) {
 		return nil
 	})
 
-	// Append an unclosed block (no end marker yet).
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")},
+		Parts: []generators.Part{generators.Text("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ps = newState.(*ParserState)
-	// No complete block before Flush.
 	if len(collectedBlocks) != 0 {
 		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
 	}
 
-	// Flush must not return an error for the unclosed block. The block
-	// is collected as a parse error instead, so the generation flow
-	// continues and the caller can feed the error back to the model for
-	// self-correction. See TheoryOfParseErrorCollection.
 	flushedState, err := ps.Flush()
 	if err != nil {
 		t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
@@ -482,15 +457,9 @@ func TestParserStateFlushCollectsTruncatedOpeningLineParseError(t *testing.T) {
 		return nil
 	})
 
-	// The model output ends with an opening marker line that has no
-	// trailing newline. This is a truncated block: the closing marker
-	// must be alone on its own line, which cannot exist after EOF.
-	// Flush must collect the truncation as a parse error instead of
-	// silently dropping the block or aborting the flow.
-	// See TheoryOfBlockFormat and TheoryOfParseErrorCollection.
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
-		Parts: []generators.Part{generators.Text("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">")},
+		Parts: []generators.Part{generators.Text("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -523,8 +492,7 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 		return nil
 	})
 
-	// Append a complete block (with end marker).
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -534,19 +502,16 @@ func TestParserStateFlushSucceedsWithCompleteBlocks(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	// The complete block should already be parsed during AppendContent.
 	if len(collectedBlocks) != 1 {
 		t.Fatalf("expected 1 block before flush, got %d", len(collectedBlocks))
 	}
 
-	// Flush should succeed because there are no unclosed blocks.
 	flushedState, err := ps.Flush()
 	if err != nil {
 		t.Fatalf("Flush should succeed with no unclosed blocks, got: %v", err)
 	}
 	ps = flushedState.(*ParserState)
 
-	// No pending text should remain after flush.
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty pending text after flush, got %q", pending)
 	}
@@ -556,12 +521,8 @@ func TestParserStateFlushCollectsMultipleParseErrors(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	// Two unclosed blocks separated by content. Both are collected as
-	// parse errors during Flush; the scanner skips past each opening
-	// marker to find the next block marker. See
-	// TheoryOfParseErrorCollection.
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n" +
-		"<<齉爩 <change op=\"DELETE\" target=\"Bar\" file-path=\"/test.go\">\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n" +
+		"<<齉爩 change(op=\"DELETE\", target=\"Bar\", file-path=\"/test.go\")\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -590,11 +551,6 @@ func TestParserStateFlushCollectsMultipleParseErrors(t *testing.T) {
 }
 
 func TestParserStateFlushHandlesCompleteBlocksAfterUnclosed(t *testing.T) {
-	// A complete block that follows a malformed block in the same buffer
-	// is not reachable during AppendContent (the parser stops at the
-	// malformed block). Flush must handle it so valid blocks are not
-	// lost because a preceding block was malformed.
-	// See TheoryOfParseErrorCollection.
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block
 	ps := NewParserState(upstream, func(block Block) error {
@@ -602,8 +558,8 @@ func TestParserStateFlushHandlesCompleteBlocksAfterUnclosed(t *testing.T) {
 		return nil
 	})
 
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n" +
-		"<<齉爩 <summary>\nDone.\n齉爩\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n" +
+		"<<齉爩 summary\nDone.\n齉爩\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -613,8 +569,6 @@ func TestParserStateFlushHandlesCompleteBlocksAfterUnclosed(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	// No complete block is handled during AppendContent because the
-	// parser stops at the unclosed change block.
 	if len(collectedBlocks) != 0 {
 		t.Fatalf("expected 0 blocks before flush, got %d", len(collectedBlocks))
 	}
@@ -625,8 +579,6 @@ func TestParserStateFlushHandlesCompleteBlocksAfterUnclosed(t *testing.T) {
 	}
 	ps = flushedState.(*ParserState)
 
-	// The unclosed block is a parse error; the complete summary block is
-	// handled at Flush so it is not lost.
 	if len(ps.ParseErrors()) != 1 {
 		t.Fatalf("expected 1 parse error, got %d", len(ps.ParseErrors()))
 	}
@@ -646,12 +598,8 @@ func TestParserStateFlushCollectsParseErrorsAfterCompleteBlocks(t *testing.T) {
 		return nil
 	})
 
-	// A complete block followed by an unclosed block. The complete block
-	// is parsed and handled during AppendContent; the unclosed block is
-	// collected as a parse error during Flush. See
-	// TheoryOfParseErrorCollection.
-	text := "<<龘靐 <summary>\nDone.\n龘靐\n" +
-		"<<齉爩 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
+	text := "<<龘靐 summary\nDone.\n龘靐\n" +
+		"<<齉爩 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -691,9 +639,7 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 		return nil
 	})
 
-	// The end marker is at the very end without a trailing newline.
-	// The block should be parsed correctly during streaming.
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -716,7 +662,6 @@ func TestParserStateEndMarkerNoTrailingNewline(t *testing.T) {
 		t.Fatalf("body should not contain the end marker: %q", collectedBlocks[0].Body)
 	}
 
-	// No pending text should remain after a fully parsed block.
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty pending text, got %q", pending)
 	}
@@ -735,7 +680,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"
+		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -763,7 +708,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"
+		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
 		_, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -784,7 +729,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text1 := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"
+		text1 := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text1)},
@@ -797,7 +742,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 1 handler call, got %d", callCount)
 		}
 
-		text2 := "<<齉爩 <change op=\"MODIFY\" target=\"Bar\" file-path=\"/test.go\">\nfunc Bar() {}\n齉爩\n"
+		text2 := "<<齉爩 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n齉爩\n"
 		newState, err = ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text2)},
@@ -819,7 +764,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n"
+		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -833,9 +778,6 @@ func TestParserStateBlockHandler(t *testing.T) {
 			t.Fatalf("expected 0 handled blocks before flush, got %d", len(handledBlocks))
 		}
 
-		// Flush collects the unclosed block as a parse error instead of
-		// returning an error. The handler is not called because the block
-		// is incomplete. See TheoryOfParseErrorCollection.
 		flushedState, err := ps.Flush()
 		if err != nil {
 			t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
@@ -856,9 +798,7 @@ func TestParserStateBlockHandler(t *testing.T) {
 			return nil
 		})
 
-		// Unclosed change block (no closing marker) — simulates
-		// truncated output where the model is cut off mid-block.
-		text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {\n\t// truncated"
+		text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {\n\t// truncated"
 		newState, err := ps.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -868,9 +808,6 @@ func TestParserStateBlockHandler(t *testing.T) {
 		}
 		ps = newState.(*ParserState)
 
-		// Flush must not return an error; the unclosed block is collected
-		// as a parse error so the caller can feed it back to the model for
-		// self-correction. See TheoryOfParseErrorCollection.
 		flushedState, err := ps.Flush()
 		if err != nil {
 			t.Fatalf("Flush must not return an error for unclosed blocks, got: %v", err)
@@ -888,13 +825,10 @@ func TestParserStateBlockHandler(t *testing.T) {
 }
 
 func TestParserStateNoHandler(t *testing.T) {
-	// When no handler is set, blocks are parsed but discarded.
-	// This is used by commands that don't need post-phase block
-	// processing (e.g., next with -no-apply).
 	upstream := &mockState{systemPrompt: "system prompt"}
 	ps := NewParserState(upstream)
 
-	text := "<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n龘靐\n"
+	text := "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n"
 	newState, err := ps.AppendContent(&generators.Content{
 		Role:  generators.RoleAssistant,
 		Parts: []generators.Part{generators.Text(text)},
@@ -904,7 +838,6 @@ func TestParserStateNoHandler(t *testing.T) {
 	}
 	ps = newState.(*ParserState)
 
-	// No error, blocks are simply discarded.
 	if pending := ps.PendingText(); pending != "" {
 		t.Fatalf("expected empty pending text after block parsed without handler, got %q", pending)
 	}

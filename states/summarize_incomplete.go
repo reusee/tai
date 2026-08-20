@@ -320,7 +320,7 @@ func handoffResponseDetail(attempt int, outputText string, thoughts []string) st
 // as the round's completion signal.
 func FormatSummaryBlock(summary string) string {
 	delimiter := freshDelimiter()
-	return "<<" + delimiter + " <summary>\n" + summary + "\n" + delimiter
+	return "<<" + delimiter + " summary\n" + summary + "\n" + delimiter
 }
 
 // FormatHandoffPrompt formats the retry user prompt with the handoff content.

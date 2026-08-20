@@ -161,7 +161,7 @@ func TestHandoffRetryState(t *testing.T) {
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
 				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "[Error: boom]") {
+					if strings.Contains(string(text), "summary") && strings.Contains(string(text), "[Error: boom]") {
 						foundSummaryBlock = true
 					}
 				}
@@ -197,7 +197,7 @@ func TestHandoffRetryState(t *testing.T) {
 		for c := range state.Contents() {
 			for _, part := range c.Parts {
 				if text, ok := part.(generators.Text); ok {
-					if strings.Contains(string(text), "<summary>") && strings.Contains(string(text), "[Error: boom]") {
+					if strings.Contains(string(text), "summary") && strings.Contains(string(text), "[Error: boom]") {
 						foundSummaryBlock = true
 					}
 				}

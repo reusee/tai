@@ -141,17 +141,11 @@ func TestRecorderBlockAndParseErrorEvents(t *testing.T) {
 }
 
 func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
-	// The record process must capture every piece of information about a
-	// malformed block — kind, boundary, line, reason, collision hints, and the
-	// full block content — without omission or truncation. The block content
-	// here exceeds the parse-error message truncation limit
-	// (maxParseErrorContentLength in blocks/block.go), so its presence in full
-	// proves the recorder does not truncate. See TheoryOfInteractionRecording.
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
 		recorder.RoundStart()
 		largeBody := strings.Repeat("x", 200*1024)
-		content := "<<徕珑龘 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\n" + largeBody
+		content := "<<徕珑龘 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\n" + largeBody
 		recorder.ParseError(&blocks.BlockParseError{
 			BlockKind: "change",
 			Boundary:  "徕珑龘",
@@ -171,8 +165,6 @@ func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The full block content, the line number, and the collision hints
-		// must be present in the transcript without truncation.
 		if !strings.Contains(text, content) {
 			t.Fatal("parse error content must be recorded in full without truncation")
 		}

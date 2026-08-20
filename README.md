@@ -157,7 +157,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 The model emits structured output as heredoc-delimited blocks. Each block has a kind (XML element name), attributes, and a body:
 
 ```
-<<徕珑龘 <change op="MODIFY" target="Foo" file-path="/path/to/file.go">
+<<徕珑龘 change(op="MODIFY", target="Foo", file-path="/path/to/file.go")
 func Foo() {
     // modified code
 }

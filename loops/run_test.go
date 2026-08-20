@@ -149,10 +149,10 @@ func TestRunParseErrorCorrection(t *testing.T) {
 			if callCount == 1 {
 				// Emit an unclosed block (no closing delimiter) — a
 				// parse error that must be fed back for self-correction.
-				return appendPhaseWithFlush("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 			}
 			// Second round: corrected output with a summary block.
-			return appendPhaseWithFlush("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -196,7 +196,7 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 			// Persistently emit an unclosed block — a parse error every
 			// round. The correction loop must stop after
 			// maxParseErrorRounds.
-			return appendPhaseWithFlush("<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+			return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -225,9 +225,9 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 				// block. The shell block is processed by the component;
 				// the parse error feedback is prepended to the shell
 				// output.
-				return appendPhaseWithFlush("<<齉爩 <shell>\necho hi\n齉爩\n<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+				return appendPhaseWithFlush("<<齉爩 shell\necho hi\n齉爩\n<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 			}
-			return appendPhaseWithFlush("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhaseWithFlush("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -300,8 +300,8 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 		// plus an unclosed change block (parse error).
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			return appendPhaseWithFlush(
-				"<<齉爩 <shell>\necho hi\n齉爩\n" +
-					"<<龘靐 <change op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\">\nfunc Foo() {}\n")
+				"<<齉爩 shell\necho hi\n齉爩\n" +
+					"<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -383,7 +383,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 <shell>\necho hello\n龘靐\n")
+				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
 			}
 			return appendPhase("done")
 		}
@@ -460,7 +460,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			Components:   comps,
 			BlockHandler: blockHandler,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<龘靐 <shell>\necho hi\n龘靐\n")
+				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -519,7 +519,7 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 				return appendPhase("incomplete output without summary")
 			}
 			// Second call includes a summary block.
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -583,7 +583,7 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 		for c := range result.FinalState.Contents() {
 			for _, p := range c.Parts {
 				if text, ok := p.(generators.Text); ok {
-					if strings.Contains(string(text), "<summary>") &&
+					if strings.Contains(string(text), "summary") &&
 						strings.Contains(string(text), "synthesized summary") {
 						foundSummary = true
 					}
@@ -605,10 +605,10 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 				// Summary block present but finish reason is "length"
 				// (max-token truncation). This should trigger retry
 				// despite the summary block.
-				return appendPhaseWithFinish("<<龘靐 <summary>\nDone.\n龘靐\n", "length")
+				return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "length")
 			}
 			// Second call: normal finish reason with summary.
-			return appendPhaseWithFinish("<<龘靐 <summary>\nDone.\n龘靐\n", "stop")
+			return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "stop")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -636,7 +636,7 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
-			return appendPhaseWithFinish("<<龘靐 <summary>\nDone.\n龘靐\n", "stop")
+			return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "stop")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -715,9 +715,9 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				round++
 				if round == 1 {
-					return appendPhase("<<龘靐 <shell>\necho hi\n龘靐\n")
+					return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 				}
-				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -747,7 +747,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			Components:     nil,
 			OnRoundSuccess: onRoundSuccess,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return appendPhase("<<龘靐 <summary>\nRound 1 done.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nRound 1 done.\n龘靐\n")
 			},
 		})
 		if err != nil {
@@ -953,7 +953,7 @@ func TestRunMaxRounds(t *testing.T) {
 			MaxRounds:    3,
 			PhaseBuilder: func(g generators.Generator) phases.Phase {
 				callCount++
-				return appendPhase("<<龘靐 <shell>\necho hi\n龘靐\n")
+				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
 		})
@@ -1003,7 +1003,7 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 			if callCount == 1 {
 				return appendThenErrorPhase("partial model output", errors.New("something went wrong"))
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -1050,11 +1050,6 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 }
 
 func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
-	// Change block apply errors must produce specific guidance in the
-	// retry feedback: the retry discards all change blocks from the
-	// failed attempt, so the model must re-emit every intended change
-	// block. Generic error feedback would leave the model guessing
-	// whether its changes were accepted. See TheoryOfLoops.
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
@@ -1065,7 +1060,7 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 					&changes.ApplyError{Err: errors.New("apply change block MODIFY Foo: target not found")},
 				)
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -1090,9 +1085,6 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 			}
 			for _, p := range c.Parts {
 				if text, ok := p.(generators.Text); ok {
-					// The guidance phrase starts the sentence ("Re-emit"),
-					// so compare case-insensitively to the lowercase
-					// assertion. See TheoryOfLoops.
 					if strings.Contains(strings.ToLower(string(text)), "re-emit every intended change block") {
 						foundGuidance = true
 					}
@@ -1140,7 +1132,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
 				}
-				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			}
 
 			result, err := runOnce(run, RunOptions{
@@ -1185,7 +1177,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 				if callCount == 1 {
 					return appendThenErrorPhase("partial output", errors.New("some error"))
 				}
-				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			}
 
 			result, err := runOnce(run, RunOptions{
@@ -1234,7 +1226,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
 				}
-				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			}
 
 			result, err := runOnce(run, RunOptions{
@@ -1279,7 +1271,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 				if callCount == 1 {
 					return appendThenErrorPhase("partial output", errors.New("some error"))
 				}
-				return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			}
 
 			result, err := runOnce(run, RunOptions{
@@ -1333,7 +1325,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		_, err := runOnce(run, RunOptions{
@@ -1371,7 +1363,7 @@ func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		result, err := runOnce(run, RunOptions{
@@ -1418,32 +1410,25 @@ func TestFormatHandoffPrompt(t *testing.T) {
 	if !strings.Contains(msg, "retry content") {
 		t.Fatalf("expected the retry content, got: %s", msg)
 	}
-	// The retry prompt must state that nothing in the interrupted
-	// attempt was completed on disk: changes are atomic, so the handoff carries
-	// forward thinking, not work status. See states.TheoryOfHandoff.
 	if !strings.Contains(msg, "no completed work") {
 		t.Fatalf("expected the atomicity note in the retry prompt, got: %s", msg)
 	}
 	if !strings.Contains(msg, "no next step to carry forward") {
 		t.Fatalf("expected the no-next-step note in the retry prompt, got: %s", msg)
 	}
-	// The retry prompt must instruct partitioning work with continue blocks
-	// to prevent repeated truncation. See states.TheoryOfHandoff.
 	if !strings.Contains(msg, "partition the work") {
 		t.Fatalf("expected partitioning instruction in the retry prompt, got: %s", msg)
 	}
 	if !strings.Contains(msg, "continue block") {
 		t.Fatalf("expected continue block guidance in the retry prompt, got: %s", msg)
 	}
-	// The retry prompt must not instruct re-reading the filesystem: the
-	// context already carries the latest state. See states.TheoryOfHandoff.
 	if strings.Contains(msg, "Re-read the current filesystem state") {
 		t.Fatalf("the retry prompt must not instruct re-reading the filesystem, got: %s", msg)
 	}
-	if strings.Contains(msg, "<summary>") {
+	if strings.Contains(msg, "summary") && strings.Contains(msg, "<<") {
 		t.Fatalf("expected no summary block in the retry prompt, got: %s", msg)
 	}
-	if strings.Contains(msg, "<continue>") {
+	if strings.Contains(msg, "continue") && strings.Contains(msg, "<<") {
 		t.Fatalf("expected no continue block in the retry prompt, got: %s", msg)
 	}
 }
@@ -1554,7 +1539,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			genCount++
-			return appendPhase("<<龘靐 <shell>\necho hi\n龘靐\n")
+			return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -1662,17 +1647,14 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 }
 
 func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
-	// When a round emits an unmatched block (done) and another component
-	// triggers a new round, the unmatched block must survive into the
-	// final Result.RemainingBlocks.
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 <done>\ngoal achieved\n龘靐\n<<齉爩 <other>\ntrigger\n齉爩\n")
+				return appendPhase("<<龘靐 done\ngoal achieved\n龘靐\n<<齉爩 other\ntrigger\n齉爩\n")
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{
@@ -1815,19 +1797,14 @@ func TestRunStateDecorators(t *testing.T) {
 }
 
 func TestRunStateModificationTriggersRound(t *testing.T) {
-	// A component that modifies State (like request-context) must trigger
-	// a new generation round. When the model emits a component-triggering
-	// block without a summary block, the round must NOT be retried for
-	// missing completion — the model is waiting for component processing,
-	// not truncated. See TheoryOfLoops and TheoryOfComponents.
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) phases.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 <state-modifier>\nrequest\n龘靐\n")
+				return appendPhase("<<龘靐 state-modifier\nrequest\n龘靐\n")
 			}
-			return appendPhase("<<龘靐 <summary>\nDone.\n龘靐\n")
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 		}
 
 		comps := components.ComponentSet{

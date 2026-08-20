@@ -10,12 +10,11 @@ import (
 
 const TheoryOfBlockFormatGeneral = `
 The heredoc block format is a general-purpose structured output format for AI
-models. Each block has a kind (XML element name), attributes (XML attributes on the
-opening tag), and a body. The opening marker is <<DELIMITER <kind attr="..">; the
-closing marker is the DELIMITER alone on its own line, with no XML closing tag. Only
-the delimiter string and the XML element structure are unified; the body content is
-defined by the specific kind. The format leverages familiar heredoc syntax for
-parsing reliability.
+models. Each block has a kind (function name), parameters (named arguments on the
+opening line), and a body. The opening marker is <<DELIMITER kind(param1="value1", ...);
+the closing marker is the DELIMITER alone on its own line. When no parameters are
+needed, parentheses may be omitted (bare kind). Only the delimiter string and the
+header structure are unified; the body content is defined by the specific kind.
 
 Delimiter selection policy: every delimiter MUST be an uncommon Chinese two-character
 word (e.g., 龃龉). Content — source code, prompts, and configuration text —
@@ -28,29 +27,16 @@ reuse an example delimiter, and must never use a delimiter of any other length o
 script.
 
 Line-start requirement: the opening marker must appear at the beginning of a line;
-the closing marker (the delimiter alone) must be on its own line. A ` + "`<<`" + ` not at the
-start of a line is regular content and will not start a block — models tend to glue the
-marker to the end of a preceding prose line, so the system prompt states the rule
-directly and shows a correct example. Negative examples are deliberately omitted:
-a model may imitate a displayed bad pattern, so the prompt never shows one. No
-blank lines are required around blocks: a block may sit directly adjacent to
-other text or blocks; the only structural requirements are the line-start opening
-and the own-line closing marker.
+the closing marker (the delimiter alone) must be on its own line. A << not at the
+start of a line is regular content and will not start a block.
 
 Unclosed block detection: an opening marker at line start without a matching closing
 line is a malformed block; the parser reports an error rather than silently skipping
-it, so incomplete AI output is surfaced to the user.
+it.
 
-Delimiter rule centralization: the delimiter rules (selection, uniqueness,
-body-disjointness, matching) live only in BlockFormatSystemPrompt and
-BlockFormatRestatePrompt. Individual kind prompts (continue, shell, go-test, summary,
-memory, request-context, change, done) must not restate any format rule, template,
-or example delimiter; they reference the general format and describe only their
-kind-specific semantics — which kind to emit and what content the body carries.
-Every component set that processes blocks MUST include BlockFormatSystemPrompt as a
-prompt-only component; a kind prompt that assumes the block format is present
-without the component set carrying it is a bug. This keeps redundant delimiter
-description at zero and gives the format rules a single authoritative source.
+Delimiter rule centralization: the delimiter rules live only in BlockFormatSystemPrompt
+and BlockFormatRestatePrompt. Individual kind prompts describe only their kind-specific
+semantics.
 `
 
 const TheoryOfBoundaryUniqueness = `
@@ -89,78 +75,34 @@ block.
 
 const TheoryOfNestedBlockParsing = `
 The parser supports nested blocks: when a block body contains another block opening
-marker (<<DELIMITER <kind ...>), the inner block's closing marker does not prematurely
+marker (<<DELIMITER kind(...)), the inner block's closing marker does not prematurely
 close the outer block. The closing-marker scanner maintains a delimiter stack
 initialized with the outer block's delimiter. A line that starts with "<<" and
-contains a valid XML opening tag after the delimiter is treated as a nested opening
+contains a valid function-call header after the delimiter is treated as a nested opening
 only when its delimiter matches the outer block's delimiter; matching delimiters are
-pushed onto the stack, marking the start of a nested block. A line that is a
-delimiter alone on its own line pops the stack only if it matches the top; when the
-stack becomes empty, the outer block is closed. A closing marker that does not match
-the top of the stack is treated as body content.
+pushed onto the stack. A line that is a delimiter alone on its own line pops the stack
+only if it matches the top; when the stack becomes empty, the outer block is closed.
 
-This correctly handles same-delimiter nesting (the inner block's closing marker pops
-the inner level, not the outer level). Different-delimiter opening markers in the
-body are treated as body content, not pushed onto the stack: they pose no collision
-risk, because a different-delimiter closing line will never match the outer block's
-delimiter. When a same-delimiter nested block is unclosed, the outer block is also
-unclosed, because the stack never returns to empty.
-
-The same-delimiter restriction prevents false positives from body content that
-incidentally matches the <<HanHan <tag> pattern: if a different-delimiter opening
-were pushed, the outer block's closing marker would not match the new stack top and
-the block would be incorrectly reported as unclosed. By only tracking same-delimiter
-openings, stack pushes are reserved for genuine nesting scenarios where the inner
-closing marker must be distinguished from the outer closing marker.
-
-The XML-tag validation after the delimiter prevents false positives from content that
-starts with "<<" but is not a block opening: the validator extracts the delimiter,
-finds the first "<" in the remainder, and calls TokenizeXMLTag to verify a
-well-formed XML tag. Lines like "<<some code" (no XML tag) or "<<text with < angle
-brackets>" (invalid XML tag) are treated as body content, not nested openings,
-avoiding false nesting from shell heredocs, code comments, or prose that happens to
-start with "<<". The validator also checks that the XML tag consumes the entire line
-(up to whitespace): a line like "<<FOO <tag> some text" has trailing content after
-the tag and is treated as body content, not a nested opening. Without this
-trailing-content check, the false nested opening would push "FOO" onto the delimiter
-stack, causing the outer block's closing marker to be treated as body content and
-the block to be incorrectly reported as unclosed.
+The header validation after the delimiter prevents false positives from content that
+starts with "<<" but is not a block opening.
 `
 
 const TheoryOfBlockFormat = `
-The parser uses a heredoc-style block format. The delimiter (a random string)
-precedes the kind as an XML opening tag:
-<<DELIMITER <kind attr=".."> ... DELIMITER. The delimiter is extracted as the text
-between ` + "`<<`" + ` and the first whitespace or ` + "`<`" + ` character on the opening line;
-trailing content after the delimiter is skipped by searching for the first ` + "`<`" + ` in
-the rest of the line. The closing marker is the delimiter alone on its own line — no
-XML closing tag is needed. The delimiter is the sole disambiguator between
-consecutive blocks within a single response.
+The parser uses a heredoc-style block format. The delimiter precedes the header:
+<<DELIMITER kind(param1="value1", ...) ... DELIMITER. The delimiter is extracted as the text
+between << and the first whitespace or ( character on the opening line. The closing marker
+is the delimiter alone on its own line.
 
 An opening marker whose line extends to the end of the content (no trailing newline)
-is a truncated block: the closing marker must be alone on its own line, which cannot
-exist after EOF. The parser parses the line as an opening marker and reports an
-unclosed-block error, surfacing the truncation instead of silently treating the
-marker as prose.
+is a truncated block. The parser reports an unclosed-block error.
 
 An opening line with a valid two-character Han delimiter followed by an invalid or
-incomplete XML opening tag (e.g., a missing ">") is a malformed block, not prose: the
-delimiter marks the line as an intended block opening. The parser reports it as a
-parse error so the model can correct it, rather than silently dropping the intended
-block.
+incomplete function-call header is a malformed block reported as a parse error.
 `
 
 const TheoryOfBareKinds = `
-Models sometimes emit block opening markers with a bare kind instead of an
-XML opening tag: <<DELIMITER kind instead of <<DELIMITER <kind ...>.
-Both forms are accepted on equal footing: a bare kind carries no
-attributes, and the XML opening tag takes precedence whenever the marker
-carries one. The compatibility does not introduce new block boundaries:
-a marker line with a compatible token already opened a block, kindless,
-before the extension; the extension only gives those blocks the intended
-kind. Nested-block detection accepts the same bare form, requiring the
-whole marker line to be the bare token so trailing prose is never
-mistaken for a nested opening.
+Models may emit block opening markers with a bare kind when no parameters are needed:
+<<DELIMITER kind instead of <<DELIMITER kind(). Both forms are accepted on equal footing.
 `
 
 const TheoryOfKindlessBlocks = `
@@ -192,25 +134,26 @@ Use heredoc-delimited blocks to include structured content in responses.
 This format avoids escaping issues and is easy to parse.
 
 **Block Format:**
-<<DELIMITER <kind attr1=".." attr2="...">
+<<DELIMITER kind(param1="value1", param2="value2")
 <kind-specific content>
 DELIMITER
 
 - DELIMITER: An uncommon Chinese two-character word (e.g., 龃龉) that does not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
-- <kind>: The type of block, specified as an XML element name. The valid kinds and their content formats are defined by the specific kind documentation. Attributes on the opening tag provide kind-specific metadata.
+- kind: The type of block, specified as a function name. The kind name may contain hyphens (e.g., go-test, request-context). The valid kinds and their content formats are defined by the specific kind documentation. Parameters on the function call provide kind-specific metadata as named arguments.
+- Parameters: Named arguments inside parentheses, in the form param="value". Values are quoted with single or double quotes. If no parameters are needed, the parentheses may be omitted entirely (just the kind name).
 - Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
 - No blank lines are required before or after a block. A block can appear on consecutive lines with other text or other blocks, but the opening marker must start at the beginning of its own line and the closing delimiter must be on its own line.
 - If no blocks are needed, simply omit them.
 
 **Line-Start Requirement (CRITICAL):**
-- The opening marker (<<DELIMITER <kind ...>) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- The opening marker (<<DELIMITER kind(...)) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
 - NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
 - Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and the changes will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<龃龉 <change op="MODIFY" target="Foo" file-path="/home/user/foo.go">
+  <<龃龉 change(op="MODIFY", target="Foo", file-path="/home/user/foo.go")
   <code here>
   龃龉
 
@@ -221,13 +164,13 @@ DELIMITER
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 <change ...> MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 change(...) MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
 - A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
 - Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
 `
 
 const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
-- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the opening tag '<kind ...>' ending with '>'. Closing marker: the EXACT SAME delimiter alone on its own line.
+- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the function-call header 'kind(param="value")' ending with ')', or bare 'kind' if no parameters. Closing marker: the EXACT SAME delimiter alone on its own line.
 - **The DELIMITER MUST be an uncommon Chinese two-character word** (e.g., 龃龉, 彳亍, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word.
 - Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
@@ -326,41 +269,19 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 	if delimiter == "" {
 		return
 	}
-	// extractDelimiter trims leading whitespace internally, so we must
-	// also trim before slicing to align the rest-of-line offset with
-	// the extracted delimiter. Without this, leading whitespace between
-	// << and the delimiter causes rest to start at a wrong byte offset
-	// (inside a multi-byte rune), producing garbled text.
 	trimmedOpeningLine := strings.TrimSpace(openingLine)
-	rest := trimmedOpeningLine[len(delimiter):]
+	rest := strings.TrimSpace(trimmedOpeningLine[len(delimiter):])
 
-	// The XML opening tag is optional: a model may emit
-	// <<DELIMITER ... DELIMITER with no kind or attributes, parsed with
-	// an empty Kind; or a bare kind — <<DELIMITER kind — whose first
-	// XML-name token is the Kind. See TheoryOfKindlessBlocks and
-	// TheoryOfBareKinds.
 	var kind string
 	var attrs map[string]string
-	if ltIdx := strings.Index(rest, "<"); ltIdx != -1 {
-		xmlPart := strings.TrimSpace(rest[ltIdx:])
-		// In heredoc format, the closing marker is the delimiter alone,
-		// so there is no XML closing tag on the opening line to reject.
-		// However, reject if the XML part starts with </ as a safety check.
-		if strings.HasPrefix(xmlPart, "</") {
-			return
-		}
+	if rest == "" {
+		kind = ""
+		attrs = nil
+	} else {
 		var valid bool
-		kind, attrs, valid = parseXMLOpeningTag(xmlPart)
-		if !valid || kind == "" {
-			// A valid three-character Han delimiter followed by an
-			// XML-like tag marks this line as an intended block opening
-			// whose opening tag is malformed or incomplete (e.g., a
-			// missing '>'). Report it as a parse error instead of
-			// silently treating it as prose, so the model can correct
-			// it. During streaming the line may be incomplete and the
-			// error is transient; it is collected only at Flush.
-			// See TheoryOfParseErrorCollection.
-			blockKind := extractTagName(xmlPart)
+		kind, attrs, valid = parseHeader(rest)
+		if !valid {
+			blockKind := extractKindName(rest)
 			matched = true
 			result.block.Kind = blockKind
 			result.block.Boundary = delimiter
@@ -375,27 +296,18 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 				Boundary:  delimiter,
 				Content:   string(content[blockStart:]),
 				Line:      bytes.Count(content[:blockStart], []byte("\n")) + 1,
-				Reason:    "has an invalid or incomplete XML opening tag",
+				Reason:    "has an invalid or incomplete function-call header",
 			}
 			return
 		}
-	} else {
-		// A bare kind without the XML opening tag: the model may emit
-		// <<DELIMITER kind instead of <<DELIMITER <kind ...>. The first
-		// XML-name token of the rest is the Kind, and the block has no
-		// attributes. An empty or non-token rest stays kindless.
-		// See TheoryOfBareKinds.
-		kind = extractBareKind(rest)
 	}
+
 	matched = true
 	result.block.Kind = kind
 	result.block.Boundary = delimiter
 	result.block.Attributes = attrs
 	bodyStart := lineEnd + 1
 	if bodyStart > len(content) {
-		// The opening line extends to the end of the content, so the
-		// body is empty and the block is necessarily unclosed.
-		// See TheoryOfBlockFormat.
 		bodyStart = len(content)
 	}
 	bodyEnd, blockEnd, found := findClosingMarker(content, bodyStart, delimiter)
@@ -406,12 +318,7 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 		result.ok = true
 		return
 	}
-	// Unclosed block: no matching end marker found. Always return an
-	// error, never finalize. An unclosed block is incomplete regardless
-	// of whether Flush has been called. The Content field captures the
-	// full text from the opening marker to the end of the available
-	// content, providing debugging context for truncated output.
-	// See TheoryOfBlockFormat.
+
 	result.start = blockStart
 	result.end = lineEnd + 1
 	if result.end > len(content) {
@@ -436,41 +343,16 @@ func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
 	if delimiter == "" {
 		return "", false
 	}
-	// extractDelimiter trims leading whitespace internally, so we must
-	// also trim before slicing to align the rest-of-line offset with
-	// the extracted delimiter. Without this, leading whitespace between
-	// << and the delimiter causes rest to start at a wrong byte offset.
 	trimmedAfterMarker := strings.TrimSpace(afterMarker)
-	rest := trimmedAfterMarker[len(delimiter):]
-	ltIdx := strings.Index(rest, "<")
-	if ltIdx == -1 {
-		// A bare kind without the XML opening tag is accepted as a
-		// nested opening marker, mirroring the bare-kind acceptance in
-		// tryParseBlock. Unlike the rendering path, the whole rest must
-		// be exactly the bare token: a marker line with trailing prose
-		// is not a nested opening, honoring the trailing-content check
-		// below. See TheoryOfBareKinds.
-		if token := extractBareKind(rest); token == "" || strings.TrimSpace(rest) != token {
-			return "", false
-		}
+	rest := strings.TrimSpace(trimmedAfterMarker[len(delimiter):])
+	if rest == "" {
 		return delimiter, true
 	}
-	xmlPart := strings.TrimSpace(rest[ltIdx:])
-	if strings.HasPrefix(xmlPart, "</") {
+	token, consumed, valid := TokenizeHeader(rest)
+	if !valid || token.Kind == "" {
 		return "", false
 	}
-	token, consumed, valid := TokenizeXMLTag(xmlPart)
-	if !valid || token.IsClosing() || token.Kind == "" {
-		return "", false
-	}
-	// A real block opening marker line consists of only the delimiter and
-	// the XML opening tag — no trailing prose. Without this check, body
-	// content like "<<FOO <tag> some text" would be falsely detected as a
-	// nested block opening, pushing "FOO" onto the delimiter stack. If no
-	// line matching "FOO" alone follows, the outer block's closing marker
-	// is consumed as body content and the block is incorrectly reported
-	// as unclosed. See TheoryOfNestedBlockParsing.
-	remaining := strings.TrimSpace(xmlPart[consumed:])
+	remaining := strings.TrimSpace(rest[consumed:])
 	if remaining != "" {
 		return "", false
 	}
@@ -579,24 +461,18 @@ func findDelimiterCollisionHints(content []byte, bodyStart int, delimiter string
 
 // extractDelimiter extracts the delimiter from an opening marker line: the
 // text from the start of the trimmed line up to the first whitespace or
-// '<', whichever comes first. The delimiter must be exactly two Unicode
+// '(', whichever comes first. The delimiter must be exactly two Unicode
 // Han characters; any other length or non-Han character returns an empty
-// string, so the marker is skipped and the line is treated as regular
-// content. See TheoryOfBoundaryUniqueness.
+// string.
 func extractDelimiter(s string) string {
 	s = strings.TrimSpace(s)
 	delimiter := s
 	for i, r := range s {
-		if r == ' ' || r == '\t' || r == '<' {
+		if r == ' ' || r == '\t' || r == '(' {
 			delimiter = s[:i]
 			break
 		}
 	}
-	// The delimiter must consist of exactly two Unicode Han characters.
-	// Non-Han delimiters and delimiters of any other length are rejected so
-	// that only two-character Chinese delimiters are recognized as block
-	// markers.
-	// See TheoryOfBoundaryUniqueness.
 	runes := []rune(delimiter)
 	if len(runes) != 2 {
 		return ""
@@ -607,50 +483,6 @@ func extractDelimiter(s string) string {
 		}
 	}
 	return delimiter
-}
-
-// extractBareKind extracts a bare block kind from the remainder of an
-// opening marker line. Models sometimes emit <<DELIMITER kind instead of
-// <<DELIMITER <kind ...>; the remainder is trimmed and its first
-// whitespace-delimited token is returned when it consists solely of XML
-// name characters. An empty remainder, or a first token containing a
-// non-name character (a space, a '<', Han text, punctuation), yields "",
-// so the block stays kindless. See TheoryOfBareKinds.
-func extractBareKind(rest string) string {
-	rest = strings.TrimSpace(rest)
-	if rest == "" {
-		return ""
-	}
-	for i := 0; i < len(rest); i++ {
-		c := rest[i]
-		if isXMLSpace(c) {
-			return rest[:i]
-		}
-		if !isXMLNameChar(c) {
-			return ""
-		}
-	}
-	return rest
-}
-
-// extractTagName extracts the element name from a possibly-incomplete XML
-// opening tag. Returns "" if no valid XML name is present. Used to report
-// the block kind in parse errors for malformed opening tags, where the tag
-// could not be fully tokenized by TokenizeXMLTag.
-func extractTagName(xmlPart string) string {
-	s := strings.TrimSpace(xmlPart)
-	if !strings.HasPrefix(s, "<") {
-		return ""
-	}
-	s = s[1:]
-	for len(s) > 0 && isXMLSpace(s[0]) {
-		s = s[1:]
-	}
-	start := 0
-	for start < len(s) && isXMLNameChar(s[start]) {
-		start++
-	}
-	return s[:start]
 }
 
 // maxParseErrorContentLength caps the amount of block content included in a

@@ -754,7 +754,7 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 
 		state := generators.NewPrompts("", nil)
 		parserState := blocks.NewParserState(state)
-		text := "<<DELIM1 <change op=\"MODIFY\" target=\"Old\" file-path=\"test.go\">\nfunc New() {}\nDELIM1\n"
+		text := "<<龘靐 change(op=\"MODIFY\", target=\"Old\", file-path=\"test.go\")\nfunc New() {}\n龘靐\n"
 		newState, err := parserState.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -767,19 +767,17 @@ func TestApplyChangeBlocksWrapperDelegatesToStore(t *testing.T) {
 		changeBlocks := []blocks.Block{
 			{
 				Kind:       "change",
-				Boundary:   "DELIM1",
+				Boundary:   "龘靐",
 				Attributes: map[string]string{"op": "MODIFY", "target": "Old", "file-path": "test.go"},
 				Body:       "func New() {}",
 			},
 		}
 
-		// ApplyChangeBlocks (the wrapper) should delegate to ApplyChangeBlocksStore
 		err = applyChangeBlocks(changeBlocks, root)
 		if err != nil {
 			t.Fatalf("ApplyChangeBlocks failed: %v", err)
 		}
 
-		// Disk should have updated content
 		got, err := root.ReadFile("test.go")
 		if err != nil {
 			t.Fatal(err)
