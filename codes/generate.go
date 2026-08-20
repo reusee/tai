@@ -381,11 +381,6 @@ The package-level implementation remains a plain function so tests can
 call it directly.
 `
 
-// handoffRetryState prepares the retry state for a phase error. When the
-// partial output can be summarized, the handoff summary is appended
-// as user content. When handoff fails, the error is propagated so the
-// caller aborts the run; a fallback state is still returned for validity.
-// See states.TheoryOfHandoff.
 func handoffRetryState(
 	errState generators.State,
 	phaseErr error,
@@ -399,7 +394,7 @@ func handoffRetryState(
 			return fallbackState, fallbackCount, fallbackSummary, handoffErr
 		} else if handoff != nil {
 			prefix := fmt.Sprintf(
-				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
+				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
 				phaseErr,
 			)
 			msg := states.FormatHandoffPrompt(prefix, handoff.Prompt)
@@ -445,8 +440,9 @@ a round ends without a summary block, or when the finish reason indicates abnorm
 termination (e.g., "length" from max-token truncation), the model's output was
 likely truncated mid-stream — the generation limit was reached before the model
 could emit its closing summary block, or the model emitted a summary but continued
-generating and was cut off. In both cases, the round is retried from the original
-pre-generation State. State immutability (see TheoryOfStateImmutability in
+generating and was cut off. Truncation often occurs because the model attempted
+too many changes in a single response. In both cases, the round is retried from the
+original pre-generation State. State immutability (see TheoryOfStateImmutability in
 generators/state.go) is the foundation for this retry: the pre-generation State is
 unaffected by the failed attempt, so retrying starts from a clean snapshot rather
 than corrupted partial state. The retry count is bounded to prevent infinite loops
@@ -468,8 +464,10 @@ callback, ensuring both external states are consistent with the rolled-back Stat
 (see TheoryOfParserState in blocks/parser_state.go).
 
 This retry uses handoff (TheoryOfHandoff in states/summarize_incomplete.go) to
-carry forward established conclusions into the next round without retaining
-unstructured conversation history.
+carry forward established conclusions, attempted changes, and partitioning guidance
+into the next round, directing the model to complete an initial subset of changes
+first and use continue blocks for remaining work, without retaining unstructured
+conversation history.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -482,10 +480,11 @@ and change-block apply errors — are routed through the same OnPhaseError retry
 with handoff, ensuring consistent retry behavior regardless of the error type.
 
 The handoff extracts the valuable content of the partial output — the
-discoveries, decisions, and facts the model had already established — and presents
-them to the retry round. The retry therefore continues from the model's conclusions
-instead of re-deriving them, reducing the thinking it needs and lowering the chance
-of failing again. See states.TheoryOfHandoff.
+discoveries, decisions, facts, and attempted changes the model had already
+established — and presents them to the retry round with guidance on task
+partitioning. The retry therefore continues from the model's conclusions and
+completes a manageable subset of changes first, using continue blocks for
+remaining work to prevent exceeding output limits again. See states.TheoryOfHandoff.
 
 This handoff is transient error recovery. The condensed content is injected
 into one retry request and does not persist as compressed history. The system does

@@ -15,22 +15,26 @@ import (
 const TheoryOfHandoff = `
 When a generation round is truncated (no summary block) or errors after
 producing partial output, a handoff summary is constructed before retrying.
-The handoff condenses the valuable thinking from the interrupted output —
-discoveries, insights, analysis, and decisions about the problem — into a
-single self-contained text.
+Truncation often occurs because the model attempted too many changes at
+once, exceeding output length limits. The handoff condenses the valuable
+thinking from the interrupted output — discoveries, insights, analysis,
+decisions about the problem, and specific attempted code modifications —
+into a single self-contained text.
 
-All changes are atomic: a truncated or failed round applies nothing, so
-there is no completed work, no remaining work, and no next step to carry
-forward. The handoff therefore never reports work status; claims about
-what was completed or what remains are hallucinations, because the output
-process failed and everything it produced was discarded.
+All changes are atomic: a truncated or failed round applies nothing to disk,
+so there is no completed work on disk and claims that changes took effect are
+hallucinations. However, summarizing what changes were being attempted and
+evaluating whether they are sound is crucial: it informs the next round so
+it can complete a manageable initial subset of those changes first, using a
+continue block to partition the remaining work across subsequent rounds
+instead of repeatedly attempting an oversized emission that triggers
+truncation again.
 
-The handoff's value is in the reasoning it preserves: it guides the
-direction of the next generation round and mitigates the model's tendency
-to overthink by carrying forward established insights and conclusions.
-The handoff is reference material, not a substitute for thinking: the
-next round must still reason about the problem and decide how to proceed,
-using the handoff to avoid re-deriving preliminary analysis.
+The handoff's value is in the reasoning and structural plan it preserves:
+it guides the direction of the next generation round, prevents repeating
+preliminary analysis, and directs task partitioning. The handoff is
+reference material, not a substitute for thinking: the next round must
+still reason about the problem and decide how to partition its work.
 
 The handoff model follows the HandoffModels list: each retry attempt uses
 the next model in order, cycling back to the beginning when the list is
@@ -103,21 +107,22 @@ type HandoffRecorder interface {
 	Event(typ string, detail string)
 }
 
-const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Because every change is applied atomically, nothing in the interrupted output was completed: the attempt's output was discarded and nothing it produced was applied, so there is no completed work, no remaining work, and no next step to carry forward. Claims about what was done or what remains are hallucinations — the output process failed, so nothing took effect.
+const HandoffSystemPrompt = `You are a handoff assistant. The previous model generation was interrupted or truncated before completion. Truncation often happens because too many changes were attempted at once, exceeding the model's output limit. Because changes are applied atomically, nothing in the interrupted output was applied to disk: the attempt's output was discarded and nothing was completed, so there is no completed work on disk. Claims that changes took effect are hallucinations — the output process failed, so nothing took effect.
 
-Your task is to extract the valuable thinking from the interrupted output — the discoveries, insights, analysis, and decisions about the problem — and condense them into a concise, self-contained handoff that improves the next generation round. The handoff's value is in the reasoning it preserves, not in any status report: it is reference material for the next round, which must still think for itself and decide how to proceed.
+Your task is to extract the valuable thinking from the interrupted output — discoveries, insights, analysis, decisions, and attempted code modifications — and condense them into a concise, self-contained handoff that guides the next generation round to partition its work effectively.
 
 CRITICAL CONSTRAINTS:
 - Do NOT assume the next generation round can see the previous truncated output or its reasoning. The previous raw output is DISCARDED and will NOT appear in conversation history. Your handoff notes are the ONLY information passed forward.
 - Everything necessary to continue must be SELF-CONTAINED in your summary.
-- Do NOT report completed work, remaining work, or next steps: nothing was completed, and such status claims are hallucinations with no value.
-- The handoff is reference material, not a substitute for thinking: the next round must still reason about the problem and apply its own judgment. State the established insights and conclusions clearly so the model does not repeat lengthy preliminary analysis or re-derive conclusions, but do not imply that it can act without thinking.
+- Acknowledge that changes were not applied to disk (atomic rollback), but identify what code changes were attempted or generated so the next round knows what modifications were underway.
+- Guide task partitioning: if the previous round was truncated due to output volume or attempting too many changes, explicitly identify what changes were attempted, evaluate whether they are sound, and advise the next round to complete an initial manageable subset of those changes first and use a continue block to partition the remaining work across subsequent rounds, rather than repeatedly emitting an oversized response that triggers truncation again.
+- The handoff is reference material, not a substitute for thinking: the next round must still think for itself, reason about the problem, and apply its own judgment. State established insights and conclusions clearly so the model does not repeat lengthy preliminary analysis or re-derive conclusions.
 
 Prioritize:
 - Important discoveries and insights established about the codebase or problem
 - Key decisions and conclusions about the problem and approach
-- Analysis that would otherwise be re-derived from scratch
-- How the thinking should be improved or redirected in the next attempt
+- Specific code modifications and change blocks that were being produced or attempted
+- Guidance on task partitioning: which changes to complete first in the upcoming round and how to use continue blocks for remaining work to avoid output truncation
 
 Output ONLY the concise handoff summary as plain text, with no preamble or extra commentary.`
 

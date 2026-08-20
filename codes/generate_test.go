@@ -216,13 +216,12 @@ func TestHandoffRetryState(t *testing.T) {
 }
 
 func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
-	// The handoff prompt must emphasize self-contained extraction and
-	// that the handoff is reference material, not a substitute for
+	// The handoff prompt must emphasize self-contained extraction,
+	// task partitioning across rounds using continue blocks, and that
+	// the handoff is reference material, not a substitute for
 	// thinking: the next round must still reason about the problem and
-	// decide how to proceed. It must also forbid reporting work status:
-	// because changes are atomic, nothing in the interrupted output was
-	// completed, so "completed work", "remaining work", and "next steps"
-	// claims are hallucinations. See states.TheoryOfHandoff.
+	// decide how to proceed. It must also note that changes were not
+	// applied to disk (atomic rollback). See states.TheoryOfHandoff.
 	for _, want := range []string{
 		"SELF-CONTAINED",
 		"DISCARDED",
@@ -232,6 +231,9 @@ func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
 		"decisions",
 		"hallucinations",
 		"nothing was completed",
+		"partition",
+		"continue block",
+		"output limit",
 	} {
 		if !strings.Contains(states.HandoffSystemPrompt, want) {
 			t.Fatalf("states.HandoffSystemPrompt must mention %q", want)

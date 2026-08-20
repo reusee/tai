@@ -100,10 +100,15 @@ Retry on missing completion and handoff: a round without a summary block,
 or with an abnormal finish reason (e.g., "length" from max-token truncation),
 was truncated mid-stream — the generation limit hit before the model emitted
 its closing summary block, or the model emitted a summary and continued until
-cut off. The round is retried from the original pre-generation State. When
-output meets the minimum threshold, the handoff process creates a self-contained
-summary carrying forward established conclusions and insights, mitigating
-overthinking in the retry attempt. Short or empty outputs are retried directly.
+cut off. Truncation often happens because the model attempted too many changes
+in a single turn. The round is retried from the original pre-generation State.
+When output meets the minimum threshold, the handoff process creates a
+self-contained summary carrying forward established conclusions, attempted
+changes, and task-partitioning guidance. The retry user prompt explicitly
+instructs the model to partition extensive modifications: implement an initial
+manageable subset of changes in the current round, end with a summary block, and
+use a continue block to carry over the remaining work into subsequent rounds,
+preventing repeated truncation loops. Short or empty outputs are retried directly.
 See states.TheoryOfHandoff.
 
 Component-triggering blocks (request-context, shell, continue, go-test) also
@@ -142,7 +147,7 @@ intermediate usage snapshots that may be emitted by streaming providers
 (e.g., Gemini's streaming UsageMetadata).
 `
 
-const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
+const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
 
 const defaultMaxRetries = 3
 
@@ -155,7 +160,7 @@ const defaultMaxRetries = 3
 // recorded in Result.ParseErrors. See TheoryOfLoops.
 const maxParseErrorRounds = 3
 
-const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Re-emit every block you intend to take effect. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work, no remaining work, and no next step to carry forward. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, and decisions about the problem. Use it as reference, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
+const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Truncation typically occurs when attempting too many changes in a single response, exceeding the output limit. If the planned modifications are extensive, do NOT attempt to emit all changes at once. Instead, partition the work: implement a manageable initial subset of change blocks in this round, and use a continue block to carry over the remaining tasks into subsequent rounds. Re-emit every block you intend to take effect in this round. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work on disk, and no next step to carry forward without implementation. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, decisions, and attempted changes. Use it as reference to partition and guide your work, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The
