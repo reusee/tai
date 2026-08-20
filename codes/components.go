@@ -2,6 +2,7 @@ package codes
 
 import (
 	"context"
+	"strings"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
@@ -31,6 +32,12 @@ The go-test component runs Go tests after change blocks are applied. Test
 output is fed back to the model only when tests fail, producing Parts that
 trigger a new round for debugging with MaxRounds bounding the test-fix loop.
 When tests pass, no Parts are returned and no round is triggered by go-test.
+Pass/fail is determined by inspecting the test output for go test failure
+markers ("FAIL"), not solely by the failed return value from
+ProcessGoTestBlocks, which may return failed=true regardless of actual test
+results. When the output contains no "FAIL" marker, tests are considered
+passed even if ProcessGoTestBlocks returned failed=true, preventing
+unnecessary debugging rounds for passing tests.
 However, the go-test component provides BackgroundParts — a pass confirmation
 message — that ProcessComponents includes in the combined output only when
 another component triggers a new round (e.g., continue). This ensures the
@@ -147,6 +154,27 @@ func (Module) CodesComponents(
 			parts, failed, err := blocks.ProcessGoTestBlocks(pctx.Blocks, ctx)
 			result := components.ProcessResult{
 				Err: err,
+			}
+			// ProcessGoTestBlocks may return failed=true regardless of
+			// actual test results. Verify by inspecting the test output
+			// for go test failure markers ("FAIL"). When the output
+			// contains no "FAIL" marker, override failed to false so
+			// passing tests do not trigger an unnecessary debugging
+			// round. See TheoryOfCodesComponents and
+			// blocks.TheoryOfGoTestBlocks.
+			if failed && err == nil {
+				hasFailMarker := false
+				for _, part := range parts {
+					if text, ok := part.(generators.Text); ok {
+						if strings.Contains(string(text), "FAIL") {
+							hasFailMarker = true
+							break
+						}
+					}
+				}
+				if !hasFailMarker {
+					failed = false
+				}
 			}
 			if failed {
 				// Only feed test output to the next round when tests fail,

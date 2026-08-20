@@ -40,7 +40,7 @@ func TestProcessGoTestBlocks(t *testing.T) {
 	t.Run("TestsPass", func(t *testing.T) {
 		// -run and ___nonexistent___ on separate lines.
 		// ___nonexistent___ matches no tests, so go test succeeds.
-		// When tests pass, no output parts should be returned.
+		// Test output is always returned to the model, even when tests pass.
 		blocks := []Block{
 			{Kind: "go-test", Body: "-run\n___nonexistent___"},
 		}
@@ -48,11 +48,18 @@ func TestProcessGoTestBlocks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ProcessGoTestBlocks failed: %v", err)
 		}
-		if failed {
-			t.Fatal("expected failed=false for passing tests")
+		if !failed {
+			t.Fatal("expected failed=true to trigger a new round even when tests pass")
 		}
-		if len(parts) != 0 {
-			t.Fatalf("expected 0 parts for passing tests, got %d", len(parts))
+		if len(parts) != 1 {
+			t.Fatalf("expected 1 part for passing tests, got %d", len(parts))
+		}
+		output := string(parts[0].(generators.Text))
+		if !strings.Contains(output, "Working directory:") {
+			t.Fatalf("expected output to contain 'Working directory:', got: %s", output)
+		}
+		if !strings.Contains(output, "Command succeeded") {
+			t.Fatalf("expected output to contain 'Command succeeded', got: %s", output)
 		}
 	})
 }

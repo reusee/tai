@@ -58,25 +58,14 @@ summary block in the same round to describe what was done, including the test
 verification. Without a summary or finish block, the system assumes the output was
 truncated and retries the round unnecessarily. This applies to every round,
 including debug rounds where tests fail and the go-test component produces Parts
-that trigger a new round. When tests pass, the go-test component does not produce
-Parts; the test output is not fed back to the model, and other mechanisms (e.g.,
-continue blocks) determine whether another round follows.
+that trigger a new round.
 
-ProcessGoTestBlocks enforces the pass/fail asymmetry at the implementation level:
-it only collects output parts when a test run fails, so the model receives stdout
-and stderr exclusively when there are failures to debug and fix. When all tests
-pass, no parts are returned, the caller has nothing to append to the state, and no
-new round is triggered by the go-test component alone.
-
-When tests pass but another component (e.g., continue) triggers a new round, the
-go-test component provides BackgroundParts — a pass confirmation message — that
-ProcessComponents includes in the combined output alongside the triggering
-component's parts. This ensures the model knows the tests passed and does not
-re-emit go-test blocks in subsequent rounds, preventing unnecessary test reruns.
-BackgroundParts are discarded when no component triggers a new round, since there
-is no next round to carry them. This preserves the pass/fail asymmetry at the
-function level (ProcessGoTestBlocks still returns no parts on pass) while ensuring
-the model is informed of pass results when they are relevant to the next round.
+ProcessGoTestBlocks always returns test output to the model and always triggers a
+new round, regardless of whether tests pass or fail. Some models run tests first
+and need the results to decide whether to continue; withholding output on pass
+causes the system to exit prematurely when the model intended to proceed. By
+always feeding back stdout and stderr, the model can see pass results and continue
+its workflow, or see failure output and debug the issues.
 `
 
 const GoTestBlockSystemPrompt = `
@@ -89,7 +78,7 @@ Use the "go-test" kind to run Go tests and receive the output as part of the nex
 - The body contains ONLY the go test arguments, one per line, with no prose. Each non-empty line is passed as a separate argument to the go test command via exec.Command, bypassing the shell to avoid injection. If empty, all tests in the current directory tree (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). The current working directory is not known, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so correct absolute paths can be constructed. If the working directory is not yet known, use an empty body to run all tests (./...).
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
-- Both stdout and stderr are captured. When tests fail, the full output (stdout and stderr) is fed back as user content in the next round for debugging and fixing the issues. When tests pass, the output is not returned.
+- Both stdout and stderr are captured and fed back as user content in the next round, regardless of whether tests pass or fail.
 - Prefer running tests after applying change blocks to verify correctness.
 - Close the go-test block with its closing line before emitting any other block (e.g., the summary block): the closing line must appear before the next block's opening marker.
 - The go-test block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
@@ -100,7 +89,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 - Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
 - **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). The current working directory is not known, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so correct absolute paths can be constructed. If the working directory is not yet known, use an empty body to run all tests (./...).
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
-- If tests fail, the output (stdout and stderr) is fed back for debugging. Fix the issues and try again. If tests pass, the output is not returned.
+- Both stdout and stderr are fed back as user content in the next round, regardless of whether tests pass or fail. Fix any failures and try again.
 - Only use go-test blocks in Go projects.
 - A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.`
 
@@ -166,34 +155,31 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 
 // ProcessGoTestBlocks runs Go tests for all go-test blocks and returns the
 // outputs as generator parts. Only blocks with Kind "go-test" are processed.
-// Output parts are only collected when a test run fails, so the model
-// receives stdout and stderr exclusively when there are failures to debug
-// and fix. When all tests pass, no parts are returned and the caller has
-// nothing to feed back. The failed flag indicates whether any test run
-// failed, so callers can set Continue to trigger a new round for debugging.
-// See TheoryOfGoTestBlocks.
+// Test output (stdout and stderr) is always returned to the model, regardless
+// of whether tests pass or fail, and a new round is always triggered so the
+// model can see the results and continue. Withholding output on pass causes
+// some models to exit prematurely when they intended to proceed after seeing
+// the test results. See TheoryOfGoTestBlocks.
 func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, bool, error) {
 	if len(blocks) == 0 {
 		return nil, false, nil
 	}
 	var parts []generators.Part
-	anyFailed := false
 	for _, block := range blocks {
 		if block.Kind != "go-test" {
 			continue
 		}
 		args := block.Body
-		output, failed := executeGoTest(ctx, args)
-		if failed {
-			anyFailed = true
-			// Only feed test output back to the model when tests fail,
-			// so the model can read stdout and stderr to debug and fix
-			// the issues. When tests pass, the output is not returned;
-			// the caller has nothing to append, and no new round is
-			// triggered by the go-test component.
-			// See TheoryOfGoTestBlocks.
-			parts = append(parts, generators.Text(output))
-		}
+		output, _ := executeGoTest(ctx, args)
+		// Always feed test output back to the model, regardless of
+		// pass or fail. Some models run tests first and need the
+		// results to decide whether to continue; withholding output
+		// on pass causes the system to exit prematurely.
+		// See TheoryOfGoTestBlocks.
+		parts = append(parts, generators.Text(output))
 	}
-	return parts, anyFailed, nil
+	if len(parts) == 0 {
+		return nil, false, nil
+	}
+	return parts, true, nil
 }
