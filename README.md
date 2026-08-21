@@ -164,7 +164,7 @@ func Foo() {
 徕珑龘
 ```
 
-Block kinds: `change`, `shell`, `go-test`, `continue`, `summary`, `request-context`, `memory`.
+Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `request-context`, `memory`.
 
 ### Context Pipeline
 

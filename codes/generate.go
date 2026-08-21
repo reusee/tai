@@ -56,6 +56,13 @@ const maxRequestContextRounds = 5
 
 const maxGoTestRounds = 10
 
+// maxGoSrcRounds bounds the number of rounds the go-src component may
+// trigger: each round feeds resolved symbol source back to the model, so
+// a runaway model that keeps requesting symbols cannot loop indefinitely
+// in unattended operation. See TheoryOfCodesComponents and
+// blocks.TheoryOfGoSrcBlocks.
+const maxGoSrcRounds = 10
+
 const maxRetriesForMissingSummary = 3
 
 const TheoryOfReviewLoop = `

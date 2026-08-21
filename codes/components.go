@@ -19,7 +19,7 @@ the ai command's AIComponents).
 
 The codes module reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-request-context) and appending summary, read-only files (prompt-only),
+go-src, request-context) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
 (prompt-only).
 
@@ -47,15 +47,23 @@ triggers, BackgroundParts are discarded. The go-test component is placed
 after change so tests run against the updated source, and before summary so
 test output is available for the next round.
 
+The go-src component resolves go-src block symbols — Go symbol names, one
+per line — through gocodes.ResolveGoSymbols, appended as user content for the
+next round. Like request-context it is read-only context fetching, but
+unconditional: symbol resolution reuses the packages the loader already
+fetched, so it is always available in the codes pipeline. MaxRounds bounds
+the fetch loop so a model cannot chain symbol requests indefinitely.
+
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
 blocks.
 
-ExtraSystemPrompt is also a prompt-only Component. Change, go-test, and
-request-context components carry RestatePrompt fields — short critical reminders
-that reinforce block format rules. Restate prompts are placed at the end of
-the user prompt via ComponentSet.UserPromptParts(), not in the system prompt,
-so they are the last content the model reads before generating.
+ExtraSystemPrompt is also a prompt-only Component. Change, go-test, go-src,
+and request-context components carry RestatePrompt fields — short critical
+reminders that reinforce block format rules. Restate prompts are placed at
+the end of the user prompt via ComponentSet.UserPromptParts(), not in the
+system prompt, so they are the last content the model reads before
+generating.
 
 The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
 that reinforces the requirement to emit a summary block in every response as
@@ -98,6 +106,7 @@ func (Module) CodesComponents(
 	plan flags.Plan,
 	flagShell flags.Shell,
 	applyChangeBlocks changes.ApplyChangeBlocks,
+	resolveGoSymbols gocodes.ResolveGoSymbols,
 ) CodesComponents {
 	var comps components.ComponentSet
 
@@ -193,6 +202,42 @@ func (Module) CodesComponents(
 				}
 			}
 			return result
+		},
+	})
+
+	// Go-src component: resolves go-src block symbols to declaration
+	// source. Read-only and unconditional: symbol resolution reuses the
+	// packages the loader already fetched, so it is always available in
+	// the codes pipeline. Placed with request-context before shell and
+	// continue so fetched context is available for the next generation
+	// round. See blocks.TheoryOfGoSrcBlocks and
+	// gocodes.TheoryOfGoSrcResolution.
+	comps = append(comps, components.Component{
+		Kind:          "go-src",
+		PromptSection: blocks.GoSrcBlockSystemPrompt,
+		RestatePrompt: blocks.GoSrcBlockRestatePrompt,
+		MaxRounds:     maxGoSrcRounds,
+		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+			symbols := blocks.ParseGoSrcSymbols(pctx.Blocks)
+			if len(symbols) == 0 {
+				// An empty go-src block is a format error the model can
+				// correct: feed back a usage hint instead of a silent
+				// no-op, so the next round can list the symbols properly.
+				return components.ProcessResult{
+					Parts: []generators.Part{
+						generators.Text("The go-src block body was empty; list one Go symbol per line (plain names or TypeName.MethodName).\n"),
+					},
+				}
+			}
+			parts, err := resolveGoSymbols(symbols)
+			if err != nil {
+				return components.ProcessResult{Err: err}
+			}
+			// A brief header tells the model why the source appeared in
+			// the next round's user content.
+			parts = append([]generators.Part{generators.Text(
+				"[Requested source of the go-src symbols]\n\n")}, parts...)
+			return components.ProcessResult{Parts: parts}
 		},
 	})
 

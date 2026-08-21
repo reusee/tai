@@ -1,0 +1,71 @@
+package blocks
+
+import "strings"
+
+const TheoryOfGoSrcBlocks = `
+The go-src block is the symbol-level context-fetching kind: the model lists
+Go symbol names — one per line — and the system resolves each symbol to its
+declaration source, returned as user content in the next generation round.
+It complements request-context: request-context fetches files and network
+resources, while go-src fetches declaration source within the packages the
+Go pipeline already loaded. Its purpose is precision under the visibility
+system: a package shown at documentation visibility carries only go doc
+output, so the model knows declaration signatures but not implementations;
+go-src lets the model pull exactly the implementations it needs instead of
+re-fetching whole files (see gocodes.TheoryOfVisibilityAllocation).
+
+The block body is opaque to the mechanism: each non-empty line is one
+symbol name — a plain name for a top-level declaration, TypeName.MethodName
+for a method, with an optional * receiver prefix ignored. The resolution
+lives with the Go package loader (gocodes.ResolveGoSymbols) because it
+needs the parsed ASTs; the blocks package defines only the block format and
+the symbol parse. Like request-context, go-src is strictly read-only and is
+not a completion signal: a round carrying a go-src block still needs a
+summary block, and because the kind is processable it participates in the
+triggering-block check, so such a round is not retried as truncated output
+(see loops.TheoryOfLoops).
+`
+
+const GoSrcBlockSystemPrompt = `
+Go-Src Block Kind:
+
+Use the "go-src" kind to request the source code of Go symbols that were not fully included in the context. The system resolves each symbol to its declaration source and provides it as user content in the next generation round.
+
+**Rules:**
+- Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies).
+- The body contains ONLY symbol names, one per line, with no prose. Each non-empty line is one symbol.
+- Symbol forms: a plain name for a top-level declaration (function, type, const, var), e.g. NewReader; and TypeName.MethodName for a method, e.g. Reader.Read. An optional leading * receiver prefix is ignored. Do not qualify names with a package path.
+- A plain name may match declarations in several packages; all matches are returned with their package-qualified names and file locations.
+- Only symbols in packages loaded in this session can be resolved. Symbols that match nothing are reported in the next round; correct the name and try again.
+- The returned source includes the declaration's doc comments.
+- Do not emit change blocks whose content depends on the requested source: request the source first, then emit changes in a subsequent response after the source is provided.
+- After emitting a go-src block, stop generating and wait: the requested source arrives as user content in the next round.
+- Close the go-src block with its closing line before emitting any other block (e.g., the summary block).
+- The go-src block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-src block. Every round must end with a summary block.
+- Only use go-src blocks in Go projects.
+`
+
+const GoSrcBlockRestatePrompt = `- When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line: plain names for top-level declarations and TypeName.MethodName for methods. The system returns the declaration source in the next round. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
+- A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.`
+
+// ParseGoSrcSymbols extracts the symbol names from go-src blocks: each
+// non-empty, trimmed body line is one symbol. Blocks of other kinds are
+// skipped. See TheoryOfGoSrcBlocks.
+func ParseGoSrcSymbols(blocks []Block) []string {
+	if len(blocks) == 0 {
+		return nil
+	}
+	var symbols []string
+	for _, block := range blocks {
+		if block.Kind != "go-src" {
+			continue
+		}
+		for line := range strings.SplitSeq(block.Body, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				symbols = append(symbols, line)
+			}
+		}
+	}
+	return symbols
+}

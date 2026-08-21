@@ -966,6 +966,8 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
 		"GoTestBlockSystemPrompt":     GoTestBlockSystemPrompt,
 		"GoTestBlockRestatePrompt":    GoTestBlockRestatePrompt,
+		"GoSrcBlockSystemPrompt":      GoSrcBlockSystemPrompt,
+		"GoSrcBlockRestatePrompt":     GoSrcBlockRestatePrompt,
 		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
 		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
 		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,
