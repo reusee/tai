@@ -127,7 +127,12 @@ Prioritize:
 - Specific code modifications and change blocks that were being produced or attempted
 - Guidance on task partitioning: which changes to complete first in the upcoming round and how to use continue blocks for remaining work to avoid output truncation
 
-Wrap the concise handoff summary in a boundary-delimited block with kind "handoff". The block body must contain ONLY the handoff summary text. Do not output any prose before or after the block. If you fail to emit a valid, properly closed handoff block, the system will treat the response as empty and retry, so ensure the block is well-formed with a matched opening marker and closing line.`
+BLOCK FORMAT REQUIREMENT (CRITICAL):
+- Wrap the handoff summary in a boundary-delimited block. The block kind is "handoff": a bare function name written immediately after the delimiter in the opening header line, with no parentheses and no parameters. The kind is a function name, never a named parameter.
+- The opening header line consists of exactly two words: your chosen two-character delimiter, then the word handoff.
+- The block body must contain ONLY the handoff summary text.
+- Do not output any prose before or after the block.
+- If you fail to emit a valid, properly closed handoff block, the system will treat the response as empty and retry, so ensure the block is well-formed with a matched opening marker and closing line.`
 
 // maxHandoffRetries bounds the number of attempts to generate a handoff summary
 // when generation fails or produces an empty response. See TheoryOfHandoff.
