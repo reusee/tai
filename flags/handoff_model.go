@@ -2,47 +2,44 @@ package flags
 
 import (
 	"fmt"
-	"slices"
 
 	"cuelang.org/go/cue"
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/configs"
 )
 
-// HandoffModels is the list of models used for handoff in order. Each retry
-// attempt in the handoff process uses the next model in the list, cycling
-// back to the beginning when the list is exhausted. When empty, the fast
-// model (FastModelName) is used if configured; otherwise the default model
+// HandoffModel is the model used for handoff. When empty, the fast model
+// (FastModelName) is used if configured; otherwise the default model
 // (ModelName) is used. See states.TheoryOfHandoffModel.
-type HandoffModels []string
+type HandoffModel string
 
-func (Module) HandoffModels() (ret HandoffModels) {
+func (Module) HandoffModel() (ret HandoffModel) {
 	return
 }
 
-var _ Flag = HandoffModels(nil)
+var _ Flag = HandoffModel("")
 
-func (m HandoffModels) Keys() map[string]string {
+func (m HandoffModel) Keys() map[string]string {
 	return map[string]string{
-		"-handoff-model": "Set a handoff model to use for generation (repeatable, tried in order)",
+		"-handoff-model": "Set a handoff model to use for generation",
 	}
 }
 
-func (m HandoffModels) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
+func (m HandoffModel) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
 	if len(args) == 0 {
 		return nil, nil, fmt.Errorf("expecting string argument, got empty")
 	}
-	ret := append(slices.Clone(m), args[0])
+	ret := HandoffModel(args[0])
 	return &ret, args[1:], nil
 }
 
-var _ configs.DynamicPathsConfig = HandoffModels(nil)
+var _ configs.DynamicPathsConfig = HandoffModel("")
 
-func (m HandoffModels) ConfigPaths() []string {
+func (m HandoffModel) ConfigPaths() []string {
 	return nil
 }
 
-func (m HandoffModels) ConfigPathsFunc() any {
+func (m HandoffModel) ConfigPathsFunc() any {
 	return func(
 		appName apps.Name,
 	) []string {
@@ -61,8 +58,9 @@ func (m HandoffModels) ConfigPathsFunc() any {
 	}
 }
 
-func (m HandoffModels) HandleConfig(path string, values []*cue.Value) (any, error) {
-	ret := slices.Clone(m)
+func (m HandoffModel) HandleConfig(path string, values []*cue.Value) (any, error) {
+	var ret HandoffModel
+	found := false
 	for _, v := range values {
 		switch v.Kind() {
 		case cue.StringKind:
@@ -71,15 +69,25 @@ func (m HandoffModels) HandleConfig(path string, values []*cue.Value) (any, erro
 				return nil, err
 			}
 			if s != "" {
-				ret = append(ret, s)
+				ret = HandoffModel(s)
+				found = true
 			}
 		case cue.ListKind:
 			var list []string
 			if err := v.Decode(&list); err != nil {
 				return nil, err
 			}
-			ret = append(ret, list...)
+			for _, s := range list {
+				if s != "" {
+					ret = HandoffModel(s)
+					found = true
+					break
+				}
+			}
 		}
+	}
+	if !found {
+		return nil, nil
 	}
 	return &ret, nil
 }

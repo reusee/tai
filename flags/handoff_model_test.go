@@ -10,13 +10,26 @@ import (
 
 func TestHandoffModelFlag(t *testing.T) {
 	scope := dscope.New(Module{})
+	result, err := Parse(scope, []string{"-handoff-model", "gemini-flash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Call(func(model HandoffModel) {
+		if string(model) != "gemini-flash" {
+			t.Fatalf("expected gemini-flash, got %v", model)
+		}
+	})
+}
+
+func TestHandoffModelFlagOverwritesPrevious(t *testing.T) {
+	scope := dscope.New(Module{})
 	result, err := Parse(scope, []string{"-handoff-model", "gemini-flash", "-handoff-model", "deepseek-chat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result.Call(func(models HandoffModels) {
-		if len(models) != 2 || models[0] != "gemini-flash" || models[1] != "deepseek-chat" {
-			t.Fatalf("expected [gemini-flash deepseek-chat], got %v", models)
+	result.Call(func(model HandoffModel) {
+		if string(model) != "deepseek-chat" {
+			t.Fatalf("expected deepseek-chat (last flag wins), got %v", model)
 		}
 	})
 }
@@ -30,7 +43,7 @@ func TestHandoffModelFlagNoArg(t *testing.T) {
 }
 
 func TestHandoffModelKeys(t *testing.T) {
-	m := HandoffModels(nil)
+	m := HandoffModel("")
 	keys := m.Keys()
 	if _, ok := keys["-handoff-model"]; !ok {
 		t.Fatal("-handoff-model flag not registered in Keys()")
@@ -42,50 +55,62 @@ func TestHandoffModelConfig(t *testing.T) {
 
 	t.Run("String", func(t *testing.T) {
 		v := ctx.CompileString(`"gemini-flash"`)
-		m := HandoffModels(nil)
+		m := HandoffModel("")
 		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ret, ok := def.(*HandoffModels)
+		ret, ok := def.(*HandoffModel)
 		if !ok {
-			t.Fatalf("expected *HandoffModels, got %T", def)
+			t.Fatalf("expected *HandoffModel, got %T", def)
 		}
-		if len(*ret) != 1 || (*ret)[0] != "gemini-flash" {
-			t.Fatalf("expected [gemini-flash], got %v", *ret)
+		if string(*ret) != "gemini-flash" {
+			t.Fatalf("expected gemini-flash, got %v", *ret)
 		}
 	})
 
-	t.Run("List", func(t *testing.T) {
+	t.Run("ListTakesFirst", func(t *testing.T) {
 		v := ctx.CompileString(`["gemini-flash", "deepseek-chat"]`)
-		m := HandoffModels(nil)
+		m := HandoffModel("")
 		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ret, ok := def.(*HandoffModels)
+		ret, ok := def.(*HandoffModel)
 		if !ok {
-			t.Fatalf("expected *HandoffModels, got %T", def)
+			t.Fatalf("expected *HandoffModel, got %T", def)
 		}
-		if len(*ret) != 2 || (*ret)[0] != "gemini-flash" || (*ret)[1] != "deepseek-chat" {
-			t.Fatalf("expected [gemini-flash deepseek-chat], got %v", *ret)
+		if string(*ret) != "gemini-flash" {
+			t.Fatalf("expected gemini-flash (first from list), got %v", *ret)
 		}
 	})
 
-	t.Run("Accumulates", func(t *testing.T) {
+	t.Run("LaterValueOverrides", func(t *testing.T) {
 		v1 := ctx.CompileString(`"first"`)
-		v2 := ctx.CompileString(`["second", "third"]`)
-		m := HandoffModels(nil)
+		v2 := ctx.CompileString(`"second"`)
+		m := HandoffModel("")
 		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v1, &v2})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ret, ok := def.(*HandoffModels)
+		ret, ok := def.(*HandoffModel)
 		if !ok {
-			t.Fatalf("expected *HandoffModels, got %T", def)
+			t.Fatalf("expected *HandoffModel, got %T", def)
 		}
-		if len(*ret) != 3 || (*ret)[0] != "first" || (*ret)[1] != "second" || (*ret)[2] != "third" {
-			t.Fatalf("expected [first second third], got %v", *ret)
+		if string(*ret) != "second" {
+			t.Fatalf("expected second (later value overrides), got %v", *ret)
+		}
+	})
+
+	t.Run("EmptyStringReturnsNil", func(t *testing.T) {
+		v := ctx.CompileString(`""`)
+		m := HandoffModel("")
+		def, err := m.HandleConfig("handoff_model", []*cue.Value{&v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if def != nil {
+			t.Fatalf("expected nil for empty string, got %v", def)
 		}
 	})
 }

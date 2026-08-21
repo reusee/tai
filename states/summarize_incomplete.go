@@ -37,11 +37,9 @@ preliminary analysis, and directs task partitioning. The handoff is
 reference material, not a substitute for thinking: the next round must
 still reason about the problem and decide how to partition its work.
 
-The handoff model follows the HandoffModels list: each retry attempt uses
-the next model in order, cycling back to the beginning when the list is
-exhausted. This provides fault tolerance: if one model's API is down or
-returns empty responses, the next model is tried without consuming the
-full retry budget on a single model. See TheoryOfHandoffModel. The handoff
+The handoff model is a single model specified by HandoffModels. When empty,
+the fast model (FastModelName) is used if configured; otherwise the default
+model (ModelName) is used. See TheoryOfHandoffModel. The handoff
 prompt instructs the model to wrap the concise handoff summary in a
 boundary-delimited block with kind "handoff". The system parses the block
 body as the handoff content; if the model does not emit a valid handoff
@@ -224,10 +222,9 @@ func CreateHandoff(
 
 	var lastErr error
 	for attempt := range maxHandoffRetries {
-		// Cycle through the handoff models: each retry attempt uses the
-		// next model in the list, wrapping around when exhausted. This
-		// provides fault tolerance across multiple model providers.
-		// See TheoryOfHandoffModel.
+		// The handoff model is a single model; the generator slice has
+		// one element. The modulo is retained for safety but always
+		// resolves to index 0.
 		generator := handoffGenerators[attempt%len(handoffGenerators)]
 
 		recordContent(&generators.Content{

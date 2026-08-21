@@ -5,10 +5,10 @@ cmd_ai?: {
   // fast_model_name specifies the fast model for summarization and lightweight tasks.
   fast_model_name?: string
   // fast_model is an alias for fast_model_name.
-  // handoff_model_name specifies the models used for handoff.
-  handoff_model_name?: string | [...string]
+  // handoff_model_name specifies the model used for handoff.
+handoff_model_name?: string
   // handoff_model is an alias for handoff_model_name.
-  handoff_model?: string | [...string]
+handoff_model?: string
   fast_model?: string
 }
 
@@ -17,13 +17,13 @@ model?: string
 fast_model_name?: string
 fast_model?: string
 
-// handoff_model specifies the models used for handoff: the summarization
+// handoff_model specifies the model used for handoff: the summarization
 // of truncated or failed generation output before retry, and periodic
 // thought summaries. When empty, the fast model is used if configured;
 // otherwise the default model is used.
-handoff_model?: string | [...string]
+handoff_model?: string
 // handoff_model_name is an alias for handoff_model.
-handoff_model_name?: string | [...string]
+handoff_model_name?: string
 
 // max_tokens limits the total context tokens (input + output).
 // Deprecated in favor of max_context_tokens.
