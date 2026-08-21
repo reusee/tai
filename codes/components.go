@@ -2,7 +2,6 @@ package codes
 
 import (
 	"context"
-	"strings"
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
@@ -29,23 +28,14 @@ it, and the kind prompts describe only their kind-specific semantics without
 restating the heredoc format. See blocks.TheoryOfBlockFormatGeneral.
 
 The go-test component runs Go tests after change blocks are applied. Test
-output is fed back to the model only when tests fail, producing Parts that
-trigger a new round for debugging with MaxRounds bounding the test-fix loop.
-When tests pass, no Parts are returned and no round is triggered by go-test.
-Pass/fail is determined by inspecting the test output for go test failure
-markers ("FAIL"), not solely by the failed return value from
-ProcessGoTestBlocks, which may return failed=true regardless of actual test
-results. When the output contains no "FAIL" marker, tests are considered
-passed even if ProcessGoTestBlocks returned failed=true, preventing
-unnecessary debugging rounds for passing tests.
-However, the go-test component provides BackgroundParts — a pass confirmation
-message — that ProcessComponents includes in the combined output only when
-another component triggers a new round (e.g., continue). This ensures the
-model knows the tests passed and does not re-emit go-test blocks in
-subsequent rounds, preventing unnecessary test reruns. When no component
-triggers, BackgroundParts are discarded. The go-test component is placed
-after change so tests run against the updated source, and before summary so
-test output is available for the next round.
+output (stdout and stderr) is always fed back to the model as Parts,
+triggering a new round regardless of whether tests pass or fail: the model
+needs the results to decide whether to continue, and withholding output on
+pass causes the system to exit prematurely when the model intended to
+proceed. MaxRounds bounds the test-fix loop so a model cannot rerun tests
+indefinitely. The go-test component is placed after change so tests run
+against the updated source, and before summary so test output is available
+for the next round.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gocodes.ResolveGoSymbols, appended as user content for the
@@ -145,63 +135,25 @@ func (Module) CodesComponents(
 	}
 
 	// Go-test component: run Go tests after change blocks are applied.
-	// Test output is fed back to the model only when tests fail,
-	// producing Parts that trigger a new round for debugging. When tests
-	// pass, BackgroundParts carry a pass confirmation that
-	// ProcessComponents includes when another component triggers a new
-	// round, so the model knows tests passed and does not re-emit
-	// go-test blocks. MaxRounds bounds the test-fix loop. Placed after
-	// change so tests run against updated source, and before summary so
-	// test output is available for the next round.
-	// See TheoryOfCodesComponents and TheoryOfGoTestBlocks.
+	// Test output is always fed back to the model as Parts, triggering a
+	// new round regardless of whether tests pass or fail: the model needs
+	// the results to decide whether to continue, and withholding output on
+	// pass causes the system to exit prematurely when the model intended
+	// to proceed. MaxRounds bounds the test-fix loop. Placed after change
+	// so tests run against updated source, and before summary so test
+	// output is available for the next round.
+	// See TheoryOfCodesComponents and blocks.TheoryOfGoTestBlocks.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
 		PromptSection: blocks.GoTestBlockSystemPrompt,
 		RestatePrompt: blocks.GoTestBlockRestatePrompt,
 		MaxRounds:     maxGoTestRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			parts, failed, err := blocks.ProcessGoTestBlocks(pctx.Blocks, ctx)
-			result := components.ProcessResult{
-				Err: err,
+			parts, err := blocks.ProcessGoTestBlocks(pctx.Blocks, ctx)
+			return components.ProcessResult{
+				Parts: parts,
+				Err:   err,
 			}
-			// ProcessGoTestBlocks may return failed=true regardless of
-			// actual test results. Verify by inspecting the test output
-			// for go test failure markers ("FAIL"). When the output
-			// contains no "FAIL" marker, override failed to false so
-			// passing tests do not trigger an unnecessary debugging
-			// round. See TheoryOfCodesComponents and
-			// blocks.TheoryOfGoTestBlocks.
-			if failed && err == nil {
-				hasFailMarker := false
-				for _, part := range parts {
-					if text, ok := part.(generators.Text); ok {
-						if strings.Contains(string(text), "FAIL") {
-							hasFailMarker = true
-							break
-						}
-					}
-				}
-				if !hasFailMarker {
-					failed = false
-				}
-			}
-			if failed {
-				// Only feed test output to the next round when tests fail,
-				// so the model can debug the failures. Parts trigger a new
-				// round for debugging.
-				result.Parts = parts
-			} else {
-				// Tests passed. Provide BackgroundParts so that when
-				// another component (e.g., continue) triggers a new
-				// round, the model is informed that tests passed and
-				// does not re-emit go-test blocks. When no component
-				// triggers, BackgroundParts are discarded because there
-				// is no next round to carry them.
-				result.BackgroundParts = []generators.Part{
-					generators.Text("Go tests passed. All test commands succeeded.\n\n"),
-				}
-			}
-			return result
 		},
 	})
 

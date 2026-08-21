@@ -82,12 +82,8 @@ A round is one pass through the phase chain, producing a summary and parts.
 The round's outcome is captured by roundResult: the updated state, the
 round's summary, and the parts that determine whether the next round
 starts. The parts are the round's return value: when any exist, they are
-appended to the state as user content and the next round begins. Parts
-have a variant — BackgroundParts — that does not trigger the next round;
-ProcessComponents merges them into the parts only when another part
-triggers, so informational output (e.g., go-test pass confirmations) is
-included in the next round's prompt without causing a round by itself.
-The summary and the parts are both determined before the round ends: the
+appended to the state as user content and the next round begins. The
+summary and the parts are both determined before the round ends: the
 summary by the model's summary blocks (or synthesis on truncation), and
 the parts by ProcessComponents. The round logic lives in loopState.runRound;
 the main loop in Run simply executes rounds and continues while
@@ -194,11 +190,7 @@ type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[err
 // the round's summary, and the parts that determine whether the next
 // round starts. The parts are the round's return value: when
 // continueNext is true, they are appended to the state as user content
-// and the next round begins. BackgroundParts from components are already
-// merged into parts by ProcessComponents when any part triggers, so
-// informational output (e.g., go-test pass confirmations) is included in
-// the next round's prompt without causing a round by itself. See
-// TheoryOfLoops.
+// and the next round begins. See TheoryOfLoops.
 type roundResult struct {
 	state        generators.State
 	summaries    []string

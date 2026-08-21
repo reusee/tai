@@ -44,15 +44,6 @@ generation) and the current state. The function returns remaining blocks (not
 matched by any component), the updated state, combined parts, and whether any
 component triggered a new round.
 
-ProcessResult carries a BackgroundParts field for informational output that
-should reach the model only when a subsequent round exists. Components like
-go-test produce BackgroundParts (e.g., a pass confirmation) without triggering
-a round themselves; ProcessComponents collects them and prepends them to the
-combined output when another component triggers a new round. When no component
-triggers, BackgroundParts are discarded because there is no next round to carry
-them. This prevents loops where the model re-emits blocks (e.g., go-test)
-because it never learned the previous invocation's result.
-
 The mechanism makes the coupling between prompt and processing explicit and
 machine-checkable. The system prompt assembly, user prompt assembly, and output
 processing loop share a single ComponentSet, ensuring that every prompt
@@ -87,14 +78,6 @@ type ProcessResult struct {
 	State generators.State
 	// Parts are user parts to append to the state, triggering a new round.
 	Parts []generators.Part
-	// BackgroundParts are parts included in the combined output only when
-	// some other component triggers a new round (via Parts or State). Used
-	// by components like go-test that produce informational output (e.g.,
-	// "tests passed") which should be communicated to the model only when
-	// there is a next round, preventing the model from re-emitting
-	// unnecessary blocks. When no component triggers a new round,
-	// BackgroundParts are discarded.
-	BackgroundParts []generators.Part
 	// Err is the error encountered during processing, if any.
 	Err error
 }
@@ -225,15 +208,6 @@ func (c ComponentSet) Processable() []Component {
 // component MaxRounds limits are enforced, preventing infinite loops from
 // components that keep producing output.
 //
-// BackgroundParts from non-triggering components are always included in
-// combinedParts, not only when a component triggers. The caller may set
-// triggered=true after this function returns (e.g., when parse-error
-// feedback triggers a new round), and the background parts must be
-// available so informational output (e.g., go-test pass confirmations)
-// reaches the model alongside the triggering content. When triggered
-// remains false, combinedParts is not used by the caller, so the
-// background parts are harmlessly ignored.
-//
 // Both the ai command and the codes module call this function, so the
 // component processing loop is identical across all generation commands —
 // only the ComponentSet and block list differ. See TheoryOfComponents.
@@ -253,11 +227,6 @@ func ProcessComponents(
 	triggered bool,
 	err error,
 ) {
-	// Background parts are collected from components that produce
-	// informational output (e.g., go-test pass confirmation) without
-	// triggering a new round.
-	var backgroundParts []generators.Part
-
 	for _, comp := range comps.Processable() {
 		if comp.Kind == "" {
 			continue
@@ -289,11 +258,6 @@ func ProcessComponents(
 			return allBlocks, state, combinedParts, triggered, result.Err
 		}
 
-		// Collect background parts from non-triggering components.
-		if len(result.BackgroundParts) > 0 {
-			backgroundParts = append(backgroundParts, result.BackgroundParts...)
-		}
-
 		componentTriggered := false
 		if result.State != nil {
 			state = result.State
@@ -314,18 +278,6 @@ func ProcessComponents(
 				}
 			}
 		}
-	}
-
-	// Include background parts in combinedParts unconditionally. The
-	// caller may set triggered=true after this function returns (e.g.,
-	// when parse-error feedback triggers a new round), and the
-	// background parts must be available so informational output (e.g.,
-	// go-test pass confirmations) from non-triggering components reaches
-	// the model alongside the triggering content. When triggered remains
-	// false, combinedParts is not used by the caller, so the background
-	// parts are harmlessly ignored.
-	if len(backgroundParts) > 0 {
-		combinedParts = append(backgroundParts, combinedParts...)
 	}
 
 	return allBlocks, state, combinedParts, triggered, nil

@@ -60,12 +60,13 @@ truncated and retries the round unnecessarily. This applies to every round,
 including debug rounds where tests fail and the go-test component produces Parts
 that trigger a new round.
 
-ProcessGoTestBlocks always returns test output to the model and always triggers a
-new round, regardless of whether tests pass or fail. Some models run tests first
-and need the results to decide whether to continue; withholding output on pass
-causes the system to exit prematurely when the model intended to proceed. By
-always feeding back stdout and stderr, the model can see pass results and continue
-its workflow, or see failure output and debug the issues.
+ProcessGoTestBlocks always returns test output, regardless of whether tests pass
+or fail; the go-test component feeds it back as user content, always triggering a
+new round. Some models run tests first and need the results to decide whether to
+continue; withholding output on pass causes the system to exit prematurely when
+the model intended to proceed. By always feeding back stdout and stderr, the model
+can see pass results and continue its workflow, or see failure output and debug
+the issues.
 `
 
 const GoTestBlockSystemPrompt = `
@@ -155,31 +156,26 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 
 // ProcessGoTestBlocks runs Go tests for all go-test blocks and returns the
 // outputs as generator parts. Only blocks with Kind "go-test" are processed.
-// Test output (stdout and stderr) is always returned to the model, regardless
-// of whether tests pass or fail, and a new round is always triggered so the
-// model can see the results and continue. Withholding output on pass causes
-// some models to exit prematurely when they intended to proceed after seeing
-// the test results. See TheoryOfGoTestBlocks.
-func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, bool, error) {
+// Test output (stdout and stderr) is always returned, regardless of whether
+// tests pass or fail; the go-test component feeds it back as user content,
+// always triggering a new round so the model can see the results and
+// continue. Withholding output on pass causes some models to exit
+// prematurely when they intended to proceed after seeing the test results.
+// See TheoryOfGoTestBlocks.
+func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, error) {
 	if len(blocks) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
 	var parts []generators.Part
 	for _, block := range blocks {
 		if block.Kind != "go-test" {
 			continue
 		}
-		args := block.Body
-		output, _ := executeGoTest(ctx, args)
-		// Always feed test output back to the model, regardless of
-		// pass or fail. Some models run tests first and need the
-		// results to decide whether to continue; withholding output
-		// on pass causes the system to exit prematurely.
-		// See TheoryOfGoTestBlocks.
+		output, _ := executeGoTest(ctx, block.Body)
 		parts = append(parts, generators.Text(output))
 	}
 	if len(parts) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
-	return parts, true, nil
+	return parts, nil
 }

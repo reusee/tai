@@ -37,7 +37,13 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 	})
 }
 
-func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
+func TestGoTestComponentPassTriggersRoundWithOutput(t *testing.T) {
+	// Test output is always fed back as Parts, triggering a new round
+	// regardless of whether tests pass or fail: the model needs the
+	// results to decide whether to continue, and withholding output on
+	// pass causes the system to exit prematurely when the model intended
+	// to proceed. See TheoryOfCodesComponents and
+	// blocks.TheoryOfGoTestBlocks.
 	goTestBlocks := []blocks.Block{
 		{Kind: "go-test", Body: "-run\n___nonexistent___"},
 	}
@@ -60,21 +66,15 @@ func TestGoTestComponentPassDoesNotTriggerRound(t *testing.T) {
 			if result.Err != nil {
 				t.Fatalf("unexpected error: %v", result.Err)
 			}
-			if len(result.Parts) != 0 {
-				t.Fatalf("expected no Parts when tests pass, got %d parts", len(result.Parts))
+			if len(result.Parts) != 1 {
+				t.Fatalf("expected Parts carrying the test output when tests pass, got %d parts", len(result.Parts))
 			}
-			// BackgroundParts should contain a pass confirmation so that
-			// when another component triggers a new round, the model is
-			// informed that tests passed and does not re-emit go-test blocks.
-			if len(result.BackgroundParts) == 0 {
-				t.Fatal("expected BackgroundParts when tests pass")
-			}
-			text, ok := result.BackgroundParts[0].(generators.Text)
+			text, ok := result.Parts[0].(generators.Text)
 			if !ok {
-				t.Fatalf("expected Text part in BackgroundParts, got %T", result.BackgroundParts[0])
+				t.Fatalf("expected Text part, got %T", result.Parts[0])
 			}
-			if !strings.Contains(string(text), "passed") {
-				t.Fatalf("expected pass confirmation in BackgroundParts, got %q", text)
+			if !strings.Contains(string(text), "Command succeeded") {
+				t.Fatalf("expected the passing test output in Parts, got %q", text)
 			}
 			return
 		}
@@ -107,11 +107,6 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 			}
 			if len(result.Parts) == 0 {
 				t.Fatal("expected parts when tests fail; go-test must produce Parts to trigger a new round")
-			}
-			// BackgroundParts should not be set when tests fail — the
-			// failure output in Parts is the triggering content.
-			if len(result.BackgroundParts) != 0 {
-				t.Fatalf("expected no BackgroundParts when tests fail, got %d", len(result.BackgroundParts))
 			}
 			return
 		}

@@ -15,12 +15,9 @@ func TestProcessGoTestBlocks(t *testing.T) {
 		blocks := []Block{
 			{Kind: "go-test", Body: "-run\nTest["},
 		}
-		parts, failed, err := ProcessGoTestBlocks(blocks, context.Background())
+		parts, err := ProcessGoTestBlocks(blocks, context.Background())
 		if err != nil {
 			t.Fatalf("ProcessGoTestBlocks failed: %v", err)
-		}
-		if !failed {
-			t.Fatal("expected failed=true for failing tests")
 		}
 		if len(parts) != 1 {
 			t.Fatalf("expected 1 part for failing tests, got %d", len(parts))
@@ -44,12 +41,9 @@ func TestProcessGoTestBlocks(t *testing.T) {
 		blocks := []Block{
 			{Kind: "go-test", Body: "-run\n___nonexistent___"},
 		}
-		parts, failed, err := ProcessGoTestBlocks(blocks, context.Background())
+		parts, err := ProcessGoTestBlocks(blocks, context.Background())
 		if err != nil {
 			t.Fatalf("ProcessGoTestBlocks failed: %v", err)
-		}
-		if !failed {
-			t.Fatal("expected failed=true to trigger a new round even when tests pass")
 		}
 		if len(parts) != 1 {
 			t.Fatalf("expected 1 part for passing tests, got %d", len(parts))
@@ -65,14 +59,11 @@ func TestProcessGoTestBlocks(t *testing.T) {
 }
 
 func TestProcessGoTestBlocksEmpty(t *testing.T) {
-	parts, failed, err := ProcessGoTestBlocks(nil, context.Background())
+	parts, err := ProcessGoTestBlocks(nil, context.Background())
 	if err != nil {
 		t.Fatalf("ProcessGoTestBlocks failed: %v", err)
 	}
 	if len(parts) != 0 {
 		t.Fatalf("expected 0 parts, got %d", len(parts))
-	}
-	if failed {
-		t.Fatal("expected failed to be false for no go-test blocks")
 	}
 }
