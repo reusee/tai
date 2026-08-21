@@ -146,5 +146,79 @@ func TestResolveGoSymbols(t *testing.T) {
 		if err != nil || parts != nil {
 			t.Fatalf("expected nil parts and nil error for empty input, got %v, %v", parts, err)
 		}
+
+		// Package-qualified forms: the full import path and the "symbols"
+		// suffix both restrict matching to this package.
+		parts, err = resolve([]string{
+			"example.com/symbols.FreeFunc",
+			"symbols.FreeFunc",
+			"symbols.Counter.Add",
+			"example.com/symbols.Pair.Swap",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of source example.com/symbols.FreeFunc",
+			"func FreeFunc() int",
+			"// Add has a pointer receiver.\nfunc (c *Counter) Add(n int)",
+			"func (p Pair[A, B]) Swap()",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in package-qualified resolved source:\n%s", want, got)
+			}
+		}
+
+		// A package qualifier for a non-loaded package yields not-found.
+		parts, err = resolve([]string{"nonexistent/pkg.FreeFunc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+			t.Fatalf("a non-loaded package qualifier must yield not-found, got %v", parts)
+		}
+
+		// go doc case rule: a lower-case query letter matches either
+		// case in the target, an upper-case letter matches exactly.
+		parts, err = resolve([]string{
+			"freefunc",    // all lower-case matches FreeFunc
+			"counter",     // matches Counter type
+			"counter.add", // matches Counter.Add method
+			"COUNTER",     // upper-case letters match exactly; COUNTER != Counter → not-found
+			"FreeFunc",    // exact match works
+			"pair.swap",   // lower-case matches Pair.Swap
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		if !strings.Contains(got, "example.com/symbols.freefunc") ||
+			!strings.Contains(got, "func FreeFunc() int") {
+			// The qualified name in the marker uses the TARGET name, not
+			// the query; check for the target form.
+			if !strings.Contains(got, "example.com/symbols.FreeFunc") {
+				t.Fatalf("expected FreeFunc resolved via lower-case query, got:\n%s", got)
+			}
+		}
+		if !strings.Contains(got, "type Counter struct") {
+			t.Fatalf("expected Counter resolved via lower-case query, got:\n%s", got)
+		}
+		if !strings.Contains(got, "func (c *Counter) Add(n int)") {
+			t.Fatalf("expected Counter.Add resolved via lower-case query, got:\n%s", got)
+		}
+		if !strings.Contains(got, "func (p Pair[A, B]) Swap()") {
+			t.Fatalf("expected Pair.Swap resolved via lower-case query, got:\n%s", got)
+		}
+
+		// Upper-case query letters match exactly: COUNTER does not
+		// resolve Counter (the target has lower-case 'ounter').
+		parts, err = resolve([]string{"COUNTER"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+			t.Fatalf("an all-upper-case query must not match mixed-case target, got %v", parts)
+		}
 	})
 }

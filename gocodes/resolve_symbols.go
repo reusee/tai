@@ -15,19 +15,26 @@ ResolveGoSymbols turns the symbol names collected from go-src blocks into
 declaration source parts (see blocks.TheoryOfGoSrcBlocks). The resolver
 searches the Go files collected by GetFiles — the same file set the context
 pipeline loaded, with raw content and parsed ASTs already cached — so
-resolution spawns no Go toolchain subprocesses. A plain name matches
-top-level functions, types, consts, and vars; a TypeName.MethodName form
-(with optional * receiver prefix) matches methods, unwrapping pointer and
-generic receiver parameters so Pair[A, B].Swap, Pair[B, A].Swap, and
-Pair.Swap all resolve. All matches across loaded packages are returned,
-because an unqualified name may be declared in several packages; each
-returned block carries the package-qualified name and file:line so the
-model can disambiguate. Doc comments attached to the matched declaration
-are included with the source. Unmatched symbols produce an explicit
-not-found part rather than an error, giving the model a concrete
-correction target; a failure of package loading itself (e.g., a non-Go
-project where the loader was never run for the context) degrades to an
-informational part so one stray block cannot abort the run.
+resolution spawns no Go toolchain subprocesses. The symbol forms follow
+go doc: [<pkg>.][<sym>.][<methodOrField>]. A package path prefix (the
+full import path or a proper suffix of it, e.g. "pkg" for "a/b/pkg")
+restricts matching to that package; the remaining parts select a
+top-level declaration or a method on a type. An optional leading *
+receiver prefix and a trailing generic parameter list ("Pair[A, B].Swap")
+are stripped from the type name, so Pair[A, B].Swap, Pair[B, A].Swap,
+and Pair.Swap all resolve. Name matching follows go doc's case rule: a
+lower-case letter in the query matches either case in the target, an
+upper-case letter matches exactly, so "reader.read" resolves Reader.Read.
+All matches across loaded packages (or the specified package) are
+returned, because an unqualified name may be declared in several
+packages; each returned block carries the package-qualified name and
+file:line so the model can disambiguate. Doc comments attached to the
+matched declaration are included with the source. Unmatched symbols
+produce an explicit not-found part rather than an error, giving the model
+a concrete correction target; a failure of package loading itself (e.g.,
+a non-Go project where the loader was never run for the context)
+degrades to an informational part so one stray block cannot abort the
+run.
 `
 
 // ResolveGoSymbols resolves Go symbol names to their declaration source
@@ -91,20 +98,25 @@ type symbolDeclaration struct {
 
 // findSymbolDeclarations searches the loaded Go files for declarations
 // matching the symbol, returning every match across packages in the
-// deterministic file order of the loaded file set. See
-// TheoryOfGoSrcResolution.
+// deterministic file order of the loaded file set. The symbol follows
+// the go doc form [<pkg>.][<sym>.][<methodOrField>]: splitGoDocSymbol
+// strips an optional package path prefix, then splitSymbolName splits
+// the remaining type/method parts. See TheoryOfGoSrcResolution.
 func findSymbolDeclarations(files []*File, symbol string) []symbolDeclaration {
-	typeName, name := splitSymbolName(symbol)
+	pkgFilter, typeName, name := splitGoDocSymbol(files, symbol)
 	var matches []symbolDeclaration
 	for _, f := range files {
 		if f.AstFile == nil || f.TokenFile == nil || f.Package == nil || len(f.Content) == 0 {
 			continue
 		}
 		pkgPath := basePkgPath(f.Package.PkgPath)
+		if pkgFilter != "" && pkgPath != pkgFilter {
+			continue
+		}
 		for _, decl := range f.AstFile.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
-				if d.Name == nil || d.Name.Name != name {
+				if d.Name == nil || !goDocNameMatch(name, d.Name.Name) {
 					continue
 				}
 				recv := receiverTypeName(d)
@@ -115,7 +127,7 @@ func findSymbolDeclarations(files []*File, symbol string) []symbolDeclaration {
 					if recv != "" {
 						continue
 					}
-				} else if recv != typeName {
+				} else if !goDocNameMatch(typeName, recv) {
 					continue
 				}
 				matches = appendSymbolMatch(matches, f, pkgPath, typeName, name, declStartPos(d, d.Doc), d.End())
@@ -178,6 +190,68 @@ func splitSymbolName(symbol string) (typeName, name string) {
 	return "", symbol
 }
 
+// goDocNameMatch reports whether the query matches the target under
+// go doc's case rule: a lower-case letter in the query matches either
+// case in the target, an upper-case letter in the query matches exactly.
+// The rule covers ASCII letters; other characters match exactly. See
+// TheoryOfGoSrcResolution.
+func goDocNameMatch(query, target string) bool {
+	if len(query) != len(target) {
+		return false
+	}
+	for i := 0; i < len(query); i++ {
+		q := query[i]
+		t := target[i]
+		if q >= 'a' && q <= 'z' {
+			if t != q && t != q-('a'-'A') {
+				return false
+			}
+		} else if q != t {
+			return false
+		}
+	}
+	return true
+}
+
+// splitGoDocSymbol splits a go doc symbol form into its package path
+// filter and its type/method name parts. The package path is the longest
+// suffix of a loaded package path that prefixes the symbol followed by a
+// dot (e.g., for path a/b/c, the suffixes tried are a/b/c, b/c, c); the
+// filter records the full package path so the file loop compares exact
+// paths. The remainder after stripping is split by splitSymbolName, which
+// handles the * receiver prefix and generic parameter lists. See
+// TheoryOfGoSrcResolution.
+func splitGoDocSymbol(files []*File, symbol string) (pkgFilter, typeName, name string) {
+	bestPkg := ""
+	bestPrefixLen := 0
+	for _, f := range files {
+		if f.Package == nil {
+			continue
+		}
+		p := basePkgPath(f.Package.PkgPath)
+		if p == "" {
+			continue
+		}
+		for candidate := p; candidate != ""; {
+			if strings.HasPrefix(symbol, candidate+".") && len(candidate) > bestPrefixLen {
+				bestPkg = p
+				bestPrefixLen = len(candidate)
+				break
+			}
+			if i := strings.Index(candidate, "/"); i >= 0 {
+				candidate = candidate[i+1:]
+			} else {
+				break
+			}
+		}
+	}
+	if bestPrefixLen > 0 {
+		symbol = symbol[bestPrefixLen+1:]
+	}
+	typeName, name = splitSymbolName(symbol)
+	return bestPkg, typeName, name
+}
+
 // receiverTypeName returns the base type name of a method's receiver,
 // unwrapping pointer and generic instantiation forms: *Foo, Foo[T], and
 // *Foo[T, U] all yield Foo.
@@ -202,17 +276,18 @@ func receiverTypeName(d *ast.FuncDecl) string {
 	}
 }
 
-// specDeclaresName reports whether the spec declares the given name; the
-// returned comment group is the spec's own doc comment.
+// specDeclaresName reports whether the spec declares a name matching the
+// query under go doc's case rule; the returned comment group is the
+// spec's own doc comment. See TheoryOfGoSrcResolution.
 func specDeclaresName(spec ast.Spec, name string) (*ast.CommentGroup, bool) {
 	switch s := spec.(type) {
 	case *ast.TypeSpec:
-		if s.Name != nil && s.Name.Name == name {
+		if s.Name != nil && goDocNameMatch(name, s.Name.Name) {
 			return s.Doc, true
 		}
 	case *ast.ValueSpec:
 		for _, n := range s.Names {
-			if n.Name == name {
+			if goDocNameMatch(name, n.Name) {
 				return s.Doc, true
 			}
 		}
