@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/apps"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
@@ -123,6 +124,7 @@ var AICommand = Command{
 		buildChatIdle phases.BuildChatIdle,
 		getDefaultGenerator generators.GetDefaultGenerator,
 		flagFiles flags.Files,
+		nameMatch anytexts.NameMatch,
 		flagChats flags.Chats,
 		noMemory NoMemory,
 		noHuman NoHuman,
@@ -166,6 +168,12 @@ var AICommand = Command{
 		var parts []generators.Part
 
 		for _, filePath := range files {
+			// The -match regex include filter applies to the ai command's
+			// file context exactly as it applies to the other commands.
+			// See anytexts.TheoryOfMatchFiltering.
+			if !nameMatch(filePath) {
+				continue
+			}
 			fileParts, err := filePathToParts(filePath)
 			ce(err)
 			parts = append(parts, fileParts...)

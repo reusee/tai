@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -691,6 +692,63 @@ func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
 		}
 		if !foundConfig {
 			t.Fatal("non-hidden file should be included during directory traversal")
+		}
+	})
+}
+
+func TestMatchFlagFiltersFiles(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("foo.py", []byte("py content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("bar.txt", []byte("txt content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The -match flag reaches the file filter through the same path as
+	// the tai command: flags.Parse forks flags.Match into the scope, and
+	// the CodeProvider's injected NameMatch builds its regex filter from
+	// the forked value. See TheoryOfMatchFiltering.
+	scope := dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	)
+	scope, err = flags.Parse(scope, []string{"-match", `\.py$`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Call(func(
+		provider CodeProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundPy, foundTxt := false, false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				if strings.Contains(string(text), "foo.py") {
+					foundPy = true
+				}
+				if strings.Contains(string(text), "bar.txt") {
+					foundTxt = true
+				}
+			}
+		}
+		if !foundPy {
+			t.Fatal("expected foo.py to be included by -match")
+		}
+		if foundTxt {
+			t.Fatal("expected bar.txt to be excluded by -match")
 		}
 	})
 }

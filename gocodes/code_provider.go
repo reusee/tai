@@ -16,6 +16,7 @@ import (
 
 type CodeProvider struct {
 	GetFiles        dscope.Inject[GetFiles]
+	NameMatch       dscope.Inject[anytexts.NameMatch]
 	SimplifyFiles   dscope.Inject[SimplifyFiles]
 	Logger          dscope.Inject[logs.Logger]
 	AnyTexts        dscope.Inject[anytexts.CodeProvider]
@@ -445,7 +446,22 @@ func isExcludedPath(relPath string, excludePatterns []string) bool {
 	return false
 }
 
+// filterFiles applies the include and exclude filters to the collected
+// project files: the -match regex include filter (NameMatch) always runs,
+// and "!"-prefixed exclusion patterns run when any are present. Both
+// filters build new slices in order — files is the cached GetFiles
+// result, so its backing array must not be mutated — and preserve the
+// deterministic input order. See anytexts.TheoryOfMatchFiltering.
 func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
+	nameMatch := c.NameMatch()
+	matched := make([]*File, 0, len(files))
+	for _, f := range files {
+		if nameMatch(f.Path) {
+			matched = append(matched, f)
+		}
+	}
+	files = matched
+
 	if len(patterns) == 0 {
 		return files
 	}

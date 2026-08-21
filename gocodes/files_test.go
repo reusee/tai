@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 )
@@ -157,6 +158,53 @@ func TestFilesGoFileContentCached(t *testing.T) {
 		}
 		if !bytes.Equal(mainFile.Content, disk) {
 			t.Fatal("main.go Content should match the file on disk")
+		}
+	})
+}
+
+func TestCodeProviderMatchFlagFiltersFiles(t *testing.T) {
+	// The -match regex include filter applies to the project files the
+	// gocodes pipeline assembles into the context — through the
+	// CodeProvider's injected NameMatch, the same filter the anytexts
+	// pipeline uses — so the flag works uniformly across the go and any
+	// commands. See anytexts.TheoryOfMatchFiltering.
+	scope := dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	)
+
+	dir := filepath.Join(testdataDir, "main")
+	scope.Fork(
+		func() LoadDir {
+			return LoadDir(dir)
+		},
+		func() flags.Match {
+			return flags.Match{`main\.go$`: true}
+		},
+	).Call(func(
+		provider CodeProvider,
+	) {
+		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundMain := false
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				s := string(text)
+				if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "a.txt")) {
+					t.Fatalf("expected a.txt to be excluded by -match, got: %s", s)
+				}
+				if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
+					t.Fatalf("expected dep1.go to be excluded by -match, got: %s", s)
+				}
+				if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
+					foundMain = true
+				}
+			}
+		}
+		if !foundMain {
+			t.Fatal("expected main.go to be included by -match")
 		}
 	})
 }
