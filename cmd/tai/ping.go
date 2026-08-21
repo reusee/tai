@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/reusee/tai/blocks"
@@ -20,19 +22,29 @@ import (
 const TheoryOfPingCommand = `
 The "ping" subcommand tests whether a model is reachable and responding, and
 whether it can emit the heredoc blocks the tai tooling relies on. The command
-randomly chooses two block kinds, asks the model to emit exactly one block of
-each kind, and validates the parsed output after generation: each required
-kind must appear exactly once, and no other block may appear. The random
-kinds — short lowercase letter strings from RandomBlockKinds — are unknown
-before each run, so a correct result demonstrates genuine instruction
-following and format ability rather than pattern memory. The block-format
+randomly chooses three block specs — each a kind, one to three parameter
+pairs, and an exact single-line body — asks the model to emit exactly one
+block of each kind, in the listed order, carrying exactly the listed
+parameter pairs in its opening header and exactly the listed body, and
+validates the parsed output after generation positionally: block i must
+match spec i in kind, attributes, and body, and no extra block may appear.
+One random parameter value in each run is replaced with a tricky value that
+exercises the header parser's escape handling (embedded quotes, backslashes,
+tabs, or newlines); the prompt shows one valid escaping and validation
+compares decoded values, so any equivalent escaping passes. The random
+specs — produced by RandomPingBlocks from short lowercase letter strings —
+are unknown before each run, so a correct result demonstrates genuine
+instruction following, format ability, function-call header parameter
+ability, escape-sequence ability, and body fidelity rather than pattern
+memory. The block-format
 instructions live in the system prompt (blocks.BlockFormatSystemPrompt); the
-user message (pingBlockPrompt) states only the test requirements without
-repeating the format description. The system prompt also carries the
+user message (pingBlockPrompt) states only the test requirements — the kinds,
+their exact parameter pairs, and their exact bodies — without repeating the
+format description. The system prompt also carries the
 user-configured extra system prompts (extra_system_prompt and
 family_extra_system_prompt), so ping honors the same configuration as the
 other generation commands. The block format prompt requires a distinct
-delimiter per block: two blocks sharing a delimiter would be mis-parsed as
+delimiter per block: blocks sharing a delimiter would be mis-parsed as
 nested (see blocks.TheoryOfNestedBlockParsing), so identical delimiters
 cannot pass the test. Validation reads the blocks collected in
 loops.Result.RemainingBlocks: ping runs without components, so no block kind
@@ -47,75 +59,215 @@ chat loop and no file context; its system prompt carries the block-format
 prompt and the user-configured extra system prompts.
 `
 
-// RandomBlockKinds returns the two block kinds the ping command asks the
-// model to emit, chosen at random on each run. The kinds are short lowercase
-// letter strings so the model can reproduce them exactly, yet they vary per
-// run, so a correct emission demonstrates genuine instruction-following and
-// block-format ability rather than pattern memory. See TheoryOfPingCommand.
-type RandomBlockKinds func() (kindA string, kindB string)
+// PingBlockSpec describes one required block for the ping test: the block
+// kind, the exact parameter pairs the block's opening header must carry,
+// and the exact body text the block must contain. Validation compares the
+// parsed attributes by decoded value and the trimmed body exactly, so a
+// correct emission demonstrates the model can use the function-call
+// header format with named parameters — including escape-sequence values
+// — and reproduce a verbatim body, not only a bare kind.
+// See TheoryOfPingCommand.
+type PingBlockSpec struct {
+	Kind       string
+	Attributes map[string]string
+	Body       string
+}
 
-func (Module) RandomBlockKinds() RandomBlockKinds {
-	return func() (kindA string, kindB string) {
-		const letters = "abcdefghijklmnopqrstuvwxyz"
-		kind := func() string {
-			n := rand.IntN(6) + 3 // 3..8 letters, short enough to reproduce exactly
-			b := make([]byte, n)
-			for i := range b {
-				b[i] = letters[rand.IntN(len(letters))]
+// RandomPingBlocks returns the three block specs the ping command asks the
+// model to emit, chosen at random on each run. Each spec pairs a short
+// lowercase kind name and an exact single-line body with one to three
+// parameter pairs whose names and values are random lowercase letter
+// strings, so the model can reproduce them exactly yet cannot match the
+// request from pattern memory; one random parameter value in the run is
+// replaced with a tricky value that exercises the header parser's escape
+// handling. A correct emission demonstrates instruction-following,
+// block-format, function-call header parameter, escape-sequence, and
+// body-fidelity ability. See TheoryOfPingCommand.
+type RandomPingBlocks func() []PingBlockSpec
+
+func (Module) RandomPingBlocks() RandomPingBlocks {
+	return func() []PingBlockSpec {
+		spec := func() PingBlockSpec {
+			spec := PingBlockSpec{
+				Kind:       randomPingWord(3, 8),
+				Attributes: map[string]string{},
+				Body:       randomPingBody(),
 			}
-			return string(b)
+			pairCount := rand.IntN(3) + 1
+			for len(spec.Attributes) < pairCount {
+				spec.Attributes[randomPingWord(3, 6)] = randomPingWord(3, 8)
+			}
+			return spec
 		}
-		kindA = kind()
-		kindB = kind()
-		for kindB == kindA {
-			kindB = kind()
+		specs := []PingBlockSpec{spec(), spec(), spec()}
+		for specs[1].Kind == specs[0].Kind {
+			specs[1] = spec()
 		}
-		return
+		for specs[2].Kind == specs[0].Kind || specs[2].Kind == specs[1].Kind {
+			specs[2] = spec()
+		}
+		// Replace one random parameter value with a tricky value so every
+		// run exercises the header parser's escape handling. The prompt
+		// renders the value in one valid escaped form; validation compares
+		// decoded values. See TheoryOfPingCommand.
+		target := &specs[rand.IntN(len(specs))]
+		names := slices.Collect(maps.Keys(target.Attributes))
+		target.Attributes[names[rand.IntN(len(names))]] = pingTrickyValues[rand.IntN(len(pingTrickyValues))]
+		return specs
 	}
 }
 
-func pingBlockPrompt(kindA, kindB string) string {
-	return fmt.Sprintf(`This is a block-generation test. Emit exactly two blocks.
+// randomPingWord returns a random lowercase letter string whose length is
+// between min and max, inclusive. Plain letters only: kind names,
+// parameter names, and parameter values must be reproducible exactly, and
+// letters avoid escape-sequence complexity in the quoted header values.
+// See TheoryOfPingCommand.
+func randomPingWord(min, max int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz"
+	n := rand.IntN(max-min+1) + min
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[rand.IntN(len(letters))]
+	}
+	return string(b)
+}
 
-The two required block kinds (each used exactly once, in any order):
-1. %s
-2. %s
+// randomPingBody returns the exact single-line body text one required
+// block must carry: two or three random lowercase words. Like the other
+// random pieces, the body is unknown before each run yet exactly
+// reproducible, so a verbatim emission demonstrates body fidelity rather
+// than pattern memory. See TheoryOfPingCommand.
+func randomPingBody() string {
+	words := make([]string, 0, 3)
+	for range rand.IntN(2) + 2 {
+		words = append(words, randomPingWord(3, 8))
+	}
+	return strings.Join(words, " ")
+}
 
+// pingTrickyValues lists parameter values that exercise the header
+// parser's escape handling: embedded double quotes, an apostrophe, a
+// backslash, a tab, a newline, and multi-word spaces. Each entry is the
+// DECODED value; the prompt renders it via escapePingValue and the model
+// may answer with any equivalent escaping. See TheoryOfPingCommand and
+// blocks.TheoryOfHeaderTokenizing.
+var pingTrickyValues = []string{
+	`say "hi"`,
+	`it's fine`,
+	`back\slash`,
+	"col1\tcol2",
+	"line1\nline2",
+	`two words`,
+}
+
+func pingBlockPrompt(specs []PingBlockSpec) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This is a block-generation test. Emit exactly %d blocks.\n\n", len(specs))
+	fmt.Fprintf(&b, "The %d required blocks, in this exact order (each used exactly once):\n", len(specs))
+	for i, spec := range specs {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, formatPingBlockSpec(spec))
+		fmt.Fprintf(&b, "   exact body: %s\n", spec.Body)
+	}
+	b.WriteString(`
 Rules:
-- The kind must be one of the two required kinds listed above.
-- The body may be any short text.
-- Emit only the two blocks and nothing else: no prose, no explanations, no additional blocks.`, kindA, kindB)
+- Each block's opening header must carry EXACTLY the parameter pairs listed for its kind: same names, same values. The listed values show one valid escaping; any equivalent escaping that decodes to the same value is accepted.
+- The body of each block must be EXACTLY the listed body text, and nothing else.
+- The blocks must appear in the listed order.
+- Emit only the required blocks and nothing else: no prose, no explanations, no additional blocks.`)
+	return b.String()
 }
 
-// validatePingBlocks checks that the model emitted exactly one block of each
-// required kind and no other blocks. Only parsed blocks are inspected: prose
-// around the blocks is discarded by ParserState and never appears in
-// loops.Result.RemainingBlocks. See TheoryOfPingCommand.
-func validatePingBlocks(result loops.Result, kindA, kindB string) error {
-	gotA := 0
-	gotB := 0
-	var extras []string
-	for _, block := range result.RemainingBlocks {
-		switch block.Kind {
-		case kindA:
-			gotA++
-		case kindB:
-			gotB++
+// formatPingBlockSpec renders one required block as kind(name="value", ...)
+// with the parameter pairs sorted by name, for deterministic prompts and
+// error messages. Values are rendered in the double-quoted escaped form.
+func formatPingBlockSpec(spec PingBlockSpec) string {
+	pairs := make([]string, 0, len(spec.Attributes))
+	for _, name := range slices.Sorted(maps.Keys(spec.Attributes)) {
+		pairs = append(pairs, name+"="+escapePingValue(spec.Attributes[name]))
+	}
+	return fmt.Sprintf("%s(%s)", spec.Kind, strings.Join(pairs, ", "))
+}
+
+// escapePingValue renders a decoded parameter value in the double-quoted
+// escaped form of the block header format, escaping exactly the
+// characters blocks.TheoryOfHeaderTokenizing defines. The prompt shows
+// this form as one valid encoding; validation compares decoded values, so
+// any equivalent escaping (e.g., single quotes around a value containing
+// a double quote) also passes.
+func escapePingValue(value string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\r':
+			b.WriteString(`\r`)
 		default:
-			extras = append(extras, block.Kind)
+			b.WriteRune(r)
 		}
 	}
-	if gotA == 1 && gotB == 1 && len(extras) == 0 {
+	b.WriteByte('"')
+	return b.String()
+}
+
+// validatePingBlocks checks that the model emitted exactly one block per
+// spec, in the listed order, each with exactly the required parameter
+// pairs and exactly the required body, and no other blocks. Attribute
+// comparison is order-independent and value-decoded: the header parser
+// stores parameters in a map and decodes escape sequences, so only the
+// decoded name-to-value pairs are significant — any equivalent escaping
+// passes. Only parsed blocks are inspected: prose around the blocks is
+// discarded by ParserState and never appears in
+// loops.Result.RemainingBlocks. See TheoryOfPingCommand.
+func validatePingBlocks(result loops.Result, specs []PingBlockSpec) error {
+	emitted := result.RemainingBlocks
+	var problems []string
+	if len(emitted) != len(specs) {
+		problems = append(problems, fmt.Sprintf("expected exactly %d block(s), got %d", len(specs), len(emitted)))
+	}
+	for i := 0; i < min(len(emitted), len(specs)); i++ {
+		spec := specs[i]
+		block := emitted[i]
+		if block.Kind != spec.Kind {
+			problems = append(problems, fmt.Sprintf("block %d: expected kind %q, got %q", i+1, spec.Kind, block.Kind))
+			continue
+		}
+		if !pingAttributesEqual(block.Attributes, spec.Attributes) {
+			problems = append(problems, fmt.Sprintf("block %d: parameter mismatch: expected %s, got %s",
+				i+1,
+				formatPingBlockSpec(spec),
+				formatPingBlockSpec(PingBlockSpec{Kind: block.Kind, Attributes: block.Attributes})))
+		}
+		if body := strings.TrimSpace(block.Body); body != spec.Body {
+			problems = append(problems, fmt.Sprintf("block %d: body mismatch: expected %q, got %q", i+1, spec.Body, body))
+		}
+	}
+	if len(problems) == 0 {
 		return nil
 	}
-	var message strings.Builder
-	fmt.Fprintf(&message, "expected exactly one block of kind %q and one block of kind %q; got %d block(s) of kind %q, %d block(s) of kind %q",
-		kindA, kindB, gotA, kindA, gotB, kindB)
-	if len(extras) > 0 {
-		fmt.Fprintf(&message, ", and %d other block(s) (%s)",
-			len(extras), strings.Join(extras, ", "))
+	return errors.New(strings.Join(problems, "; "))
+}
+
+// pingAttributesEqual reports whether two attribute maps hold exactly the
+// same name-to-value pairs.
+func pingAttributesEqual(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
 	}
-	return errors.New(message.String())
+	for name, value := range want {
+		gotValue, ok := got[name]
+		if !ok || gotValue != value {
+			return false
+		}
+	}
+	return true
 }
 
 var PingCommand = Command{
@@ -128,7 +280,7 @@ var PingCommand = Command{
 		getDefaultGenerator generators.GetDefaultGenerator,
 		buildGenerate phases.BuildGenerate,
 		loopRun loops.Run,
-		randomBlockKinds RandomBlockKinds,
+		randomPingBlocks RandomPingBlocks,
 		extra flags.ExtraSystemPrompt,
 		familyExtra flags.FamilyExtraSystemPrompt,
 		modelFamily generators.ModelFamily,
@@ -138,17 +290,21 @@ var PingCommand = Command{
 		generator, err := getDefaultGenerator()
 		ce(err)
 
-		// Two block kinds are chosen at random on every run so the model
-		// cannot match the request from pattern memory; a correct emission
-		// demonstrates both availability and basic block-generation ability.
+		// Three block specs — each a kind, one to three random parameter
+		// pairs, and an exact body — are chosen at random on every run so
+		// the model cannot match the request from pattern memory; a
+		// correct emission demonstrates availability, block-generation
+		// ability, function-call header parameter ability (including
+		// escape sequences), and verbatim body fidelity.
 		// See TheoryOfPingCommand.
-		kindA, kindB := randomBlockKinds()
+		specs := randomPingBlocks()
 
 		// The block-format instructions live in the system prompt
 		// (blocks.BlockFormatSystemPrompt), so the user message
-		// (pingBlockPrompt) states only the test requirements without
-		// repeating the format description. The system prompt also
-		// carries the user-configured extra system prompts
+		// (pingBlockPrompt) states only the test requirements — the
+		// kinds, their exact parameter pairs, and their exact bodies —
+		// without repeating the format description. The system prompt
+		// also carries the user-configured extra system prompts
 		// (extra_system_prompt and family_extra_system_prompt), so ping
 		// honors the same configuration as the other generation
 		// commands. Each prompt section is separated by a blank line so
@@ -173,7 +329,7 @@ var PingCommand = Command{
 				{
 					Role: generators.RoleUser,
 					Parts: []generators.Part{
-						generators.Text(pingBlockPrompt(kindA, kindB)),
+						generators.Text(pingBlockPrompt(specs)),
 					},
 				},
 			},
@@ -203,12 +359,15 @@ var PingCommand = Command{
 		}
 		ce(err)
 
-		// Validate the emitted blocks after generation. A validation
-		// failure exits with status 1 so the command is scriptable:
-		// availability alone is not enough, the model must also emit the
-		// required blocks in the required format.
+		// Validate the emitted blocks after generation positionally:
+		// block i must match spec i in kind, attributes (compared by
+		// decoded value, so any equivalent escaping passes), and body,
+		// and no extra block may appear. A validation failure exits
+		// with status 1 so the command is scriptable: availability
+		// alone is not enough, the model must also emit the required
+		// blocks in the required format.
 		// See TheoryOfPingCommand.
-		if err := validatePingBlocks(result, kindA, kindB); err != nil {
+		if err := validatePingBlocks(result, specs); err != nil {
 			fmt.Fprintf(os.Stderr, "ping failed: %v\n", err)
 			if len(result.ParseErrors) > 0 {
 				fmt.Fprintf(os.Stderr, "ping: %d malformed block(s) were detected during parsing, e.g. kind %q with boundary %q\n",
@@ -220,6 +379,11 @@ var PingCommand = Command{
 		// The verdict is written to the command Output writer so it is
 		// visible in the TUI's output tab instead of being discarded with
 		// stdout. See TheoryOfCommandOutput and TheoryOfPingCommand.
-		fmt.Fprintf(output, "ping ok: model emitted the required blocks (%q, %q)\n", kindA, kindB)
+		rendered := make([]string, len(specs))
+		for i, spec := range specs {
+			rendered[i] = formatPingBlockSpec(spec)
+		}
+		fmt.Fprintf(output, "ping ok: model emitted %d blocks in order with exact parameters and bodies (%s)\n",
+			len(specs), strings.Join(rendered, ", "))
 	},
 }

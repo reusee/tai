@@ -29,7 +29,7 @@ func (c Command) Keys() map[string]string {
 		"patch":  "Apply a boundary-delimited diff file to the working tree",
 		"go":     "Generate code for Go files (default in Go modules)",
 		"any":    "Generate code for arbitrary text files",
-		"ping":   "Test whether a model is reachable by sending a hello message",
+		"ping":   "Test whether a model is reachable and can emit blocks in the required format",
 		"goal":   "Work toward a goal through multiple independent generation loops",
 		"record": "Record interaction sessions and analyze them for self-improvement",
 	}

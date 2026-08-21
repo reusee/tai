@@ -45,38 +45,87 @@ func TestPingCommandRegistered(t *testing.T) {
 	})
 }
 
-func TestRandomBlockKinds(t *testing.T) {
-	var provider RandomBlockKinds
+func TestRandomPingBlocks(t *testing.T) {
+	var provider RandomPingBlocks
 	dscope.New(
 		new(Module),
 	).Call(func(
-		randomBlockKinds RandomBlockKinds,
+		randomPingBlocks RandomPingBlocks,
 	) {
-		provider = randomBlockKinds
+		provider = randomPingBlocks
 	})
+	checkLowercase := func(s string) {
+		if s == "" {
+			t.Fatal("expected a non-empty string")
+		}
+		for _, ch := range s {
+			if ch < 'a' || ch > 'z' {
+				t.Fatalf("expected lowercase letters only, got %q", s)
+			}
+		}
+	}
+	tricky := make(map[string]bool)
+	for _, value := range pingTrickyValues {
+		tricky[value] = true
+	}
 	for i := 0; i < 100; i++ {
-		a, b := provider()
-		if a == "" || b == "" {
-			t.Fatal("expected non-empty kind names")
+		specs := provider()
+		if len(specs) != 3 {
+			t.Fatalf("expected 3 block specs, got %d", len(specs))
 		}
-		if a == b {
-			t.Fatal("expected two distinct kind names")
-		}
-		for _, k := range []string{a, b} {
-			for _, ch := range k {
-				if ch < 'a' || ch > 'z' {
-					t.Fatalf("expected lowercase letters in kind name, got %q", k)
+		kinds := make(map[string]bool)
+		foundTricky := false
+		for _, spec := range specs {
+			checkLowercase(spec.Kind)
+			if kinds[spec.Kind] {
+				t.Fatalf("expected distinct kind names, got duplicate %q", spec.Kind)
+			}
+			kinds[spec.Kind] = true
+			if len(spec.Attributes) < 1 || len(spec.Attributes) > 3 {
+				t.Fatalf("expected 1..3 parameter pairs, got %d: %v", len(spec.Attributes), spec.Attributes)
+			}
+			for name, value := range spec.Attributes {
+				checkLowercase(name)
+				if tricky[value] {
+					foundTricky = true
+				} else {
+					checkLowercase(value)
 				}
 			}
+			if spec.Body == "" {
+				t.Fatal("expected a non-empty body")
+			}
+			for _, word := range strings.Fields(spec.Body) {
+				checkLowercase(word)
+			}
+		}
+		if !foundTricky {
+			t.Fatalf("expected at least one tricky parameter value per run, got %+v", specs)
 		}
 	}
 }
 
 func TestPingBlockPrompt(t *testing.T) {
-	prompt := pingBlockPrompt("abc", "xyz")
-	for _, kind := range []string{"abc", "xyz"} {
-		if !strings.Contains(prompt, kind) {
-			t.Fatalf("prompt must contain required kind %q", kind)
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar", "id": "qux"}, Body: "first body"},
+		{Kind: "xyz", Attributes: map[string]string{"tag": `say "hi"`}, Body: "second body"},
+	}
+	prompt := pingBlockPrompt(specs)
+	// The prompt carries the kinds, their exact parameter pairs — sorted
+	// by name, with tricky values shown in one valid escaped form — the
+	// exact bodies, and the ordering requirement, so the model can
+	// reproduce them exactly.
+	for _, s := range []string{
+		"abc",
+		"xyz",
+		`foo="bar", id="qux"`,
+		"tag=\"say \\\"hi\\\"\"",
+		"first body",
+		"second body",
+		"in this exact order",
+	} {
+		if !strings.Contains(prompt, s) {
+			t.Fatalf("prompt must contain %q, got: %s", s, prompt)
 		}
 	}
 	// The block-format description lives in the system prompt
@@ -91,66 +140,131 @@ func TestPingBlockPrompt(t *testing.T) {
 }
 
 func TestValidatePingBlocks(t *testing.T) {
-	kindA, kindB := "abc", "xyz"
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
+		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
+	}
 
 	t.Run("MissingBlocks", func(t *testing.T) {
-		if err := validatePingBlocks(loops.Result{}, kindA, kindB); err == nil {
+		if err := validatePingBlocks(loops.Result{}, specs); err == nil {
 			t.Fatal("expected an error when no blocks are emitted")
 		}
 	})
 
 	t.Run("ExactMatch", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: []blocks.Block{{Kind: kindA}, {Kind: kindB}}}
-		if err := validatePingBlocks(result, kindA, kindB); err != nil {
+		result := loops.Result{RemainingBlocks: pingResultBlocks(specs)}
+		if err := validatePingBlocks(result, specs); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("OrderIndependent", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: []blocks.Block{{Kind: kindB}, {Kind: kindA}}}
-		if err := validatePingBlocks(result, kindA, kindB); err != nil {
+	t.Run("TrickyValueDecoding", func(t *testing.T) {
+		// The prompt shows key="say \"hi\""; the header parser decodes
+		// the escape, so validation compares against the decoded value
+		// and any equivalent escaping passes.
+		// See TheoryOfPingCommand.
+		tricky := []PingBlockSpec{
+			{Kind: "abc", Attributes: map[string]string{"key": `say "hi"`}, Body: "body one"},
+		}
+		result := loops.Result{RemainingBlocks: pingResultBlocks(tricky)}
+		if err := validatePingBlocks(result, tricky); err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("WrongOrderFails", func(t *testing.T) {
+		bs := pingResultBlocks(specs)
+		bs[0], bs[1] = bs[1], bs[0]
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+			t.Fatal("expected an error when the blocks are emitted in the wrong order")
 		}
 	})
 
 	t.Run("DuplicateKindFails", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: []blocks.Block{{Kind: kindA}, {Kind: kindA}}}
-		if err := validatePingBlocks(result, kindA, kindB); err == nil {
+		bs := pingResultBlocks(specs)
+		bs[1].Kind = specs[0].Kind
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when one kind is duplicated")
 		}
 	})
 
-	t.Run("WrongKindFails", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: []blocks.Block{{Kind: kindA}, {Kind: "wrong"}}}
-		if err := validatePingBlocks(result, kindA, kindB); err == nil {
-			t.Fatal("expected an error when a block has the wrong kind")
+	t.Run("WrongBodyFails", func(t *testing.T) {
+		bs := pingResultBlocks(specs)
+		bs[0].Body = "wrong body"
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+			t.Fatal("expected an error when a block body differs from the required body")
 		}
 	})
 
 	t.Run("ExtraBlockFails", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: []blocks.Block{{Kind: kindA}, {Kind: kindB}, {Kind: "other"}}}
-		if err := validatePingBlocks(result, kindA, kindB); err == nil {
+		bs := append(pingResultBlocks(specs), blocks.Block{Kind: "other"})
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when an extra block is emitted")
 		}
 	})
+
+	t.Run("WrongParameterValueFails", func(t *testing.T) {
+		bs := pingResultBlocks(specs)
+		bs[0].Attributes["foo"] = "wrong"
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+			t.Fatal("expected an error when a parameter value differs from the required pair")
+		}
+	})
+
+	t.Run("MissingParametersFails", func(t *testing.T) {
+		bs := pingResultBlocks(specs)
+		bs[0].Attributes = nil
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+			t.Fatal("expected an error when a required parameter pair is missing")
+		}
+	})
+
+	t.Run("ExtraParameterFails", func(t *testing.T) {
+		bs := pingResultBlocks(specs)
+		bs[0].Attributes["id"] = "extra"
+		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+			t.Fatal("expected an error when an extra parameter pair is emitted")
+		}
+	})
+}
+
+// pingResultBlocks builds the RemainingBlocks of a passing run: one block
+// per spec, in order, with copies of the exact attributes (decoded
+// values) and the exact body. Tests mutate the returned blocks to build
+// failing cases; the copied maps keep the specs intact.
+func pingResultBlocks(specs []PingBlockSpec) []blocks.Block {
+	ret := make([]blocks.Block, len(specs))
+	for i, spec := range specs {
+		attrs := make(map[string]string, len(spec.Attributes))
+		for name, value := range spec.Attributes {
+			attrs[name] = value
+		}
+		ret[i] = blocks.Block{Kind: spec.Kind, Attributes: attrs, Body: spec.Body}
+	}
+	return ret
 }
 
 func TestPingCommandUsesRunLoop(t *testing.T) {
 	// Ping must run through the unified generation loop so it
 	// participates in the TUI mechanism (finish-reason observer,
 	// generating hint) and interaction recording. The fake run simulates
-	// the model emitting exactly the two required blocks so the validation
-	// passes. See TheoryOfPingCommand.
-	const kindA = "abc"
-	const kindB = "xyz"
+	// the model emitting exactly the required blocks, in order, with the
+	// exact parameter values (decoded, including the tricky escaped
+	// value) and exact bodies so the validation passes.
+	// See TheoryOfPingCommand.
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
+		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
+		{Kind: "zzz", Attributes: map[string]string{"key": `say "hi"`}, Body: "body three"},
+	}
 	var gotOpts loops.RunOptions
 	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		gotOpts = opts
-		result.RemainingBlocks = []blocks.Block{{Kind: kindA}, {Kind: kindB}}
+		result.RemainingBlocks = pingResultBlocks(specs)
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -175,7 +289,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 			}
 		},
 		fakeRun,
-		func() (string, string) { return kindA, kindB },
+		func() []PingBlockSpec { return specs },
 		nil,
 		nil,
 		"",
@@ -211,9 +325,19 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 			}
 		}
 	}
-	for _, kind := range []string{kindA, kindB} {
+	for _, kind := range []string{"abc", "xyz", "zzz"} {
 		if !strings.Contains(prompt.String(), kind) {
 			t.Fatalf("expected required kind %q in the user prompt", kind)
+		}
+	}
+	for _, pair := range []string{`foo="bar"`, `tag="qux"`, "key=\"say \\\"hi\\\"\""} {
+		if !strings.Contains(prompt.String(), pair) {
+			t.Fatalf("expected required parameter pair %q in the user prompt", pair)
+		}
+	}
+	for _, body := range []string{"body one", "body two", "body three"} {
+		if !strings.Contains(prompt.String(), body) {
+			t.Fatalf("expected required body %q in the user prompt", body)
 		}
 	}
 	if !strings.Contains(string(output), "ping ok") {
@@ -226,16 +350,18 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 	// prompts (extra_system_prompt and family_extra_system_prompt) into
 	// its system prompt, honoring the same configuration as the other
 	// generation commands. See TheoryOfPingCommand.
-	const kindA = "abc"
-	const kindB = "xyz"
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
+		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
+	}
 	var gotOpts loops.RunOptions
 	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
 		gotOpts = opts
-		result.RemainingBlocks = []blocks.Block{{Kind: kindA}, {Kind: kindB}}
+		result.RemainingBlocks = pingResultBlocks(specs)
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomBlockKinds, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -258,7 +384,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 			}
 		},
 		fakeRun,
-		func() (string, string) { return kindA, kindB },
+		func() []PingBlockSpec { return specs },
 		flags.ExtraSystemPrompt{"generic extra prompt"},
 		flags.FamilyExtraSystemPrompt{"test-family": {"family extra prompt"}},
 		generators.ModelFamily("test-family"),
