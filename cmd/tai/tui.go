@@ -15,6 +15,7 @@ import (
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
+	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -1426,6 +1427,12 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		// See states.TheoryOfHandoff and TheoryOfTUIHandoff.
 		func() states.HandoffWriter { return states.HandoffWriter(tui.Writer()) },
 		func() states.HandoffObserver { return tui },
+		// The round statistics table is routed to the Output tab: the
+		// codes pipeline prints it via a deferred call at the end of the
+		// session, and the generation output writer it receives is the
+		// redirected null device in TUI mode. See
+		// codes.TheoryOfRoundStatistics.
+		func() codes.RoundStatsWriter { return codes.RoundStatsWriter(tui.Writer()) },
 		func() loops.Run {
 			return withTUIOutputObserver(originalRun, tui)
 		},

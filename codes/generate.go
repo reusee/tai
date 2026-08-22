@@ -219,7 +219,10 @@ summary synthesized by the retry process, so they appear as separate loops in th
 statistics; the retry round itself is recorded by OnRoundSuccess when it
 completes successfully. The statistics are printed at the end of the session
 via a deferred call, so they are shown even when the session ends early due to
-an error.
+an error. The table is written to the RoundStatsWriter provider when one is
+configured, and to the generation output writer otherwise: in TUI mode the
+output writer is the redirected null device, so the TUI forks RoundStatsWriter
+to its output pane — the same writer-provider routing thought summaries use.
 `
 
 // RoundStat records per-round token usage (prompt, completion, thoughts,
@@ -238,6 +241,15 @@ type RoundStat struct {
 	Duration         time.Duration
 	Summary          string
 }
+
+// RoundStatsWriter receives the round statistics table printed at the end of
+// a generation session. The default provider returns nil, in which case the
+// table is written to the generation output writer passed by the command. A
+// display front-end (e.g., tai's TUI) forks this type to route the table into
+// its interface: in TUI mode the generation output writer is the redirected
+// null device, so the table would be invisible without the fork. See
+// TheoryOfRoundStatistics.
+type RoundStatsWriter io.Writer
 
 // PrintRoundStats writes the round statistics table to w. The optional
 // title replaces the default "Generation Statistics" header. When any
@@ -552,6 +564,7 @@ func (Module) GenerateWithResultWithStats(
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
 	thoughtSummaryWriter states.ThoughtSummaryWriter,
+	roundStatsWriter RoundStatsWriter,
 	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
@@ -707,7 +720,14 @@ func (Module) GenerateWithResultWithStats(
 
 		var roundStats []RoundStat
 		defer func() {
-			PrintRoundStats(output, roundStats)
+			// The table goes to the RoundStatsWriter provider when one is
+			// configured (TUI mode forks it to its output pane), and to the
+			// generation output writer otherwise. See TheoryOfRoundStatistics.
+			statsOutput := io.Writer(roundStatsWriter)
+			if statsOutput == nil {
+				statsOutput = output
+			}
+			PrintRoundStats(statsOutput, roundStats)
 		}()
 
 		var roundStartTime time.Time
@@ -867,4 +887,8 @@ func (Module) GenerateWithResultWithStats(
 
 		return result, roundStats, err
 	}
+}
+
+func (Module) RoundStatsWriter() RoundStatsWriter {
+	return RoundStatsWriter(nil)
 }

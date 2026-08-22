@@ -1089,6 +1089,58 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 	})
 }
 
+func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
+	// The round statistics table is written to the RoundStatsWriter
+	// provider when one is configured, never to the generation output
+	// writer: in TUI mode the output writer is the redirected null
+	// device (see runWithTUI in cmd/tai/tui.go), so the deferred
+	// PrintRoundStats in the codes pipeline needs the forked provider
+	// to stay visible. The test forks the provider, runs one fake round
+	// that collects a stat through OnRoundSuccess, and asserts the table
+	// lands in the forked writer while the output writer stays without
+	// it. See TheoryOfRoundStatistics.
+	var statsBuf bytes.Buffer
+	var outputBuf bytes.Buffer
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() flags.Chats { return flags.Chats{"hello"} },
+		func() *records.Recorder { return nil },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return &debugOutputMockGenerator{}, nil
+			}
+		},
+		func() loops.Run {
+			return func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+				return func(yield func(error) bool) {
+					// One successful round with no summaries: the loop
+					// collects a zero-usage RoundStat, enough for
+					// PrintRoundStats to render the table.
+					if err := opts.OnRoundSuccess(opts.InitialState, nil); err != nil {
+						t.Errorf("OnRoundSuccess: %v", err)
+					}
+				}
+			}
+		},
+		func() RoundStatsWriter { return RoundStatsWriter(&statsBuf) },
+	).Call(func(
+		generateWithResultWithStats GenerateWithResultWithStats,
+	) {
+		if _, _, err := generateWithResultWithStats(context.Background(), &outputBuf); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(statsBuf.String(), "Generation Statistics") {
+			t.Fatalf("expected the round statistics table in the stats writer, got: %q", statsBuf.String())
+		}
+		if strings.Contains(outputBuf.String(), "Generation Statistics") {
+			t.Fatalf("expected the output writer to stay without the statistics table, got: %q", outputBuf.String())
+		}
+	})
+}
+
 func TestCollectRoundStats(t *testing.T) {
 	t.Run("MultipleUsagePartsSingleRound", func(t *testing.T) {
 		// Simulating Gemini streaming which emits multiple Usage parts in one round.
