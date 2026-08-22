@@ -223,6 +223,118 @@ func TestResolveGoSymbols(t *testing.T) {
 	})
 }
 
+func TestResolveGoSymbolsPackageNameQualifier(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOWORK", "")
+	depDir := filepath.Join(dir, "dep")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "go.mod"), []byte("module example.com/dep/v4\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The declared package name (stars) is not any segment of the
+	// major-version import path (…/dep/v4): the declared-name qualifier
+	// is the only pkg-qualified form that can address these symbols.
+	if err := os.WriteFile(filepath.Join(depDir, "stars.go"), []byte(`package stars
+
+// Twinkle is exported from a major-version package.
+func Twinkle() int { return 42 }
+
+// Sky counts stars.
+type Sky struct{ n int }
+
+// Poll returns the count.
+func (s Sky) Poll() int { return s.n }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module example.com/symbols
+
+go 1.21
+
+require example.com/dep/v4 v4.0.0
+
+replace example.com/dep/v4 => ./dep
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "symbols.go"), []byte(`package symbols
+
+import _ "example.com/dep/v4"
+
+// Stars is a type whose name shadows the dependency's package name.
+type Stars struct{}
+
+// Poll is a method on Stars.
+func (Stars) Poll() int { return 7 }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+		func() LoadPatterns { return LoadPatterns{"."} },
+	).Call(func(resolve ResolveGoSymbols) {
+
+		// Package-name qualifier: "stars.Twinkle" addresses the package
+		// whose declared name is stars even though no path segment is.
+		parts, err := resolve([]string{"stars.Twinkle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		if !strings.Contains(got, "``` begin of source example.com/dep/v4.Twinkle") ||
+			!strings.Contains(got, "func Twinkle() int { return 42 }") {
+			t.Fatalf("expected package-name qualifier to resolve, got:\n%s", got)
+		}
+
+		// The full import path still restricts to the same package.
+		parts, err = resolve([]string{"example.com/dep/v4.Twinkle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
+			t.Fatalf("expected full-path qualifier to resolve, got:\n%s", got)
+		}
+
+		// A plain name resolves across every loaded package, including
+		// the major-version dependency.
+		parts, err = resolve([]string{"Twinkle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "example.com/dep/v4.Twinkle") {
+			t.Fatalf("expected plain name to resolve, got:\n%s", got)
+		}
+
+		// pkg.Type.Method keeps working under a name qualifier.
+		parts, err = resolve([]string{"stars.Sky.Poll"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "func (s Sky) Poll() int") {
+			t.Fatalf("expected pkg.Type.Method under a name qualifier to resolve, got:\n%s", got)
+		}
+
+		// A name qualifier that shadows a type name falls back to the
+		// receiver-type reading when the qualified form matches nothing:
+		// "stars.Poll" has no top-level Poll in the dep package, so it
+		// resolves Stars.Poll in the root package. See
+		// TheoryOfGoSrcResolution.
+		parts, err = resolve([]string{"stars.Poll"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = partsText(t, parts); !strings.Contains(got, "func (Stars) Poll() int { return 7 }") {
+			t.Fatalf("expected shadowed qualifier to fall back to the type reading, got:\n%s", got)
+		}
+	})
+}
+
 func TestResolveGoSymbolsPackageDocs(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOWORK", "")

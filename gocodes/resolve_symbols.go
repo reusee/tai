@@ -18,9 +18,15 @@ declaration source parts (see blocks.TheoryOfGoSrcBlocks). The resolver
 searches the Go files collected by GetFiles — the same file set the context
 pipeline loaded, with raw content and parsed ASTs already cached — so
 resolution spawns no Go toolchain subprocesses. The symbol forms follow
-go doc: [<pkg>.][<sym>.][<methodOrField>]. A package path prefix (the
-full import path or a proper suffix of it, e.g. "pkg" for "a/b/pkg")
-restricts matching to that package; the remaining parts select a
+go doc: [<pkg>.][<sym>.][<methodOrField>]. A package qualifier — the
+full import path, a proper suffix of it (e.g. "pkg" for "a/b/pkg"), or
+a loaded package's declared name — restricts matching to that package,
+longest qualifier first; the declared-name form keeps major-version
+packages whose name is not a path segment (doublestar for …/v4)
+addressable as name.Symbol. When a qualified form matches nothing, the
+qualifier segment is retried as a receiver type name, so a package name
+that shadows a type name (graphemes vs Graphemes) does not hide the
+type's methods. The remaining parts select a
 top-level declaration or a method on a type. An optional leading *
 receiver prefix and a trailing generic parameter list ("Pair[A, B].Swap")
 are stripped from the type name, so Pair[A, B].Swap, Pair[B, A].Swap,
@@ -245,10 +251,28 @@ type symbolDeclaration struct {
 // matching the symbol, returning every match across packages in the
 // deterministic file order of the loaded file set. The symbol follows
 // the go doc form [<pkg>.][<sym>.][<methodOrField>]: splitGoDocSymbol
-// strips an optional package path prefix, then splitSymbolName splits
-// the remaining type/method parts. See TheoryOfGoSrcResolution.
+// strips an optional package qualifier (an import path suffix or the
+// declared package name), then splitSymbolName splits the remaining
+// type/method parts. When the qualified interpretation matches nothing,
+// the qualifier segment is retried as a receiver type name, so a package
+// name that shadows a type name (graphemes vs Graphemes) does not hide
+// the type's methods. See TheoryOfGoSrcResolution.
 func findSymbolDeclarations(files []*File, symbol string) []symbolDeclaration {
 	pkgFilter, typeName, name := splitGoDocSymbol(files, symbol)
+	if matches := matchSymbolDeclarations(files, pkgFilter, typeName, name); len(matches) > 0 || pkgFilter == "" {
+		return matches
+	}
+	// Retry with the qualifier segment as the receiver type: the primary
+	// parse stripped it as a package qualifier (path suffix or package
+	// name), but it may name a type instead.
+	typeName, name = splitSymbolName(symbol)
+	return matchSymbolDeclarations(files, "", typeName, name)
+}
+
+// matchSymbolDeclarations scans the loaded files for declarations
+// matching the parsed symbol form, restricted to pkgFilter when it is
+// non-empty.
+func matchSymbolDeclarations(files []*File, pkgFilter, typeName, name string) []symbolDeclaration {
 	var matches []symbolDeclaration
 	for _, f := range files {
 		if f.AstFile == nil || f.TokenFile == nil || f.Package == nil || len(f.Content) == 0 {
@@ -358,14 +382,17 @@ func goDocNameMatch(query, target string) bool {
 	return true
 }
 
-// splitGoDocSymbol splits a go doc symbol form into its package path
-// filter and its type/method name parts. The package path is the longest
-// suffix of a loaded package path that prefixes the symbol followed by a
-// dot (e.g., for path a/b/c, the suffixes tried are a/b/c, b/c, c); the
-// filter records the full package path so the file loop compares exact
-// paths. The remainder after stripping is split by splitSymbolName, which
-// handles the * receiver prefix and generic parameter lists. See
-// TheoryOfGoSrcResolution.
+// splitGoDocSymbol splits a go doc symbol form into its package filter
+// and its type/method name parts. The filter is the longest qualifier
+// that prefixes the symbol followed by a dot; a qualifier is either a
+// suffix of a loaded package's import path (e.g., for path a/b/c, the
+// suffixes tried are a/b/c, b/c, c) or a loaded package's declared name,
+// so packages whose name is not a path segment — major-version import
+// paths such as …/doublestar/v4 declaring "doublestar" — remain
+// addressable as pkgName.Symbol. The filter records the full package
+// path so the file loop compares exact paths. The remainder after
+// stripping is split by splitSymbolName, which handles the * receiver
+// prefix and generic parameter lists. See TheoryOfGoSrcResolution.
 func splitGoDocSymbol(files []*File, symbol string) (pkgFilter, typeName, name string) {
 	bestPkg := ""
 	bestPrefixLen := 0
@@ -388,6 +415,15 @@ func splitGoDocSymbol(files []*File, symbol string) (pkgFilter, typeName, name s
 			} else {
 				break
 			}
+		}
+		// The declared package name qualifies symbols like a path
+		// suffix. Longest-match-wins applies across both qualifier
+		// kinds, so a longer path suffix of another package still
+		// takes precedence over a package name.
+		if pkgName := f.Package.Name; pkgName != "" &&
+			strings.HasPrefix(symbol, pkgName+".") && len(pkgName) > bestPrefixLen {
+			bestPkg = p
+			bestPrefixLen = len(pkgName)
 		}
 	}
 	if bestPrefixLen > 0 {
