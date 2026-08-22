@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"maps"
+	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/reusee/tai/generators"
@@ -35,15 +38,33 @@ a concrete correction target; a failure of package loading itself (e.g.,
 a non-Go project where the loader was never run for the context)
 degrades to an informational part so one stray block cannot abort the
 run.
+
+A symbol that exactly matches a loaded package — by import path (base
+path, test variants merged) or by declared package name — resolves to
+the package's go doc documentation instead of declaration source.
+Package matching takes precedence over symbol matching, mirroring go
+doc, and a package name may match several packages, all of which are
+returned. go doc runs from the load directory (or the workspace root in
+workspace mode) with the read-only environment of TheoryOfGoDocReadonly,
+so go.sum is never modified; a focus (root) package adds the -cmd and -u
+flags so a main package's documentation and unexported symbols are shown
+— the model edits focus packages and needs their complete surface —
+while a context package's exported API surface suffices. A failed go doc
+yields an explicit error part for that package, never an abort.
 `
 
 // ResolveGoSymbols resolves Go symbol names to their declaration source
-// code, returned as user-content parts for the next generation round.
+// code, returned as user-content parts for the next generation round. A
+// symbol that names a loaded package (exact import path or package name)
+// resolves to the package's go doc documentation instead.
 // See TheoryOfGoSrcResolution and blocks.TheoryOfGoSrcBlocks.
 type ResolveGoSymbols func(symbols []string) ([]generators.Part, error)
 
 func (Module) ResolveGoSymbols(
 	getFiles GetFiles,
+	loadDir LoadDir,
+	workspace Workspace,
+	envs Envs,
 	logger logs.Logger,
 ) ResolveGoSymbols {
 	return func(symbols []string) (parts []generators.Part, err error) {
@@ -59,6 +80,18 @@ func (Module) ResolveGoSymbols(
 			return []generators.Part{generators.Text(fmt.Sprintf(
 				"[go-src: cannot resolve symbols, Go package loading failed: %v]\n\n", err))}, nil
 		}
+		pkgIndex := indexLoadedPackages(files)
+		// go doc resolves import paths from the load directory; in
+		// workspace mode it runs from the workspace root so the paths of
+		// every workspace module resolve. See TheoryOfGoSrcResolution.
+		docDir := string(loadDir)
+		if workspace != "" {
+			docDir = string(workspace)
+		}
+		// renderedPkgs deduplicates documentation across package symbol
+		// forms: requesting a package by both path and name renders it
+		// once.
+		renderedPkgs := make(map[string]bool)
 		seen := make(map[string]bool, len(symbols))
 		for _, symbol := range symbols {
 			symbol = strings.TrimSpace(symbol)
@@ -66,10 +99,17 @@ func (Module) ResolveGoSymbols(
 				continue
 			}
 			seen[symbol] = true
+			// A package reference takes precedence over symbol matching,
+			// mirroring go doc. See TheoryOfGoSrcResolution.
+			var matched bool
+			parts, matched = appendPackageDocParts(parts, symbol, pkgIndex, renderedPkgs, docDir, []string(envs))
+			if matched {
+				continue
+			}
 			matches := findSymbolDeclarations(files, symbol)
 			if len(matches) == 0 {
 				parts = append(parts, generators.Text(fmt.Sprintf(
-					"[go-src: symbol %q not found in the loaded packages]\n\n", symbol)))
+					"[go-src: symbol or package %q not found in the loaded packages]\n\n", symbol)))
 				continue
 			}
 			for _, m := range matches {
@@ -84,6 +124,123 @@ func (Module) ResolveGoSymbols(
 		)
 		return parts, nil
 	}
+}
+
+// loadedPackage records one package resolvable by go-src package
+// resolution: its base import path, its declared package name, and
+// whether it is a focus (root) package. See TheoryOfGoSrcResolution.
+type loadedPackage struct {
+	path  string
+	name  string
+	focus bool
+}
+
+// indexLoadedPackages indexes the packages of the loaded file set by
+// their base import path. Test-variant packages ("pkg [pkg.test]") merge
+// into the base path; any file of a root (focus) package marks the
+// package focus. See TheoryOfGoSrcResolution.
+func indexLoadedPackages(files []*File) map[string]loadedPackage {
+	index := make(map[string]loadedPackage)
+	for _, f := range files {
+		if f.Package == nil {
+			continue
+		}
+		path := basePkgPath(f.Package.PkgPath)
+		if path == "" {
+			continue
+		}
+		pkg := index[path]
+		pkg.path = path
+		if pkg.name == "" && f.Package.Name != "" {
+			pkg.name = f.Package.Name
+		}
+		if f.PackageIsRoot {
+			pkg.focus = true
+		}
+		index[path] = pkg
+	}
+	return index
+}
+
+// matchLoadedPackages returns the loaded packages a go-src symbol refers
+// to as a package: an exact base import path match, or an exact declared
+// package name match. A path match is unique by construction; a name may
+// match several packages, all returned in deterministic path order.
+// See TheoryOfGoSrcResolution.
+func matchLoadedPackages(symbol string, index map[string]loadedPackage) []loadedPackage {
+	if pkg, ok := index[symbol]; ok {
+		return []loadedPackage{pkg}
+	}
+	var matches []loadedPackage
+	for _, path := range slices.Sorted(maps.Keys(index)) {
+		if index[path].name == symbol {
+			matches = append(matches, index[path])
+		}
+	}
+	return matches
+}
+
+// renderGoSrcPackageDoc runs go doc for the package and wraps the output
+// with source package markers. A focus package adds the -cmd and -u
+// flags: -cmd documents a main package and -u includes unexported
+// symbols, giving the model the complete surface of the packages it
+// edits, while a context package is reference material whose exported
+// API suffices. Like renderPackageDoc, the environment strips -mod=mod
+// so go doc never modifies go.sum. See TheoryOfGoDocReadonly and
+// TheoryOfGoSrcResolution.
+func renderGoSrcPackageDoc(pkgPath string, focus bool, dir string, envs []string) (string, error) {
+	args := []string{"doc"}
+	if focus {
+		args = append(args, "-cmd", "-u")
+	}
+	args = append(args, pkgPath)
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = withoutModModEnv(envs)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	text := string(output)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return "``` begin of source package " + pkgPath + "\n" +
+		text +
+		"``` end of source package " + pkgPath + "\n\n", nil
+}
+
+// appendPackageDocParts appends the go doc documentation parts for the
+// loaded packages a symbol refers to as a package, reporting whether the
+// symbol was a package reference. A failed go doc yields an explicit
+// error part for that package rather than an abort, giving the model a
+// concrete correction target. See TheoryOfGoSrcResolution.
+func appendPackageDocParts(
+	parts []generators.Part,
+	symbol string,
+	pkgIndex map[string]loadedPackage,
+	renderedPkgs map[string]bool,
+	docDir string,
+	envs []string,
+) ([]generators.Part, bool) {
+	pkgs := matchLoadedPackages(symbol, pkgIndex)
+	if len(pkgs) == 0 {
+		return parts, false
+	}
+	for _, pkg := range pkgs {
+		if renderedPkgs[pkg.path] {
+			continue
+		}
+		renderedPkgs[pkg.path] = true
+		doc, err := renderGoSrcPackageDoc(pkg.path, pkg.focus, docDir, envs)
+		if err != nil {
+			parts = append(parts, generators.Text(fmt.Sprintf(
+				"[go-src: package %q documentation unavailable: %v]\n\n", pkg.path, err)))
+			continue
+		}
+		parts = append(parts, generators.Text(doc))
+	}
+	return parts, true
 }
 
 // symbolDeclaration is one resolved declaration: its package-qualified

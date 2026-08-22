@@ -104,7 +104,7 @@ func TestResolveGoSymbols(t *testing.T) {
 			"// GroupedA is grouped const A.\n\tGroupedA = 10",
 			"var VarOne = \"one\"",
 			"VarTwo, VarThree = 2, 3",
-			"[go-src: symbol \"Missing\" not found",
+			"[go-src: symbol or package \"Missing\" not found",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("expected %q in resolved source:\n%s", want, got)
@@ -220,5 +220,145 @@ func TestResolveGoSymbols(t *testing.T) {
 		if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
 			t.Fatalf("an all-upper-case query must not match mixed-case target, got %v", parts)
 		}
+	})
+}
+
+func TestResolveGoSymbolsPackageDocs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/symbols\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "symbols.go"), []byte(`// Package symbols demonstrates documentation.
+package symbols
+
+import "example.com/symbols/dep"
+
+var _ = dep.Foo
+
+// FreeFunc is a free function.
+func FreeFunc() int { return 1 }
+
+// helper is unexported and shows only with -u.
+func helper() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	depDir := filepath.Join(dir, "dep")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "dep.go"), []byte(`// Package dep is a dependency package.
+package dep
+
+// Foo does something.
+func Foo() {}
+
+func secret() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// LoadPatterns{"."} makes only the root package focus; dep is
+	// loaded as a context package via the import walk.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+		func() LoadPatterns { return LoadPatterns{"."} },
+	).Call(func(resolve ResolveGoSymbols) {
+
+		t.Run("FocusPackagePath", func(t *testing.T) {
+			parts, err := resolve([]string{"example.com/symbols"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parts) != 1 {
+				t.Fatalf("expected 1 part, got %d", len(parts))
+			}
+			got := string(parts[0].(generators.Text))
+			for _, want := range []string{
+				"``` begin of source package example.com/symbols",
+				"``` end of source package example.com/symbols",
+				"Package symbols demonstrates documentation",
+				// -u includes unexported symbols for focus packages.
+				"helper",
+			} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected %q in focus package doc:\n%s", want, got)
+				}
+			}
+		})
+
+		t.Run("FocusPackageName", func(t *testing.T) {
+			parts, err := resolve([]string{"symbols"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parts) != 1 {
+				t.Fatalf("expected 1 part, got %d", len(parts))
+			}
+			if got := string(parts[0].(generators.Text)); !strings.Contains(got, "``` begin of source package example.com/symbols") {
+				t.Fatalf("expected focus package doc via package name, got:\n%s", got)
+			}
+		})
+
+		t.Run("ContextPackagePath", func(t *testing.T) {
+			parts, err := resolve([]string{"example.com/symbols/dep"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := partsText(t, parts)
+			for _, want := range []string{
+				"``` begin of source package example.com/symbols/dep",
+				"Package dep is a dependency package",
+				"Foo",
+			} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected %q in context package doc:\n%s", want, got)
+				}
+			}
+			// No -u for context packages: unexported symbols stay hidden.
+			if strings.Contains(got, "secret") {
+				t.Fatalf("context package doc must not include unexported symbols:\n%s", got)
+			}
+		})
+
+		t.Run("ContextPackageName", func(t *testing.T) {
+			parts, err := resolve([]string{"dep"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := partsText(t, parts); !strings.Contains(got, "``` begin of source package example.com/symbols/dep") {
+				t.Fatalf("expected context package doc via package name, got:\n%s", got)
+			}
+		})
+
+		t.Run("PackageAndSymbolMixed", func(t *testing.T) {
+			parts, err := resolve([]string{"example.com/symbols/dep", "FreeFunc"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parts) != 2 {
+				t.Fatalf("expected 2 parts, got %d", len(parts))
+			}
+			if got := string(parts[0].(generators.Text)); !strings.Contains(got, "begin of source package example.com/symbols/dep") {
+				t.Fatalf("unexpected first part:\n%s", got)
+			}
+			if got := string(parts[1].(generators.Text)); !strings.Contains(got, "begin of source example.com/symbols.FreeFunc") {
+				t.Fatalf("unexpected second part:\n%s", got)
+			}
+		})
+
+		t.Run("UnknownPackage", func(t *testing.T) {
+			parts, err := resolve([]string{"nonexistent/pkg"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parts) != 1 || !strings.Contains(string(parts[0].(generators.Text)), "not found") {
+				t.Fatalf("expected not-found for unknown package, got %v", parts)
+			}
+		})
 	})
 }

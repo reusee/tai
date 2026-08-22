@@ -21,14 +21,24 @@ with an optional package path prefix (full path or proper suffix)
 restricting the match to that package, an optional leading * receiver
 prefix ignored, and generic parameter lists on the type name ignored.
 Name matching follows go doc's case rule: lower-case query letters match
-either case, upper-case letters match exactly. The resolution lives with
-the Go package loader (gocodes.ResolveGoSymbols) because it needs the
-parsed ASTs; the blocks package defines only the block format and the
-symbol parse. Like request-context, go-src is strictly read-only and is
-not a completion signal: a round carrying a go-src block still needs a
-summary block, and because the kind is processable it participates in the
-triggering-block check, so such a round is not retried as truncated output
-(see loops.TheoryOfLoops).
+either case, upper-case letters match exactly.
+
+A symbol may also be a package reference: an exact loaded package import
+path or package name resolves to the package's go doc documentation
+instead of declaration source. Focus packages are documented with the
+-cmd and -u flags — a main package's documentation and unexported
+symbols are shown because the model edits focus packages — while a
+context package shows its exported API surface. Package matching takes
+precedence over symbol matching, mirroring go doc; a package name may
+match several packages, all of which are returned.
+
+The resolution lives with the Go package loader (gocodes.ResolveGoSymbols)
+because it needs the parsed ASTs; the blocks package defines only the
+block format and the symbol parse. Like request-context, go-src is
+strictly read-only and is not a completion signal: a round carrying a
+go-src block still needs a summary block, and because the kind is
+processable it participates in the triggering-block check, so such a
+round is not retried as truncated output (see loops.TheoryOfLoops).
 `
 
 const GoSrcBlockSystemPrompt = `
@@ -40,6 +50,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies).
 - The body contains ONLY symbol names, one per line, with no prose. Each non-empty line is one symbol.
 - Symbol forms follow go doc: a plain name for a top-level declaration (function, type, const, var), e.g. NewReader; TypeName.MethodName for a method, e.g. Reader.Read; and an optional package path prefix that restricts matching to that package, e.g. encoding/json.Marshal or json.Marshal. The package path may be the full import path or a proper suffix of it. An optional leading * receiver prefix is ignored. Generic parameter lists on the type name are ignored (Pair.Swap and Pair[A, B].Swap both resolve). Do not qualify names with a package path unless restricting to a specific loaded package.
+- A symbol that is itself a package — an exact loaded package import path (e.g., encoding/json) or package name (e.g., json) — returns that package's go doc documentation instead of declaration source. Focus packages include command and unexported documentation; context packages show the exported API.
 - Name matching follows go doc's case rule: a lower-case letter in the query matches either case in the target, an upper-case letter matches exactly.
 - A plain name may match declarations in several packages; all matches are returned with their package-qualified names and file locations. A package-qualified name returns only that package's matches.
 - Only symbols in packages loaded in this session can be resolved. Symbols that match nothing are reported in the next round; correct the name and try again.
@@ -52,6 +63,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 `
 
 const GoSrcBlockRestatePrompt = `- When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package path prefix (full path or proper suffix) restricting the match to that package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
+- A symbol that is a loaded package (exact import path or package name) returns that package's go doc documentation: focus packages include command and unexported documentation, context packages the exported API.
 - A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.`
 
 // ParseGoSrcSymbols extracts the symbol names from go-src blocks: each
