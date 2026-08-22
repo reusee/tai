@@ -19,7 +19,7 @@ searches the Go files collected by GetFiles — the same file set the context
 pipeline loaded, with raw content and parsed ASTs already cached — so
 resolution spawns no Go toolchain subprocesses. The symbol forms follow
 go doc: [<pkg>.][<sym>.][<methodOrField>]. A package qualifier — the
-full import path, a proper suffix of it (e.g. "pkg" for "a/b/pkg"), or
+full import path, a proper suffix of it (e.g., "pkg" for "a/b/pkg"), or
 a loaded package's declared name — restricts matching to that package,
 longest qualifier first; the declared-name form keeps major-version
 packages whose name is not a path segment (doublestar for …/v4)
@@ -57,6 +57,16 @@ adds -u so unexported symbols are shown: the model edits focus packages
 and needs their complete surface, while a context package's exported API
 surface suffices. A failed go doc yields an explicit error part for that
 package, never an abort.
+
+Resolution is a read over the cached file set, not a fresh disk scan:
+GetFiles is a scope-cached provider resolved once (at context assembly),
+and change blocks applied during the session do not mutate the cached
+file contents or ASTs, so a repeated fetch returns the pre-modification
+source. The prompts state this snapshot contract explicitly — the model
+verifies applied changes with go-test blocks or disk reads rather than
+re-fetching symbols — and recommend the full import path as the
+qualifier form because it is unique over loaded packages, unlike a
+declared name or path suffix that may match several same-named packages.
 `
 
 // ResolveGoSymbols resolves Go symbol names to their declaration source

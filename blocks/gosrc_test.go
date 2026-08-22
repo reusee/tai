@@ -41,6 +41,28 @@ func TestGoSrcPromptsDescribePackageSymbols(t *testing.T) {
 	}
 }
 
+func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
+	// The go-src prompts must teach three facts about resolution results:
+	// prefer the import-path qualifier, the resolved source names the
+	// defining file (usable as a change block file-path), and resolution
+	// reads an in-memory snapshot that does not reflect change blocks
+	// applied during the session. See TheoryOfGoSrcBlocks.
+	for name, prompt := range map[string]string{
+		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
+		"GoSrcBlockRestatePrompt": GoSrcBlockRestatePrompt,
+	} {
+		if !strings.Contains(prompt, "full import path") {
+			t.Fatalf("%s does not recommend the import-path qualifier", name)
+		}
+		if !strings.Contains(prompt, "file-path") {
+			t.Fatalf("%s does not describe the defining file usage", name)
+		}
+		if !strings.Contains(prompt, "does not re-read") {
+			t.Fatalf("%s does not describe the snapshot semantics", name)
+		}
+	}
+}
+
 func TestGoSrcPromptsEndWithSummary(t *testing.T) {
 	// The go-src stop rule must be phrased like the shell prompt's: stop
 	// generating, end the response with a summary block, and wait. A bare
