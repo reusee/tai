@@ -12,7 +12,7 @@ Go pipeline already loaded. Its purpose is precision under the visibility
 system: a package shown at documentation visibility carries only go doc
 output, so the model knows declaration signatures but not implementations;
 go-src lets the model pull exactly the implementations it needs instead of
-re-fetching whole files (see gocodes.TheoryOfVisibilityAllocation). Focus
+re-fetching whole files (see gotools.TheoryOfVisibilityAllocation). Focus
 packages are pinned at documentation level, which makes go-src the primary
 path from the declaration surface to the implementation: the initial
 context carries only declarations and test-function names, and the model
@@ -39,7 +39,7 @@ context package shows its exported API surface. Package matching takes
 precedence over symbol matching, mirroring go doc; a package name may
 match several packages, all of which are returned.
 
-The resolution lives with the Go package loader (gocodes.ResolveGoSymbols)
+The resolution lives with the Go package loader (gotools.ResolveGoSymbols)
 because it needs the parsed ASTs; the blocks package defines only the
 block format and the symbol parse. Like request-context, go-src is
 strictly read-only and is not a completion signal: a round carrying a

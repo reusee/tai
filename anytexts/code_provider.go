@@ -117,7 +117,7 @@ following gitignore-style semantics, so files in subdirectories or sibling
 workspace modules (paths containing "..") are still excluded. This ensures
 consistent ** semantics across all file matching contexts: IterFiles glob
 expansion, isExcludedPath pattern matching, request-context glob tags, and
-gocodes exclusion/embed-requested checks.
+gotools exclusion/embed-requested checks.
 
 Hidden files (those whose basename starts with ".") are skipped during
 directory traversal to avoid including unintended dotfiles (e.g., .git,
@@ -432,7 +432,7 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 // determined. CodeProvider.Parts appends it after all file contents so
 // the model can construct correct absolute paths for change block
 // file-path attributes. It is exported because
-// gocodes.CodeProvider.Parts appends the same hint after the Go file
+// gotools.CodeProvider.Parts appends the same hint after the Go file
 // contents. See TheoryOfWorkingDirectoryHint.
 func WorkingDirectoryPart() generators.Part {
 	cwd, err := os.Getwd()

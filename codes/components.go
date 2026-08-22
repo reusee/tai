@@ -8,7 +8,7 @@ import (
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 )
 
 const TheoryOfCodesComponents = `
@@ -46,7 +46,7 @@ against the updated source, and before summary so test output is available
 for the next round.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
-per line — through gocodes.ResolveGoSymbols, appended as user content for the
+per line — through gotools.ResolveGoSymbols, appended as user content for the
 next round. Like request-context it is read-only context fetching, but
 unconditional: symbol resolution reuses the packages the loader already
 fetched, so it is always available in the codes pipeline. MaxRounds bounds
@@ -100,15 +100,15 @@ type CodesComponents struct {
 
 func (Module) CodesComponents(
 	extra flags.ExtraSystemPrompt,
-	goExtra gocodes.ExtraSystemPrompt,
+	goExtra gotools.ExtraSystemPrompt,
 	familyExtra flags.FamilyExtraSystemPrompt,
-	goFamilyExtra gocodes.FamilyExtraSystemPrompt,
+	goFamilyExtra gotools.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
 	apply flags.Apply,
 	plan flags.Plan,
 	flagShell flags.Shell,
 	applyChangeBlocks changes.ApplyChangeBlocks,
-	resolveGoSymbols gocodes.ResolveGoSymbols,
+	resolveGoSymbols gotools.ResolveGoSymbols,
 ) CodesComponents {
 	var comps components.ComponentSet
 
@@ -175,7 +175,7 @@ func (Module) CodesComponents(
 	// the codes pipeline. Placed with request-context before shell and
 	// continue so fetched context is available for the next generation
 	// round. See blocks.TheoryOfGoSrcBlocks and
-	// gocodes.TheoryOfGoSrcResolution.
+	// gotools.TheoryOfGoSrcResolution.
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
 		PromptSection: blocks.GoSrcBlockSystemPrompt,
@@ -292,7 +292,7 @@ func (Module) CodesComponents(
 	// top-level extra prompts so the go project context is introduced
 	// whenever the codes generation pipeline is active (go, any, goal
 	// commands). The ai command uses AIComponents and is unaffected.
-	// See gocodes.ExtraSystemPrompt.
+	// See gotools.ExtraSystemPrompt.
 	for _, prompt := range goExtra {
 		if prompt != "" {
 			comps = append(comps, components.Component{

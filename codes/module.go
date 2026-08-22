@@ -6,7 +6,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
@@ -16,7 +16,7 @@ import (
 type Module struct {
 	dscope.Module
 	Generators generators.Module
-	GoCodes    gocodes.Module
+	GoTools    gotools.Module
 	AnyTexts   anytexts.Module
 	Phases     phases.Module
 	Flags      flags.Module

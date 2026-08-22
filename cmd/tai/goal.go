@@ -10,7 +10,7 @@ import (
 	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/codes/codetypes"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
 )
 
@@ -57,7 +57,7 @@ message occurs maxConsecutiveGoalErrors times in a row, the goal command stops
 early with a diagnostic message instead of burning the remaining iterations on
 a persistent failure.
 
-The gocodes.CodeProvider is the default for the goal command. The gocodes
+The gotools.CodeProvider is the default for the goal command. The gotools
 pipeline holds no process-level caches: all caches, such as loaded packages
 and parsed ASTs, are defined within scope provider functions. Because each
 goal loop resolves a fresh GenerateWithResultWithStats from a reset scope,
@@ -135,7 +135,7 @@ var GoalCommand = Command{
 		modes.ForProduction(),
 		func() NoHuman { return NoHuman(true) },
 		func(
-			provider gocodes.CodeProvider,
+			provider gotools.CodeProvider,
 		) codetypes.CodeProvider {
 			return provider
 		},

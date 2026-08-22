@@ -52,7 +52,7 @@ Architectural constraints:
 
 - No blind exploration. The upfront context always carries the complete
   declaration surface, so the model never starts from nothing (see
-  gocodes.TheoryOfContextStrategy). Implementation source is fetched on
+  gotools.TheoryOfContextStrategy). Implementation source is fetched on
   demand with go-src blocks — a targeted pull from the known surface, not
   semantic-search probing. Request-context blocks serve external resources
   unavailable at construction time (network fetches, glob expansion), not

@@ -11,7 +11,7 @@ import (
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
 )
 
@@ -124,8 +124,8 @@ func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
 		},
-		func() gocodes.FamilyExtraSystemPrompt {
-			return gocodes.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
+		func() gotools.FamilyExtraSystemPrompt {
+			return gotools.FamilyExtraSystemPrompt{"gemini": {"go gemini family prompt"}}
 		},
 	).Call(func(comps CodesComponents) {
 		prompt := comps.PromptSections()

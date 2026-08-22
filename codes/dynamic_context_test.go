@@ -8,7 +8,7 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
 )
 
@@ -82,8 +82,8 @@ func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
 		new(Module),
 	).Fork(
 		func() codetypes.CodeProvider { return mockCodeProvider{} },
-		func() gocodes.ExtraSystemPrompt {
-			return gocodes.ExtraSystemPrompt{"go-specific system prompt"}
+		func() gotools.ExtraSystemPrompt {
+			return gotools.ExtraSystemPrompt{"go-specific system prompt"}
 		},
 	).Call(func(
 		prompt SystemPrompt,

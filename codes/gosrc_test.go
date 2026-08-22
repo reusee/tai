@@ -10,7 +10,7 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/gocodes"
+	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
 )
 
@@ -39,7 +39,7 @@ func TestGoSrcComponentResolvesSymbols(t *testing.T) {
 		new(Module),
 	).Fork(
 		func() codetypes.CodeProvider { return mockCodeProvider{} },
-		func() gocodes.ResolveGoSymbols {
+		func() gotools.ResolveGoSymbols {
 			return func(symbols []string) ([]generators.Part, error) {
 				return []generators.Part{generators.Text("resolved: " + strings.Join(symbols, ","))}, nil
 			}
@@ -82,7 +82,7 @@ func TestGoSrcComponentEmptyBodyFeedback(t *testing.T) {
 		new(Module),
 	).Fork(
 		func() codetypes.CodeProvider { return mockCodeProvider{} },
-		func() gocodes.ResolveGoSymbols {
+		func() gotools.ResolveGoSymbols {
 			return func(symbols []string) ([]generators.Part, error) {
 				resolverCalled = true
 				return nil, nil

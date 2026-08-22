@@ -150,7 +150,7 @@ debug_gemini?: bool
 debug_openai?: bool
 tap_openai?: bool
 debug_codes?: bool
-debug_gocodes?: bool
+debug_gotools?: bool
 debug_anytexts?: bool
 
 // _gen defines the structure of a generator (AI model configuration).
