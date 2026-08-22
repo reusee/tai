@@ -16,6 +16,13 @@ the closing marker is the DELIMITER alone on its own line. When no parameters ar
 needed, parentheses may be omitted (bare kind). Only the delimiter string and the
 header structure are unified; the body content is defined by the specific kind.
 
+Kind generality: the block format prompts describe only the format and the rules
+that apply to every kind — marker structure, delimiter policy, deferred execution.
+They must not mention or reference any specific kind's semantics, and must not
+assume which kinds a deployment provides, requires, or forbids. Third-party
+programs may embed the format prompts without any tai-implemented kind, so every
+kind-specific statement belongs in that kind's own prompt.
+
 Delimiter selection policy: every delimiter MUST be an uncommon Chinese two-character
 word (e.g., 龃龉). Content — source code, prompts, and configuration text —
 is overwhelmingly ASCII or common-script writing, so a rare Han pair has negligible
@@ -36,7 +43,33 @@ it.
 
 Delimiter rule centralization: the delimiter rules live only in BlockFormatSystemPrompt
 and BlockFormatRestatePrompt. Individual kind prompts describe only their kind-specific
-semantics.
+semantics. The deferred-execution contract is centralized the same way; see
+TheoryOfDeferredExecution.
+`
+
+const TheoryOfDeferredExecution = `
+Blocks are a request protocol, not a tool-call protocol. The model emits
+blocks inside one response; the loop parses and processes them only after
+the response ends, and every outcome — shell and go-test output,
+request-context fetches, go-src sources, change-block apply results — is
+fed back as user content at the start of the next round. Nothing executes
+and nothing returns mid-response. Change blocks are the same: applied
+atomically after the round succeeds, with apply errors reported in the
+next round.
+
+The distinction matters because models trained on tool-call APIs expect a
+result before continuing generation. Under the block protocol that
+expectation produces hallucinations: the model writes as if a command had
+already run or a file had already been fetched, fabricating outputs that
+never existed and sometimes building later blocks on the fabricated
+results. The unified format prompts therefore state the deferred-execution
+contract explicitly: nothing executes while generating, results arrive only
+in the next round, an emitted block must be assumed unexecuted, and
+content that depends on a block's result must wait for a later round.
+Kind prompts may state kind-specific arrival details (which round the
+output arrives in, stop-and-wait rules) but must not restate the general
+principle; BlockFormatSystemPrompt and BlockFormatRestatePrompt own it,
+mirroring the delimiter rule centralization.
 `
 
 const TheoryOfBoundaryUniqueness = `
@@ -139,7 +172,7 @@ This format avoids escaping issues and is easy to parse.
 DELIMITER
 
 - DELIMITER: An uncommon Chinese two-character word (e.g., 龃龉) that does not appear in the block body. The rarity of the characters ensures the delimiter cannot conflict with any content. Use a different pair of uncommon Chinese characters for each block in the same response. The same delimiter MUST be used for the start marker and the closing line.
-- kind: The type of block, specified as a function name. The kind name may contain hyphens (e.g., go-test, request-context). The valid kinds and their content formats are defined by the specific kind documentation. Parameters on the function call provide kind-specific metadata as named arguments.
+- kind: The type of block, specified as a function name. The kind name may contain hyphens (e.g., parse-input, record-entry). The valid kinds and their content formats are defined by the specific kind documentation. Parameters on the function call provide kind-specific metadata as named arguments.
 - Parameters: Named arguments inside parentheses, in the form param="value". Values are quoted with single or double quotes. If no parameters are needed, the parentheses may be omitted entirely (just the kind name).
 - Content: The body between the start marker and the closing line is defined by the specific kind. See the kind-specific format documentation for details.
 - Content outside blocks is preserved verbatim.
@@ -150,11 +183,11 @@ DELIMITER
 - The opening marker (<<DELIMITER kind(...)) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
 - NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
-- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and the changes will be lost.
+- Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and its content will be lost.
 - Do this (marker starts on its own line after the prose):
   Some explanation text.
-  <<龃龉 change(op="MODIFY", target="Foo", file-path="/home/user/foo.go")
-  <code here>
+  <<龃龉 example(param="value")
+  <block body>
   龃龉
 
 **Delimiter Uniqueness (CRITICAL):**
@@ -164,17 +197,26 @@ DELIMITER
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body (the code or text between the markers). Because the parser closes the block at the first line matching the delimiter, a body line that matches the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters are very unlikely to appear in code or prose, but MUST verify the chosen pair is absent from the body before emitting the block. This is not a suggestion: a delimiter that appears in the body corrupts the block.
 
 **Delimiter Matching (CRITICAL):**
-- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 change(...) MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
+- The opening marker and the closing line form a MATCHED PAIR: a block opened with <<龃龉 example(...) MUST be closed with the EXACT same delimiter string 龃龉, never 彳亍 or any other delimiter.
 - A closing line that does not match the opening delimiter is treated as body content, not a closing marker. The parser continues scanning for the matching delimiter; if no matching closing line is found, the block is unclosed — the opening marker's block never completes and its content is discarded.
 - Always close a block with the same delimiter used to open it. Before writing each closing line, verify it matches the opening delimiter of the same block. The most common cause of mismatched delimiters is copying a delimiter from another block or from an example instead of reusing the opening delimiter.
+
+**Deferred Execution — Blocks Are Not Tool Calls (CRITICAL):**
+- Blocks do not execute while you are generating. Every block, regardless of kind, is processed only after the current response has completely ended: nothing runs, nothing is fetched, and nothing is modified while you are still writing.
+- All actions and information requested by blocks arrive only in the NEXT round, as user content at its start. None of it is available in the current response.
+- This is the essential difference from tool calls, where a result returns before you continue generating. There is no mid-response result under the block protocol.
+- NEVER assume a block you emitted has already executed or produced a result. NEVER fabricate, quote, or reason from an imagined result. A phrase like "the block above returned ..." inside the same response is a hallucination — the block has not run.
+- Any content that depends on a block's result — another block, an analysis, a conclusion — MUST be emitted in a later round, after the result has arrived as user content.
+- The flow is always: emit the blocks, end the response, and wait; read the results that arrive as the next user message, then continue.
 `
 
-const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and the changes will be lost.
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and its content will be lost.
 - **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the function-call header 'kind(param="value")' ending with ')', or bare 'kind' if no parameters. Closing marker: the EXACT SAME delimiter alone on its own line.
 - **The DELIMITER MUST be an uncommon Chinese two-character word** (e.g., 龃龉, 彳亍, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word.
 - Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
 - **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
 - **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen pair is absent from the body before emitting the block.
+- **Deferred execution — blocks are not tool calls**: nothing executes or returns while you are still generating. Every block is processed only after the response ends; all results arrive as user content in the NEXT round. Never assume an emitted block has already run, and never fabricate its result in the current response.
 - No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.

@@ -1009,3 +1009,54 @@ func TestBlockFormatPromptsNoNegativeExamples(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockFormatPromptsStateDeferredExecution(t *testing.T) {
+	// The deferred-execution contract is centralized in the unified block
+	// format prompts: blocks are processed only after the response ends,
+	// and results arrive as user content in the next round. Kind prompts
+	// may state kind-specific arrival details but must not restate the
+	// general principle. See TheoryOfDeferredExecution.
+	if !strings.Contains(BlockFormatSystemPrompt, "Blocks Are Not Tool Calls") {
+		t.Fatal("BlockFormatSystemPrompt must state the not-tool-calls contract")
+	}
+	if !strings.Contains(BlockFormatSystemPrompt, "hallucination") {
+		t.Fatal("BlockFormatSystemPrompt must name the fabricated-result risk")
+	}
+	for name, prompt := range map[string]string{
+		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
+		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
+	} {
+		if !strings.Contains(prompt, "NEXT round") {
+			t.Fatalf("%s must state that block results arrive in the NEXT round", name)
+		}
+	}
+}
+
+func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
+	// The block format prompts must stay kind-agnostic: third-party
+	// programs may embed them without providing any tai-implemented
+	// kind, so they describe only the format and universally applicable
+	// rules. Kind semantics live in the kind prompts.
+	// See TheoryOfBlockFormatGeneral.
+	kindReferences := []string{
+		"go-test",
+		"go-src",
+		"request-context",
+		"shell",
+		"summary block",
+		"continue block",
+		"change(",
+		"changes will be lost",
+		"command output",
+	}
+	for name, prompt := range map[string]string{
+		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
+		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
+	} {
+		for _, ref := range kindReferences {
+			if strings.Contains(prompt, ref) {
+				t.Fatalf("%s must not reference kind-specific semantics %q; see TheoryOfBlockFormatGeneral", name, ref)
+			}
+		}
+	}
+}
