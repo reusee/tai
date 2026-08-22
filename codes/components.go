@@ -65,9 +65,14 @@ generating.
 
 The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
 that reinforces the requirement to emit a summary block in every response as
-the round completion signal. The summary block is the sole completion signal:
-the generation loop checks for its presence to distinguish a normally ended
-round from truncated output.
+the round completion signal. The generation loop checks for the summary block
+to distinguish a normally ended round from truncated output; a round carrying
+a component-triggering block (request-context, shell, continue, go-test,
+go-src) is also complete without a summary block, because the model is
+waiting for component processing rather than truncated (see
+loops.TheoryOfLoops). Every kind prompt that stops and waits states the
+summary requirement with the same wording, so no stop instruction licenses
+omitting the summary block.
 `
 
 const TheoryOfFamilyExtraSystemPrompt = `

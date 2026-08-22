@@ -40,3 +40,17 @@ func TestGoSrcPromptsDescribePackageSymbols(t *testing.T) {
 		}
 	}
 }
+
+func TestGoSrcPromptsEndWithSummary(t *testing.T) {
+	// The go-src stop rule must be phrased like the shell prompt's: stop
+	// generating, end the response with a summary block, and wait. A bare
+	// "stop generating and wait" licenses omitting the summary block and
+	// contradicts SummaryBlockSystemPrompt's every-response requirement.
+	// See TheoryOfGoSrcBlocks and TheoryOfSummaryBlocks.
+	if !strings.Contains(GoSrcBlockSystemPrompt, "end the response with a summary block") {
+		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
+	}
+	if strings.Contains(GoSrcBlockSystemPrompt, "stop generating and wait:") {
+		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
+	}
+}

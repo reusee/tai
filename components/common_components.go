@@ -12,7 +12,7 @@ shell (conditional on the shell flag) and continue. These are generic,
 side-effect-free components that any generation pipeline may use regardless of
 whether it performs code modification or dynamic context fetching. Commands
 that need additional components (e.g., change for code generation,
-request-context for dynamic context, finish and summary for round statistics,
+request-context for dynamic context, summary for round statistics,
 read-only files for prompt-only rules) prepend or append their specific
 components to this common set. The common components are constructed once and
 reused by both the ai command (via AIComponents) and the codes module (via

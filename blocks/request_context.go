@@ -40,6 +40,16 @@ process's current working directory. The glob tag supports ** (globstar) pattern
 for recursive directory traversal via doublestar; when ** appears as a complete
 path segment, it matches zero or more directories.
 
+Like every kind whose prompt stops and waits for the next round (shell, go-test,
+go-src), the request-context prompt carries the summary discipline: the block does
+not replace the summary block, the prompt requires a summary block in the same
+round after the request-context block, and the stop rule is phrased as "stop
+generating, end the response with a summary block, and wait" — the same wording as
+the shell prompt — so the stop instruction never licenses omitting the summary
+block. At the loop level the block still completes the round (see
+loops.TheoryOfLoops), but the summary block remains required so the round
+statistics and the summary display carry the round's narrative.
+
 Only request-context blocks are consumed from ParserState during context
 processing; blocks of other kinds are preserved so they remain available after the
 context is provided.
@@ -58,7 +68,8 @@ Use the "request-context" kind to request additional context needed to complete 
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
-- After emitting a request-context block, stop generating and wait for the system to provide the requested context.
+- After emitting a request-context block, stop generating, end the response with a summary block, and wait for the system to provide the requested context.
+- The request-context block is NOT a completion signal. MUST still emit a summary block in the same round, after the request-context block. Every round must end with a summary block.
 - Do not include request-context blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
 
 **Example use:**
@@ -70,7 +81,8 @@ Use the "request-context" kind to request additional context needed to complete 
 const RequestContextRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a request-context block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
-- After emitting a request-context block, stop and wait for the system to provide the context.
+- After emitting a request-context block, stop and end the response with a summary block, then wait for the system to provide the context.
+- A request-context block does NOT replace the summary block. MUST still emit a summary block in the same round, after the request-context block.
 - The request-context block is read-only: never use it for writes or side effects.
 - Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.`
 

@@ -37,6 +37,27 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	})
 }
 
+func TestSystemPromptRequestContextNotCompletionSignal(t *testing.T) {
+	// Mirrors TestSystemPromptGoSrcBlock: the assembled codes system prompt
+	// must teach that a request-context block does not replace the summary
+	// block, so the stop-and-wait instruction never licenses omitting the
+	// round's summary block. See blocks.TheoryOfRequestContext and
+	// blocks.TheoryOfSummaryBlocks.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		s := string(prompt)
+		if !strings.Contains(s, "request-context block is NOT a completion signal") {
+			t.Fatal("system prompt must state that request-context block is not a completion signal and summary is still required")
+		}
+	})
+}
+
 func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),

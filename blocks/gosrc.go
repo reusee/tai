@@ -65,7 +65,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Only symbols in packages loaded in this session can be resolved. Symbols that match nothing are reported in the next round; correct the name and try again.
 - The returned source includes the declaration's doc comments.
 - Do not emit change blocks whose content depends on the requested source: request the source first, then emit changes in a subsequent response after the source is provided.
-- After emitting a go-src block, stop generating and wait: the requested source arrives as user content in the next round.
+- After emitting a go-src block, stop generating, end the response with a summary block, and wait: the requested source arrives as user content in the next round.
 - Close the go-src block with its closing line before emitting any other block (e.g., the summary block).
 - The go-src block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-src block. Every round must end with a summary block.
 - Only use go-src blocks in Go projects.

@@ -51,14 +51,16 @@ are relevant. After modifying or adding a test function, the go-test block shoul
 name that function in the -run argument so the verification is directly tied to the
 change.
 
-The go-test block is not a completion signal. The summary and finish blocks are
-completion signals for each round (see TheoryOfSummaryCompletionRetry in
-codes/generate.go). When the model emits a go-test block, it must still emit a
-summary block in the same round to describe what was done, including the test
-verification. Without a summary or finish block, the system assumes the output was
-truncated and retries the round unnecessarily. This applies to every round,
-including debug rounds where tests fail and the go-test component produces Parts
-that trigger a new round.
+The go-test block does not carry the round's narrative — that is the summary
+block's role. When the model emits a go-test block, it must still emit a summary
+block in the same round to describe what was done, including the test
+verification. A round with a go-test block but no summary block is not retried —
+the block itself signals that the model is waiting for component processing (see
+loops.TheoryOfLoops) — but the round statistics and the summary display then lose
+the round's narrative, which is why the go-test prompt states the summary
+requirement with the same wording as the shell prompt. This applies to every
+round, including debug rounds where tests fail and the go-test component produces
+Parts that trigger a new round.
 
 ProcessGoTestBlocks always returns test output, regardless of whether tests pass
 or fail; the go-test component feeds it back as user content, always triggering a

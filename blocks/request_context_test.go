@@ -509,6 +509,29 @@ func TestFetchRequestContextError(t *testing.T) {
 	}
 }
 
+func TestRequestContextPromptsRequireSummary(t *testing.T) {
+	// The request-context prompts must not license omitting the summary
+	// block: the stop rule is phrased like the shell prompt's ("stop and
+	// end the response with a summary block"), and the block is declared
+	// not to replace the summary block. A bare "stop generating and wait"
+	// contradicts SummaryBlockSystemPrompt's every-response requirement
+	// and is the most likely cause of missing summary blocks after
+	// request-context blocks. See TheoryOfRequestContext and
+	// TheoryOfSummaryBlocks.
+	if !strings.Contains(RequestContextSystemPrompt, "request-context block is NOT a completion signal") {
+		t.Fatal("system prompt must state that the request-context block is not a completion signal and a summary block is still required")
+	}
+	if !strings.Contains(RequestContextSystemPrompt, "end the response with a summary block") {
+		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
+	}
+	if strings.Contains(RequestContextSystemPrompt, "stop generating and wait for the system to provide") {
+		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
+	}
+	if !strings.Contains(RequestContextRestatePrompt, "does NOT replace the summary block") {
+		t.Fatal("restate prompt must state that a request-context block does not replace the summary block")
+	}
+}
+
 func TestReadContextFileAbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
