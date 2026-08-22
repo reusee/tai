@@ -78,6 +78,7 @@ type ResolveGoSymbols func(symbols []string) ([]generators.Part, error)
 
 func (Module) ResolveGoSymbols(
 	getFiles GetFiles,
+	getTypeCheckedPackages GetTypeCheckedPackages,
 	loadDir LoadDir,
 	workspace Workspace,
 	envs Envs,
@@ -108,6 +109,25 @@ func (Module) ResolveGoSymbols(
 		// forms: requesting a package by both path and name renders it
 		// once.
 		renderedPkgs := make(map[string]bool)
+		// The reference index is built lazily, once per resolve call: the
+		// type-checked load is expensive and only needed when a symbol
+		// actually resolves. A load failure degrades to source-only output
+		// rather than aborting the resolve. See TheoryOfGoSrcReferences.
+		var refIndex *typeCheckIndex
+		refIndexReady := false
+		ensureRefIndex := func() *typeCheckIndex {
+			if refIndexReady {
+				return refIndex
+			}
+			refIndexReady = true
+			typeCheckedPkgs, err := getTypeCheckedPackages()
+			if err != nil {
+				logger.Warn("go-src references unavailable", "err", err)
+				return nil
+			}
+			refIndex = buildTypeCheckIndex(typeCheckedPkgs)
+			return refIndex
+		}
 		seen := make(map[string]bool, len(symbols))
 		for _, symbol := range symbols {
 			symbol = strings.TrimSpace(symbol)
@@ -132,6 +152,16 @@ func (Module) ResolveGoSymbols(
 				parts = append(parts, generators.Text(fmt.Sprintf(
 					"``` begin of source %s %s:%d\n%s\n``` end of source %s\n\n",
 					m.qualifiedName, m.filePath, m.line, m.source, m.qualifiedName)))
+				// Each resolved source part is followed by the references
+				// report for the same symbol when references exist. See
+				// TheoryOfGoSrcReferences.
+				if index := ensureRefIndex(); index != nil {
+					objects := index.objectsFor(m)
+					refs, truncated := index.referencesFor(objects)
+					if len(refs) > 0 || truncated {
+						parts = append(parts, formatReferencesPart(m.qualifiedName, refs, truncated))
+					}
+				}
 			}
 		}
 		logger.Info("go-src symbols resolved",
@@ -250,11 +280,20 @@ func appendPackageDocParts(
 // symbolDeclaration is one resolved declaration: its package-qualified
 // name, the defining file, the 1-based line where the declaration (or its
 // doc comment) starts, and the declaration source including doc comments.
+// typeName and name record the declaration's receiver type and declaration
+// names; startOffset and endOffset delimit the source's byte range within
+// the file. go-src reference reporting maps the byte range — stable across
+// distinct FileSets — onto the type-checked load's AST, name-checked with
+// typeName and name. See TheoryOfGoSrcReferences.
 type symbolDeclaration struct {
 	qualifiedName string
+	typeName      string
+	name          string
 	filePath      string
 	line          int
 	source        string
+	startOffset   int
+	endOffset     int
 }
 
 // findSymbolDeclarations searches the loaded Go files for declarations
@@ -338,7 +377,9 @@ func matchSymbolDeclarations(files []*File, pkgFilter, typeName, name string) []
 }
 
 // appendSymbolMatch extracts the source between start and end from the
-// file's cached content and appends a symbolDeclaration to matches.
+// file's cached content and appends a symbolDeclaration to matches. The
+// declaration names and the byte-offset range of the extraction are
+// recorded for go-src reference reporting. See TheoryOfGoSrcReferences.
 func appendSymbolMatch(matches []symbolDeclaration, f *File, pkgPath, typeName, name string, start, end token.Pos) []symbolDeclaration {
 	qualified := pkgPath + "." + name
 	if typeName != "" {
@@ -346,9 +387,13 @@ func appendSymbolMatch(matches []symbolDeclaration, f *File, pkgPath, typeName, 
 	}
 	return append(matches, symbolDeclaration{
 		qualifiedName: qualified,
+		typeName:      typeName,
+		name:          name,
 		filePath:      f.Path,
 		line:          f.TokenFile.Line(start),
 		source:        string(f.Content[f.TokenFile.Offset(start):f.TokenFile.Offset(end)]),
+		startOffset:   f.TokenFile.Offset(start),
+		endOffset:     f.TokenFile.Offset(end),
 	})
 }
 

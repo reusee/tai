@@ -223,6 +223,165 @@ func TestResolveGoSymbols(t *testing.T) {
 	})
 }
 
+func TestResolveGoSymbolsReferences(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/refs\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	refsSource := `package refs
+
+// UsedFunc is referenced from user.go and the internal test.
+func UsedFunc() int { return 1 }
+
+// UnusedFunc has no references.
+func UnusedFunc() {}
+
+// Widget carries a counter.
+type Widget struct {
+	N int
+}
+
+// Nudge increments the counter.
+func (w *Widget) Nudge() { w.N++ }
+
+const UsedConst = 7
+
+var UsedVar = "v"
+
+// Pair is generic.
+type Pair[A, B any] struct {
+	First  A
+	Second B
+}
+
+// Swap flips the pair.
+func (p Pair[A, B]) Swap() Pair[B, A] {
+	return Pair[B, A]{First: p.Second, Second: p.First}
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "refs.go"), []byte(refsSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// CallUsedFunc uses UsedFunc twice: references are deduplicated per
+	// top-level declaration, so two uses in one declaration produce one
+	// report line.
+	userSource := `package refs
+
+func CallUsedFunc() int { return UsedFunc() + UsedFunc() }
+
+func UseWidget() int {
+	w := &Widget{}
+	w.Nudge()
+	return w.N
+}
+
+func UseConstVar() int { return UsedConst + len(UsedVar) }
+`
+	if err := os.WriteFile(filepath.Join(dir, "user.go"), []byte(userSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The internal test file makes the package and its test variant both
+	// type-check user.go: a use there must appear exactly once in the
+	// references report (variant deduplication). See TheoryOfGoSrcReferences.
+	internalTestSource := `package refs
+
+import "testing"
+
+func TestRefsUses(t *testing.T) {
+	if UsedFunc() != 1 {
+		t.Fatal("bad")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "refs_test.go"), []byte(internalTestSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+	).Call(func(resolve ResolveGoSymbols) {
+
+		parts, err := resolve([]string{"UsedFunc", "UnusedFunc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of references example.com/refs.UsedFunc",
+			"example.com/refs: CallUsedFunc (",
+			"example.com/refs: TestRefsUses (",
+			"``` begin of source example.com/refs.UnusedFunc",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in resolved output:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "begin of references example.com/refs.UnusedFunc") {
+			t.Fatalf("expected no references block for UnusedFunc, got:\n%s", got)
+		}
+		// References carry no line numbers: the line is exactly
+		// "package: top-level declaration (file)".
+		wantLine := "example.com/refs: CallUsedFunc (" + filepath.Join(dir, "user.go") + ")\n"
+		if !strings.Contains(got, wantLine) {
+			t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
+		}
+		// References are deduplicated per top-level declaration: the two
+		// UsedFunc uses inside CallUsedFunc collapse to one line, and the
+		// package and test variant re-typechecking user.go collapse too.
+		if n := strings.Count(got, "example.com/refs: CallUsedFunc ("); n != 1 {
+			t.Fatalf("expected exactly 1 CallUsedFunc reference line, got %d", n)
+		}
+
+		// A method's references report lists the callers of the method.
+		parts, err = resolve([]string{"Widget.Nudge"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		if !strings.Contains(got, "``` begin of references example.com/refs.Widget.Nudge") {
+			t.Fatalf("expected references block for Widget.Nudge, got:\n%s", got)
+		}
+		if !strings.Contains(got, "example.com/refs: UseWidget (") {
+			t.Fatalf("expected UseWidget reference, got:\n%s", got)
+		}
+	})
+
+	// Truncation: 120 additional callers exceed maxGoSrcReferencesPerSymbol.
+	// A fresh scope re-resolves GetFiles and the type-checked load, so the
+	// generated file joins the file set. Wrapper names use two letters so
+	// the generator needs only strings.Builder.
+	var gen strings.Builder
+	gen.WriteString("package refs\n\n")
+	for i := 0; i < 120; i++ {
+		gen.WriteString("func W")
+		gen.WriteByte(byte('a' + i/26))
+		gen.WriteByte(byte('a' + i%26))
+		gen.WriteString("() int { return UsedFunc() }\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gen.go"), []byte(gen.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+	).Call(func(resolve ResolveGoSymbols) {
+		parts, err := resolve([]string{"UsedFunc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		if !strings.Contains(got, "truncated at 100 references") {
+			t.Fatalf("expected truncated references note, got:\n%s", got)
+		}
+	})
+}
+
 func TestResolveGoSymbolsPackageNameQualifier(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOWORK", "")

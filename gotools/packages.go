@@ -58,38 +58,10 @@ func (Module) Packages(
 	var err error
 
 	init := sync.OnceFunc(func() {
-		// In workspace mode, load from the workspace root so that package
-		// resolution covers every module in the workspace. See
-		// TheoryOfWorkspace.
-		dir := string(loadDir)
-		if workspace != "" {
-			dir = string(workspace)
-			// The go command forbids -mod=mod in workspace mode ("-mod may
-			// only be set to readonly or vendor when in workspace mode").
-			// Strip it here as a safety net for envs supplied via config,
-			// which bypass the Envs provider's workspace-aware handling.
-			// See TheoryOfModModEnv and TheoryOfWorkspace.
-			envs = Envs(withoutModModEnv(envs))
-			// The go command rejects "./..." from a non-module workspace
-			// root ("directory prefix . does not contain modules listed in
-			// go.work or their selected dependencies"), so the default
-			// "./..." pattern is replaced with one pattern per workspace
-			// module. See TheoryOfWorkspace.
-			if len(loadPatterns) == 1 && loadPatterns[0] == "./..." {
-				modules := workspaceModules(string(workspace))
-				patterns := make([]string, 0, len(modules))
-				for _, moduleDir := range modules {
-					rel, err := filepath.Rel(string(workspace), moduleDir)
-					if err != nil {
-						continue
-					}
-					patterns = append(patterns, "./"+filepath.ToSlash(rel)+"/...")
-				}
-				if len(patterns) > 0 {
-					loadPatterns = LoadPatterns(patterns)
-				}
-			}
-		}
+		// resolveLoadContext applies the workspace adjustments shared with
+		// the type-checked reference loader. See TheoryOfWorkspace and
+		// TheoryOfModModEnv.
+		dir, patterns, loadEnvs := resolveLoadContext(loadDir, loadPatterns, workspace, envs)
 		// NeedDeps loads the full dependency graph in a single go list
 		// invocation. Packages beyond MaxPackageDistanceFromRoot are still
 		// filtered out in Files() via BFS distance computation, but loading
@@ -106,11 +78,11 @@ func (Module) Packages(
 				packages.NeedEmbedFiles |
 				packages.NeedEmbedPatterns,
 			Tests: !bool(noTests),
-			Env:   envs,
+			Env:   loadEnvs,
 			Dir:   dir,
 		}
 
-		rootPkgs, err = packages.Load(config, loadPatterns...)
+		rootPkgs, err = packages.Load(config, patterns...)
 		if err != nil {
 			return
 		}
@@ -165,5 +137,45 @@ func (Module) Packages(
 		return fset, err
 	}
 
+	return
+}
+
+// resolveLoadContext applies the load-directory, pattern, and environment
+// adjustments shared by the context loader and the type-checked reference
+// loader. In workspace mode it loads from the workspace root so that
+// package resolution covers every module in the workspace, strips the
+// -mod=mod flag the go command forbids in workspace mode (a safety net for
+// envs supplied via config, which bypass the Envs provider's workspace-aware
+// handling), and replaces the default "./..." pattern — rejected from a
+// non-module workspace root — with one pattern per workspace module.
+// See TheoryOfWorkspace and TheoryOfModModEnv.
+func resolveLoadContext(
+	loadDir LoadDir,
+	loadPatterns LoadPatterns,
+	workspace Workspace,
+	envs Envs,
+) (dir string, patterns []string, loadEnvs Envs) {
+	dir = string(loadDir)
+	patterns = loadPatterns
+	loadEnvs = envs
+	if workspace == "" {
+		return
+	}
+	dir = string(workspace)
+	loadEnvs = Envs(withoutModModEnv(envs))
+	if len(loadPatterns) == 1 && loadPatterns[0] == "./..." {
+		modules := workspaceModules(string(workspace))
+		wsPatterns := make([]string, 0, len(modules))
+		for _, moduleDir := range modules {
+			rel, err := filepath.Rel(string(workspace), moduleDir)
+			if err != nil {
+				continue
+			}
+			wsPatterns = append(wsPatterns, "./"+filepath.ToSlash(rel)+"/...")
+		}
+		if len(wsPatterns) > 0 {
+			patterns = wsPatterns
+		}
+	}
 	return
 }
