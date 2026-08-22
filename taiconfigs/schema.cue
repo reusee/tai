@@ -121,6 +121,12 @@ go?: {
 	// doc_patterns specifies additional Go package paths whose documentation
 	// (go doc -all -cmd) is included in the context as reference.
 	doc_patterns?: [...string]
+// hidden specifies import-path patterns of packages that are always
+	// hidden from the context: no code, no documentation, and no go-src
+	// symbol resolution. A pattern ending in "/..." hides the base
+	// package and every subpackage (e.g., "github.com/foo/bar/..."
+	// hides github.com/foo/bar and all packages under it).
+	hidden?: [...string]
 
 	// no_tests, if true, excludes test files from the context.
 	no_tests?: bool

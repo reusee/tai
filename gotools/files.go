@@ -118,6 +118,7 @@ func (Module) Files(
 	debug Debug,
 	loadDir LoadDir,
 	workspace Workspace,
+	hidden HiddenPatterns,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
 
@@ -135,6 +136,12 @@ func (Module) Files(
 		if err != nil {
 			return nil, err
 		}
+
+		// Hidden packages (go.hidden) are removed wherever package content
+		// enters the pipeline. isHidden is nil when no pattern is
+		// configured, so the default configuration skips every check.
+		// See TheoryOfHiddenPackages.
+		isHidden := newHiddenPackageMatcher(hidden)
 
 		// Collect all packages from the dependency graph by walking imports.
 		// Standard library packages (Module == nil) are skipped so their
@@ -181,6 +188,22 @@ func (Module) Files(
 		slices.SortStableFunc(allPkgs, func(a, b *packages.Package) int {
 			return cmp.Compare(a.PkgPath, b.PkgPath)
 		})
+
+		// Hidden packages are removed before file discovery: their Go,
+		// embed, and non-Go files are never read, parsed, or
+		// token-counted, and the go-src resolver — which searches the
+		// collected file set — reports their symbols as not found.
+		// See TheoryOfHiddenPackages.
+		if isHidden != nil {
+			kept := allPkgs[:0]
+			for _, pkg := range allPkgs {
+				if isHidden(pkg.PkgPath) {
+					continue
+				}
+				kept = append(kept, pkg)
+			}
+			allPkgs = kept
+		}
 
 		// rootPkgSet provides O(1) root package membership checks.
 		rootPkgSet := make(map[*packages.Package]bool, len(rootPkgs))
@@ -333,8 +356,16 @@ func (Module) Files(
 		}
 
 		// root packages directories
+		// Hidden packages do not anchor root package directories: a hidden
+		// package's directory README is documentation of a hidden package,
+		// so a hidden package must not contribute markdown files. The
+		// module-root and workspace-module anchor selections below skip
+		// hidden packages the same way. See TheoryOfHiddenPackages.
 		rootPkgDirs := make(map[string]*packages.Package)
 		for _, pkg := range rootPkgs {
+			if isHidden != nil && isHidden(pkg.PkgPath) {
+				continue
+			}
 			for _, file := range pkg.GoFiles {
 				rootPkgDirs[filepath.Dir(file)] = pkg
 				break
@@ -355,6 +386,9 @@ func (Module) Files(
 		// collection time.
 		loadDirPath := filepath.Clean(string(loadDir))
 		for _, pkg := range rootPkgs {
+			if isHidden != nil && isHidden(pkg.PkgPath) {
+				continue
+			}
 			if pkg.Module != nil && pkg.Module.Dir != "" {
 				rootDir := filepath.Clean(pkg.Module.Dir)
 				if rootDir == loadDirPath {
@@ -375,6 +409,9 @@ func (Module) Files(
 					continue
 				}
 				for _, pkg := range rootPkgs {
+					if isHidden != nil && isHidden(pkg.PkgPath) {
+						continue
+					}
 					if pkg.Module != nil && filepath.Clean(pkg.Module.Dir) == moduleDir {
 						rootPkgDirs[moduleDir] = pkg
 						break
@@ -399,8 +436,8 @@ func (Module) Files(
 			}
 			// Sort entries by name for deterministic ordering.
 			// Without sorting, the filesystem order could change when files are added/removed,
-			// shifting the position of existing markdown files in the prompt and breaking
-			// the LLM prefix cache.
+			// shifting the position of existing markdown files in the prompt and breaking the
+			// LLM prefix cache.
 			slices.SortStableFunc(entries, func(a, b os.DirEntry) int {
 				return strings.Compare(a.Name(), b.Name())
 			})

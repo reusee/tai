@@ -69,6 +69,7 @@ func (Module) SimplifyFiles(
 	loadDir LoadDir,
 	envs Envs,
 	workspace Workspace,
+	hidden HiddenPatterns,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		rootPkgs, err := getRootPackages()
@@ -87,6 +88,24 @@ func (Module) SimplifyFiles(
 
 		// 1. Build logical packages from files
 		logicalPkgs := buildLogicalPackages(files, rootPkgs, contextPkgs)
+
+		// 1.5. Drop hidden logical packages before categorization.
+		// GetFiles already excluded hidden packages' files, but -pkg and
+		// -ctx load patterns create file-less logical packages for them:
+		// a hidden focus package would otherwise still run its go doc
+		// subprocess and inflate the context budget derived from focus
+		// documentation, and a hidden context package would keep its
+		// visibility guarantee. See TheoryOfHiddenPackages.
+		if isHidden := newHiddenPackageMatcher(hidden); isHidden != nil {
+			kept := logicalPkgs[:0]
+			for _, lp := range logicalPkgs {
+				if isHidden(lp.PkgPath) {
+					continue
+				}
+				kept = append(kept, lp)
+			}
+			logicalPkgs = kept
+		}
 
 		// 2. Categorize each logical package
 		categorizePackages(logicalPkgs, rootPkgs, contextPkgs)
