@@ -14,7 +14,7 @@ import (
 
 const TheoryOfGoSrcResolution = `
 ResolveGoSymbols turns the symbol names collected from go-src blocks into
-declaration source parts (see blocks.TheoryOfGoSrcBlocks). The resolver
+declaration source parts (see TheoryOfGoSrcBlocks). The resolver
 searches the Go files collected by GetFiles — the same file set the context
 pipeline loaded, with raw content and parsed ASTs already cached — so
 resolution spawns no Go toolchain subprocesses. The symbol forms follow

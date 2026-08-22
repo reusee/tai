@@ -927,12 +927,12 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 	// literal placeholder produces blocks with a non-unique delimiter.
 	// Kind prompts must instead show complete examples with concrete
 	// delimiters, so the model has a correct header/footer imitation
-	// target. See TheoryOfBlockFormatGeneral.
+	// target. The Go-specific kind prompts (go-test, go-src) are covered
+	// by the equivalent guard in the gotools package. See
+	// TheoryOfBlockFormatGeneral.
 	prompts := map[string]string{
 		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
 		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
-		"GoTestBlockSystemPrompt":     GoTestBlockSystemPrompt,
-		"GoTestBlockRestatePrompt":    GoTestBlockRestatePrompt,
 		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
 		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
 		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,
@@ -951,7 +951,9 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 	// The delimiter policy mandates an uncommon Chinese two-character word
 	// per block. Only the unified block format prompts state the policy;
 	// kind prompts reference the general format and must not restate it.
-	// See TheoryOfBlockFormatGeneral.
+	// The Go-specific kind prompts (go-test, go-src) live in the gotools
+	// package and are covered by its equivalent guard. See
+	// TheoryOfBlockFormatGeneral.
 	policyPrompts := map[string]string{
 		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
 		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
@@ -964,10 +966,6 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 	kindPrompts := map[string]string{
 		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
 		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
-		"GoTestBlockSystemPrompt":     GoTestBlockSystemPrompt,
-		"GoTestBlockRestatePrompt":    GoTestBlockRestatePrompt,
-		"GoSrcBlockSystemPrompt":      GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt":     GoSrcBlockRestatePrompt,
 		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
 		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
 		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,

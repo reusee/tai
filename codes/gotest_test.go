@@ -30,7 +30,7 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		// The go-test prompt must instruct the model to emit a summary block
 		// even when emitting a go-test block. Without this, the model may omit
 		// the summary, causing unnecessary retries (see TheoryOfSummaryCompletionRetry
-		// in codes/generate.go and TheoryOfGoTestBlocks in blocks/gotest.go).
+		// in codes/generate.go and TheoryOfGoTestBlocks in gotools/gotest.go).
 		if !strings.Contains(string(prompt), "go-test block is NOT a completion signal") {
 			t.Fatal("system prompt must state that go-test block is not a completion signal and summary is still required")
 		}
@@ -43,7 +43,7 @@ func TestGoTestComponentPassTriggersRoundWithOutput(t *testing.T) {
 	// results to decide whether to continue, and withholding output on
 	// pass causes the system to exit prematurely when the model intended
 	// to proceed. See TheoryOfCodesComponents and
-	// blocks.TheoryOfGoTestBlocks.
+	// gotools.TheoryOfGoTestBlocks.
 	goTestBlocks := []blocks.Block{
 		{Kind: "go-test", Body: "-run\n___nonexistent___"},
 	}

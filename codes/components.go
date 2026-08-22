@@ -154,14 +154,14 @@ func (Module) CodesComponents(
 	// to proceed. MaxRounds bounds the test-fix loop. Placed after change
 	// so tests run against updated source, and before summary so test
 	// output is available for the next round.
-	// See TheoryOfCodesComponents and blocks.TheoryOfGoTestBlocks.
+	// See TheoryOfCodesComponents and gotools.TheoryOfGoTestBlocks.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
-		PromptSection: blocks.GoTestBlockSystemPrompt,
-		RestatePrompt: blocks.GoTestBlockRestatePrompt,
+		PromptSection: gotools.GoTestBlockSystemPrompt,
+		RestatePrompt: gotools.GoTestBlockRestatePrompt,
 		MaxRounds:     maxGoTestRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			parts, err := blocks.ProcessGoTestBlocks(pctx.Blocks, ctx)
+			parts, err := gotools.ProcessGoTestBlocks(pctx.Blocks, ctx)
 			return components.ProcessResult{
 				Parts: parts,
 				Err:   err,
@@ -174,15 +174,15 @@ func (Module) CodesComponents(
 	// packages the loader already fetched, so it is always available in
 	// the codes pipeline. Placed with request-context before shell and
 	// continue so fetched context is available for the next generation
-	// round. See blocks.TheoryOfGoSrcBlocks and
+	// round. See gotools.TheoryOfGoSrcBlocks and
 	// gotools.TheoryOfGoSrcResolution.
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
-		PromptSection: blocks.GoSrcBlockSystemPrompt,
-		RestatePrompt: blocks.GoSrcBlockRestatePrompt,
+		PromptSection: gotools.GoSrcBlockSystemPrompt,
+		RestatePrompt: gotools.GoSrcBlockRestatePrompt,
 		MaxRounds:     maxGoSrcRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			symbols := blocks.ParseGoSrcSymbols(pctx.Blocks)
+			symbols := gotools.ParseGoSrcSymbols(pctx.Blocks)
 			if len(symbols) == 0 {
 				// An empty go-src block is a format error the model can
 				// correct: feed back a usage hint instead of a silent

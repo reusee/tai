@@ -1,18 +1,20 @@
-package blocks
+package gotools
 
 import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/reusee/tai/blocks"
 )
 
 func TestParseGoSrcSymbols(t *testing.T) {
-	blocks := []Block{
+	bs := []blocks.Block{
 		{Kind: "summary", Body: "- done"},
 		{Kind: "go-src", Body: "Foo\n\n  Bar.Read  \n*Baz.Write"},
 		{Kind: "go-src", Body: "   "},
 	}
-	got := ParseGoSrcSymbols(blocks)
+	got := ParseGoSrcSymbols(bs)
 	want := []string{"Foo", "Bar.Read", "*Baz.Write"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseGoSrcSymbols = %v, want %v", got, want)
@@ -20,7 +22,7 @@ func TestParseGoSrcSymbols(t *testing.T) {
 	if got := ParseGoSrcSymbols(nil); got != nil {
 		t.Fatalf("expected nil for no blocks, got %v", got)
 	}
-	if got := ParseGoSrcSymbols([]Block{{Kind: "shell", Body: "ls"}}); got != nil {
+	if got := ParseGoSrcSymbols([]blocks.Block{{Kind: "shell", Body: "ls"}}); got != nil {
 		t.Fatalf("expected nil for non-go-src blocks, got %v", got)
 	}
 }
@@ -67,8 +69,8 @@ func TestGoSrcPromptsEndWithSummary(t *testing.T) {
 	// The go-src stop rule must be phrased like the shell prompt's: stop
 	// generating, end the response with a summary block, and wait. A bare
 	// "stop generating and wait" licenses omitting the summary block and
-	// contradicts SummaryBlockSystemPrompt's every-response requirement.
-	// See TheoryOfGoSrcBlocks and TheoryOfSummaryBlocks.
+	// contradicts the every-response requirement of
+	// blocks.SummaryBlockSystemPrompt. See TheoryOfGoSrcBlocks.
 	if !strings.Contains(GoSrcBlockSystemPrompt, "end the response with a summary block") {
 		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
 	}

@@ -1,4 +1,4 @@
-package blocks
+package gotools
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 )
 
@@ -24,7 +25,8 @@ reads failures, and iterates until all tests pass.
 The go-test block is Go-specific: it only makes sense in Go projects with a go.mod
 file. The system prompt instructs the model to use go-test blocks only when working
 with Go code. In non-Go projects, the model should rely on shell blocks for command
-execution instead.
+execution instead. Because the kind is Go-specific, its prompts and processing
+live in the gotools package, not in the language-neutral blocks package.
 
 The block body contains optional arguments passed to go test, one argument per
 line. If the body is empty, all tests in the current directory tree (./...) are
@@ -164,12 +166,12 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 // continue. Withholding output on pass causes some models to exit
 // prematurely when they intended to proceed after seeing the test results.
 // See TheoryOfGoTestBlocks.
-func ProcessGoTestBlocks(blocks []Block, ctx context.Context) ([]generators.Part, error) {
-	if len(blocks) == 0 {
+func ProcessGoTestBlocks(bs []blocks.Block, ctx context.Context) ([]generators.Part, error) {
+	if len(bs) == 0 {
 		return nil, nil
 	}
 	var parts []generators.Part
-	for _, block := range blocks {
+	for _, block := range bs {
 		if block.Kind != "go-test" {
 			continue
 		}

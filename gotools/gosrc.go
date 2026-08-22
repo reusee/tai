@@ -1,6 +1,10 @@
-package blocks
+package gotools
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/reusee/tai/blocks"
+)
 
 const TheoryOfGoSrcBlocks = `
 The go-src block is the symbol-level context-fetching kind: the model lists
@@ -12,7 +16,7 @@ Go pipeline already loaded. Its purpose is precision under the visibility
 system: a package shown at documentation visibility carries only go doc
 output, so the model knows declaration signatures but not implementations;
 go-src lets the model pull exactly the implementations it needs instead of
-re-fetching whole files (see gotools.TheoryOfVisibilityAllocation). Focus
+re-fetching whole files (see TheoryOfVisibilityAllocation). Focus
 packages are pinned at documentation level, which makes go-src the primary
 path from the declaration surface to the implementation: the initial
 context carries only declarations and test-function names, and the model
@@ -52,9 +56,10 @@ pre-modification content on a repeated fetch; verification of applied
 changes belongs to go-test blocks and disk reads, not to re-fetching
 symbols.
 
-The resolution lives with the Go package loader (gotools.ResolveGoSymbols)
-because it needs the parsed ASTs; the blocks package defines only the
-block format and the symbol parse. Like request-context, go-src is
+The go-test and go-src mechanisms are Go-specific, so they live in this
+package together with the resolver (ResolveGoSymbols, which needs the
+parsed ASTs); the blocks package defines only the generic block format
+and the language-neutral kinds. Like request-context, go-src is
 strictly read-only and is not a completion signal: a round carrying a
 go-src block still needs a summary block, and because the kind is
 processable it participates in the triggering-block check, so such a
@@ -96,12 +101,12 @@ const GoSrcBlockRestatePrompt = `- When you need the implementation of a Go symb
 // ParseGoSrcSymbols extracts the symbol names from go-src blocks: each
 // non-empty, trimmed body line is one symbol. Blocks of other kinds are
 // skipped. See TheoryOfGoSrcBlocks.
-func ParseGoSrcSymbols(blocks []Block) []string {
-	if len(blocks) == 0 {
+func ParseGoSrcSymbols(bs []blocks.Block) []string {
+	if len(bs) == 0 {
 		return nil
 	}
 	var symbols []string
-	for _, block := range blocks {
+	for _, block := range bs {
 		if block.Kind != "go-src" {
 			continue
 		}
