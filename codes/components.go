@@ -27,6 +27,14 @@ as the first prompt-only component: every block-using component set must carry
 it, and the kind prompts describe only their kind-specific semantics without
 restating the heredoc format. See blocks.TheoryOfBlockFormatGeneral.
 
+When the shell flag is off, the set carries the disabled-blocks notice for
+shell (components.DisabledBlocksComponent), so the model is explicitly told
+that shell blocks are unavailable instead of finding the shell slot silent.
+Under -no-apply the change prompt is still included and change is
+deliberately not listed as disabled: the blocks are the deliverable of a dry
+run, reviewed by the user, so the model must keep emitting them. See
+components.TheoryOfDisabledBlocks.
+
 The go-test component runs Go tests after change blocks are applied. Test
 output (stdout and stderr) is always fed back to the model as Parts,
 triggering a new round regardless of whether tests pass or fail: the model
@@ -137,8 +145,8 @@ func (Module) CodesComponents(
 	// Test output is always fed back to the model as Parts, triggering a
 	// new round regardless of whether tests pass or fail: the model needs
 	// the results to decide whether to continue, and withholding output on
-	// pass causes the system to exit prematurely when the model intended to
-	// proceed. MaxRounds bounds the test-fix loop. Placed after change
+	// pass causes the system to exit prematurely when the model intended
+	// to proceed. MaxRounds bounds the test-fix loop. Placed after change
 	// so tests run against updated source, and before summary so test
 	// output is available for the next round.
 	// See TheoryOfCodesComponents and blocks.TheoryOfGoTestBlocks.
@@ -226,6 +234,17 @@ func (Module) CodesComponents(
 	// configuration is shared across all generation commands.
 	// See TheoryOfCommonComponents in components/common_components.go.
 	comps = append(comps, components.CommonComponents(bool(flagShell))...)
+
+	// Disabled-blocks notice: when the shell flag is off, state it
+	// explicitly instead of leaving the shell slot silent. A model that
+	// emits shell blocks from habit would have them silently ignored
+	// while implying commands had run. Under -no-apply the change prompt
+	// above is still included and change is deliberately not listed as
+	// disabled: the blocks are the deliverable of a dry run. See
+	// components.TheoryOfDisabledBlocks and TheoryOfCodesComponents.
+	if !bool(flagShell) {
+		comps = append(comps, components.DisabledBlocksComponent("shell"))
+	}
 
 	// Summary component: processed in runPhaseWithRetry for completion detection
 	// and round statistics, not in the main component loop.

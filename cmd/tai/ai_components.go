@@ -25,6 +25,17 @@ prompt-only Components, unifying all system prompt contributions under the
 Component framework. AISystemPrompt assembles only the dynamic current time,
 which must be computed at call time.
 
+Disabled blocks are announced explicitly: the set carries
+components.DisabledBlocksComponent listing every kind this session cannot
+process — the codes-pipeline kinds (change, go-test, go-src,
+request-context), the deliberately excluded continue (OnIdle is the sole
+input gateway), and conditionally shell (-shell off) and memory
+(-no-memory). Without the notice the model may emit these kinds from habit;
+the blocks would be silently ignored while implying actions that never
+happened. The notice is static per configuration and placed before the
+config-derived extras and the dynamic memory section, keeping the cacheable
+prefix stable. See components.TheoryOfDisabledBlocks.
+
 The memory component is appended last, after the static shell and
 extra prompt components, so that the dynamic user profile text — which
 changes across sessions as the profile accumulates — never shifts the
@@ -113,6 +124,28 @@ func (Module) AIComponents(
 		}
 		comps = append(comps, comp)
 	}
+
+	// Disabled-blocks notice: list the block kinds this session cannot
+	// process so the model does not emit them from habit — an unprocessed
+	// block is silently ignored while implying an action that never
+	// happened. The ai command processes only shell and memory blocks: the
+	// codes-pipeline kinds (change, go-test, go-src, request-context) have
+	// no processor here, and continue is deliberately excluded because
+	// OnIdle is the sole input gateway. Shell is listed when the flag is
+	// off, memory when -no-memory is set. The notice is static per
+	// configuration and placed before the config-derived extras and the
+	// dynamic memory section, keeping the cacheable prefix stable. See
+	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
+	disabledKinds := []string{
+		"change", "continue", "go-test", "go-src", "request-context",
+	}
+	if !bool(flagShell) {
+		disabledKinds = append(disabledKinds, "shell")
+	}
+	if noMemory {
+		disabledKinds = append(disabledKinds, "memory")
+	}
+	comps = append(comps, components.DisabledBlocksComponent(disabledKinds...))
 
 	// Extra system prompt from configuration: prompt-only Component.
 	// Each entry is added as a separate prompt-only Component so that

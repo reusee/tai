@@ -19,6 +19,12 @@ reused by both the ai command (via AIComponents) and the codes module (via
 CodesComponents), ensuring that shell and continue components are consistently
 configured across all generation pipelines.
 
+The common set itself carries no disabled-blocks notices: a caller that
+disables a common kind (shell without the flag) or excludes one (the ai
+command excludes continue) announces it through its own
+DisabledBlocksComponent, so each prompt carries one complete notice. See
+TheoryOfDisabledBlocks.
+
 Shell and continue components include RestatePrompt fields that provide short
 critical reminders reinforcing the block format rules at the end of the system
 prompt, improving the model's adherence to the boundary-delimited block format

@@ -9,6 +9,7 @@ import (
 
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -29,6 +30,16 @@ continue blocks, "next" performs a single generation round: it builds the
 system prompt and user prompt from file context, runs one generate-chat phase
 chain, and writes the result to stdout. This makes it the simplest entry point
 for autonomous, single-shot task execution.
+
+The system prompt carries a disabled-blocks notice
+(components.DisabledBlocksNotice) listing shell, continue, go-test, go-src,
+and request-context: the single-shot loop runs with no components, so these
+kinds are never processed here, and without the notice the model could emit
+them from habit and have them silently ignored while implying actions that
+never happened. Change is not listed: it is handled by the BlockHandler (or
+dry-run under -no-apply) whenever hasFiles included the change prompt. The
+notice is static for this command, so it sits directly after the base prompt
+inside the stable prefix region. See components.TheoryOfDisabledBlocks.
 
 Change blocks emitted by the model are applied to the working tree via a
 ParserState block handler that writes to an in-memory MemoryStore during
@@ -64,6 +75,21 @@ func (Module) SystemPrompt(
 ) (ret SystemPrompt) {
 
 	ret += SystemPrompt(prompts.NextStep)
+
+	// Disabled-blocks notice: the next command runs a single-shot loop
+	// with no components, so the component-driven kinds are never
+	// processed here — shell commands are not run, no next round is
+	// triggered by a continue block, and no context, symbol sources, or
+	// test results are fetched. Listing them explicitly prevents blocks
+	// that would be silently ignored while implying actions that never
+	// happened. Change is not listed: it is handled by the BlockHandler
+	// (or dry-run under -no-apply) whenever hasFiles included the change
+	// prompt. The notice is static for this command, so it sits directly
+	// after the base prompt inside the stable prefix region. See
+	// components.TheoryOfDisabledBlocks and TheoryOfNextCommand.
+	ret += "\n\n" + SystemPrompt(components.DisabledBlocksNotice(
+		"shell", "continue", "go-test", "go-src", "request-context",
+	))
 
 	if hasFiles {
 		logger.Info("has focus file")

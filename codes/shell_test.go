@@ -23,6 +23,9 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 			if strings.Contains(string(prompt), "Shell Block Kind") {
 				t.Fatal("system prompt must not include shell section when shell is disabled")
 			}
+			if !strings.Contains(string(prompt), "shell execution is disabled") {
+				t.Fatal("system prompt should announce that shell blocks are disabled")
+			}
 		})
 	})
 
@@ -39,6 +42,9 @@ func TestShellBlockSystemPrompt(t *testing.T) {
 		) {
 			if !strings.Contains(string(prompt), "Shell Block Kind") {
 				t.Fatal("system prompt must include shell section when shell is enabled")
+			}
+			if strings.Contains(string(prompt), "shell execution is disabled") {
+				t.Fatal("system prompt must not carry the disabled-shell notice when shell is enabled")
 			}
 		})
 	})

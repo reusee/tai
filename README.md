@@ -176,6 +176,7 @@ Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `req
 ### Generation Loop
 
 Each round wraps the state with a `ParserState` that collects blocks during streaming. After the round, components process collected blocks. If a component produces parts or modifies state, a new round starts. When no component triggers, the loop ends (or prompts for input in interactive mode).
+Block kinds that are not available in a session are announced as disabled in the system prompt (for example shell blocks without `-shell`, or the codes-pipeline kinds in `tai ai`), so the model does not emit blocks that would be silently ignored.
 
 ### State Immutability
 

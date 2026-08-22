@@ -207,6 +207,68 @@ func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 				t.Fatal("ai command must not include a processable continue component")
 			}
 		}
+
+		// Disabled kinds are announced explicitly so the model does not
+		// emit them from habit; unprocessed blocks would be silently
+		// ignored while implying actions that never happened. See
+		// components.TheoryOfDisabledBlocks.
+		prompt := comps.PromptSections()
+		if !strings.Contains(prompt, "Disabled Block Kinds") {
+			t.Fatal("ai command should carry the disabled-blocks notice")
+		}
+		if !strings.Contains(prompt, "continue blocks are not accepted") {
+			t.Fatal("disabled-blocks notice should list continue")
+		}
+		if !strings.Contains(prompt, "change blocks are not processed") {
+			t.Fatal("disabled-blocks notice should list change")
+		}
+		if !strings.Contains(prompt, "shell execution is disabled") {
+			t.Fatal("disabled-blocks notice should list shell when the flag is off")
+		}
+		if strings.Contains(prompt, "the user profile is not updated") {
+			t.Fatal("disabled-blocks notice must not list memory when memory is enabled")
+		}
+		for _, comp := range comps.Processable() {
+			if comp.PromptSection != "" && strings.Contains(comp.PromptSection, "Disabled Block Kinds") {
+				t.Fatal("the notice component must be prompt-only, never processable")
+			}
+		}
+	})
+}
+
+func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
+	).Call(func(
+		systemPrompt SystemPrompt,
+	) {
+		// The next command runs a single-shot loop with no components, so
+		// the component-driven kinds are never processed here. The notice
+		// states that explicitly. See components.TheoryOfDisabledBlocks
+		// and TheoryOfNextCommand.
+		prompt := string(systemPrompt)
+		if !strings.Contains(prompt, "Disabled Block Kinds") {
+			t.Fatal("next system prompt should carry the disabled-blocks notice")
+		}
+		if !strings.Contains(prompt, "shell execution is disabled") {
+			t.Fatal("next disabled-blocks notice should list shell")
+		}
+		if !strings.Contains(prompt, "continue blocks are not accepted") {
+			t.Fatal("next disabled-blocks notice should list continue")
+		}
+		if !strings.Contains(prompt, "request-context") {
+			t.Fatal("next disabled-blocks notice should list request-context")
+		}
+		if strings.Contains(prompt, "change blocks are not processed") {
+			t.Fatal("next disabled-blocks notice must not list change; change blocks are applied by the BlockHandler")
+		}
 	})
 }
 
