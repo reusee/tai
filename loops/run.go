@@ -50,8 +50,11 @@ Architectural constraints:
   to the user's screen for readability; it never feeds back as compressed
   context.
 
-- No iterative discovery. The CodeProvider pipeline delivers all file and
-  code context upfront. Request-context blocks serve external resources
+- No blind exploration. The upfront context always carries the complete
+  declaration surface, so the model never starts from nothing (see
+  gocodes.TheoryOfContextStrategy). Implementation source is fetched on
+  demand with go-src blocks — a targeted pull from the known surface, not
+  semantic-search probing. Request-context blocks serve external resources
   unavailable at construction time (network fetches, glob expansion), not
   as a substitute for upfront context.
 

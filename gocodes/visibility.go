@@ -70,6 +70,30 @@ its block is still emitted with a failure note and the test-function
 names, keeping the package discoverable for go-src fetches.
 `
 
+const TheoryOfContextStrategy = `
+Code context construction sits between two poles. Full-source context
+delivers every file upfront: no detail is missed, but tokens are
+consumed at scale and the model's attention is diluted across code the
+task never touches. Agentic exploration delivers no code upfront and
+lets the model find it via semantic search: cheap in tokens, but prone
+to missing details and to never grasping the architecture as a whole —
+what the model does not search for never surfaces.
+
+The project evolved from full source to a middle path that keeps the
+strengths of both poles. The initial context is documentation: focus
+packages enter as go doc output carrying the complete declaration
+surface — every symbol, every test function name — at a fraction of
+the full-source token cost, and the supporting package graph fills a
+deterministic budget (TheoryOfVisibilityAllocation). Implementation
+source is fetched on demand with go-src blocks, resolved against the
+declaration surface the model already sees, so a fetch is a targeted
+pull from a known index rather than a search in the dark. No detail is
+unreachable, because the full surface precedes every fetch; no token is
+spent on bodies the task never reads. Start from the whole picture, and
+descend into detail on demand. TheoryOfGoSrcResolution describes the
+fetch mechanism.
+`
+
 const TheoryOfVisibilityAllocation = `
 The context token budget for non-focus packages is dynamic: it is derived
 from the total token count of the focus packages' documentation so that
