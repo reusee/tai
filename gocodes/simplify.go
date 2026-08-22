@@ -11,26 +11,29 @@ import (
 )
 
 const TheoryOfSimplification = `
-Simplification uses package-level visibility levels (0-3) instead of
+Simplification uses package-level visibility levels instead of
 file-level transforms. Each package is assigned a visibility level based
 on its priority (category, distance, path) and the dynamic context budget
 (see TheoryOfVisibilityAllocation in visibility.go).
-Level 0: invisible (deleted). Level 1: package documentation via
-go doc -all -cmd (per-package output, not per-file; the -u flag is
+Level VisibilityInvisible: invisible (deleted). Level VisibilityShortDoc:
+a short package overview via go doc without -all (per-package; the
+package comment and the top-level symbol index, a fraction of the full
+documentation's size). Level VisibilityDoc: full package documentation
+via go doc -all -cmd (per-package output, not per-file; the -u flag is
 deliberately omitted for context packages so the reference stays focused
 on exported symbols, and added for focus packages so the model sees the
 complete surface of the packages it edits, alongside the package's test
-function names). Level 2: full Go code without test files (raw file
-content). Level 3: all files including tests, non-Go files, and embed
-files (raw file content).
+function names). Level VisibilityCode: full Go code without test files
+(raw file content). Level VisibilityAll: all files including tests,
+non-Go files, and embed files (raw file content).
 
 The water-filling algorithm upgrades packages from their minimum visibility
 to higher levels as the budget allows, processing packages in priority order.
 See TheoryOfVisibilityAllocation in visibility.go.
 
-Focus packages are pinned at level 1 (documentation plus test-function
-names) and do not count against the budget; the model fetches focus
-implementation source on demand with go-src blocks. Focus files
+Focus packages are pinned at full documentation (documentation plus
+test-function names) and do not count against the budget; the model fetches
+focus implementation source on demand with go-src blocks. Focus files
 explicitly requested via -file and non-Go focus files (which go doc
 cannot summarize) are still emitted at full content. File ordering (see
 TheoryOfFileOrdering in files.go) places stable context files first and
@@ -41,19 +44,18 @@ consecutive requests for LLM prefix caching.
 const TheoryOfTokenComposition = `
 Token composition logging makes the context token budget observable. The
 SimplifyFiles step logs the allocation view: focus package documentation
-tokens (the pinned level-1 blocks from which the budget derives), the
+tokens (the pinned full-doc blocks from which the budget derives), the
 dynamic context budget derived from them, and how the context packages
-consume that budget by visibility level (doc-only packages at level 1,
-code-only packages at level 2, full packages at level 3). The
-CodeProvider.Parts step logs the assembly view: how the final prompt
-token total is composed of focus project files, context project files
-(focus-package documentation blocks carry the context-file marker and are
-counted with context tokens there), extra files from -file patterns, and
-package documentation from -doc patterns. Together these logs let the
-user see at a glance whether the token budget is dominated by focus
-files, context files, or user-requested additions, and whether the
-dynamic context budget is under- or over-allocated. See
-TheoryOfVisibilityAllocation.
+consume that budget by visibility level (short-doc packages, doc-only
+packages, code-only packages, full packages). The CodeProvider.Parts step
+logs the assembly view: how the final prompt token total is composed of
+focus project files, context project files (focus-package documentation
+blocks carry the context-file marker and are counted with context tokens
+there), extra files from -file patterns, and package documentation from
+-doc patterns. Together these logs let the user see at a glance whether
+the token budget is dominated by focus files, context files, or
+user-requested additions, and whether the dynamic context budget is
+under- or over-allocated. See TheoryOfVisibilityAllocation.
 `
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
@@ -122,47 +124,53 @@ func (Module) SimplifyFiles(
 		// 4. Sort by priority (category, distance, path)
 		sortPackagesByPriority(logicalPkgs)
 
-		// 5. Pre-compute per-file token counts at visibility levels 2 and 3
-		// for the packages whose costs the allocation requires up front,
-		// concurrently: context packages and any package containing files
-		// always emitted at full content (DoNotSimplify files and the
-		// non-Go files of focus packages). Focus packages pinned at
-		// documentation level need no file costs. All other packages have
-		// their costs computed lazily only when the allocation probes
-		// them; packages that receive no visibility never run the
-		// tokenizer. See TheoryOfLazyVisibilityCosts in visibility.go.
+		// 5. Pre-compute per-file token counts at the code and full
+		// visibility levels for the packages whose costs the allocation
+		// requires up front, concurrently: context packages and any
+		// package containing files always emitted at full content
+		// (DoNotSimplify files and the non-Go files of focus packages).
+		// Focus packages pinned at full documentation need no file costs.
+		// All other packages have their costs computed lazily only when
+		// the allocation probes them; packages that receive no visibility
+		// never run the tokenizer. See TheoryOfLazyVisibilityCosts in
+		// visibility.go.
 		if err := precomputeTokenCounts(logicalPkgs, countTokens); err != nil {
 			return nil, err
 		}
 
 		// 6. Water-fill: allocate visibility levels within budget. The
-		// computeDoc hook delegates to computePackageDoc, which runs go
-		// doc for a package exactly when the allocation considers placing
-		// it at level 1, caching the result so packages that never reach
-		// level 1 skip the expensive subprocess entirely. The
-		// minimum-visibility allocation probes every package whose
-		// minimum visibility includes documentation, so those probes are
-		// launched concurrently by prefetchPackageDocs first, hiding the
-		// subprocess latency; the hook's calls then short-circuit via the
-		// docComputed guard. go doc runs from the load directory (or
-		// workspace root in workspace mode) so it can resolve package
-		// import paths. The computeCosts hook delegates to
-		// computePackageCosts, which renders and token-counts a package's
-		// files only when the allocation probes it. See
-		// TheoryOfLazyPackageDoc and TheoryOfLazyVisibilityCosts in
-		// visibility.go.
+		// computeShortDoc and computeDoc hooks delegate to
+		// computePackageShortDoc and computePackageDoc, which run go doc
+		// for a package exactly when the allocation considers placing it
+		// at that documentation level, caching the result so packages that
+		// never reach a documentation level skip the expensive subprocess
+		// entirely. The minimum-visibility allocation probes every package
+		// whose minimum visibility includes full documentation, so those
+		// probes are launched concurrently by prefetchPackageDocs first,
+		// hiding the subprocess latency; the hooks' calls then
+		// short-circuit via the docComputed guard. Short doc is computed
+		// only by the water-fill, because no category has it as a minimum
+		// visibility. go doc runs from the load directory (or workspace
+		// root in workspace mode) so it can resolve package import paths.
+		// The computeCosts hook delegates to computePackageCosts, which
+		// renders and token-counts a package's files only when the
+		// allocation probes it. See TheoryOfLazyPackageDoc and
+		// TheoryOfLazyVisibilityCosts in visibility.go.
 		dir := string(loadDir)
 		if workspace != "" {
 			dir = string(workspace)
 		}
 		prefetchPackageDocs(logicalPkgs, dir, envs, countTokens)
+		computeShortDoc := func(lp *LogicalPackage) {
+			computePackageShortDoc(lp, dir, envs, countTokens)
+		}
 		computeDoc := func(lp *LogicalPackage) {
 			computePackageDoc(lp, dir, envs, countTokens)
 		}
 		computeCosts := func(lp *LogicalPackage) error {
 			return computePackageCosts(lp, countTokens)
 		}
-		if err := allocateVisibility(logicalPkgs, logger, debug, computeDoc, computeCosts); err != nil {
+		if err := allocateVisibility(logicalPkgs, logger, debug, computeShortDoc, computeDoc, computeCosts); err != nil {
 			return nil, err
 		}
 
@@ -194,7 +202,7 @@ func (Module) SimplifyFiles(
 				}
 				what := "full content (non-Go focus file)"
 				if f.DoNotSimplify {
-					what = "visibility level 3 (do not simplify)"
+					what = fmt.Sprintf("visibility level %d (do not simplify)", VisibilityAll)
 				}
 				f.LogicalPkgPath = lp.PkgPath
 				f.PackageDistanceFromRoot = lp.Distance
@@ -210,53 +218,32 @@ func (Module) SimplifyFiles(
 				continue
 			}
 
-			// Level 1: emit a single synthetic entry with go doc output.
-			// The synthetic file uses the package path as its Path so
-			// compareFilesForOutput can sort it correctly.
-			if lp.Visibility == VisibilityDoc && lp.DocContent != "" {
-				if len(lp.Files) == 0 {
-					continue
+			// The documentation levels emit a single synthetic entry with
+			// the package's go doc output: short doc (go doc without -all)
+			// or full doc (go doc -all -cmd). The synthetic file uses the
+			// package path as its Path so compareFilesForOutput can sort
+			// it correctly.
+			if lp.Visibility == VisibilityShortDoc && lp.ShortDocContent != "" {
+				what := fmt.Sprintf("visibility level %d (go doc short)", VisibilityShortDoc)
+				if docFile := packageDocFile(lp, lp.ShortDocContent, lp.ShortDocTokens, what); docFile != nil {
+					result = append(result, docFile)
 				}
-				moduleIsRoot := false
-				moduleIsNil := true
-				for _, f := range lp.Files {
-					moduleIsRoot = f.ModuleIsRoot
-					moduleIsNil = f.ModuleIsNil
-					break
-				}
-				mainPkg := lp.MainPackage
-				if mainPkg == nil && len(lp.Packages) > 0 {
-					mainPkg = lp.Packages[0]
-				}
-				pkgPathDepth := len(strings.Split(lp.PkgPath, "/"))
-				docWhat := "visibility level 1 (go doc)"
-				if lp.Category == CategoryFocus {
-					docWhat = "visibility level 1 (focus go doc -u)"
-				}
-				docFile := &File{
-					Path:                    lp.PkgPath,
-					IsGoFile:                true,
-					Content:                 []byte(lp.DocContent),
-					Package:                 mainPkg,
-					PackageIsRoot:           false,
-					PackageDistanceFromRoot: lp.Distance,
-					PackagePathDepth:        pkgPathDepth,
-					Module:                  lp.Module,
-					ModuleIsRoot:            moduleIsRoot,
-					ModuleIsNil:             moduleIsNil,
-					LogicalPkgPath:          lp.PkgPath,
-					ChangeCount:             lp.ChangeCount,
-					Confirmed: &Transformed{
-						What:      docWhat,
-						Content:   []byte(lp.DocContent),
-						NumTokens: lp.DocTokens,
-					},
-				}
-				result = append(result, docFile)
 				continue
 			}
 
-			// Levels 2 and 3: per-file rendering with raw disk content.
+			if lp.Visibility == VisibilityDoc && lp.DocContent != "" {
+				docWhat := fmt.Sprintf("visibility level %d (go doc)", VisibilityDoc)
+				if lp.Category == CategoryFocus {
+					docWhat = fmt.Sprintf("visibility level %d (focus go doc -u)", VisibilityDoc)
+				}
+				if docFile := packageDocFile(lp, lp.DocContent, lp.DocTokens, docWhat); docFile != nil {
+					result = append(result, docFile)
+				}
+				continue
+			}
+
+			// The code and full levels: per-file rendering with raw disk
+			// content.
 			renderedAtVisibility := make(map[*File]renderedFile)
 			for _, rf := range lp.RenderedFiles[lp.Visibility] {
 				renderedAtVisibility[rf.file] = rf
@@ -284,6 +271,49 @@ func (Module) SimplifyFiles(
 		slices.SortStableFunc(result, compareFilesForOutput)
 
 		return result, nil
+	}
+}
+
+// packageDocFile builds the synthetic output entry for a package
+// documentation level (short doc or full doc): a single File whose
+// content is the package's go doc output. The synthetic file uses the
+// package path as its Path so compareFilesForOutput can sort it
+// correctly. It returns nil when the package has no files, in which case
+// the caller emits nothing.
+func packageDocFile(lp *LogicalPackage, content string, tokens int, what string) *File {
+	if len(lp.Files) == 0 {
+		return nil
+	}
+	moduleIsRoot := false
+	moduleIsNil := true
+	for _, f := range lp.Files {
+		moduleIsRoot = f.ModuleIsRoot
+		moduleIsNil = f.ModuleIsNil
+		break
+	}
+	mainPkg := lp.MainPackage
+	if mainPkg == nil && len(lp.Packages) > 0 {
+		mainPkg = lp.Packages[0]
+	}
+	pkgPathDepth := len(strings.Split(lp.PkgPath, "/"))
+	return &File{
+		Path:                    lp.PkgPath,
+		IsGoFile:                true,
+		Content:                 []byte(content),
+		Package:                 mainPkg,
+		PackageIsRoot:           false,
+		PackageDistanceFromRoot: lp.Distance,
+		PackagePathDepth:        pkgPathDepth,
+		Module:                  lp.Module,
+		ModuleIsRoot:            moduleIsRoot,
+		ModuleIsNil:             moduleIsNil,
+		LogicalPkgPath:          lp.PkgPath,
+		ChangeCount:             lp.ChangeCount,
+		Confirmed: &Transformed{
+			What:      what,
+			Content:   []byte(content),
+			NumTokens: tokens,
+		},
 	}
 }
 
@@ -367,8 +397,8 @@ func compareFilesForOutput(a, b *File) int {
 // allocation: focus package documentation tokens, the dynamic context
 // budget derived from them, and how the context packages consume that
 // budget by visibility level. The composition makes it possible to see at
-// a glance whether the context budget is dominated by doc-only, code-only,
-// or full packages, and how many packages are invisible. See
+// a glance whether the context budget is dominated by short-doc, doc-only,
+// code-only, or full packages, and how many packages are invisible. See
 // TheoryOfTokenComposition.
 func logTokenComposition(
 	logger logs.Logger,
@@ -380,8 +410,8 @@ func logTokenComposition(
 			focusTokens += lp.TokensByLevel[VisibilityDoc]
 		}
 	}
-	var contextTokensByLevel [4]int
-	var contextPackagesByLevel [4]int
+	var contextTokensByLevel [5]int
+	var contextPackagesByLevel [5]int
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			continue
@@ -389,17 +419,20 @@ func logTokenComposition(
 		contextTokensByLevel[lp.Visibility] += lp.TokensByLevel[lp.Visibility]
 		contextPackagesByLevel[lp.Visibility]++
 	}
-	contextTokens := contextTokensByLevel[VisibilityDoc] +
+	contextTokens := contextTokensByLevel[VisibilityShortDoc] +
+		contextTokensByLevel[VisibilityDoc] +
 		contextTokensByLevel[VisibilityCode] +
 		contextTokensByLevel[VisibilityAll]
 	logger.Info("context token composition",
 		"focus tokens", focusTokens,
 		"context budget", calculateMaxContextTokens(focusTokens),
 		"context tokens", contextTokens,
+		"short doc packages", contextPackagesByLevel[VisibilityShortDoc],
 		"doc packages", contextPackagesByLevel[VisibilityDoc],
 		"code packages", contextPackagesByLevel[VisibilityCode],
 		"full packages", contextPackagesByLevel[VisibilityAll],
 		"invisible packages", contextPackagesByLevel[VisibilityInvisible],
+		"short doc tokens", contextTokensByLevel[VisibilityShortDoc],
 		"doc tokens", contextTokensByLevel[VisibilityDoc],
 		"code tokens", contextTokensByLevel[VisibilityCode],
 		"full tokens", contextTokensByLevel[VisibilityAll],

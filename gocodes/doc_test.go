@@ -178,6 +178,67 @@ func helper() {}
 	}
 }
 
+func TestRenderShortDoc(t *testing.T) {
+	// The short-doc visibility level renders go doc without -all: the
+	// package overview and the top-level symbol index, without per-symbol
+	// documentation. It must be strictly smaller than the full
+	// documentation and must carry the context package markers. See
+	// TheoryOfLazyPackageDoc.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/shortdoc\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "shortdoc.go"), []byte(`// Package shortdoc demonstrates short documentation.
+package shortdoc
+
+// FooMarker returns 42 with a long comment attached to the declaration so
+// the full documentation carries text that the short documentation omits.
+func FooMarker() int { return 42 }
+
+// BarMarker does something else.
+func BarMarker() int { return 43 }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	shortContent, shortTokens, err := renderShortDoc(
+		"example.com/shortdoc",
+		root,
+		withModModEnv(os.Environ()),
+		generators.DeepseekTokenCounterFn,
+	)
+	if err != nil {
+		t.Fatalf("renderShortDoc failed: %v", err)
+	}
+
+	fullContent, fullTokens, err := renderPackageDoc(
+		"example.com/shortdoc",
+		root,
+		withModModEnv(os.Environ()),
+		generators.DeepseekTokenCounterFn,
+	)
+	if err != nil {
+		t.Fatalf("renderPackageDoc failed: %v", err)
+	}
+
+	if !strings.Contains(shortContent, "begin of context package example.com/shortdoc") {
+		t.Fatalf("short doc must carry the context package markers:\n%s", shortContent)
+	}
+	if !strings.Contains(shortContent, "FooMarker") {
+		t.Fatalf("short doc must list the top-level symbol index:\n%s", shortContent)
+	}
+	if strings.Contains(shortContent, "long comment attached") {
+		t.Fatalf("short doc must omit per-symbol documentation (no -all):\n%s", shortContent)
+	}
+	if !strings.Contains(fullContent, "long comment attached") {
+		t.Fatalf("full doc must include per-symbol documentation:\n%s", fullContent)
+	}
+	if shortTokens >= fullTokens {
+		t.Fatalf("short doc tokens (%d) must be smaller than full doc tokens (%d)", shortTokens, fullTokens)
+	}
+}
+
 func TestRenderPackageDocDoesNotModifyGoSum(t *testing.T) {
 	// go doc must not modify go.sum: the load environment injects
 	// -mod=mod so go list can update go.mod when it is out of sync, but

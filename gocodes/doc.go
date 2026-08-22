@@ -29,11 +29,11 @@ included in smaller-budget requests appear at the same positions in
 larger-budget requests.
 
 The rendering reuses renderPackageDoc, the same function that produces
-level-1 package documentation for the visibility system, so the marker format
-and the go doc invocation are consistent across the codebase. A failure of
-go doc for a user-specified package path aborts context assembly with an
-error, matching the fail-fast behavior of other user-provided loader
-arguments (e.g., -pkg patterns).
+full-doc (VisibilityDoc) package documentation for the visibility system, so
+the marker format and the go doc invocation are consistent across the
+codebase. A failure of go doc for a user-specified package path aborts
+context assembly with an error, matching the fail-fast behavior of other
+user-provided loader arguments (e.g., -pkg patterns).
 `
 
 // DocPatterns configs.Config implementation.

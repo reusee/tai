@@ -250,15 +250,15 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 	// context for lower-priority packages. The old predecessor
 	// constraint cascaded invisibility: if the first non-focus package in
 	// priority order could not afford its minimum visibility (e.g., its go
-	// doc output exceeded the budget, or go doc failed, making level 1's
-	// sentinel cost 1<<30 unaffordable), every subsequent package was
-	// capped at level 0 and the context used zero tokens of the 32K budget
-	// even though cheaper packages would have fit. See
+	// doc output exceeded the budget, or go doc failed, making the doc
+	// level's sentinel cost 1<<30 unaffordable), every subsequent package
+	// was capped at invisible and the context used zero tokens of the 32K
+	// budget even though cheaper packages would have fit. See
 	// TheoryOfVisibilityAllocation.
 	//
 	// Context packages are excluded from this scenario: they are
 	// explicitly requested via -ctx and are guaranteed their minimum
-	// visibility (level 2) regardless of the budget. See
+	// visibility (code) regardless of the budget. See
 	// TestAllocateVisibilityGuaranteesContextPackages.
 	t.Run("allocates lower priority when higher priority unaffordable", func(t *testing.T) {
 		pkgs := []*LogicalPackage{
@@ -267,32 +267,34 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
 				PkgPath:       "directimport",
 				Category:      CategoryDirectImport,
 				MinVisibility: VisibilityDoc,
 				Visibility:    VisibilityInvisible,
-				// Level 1 (doc) costs 40000, exceeding the 32K budget
-				BudgetTokensByLevel: [4]int{0, 40000, 50000, 50000},
+				// Both documentation levels (35000 short, 40000 full)
+				// exceed the remaining budget
+				BudgetTokensByLevel: [5]int{0, 35000, 40000, 50000, 50000},
 			},
 			{
 				PkgPath:       "samemodule",
 				Category:      CategorySameModule,
 				MinVisibility: VisibilityDoc,
 				Visibility:    VisibilityInvisible,
-				// Level 1 costs 50, affordable on its own
-				BudgetTokensByLevel: [4]int{0, 50, 50, 50},
+				// Both documentation levels cost little, affordable on
+				// their own
+				BudgetTokensByLevel: [5]int{0, 30, 50, 50, 50},
 			},
 		}
 
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 
 		if pkgs[0].Visibility != VisibilityDoc {
-			t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
+			t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 		}
 		if pkgs[1].Visibility != VisibilityInvisible {
 			t.Fatalf("directimport should be invisible (unaffordable), got %d", pkgs[1].Visibility)
@@ -305,9 +307,9 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 	t.Run("construction principle holds when all packages affordable", func(t *testing.T) {
 		// The construction principle — higher-priority packages have at
 		// least as much visibility as lower-priority ones — now holds
-		// among non-focus packages. Focus packages are pinned at level 1
-		// by design and may sit below context packages; the pinned focus
-		// level is independent of the principle. See
+		// among non-focus packages. Focus packages are pinned at full
+		// documentation by design and may sit below context packages; the
+		// pinned focus level is independent of the principle. See
 		// TheoryOfVisibilityAllocation.
 		pkgs := []*LogicalPackage{
 			{
@@ -315,30 +317,30 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
 				PkgPath:             "context",
 				Category:            CategoryContext,
 				MinVisibility:       VisibilityCode,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 100, 200, 300},
+				BudgetTokensByLevel: [5]int{0, 50, 100, 200, 300},
 			},
 			{
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 50, 100, 150},
+				BudgetTokensByLevel: [5]int{0, 25, 50, 100, 150},
 			},
 		}
 
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 
 		if pkgs[0].Visibility != VisibilityDoc {
-			t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
+			t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 		}
 		if pkgs[1].Visibility < pkgs[2].Visibility {
 			t.Fatalf("construction principle violated: context (%d) < samemodule (%d)",
@@ -349,23 +351,23 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 	t.Run("failed doc falls back to code visibility", func(t *testing.T) {
 		// When go doc fails for a package, the doc is treated as empty
 		// (zero cost, nothing emitted) rather than unaffordable, so the
-		// water-fill can still upgrade the package to level 2 (code) using
-		// the precomputed code costs. See TheoryOfLazyPackageDoc.
+		// water-fill can still upgrade the package to code using the
+		// precomputed code costs. See TheoryOfLazyPackageDoc.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
 				PkgPath:             "dep",
 				Category:            CategoryDirectImport,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 1 << 30, 200, 300},
-				TokensByLevel:       [4]int{0, 0, 200, 300},
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 200, 300},
+				TokensByLevel:       [5]int{0, 0, 0, 200, 300},
 			},
 		}
 		computeDoc := func(lp *LogicalPackage) {
@@ -376,25 +378,25 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 0
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
 		if pkgs[1].Visibility != VisibilityAll {
-			t.Fatalf("dep should reach level 3 via the failed-doc fallback, got %d", pkgs[1].Visibility)
+			t.Fatalf("dep should reach full visibility via the failed-doc fallback, got %d", pkgs[1].Visibility)
 		}
 	})
 }
 
 func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 	// A package explicitly requested via -ctx (CategoryContext) must be
-	// included at its minimum visibility (level 2, code) even when its
-	// code cost exceeds the context token budget. Without the guarantee,
-	// the context package could not afford its code cost at minimum
-	// allocation, so it stayed invisible or doc-only while its smaller
-	// dependencies — discovered automatically — were water-filled to full
-	// code: the explicitly requested package was absent from the context
-	// while its dependencies were present. See
+	// included at its minimum visibility (code, full Go code without test
+	// files) even when its code cost exceeds the context token budget.
+	// Without the guarantee, the context package could not afford its code
+	// cost at minimum allocation, so it stayed invisible or doc-only while
+	// its smaller dependencies — discovered automatically — were
+	// water-filled to full code: the explicitly requested package was
+	// absent from the context while its dependencies were present. See
 	// TheoryOfVisibilityAllocation.
 	pkgs := []*LogicalPackage{
 		{
@@ -402,19 +404,19 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 			Category:            CategoryFocus,
 			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 0, 0, 100},
-			TokensByLevel:       [4]int{0, 0, 0, 100},
+			BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
+			TokensByLevel:       [5]int{0, 0, 0, 0, 100},
 		},
 		{
-			// The explicitly requested context package: its code (level 2)
-			// costs 60000 tokens, exceeding the 32K context budget. It
-			// must still be allocated.
+			// The explicitly requested context package: its code costs
+			// 60000 tokens, exceeding the 32K context budget. It must
+			// still be allocated.
 			PkgPath:             "requested",
 			Category:            CategoryContext,
 			MinVisibility:       VisibilityCode,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 2000, 60000, 60000},
-			TokensByLevel:       [4]int{0, 2000, 60000, 60000},
+			BudgetTokensByLevel: [5]int{0, 1000, 2000, 60000, 60000},
+			TokensByLevel:       [5]int{0, 1000, 2000, 60000, 60000},
 		},
 		{
 			// A dependency of the requested package, discovered
@@ -423,20 +425,20 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 			Category:            CategorySameModule,
 			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 100, 500, 500},
-			TokensByLevel:       [4]int{0, 100, 500, 500},
+			BudgetTokensByLevel: [5]int{0, 50, 100, 500, 500},
+			TokensByLevel:       [5]int{0, 50, 100, 500, 500},
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	if pkgs[0].Visibility != VisibilityDoc {
-		t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
+		t.Fatalf("focus should be pinned at full doc, got %d", pkgs[0].Visibility)
 	}
 	if pkgs[1].Visibility != VisibilityCode {
-		t.Fatalf("context package must be guaranteed at level 2, got %d", pkgs[1].Visibility)
+		t.Fatalf("context package must be guaranteed at code level, got %d", pkgs[1].Visibility)
 	}
 	// The dependency must not be included: the context package exhausted
 	// the budget. Before the guarantee, the dependency would have been
@@ -448,33 +450,33 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 
 func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 	// Package documentation (go doc output) is computed lazily, only for
-	// packages that actually reach visibility level 1. The eager approach
+	// packages that actually reach a documentation level. The eager approach
 	// ran go doc for every non-focus package in the dependency graph — one
 	// Go toolchain subprocess per package — even though most packages end
-	// at level 0 (invisible) or at levels 2/3 (full code), where the doc
-	// output is never used. See TheoryOfLazyPackageDoc.
+	// invisible or at the code/full levels, where the doc output is never
+	// used. See TheoryOfLazyPackageDoc.
 
 	t.Run("ComputesDocForLevelOnePackages", func(t *testing.T) {
 		var docCalls []string
 		pkgs := []*LogicalPackage{
 			{
-				// Focus is pinned at level 1, so its documentation is
-				// probed too.
+				// Focus is pinned at full documentation, so its
+				// documentation is probed too.
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityAll,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
 				// Same-module package whose doc fits the budget but whose
-				// full code (level 2) does not: it lands at level 1, so
-				// its doc is computed exactly once.
+				// full code does not: it lands at full doc, so its doc is
+				// computed exactly once.
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 100, 1 << 30, 1 << 30},
+				BudgetTokensByLevel: [5]int{0, 50, 100, 1 << 30, 1 << 30},
 			},
 		}
 		computeDoc := func(lp *LogicalPackage) {
@@ -488,7 +490,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 100
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -496,22 +498,22 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			t.Fatalf("expected doc computed once each for focus and samemodule, got %v", docCalls)
 		}
 		if pkgs[1].Visibility != VisibilityDoc {
-			t.Fatalf("expected samemodule at level 1, got %d", pkgs[1].Visibility)
+			t.Fatalf("expected samemodule at full doc, got %d", pkgs[1].Visibility)
 		}
 	})
 
 	t.Run("SkipsDocForPackagesBlockedByPredecessor", func(t *testing.T) {
-		// The water-fill gates the 0→1 (doc) transition on the immediate
-		// predecessor: a package whose predecessor is stuck at level 0 is
-		// never probed, so the go doc subprocess does not run for packages
-		// whose doc could not be shown without violating the priority
-		// ordering. The docComputed guard additionally prevents repeated
-		// probes on later water-fill iterations.
+		// The water-fill gates both documentation transitions on the
+		// immediate predecessor: a package whose predecessor is still at
+		// a lower level is never probed, so the go doc subprocess does not
+		// run for packages whose doc could not be shown without violating
+		// the priority ordering. The docComputed guard additionally
+		// prevents repeated probes on later water-fill iterations.
 		// See TheoryOfLazyPackageDoc.
 		//
 		// Context packages are excluded from this scenario: they are
-		// guaranteed their minimum visibility (level 2) and never sit at
-		// level 0. See TestAllocateVisibilityGuaranteesContextPackages.
+		// guaranteed their minimum visibility (code) and never sit at
+		// invisible. See TestAllocateVisibilityGuaranteesContextPackages.
 		var docCalls []string
 		pkgs := []*LogicalPackage{
 			{
@@ -519,7 +521,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityAll,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
+				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
 			{
 				// Direct-import package whose doc AND code costs exceed
@@ -531,26 +533,26 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				Category:            CategoryDirectImport,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 60000, 60000, 60000},
+				BudgetTokensByLevel: [5]int{0, 60000, 60000, 60000, 60000},
 			},
 			{
 				// An other-module package: its immediate predecessor is
-				// also at level 0, so it is blocked at the 0→1 gate and
-				// its doc is never probed.
+				// also at invisible, so it is blocked at the documentation
+				// gate and its doc is never probed.
 				PkgPath:             "othermodule",
 				Category:            CategoryOtherModule,
 				MinVisibility:       VisibilityInvisible,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 60000, 60000, 60000},
+				BudgetTokensByLevel: [5]int{0, 60000, 60000, 60000, 60000},
 			},
 			{
-				// Same-module package: affordable at level 1, probed once,
-				// and water-filled all the way to level 3.
+				// Same-module package: affordable at full doc, probed
+				// once, and water-filled all the way to full content.
 				PkgPath:             "samemodule",
 				Category:            CategorySameModule,
 				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
-				BudgetTokensByLevel: [4]int{0, 50, 50, 50},
+				BudgetTokensByLevel: [5]int{0, 20, 50, 50, 50},
 			},
 		}
 		computeDoc := func(lp *LogicalPackage) {
@@ -562,7 +564,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			// allocation behaves as if the doc were pre-computed.
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -578,7 +580,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		if directImportProbes != 1 {
 			t.Fatalf("expected one doc probe for directimport, got %v", docCalls)
 		}
-		// othermodule never reaches level 1 and must never have its doc
+		// othermodule never reaches full doc and must never have its doc
 		// computed.
 		for _, p := range docCalls {
 			if p == "othermodule" {
@@ -588,20 +590,20 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		// samemodule is probed once and reaches full visibility despite
 		// the unaffordable packages ahead of it.
 		if pkgs[3].Visibility != VisibilityAll {
-			t.Fatalf("expected samemodule at level 3, got %d", pkgs[3].Visibility)
+			t.Fatalf("expected samemodule at full visibility, got %d", pkgs[3].Visibility)
 		}
 	})
 }
 
 func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
-	// File token costs (rendered content and token counts at visibility
-	// levels 2 and 3) are computed lazily, driven by the visibility
+	// File token costs (rendered content and token counts at the code and
+	// full visibility levels) are computed lazily, driven by the visibility
 	// allocation: only packages the allocation actually probes run the
 	// tokenizer. Context packages are always probed (their minimum
-	// visibility is level 2); focus packages are pinned at documentation
-	// level and never need file costs. A package that receives no
-	// visibility — here, an other-module package whose doc and code costs
-	// exceed the budget — must never have its costs computed. See
+	// visibility is code); focus packages are pinned at full documentation
+	// and never need file costs. A package that receives no visibility —
+	// here, an other-module package whose doc and code costs exceed the
+	// budget — must never have its costs computed. See
 	// TheoryOfLazyVisibilityCosts.
 	var costCalls []string
 	computed := make(map[string]bool)
@@ -620,39 +622,98 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 			Category:            CategoryFocus,
 			MinVisibility:       VisibilityAll,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 0, 0, 100},
-			TokensByLevel:       [4]int{0, 0, 0, 100},
+			BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
+			TokensByLevel:       [5]int{0, 0, 0, 0, 100},
 		},
 		{
 			PkgPath:             "context",
 			Category:            CategoryContext,
 			MinVisibility:       VisibilityCode,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 0, 100, 1 << 30},
-			TokensByLevel:       [4]int{0, 0, 100, 1 << 30},
+			BudgetTokensByLevel: [5]int{0, 0, 0, 100, 1 << 30},
+			TokensByLevel:       [5]int{0, 0, 0, 100, 1 << 30},
 		},
 		{
 			PkgPath:             "othermodule",
 			Category:            CategoryOtherModule,
 			MinVisibility:       VisibilityInvisible,
 			Visibility:          VisibilityInvisible,
-			BudgetTokensByLevel: [4]int{0, 1 << 30, 1 << 30, 1 << 30},
-			TokensByLevel:       [4]int{0, 1 << 30, 1 << 30, 1 << 30},
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
+			TokensByLevel:       [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeCosts); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, computeCosts); err != nil {
 		t.Fatal(err)
 	}
 
 	if len(costCalls) != 1 || costCalls[0] != "context" {
-		t.Fatalf("expected costs computed for context only (focus is pinned at documentation level), got %v", costCalls)
+		t.Fatalf("expected costs computed for context only (focus is pinned at full documentation), got %v", costCalls)
 	}
 	if pkgs[1].Visibility != VisibilityCode {
-		t.Fatalf("expected context at level 2, got %d", pkgs[1].Visibility)
+		t.Fatalf("expected context at code level, got %d", pkgs[1].Visibility)
 	}
 	if pkgs[2].Visibility != VisibilityInvisible {
 		t.Fatalf("expected othermodule invisible, got %d", pkgs[2].Visibility)
+	}
+}
+
+func TestAllocateVisibilityShortDoc(t *testing.T) {
+	// Short doc is the water-fill's first documentation step from
+	// invisible: a package whose full doc exceeds the budget but whose
+	// short doc fits lands at VisibilityShortDoc, so a tight budget
+	// yields a briefly-documented package instead of an invisible one.
+	// No category has short doc as its minimum visibility, so the
+	// minimum-visibility allocation never probes short doc; the probe
+	// happens only in the water-fill, computed exactly once per package.
+	// Focus packages are pinned at full documentation and never occupy
+	// the short-doc level. See TheoryOfVisibilityAllocation and
+	// TheoryOfLazyPackageDoc.
+	var shortDocCalls []string
+	computeShortDoc := func(lp *LogicalPackage) {
+		if lp.shortDocComputed {
+			return
+		}
+		shortDocCalls = append(shortDocCalls, lp.PkgPath)
+		lp.ShortDocContent = "short doc"
+		lp.ShortDocTokens = 100
+		lp.BudgetTokensByLevel[VisibilityShortDoc] = 100
+		lp.TokensByLevel[VisibilityShortDoc] = 100
+		lp.shortDocComputed = true
+	}
+
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:             "focus",
+			Category:            CategoryFocus,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
+			TokensByLevel:       [5]int{0, 0, 0, 0, 100},
+		},
+		{
+			// A direct import whose full doc (40000) exceeds the 32K
+			// budget: the minimum-visibility allocation leaves it
+			// invisible, and the water-fill upgrades it to short doc,
+			// the affordable documentation level.
+			PkgPath:             "directimport",
+			Category:            CategoryDirectImport,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 100, 40000, 50000, 50000},
+			TokensByLevel:       [5]int{0, 100, 40000, 50000, 50000},
+		},
+	}
+
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, computeShortDoc, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if pkgs[1].Visibility != VisibilityShortDoc {
+		t.Fatalf("expected directimport at short doc, got %d", pkgs[1].Visibility)
+	}
+	if len(shortDocCalls) != 1 || shortDocCalls[0] != "directimport" {
+		t.Fatalf("expected short doc computed exactly once for directimport, got %v", shortDocCalls)
 	}
 }
 
@@ -737,38 +798,44 @@ func TestMatchPattern(t *testing.T) {
 func TestLogTokenComposition(t *testing.T) {
 	// The context token composition log must report focus package
 	// documentation tokens, the dynamic context budget, and how the
-	// context packages consume that budget by visibility level. See
-	// TheoryOfTokenComposition.
+	// context packages consume that budget by visibility level, including
+	// the short-doc level. See TheoryOfTokenComposition.
 	pkgs := []*LogicalPackage{
 		{
 			PkgPath:       "focus",
 			Category:      CategoryFocus,
 			Visibility:    VisibilityDoc,
-			TokensByLevel: [4]int{0, 500, 0, 0},
+			TokensByLevel: [5]int{0, 0, 500, 0, 0},
+		},
+		{
+			PkgPath:       "shortdocpkg",
+			Category:      CategoryOtherModule,
+			Visibility:    VisibilityShortDoc,
+			TokensByLevel: [5]int{0, 40, 90, 200, 300},
 		},
 		{
 			PkgPath:       "docpkg",
 			Category:      CategorySameModule,
 			Visibility:    VisibilityDoc,
-			TokensByLevel: [4]int{0, 100, 300, 400},
+			TokensByLevel: [5]int{0, 50, 100, 300, 400},
 		},
 		{
 			PkgPath:       "codepkg",
 			Category:      CategoryContext,
 			Visibility:    VisibilityCode,
-			TokensByLevel: [4]int{0, 50, 200, 300},
+			TokensByLevel: [5]int{0, 20, 50, 200, 300},
 		},
 		{
 			PkgPath:       "fullpkg",
 			Category:      CategorySameModule,
 			Visibility:    VisibilityAll,
-			TokensByLevel: [4]int{0, 10, 20, 600},
+			TokensByLevel: [5]int{0, 5, 10, 20, 600},
 		},
 		{
 			PkgPath:       "hiddenpkg",
 			Category:      CategoryStdLib,
 			Visibility:    VisibilityInvisible,
-			TokensByLevel: [4]int{0, 30, 40, 50},
+			TokensByLevel: [5]int{0, 15, 30, 40, 50},
 		},
 	}
 
@@ -781,11 +848,13 @@ func TestLogTokenComposition(t *testing.T) {
 		`msg="context token composition"`,
 		`"focus tokens"=500`,
 		`"context budget"=32768`,
-		`"context tokens"=900`,
+		`"context tokens"=940`,
+		`"short doc packages"=1`,
 		`"doc packages"=1`,
 		`"code packages"=1`,
 		`"full packages"=1`,
 		`"invisible packages"=1`,
+		`"short doc tokens"=40`,
 		`"doc tokens"=100`,
 		`"code tokens"=200`,
 		`"full tokens"=600`,

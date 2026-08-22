@@ -13,15 +13,16 @@ Logical packages merge the main package with its test variants produced by
 packages.Load with Tests:true. When Tests is enabled, a package "foo" may
 appear as "foo" (main) and "foo [foo.test]" (test variant). These are merged
 into a single logical package with PkgPath "foo". The external test package
-"foo_test" is a separate logical package. Level 3 includes _test.go files;
-levels 0-2 exclude them. The distance graph uses merged logical packages.
+"foo_test" is a separate logical package. VisibilityAll includes _test.go
+files; all lower levels exclude them. The distance graph uses merged logical
+packages.
 
 Package categorization determines the minimum visibility and priority:
-- Focus packages (from -pkg): level 1 (go doc -u plus test names), pinned
-- Context packages (from -ctx, -dep): level 2, always visible
-- Same-module non-focus packages: level 1
-- Direct imports of focus packages: level 1
-- Other module packages: level 0
+- Focus packages (from -pkg): VisibilityDoc (go doc -u plus test names), pinned
+- Context packages (from -ctx, -dep): VisibilityCode, always visible
+- Same-module non-focus packages: VisibilityDoc
+- Direct imports of focus packages: VisibilityDoc
+- Other module packages: VisibilityInvisible
 - Standard library: excluded at collection time, so it never forms a logical
   package unless explicitly requested via -pkg or -ctx (in which case it is
   categorized as focus or context). See TheoryOfStdLibExclusion in files.go.
@@ -37,9 +38,10 @@ type VisibilityLevel int
 
 const (
 	VisibilityInvisible VisibilityLevel = 0
-	VisibilityDoc       VisibilityLevel = 1
-	VisibilityCode      VisibilityLevel = 2
-	VisibilityAll       VisibilityLevel = 3
+	VisibilityShortDoc  VisibilityLevel = 1
+	VisibilityDoc       VisibilityLevel = 2
+	VisibilityCode      VisibilityLevel = 3
+	VisibilityAll       VisibilityLevel = 4
 )
 
 // PackageCategory represents the major classification of a package,
@@ -93,33 +95,46 @@ type LogicalPackage struct {
 	ChangeCount   int
 
 	// Pre-computed rendered files and token counts at each visibility level.
-	RenderedFiles [4][]renderedFile
-	TokensByLevel [4]int
+	RenderedFiles [5][]renderedFile
+	TokensByLevel [5]int
 
 	// BudgetTokensByLevel excludes DoNotSimplify files from the token count,
-	// because DoNotSimplify files are always at level 3 and do not count
-	// against the 32K context budget.
-	BudgetTokensByLevel [4]int
+	// because DoNotSimplify files are always emitted at VisibilityAll and
+	// do not count against the 32K context budget.
+	BudgetTokensByLevel [5]int
 
-	// DocContent and DocTokens hold the go doc output for level 1
-	// (VisibilityDoc). Level 1 is per-package, not per-file.
+	// ShortDocContent and ShortDocTokens hold the go doc output for
+	// VisibilityShortDoc: go doc without -all, a compact package overview.
+	// Like full documentation, short doc is per-package, not per-file.
+	ShortDocContent string
+	ShortDocTokens  int
+
+	// DocContent and DocTokens hold the go doc output for VisibilityDoc
+	// (go doc -all -cmd). Full documentation is per-package, not per-file.
 	DocContent string
 	DocTokens  int
 
-	// docComputed reports whether the package's go doc output has been
+	// shortDocComputed reports whether the package's short-doc output has
+	// been computed. Like full-doc computation, short-doc computation is
+	// lazy: only packages that reach VisibilityShortDoc run the go doc
+	// subprocess, exactly once, independently of the full-doc
+	// computation. See TheoryOfLazyPackageDoc in visibility.go.
+	shortDocComputed bool
+
+	// docComputed reports whether the package's full-doc output has been
 	// computed. Doc computation is lazy: only packages that reach
-	// visibility level 1 run the go doc subprocess, exactly once.
+	// VisibilityDoc run the go doc subprocess, exactly once.
 	// See TheoryOfLazyPackageDoc in visibility.go.
 	docComputed bool
 
 	// costsComputed reports whether RenderedFiles, TokensByLevel, and
-	// BudgetTokensByLevel for visibility levels 2 and 3 have been populated
-	// for this package; costsErr records a failure so the computation is
-	// attempted at most once. Costs are computed lazily, driven by the
-	// visibility allocation: focus and context packages are precomputed
-	// eagerly, while every other package is computed on demand only when
-	// probed. Packages that receive no visibility never run the tokenizer.
-	// See TheoryOfLazyVisibilityCosts in visibility.go.
+	// BudgetTokensByLevel for the code and full visibility levels have
+	// been populated for this package; costsErr records a failure so the
+	// computation is attempted at most once. Costs are computed lazily,
+	// driven by the visibility allocation: focus and context packages are
+	// precomputed eagerly, while every other package is computed on demand
+	// only when probed. Packages that receive no visibility never run the
+	// tokenizer. See TheoryOfLazyVisibilityCosts in visibility.go.
 	costsComputed bool
 	costsErr      error
 
