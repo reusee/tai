@@ -188,7 +188,7 @@ func TestCodeProviderMatchFlagFiltersFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		foundMain := false
+		foundFocusDoc := false
 		for _, part := range parts {
 			if text, ok := part.(generators.Text); ok {
 				s := string(text)
@@ -198,13 +198,13 @@ func TestCodeProviderMatchFlagFiltersFiles(t *testing.T) {
 				if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
 					t.Fatalf("expected dep1.go to be excluded by -match, got: %s", s)
 				}
-				if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
-					foundMain = true
+				if strings.Contains(s, "begin of focus package") {
+					foundFocusDoc = true
 				}
 			}
 		}
-		if !foundMain {
-			t.Fatal("expected main.go to be included by -match")
+		if !foundFocusDoc {
+			t.Fatal("expected the focus package documentation to be included by -match")
 		}
 	})
 }

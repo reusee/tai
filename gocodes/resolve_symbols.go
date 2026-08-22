@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"maps"
-	"os/exec"
 	"slices"
 	"strings"
 
@@ -186,25 +185,13 @@ func matchLoadedPackages(symbol string, index map[string]loadedPackage) []loaded
 // declaration, not only the top-level summary, and -cmd documents a main
 // package. A focus package adds -u to include unexported symbols, giving
 // the model the complete surface of the packages it edits, while a
-// context package is reference material whose exported API suffices.
-// Like renderPackageDoc, the environment strips -mod=mod so go doc never
-// modifies go.sum. See TheoryOfGoDocReadonly and TheoryOfGoSrcResolution.
+// context package's exported API surface suffices. The invocation and
+// its read-only environment are shared with the visibility system via
+// goDocOutput. See TheoryOfGoDocReadonly and TheoryOfGoSrcResolution.
 func renderGoSrcPackageDoc(pkgPath string, focus bool, dir string, envs []string) (string, error) {
-	args := []string{"doc", "-all", "-cmd"}
-	if focus {
-		args = append(args, "-u")
-	}
-	args = append(args, pkgPath)
-	cmd := exec.Command("go", args...)
-	cmd.Dir = dir
-	cmd.Env = withoutModModEnv(envs)
-	output, err := cmd.Output()
+	text, err := goDocOutput(pkgPath, dir, envs, focus)
 	if err != nil {
 		return "", err
-	}
-	text := string(output)
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
 	}
 	return "``` begin of source package " + pkgPath + "\n" +
 		text +

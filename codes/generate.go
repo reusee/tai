@@ -59,9 +59,12 @@ const maxGoTestRounds = 10
 // maxGoSrcRounds bounds the number of rounds the go-src component may
 // trigger: each round feeds resolved symbol source back to the model, so
 // a runaway model that keeps requesting symbols cannot loop indefinitely
-// in unattended operation. See TheoryOfCodesComponents and
-// blocks.TheoryOfGoSrcBlocks.
-const maxGoSrcRounds = 10
+// in unattended operation. Focus packages are pinned at documentation
+// level, making go-src the primary source-fetch path from the declaration
+// surface to the implementation, so the bound matches the shell
+// component's 50: fetching source in many small rounds is the intended
+// workflow. See TheoryOfCodesComponents and blocks.TheoryOfGoSrcBlocks.
+const maxGoSrcRounds = 50
 
 const maxRetriesForMissingSummary = 3
 

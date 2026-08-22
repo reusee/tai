@@ -34,16 +34,16 @@ func TestContextPrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// With no distance limit, all transitive dependencies are loaded.
-		// The water-filling algorithm may upgrade packages within the 32K
-		// context budget, so the total part count can exceed the three
-		// core files. Assert that the three essential files are present
-		// rather than asserting an exact count.
+		// Focus packages are pinned at documentation level: dep1.go is
+		// loaded as a context file, a.txt is a non-Go focus file at full
+		// content, and the focus package appears as a documentation
+		// block. main.go's full content must not appear.
+		// See TheoryOfVisibilityAllocation.
 		if len(parts) < 3 {
 			t.Fatalf("got %v", len(parts))
 		}
 
-		var foundDep1, foundATxt, foundMain bool
+		var foundDep1, foundATxt, foundFocusDoc bool
 		for _, part := range parts {
 			t.Logf("%s\n", part)
 			text, ok := part.(generators.Text)
@@ -57,8 +57,11 @@ func TestContextPrompt(t *testing.T) {
 			if strings.Contains(s, filepath.Join(dir, "a.txt")) {
 				foundATxt = true
 			}
-			if strings.Contains(s, filepath.Join(dir, "main.go")) {
-				foundMain = true
+			if strings.Contains(s, "begin of focus package") {
+				foundFocusDoc = true
+			}
+			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
+				t.Errorf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
 			}
 		}
 		if !foundDep1 {
@@ -67,8 +70,8 @@ func TestContextPrompt(t *testing.T) {
 		if !foundATxt {
 			t.Errorf("a.txt not found")
 		}
-		if !foundMain {
-			t.Errorf("main.go not found")
+		if !foundFocusDoc {
+			t.Errorf("focus package documentation not found")
 		}
 
 	})
@@ -408,10 +411,12 @@ func main() {}
 
 func TestFocusFileOutsideWritableDirs(t *testing.T) {
 	// When -pkg ../dep1 is used from a working directory under /var/tmp,
-	// dep1 becomes a root package (focus file), but its files are outside
+	// dep1 becomes a root package (focus package), but its files are outside
 	// writable directories (CWD, /tmp, Go dirs, config dir, /dev/shm).
-	// The files should be marked as read-only and included in the context
-	// with "(read-only)" markers rather than rejected.
+	// The focus package is a documentation block whose begin marker
+	// carries the "(read-only)" note, because focus Go files are no
+	// longer emitted individually. The package's content still provides
+	// useful reference context.
 	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
 	//
 	// The module root is placed under /var/tmp (not /tmp) so that
@@ -477,13 +482,13 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		foundReadOnly := false
 		for _, part := range parts {
 			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "focus file") && strings.Contains(string(text), "(read-only)") {
+				if strings.Contains(string(text), "focus package") && strings.Contains(string(text), "(read-only)") {
 					foundReadOnly = true
 				}
 			}
 		}
 		if !foundReadOnly {
-			t.Fatal("expected focus file outside writable directories to be included with read-only marker")
+			t.Fatal("expected focus package documentation outside writable directories to carry the read-only marker")
 		}
 	})
 }

@@ -234,7 +234,10 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 	// Focus packages with more recent git changes appear after focus
 	// packages with fewer changes, so volatile content forms the tail of
 	// the context and the stable prefix is preserved for LLM prefix
-	// caching. Alphabetically, example.com/changes/a precedes
+	// caching. With focus packages pinned at documentation level, the
+	// packages appear as documentation blocks; the block carries the
+	// logical package's change count, so the ordering key applies
+	// unchanged. Alphabetically, example.com/changes/a precedes
 	// example.com/changes/b; the git change counts must override that.
 	// See TheoryOfGitChangeOrdering.
 	root := t.TempDir()
@@ -290,30 +293,33 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 				continue
 			}
 			s := string(text)
-			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "a", "a.go")) {
+			if strings.Contains(s, "begin of focus package example.com/changes/a") {
 				posA = i
 			}
-			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "b", "b.go")) {
+			if strings.Contains(s, "begin of focus package example.com/changes/b") {
 				posB = i
 			}
 		}
 		if posA == -1 || posB == -1 {
-			t.Fatalf("a/a.go or b/b.go not found in parts (posA=%d posB=%d)", posA, posB)
+			t.Fatalf("focus package documentation for a or b not found in parts (posA=%d posB=%d)", posA, posB)
 		}
 		if posA <= posB {
-			t.Fatalf("a/a.go (3 commits) must appear after b/b.go (1 commit), got posA=%d posB=%d", posA, posB)
+			t.Fatalf("a (3 commits) must appear after b (1 commit), got posA=%d posB=%d", posA, posB)
 		}
 	})
 }
 
 func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 	// Context files in the root module are ordered by recent git activity
-	// just like focus files: the change-count key applies to all
+	// just like focus packages: the change-count key applies to all
 	// root-module files, so volatile context content settles at the end of
 	// the context block instead of sitting in the stable prefix region.
 	// Alphabetically, example.com/mod/actx precedes example.com/mod/bctx;
-	// the git change counts must override that. See
-	// TheoryOfGitChangeOrdering.
+	// the git change counts must override that. The focus package is
+	// pinned at documentation level; its block carries the package's
+	// change count and interleaves with the context files under the same
+	// ordering, so only the context ordering (bctx before actx) and the
+	// block's presence are asserted. See TheoryOfGitChangeOrdering.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 	git := initGitRepo(t, root)
@@ -380,18 +386,15 @@ func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 			if strings.Contains(s, "begin of context file "+filepath.Join(root, "bctx", "bctx.go")) {
 				posBctx = i
 			}
-			if strings.Contains(s, "begin of focus file "+filepath.Join(root, "focus", "focus.go")) {
+			if strings.Contains(s, "begin of focus package example.com/mod/focus") {
 				posFocus = i
 			}
 		}
 		if posActx == -1 || posBctx == -1 || posFocus == -1 {
-			t.Fatalf("context or focus files not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
+			t.Fatalf("context files or focus package documentation not found in parts (posActx=%d posBctx=%d posFocus=%d)", posActx, posBctx, posFocus)
 		}
 		if posBctx >= posActx {
 			t.Fatalf("bctx (1 commit) must appear before actx (3 commits), got posBctx=%d posActx=%d", posBctx, posActx)
-		}
-		if posActx >= posFocus {
-			t.Fatalf("context files must appear before the focus file, got posActx=%d posFocus=%d", posActx, posFocus)
 		}
 	})
 }

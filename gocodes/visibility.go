@@ -3,6 +3,7 @@ package gocodes
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"os"
 	"os/exec"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/reusee/tai/logs"
+	"github.com/reusee/tai/pathutil"
 )
 
 const TheoryOfLazyPackageDoc = `
@@ -22,7 +24,8 @@ hundreds of processes for a typical project — even though most packages end
 at level 0 (invisible) or at levels 2/3 (full code), where the doc output is
 never used. The allocation algorithm only requires a package's doc cost when
 it considers placing the package at level 1: in the minimum-visibility
-allocation (MinVisibility == 1) and in the water-filling upgrade from level
+allocation (MinVisibility == 1), when pinning focus packages at their
+documentation level, and in the water-filling upgrade from level
 0 to level 1. At exactly those decision points allocateVisibility invokes
 computeDoc (via computePackageDoc), which runs go doc once, caches the
 result on the package (docComputed, DocContent, DocTokens), and sets the
@@ -32,12 +35,12 @@ sentinel is never read by a decision because computeDoc runs first whenever
 level 1 is considered.
 
 The minimum-visibility allocation probes every package whose minimum
-visibility includes documentation (same-module and direct-import packages):
-the doc cost must be known before affordability can be decided. These
-unconditional probes are launched concurrently by prefetchPackageDocs with
-bounded concurrency, hiding the per-subprocess latency that a serial probe
-loop would incur; the allocation's own computeDoc calls then short-circuit
-via the docComputed guard.
+visibility includes documentation (focus, same-module, and direct-import
+packages): the doc cost must be known before affordability can be decided.
+These unconditional probes are launched concurrently by prefetchPackageDocs
+with bounded concurrency, hiding the per-subprocess latency that a serial
+probe loop would incur; the allocation's own computeDoc calls then
+short-circuit via the docComputed guard.
 
 The water-fill phase gates the 0→1 upgrade on the immediate predecessor: a
 package whose predecessor is still at level 0 is not probed, because its doc
@@ -55,24 +58,27 @@ unaffordable: the level-1 cost is zero and the level-1 content is empty
 (nothing is emitted at level 1), and the water-fill can still upgrade the
 package to level 2 (code), whose costs are precomputed. This turns a
 systemic go doc failure into a graceful degradation to code visibility
-instead of making every such package permanently invisible.
+instead of making every such package permanently invisible. A focus
+package is the exception: it is pinned at level 1 and never upgraded, so
+its block is still emitted with a failure note and the test-function
+names, keeping the package discoverable for go-src fetches.
 `
 
 const TheoryOfVisibilityAllocation = `
 The context token budget for non-focus packages is dynamic: it is derived
-from the total token count of the focus packages so that large
-repositories receive a proportionally larger context budget. The budget
-is focusTokens / 4, rounded to the nearest multiple of
+from the total token count of the focus packages' documentation so that
+large declaration surfaces receive a proportionally larger context
+budget. The budget is focusTokens / 4, rounded to the nearest multiple of
 contextTokenBudgetUnit (32K), with a floor at one unit. A repository
-whose focus packages total 128K tokens gets a 32K context budget; a 200K
-focus package gets a 64K budget. This scaling prevents a large focus
-package from starving its dependencies and supporting packages, which
-would degrade the model's ability to reason about cross-package
-interactions. Small projects stay at the 32K floor, matching the
-original fixed-budget behavior. The computation is deterministic:
-identical focus packages always produce an identical budget, so context
-files are simplified to the same level across requests with the same
-focus, preserving the LLM prefix cache.
+whose focus packages total 128K documentation tokens gets a 32K context
+budget; a 200K documentation surface gets a 64K budget. This scaling
+prevents a large focus package from starving its dependencies and
+supporting packages, which would degrade the model's ability to reason
+about cross-package interactions. Small projects stay at the 32K floor,
+matching the original fixed-budget behavior. The computation is
+deterministic: identical focus packages always produce an identical
+budget, so context files are simplified to the same level across
+requests with the same focus, preserving the LLM prefix cache.
 
 The visibility allocation uses a water-filling algorithm that upgrades
 packages from their minimum visibility to higher levels as the budget
@@ -116,31 +122,44 @@ lower-priority ones — holds when every package is affordable at its
 minimum, and degrades gracefully otherwise: visibility may be
 non-monotonic only in the presence of unaffordable packages.
 
-Focus packages are always at level 3 (all files) and do not count
-against the context budget. Non-focus packages share the context token
-budget, a hard limit: packages are initially invisible, then context
-packages are raised to their guaranteed minimum visibility
-unconditionally, remaining packages are upgraded to their minimum
-visibility in priority order as the budget allows, then upgraded further
-by the water-filling algorithm within the remaining budget.
+Focus packages are pinned at level 1: their initial context is the
+declaration surface — go doc -all -cmd -u output plus the package's
+test-function names — and the model fetches implementation source on
+demand with go-src blocks. Pinning bounds the initial context of large
+projects without sacrificing detail: the model pulls exactly the
+declarations it needs. The water-fill never upgrades pinned focus
+packages (upgrading would reintroduce the full-source initial context),
+focus never counts against the context budget, and the budget derives
+from the focus documentation size, so the same focus packages always
+produce the same budget. Focus files still reach the context at full
+content when explicitly requested via -file (DoNotSimplify) and when
+they are non-Go files, which go doc cannot summarize; the focus
+documentation block carries the writable-dir read-only annotation in
+its begin marker, because focus Go files are no longer emitted
+individually. The construction principle therefore holds among
+non-focus packages; the pinned focus level is independent of it by
+design.
 `
 
 const TheoryOfLazyVisibilityCosts = `
 File token costs (rendered content and token counts at visibility levels 2
 and 3) are computed lazily, driven by the visibility allocation. Only
 packages whose costs the allocation requires up front are precomputed in
-parallel: focus packages (their level-3 total determines the dynamic
-context token budget), context packages (their level-2 cost is the first
-minimum-visibility decision), and any package containing DoNotSimplify
-files (which are always shown at full content regardless of the package's
-visibility). Every other package computes its costs on demand, exactly when
-the allocation probes it for a level that needs the file costs. Packages
-that receive no visibility — typically the long tail of external
-dependencies and standard library packages — never run the tokenizer, and
-packages that stop at level 1 (documentation) never pay the cost of
-counting their source files. The eagerly computed and on-demand values are
-identical because token counting is deterministic, so the allocation
-outcome is unchanged; laziness only avoids the work.
+parallel: context packages (their level-2 cost is the first
+minimum-visibility decision) and any package containing files always
+emitted at full content — DoNotSimplify files and the non-Go files of
+focus packages, which go doc cannot summarize. Focus packages need no
+file costs at all: pinned at documentation level, their budget
+contribution is their documentation size, so focus source files are
+never rendered or token-counted unless a file is explicitly requested
+via -file. Every other package computes its costs on demand, exactly
+when the allocation probes it for a level that needs the file costs.
+Packages that receive no visibility — typically the long tail of
+external dependencies and standard library packages — never run the
+tokenizer, and packages that stop at level 1 (documentation) never pay
+the cost of counting their source files. The eagerly computed and
+on-demand values are identical because token counting is deterministic,
+so the allocation outcome is unchanged; laziness only avoids the work.
 
 The water-fill's probe sequence bounds the on-demand computes
 automatically: a package whose predecessor is stuck at level 0 is never
@@ -159,9 +178,9 @@ a file's render is identical at both levels. computePackageCosts therefore
 renders and token-counts each file exactly once and reuses the result
 across levels, eliminating duplicate disk reads and tokenizer work per
 package. The computation itself is lazy per package: only packages probed
-by the visibility allocation — or focus/context packages, whose costs are
-required up front — are rendered and counted at all. See
-TheoryOfLazyVisibilityCosts.
+by the visibility allocation — or context packages and packages with
+always-full-content files, whose costs are required up front — are
+rendered and counted at all. See TheoryOfLazyVisibilityCosts.
 `
 
 const TheoryOfGoDocReadonly = `
@@ -216,38 +235,57 @@ func shouldIncludeFile(f *File, level VisibilityLevel) bool {
 	return false
 }
 
+// goDocOutput runs `go doc -all -cmd` for the package — adding -u for a
+// focus package so unexported symbols are included — and returns the raw
+// documentation text with a guaranteed trailing newline. Every
+// documentation path (visibility-level rendering, focus-package pinning,
+// and go-src package references) delegates here, keeping one go doc
+// invocation shared across the codebase. go doc runs with -mod=readonly:
+// the load environment injects -mod=mod (see TheoryOfModModEnv) so go
+// list can update go.mod when it is out of sync, but go doc would then
+// re-add checksums that go mod tidy removed, causing go.sum to churn.
+// Stripping -mod=mod leaves the go command's default -mod=readonly,
+// which fails instead of writing when a checksum is missing. See
+// TheoryOfGoDocReadonly.
+func goDocOutput(pkgPath, dir string, envs []string, focus bool) (string, error) {
+	args := []string{"doc", "-all", "-cmd"}
+	if focus {
+		args = append(args, "-u")
+	}
+	args = append(args, pkgPath)
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = withoutModModEnv(envs)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	text := string(output)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text, nil
+}
+
 // renderPackageDoc runs `go doc -all -cmd` for the package and wraps
 // the output with context package markers. Level 1 documentation is
 // per-package, not per-file. If go doc fails, the caller treats the
 // package as unaffordable at level 1 (cost set to 1<<30).
 // The -u flag is deliberately omitted: including unexported symbols
 // roughly doubles the doc output for most packages without adding
-// API-level reference value.
+// API-level reference value. Focus packages use -u via
+// computeFocusPackageDoc. See goDocOutput for the invocation.
 func renderPackageDoc(
 	pkgPath string,
 	dir string,
 	envs []string,
 	countTokens func(string) (int, error),
 ) (content string, tokens int, err error) {
-	cmd := exec.Command("go", "doc", "-all", "-cmd", pkgPath)
-	cmd.Dir = dir
-	// go doc must not modify go.sum: the load environment injects
-	// -mod=mod (see TheoryOfModModEnv) so go list can update go.mod
-	// when it is out of sync, but go doc would then re-add checksums
-	// that go mod tidy removed, causing go.sum to churn. Stripping
-	// -mod=mod leaves the go command's default -mod=readonly, which
-	// fails instead of writing when a checksum is missing. See
-	// TheoryOfGoDocReadonly.
-	cmd.Env = withoutModModEnv(envs)
-	output, err := cmd.Output()
+	text, err := goDocOutput(pkgPath, dir, envs, false)
 	if err != nil {
 		return "", 0, err
 	}
 
-	text := string(output)
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
 	content = "``` begin of context package " + pkgPath + "\n" +
 		text +
 		"``` end of context package " + pkgPath + "\n"
@@ -261,13 +299,16 @@ func renderPackageDoc(
 
 // computePackageDoc computes and caches the go doc output for a logical
 // package. It is the production computeDoc used by allocateVisibility via
-// SimplifyFiles. On success the level-1 budget cost is the doc token count.
-// On failure the doc is treated as empty: level 1 costs nothing and emits
-// nothing, and the water-fill can still upgrade the package to level 2
-// (code), whose costs are precomputed. This prevents a single go doc
-// failure from making the package permanently unaffordable. The docComputed
-// guard makes the call idempotent: each package runs the go doc subprocess
-// at most once. See TheoryOfLazyPackageDoc.
+// SimplifyFiles. Focus packages are routed to computeFocusPackageDoc:
+// their documentation block carries -u output and test-function names and
+// is the package's pinned terminal visibility, so it is never empty. For
+// non-focus packages, on success the level-1 budget cost is the doc token
+// count; on failure the doc is treated as empty: level 1 costs nothing and
+// emits nothing, and the water-fill can still upgrade the package to
+// level 2 (code), whose costs are precomputed. This prevents a single go
+// doc failure from making the package permanently unaffordable. The
+// docComputed guard makes the call idempotent: each package runs the go
+// doc subprocess at most once. See TheoryOfLazyPackageDoc.
 func computePackageDoc(
 	lp *LogicalPackage,
 	dir string,
@@ -275,6 +316,10 @@ func computePackageDoc(
 	countTokens func(string) (int, error),
 ) {
 	if lp.docComputed {
+		return
+	}
+	if lp.Category == CategoryFocus {
+		computeFocusPackageDoc(lp, dir, envs, countTokens)
 		return
 	}
 	content, tokens, err := renderPackageDoc(lp.PkgPath, dir, []string(envs), countTokens)
@@ -294,6 +339,113 @@ func computePackageDoc(
 		lp.TokensByLevel[VisibilityDoc] = tokens
 	}
 	lp.docComputed = true
+}
+
+// computeFocusPackageDoc computes the level-1 documentation block for a
+// focus package: go doc -all -cmd -u output (unexported symbols included,
+// because the model edits focus packages) followed by the package's test
+// function names, wrapped in "focus package" markers so the model can
+// distinguish the focus declaration surface from context documentation.
+// The block is the focus package's pinned terminal visibility, so it is
+// emitted even when go doc fails — carrying a failure note and the test
+// names — keeping the package discoverable for go-src fetches. A
+// countTokens failure falls back to empty content, matching the
+// non-focus path. See TheoryOfVisibilityAllocation and
+// TheoryOfLazyPackageDoc.
+func computeFocusPackageDoc(
+	lp *LogicalPackage,
+	dir string,
+	envs Envs,
+	countTokens func(string) (int, error),
+) {
+	readOnlyNote := ""
+	if focusPackageReadOnly(lp) {
+		readOnlyNote = " (read-only)"
+	}
+
+	var body strings.Builder
+	if text, err := goDocOutput(lp.PkgPath, dir, []string(envs), true); err != nil {
+		body.WriteString("(go doc failed: " + err.Error() +
+			"; fetch declarations with go-src blocks)\n")
+	} else {
+		body.WriteString(text)
+	}
+	body.WriteString(focusTestNamesSection(lp))
+
+	content := "``` begin of focus package " + lp.PkgPath + readOnlyNote + "\n" +
+		body.String() +
+		"``` end of focus package " + lp.PkgPath + "\n"
+
+	tokens, err := countTokens(content)
+	if err != nil {
+		content = ""
+		tokens = 0
+	}
+	lp.DocContent = content
+	lp.DocTokens = tokens
+	lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+	lp.TokensByLevel[VisibilityDoc] = tokens
+	lp.docComputed = true
+}
+
+// focusTestNamesSection lists the test function names of a focus
+// package: top-level Test, Benchmark, Fuzz, and Example functions
+// declared in the package's test files. Names — not bodies — are included
+// in the focus documentation block so the model can discover and fetch
+// potentially related test code with go-src blocks naming a function,
+// without paying the token cost of every test body up front. Names are
+// deduplicated and sorted for deterministic output. See
+// TheoryOfVisibilityAllocation.
+func focusTestNamesSection(lp *LogicalPackage) string {
+	var names []string
+	for _, f := range lp.Files {
+		if !f.IsTestFile || f.AstFile == nil {
+			continue
+		}
+		for _, decl := range f.AstFile.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Name == nil {
+				continue
+			}
+			name := fn.Name.Name
+			if strings.HasPrefix(name, "Test") ||
+				strings.HasPrefix(name, "Benchmark") ||
+				strings.HasPrefix(name, "Fuzz") ||
+				strings.HasPrefix(name, "Example") {
+				names = append(names, name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	var b strings.Builder
+	b.WriteString("\nTest functions in this package (fetch a test's source with a go-src block naming the function):\n")
+	for _, name := range names {
+		b.WriteString("- " + name + "\n")
+	}
+	return b.String()
+}
+
+// focusPackageReadOnly reports whether a focus package's files live
+// outside the writable directories. Focus Go files are no longer emitted
+// individually, so the per-file read-only annotation in
+// CodeProvider.Parts cannot reach the focus documentation block; the
+// note is carried in the block's begin marker instead, preserving the
+// instruction that change blocks must not target read-only files. The
+// first file decides; a check error is treated as not read-only. See
+// anytexts.TheoryOfFocusFileDirectoryCheck.
+func focusPackageReadOnly(lp *LogicalPackage) bool {
+	for _, f := range lp.Files {
+		outside, err := pathutil.IsOutsideWritableDirs(f.Path)
+		if err != nil {
+			return false
+		}
+		return outside
+	}
+	return false
 }
 
 // computePackageCosts renders and token-counts every file of the logical
@@ -404,16 +556,19 @@ func renderFileAtLevel(
 
 // precomputeTokenCounts renders and token-counts files at visibility levels
 // 2 and 3, in parallel, for the packages whose costs the visibility
-// allocation requires up front: focus packages (their level-3 total
-// determines the dynamic context budget), context packages (their level-2
-// minimum-visibility cost is the first allocation decision), and any
-// package containing DoNotSimplify files, which are always shown at level 3
-// regardless of the package's visibility. All other packages have their
-// costs computed lazily by allocateVisibility only when they are probed;
-// packages that receive no visibility never run the tokenizer. Level 1
-// (package documentation) costs are NOT computed here: they are computed by
-// computePackageDoc, lazily, for packages that reach level 1.
-// See TheoryOfLazyVisibilityCosts.
+// allocation requires up front: context packages (their level-2
+// minimum-visibility cost is the first allocation decision) and any
+// package containing files always emitted at full content — DoNotSimplify
+// files (explicitly requested via -file) and the non-Go files of focus
+// packages, which go doc cannot summarize. Focus packages pinned at
+// documentation level need no file costs: their budget contribution is
+// their documentation size, so focus source files are never rendered or
+// token-counted unless a file is explicitly requested. All other packages
+// have their costs computed lazily by allocateVisibility only when they
+// are probed; packages that receive no visibility never run the
+// tokenizer. Level 1 (package documentation) costs are NOT computed here:
+// they are computed by computePackageDoc, lazily, for packages that reach
+// level 1. See TheoryOfLazyVisibilityCosts.
 func precomputeTokenCounts(
 	logicalPkgs []*LogicalPackage,
 	countTokens func(string) (int, error),
@@ -424,8 +579,10 @@ func precomputeTokenCounts(
 	var errOnce sync.Once
 
 	for _, lp := range logicalPkgs {
-		if lp.Category != CategoryFocus && lp.Category != CategoryContext &&
-			!slices.ContainsFunc(lp.Files, func(f *File) bool { return f.DoNotSimplify }) {
+		if lp.Category != CategoryContext &&
+			!slices.ContainsFunc(lp.Files, func(f *File) bool {
+				return f.DoNotSimplify || (lp.Category == CategoryFocus && !f.IsGoFile)
+			}) {
 			continue
 		}
 		wg.Add(1)
@@ -529,28 +686,35 @@ func allocateVisibility(
 		return computeCosts(lp)
 	}
 
-	// Focus packages are always at level 3
+	// Focus packages are pinned at level 1: their initial context is the
+	// declaration surface (go doc -all -cmd -u) plus the package's test
+	// function names, and the model fetches implementation source on
+	// demand with go-src blocks. Pinning bounds the initial context of
+	// large projects without sacrificing detail, and the water-fill never
+	// upgrades pinned focus packages — upgrading would reintroduce the
+	// full-source initial context this scheme exists to avoid. The
+	// documentation cost is computed here because the context budget
+	// derives from it (a no-op when prefetchPackageDocs already computed
+	// it). See TheoryOfVisibilityAllocation.
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			lp.Visibility = VisibilityAll
+			computeDoc(lp)
+			lp.Visibility = VisibilityDoc
 		}
 	}
 
 	// The context token budget is dynamic: it is derived from the total
-	// token count of the focus packages (focusTokens / 4, rounded to the
-	// nearest multiple of contextTokenBudgetUnit, floored at one unit),
-	// so large repositories with big focus packages receive
-	// proportionally larger budgets for context packages. The
-	// computation is deterministic — identical focus packages produce an
-	// identical budget — preserving the LLM prefix cache. See
+	// token count of the focus packages' documentation (focusTokens / 4,
+	// rounded to the nearest multiple of contextTokenBudgetUnit, floored
+	// at one unit), so large declaration surfaces allocate proportionally
+	// larger budgets for context packages. The computation is
+	// deterministic — identical focus packages produce an identical
+	// budget — preserving the LLM prefix cache. See
 	// TheoryOfVisibilityAllocation.
 	focusTokens := 0
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			if err := ensureCosts(lp); err != nil {
-				return err
-			}
-			focusTokens += lp.TokensByLevel[VisibilityAll]
+			focusTokens += lp.TokensByLevel[VisibilityDoc]
 		}
 	}
 	remaining := calculateMaxContextTokens(focusTokens)

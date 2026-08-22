@@ -40,20 +40,137 @@ func TestSimplify(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(files) < 2 {
+		// Focus packages are pinned at documentation level: the output is
+		// the dep1 context file, the focus package's go doc block, and
+		// the non-Go focus file a.txt (the only PackageIsRoot entry, so
+		// it sorts last). main.go's full content must not appear.
+		// See TheoryOfVisibilityAllocation.
+		if len(files) < 3 {
 			t.Fatalf("got %v", len(files))
 		}
 		t.Logf("num files: %v", len(files))
-		if files[len(files)-1].Path != filepath.Join(dir, "main.go") {
-			t.Fatalf("got %v", files[0].Path)
+		var foundDep1, foundFocusDoc, foundATxt bool
+		for _, f := range files {
+			switch f.Path {
+			case filepath.Join(dir, "..", "dep1", "dep1.go"):
+				foundDep1 = true
+				if !strings.Contains(f.Confirmed.What, "visibility level") {
+					t.Fatalf("dep1.go should be at a code visibility level, got %q", f.Confirmed.What)
+				}
+			case filepath.Join(dir, "a.txt"):
+				foundATxt = true
+			case filepath.Join(dir, "main.go"):
+				t.Fatalf("main.go must not appear at full content; focus packages are documentation-only")
+			}
+			if strings.Contains(f.Confirmed.What, "focus go doc -u") {
+				foundFocusDoc = true
+				if !strings.Contains(string(f.Confirmed.Content), "begin of focus package") {
+					t.Fatalf("focus documentation block missing its marker:\n%s", f.Confirmed.Content)
+				}
+			}
 		}
-		if files[len(files)-2].Path != filepath.Join(dir, "a.txt") {
-			t.Fatalf("got %v", files[0].Path)
+		if !foundDep1 {
+			t.Fatal("dep1.go not found in output")
 		}
-		if files[len(files)-3].Path != filepath.Join(dir, "..", "dep1", "dep1.go") {
-			t.Fatalf("got %v", files[1].Path)
+		if !foundFocusDoc {
+			t.Fatal("focus package documentation block not found in output")
+		}
+		if !foundATxt {
+			t.Fatal("a.txt not found in output")
+		}
+		if files[len(files)-1].Path != filepath.Join(dir, "a.txt") {
+			t.Fatalf("a.txt should be the last output file, got %v", files[len(files)-1].Path)
 		}
 
+	})
+}
+
+func TestFocusPackageDocumentationContext(t *testing.T) {
+	// Focus packages are pinned at documentation level: the initial
+	// context carries go doc -all -cmd -u output (unexported symbols
+	// included) plus the package's test-function names, and the model
+	// fetches implementation source on demand with go-src blocks. Non-Go
+	// focus files stay at full content. See TheoryOfVisibilityAllocation.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/focusdoc\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "focusdoc.go"), []byte(`package focusdoc
+
+import _ "embed"
+
+//go:embed notes.txt
+var notes string
+
+// Exported returns something.
+func Exported() string {
+	return helper()
+}
+
+func helper() string {
+	return "helper result"
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "focusdoc_test.go"), []byte(`package focusdoc
+
+import "testing"
+
+func TestExported(t *testing.T) {
+	if Exported() == "" {
+		t.Fatal("empty")
+	}
+}
+
+func BenchmarkExported(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Exported()
+	}
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("focus note content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+	).Call(func(
+		provider CodeProvider,
+	) {
+		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var context strings.Builder
+		for _, part := range parts {
+			if text, ok := part.(generators.Text); ok {
+				context.WriteString(string(text))
+			}
+		}
+		got := context.String()
+		if !strings.Contains(got, "begin of focus package example.com/focusdoc") {
+			t.Fatalf("expected the focus package documentation block:\n%s", got)
+		}
+		if !strings.Contains(got, "helper") {
+			t.Fatalf("expected unexported symbols via -u:\n%s", got)
+		}
+		if strings.Contains(got, "return helper()") {
+			t.Fatalf("focus package bodies must not appear in the initial context:\n%s", got)
+		}
+		if !strings.Contains(got, "TestExported") || !strings.Contains(got, "BenchmarkExported") {
+			t.Fatalf("expected the test function names:\n%s", got)
+		}
+		if !strings.Contains(got, "focus note content") {
+			t.Fatalf("expected the non-Go focus file at full content:\n%s", got)
+		}
 	})
 }
 
@@ -148,7 +265,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			{
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
-				MinVisibility:       VisibilityAll,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
 			},
@@ -174,8 +291,8 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if pkgs[0].Visibility != VisibilityAll {
-			t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
+		if pkgs[0].Visibility != VisibilityDoc {
+			t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
 		}
 		if pkgs[1].Visibility != VisibilityInvisible {
 			t.Fatalf("directimport should be invisible (unaffordable), got %d", pkgs[1].Visibility)
@@ -186,15 +303,17 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 	})
 
 	t.Run("construction principle holds when all packages affordable", func(t *testing.T) {
-		// Verify the construction principle holds when packages can afford
-		// their minimum visibility: higher-priority packages have at least
-		// as much visibility as lower-priority ones. See
+		// The construction principle — higher-priority packages have at
+		// least as much visibility as lower-priority ones — now holds
+		// among non-focus packages. Focus packages are pinned at level 1
+		// by design and may sit below context packages; the pinned focus
+		// level is independent of the principle. See
 		// TheoryOfVisibilityAllocation.
 		pkgs := []*LogicalPackage{
 			{
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
-				MinVisibility:       VisibilityAll,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
 			},
@@ -218,9 +337,8 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if pkgs[0].Visibility < pkgs[1].Visibility {
-			t.Fatalf("construction principle violated: focus (%d) < context (%d)",
-				pkgs[0].Visibility, pkgs[1].Visibility)
+		if pkgs[0].Visibility != VisibilityDoc {
+			t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
 		}
 		if pkgs[1].Visibility < pkgs[2].Visibility {
 			t.Fatalf("construction principle violated: context (%d) < samemodule (%d)",
@@ -237,7 +355,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			{
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
-				MinVisibility:       VisibilityAll,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [4]int{0, 0, 0, 100},
 			},
@@ -282,7 +400,7 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		{
 			PkgPath:             "focus",
 			Category:            CategoryFocus,
-			MinVisibility:       VisibilityAll,
+			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
 			BudgetTokensByLevel: [4]int{0, 0, 0, 100},
 			TokensByLevel:       [4]int{0, 0, 0, 100},
@@ -314,8 +432,8 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if pkgs[0].Visibility != VisibilityAll {
-		t.Fatalf("focus should be at level 3, got %d", pkgs[0].Visibility)
+	if pkgs[0].Visibility != VisibilityDoc {
+		t.Fatalf("focus should be pinned at level 1, got %d", pkgs[0].Visibility)
 	}
 	if pkgs[1].Visibility != VisibilityCode {
 		t.Fatalf("context package must be guaranteed at level 2, got %d", pkgs[1].Visibility)
@@ -340,6 +458,8 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 		var docCalls []string
 		pkgs := []*LogicalPackage{
 			{
+				// Focus is pinned at level 1, so its documentation is
+				// probed too.
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
 				MinVisibility:       VisibilityAll,
@@ -372,8 +492,8 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if len(docCalls) != 1 || docCalls[0] != "samemodule" {
-			t.Fatalf("expected doc computed once for samemodule, got %v", docCalls)
+		if len(docCalls) != 2 || docCalls[0] != "focus" || docCalls[1] != "samemodule" {
+			t.Fatalf("expected doc computed once each for focus and samemodule, got %v", docCalls)
 		}
 		if pkgs[1].Visibility != VisibilityDoc {
 			t.Fatalf("expected samemodule at level 1, got %d", pkgs[1].Visibility)
@@ -477,11 +597,12 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 	// File token costs (rendered content and token counts at visibility
 	// levels 2 and 3) are computed lazily, driven by the visibility
 	// allocation: only packages the allocation actually probes run the
-	// tokenizer. Focus and context packages are always probed (focus
-	// determines the context budget, context's minimum visibility is
-	// level 2), but a package that receives no visibility — here, an
-	// other-module package whose doc and code costs exceed the budget —
-	// must never have its costs computed. See TheoryOfLazyVisibilityCosts.
+	// tokenizer. Context packages are always probed (their minimum
+	// visibility is level 2); focus packages are pinned at documentation
+	// level and never need file costs. A package that receives no
+	// visibility — here, an other-module package whose doc and code costs
+	// exceed the budget — must never have its costs computed. See
+	// TheoryOfLazyVisibilityCosts.
 	var costCalls []string
 	computed := make(map[string]bool)
 	computeCosts := func(lp *LogicalPackage) error {
@@ -524,8 +645,8 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(costCalls) != 2 || costCalls[0] != "focus" || costCalls[1] != "context" {
-		t.Fatalf("expected costs computed for focus and context only, got %v", costCalls)
+	if len(costCalls) != 1 || costCalls[0] != "context" {
+		t.Fatalf("expected costs computed for context only (focus is pinned at documentation level), got %v", costCalls)
 	}
 	if pkgs[1].Visibility != VisibilityCode {
 		t.Fatalf("expected context at level 2, got %d", pkgs[1].Visibility)
@@ -615,14 +736,15 @@ func TestMatchPattern(t *testing.T) {
 
 func TestLogTokenComposition(t *testing.T) {
 	// The context token composition log must report focus package
-	// tokens, the dynamic context budget, and how the context packages
-	// consume that budget by visibility level. See TheoryOfTokenComposition.
+	// documentation tokens, the dynamic context budget, and how the
+	// context packages consume that budget by visibility level. See
+	// TheoryOfTokenComposition.
 	pkgs := []*LogicalPackage{
 		{
 			PkgPath:       "focus",
 			Category:      CategoryFocus,
-			Visibility:    VisibilityAll,
-			TokensByLevel: [4]int{0, 0, 0, 500},
+			Visibility:    VisibilityDoc,
+			TokensByLevel: [4]int{0, 500, 0, 0},
 		},
 		{
 			PkgPath:       "docpkg",

@@ -17,7 +17,7 @@ into a single logical package with PkgPath "foo". The external test package
 levels 0-2 exclude them. The distance graph uses merged logical packages.
 
 Package categorization determines the minimum visibility and priority:
-- Focus packages (from -pkg): level 3, always visible
+- Focus packages (from -pkg): level 1 (go doc -u plus test names), pinned
 - Context packages (from -ctx, -dep): level 2, always visible
 - Same-module non-focus packages: level 1
 - Direct imports of focus packages: level 1
@@ -60,7 +60,7 @@ const (
 func categoryMinVisibility(c PackageCategory) VisibilityLevel {
 	switch c {
 	case CategoryFocus:
-		return VisibilityAll
+		return VisibilityDoc
 	case CategoryContext:
 		return VisibilityCode
 	case CategorySameModule, CategoryDirectImport:

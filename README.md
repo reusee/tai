@@ -170,8 +170,8 @@ Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `req
 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
-3. Context packages are assigned a package-level visibility (invisible, package documentation, code without tests, or full content) to fit a dynamic token budget derived from focus package size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
-4. Focus files (root package) are appended last
+3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names; implementation source is fetched on demand via go-src blocks. Non-Go focus files and files explicitly requested via `-file` are appended at full content last
+4. Context packages are assigned a package-level visibility (invisible, package documentation, code without tests, or full content) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
 5. Extra files from `-file` patterns are appended after focus files
 
 ### Generation Loop

@@ -17,32 +17,43 @@ on its priority (category, distance, path) and the dynamic context budget
 (see TheoryOfVisibilityAllocation in visibility.go).
 Level 0: invisible (deleted). Level 1: package documentation via
 go doc -all -cmd (per-package output, not per-file; the -u flag is
-deliberately omitted so the reference stays focused on exported symbols).
-Level 2: full Go code without test files (raw file content). Level 3: all
-files including tests, non-Go files, and embed files (raw file content).
+deliberately omitted for context packages so the reference stays focused
+on exported symbols, and added for focus packages so the model sees the
+complete surface of the packages it edits, alongside the package's test
+function names). Level 2: full Go code without test files (raw file
+content). Level 3: all files including tests, non-Go files, and embed
+files (raw file content).
 
 The water-filling algorithm upgrades packages from their minimum visibility
 to higher levels as the budget allows, processing packages in priority order.
 See TheoryOfVisibilityAllocation in visibility.go.
 
-Focus packages are always at level 3 and do not count against the budget.
-File ordering (see TheoryOfFileOrdering in files.go) places stable context
-files first and volatile focus files last, maximizing the common prefix
-between consecutive requests for LLM prefix caching.
+Focus packages are pinned at level 1 (documentation plus test-function
+names) and do not count against the budget; the model fetches focus
+implementation source on demand with go-src blocks. Focus files
+explicitly requested via -file and non-Go focus files (which go doc
+cannot summarize) are still emitted at full content. File ordering (see
+TheoryOfFileOrdering in files.go) places stable context files first and
+volatile focus files last, maximizing the common prefix between
+consecutive requests for LLM prefix caching.
 `
 
 const TheoryOfTokenComposition = `
 Token composition logging makes the context token budget observable. The
-SimplifyFiles step logs the allocation view: focus package tokens, the dynamic
-context budget derived from them, and how the context packages consume that
-budget by visibility level (doc-only packages at level 1, code-only packages
-at level 2, full packages at level 3). The CodeProvider.Parts step logs the
-assembly view: how the final prompt token total is composed of focus project
-files, context project files, extra files from -file patterns, and package
-documentation from -doc patterns. Together these logs let the user see at a
-glance whether the token budget is dominated by focus files, context files,
-or user-requested additions, and whether the dynamic context budget is
-under- or over-allocated. See TheoryOfVisibilityAllocation.
+SimplifyFiles step logs the allocation view: focus package documentation
+tokens (the pinned level-1 blocks from which the budget derives), the
+dynamic context budget derived from them, and how the context packages
+consume that budget by visibility level (doc-only packages at level 1,
+code-only packages at level 2, full packages at level 3). The
+CodeProvider.Parts step logs the assembly view: how the final prompt
+token total is composed of focus project files, context project files
+(focus-package documentation blocks carry the context-file marker and are
+counted with context tokens there), extra files from -file patterns, and
+package documentation from -doc patterns. Together these logs let the
+user see at a glance whether the token budget is dominated by focus
+files, context files, or user-requested additions, and whether the
+dynamic context budget is under- or over-allocated. See
+TheoryOfVisibilityAllocation.
 `
 
 type SimplifyFiles func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error)
@@ -113,11 +124,13 @@ func (Module) SimplifyFiles(
 
 		// 5. Pre-compute per-file token counts at visibility levels 2 and 3
 		// for the packages whose costs the allocation requires up front,
-		// concurrently: focus packages, context packages, and any package
-		// containing DoNotSimplify files. All other packages have their
-		// costs computed lazily only when the allocation probes them;
-		// packages that receive no visibility never run the tokenizer.
-		// See TheoryOfLazyVisibilityCosts in visibility.go.
+		// concurrently: context packages and any package containing files
+		// always emitted at full content (DoNotSimplify files and the
+		// non-Go files of focus packages). Focus packages pinned at
+		// documentation level need no file costs. All other packages have
+		// their costs computed lazily only when the allocation probes
+		// them; packages that receive no visibility never run the
+		// tokenizer. See TheoryOfLazyVisibilityCosts in visibility.go.
 		if err := precomputeTokenCounts(logicalPkgs, countTokens); err != nil {
 			return nil, err
 		}
@@ -162,24 +175,31 @@ func (Module) SimplifyFiles(
 		// 7. Collect output files at their assigned visibility levels
 		var result []*File
 		for _, lp := range logicalPkgs {
-			// DoNotSimplify files are always at level 3 (full content),
-			// regardless of the package's visibility level.
+			// Files always emitted at full content regardless of the
+			// package's visibility level: files explicitly requested via
+			// -file (DoNotSimplify) and the non-Go files of focus
+			// packages, which go doc cannot summarize.
 			renderedAtAll := make(map[*File]renderedFile)
 			for _, rf := range lp.RenderedFiles[VisibilityAll] {
 				renderedAtAll[rf.file] = rf
 			}
 			for _, f := range lp.Files {
-				if !f.DoNotSimplify {
+				nonGoFocus := lp.Category == CategoryFocus && !f.IsGoFile
+				if !f.DoNotSimplify && !nonGoFocus {
 					continue
 				}
 				rf, ok := renderedAtAll[f]
 				if !ok {
 					continue
 				}
+				what := "full content (non-Go focus file)"
+				if f.DoNotSimplify {
+					what = "visibility level 3 (do not simplify)"
+				}
 				f.LogicalPkgPath = lp.PkgPath
 				f.PackageDistanceFromRoot = lp.Distance
 				f.Confirmed = &Transformed{
-					What:      "visibility level 3 (do not simplify)",
+					What:      what,
 					Content:   []byte(rf.content),
 					NumTokens: rf.tokens,
 				}
@@ -209,6 +229,10 @@ func (Module) SimplifyFiles(
 					mainPkg = lp.Packages[0]
 				}
 				pkgPathDepth := len(strings.Split(lp.PkgPath, "/"))
+				docWhat := "visibility level 1 (go doc)"
+				if lp.Category == CategoryFocus {
+					docWhat = "visibility level 1 (focus go doc -u)"
+				}
 				docFile := &File{
 					Path:                    lp.PkgPath,
 					IsGoFile:                true,
@@ -223,7 +247,7 @@ func (Module) SimplifyFiles(
 					LogicalPkgPath:          lp.PkgPath,
 					ChangeCount:             lp.ChangeCount,
 					Confirmed: &Transformed{
-						What:      "visibility level 1 (go doc)",
+						What:      docWhat,
 						Content:   []byte(lp.DocContent),
 						NumTokens: lp.DocTokens,
 					},
@@ -340,11 +364,12 @@ func compareFilesForOutput(a, b *File) int {
 }
 
 // logTokenComposition logs the context token composition after visibility
-// allocation: focus package tokens, the dynamic context budget derived from
-// them, and how the context packages consume that budget by visibility level.
-// The composition makes it possible to see at a glance whether the context
-// budget is dominated by doc-only, code-only, or full packages, and how many
-// packages are invisible. See TheoryOfTokenComposition.
+// allocation: focus package documentation tokens, the dynamic context
+// budget derived from them, and how the context packages consume that
+// budget by visibility level. The composition makes it possible to see at
+// a glance whether the context budget is dominated by doc-only, code-only,
+// or full packages, and how many packages are invisible. See
+// TheoryOfTokenComposition.
 func logTokenComposition(
 	logger logs.Logger,
 	logicalPkgs []*LogicalPackage,
@@ -352,7 +377,7 @@ func logTokenComposition(
 	focusTokens := 0
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			focusTokens += lp.TokensByLevel[VisibilityAll]
+			focusTokens += lp.TokensByLevel[VisibilityDoc]
 		}
 	}
 	var contextTokensByLevel [4]int
