@@ -91,7 +91,6 @@ func (Module) CodesComponents(
 	familyExtra flags.FamilyExtraSystemPrompt,
 	goFamilyExtra gocodes.FamilyExtraSystemPrompt,
 	modelFamily generators.ModelFamily,
-	dynamicContext DynamicContext,
 	apply flags.Apply,
 	plan flags.Plan,
 	flagShell flags.Shell,
@@ -138,8 +137,8 @@ func (Module) CodesComponents(
 	// Test output is always fed back to the model as Parts, triggering a
 	// new round regardless of whether tests pass or fail: the model needs
 	// the results to decide whether to continue, and withholding output on
-	// pass causes the system to exit prematurely when the model intended
-	// to proceed. MaxRounds bounds the test-fix loop. Placed after change
+	// pass causes the system to exit prematurely when the model intended to
+	// proceed. MaxRounds bounds the test-fix loop. Placed after change
 	// so tests run against updated source, and before summary so test
 	// output is available for the next round.
 	// See TheoryOfCodesComponents and blocks.TheoryOfGoTestBlocks.
@@ -193,34 +192,34 @@ func (Module) CodesComponents(
 		},
 	})
 
-	// Request-context component: conditional on dynamicContext.
-	// Processed before shell/continue so fetched context is available
-	// for the next generation round.
-	// RestatePrompt carries the request-context restate prompt.
-	if bool(dynamicContext) {
-		comps = append(comps, components.Component{
-			Kind:          "request-context",
-			PromptSection: blocks.RequestContextSystemPrompt,
-			RestatePrompt: blocks.RequestContextRestatePrompt,
-			MaxRounds:     maxRequestContextRounds,
-			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-				state, hasRC, err := blocks.ProcessRequestContextBlocks(
-					pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
-				)
-				result := components.ProcessResult{
-					Err: err,
-				}
-				// Only set State when request-context blocks were
-				// found and fetched content was appended, so that
-				// result.State != nil reliably signals a state
-				// modification that triggers a new round.
-				if hasRC {
-					result.State = state
-				}
-				return result
-			},
-		})
-	}
+	// Request-context component: always enabled — dynamic context has no
+	// toggle; the model may request additional files and network resources
+	// mid-generation in every codes session. Processed before
+	// shell/continue so fetched context is available for the next
+	// generation round. RestatePrompt carries the request-context restate
+	// prompt. See blocks.TheoryOfRequestContext.
+	comps = append(comps, components.Component{
+		Kind:          "request-context",
+		PromptSection: blocks.RequestContextSystemPrompt,
+		RestatePrompt: blocks.RequestContextRestatePrompt,
+		MaxRounds:     maxRequestContextRounds,
+		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+			state, hasRC, err := blocks.ProcessRequestContextBlocks(
+				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
+			)
+			result := components.ProcessResult{
+				Err: err,
+			}
+			// Only set State when request-context blocks were
+			// found and fetched content was appended, so that
+			// result.State != nil reliably signals a state
+			// modification that triggers a new round.
+			if hasRC {
+				result.State = state
+			}
+			return result
+		},
+	})
 
 	// Common components: shell (conditional on flagShell) and continue.
 	// Reused from components.CommonComponents so that shell and continue

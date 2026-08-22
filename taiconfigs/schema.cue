@@ -66,9 +66,6 @@ temperature?: float
 // apply controls whether change blocks are applied to the working tree during generation.
 apply?: bool
 
-// dynamic_context enables dynamic context fetching via request-context blocks.
-dynamic_context?: bool
-
 // plan enables mandatory planning and multi-round generation.
 plan?: bool
 

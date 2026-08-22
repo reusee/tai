@@ -21,35 +21,19 @@ func (mockCodeProvider) Parts(int, func(string) (int, error), []string) ([]gener
 }
 
 func TestSystemPromptDynamicContext(t *testing.T) {
-	t.Run("Disabled", func(t *testing.T) {
-		dscope.New(
-			modes.ForTest(t),
-			new(Module),
-		).Fork(
-			func() codetypes.CodeProvider { return mockCodeProvider{} },
-		).Call(func(
-			prompt SystemPrompt,
-		) {
-			if strings.Contains(string(prompt), "Request-Context Block Kind") {
-				t.Fatal("system prompt must not include request-context section when dynamic context is disabled")
-			}
-		})
-	})
-
-	t.Run("Enabled", func(t *testing.T) {
-		dscope.New(
-			modes.ForTest(t),
-			new(Module),
-		).Fork(
-			func() codetypes.CodeProvider { return mockCodeProvider{} },
-			func() DynamicContext { return true },
-		).Call(func(
-			prompt SystemPrompt,
-		) {
-			if !strings.Contains(string(prompt), "Request-Context Block Kind") {
-				t.Fatal("system prompt must include request-context section when dynamic context is enabled")
-			}
-		})
+	// Dynamic context is always enabled: the request-context section is an
+	// unconditional part of the codes system prompt.
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.CodeProvider { return mockCodeProvider{} },
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		if !strings.Contains(string(prompt), "Request-Context Block Kind") {
+			t.Fatal("system prompt must include request-context section")
+		}
 	})
 }
 

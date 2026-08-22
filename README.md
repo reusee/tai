@@ -115,7 +115,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |
-| `-dynamic-context` | Enable dynamic context fetching via request-context blocks |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
 | `-no-human` | Disable interactive chat for unattended operation |
