@@ -46,11 +46,12 @@ Package matching takes precedence over symbol matching, mirroring go
 doc, and a package name may match several packages, all of which are
 returned. go doc runs from the load directory (or the workspace root in
 workspace mode) with the read-only environment of TheoryOfGoDocReadonly,
-so go.sum is never modified; a focus (root) package adds the -cmd and -u
-flags so a main package's documentation and unexported symbols are shown
-— the model edits focus packages and needs their complete surface —
-while a context package's exported API surface suffices. A failed go doc
-yields an explicit error part for that package, never an abort.
+so go.sum is never modified; every package is documented with -all -cmd —
+all declarations, including a main package's — and a focus (root) package
+adds -u so unexported symbols are shown: the model edits focus packages
+and needs their complete surface, while a context package's exported API
+surface suffices. A failed go doc yields an explicit error part for that
+package, never an abort.
 `
 
 // ResolveGoSymbols resolves Go symbol names to their declaration source
@@ -180,18 +181,18 @@ func matchLoadedPackages(symbol string, index map[string]loadedPackage) []loaded
 	return matches
 }
 
-// renderGoSrcPackageDoc runs go doc for the package and wraps the output
-// with source package markers. A focus package adds the -cmd and -u
-// flags: -cmd documents a main package and -u includes unexported
-// symbols, giving the model the complete surface of the packages it
-// edits, while a context package is reference material whose exported
-// API suffices. Like renderPackageDoc, the environment strips -mod=mod
-// so go doc never modifies go.sum. See TheoryOfGoDocReadonly and
-// TheoryOfGoSrcResolution.
+// renderGoSrcPackageDoc runs go doc -all -cmd for the package and wraps
+// the output with source package markers: -all documents every
+// declaration, not only the top-level summary, and -cmd documents a main
+// package. A focus package adds -u to include unexported symbols, giving
+// the model the complete surface of the packages it edits, while a
+// context package is reference material whose exported API suffices.
+// Like renderPackageDoc, the environment strips -mod=mod so go doc never
+// modifies go.sum. See TheoryOfGoDocReadonly and TheoryOfGoSrcResolution.
 func renderGoSrcPackageDoc(pkgPath string, focus bool, dir string, envs []string) (string, error) {
-	args := []string{"doc"}
+	args := []string{"doc", "-all", "-cmd"}
 	if focus {
-		args = append(args, "-cmd", "-u")
+		args = append(args, "-u")
 	}
 	args = append(args, pkgPath)
 	cmd := exec.Command("go", args...)
