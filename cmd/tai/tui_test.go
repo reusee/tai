@@ -2715,6 +2715,32 @@ func TestTuiThoughtSummaryWriter(t *testing.T) {
 	}
 }
 
+func TestTuiUsageWriter(t *testing.T) {
+	tui, err := newTUI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := "[Usage] round 1: prompt 100, cached 20, completion 50, thoughts 10"
+	if _, err := tui.UsageWriter().Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if len(tui.signals) != 1 {
+		t.Fatalf("expected 1 signal line, got %d", len(tui.signals))
+	}
+	if tui.signals[0].Text != line {
+		t.Fatalf("unexpected signal %q", tui.signals[0].Text)
+	}
+	if tui.signals[0].Color != outputColorLogLine {
+		t.Fatalf("expected log color for the usage line")
+	}
+	if !tui.tabs.Expanded[1] {
+		t.Fatal("expected Summary tab to auto-expand on a usage line")
+	}
+	if !tui.scrolls[1].Follow {
+		t.Fatal("expected Summary tab to follow the tail")
+	}
+}
+
 func TestTuiStateDoesNotParseSummariesFromUserContent(t *testing.T) {
 	tui := newTUIForTest()
 	tui.captureContent(&generators.Content{

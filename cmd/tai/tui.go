@@ -44,8 +44,9 @@ lifecycle is tracked by isGeneratingLog and outputTabLabel.
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Summary tab collects the round completion
 signals — the bodies of summary blocks, the finish reasons ("[Finish: ...]"),
-and the periodic thought summaries when -summarize-thoughts is enabled —
-and the Logs tab collects log records. The Logs tab renders consecutive
+the per-round usage lines ("[Usage] ..."), and the periodic thought
+summaries when -summarize-thoughts is enabled — and the Logs tab collects
+log records. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
 alternation stays subtle in either state. Model output is captured from the
@@ -57,7 +58,10 @@ directly from the state's FinishReason parts. Raw thoughts are suppressed
 from the Output tab only when -no-thoughts is set; when
 -summarize-thoughts is enabled, the raw stream keeps flowing to the
 Output tab while the periodic summaries stream to the Summary tab through
-the forked pipeline.ThoughtSummaryWriter. Suppressing the raw stream under
+the forked pipeline.ThoughtSummaryWriter. Per-round usage lines are routed
+to the Summary tab through the forked pipeline.UsageWriter instead of the
+Logs pane, so round usage reads as one of the round's signals (see
+pipeline.TheoryOfUsageLogging). Suppressing the raw stream under
 -summarize-thoughts would blank the focused Output tab during long
 thinking phases — leaving no live feedback and making the session look
 stalled — so the two tabs show both streams concurrently. The tuiOutputState's Flush
@@ -92,8 +96,8 @@ already-expanded tab keeps its current view; re-expanding a collapsed tab
 resumes following the live tail. All tabs are collapsed by default; a
 collapsed tab expands automatically the FIRST time content for it arrives —
 the Output tab on any streamed output, the Summary tab on a parsed summary
-block, a finish reason, or a thought summary, the Logs tab on any log
-record — so the interface surfaces panes only when they have something
+block, a finish reason, a usage line, or a thought summary, the Logs tab
+on any log record — so the interface surfaces panes only when they have something
 to show. Subsequent content
 arrivals do not re-expand a tab the user collapsed. Auto-expansion never
 changes an existing focus: a tab popping open cannot steal attention from the
@@ -385,6 +389,27 @@ func (t *TUI) writeThoughtSummary(p []byte) {
 	t.signals = append(t.signals, taiui.Line{})
 }
 
+// writeUsage appends a per-round token usage line to the Summary tab.
+// The pipeline's UsageWriter (forked to TUI.UsageWriter by runWithTUI)
+// writes the "[Usage] round N: ..." line here, so round usage reads as
+// one of the round's signals — alongside summary bodies, finish reasons,
+// and thought summaries — instead of as a log record in the Logs tab.
+// The line uses the log color, matching finish signals. See TheoryOfTUI.
+func (t *TUI) writeUsage(p []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	text := strings.TrimSpace(string(p))
+	if text == "" {
+		return
+	}
+	if t.tabs.AutoExpand(1) {
+		t.scrolls[1].Follow = true
+	}
+	for _, line := range strings.Split(text, "\n") {
+		t.signals = append(t.signals, taiui.Line{Text: line, Color: outputColorLogLine})
+	}
+}
+
 // isGeneratingLog reports whether a log line marks the start of a
 // generation request. The generators package logs a record with message
 // "generating" at the start of every API request, before any output is
@@ -487,6 +512,14 @@ func (w logsWriter) Write(p []byte) (int, error) {
 
 func (w thoughtSummaryWriter) Write(p []byte) (int, error) {
 	w.t.writeThoughtSummary(p)
+	w.t.notify()
+	return len(p), nil
+}
+
+type usageWriter struct{ t *TUI }
+
+func (w usageWriter) Write(p []byte) (int, error) {
+	w.t.writeUsage(p)
 	w.t.notify()
 	return len(p), nil
 }
@@ -646,6 +679,15 @@ func (t *TUI) LogsWriter() io.Writer {
 // summaries and finish signals, not in the Output tab. See TheoryOfTUI.
 func (t *TUI) ThoughtSummaryWriter() io.Writer {
 	return thoughtSummaryWriter{t}
+}
+
+// UsageWriter returns the writer that appends per-round token usage lines
+// to the Summary tab. runWithTUI forks the pipeline.UsageWriter provider
+// to this writer so the round usage reads as one of the round's signals
+// alongside summaries and finish reasons, not as a log record in the
+// Logs tab. See TheoryOfTUI.
+func (t *TUI) UsageWriter() io.Writer {
+	return usageWriter{t}
 }
 
 func (t *TUI) captureContent(content *generators.Content) {
@@ -1419,6 +1461,11 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		// raw thoughts. See pipeline.TheoryOfThoughtsSummarize and
 		// TheoryOfTUI.
 		func() pipeline.ThoughtSummaryWriter { return pipeline.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
+		// Per-round token usage lines are routed to the Summary tab so
+		// they read as round signals alongside summaries and finish
+		// reasons; without the fork the usage goes to the logger and
+		// the Logs pane. See pipeline.TheoryOfUsageLogging.
+		func() pipeline.UsageWriter { return pipeline.UsageWriter(tui.UsageWriter()) },
 		// Handoff generation streams to the Output tab and reports its
 		// lifecycle through the HandoffObserver, so the title shows
 		// "Output (handoff...)" while a handoff request is in flight.
