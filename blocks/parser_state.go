@@ -72,7 +72,7 @@ The correction budget is cumulative per run: the loop (see TheoryOfLoops) feeds
 parse errors back only for a bounded number of rounds since the last clean round,
 and the feedback states the attempt number so the model knows when it is on its
 final attempt. When the budget is exhausted, feedback stops and the uncorrected
-parse errors are surfaced via loops.Result.ParseErrors, so a persistently malformed
+parse errors are surfaced via pipeline.Result.ParseErrors, so a persistently malformed
 model cannot restart the correction cycle indefinitely and unattended callers can
 detect silent change loss.
 

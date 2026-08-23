@@ -27,7 +27,7 @@ which must be computed at call time.
 
 Disabled blocks are announced explicitly: the set carries
 components.DisabledBlocksComponent listing every kind this session cannot
-process — the codes-pipeline kinds (change, go-test, go-src, read), the
+process — the pipeline kinds (change, go-test, go-src, read), the
 deliberately excluded continue (OnIdle is the sole input gateway), and
 conditionally shell (-shell off) and memory (-no-memory). Without the notice
 the model may emit these kinds from habit; the blocks would be silently
@@ -59,7 +59,7 @@ never sees continue-block instructions, and any stray continue block is not
 processed.
 
 AIComponents is a distinct named type embedding components.ComponentSet so that
-dscope resolves it independently from the codes module's CodesComponents
+dscope resolves it independently from the pipeline module's CodesComponents
 provider.
 
 RestatePrompts are included for the block format, memory, and shell
@@ -75,10 +75,10 @@ const baseAISystemPrompt = `提供有用的帮助。
 
 // AIComponents is the component set type for the ai command. It embeds
 // components.ComponentSet as an anonymous struct field so that dscope can
-// resolve it independently from the codes module's CodesComponents, avoiding
-// a type conflict when both providers are wired into the same scope. Method
-// promotion eliminates the need for explicit delegation methods.
-// See TheoryOfAIComponents.
+// resolve it independently from the pipeline module's CodesComponents,
+// avoiding a type conflict when both providers are wired into the same
+// scope. Method promotion eliminates the need for explicit delegation
+// methods. See TheoryOfAIComponents.
 type AIComponents struct {
 	components.ComponentSet
 }
@@ -129,7 +129,7 @@ func (Module) AIComponents(
 	// process so the model does not emit them from habit — an unprocessed
 	// block is silently ignored while implying an action that never
 	// happened. The ai command processes only shell and memory blocks: the
-	// codes-pipeline kinds (change, go-test, go-src, read) have no
+	// pipeline kinds (change, go-test, go-src, read) have no
 	// processor here, and continue is deliberately excluded because
 	// OnIdle is the sole input gateway. Shell is listed when the flag is
 	// off, memory when -no-memory is set. The notice is static per
@@ -163,7 +163,7 @@ func (Module) AIComponents(
 	// the model family. The family is resolved from the scope via
 	// generators.ModelFamily; when the family matches a key, the
 	// corresponding prompts are appended after the generic extra prompts
-	// as prompt-only components. See codes.TheoryOfFamilyExtraSystemPrompt.
+	// as prompt-only components. See pipeline.TheoryOfFamilyExtraSystemPrompt.
 	for _, prompt := range familyExtra[string(modelFamily)] {
 		if prompt != "" {
 			comps = append(comps, components.Component{

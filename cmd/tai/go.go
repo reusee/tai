@@ -5,18 +5,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/reusee/tai/codes"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 const TheoryOfGoCommand = `
 The "go" subcommand provides code generation for Go files by selecting the "go"
 PartsProvider, which delegates to gotools.PartsProvider. It reuses the full
-codes.Generate pipeline — including dynamic context, immediate apply, shell and
-continue blocks, and round statistics — by wiring codes.Module into the dscope
+generation pipeline — including dynamic context, immediate apply, shell and
+continue blocks, and round statistics — by wiring pipeline.Module into the dscope
 scope. The -repl flag enables a REPL mode that taps the debugs infrastructure
 without running generation, useful for interactive debugging. This is the
 Go-oriented counterpart to the "any" subcommand for general-purpose text file
@@ -38,8 +38,8 @@ var GoCommand = Command{
 		},
 	},
 	Main: func(
-		generateWithResult codes.GenerateWithResult,
-		runReview codes.RunReview,
+		generateWithResult pipeline.GenerateWithResult,
+		runReview pipeline.RunReview,
 		tap debugs.Tap,
 		repl Repl,
 		noHuman NoHuman,

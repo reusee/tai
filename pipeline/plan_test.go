@@ -1,13 +1,13 @@
-package codes
+package pipeline
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 func TestSystemPromptPlan(t *testing.T) {

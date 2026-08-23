@@ -13,11 +13,10 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
-	"github.com/reusee/tai/states"
 )
 
 const TheoryOfNextCommand = `
@@ -44,22 +43,22 @@ inside the stable prefix region. See components.TheoryOfDisabledBlocks.
 Change blocks emitted by the model are applied to the working tree via a
 ParserState block handler that writes to an in-memory MemoryStore during
 streaming, then flushes to disk after the generation round succeeds. This
-reuses the same in-memory apply mechanism as the codes module (see
+reuses the same in-memory apply mechanism as the pipeline (see
 changes.TheoryOfInMemoryApply), ensuring early error detection — a malformed
 change block triggers a retry via changes.ApplyError, resetting the
 MemoryStore to discard failed changes — while preserving filesystem
 consistency on failure. The handler is built by
 changes.BuildChangeBlockHandler, sharing the change-application logic with
-the codes module. The -no-apply flag disables change block application,
+the pipeline. The -no-apply flag disables change block application,
 causing blocks to be parsed but not applied to disk.
 
-The -summarize-thoughts flag wires states.NewThoughtsSummarize around the
-output layer, mirroring the codes pipeline: when enabled (and thoughts are
+The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
+output layer, mirroring the generation pipeline: when enabled (and thoughts are
 not hidden), the stdout Output layer suppresses raw thoughts and the
-summarizer writes periodic summaries to states.ThoughtSummaryWriter —
+summarizer writes periodic summaries to pipeline.ThoughtSummaryWriter —
 os.Stdout by default, or the TUI's Summary-tab writer when -tui forks the
 provider. In TUI mode the tuiOutputState decorator still streams raw
-thoughts to the Output tab. See states.TheoryOfThoughtsSummarize.
+thoughts to the Output tab. See pipeline.TheoryOfThoughtsSummarize.
 `
 
 type SystemPrompt string
@@ -106,7 +105,7 @@ func (Module) SystemPrompt(
 	// the model family. The family is resolved from the scope via
 	// generators.ModelFamily; when the family matches a key, the
 	// corresponding prompts are appended after the generic extra prompts.
-	// See codes.TheoryOfFamilyExtraSystemPrompt.
+	// See pipeline.TheoryOfFamilyExtraSystemPrompt.
 	for _, prompt := range familyExtra[string(modelFamily)] {
 		if prompt != "" {
 			ret += "\n\n" + SystemPrompt(prompt) + "\n"
@@ -153,12 +152,12 @@ var NextCommand = Command{
 		flagThoughts flags.Thoughts,
 		apply flags.Apply,
 		buildChangeBlockHandler changes.BuildChangeBlockHandler,
-		loopRun loops.Run,
+		loopRun pipeline.Run,
 		recorder *records.Recorder,
 		writeTimes *changes.FileWriteTimes,
-		getDefaultSummarizer states.GetDefaultSummarizer,
+		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-		thoughtSummaryWriter states.ThoughtSummaryWriter,
+		thoughtSummaryWriter pipeline.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
@@ -197,11 +196,11 @@ var NextCommand = Command{
 		}
 		// When -summarize-thoughts is enabled, the Output layer suppresses
 		// raw thoughts and the summarizer writes periodic summaries in their
-		// place, mirroring the codes pipeline. In TUI mode os.Stdout is
+		// place, mirroring the generation pipeline. In TUI mode os.Stdout is
 		// discarded and the tuiOutputState decorator streams raw thoughts to
-		// the Output tab while the forked states.ThoughtSummaryWriter routes
-		// summaries to the Summary tab. See TheoryOfNextCommand and
-		// states.TheoryOfThoughtsSummarize.
+		// the Output tab while the forked pipeline.ThoughtSummaryWriter
+		// routes summaries to the Summary tab. See TheoryOfNextCommand and
+		// pipeline.TheoryOfThoughtsSummarize.
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			ce(err)
@@ -210,7 +209,7 @@ var NextCommand = Command{
 			if thoughtSummaryWriter != nil {
 				summaryWriter = thoughtSummaryWriter
 			}
-			state = states.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
+			state = pipeline.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
 		} else {
 			state = generators.NewOutput(state, os.Stdout, showThoughts)
 		}
@@ -221,12 +220,12 @@ var NextCommand = Command{
 		// *changes.ApplyError so the loop can retry, resetting the
 		// MemoryStore to discard failed changes. The handler is built
 		// by changes.BuildChangeBlockHandler so the change-application
-		// logic is shared with the codes module. See
-		// changes.TheoryOfInMemoryApply and loops.TheoryOfLoops.
-		var blockHandler loops.BlockHandler
+		// logic is shared with the pipeline. See
+		// changes.TheoryOfInMemoryApply and pipeline.TheoryOfLoops.
+		var blockHandler pipeline.BlockHandler
 		if bool(apply) {
 			handler := buildChangeBlockHandler(memStore)
-			blockHandler = loops.BlockHandler(handler)
+			blockHandler = pipeline.BlockHandler(handler)
 		}
 
 		// Run the unified generation loop in single-shot mode (no
@@ -236,9 +235,9 @@ var NextCommand = Command{
 		// recorder is passed explicitly so the session is captured when
 		// -record is enabled. The result is filled into result as the
 		// run progresses; the iterator yields the terminal error, if
-		// any. See loops.TheoryOfLoops.
-		var result loops.Result
-		for e := range loopRun(ctx, loops.RunOptions{
+		// any. See pipeline.TheoryOfLoops.
+		var result pipeline.Result
+		for e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,

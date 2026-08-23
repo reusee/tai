@@ -1,15 +1,15 @@
-package codes
+package pipeline
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 type mockPartsProvider struct{}

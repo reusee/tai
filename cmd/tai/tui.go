@@ -15,12 +15,10 @@ import (
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/codes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/loops"
-	"github.com/reusee/tai/states"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -59,7 +57,7 @@ directly from the state's FinishReason parts. Raw thoughts are suppressed
 from the Output tab only when -no-thoughts is set; when
 -summarize-thoughts is enabled, the raw stream keeps flowing to the
 Output tab while the periodic summaries stream to the Summary tab through
-the forked states.ThoughtSummaryWriter. Suppressing the raw stream under
+the forked pipeline.ThoughtSummaryWriter. Suppressing the raw stream under
 -summarize-thoughts would blank the focused Output tab during long
 thinking phases — leaving no live feedback and making the session look
 stalled — so the two tabs show both streams concurrently. The tuiOutputState's Flush
@@ -141,12 +139,12 @@ buffers, tab machine, scroll offsets, signals, and session flags.
 
 const TheoryOfTUIHandoff = `
 The Output tab title reflects the handoff process: while a handoff
-request is being generated (see states.TheoryOfHandoff), the title shows
+request is being generated (see pipeline.TheoryOfHandoff), the title shows
 "Output (handoff...)" with the active highlight, taking precedence over
 the "generating..." hint. The handoff request's streamed text and
 reasoning thoughts are written to the Output tab through the forked
-states.HandoffWriter, so the user sees the handoff in progress. The
-states.HandoffObserver provider drives the title state: HandoffStart sets
+pipeline.HandoffWriter, so the user sees the handoff in progress. The
+pipeline.HandoffObserver provider drives the title state: HandoffStart sets
 the handoff flag, HandoffEnd clears it.
 `
 
@@ -360,7 +358,7 @@ func (t *TUI) writeLogs(p []byte) {
 }
 
 // writeThoughtSummary appends a periodic thought summary to the Summary
-// tab. The states writer prefixes each summary with a "[Thought
+// tab. The pipeline writer prefixes each summary with a "[Thought
 // Summary]:" header line; the header line is colored with the thought
 // color to distinguish thought summaries from round summaries and finish
 // signals, and a blank separator terminates the entry. The summary
@@ -534,7 +532,7 @@ type TUI struct {
 	// handoff reports whether a handoff generation request is in flight.
 	// It is set by HandoffStart and cleared by HandoffEnd, and takes
 	// precedence over the "generating..." hint in the Output tab title.
-	// See states.TheoryOfHandoff and TheoryOfTUIHandoff.
+	// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
 	handoff bool
 	// showHelp reports whether the operation help overlay is visible.
 	// The ? key toggles it. The overlay is derived from state like the
@@ -643,7 +641,7 @@ func (t *TUI) LogsWriter() io.Writer {
 
 // ThoughtSummaryWriter returns the writer that appends periodic thought
 // summaries (-summarize-thoughts) to the Summary tab. runWithTUI forks
-// the states.ThoughtSummaryWriter provider to this writer so the
+// the pipeline.ThoughtSummaryWriter provider to this writer so the
 // condensed reasoning appears in the Summary tab alongside the round
 // summaries and finish signals, not in the Output tab. See TheoryOfTUI.
 func (t *TUI) ThoughtSummaryWriter() io.Writer {
@@ -775,7 +773,7 @@ func (t *TUI) notify() {
 }
 
 // HandoffStart marks the beginning of a handoff generation request. It
-// is called by the handoff process (see states.TheoryOfHandoff) and sets
+// is called by the handoff process (see pipeline.TheoryOfHandoff) and sets
 // the handoff flag so the Output tab title shows "Output (handoff...)".
 func (t *TUI) HandoffStart() {
 	t.mu.Lock()
@@ -1320,8 +1318,8 @@ var (
 	tabActiveLabelFg int32 = 10
 )
 
-func withTUIOutputObserver(run loops.Run, tui *TUI) loops.Run {
-	return func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
+	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
 			// The tuiOutputState layer observes only content appended
 			// after it wraps the state. Initial contents are not parsed
@@ -1396,10 +1394,10 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// captures model output through a pipe, and the Round tab never
 	// scans rendered output for "[Finish: ...]" markers. The decorator
 	// is passed through RunOptions.StateDecorators by wrapping the
-	// loops.Run provider: the original Run is resolved before the fork,
+	// pipeline.Run provider: the original Run is resolved before the fork,
 	// and the wrapper appends the decorator to the options before
 	// delegating. See TheoryOfTUI.
-	originalRun := scope.Get[loops.Run]()
+	originalRun := scope.Get[pipeline.Run]()
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
 	// -summarize-thoughts adds periodic summaries in the Summary tab but
 	// never suppresses the raw stream, because blanking the focused
@@ -1418,22 +1416,22 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		// Periodic thought summaries are routed to the Summary tab so
 		// the condensed reasoning appears alongside the round summaries
 		// and finish signals, while the Output tab keeps streaming the
-		// raw thoughts. See states.TheoryOfThoughtsSummarize and
+		// raw thoughts. See pipeline.TheoryOfThoughtsSummarize and
 		// TheoryOfTUI.
-		func() states.ThoughtSummaryWriter { return states.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
+		func() pipeline.ThoughtSummaryWriter { return pipeline.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
 		// Handoff generation streams to the Output tab and reports its
 		// lifecycle through the HandoffObserver, so the title shows
 		// "Output (handoff...)" while a handoff request is in flight.
-		// See states.TheoryOfHandoff and TheoryOfTUIHandoff.
-		func() states.HandoffWriter { return states.HandoffWriter(tui.Writer()) },
-		func() states.HandoffObserver { return tui },
+		// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
+		func() pipeline.HandoffWriter { return pipeline.HandoffWriter(tui.Writer()) },
+		func() pipeline.HandoffObserver { return tui },
 		// The round statistics table is routed to the Output tab: the
-		// codes pipeline prints it via a deferred call at the end of the
+		// pipeline prints it via a deferred call at the end of the
 		// session, and the generation output writer it receives is the
 		// redirected null device in TUI mode. See
-		// codes.TheoryOfRoundStatistics.
-		func() codes.RoundStatsWriter { return codes.RoundStatsWriter(tui.Writer()) },
-		func() loops.Run {
+		// pipeline.TheoryOfRoundStatistics.
+		func() pipeline.RoundStatsWriter { return pipeline.RoundStatsWriter(tui.Writer()) },
+		func() pipeline.Run {
 			return withTUIOutputObserver(originalRun, tui)
 		},
 	)

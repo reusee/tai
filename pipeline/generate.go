@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"context"
@@ -12,15 +12,13 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/changes"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/pipeline/codetypes"
 	"github.com/reusee/tai/records"
-	"github.com/reusee/tai/states"
 )
 
 const TheoryOfStreamingApply = `
@@ -78,12 +76,12 @@ improving accuracy.
 type Generate func(ctx context.Context, output io.Writer) error
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and
-// returns the loops.Result together with the round statistics collected
+// returns the Result together with the round statistics collected
 // during the run. The statistics are returned (not only printed) so that
 // callers that run multiple independent generation sessions — such as the
 // goal command — can accumulate them and re-print the entire process
 // aggregated after all sessions complete. See TheoryOfRoundStatistics.
-type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error)
+type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []RoundStat, error)
 
 // RunReview provider. It is separate from GenerateWithResultWithStats so
 // review is opt-in and does not recursively trigger itself. Each review
@@ -142,10 +140,10 @@ func buildReviewPrompt(diffs []changes.FileDiff) string {
 }
 
 // GenerateWithResult runs the full codes generation pipeline and returns the
-// loops.Result, which includes the final state and any remaining (unconsumed)
+// Result, which includes the final state and any remaining (unconsumed)
 // blocks. It wraps GenerateWithResultWithStats, discarding the round
 // statistics. Used by commands that do not need the statistics (go, any).
-type GenerateWithResult func(ctx context.Context, output io.Writer) (loops.Result, error)
+type GenerateWithResult func(ctx context.Context, output io.Writer) (Result, error)
 
 // RunReview runs one or more review generation sessions after the main
 // generation completes. Each review session uses a fresh scope (latest
@@ -354,28 +352,28 @@ func collectRoundStats(
 // CreateHandoff summarizes truncated or failed generation output before
 // retry, producing a self-contained handoff carried into the next round.
 // The summarize generator, logger, and interaction recorder are bound from
-// the dscope scope. See states.TheoryOfHandoff.
+// the dscope scope. See TheoryOfHandoff.
 type CreateHandoff func(
 	ctx context.Context,
 	incompleteText string,
-) (*states.Handoff, error)
+) (*Handoff, error)
 
 func (Module) CreateHandoff(
 	logger logs.Logger,
 	recorder *records.Recorder,
-	getHandoffGenerators states.GetHandoffGenerators,
-	handoffWriter states.HandoffWriter,
-	handoffObserver states.HandoffObserver,
+	getHandoffGenerators GetHandoffGenerators,
+	handoffWriter HandoffWriter,
+	handoffObserver HandoffObserver,
 ) CreateHandoff {
 	return func(
 		ctx context.Context,
 		incompleteText string,
-	) (*states.Handoff, error) {
+	) (*Handoff, error) {
 		generators, err := getHandoffGenerators()
 		if err != nil {
 			return nil, err
 		}
-		return states.CreateHandoff(ctx, logger, recorder, generators, incompleteText, handoffWriter, handoffObserver)
+		return createHandoff(ctx, logger, recorder, generators, incompleteText, handoffWriter, handoffObserver)
 	}
 }
 
@@ -393,9 +391,9 @@ func handoffRetryState(
 	errState generators.State,
 	phaseErr error,
 	prevContentCount int,
-	createHandoff func(string) (*states.Handoff, error),
+	createHandoff func(string) (*Handoff, error),
 ) (newState generators.State, contentCount int, summary string, err error) {
-	partialText := loops.ExtractIncompleteOutput(errState, prevContentCount)
+	partialText := ExtractIncompleteOutput(errState, prevContentCount)
 	if partialText != "" {
 		if handoff, handoffErr := createHandoff(partialText); handoffErr != nil {
 			fallbackState, fallbackCount, fallbackSummary := fallbackRetryState(errState, phaseErr)
@@ -405,7 +403,7 @@ func handoffRetryState(
 				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
 				phaseErr,
 			)
-			msg := states.FormatHandoffPrompt(prefix, handoff.Prompt)
+			msg := FormatHandoffPrompt(prefix, handoff.Prompt)
 			newState, appendErr := errState.AppendContent(&generators.Content{
 				Role: generators.RoleUser,
 				Parts: []generators.Part{
@@ -433,7 +431,7 @@ func fallbackRetryState(
 		Role: generators.RoleLog,
 		Parts: []generators.Part{
 			generators.Error{Error: phaseErr},
-			generators.Text(states.FormatSummaryBlock("[Error: " + phaseErr.Error() + "]")),
+			generators.Text(FormatSummaryBlock("[Error: " + phaseErr.Error() + "]")),
 		},
 	})
 	if err != nil {
@@ -445,7 +443,7 @@ func fallbackRetryState(
 const TheoryOfSummaryCompletionRetry = `
 The summary block is the primary completion signal for each generation round. When
 a round ends without a summary block or any component-triggering block (see
-loops.TheoryOfLoops), or when the finish reason indicates abnormal termination
+TheoryOfLoops), or when the finish reason indicates abnormal termination
 (e.g., "length" from max-token truncation), the model's output was likely truncated
 mid-stream — the generation limit was reached before the model could emit its
 closing summary block, or the model emitted a summary but continued generating and
@@ -467,7 +465,7 @@ kind and the finish reason in the state for abnormal termination. A round is
 complete when a summary block is present AND the finish reason is not abnormal;
 a round carrying a component-triggering block (read, shell, continue, go-test,
 go-src) is also complete without a summary block, because the model is
-waiting for component processing rather than truncated (see loops.TheoryOfLoops).
+waiting for component processing rather than truncated (see TheoryOfLoops).
 Because blocks are collected by the BlockHandler during AppendContent (not stored
 in ParserState), the check is a simple scan of the collected slice. The finish
 reason is extracted from RoleLog content appended by the generator. On retry, the
@@ -475,10 +473,10 @@ collected blocks are reset alongside the MemoryStore in the onPhaseStart
 callback, ensuring both external states are consistent with the rolled-back State
 (see TheoryOfParserState in blocks/parser_state.go).
 
-This retry uses handoff (TheoryOfHandoff in states/summarize_incomplete.go) to
-carry forward established conclusions, attempted changes, and partitioning guidance
-into the next round, directing the model to complete an initial subset of changes
-first and use continue blocks for remaining work, without retaining unstructured
+This retry uses handoff (TheoryOfHandoff) to carry forward established
+conclusions, attempted changes, and partitioning guidance into the next round,
+directing the model to complete an initial subset of changes first and use
+continue blocks for remaining work, without retaining unstructured
 conversation history.
 `
 
@@ -496,14 +494,14 @@ discoveries, decisions, facts, and attempted changes the model had already
 established — and presents them to the retry round with guidance on task
 partitioning. The retry therefore continues from the model's conclusions and
 completes a manageable subset of changes first, using continue blocks for
-remaining work to prevent exceeding output limits again. See states.TheoryOfHandoff.
+remaining work to prevent exceeding output limits again. See TheoryOfHandoff.
 
 This handoff is transient error recovery. The condensed content is injected
 into one retry request and does not persist as compressed history. The system does
-not compress conversation. See TheoryOfContextPhilosophy in loops/run.go.
+not compress conversation. See TheoryOfContextPhilosophy.
 `
 
-// Generate wraps GenerateWithResult, discarding the loops.Result so existing
+// Generate wraps GenerateWithResult, discarding the Result so existing
 // callers (go, any) see the same func(ctx, output) error signature.
 func (Module) Generate(
 	generateWithResult GenerateWithResult,
@@ -515,13 +513,13 @@ func (Module) Generate(
 }
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the round
-// statistics so existing callers see the same (loops.Result, error)
-// signature. Callers that need the statistics (e.g., goal command) should
-// use GenerateWithResultWithStats directly. See TheoryOfRoundStatistics.
+// statistics so existing callers see the same (Result, error) signature.
+// Callers that need the statistics (e.g., goal command) should use
+// GenerateWithResultWithStats directly. See TheoryOfRoundStatistics.
 func (Module) GenerateWithResult(
 	generateWithResultWithStats GenerateWithResultWithStats,
 ) GenerateWithResult {
-	return func(ctx context.Context, output io.Writer) (loops.Result, error) {
+	return func(ctx context.Context, output io.Writer) (Result, error) {
 		result, _, err := generateWithResultWithStats(ctx, output)
 		return result, err
 	}
@@ -533,33 +531,33 @@ func (Module) GenerateWithResultWithStats(
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
 	getDefaultGenerator generators.GetDefaultGenerator,
-	getDefaultSummarizer states.GetDefaultSummarizer,
-	getHandoffGenerator states.GetHandoffGenerator,
+	getDefaultSummarizer GetDefaultSummarizer,
+	getHandoffGenerator GetHandoffGenerator,
 	buildGenerate phases.BuildGenerate,
 	maxTokens flags.MaxTokens,
 	buildChangeBlockHandler changes.BuildChangeBlockHandler,
 	patterns Patterns,
 	flagThoughts flags.Thoughts,
-	summarizeThoughts states.SummarizeThoughts,
+	summarizeThoughts flags.SummarizeThoughts,
 	httpClient nets.HTTPClient,
 	flagChats flags.Chats,
 	debug Debug,
 	funcDecls generators.FuncDecls,
 	apply flags.Apply,
-	loopRun loops.Run,
+	loopRun Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
-	thoughtSummaryWriter states.ThoughtSummaryWriter,
+	thoughtSummaryWriter ThoughtSummaryWriter,
 	roundStatsWriter RoundStatsWriter,
 	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
-	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
+	return func(ctx context.Context, output io.Writer) (Result, []RoundStat, error) {
 
 		// Open a root on the current directory to restrict all file I/O
 		// to the project tree. See blocks.TheoryOfReadBlocks.
 		root, err := os.OpenRoot(".")
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 		defer root.Close()
 
@@ -575,7 +573,7 @@ func (Module) GenerateWithResultWithStats(
 		// generator
 		generator, err := getDefaultGenerator()
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 		spec := generator.Spec()
 		logger.Info("initial generator",
@@ -591,7 +589,7 @@ func (Module) GenerateWithResultWithStats(
 		// handoff generator
 		handoffGenerator, err := getHandoffGenerator()
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 		if recorder != nil && recorder.Enabled() {
 			recorder.Event("decision", fmt.Sprintf("handoff generator selected: model=%s", handoffGenerator.Spec().Model))
@@ -610,7 +608,7 @@ func (Module) GenerateWithResultWithStats(
 		// Count tokens for fixed parts
 		systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 
 		// Collect function declarations from all sources for accurate token
@@ -624,13 +622,13 @@ func (Module) GenerateWithResultWithStats(
 		}
 		funcTokens, err := countFuncsTokens(allFuncDecls, generator.CountTokens)
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 
 		// Calculate remaining budget for user content
 		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
-			return loops.Result{}, nil, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
+			return Result{}, nil, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
 		logger.Info("token limits",
 			"system", systemPromptTokens,
@@ -644,7 +642,7 @@ func (Module) GenerateWithResultWithStats(
 		// user prompt
 		userPromptParts, err := partsProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 
 		// Component user prompt parts are appended after parts provider parts.
@@ -654,7 +652,7 @@ func (Module) GenerateWithResultWithStats(
 		userPromptText := buildUserPromptText(userPromptParts)
 		userPromptTokens, err := generator.CountTokens(userPromptText)
 		if err != nil {
-			return loops.Result{}, nil, err
+			return Result{}, nil, err
 		}
 		logger.Info("user prompt ready",
 			"tokens", userPromptTokens,
@@ -692,14 +690,14 @@ func (Module) GenerateWithResultWithStats(
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			if err != nil {
-				return loops.Result{}, nil, err
+				return Result{}, nil, err
 			}
 			state = generators.NewOutput(state, output, false)
 			summaryWriter := output
 			if thoughtSummaryWriter != nil {
 				summaryWriter = thoughtSummaryWriter
 			}
-			state = states.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
+			state = NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
 		} else {
 			state = generators.NewOutput(state, output, showThoughts)
 		}
@@ -727,29 +725,29 @@ func (Module) GenerateWithResultWithStats(
 				},
 			})
 			if err != nil {
-				return loops.Result{}, nil, err
+				return Result{}, nil, err
 			}
 			hasChats = true
 		}
 
 		if !hasChats {
-			return loops.Result{}, nil, nil
+			return Result{}, nil, nil
 		}
 
 		prevContentCount := generators.CountContents(state)
 
-		var blockHandler loops.BlockHandler
+		var blockHandler BlockHandler
 		if bool(apply) {
 			handler := buildChangeBlockHandler(memStore)
-			blockHandler = loops.BlockHandler(handler)
+			blockHandler = BlockHandler(handler)
 		}
 
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var fatalErr error
 
-		var result loops.Result
-		for e := range loopRun(runCtx, loops.RunOptions{
+		var result Result
+		for e := range loopRun(runCtx, RunOptions{
 			Generator:    generator,
 			InitialState: state,
 			Components:   comps.ComponentSet,
@@ -782,8 +780,8 @@ func (Module) GenerateWithResultWithStats(
 				if len(summaries) > 0 {
 					summaryText = strings.Join(summaries, "\n")
 				} else {
-					if incompleteText := loops.ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
-						var handoff *states.Handoff
+					if incompleteText := ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
+						var handoff *Handoff
 						handoff, handoffErr = createHandoff(runCtx, incompleteText)
 						if handoffErr == nil && handoff != nil {
 							summaryText = handoff.Summary
@@ -823,7 +821,7 @@ func (Module) GenerateWithResultWithStats(
 					errState,
 					phaseErr,
 					prevContentCount,
-					func(text string) (*states.Handoff, error) {
+					func(text string) (*Handoff, error) {
 						return createHandoff(runCtx, text)
 					},
 				)
@@ -841,7 +839,7 @@ func (Module) GenerateWithResultWithStats(
 			RetryOnMissingCompletion: true,
 			RetryOnError:             true,
 			MaxRetries:               maxRetriesForMissingSummary,
-			Handoff: func(incompleteText string) (*states.Handoff, error) {
+			Handoff: func(incompleteText string) (*Handoff, error) {
 				if fatalErr != nil {
 					return nil, fatalErr
 				}

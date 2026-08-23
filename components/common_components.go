@@ -15,7 +15,7 @@ that need additional components (e.g., change for code generation, read for
 dynamic context, summary for round statistics, read-only files for prompt-only
 rules) prepend or append their specific components to this common set. The
 common components are constructed once and reused by both the ai command (via
-AIComponents) and the codes module (via CodesComponents), ensuring that shell
+AIComponents) and the pipeline (via CodesComponents), ensuring that shell
 and continue components are consistently configured across all generation
 pipelines.
 
@@ -33,7 +33,7 @@ across all generation commands.
 Components carry no per-kind round bounds: a session may chain any number of
 shell, continue, go-test, go-src, or read rounds, so a model can run as long
 as the task requires. Run-duration control belongs to the caller, not the
-component layer — loops.RunOptions.MaxRounds caps the total rounds of a whole
+component layer — pipeline.RunOptions.MaxRounds caps the total rounds of a whole
 run (0 means unlimited) — and an unattended operator terminates the process
 when they choose. The accepted trade-off is that a runaway model consumes
 tokens until the caller stops it; legitimate long workflows are never

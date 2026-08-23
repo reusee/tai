@@ -19,7 +19,7 @@ phrases its stop rule as "end the response with a summary block" and declares th
 its block does not replace the summary, so no stop instruction conflicts with the
 every-response requirement. A round with no summary block and no component-
 triggering block is assumed truncated and retried; a round carrying a component-
-triggering block is complete without a summary (see loops.TheoryOfLoops), which is
+triggering block is complete without a summary (see pipeline.TheoryOfLoops), which is
 why every kind prompt still demands one — the round statistics and the summary
 display would otherwise lose the round's narrative. When no changes were made, the
 summary block body should be "No changes were needed." so the model still signals

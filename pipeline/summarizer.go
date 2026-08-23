@@ -1,4 +1,4 @@
-package states
+package pipeline
 
 import (
 	"context"
@@ -46,7 +46,7 @@ found the raw text is returned as a fallback.
 Thought summarization serves user readability, not context compression.
 Summaries go to the output writer for the human reader; they are never fed
 back into the model. The system does not compress dialogue history. See
-TheoryOfContextPhilosophy in loops/run.go.
+TheoryOfContextPhilosophy.
 `
 
 const SummarizeSystemPrompt = `Condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.
@@ -61,16 +61,13 @@ Wrap the output in a summary block whose body is the bullet list. Output ONLY th
 
 ` + blocks.BlockFormatSystemPrompt
 
-// ThoughtsSummarizeLanguage is an alias for flags.ThoughtsSummarizeLanguage.
-type ThoughtsSummarizeLanguage = flags.ThoughtsSummarizeLanguage
-
 // Summarizer is a separate generator type dedicated to summarizing thoughts.
 // It wraps an underlying Generator (typically a fast, cheap model) and
 // provides a Summarize method that sends accumulated thoughts to the model
 // with a purpose-built system prompt.
 type Summarizer struct {
 	generator generators.Generator
-	language  ThoughtsSummarizeLanguage
+	language  flags.ThoughtsSummarizeLanguage
 }
 
 func NewSummarizer(generator generators.Generator) *Summarizer {
@@ -81,8 +78,8 @@ type GetDefaultSummarizer func() (*Summarizer, error)
 
 func (Module) GetDefaultSummarizer(
 	getHandoffGenerator GetHandoffGenerator,
-	enable SummarizeThoughts,
-	language ThoughtsSummarizeLanguage,
+	enable flags.SummarizeThoughts,
+	language flags.ThoughtsSummarizeLanguage,
 ) GetDefaultSummarizer {
 	return func() (*Summarizer, error) {
 		if !enable {

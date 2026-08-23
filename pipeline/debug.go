@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"cuelang.org/go/cue"
@@ -7,7 +7,7 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
-// Debug configs.Config implementation for the codes module.
+// Debug configs.Config implementation for the pipeline module.
 // See flags.TheoryOfConfigFlagParity.
 
 var _ configs.Config = Debug(false)
@@ -27,7 +27,7 @@ func (d Debug) Handle(key string, args []string) (newValue any, remainArgs []str
 
 func (d Debug) Keys() map[string]string {
 	return map[string]string{
-		"-debug-codes": "Enable debug logging for the codes module",
+		"-debug-codes": "Enable debug logging for the pipeline module",
 	}
 }
 

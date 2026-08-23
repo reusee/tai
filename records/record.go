@@ -18,7 +18,6 @@ import (
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/loops"
 	_ "modernc.org/sqlite"
 )
 
@@ -28,10 +27,10 @@ todo.md: every interaction of the tai command can be recorded in detail into
 a single sqlite database file, and recorded sessions can be fed back to the
 model for analysis and improvement.
 
-Recording is centralized in the unified generation loop (loops.Run), which is
+Recording is centralized in the unified generation loop (pipeline.Run), which is
 used by every generation command (ai, next, go, any, goal), so one
 instrumentation point covers them all. The loop implements the
-loops.InteractionRecorder contract: it reports the session's system prompt
+pipeline.InteractionRecorder contract: it reports the session's system prompt
 and initial contents, wraps the state so every content append is captured
 (user input, model output, reasoning thoughts, tool calls, retry feedback),
 reports every structured block parsed from the model output (change, shell,
@@ -137,8 +136,6 @@ func (e Enabled) HandleConfig(path string, values []*cue.Value) (any, error) {
 	ret := Enabled(b)
 	return &ret, nil
 }
-
-var _ loops.InteractionRecorder = (*Recorder)(nil)
 
 // Recorder writes interaction events of the tai command into a sqlite
 // database. It is created by the Recorder provider, which opens the database

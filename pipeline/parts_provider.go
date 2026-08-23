@@ -1,8 +1,8 @@
-package codes
+package pipeline
 
 import (
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/codes/codetypes"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 func (Module) PartsProvider(

@@ -14,7 +14,7 @@ import (
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/loops"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -1929,15 +1929,15 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 
 func TestWithTUIOutputObserver(t *testing.T) {
 	tui := newTUIForTest()
-	var gotOpts loops.RunOptions
-	run := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+	var gotOpts pipeline.RunOptions
+	run := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
 		gotOpts = opts
 		return func(yield func(error) bool) {}
 	}
 	wrapped := withTUIOutputObserver(run, tui)
 
-	var result loops.Result
-	for e := range wrapped(context.Background(), loops.RunOptions{}, &result) {
+	var result pipeline.Result
+	for e := range wrapped(context.Background(), pipeline.RunOptions{}, &result) {
 		t.Fatal(e)
 	}
 	if len(gotOpts.StateDecorators) != 1 {
@@ -2624,7 +2624,7 @@ func TestReadTUIKeysSS3AndVT220(t *testing.T) {
 
 func TestTuiStateWriteThoughtSummary(t *testing.T) {
 	// Thought summaries (-summarize-thoughts) go to the Summary tab, not
-	// the Output tab. The entry keeps the states writer's "[Thought
+	// the Output tab. The entry keeps the pipeline writer's "[Thought
 	// Summary]:" header — colored with the thought color to distinguish
 	// it from round summaries and finish signals — followed by the
 	// summary lines and a blank separator. See TheoryOfTUI.

@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"cmp"

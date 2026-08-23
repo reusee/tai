@@ -1,4 +1,4 @@
-package loops
+package pipeline
 
 import (
 	"errors"

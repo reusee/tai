@@ -12,8 +12,8 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
 
@@ -146,13 +146,13 @@ func TestValidatePingBlocks(t *testing.T) {
 	}
 
 	t.Run("MissingBlocks", func(t *testing.T) {
-		if err := validatePingBlocks(loops.Result{}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{}, specs); err == nil {
 			t.Fatal("expected an error when no blocks are emitted")
 		}
 	})
 
 	t.Run("ExactMatch", func(t *testing.T) {
-		result := loops.Result{RemainingBlocks: pingResultBlocks(specs)}
+		result := pipeline.Result{RemainingBlocks: pingResultBlocks(specs)}
 		if err := validatePingBlocks(result, specs); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -166,7 +166,7 @@ func TestValidatePingBlocks(t *testing.T) {
 		tricky := []PingBlockSpec{
 			{Kind: "abc", Attributes: map[string]string{"key": `say "hi"`}, Body: "body one"},
 		}
-		result := loops.Result{RemainingBlocks: pingResultBlocks(tricky)}
+		result := pipeline.Result{RemainingBlocks: pingResultBlocks(tricky)}
 		if err := validatePingBlocks(result, tricky); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -175,7 +175,7 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("WrongOrderFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[0], bs[1] = bs[1], bs[0]
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when the blocks are emitted in the wrong order")
 		}
 	})
@@ -183,7 +183,7 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("DuplicateKindFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[1].Kind = specs[0].Kind
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when one kind is duplicated")
 		}
 	})
@@ -191,14 +191,14 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("WrongBodyFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[0].Body = "wrong body"
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when a block body differs from the required body")
 		}
 	})
 
 	t.Run("ExtraBlockFails", func(t *testing.T) {
 		bs := append(pingResultBlocks(specs), blocks.Block{Kind: "other"})
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when an extra block is emitted")
 		}
 	})
@@ -206,7 +206,7 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("WrongParameterValueFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[0].Attributes["foo"] = "wrong"
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when a parameter value differs from the required pair")
 		}
 	})
@@ -214,7 +214,7 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("MissingParametersFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[0].Attributes = nil
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when a required parameter pair is missing")
 		}
 	})
@@ -222,7 +222,7 @@ func TestValidatePingBlocks(t *testing.T) {
 	t.Run("ExtraParameterFails", func(t *testing.T) {
 		bs := pingResultBlocks(specs)
 		bs[0].Attributes["id"] = "extra"
-		if err := validatePingBlocks(loops.Result{RemainingBlocks: bs}, specs); err == nil {
+		if err := validatePingBlocks(pipeline.Result{RemainingBlocks: bs}, specs); err == nil {
 			t.Fatal("expected an error when an extra parameter pair is emitted")
 		}
 	})
@@ -257,14 +257,14 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
 		{Kind: "zzz", Attributes: map[string]string{"key": `say "hi"`}, Body: "body three"},
 	}
-	var gotOpts loops.RunOptions
-	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+	var gotOpts pipeline.RunOptions
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -354,14 +354,14 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
 		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
 	}
-	var gotOpts loops.RunOptions
-	fakeRun := func(ctx context.Context, opts loops.RunOptions, result *loops.Result) iter.Seq[error] {
+	var gotOpts pipeline.RunOptions
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, loops.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}

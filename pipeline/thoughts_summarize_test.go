@@ -1,4 +1,4 @@
-package states
+package pipeline
 
 import (
 	"bytes"
@@ -532,7 +532,7 @@ func TestThoughtSummaryWriterDefaultsToNil(t *testing.T) {
 	// written to the generation output stream — the same stream the raw
 	// thoughts would have used. A display front-end forks this type to
 	// route the summaries to its own display. See
-	// states.TheoryOfThoughtsSummarize.
+	// TheoryOfThoughtsSummarize.
 	m := new(Module)
 	if w := m.ThoughtSummaryWriter(); w != nil {
 		t.Fatal("expected the default thought summary writer to be nil")

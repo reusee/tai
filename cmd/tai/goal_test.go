@@ -12,8 +12,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/changes"
-	"github.com/reusee/tai/codes"
-	"github.com/reusee/tai/loops"
+	"github.com/reusee/tai/pipeline"
 )
 
 func TestGoalCommandRegistered(t *testing.T) {
@@ -66,14 +65,14 @@ func TestGoalSystemPromptNoLiteralDelimiter(t *testing.T) {
 }
 
 func TestGoalTheoryStatesNoProcessLevelCaches(t *testing.T) {
-	// The gocodes pipeline must not hold process-level caches: all caches
-	// live inside scope provider functions, so dscope.Reset recomputes them
-	// on every goal loop. See TheoryOfGoalCommand.
+	// The generation pipeline must not hold process-level caches: all
+	// caches live inside scope provider functions, so dscope.Reset
+	// recomputes them on every goal loop. See TheoryOfGoalCommand.
 	if !strings.Contains(TheoryOfGoalCommand, "no process-level caches") {
-		t.Fatal("TheoryOfGoalCommand must state that the gocodes pipeline holds no process-level caches")
+		t.Fatal("TheoryOfGoalCommand must state that the generation pipeline holds no process-level caches")
 	}
 	if !strings.Contains(TheoryOfGoalCommand, "scope provider functions") {
-		t.Fatal("TheoryOfGoalCommand must state that all gocodes caches live inside scope provider functions")
+		t.Fatal("TheoryOfGoalCommand must state that all generation caches live inside scope provider functions")
 	}
 }
 
@@ -87,10 +86,10 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	// failing this test. See TheoryOfGoalCommand.
 	calls := 0
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+		func() pipeline.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
 				calls++
-				return loops.Result{
+				return pipeline.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
 				}, nil, nil
 			}
@@ -106,8 +105,8 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+	mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -137,9 +136,9 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	// silent change loss is surfaced in unattended operation.
 	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
-				return loops.Result{
+		func() pipeline.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+				return pipeline.Result{
 					ParseErrors: []*blocks.BlockParseError{
 						{BlockKind: "change", Boundary: "龘靐"},
 					},
@@ -163,8 +162,8 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	os.Stdout = wOut
 	os.Stderr = wErr
 
-	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+	mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -200,10 +199,10 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		// operation. See TheoryOfGoalCommand.
 		calls := 0
 		fakeScope := dscope.New(
-			func() codes.GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+			func() pipeline.GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
 					calls++
-					return loops.Result{}, nil, errors.New("persistent failure")
+					return pipeline.Result{}, nil, errors.New("persistent failure")
 				}
 			},
 		)
@@ -222,8 +221,8 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-		mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+		mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 			return nil
 		}))
 
@@ -264,23 +263,23 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		fakeScope := dscope.New(
 			func() GoalFeedback { return "" },
 			func(
-				systemPrompt codes.SystemPrompt,
-			) codes.GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+				systemPrompt pipeline.SystemPrompt,
+			) pipeline.GenerateWithResultWithStats {
+				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
 					calls++
 					seenPrompts = append(seenPrompts, string(systemPrompt))
 					if calls == 1 {
-						return loops.Result{}, nil, errors.New("first loop failed")
+						return pipeline.Result{}, nil, errors.New("first loop failed")
 					}
-					return loops.Result{
+					return pipeline.Result{
 						RemainingBlocks: []blocks.Block{{Kind: "done"}},
 					}, nil, nil
 				}
 			},
 			func(
 				feedback GoalFeedback,
-			) codes.SystemPrompt {
-				return codes.SystemPrompt("BASE_PROMPT" + string(feedback))
+			) pipeline.SystemPrompt {
+				return pipeline.SystemPrompt("BASE_PROMPT" + string(feedback))
 			},
 		)
 		reset := dscope.Reset(func() dscope.Scope { return fakeScope })
@@ -298,8 +297,8 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		os.Stdout = wOut
 		os.Stderr = wErr
 
-		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-		mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+		mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+		mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 			return nil
 		}))
 
@@ -343,17 +342,17 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	// them once more, aggregated, after the goal completes — in addition to
 	// the per-loop print at each loop's end — so the user can review the
 	// entire process in a single table. The Loop column identifies which
-	// goal loop produced each round. See codes.TheoryOfRoundStatistics.
+	// goal loop produced each round. See pipeline.TheoryOfRoundStatistics.
 	//
 	// With done-block verification, the command runs two loops (declaration
 	// and verification), so the aggregated totals cover both loops.
 	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
-				return loops.Result{
+		func() pipeline.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+				return pipeline.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
-				}, []codes.RoundStat{
+				}, []pipeline.RoundStat{
 					{Round: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
 					{Round: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
 				}, nil
@@ -370,8 +369,8 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+	mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 
@@ -417,18 +416,18 @@ func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
 	// is exhausted. See TheoryOfGoalCommand.
 	calls := 0
 	fakeScope := dscope.New(
-		func() codes.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (loops.Result, []codes.RoundStat, error) {
+		func() pipeline.GenerateWithResultWithStats {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
 				calls++
 				if calls == 1 {
 					// First loop: declares the goal achieved.
-					return loops.Result{
+					return pipeline.Result{
 						RemainingBlocks: []blocks.Block{{Kind: "done"}},
 					}, nil, nil
 				}
 				// Verification loop and all subsequent loops: re-read the
 				// filesystem, find remaining work, emit no done block.
-				return loops.Result{}, nil, nil
+				return pipeline.Result{}, nil, nil
 			}
 		},
 	)
@@ -442,8 +441,8 @@ func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
 	}
 	os.Stdout = w
 
-	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, codes.RunReview))
-	mainFn(Output(os.Stdout), reset, codes.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
+	mainFn := GoalCommand.Main.(func(Output, dscope.Reset, pipeline.RunReview))
+	mainFn(Output(os.Stdout), reset, pipeline.RunReview(func(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 		return nil
 	}))
 

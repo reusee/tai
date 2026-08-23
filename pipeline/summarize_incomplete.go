@@ -1,4 +1,4 @@
-package states
+package pipeline
 
 import (
 	"bytes"
@@ -77,7 +77,7 @@ type Handoff struct {
 // request. The default provider returns nil, in which case the handoff
 // output is not displayed. A display front-end (e.g., tai's TUI) forks
 // this type to stream the handoff request's text and reasoning thoughts
-// to its own display. See TheoryOfHandoff.
+// to its display. See TheoryOfHandoff.
 type HandoffWriter io.Writer
 
 func (Module) HandoffWriter() HandoffWriter {
@@ -173,7 +173,12 @@ func parseHandoffBlock(text string) (string, bool) {
 	return "", false
 }
 
-func CreateHandoff(
+// createHandoff is the unexported package-level implementation behind the
+// CreateHandoff dscope function type: it summarizes truncated or failed
+// generation output into a self-contained handoff carried into the next
+// round. The implementation stays a plain function so tests can call it
+// directly. See TheoryOfHandoff and TheoryOfDscopeBoundFunctions.
+func createHandoff(
 	ctx context.Context,
 	logger logs.Logger,
 	recorder HandoffRecorder,

@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"github.com/reusee/prompts"
@@ -48,7 +48,7 @@ how rounds are structured. The two are orthogonal: continue blocks may serve
 other extensions with entirely different body conventions.
 
 For complex tasks, the model maintains a task list in the continue block body.
-In each round, the model selects one or more tasks from the list to execute,
+In each round, the model selects one or a few tasks from the list to execute,
 produces the corresponding change blocks, and ends with a continue block
 containing the updated task list — marking completed tasks and listing
 remaining tasks. This cycle repeats until all tasks are complete, at which

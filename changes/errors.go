@@ -8,7 +8,7 @@ package changes
 // that occurs after the model has output content, regardless of the specific
 // error type. The retry feedback for ApplyError instructs the model to
 // re-emit every intended change block, because the retry discards all change
-// blocks from the failed attempt. See loops.TheoryOfLoops.
+// blocks from the failed attempt. See pipeline.TheoryOfLoops.
 type ApplyError struct {
 	Err error
 }

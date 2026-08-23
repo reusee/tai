@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"fmt"
@@ -21,8 +21,8 @@ var _ flags.Flag = Review(true)
 type Review bool
 
 // ReviewModels lists the models used for review, in order. Each model runs
-// a separate review generation session with a fresh scope. When empty, the
-// model selected by the -model flag is reused: the resolved generator's
+// a separate review generation session with a fresh scope. When empty,
+// the model selected by the -model flag is reused: the resolved generator's
 // Spec is not reusable because built-in shortcuts (flash, gemini, ...) and
 // the ollama shorthand do not set Spec.Name, and their Spec.Model values are
 // not resolvable model names. See TheoryOfReviewLoop.

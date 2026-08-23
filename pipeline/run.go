@@ -1,4 +1,4 @@
-package loops
+package pipeline
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
-	"github.com/reusee/tai/states"
+	"github.com/reusee/tai/records"
 )
 
 // TheoryOfContextPhilosophy articulates the system's single-shot context
@@ -44,11 +44,10 @@ Architectural constraints:
 - No conversation compression. Old dialogue is never summarized to free
   token budget; context is managed solely by pruning, AST-level
   simplification, and deterministic file ordering. Handoff
-  (TheoryOfHandoff in states/summarize_incomplete.go) condenses truncated
-  output for one-shot error recovery, not persistent history. Thought
-  summarization (TheoryOfThoughtsSummarize in states/summarizer.go) writes
-  to the user's screen for readability; it never feeds back as compressed
-  context.
+  (TheoryOfHandoff) condenses truncated output for one-shot error recovery,
+  not persistent history. Thought summarization (TheoryOfThoughtsSummarize)
+  writes to the user's screen for readability; it never feeds back as
+  compressed context.
 
 - No blind exploration. The upfront context always carries the complete
   declaration surface, so the model never starts from nothing (see
@@ -68,8 +67,8 @@ this philosophy and are out of scope.
 `
 
 const TheoryOfLoops = `
-The loops package unifies the generation loop pattern across all generation
-commands (codes, ai, next). The core pattern:
+The pipeline unifies the generation loop pattern across all generation
+commands (go, any, ai, next). The core pattern:
 1. Wrap state with ParserState to collect blocks during streaming
 2. Execute the phase chain until done
 3. Unwrap ParserState to get the final state and collected blocks
@@ -108,7 +107,7 @@ instructs the model to partition extensive modifications: implement an initial
 manageable subset of changes in the current round, end with a summary block, and
 use a continue block to carry over the remaining work into subsequent rounds,
 preventing repeated truncation loops. Short or empty outputs are retried directly.
-See states.TheoryOfHandoff.
+See TheoryOfHandoff.
 
 Component-triggering blocks (read, shell, continue, go-test) also
 serve as completion signals: a round with such blocks but no summary block is
@@ -134,7 +133,7 @@ The token usage of each generation round is recorded to the logger by the Run
 loop itself, not by individual commands. After each round, a "usage" log
 record carries the 1-based round number and the prompt, cached, completion, and
 thought token counts from the round's final usage, so every generation command
-— codes, ai, next, ping — shows token consumption in its logs, and in the
+— go, any, ai, next, ping — shows token consumption in its logs, and in the
 TUI's Logs pane when the logs writer is routed there. A round that ends with an
 error is logged with outcome="error", so token consumption is traceable for
 every attempt, including retries. Rounds that record no token usage emit no
@@ -166,7 +165,7 @@ const incompleteOutputHandoffPrefix = "[System note: The previous generation was
 // decorator is applied after interaction recording, so it sees every
 // subsequent content append. Multiple decorators are applied in order,
 // each wrapping the state produced by the previous one. See
-// loops.RunOptions.StateDecorators.
+// RunOptions.StateDecorators.
 type StateDecorator func(generators.State) generators.State
 
 // InteractionRecorder provider: the default is nil, meaning no interaction
@@ -178,6 +177,11 @@ type StateDecorator func(generators.State) generators.State
 func (Module) InteractionRecorder() InteractionRecorder {
 	return nil
 }
+
+// The records.Recorder implements InteractionRecorder. The assertion lives
+// here rather than in records: pipeline imports records, and the reverse
+// import would create a cycle. See records.TheoryOfInteractionRecording.
+var _ InteractionRecorder = (*records.Recorder)(nil)
 
 // Run executes generation rounds in a loop. Each round wraps the state
 // with ParserState, executes the phase chain, processes blocks via
@@ -320,8 +324,8 @@ func (ls *loopState) runRound() (roundResult, error) {
 			// discarding failed changes), and retries from the
 			// updated state. Errors that occur before any
 			// content is output do not trigger retry. The
-			// feedback states the current attempt number so the
-			// model knows how much retry budget remains.
+			// feedback states the current attempt number so
+			// the model knows how much retry budget remains.
 			// See TheoryOfLoops.
 			if ls.opts.RetryOnError && retry < ls.maxRetries {
 				prevCount := generators.CountContents(ls.state)
@@ -431,7 +435,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// completion, but an abnormal finish reason (e.g.,
 		// "length" from max-token truncation) overrides the
 		// summary signal and triggers retry. See
-		// TheoryOfSummaryCompletionRetry in codes/generate.go.
+		// TheoryOfSummaryCompletionRetry in generate.go.
 		hasCompletion := len(roundSummaries) > 0
 		finishReason := extractFinishReason(phaseState, generators.CountContents(ls.state))
 		isAbnormalFinish := isAbnormalFinishReason(finishReason)
@@ -770,13 +774,13 @@ type RunOptions struct {
 	// Generator is the model used for generation.
 	Generator generators.Generator
 	// InitialState is the starting state (without ParserState wrapping).
-	// loops.Run wraps it with ParserState internally.
+	// Run wraps it with ParserState internally.
 	InitialState generators.State
 	// StateDecorators wrap the state before the loop starts, in order.
 	// Each decorator receives the state produced by the previous one.
 	// The default is none; commands that need to observe state (e.g., the
 	// TUI observing FinishReason parts) pass their own implementations.
-	// See loops.StateDecorator.
+	// See StateDecorator.
 	StateDecorators []StateDecorator
 	// Components is the component set for block processing between rounds.
 	// When empty, the loop runs a single round (single-shot mode).
@@ -854,7 +858,7 @@ type RunOptions struct {
 	// Handoff summarizes incomplete output into a self-contained handoff
 	// before retrying. If output is below the threshold or handoff is nil,
 	// retry proceeds directly.
-	Handoff func(incompleteText string) (*states.Handoff, error)
+	Handoff func(incompleteText string) (*Handoff, error)
 
 	// OnIdle is called when no component triggers after a round. It allows
 	// the caller to provide interactive input (e.g., chat prompt) and
@@ -865,21 +869,11 @@ type RunOptions struct {
 	OnIdle phases.IdleHandler
 }
 
-// Handoff is an alias for states.Handoff. See states.TheoryOfHandoff.
-type Handoff = states.Handoff
-
-// FormatSummaryBlock wraps a summary in a boundary-delimited summary
-// block with a fresh delimiter, so the TUI's Round tab can display it
-// as the round's completion signal. See states.TheoryOfIncompleteOutputSummarization.
-func FormatSummaryBlock(summary string) string {
-	return states.FormatSummaryBlock(summary)
-}
-
 // formatHandoffPrompt formats the retry user prompt with the handoff content.
-// See states.TheoryOfHandoff.
+// See TheoryOfHandoff.
 func formatHandoffPrompt(retryPrompt string, attempt, maxAttempts int) string {
 	prefix := fmt.Sprintf(incompleteOutputHandoffPrefix, attempt, maxAttempts)
-	return states.FormatHandoffPrompt(prefix, retryPrompt)
+	return FormatHandoffPrompt(prefix, retryPrompt)
 }
 
 // Result holds the outcome of a generation loop.
@@ -897,7 +891,7 @@ type Result struct {
 	// Diffs are the session diffs of all changes applied through the
 	// in-memory file store during this run. They are used by the review
 	// loop to present the changes to a second model. See
-	// TheoryOfReviewLoop in codes/generate.go.
+	// TheoryOfReviewLoop in generate.go.
 	Diffs []changes.FileDiff
 }
 
@@ -1036,7 +1030,7 @@ func (Module) Run(
 			// Apply the state decorators after recording so decorations (e.g.,
 			// observing FinishReason parts for a TUI) see every subsequent
 			// content append. Decorators are applied in order, each wrapping
-			// the state produced by the previous one. See loops.StateDecorator.
+			// the state produced by the previous one. See StateDecorator.
 			for _, decorator := range opts.StateDecorators {
 				if decorator != nil {
 					ls.state = decorator(ls.state)
@@ -1083,8 +1077,8 @@ func (Module) Run(
 
 // ExtractIncompleteOutput collects Text and Thought parts from contents
 // appended after prevCount, returning them as a single string for
-// summarization. It is shared by the codes module's retry summarization
-// (codes.summarizeRetryState) and the loop's own retry paths.
+// summarization. It is shared by the pipeline's retry summarization
+// (handoffRetryState) and the loop's own retry paths.
 func ExtractIncompleteOutput(state generators.State, prevCount int) string {
 	var parts []string
 	i := 0
@@ -1109,7 +1103,7 @@ func ExtractIncompleteOutput(state generators.State, prevCount int) string {
 // extractFinishReason scans new contents (after prevCount) for FinishReason
 // parts and returns the last finish reason found. Used to detect abnormal
 // termination such as max-token truncation ("length"). See
-// TheoryOfSummaryCompletionRetry in codes/generate.go.
+// TheoryOfSummaryCompletionRetry in generate.go.
 func extractFinishReason(state generators.State, prevCount int) string {
 	var reason string
 	i := 0
@@ -1128,17 +1122,17 @@ func extractFinishReason(state generators.State, prevCount int) string {
 
 // abnormalFinishReasons lists finish reasons that indicate the output was
 // truncated or ended abnormally, warranting a retry with content
-// summarization. "length" (OpenAI) and "max_tokens" (some providers) mean
-// the model hit the output token limit. The comparison is case-insensitive.
+// summarization. "length" (OpenAI) and "max_tokens" (some providers) mean the
+// model hit the output token limit. The comparison is case-insensitive.
 var abnormalFinishReasons = map[string]bool{
 	"length":     true,
 	"max_tokens": true,
 }
 
-// isAbnormalFinishReason reports whether the finish reason indicates the
-// output was truncated or otherwise ended abnormally, warranting a retry
-// with content summarization. See TheoryOfSummaryCompletionRetry in
-// codes/generate.go.
+// isAbnormalFinishReason reports whether the finish reason indicates
+// the output was truncated or otherwise ended abnormally, warranting a
+// retry with content summarization. See TheoryOfSummaryCompletionRetry in
+// generate.go.
 func isAbnormalFinishReason(reason string) bool {
 	return abnormalFinishReasons[strings.ToLower(reason)]
 }
@@ -1163,9 +1157,9 @@ func hasTriggeringBlocks(collectedBlocks []blocks.Block, comps components.Compon
 }
 
 // formatParseErrors formats collected parse errors as user content fed
-// back to the model for self-correction. The message states that only
-// the listed blocks were not applied and must be re-emitted, so the
-// model does not re-emit already-applied blocks (which would duplicate
+// back to the model for self-correction. The message states that only the
+// listed blocks were not applied and must be re-emitted, so the model does
+// not re-emit already-applied blocks (which would duplicate
 // ADD_BEFORE/ADD_AFTER changes). The attempt number makes the correction
 // budget explicit so the model knows when it is on its final attempt and
 // that persistently malformed blocks will be silently dropped. The full

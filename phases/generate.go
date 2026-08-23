@@ -18,7 +18,7 @@ after exhausting its own retries, so the outer loop does not re-trigger on the
 same exhausted error.
 
 When an error occurs (either non-retryable or after exhausting retries), the
-phase returns the input state so that callers like loops.Run can pass a valid
+phase returns the input state so that callers like pipeline.Run can pass a valid
 state to OnPhaseError.
 `
 
@@ -41,14 +41,14 @@ func (Module) BuildGenerate() BuildGenerate {
 							continue
 						}
 						// If the generator produced partial output before the
-						// error, return that state so the caller (loops.Run)
+						// error, return that state so the caller (pipeline.Run)
 						// can detect the content increase and trigger a retry
 						// with summarization. See TheoryOfGenerateRetry.
 						if newState != nil && generators.CountContents(newState) > generators.CountContents(state) {
 							return nil, newState, err
 						}
 						// Return the input state (not nil) so callers like
-						// loops.Run can pass a valid state to OnPhaseError.
+						// pipeline.Run can pass a valid state to OnPhaseError.
 						return nil, state, err
 					}
 					state = newState
@@ -62,7 +62,7 @@ func (Module) BuildGenerate() BuildGenerate {
 				// All retries exhausted. Use %v (not %w) to convert lastErr
 				// to a string, stripping ErrRetryable from the error chain
 				// so callers do not re-trigger retries. Return the input
-				// state (not nil) so callers like loops.Run can pass a
+				// state (not nil) so callers like pipeline.Run can pass a
 				// valid state to OnPhaseError.
 				return nil, state, fmt.Errorf("generate failed after %d retries: %v", maxRetries, lastErr)
 

@@ -200,9 +200,9 @@ func (c ComponentSet) Processable() []Component {
 // round (produced Parts or modified State), and an error if any component
 // failed. There are no per-component round limits: a component may trigger
 // rounds for as long as the model keeps emitting its blocks, and run-duration
-// control belongs to the caller via loops.RunOptions.MaxRounds.
+// control belongs to the caller via pipeline.RunOptions.MaxRounds.
 //
-// Both the ai command and the codes module call this function, so the
+// Both the ai command and the pipeline call this function, so the
 // component processing loop is identical across all generation commands —
 // only the ComponentSet and block list differ. See TheoryOfComponents.
 func ProcessComponents(

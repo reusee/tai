@@ -67,7 +67,7 @@ and the language-neutral kinds. Like read, go-src is strictly read-only
 and is not a completion signal: a round carrying a go-src block still
 needs a summary block, and because the kind is processable it
 participates in the triggering-block check, so such a round is not
-retried as truncated output (see loops.TheoryOfLoops).
+retried as truncated output (see pipeline.TheoryOfLoops).
 `
 
 const GoSrcBlockSystemPrompt = `

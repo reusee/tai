@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 func TestSystemPromptGoTestBlock(t *testing.T) {
@@ -30,7 +30,7 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		// The go-test prompt must instruct the model to emit a summary block
 		// even when emitting a go-test block. Without this, the model may omit
 		// the summary, causing unnecessary retries (see TheoryOfSummaryCompletionRetry
-		// in codes/generate.go and TheoryOfGoTestBlocks in gotools/gotest.go).
+		// in generate.go and TheoryOfGoTestBlocks in gotools/gotest.go).
 		if !strings.Contains(string(prompt), "go-test block is NOT a completion signal") {
 			t.Fatal("system prompt must state that go-test block is not a completion signal and summary is still required")
 		}

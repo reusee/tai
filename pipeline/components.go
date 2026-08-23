@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"context"
@@ -16,7 +16,7 @@ CodesComponents is a distinct named type embedding components.ComponentSet so th
 dscope resolves it independently from other modules' ComponentSet providers (e.g.,
 the ai command's AIComponents).
 
-The codes module reuses components.CommonComponents for the shell and continue
+The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
 go-src, read) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
@@ -45,8 +45,8 @@ against the updated source, and before summary so test output is available
 for the next round.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
-per line — through gotools.ResolveGoSymbols, appended as user content for the
-next round. Like read it is read-only context fetching, but unconditional:
+per line — through gotools.ResolveGoSymbols, appended as user content for
+the next round. Like read it is read-only context fetching, but unconditional:
 symbol resolution reuses the packages the loader already fetched, so it is
 always available in the codes pipeline.
 
@@ -67,7 +67,7 @@ the round completion signal. The generation loop checks for the summary block
 to distinguish a normally ended round from truncated output; a round carrying
 a component-triggering block (read, shell, continue, go-test, go-src) is also
 complete without a summary block, because the model is waiting for component
-processing rather than truncated (see loops.TheoryOfLoops). Every kind prompt
+processing rather than truncated (see TheoryOfLoops). Every kind prompt
 that stops and waits states the summary requirement with the same wording, so
 no stop instruction licenses omitting the summary block.
 `
@@ -87,7 +87,7 @@ provider, which derives the family from the resolved default generator, so
 no customization is needed.
 `
 
-// CodesComponents is the component set type for the codes module. It embeds
+// CodesComponents is the component set type for the codes pipeline. It embeds
 // components.ComponentSet as an anonymous struct field so that dscope can
 // resolve it independently from other modules' ComponentSet providers.
 // See TheoryOfCodesComponents.

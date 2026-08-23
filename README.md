@@ -135,15 +135,13 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 |---------|----------------|
 | `cmd/tai` | Command definitions and entry point |
 | `generators` | AI model abstraction (Gemini, OpenAI-compatible) |
-| `codes` | Code generation pipeline |
+| `pipeline` | Generation loop, codes generation pipeline, and state layers |
 | `gotools` | Go-specific parts provider, simplification, and the Go block kinds (go-test, go-src) |
 | `anytexts` | General-purpose text file parts provider |
 | `changes` | Change block parsing and application |
 | `blocks` | Heredoc block format parsing |
 | `components` | Component mechanism for block processing |
-| `loops` | Unified generation loop |
 | `phases` | Phase chain (generate, chat) |
-| `states` | State layers (thoughts summarization) |
 | `configs` | CUE configuration loading |
 | `flags` | Command-line flag parsing |
 | `security` | Container isolation and shell security |

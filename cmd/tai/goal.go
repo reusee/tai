@@ -8,10 +8,10 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/changes"
-	"github.com/reusee/tai/codes"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 const TheoryOfGoalCommand = `
@@ -31,7 +31,7 @@ carries goalDoneVerificationPrompt into the next loop, which re-reads the
 current filesystem state and re-assesses the goal. Only a second consecutive
 done block confirms the goal and stops the command. This verification step is
 required because the filesystem may change while a loop runs: a loop that
-loaded todo.md containing only task A cannot see task B added by the user
+loaded todo.md containing task A cannot see task B added by the user
 during execution, so its done declaration may rest on stale context. The
 verification loop sees the latest files, so the goal-achieved verdict always
 reflects the current state. Because the done block is not consumed by any
@@ -42,7 +42,7 @@ uncorrected malformed blocks overturns a pending declaration: the goal state
 is unknown or changes are missing, so the goal is not achieved.
 
 Malformed blocks that cannot be corrected within the parse-error correction
-budget are reported per loop via loops.Result.ParseErrors. Reporting makes
+budget are reported per loop via pipeline.Result.ParseErrors. Reporting makes
 silent change loss — malformed change blocks that are never applied — visible
 in unattended operation, where no human is available to notice missing
 changes.
@@ -65,9 +65,9 @@ dscope.Reset rebuilds every provider-scoped cache, giving each loop an
 accurate view of the current filesystem state.
 
 Each goal loop prints its round statistics at the loop's end (see
-codes.TheoryOfRoundStatistics). In addition, the goal command accumulates the
+pipeline.TheoryOfRoundStatistics). In addition, the goal command accumulates the
 statistics of every loop — via the statistics-returning
-codes.GenerateWithResultWithStats, with codes.RoundStat.Loop set to the loop
+pipeline.GenerateWithResultWithStats, with pipeline.RoundStat.Loop set to the loop
 number — and prints them once more, aggregated, after the goal completes. The
 aggregated report lets the user review the entire process in a single table:
 token usage, durations, and round summaries across all loops, with the Loop
@@ -140,9 +140,9 @@ var GoalCommand = Command{
 			return provider
 		},
 		func(
-			comps codes.CodesComponents,
+			comps pipeline.CodesComponents,
 			feedback GoalFeedback,
-		) codes.SystemPrompt {
+		) pipeline.SystemPrompt {
 			prompt := prompts.Codes + "\n" +
 				GoalSystemPrompt + "\n" +
 				comps.PromptSections()
@@ -154,13 +154,13 @@ var GoalCommand = Command{
 			if feedback != "" {
 				prompt += "\n\n" + string(feedback)
 			}
-			return codes.SystemPrompt(prompt)
+			return pipeline.SystemPrompt(prompt)
 		},
 	},
 	Main: func(
 		output Output,
 		reset dscope.Reset,
-		runReview codes.RunReview,
+		runReview pipeline.RunReview,
 	) {
 		ctx := context.Background()
 
@@ -195,8 +195,8 @@ var GoalCommand = Command{
 		// completes — in addition to the per-loop print at each loop's end.
 		// The Loop field is set to the loop number when each loop's stats
 		// are appended, so the aggregated table shows the entire process at
-		// a glance. See codes.TheoryOfRoundStatistics.
-		var allStats []codes.RoundStat
+		// a glance. See pipeline.TheoryOfRoundStatistics.
+		var allStats []pipeline.RoundStat
 
 		// allDiffs accumulates the session diffs of every goal loop so the
 		// review loop can review all changes made during the goal.
@@ -228,7 +228,7 @@ var GoalCommand = Command{
 			}
 
 			scope.Call(func(
-				generateWithResultWithStats codes.GenerateWithResultWithStats,
+				generateWithResultWithStats pipeline.GenerateWithResultWithStats,
 			) {
 
 				// Run a full generation cycle. Each call to
@@ -238,13 +238,13 @@ var GoalCommand = Command{
 				// shell, continue, etc.). It returns the loop result
 				// together with the round statistics collected during the
 				// loop, which are retained for the aggregated final report.
-				// See TheoryOfGoalCommand and codes.TheoryOfRoundStatistics.
+				// See TheoryOfGoalCommand and pipeline.TheoryOfRoundStatistics.
 				loopStart := len(allStats)
 				result, stats, err := generateWithResultWithStats(ctx, os.Stdout)
 				// Retain this loop's statistics for the aggregated final
 				// report. The Loop field identifies the goal loop that
 				// produced each round, so the final table shows the entire
-				// process at a glance. See codes.TheoryOfRoundStatistics.
+				// process at a glance. See pipeline.TheoryOfRoundStatistics.
 				allStats = append(allStats, stats...)
 				for i := loopStart; i < len(allStats); i++ {
 					allStats[i].Loop = loopsRun
@@ -323,7 +323,7 @@ var GoalCommand = Command{
 					// is the model's only chance to fix them.
 					// See TheoryOfGoalCommand.
 					feedback = GoalFeedback(fmt.Sprintf(
-						"[System note: The previous goal loop produced %d malformed block(s) that could not be corrected, e.g., kind %q with boundary %q. These blocks were NOT applied. In this loop, re-emit ONLY the corrected versions of these blocks; do not re-emit blocks that were applied successfully.]",
+						"[System note: The previous goal loop produced %d malformed block(s) that could not be corrected, e.g. kind %q with boundary %q. These blocks were NOT applied. In this loop, re-emit ONLY the corrected versions of these blocks; do not re-emit blocks that were applied successfully.]",
 						len(result.ParseErrors), first.BlockKind, first.Boundary))
 					return
 				}
@@ -404,9 +404,9 @@ var GoalCommand = Command{
 		// completes so the user can review the entire process in a single
 		// table. The per-loop print at each loop's end remains. The Loop
 		// column identifies which goal loop produced each round.
-		// See codes.TheoryOfRoundStatistics.
+		// See pipeline.TheoryOfRoundStatistics.
 		if len(allStats) > 0 {
-			codes.PrintRoundStats(output, allStats, "Goal Loop Statistics")
+			pipeline.PrintRoundStats(output, allStats, "Goal Loop Statistics")
 		}
 	},
 }

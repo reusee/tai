@@ -1,4 +1,4 @@
-package codes
+package pipeline
 
 import (
 	"context"
@@ -7,11 +7,11 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/gotools"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 func TestSystemPromptGoSrcBlock(t *testing.T) {

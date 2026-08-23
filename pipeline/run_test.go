@@ -1,4 +1,4 @@
-package loops
+package pipeline
 
 import (
 	"bytes"
@@ -816,7 +816,7 @@ func TestRunLogsRoundUsage(t *testing.T) {
 }
 
 func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
-	// If a generator emits multiple Usage parts during streaming (e.g. Gemini),
+	// If a generator emits multiple Usage parts during streaming (e.g., Gemini),
 	// logRoundUsage must take the final Usage snapshot rather than summing them.
 	// The logger is forked directly so the test controls the output sink;
 	// forking the logs.Writer would be ignored when the logger provider

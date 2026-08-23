@@ -5,17 +5,17 @@ import (
 	"os"
 
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/codes"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/modes"
+	"github.com/reusee/tai/pipeline"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 const TheoryOfAnyCommand = `
 The "any" subcommand provides code generation for arbitrary text files by
 selecting the "any" PartsProvider, which delegates to anytexts.PartsProvider.
-It reuses the full codes.Generate pipeline — including dynamic context,
+It reuses the full generation pipeline — including dynamic context,
 immediate apply, shell and continue blocks, and round statistics — by wiring
-codes.Module into the dscope scope. This makes "tai any" the general-purpose
+pipeline.Module into the dscope scope. This makes "tai any" the general-purpose
 entry point for non-Go code generation, complementing the Go-oriented default.
 `
 
@@ -29,8 +29,8 @@ var AnyCommand = Command{
 		},
 	},
 	Main: func(
-		generateWithResult codes.GenerateWithResult,
-		runReview codes.RunReview,
+		generateWithResult pipeline.GenerateWithResult,
+		runReview pipeline.RunReview,
 	) {
 		result, err := generateWithResult(context.Background(), os.Stdout)
 		if err != nil {

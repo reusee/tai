@@ -262,7 +262,7 @@ type memoryFile struct {
 
 // FileDiff represents a file's original (pre-session) and current state.
 // It is produced by MemoryStore.Diffs for review loops. See
-// TheoryOfReviewLoop in codes/generate.go.
+// TheoryOfReviewLoop in pipeline/generate.go.
 type FileDiff struct {
 	Path           string
 	Original       []byte

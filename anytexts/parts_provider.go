@@ -13,10 +13,10 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/codes/codetypes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/pathutil"
+	"github.com/reusee/tai/pipeline/codetypes"
 )
 
 const TheoryOfReadOnlySymlinks = `

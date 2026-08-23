@@ -47,7 +47,7 @@ round after the read block, and the stop rule is phrased as "stop
 generating, end the response with a summary block, and wait" — the same wording as
 the shell prompt — so the stop instruction never licenses omitting the summary
 block. At the loop level the block still completes the round (see
-loops.TheoryOfLoops), but the summary block remains required so the round
+pipeline.TheoryOfLoops), but the summary block remains required so the round
 statistics and the summary display carry the round's narrative.
 
 Only read blocks are consumed from ParserState during context

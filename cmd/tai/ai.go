@@ -13,13 +13,12 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
-	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
-	"github.com/reusee/tai/states"
 )
 
 const TheoryOfAiCommand = `
@@ -82,7 +81,7 @@ the generate phase (not chat); the chat prompt is handled by OnIdle, which is
 invoked by the loop as a fallback when no component triggers. This ensures the
 model can chain multiple rounds of autonomous shell execution without user
 intervention, and the user is only prompted when the model has no pending
-automated actions. See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
+automated actions. See phases.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
 The user prompt places file context first, then the static restate prompts,
@@ -98,16 +97,16 @@ TheoryOfAIComponents). See TheoryOfPrefixCaching in
 generators/state_func_map.go.
 
 Thought Summarization:
-The -summarize-thoughts flag wires states.NewThoughtsSummarize around the
-output layers, mirroring the codes pipeline: when enabled, the stdout Output
-layer suppresses raw thoughts and the summarizer writes periodic summaries
-to states.ThoughtSummaryWriter — os.Stdout by default, or the TUI's
-Summary-tab writer when -tui forks the provider. In TUI mode the
+The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
+output layers, mirroring the generation pipeline: when enabled, the stdout
+Output layer suppresses raw thoughts and the summarizer writes periodic
+summaries to pipeline.ThoughtSummaryWriter — os.Stdout by default, or the
+TUI's Summary-tab writer when -tui forks the provider. In TUI mode the
 tuiOutputState decorator still streams raw thoughts to the Output tab, so
 both streams are visible concurrently. The buf layer that captures
 assistant text for memory parsing always excludes thoughts, so
 summarization never interferes with memory block extraction. See
-states.TheoryOfThoughtsSummarize.
+pipeline.TheoryOfThoughtsSummarize.
 `
 
 var AICommand = Command{
@@ -128,11 +127,11 @@ var AICommand = Command{
 		flagChats flags.Chats,
 		noMemory NoMemory,
 		noHuman NoHuman,
-		loopRun loops.Run,
+		loopRun pipeline.Run,
 		recorder *records.Recorder,
-		getDefaultSummarizer states.GetDefaultSummarizer,
+		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-		thoughtSummaryWriter states.ThoughtSummaryWriter,
+		thoughtSummaryWriter pipeline.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
@@ -211,11 +210,12 @@ var AICommand = Command{
 		buf := new(strings.Builder)
 		// When -summarize-thoughts is enabled, the stdout Output layer
 		// suppresses raw thoughts and the summarizer writes periodic
-		// summaries in their place, mirroring the codes pipeline. In TUI
-		// mode os.Stdout is discarded and the tuiOutputState decorator
+		// summaries in their place, mirroring the generation pipeline. In
+		// TUI mode os.Stdout is discarded and the tuiOutputState decorator
 		// streams raw thoughts to the Output tab while the forked
-		// states.ThoughtSummaryWriter routes summaries to the Summary
-		// tab. See TheoryOfAiCommand and states.TheoryOfThoughtsSummarize.
+		// pipeline.ThoughtSummaryWriter routes summaries to the Summary
+		// tab. See TheoryOfAiCommand and
+		// pipeline.TheoryOfThoughtsSummarize.
 		outputShowThoughts := !bool(summarizeThoughts)
 		baseState = generators.NewOutput(baseState, os.Stdout, outputShowThoughts).WithTools(false)
 		// buf captures assistant text for memory block parsing.
@@ -229,7 +229,7 @@ var AICommand = Command{
 			if thoughtSummaryWriter != nil {
 				summaryWriter = thoughtSummaryWriter
 			}
-			baseState = states.NewThoughtsSummarize(ctx, baseState, summarizer, summaryWriter)
+			baseState = pipeline.NewThoughtsSummarize(ctx, baseState, summarizer, summaryWriter)
 		}
 
 		// Memory is updated after each generation round via the OnRoundSuccess
@@ -257,9 +257,9 @@ var AICommand = Command{
 		// passed explicitly so the session is captured when -record is
 		// enabled. The result is filled into result as the run progresses;
 		// the iterator yields the terminal error, if any.
-		// See phases.TheoryOfIdleHandler and loops.TheoryOfLoops.
-		var result loops.Result
-		for e := range loopRun(ctx, loops.RunOptions{
+		// See phases.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
+		var result pipeline.Result
+		for e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        baseState,
 			Components:          comps.ComponentSet,

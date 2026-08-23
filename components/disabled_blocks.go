@@ -34,7 +34,7 @@ Scope: the notice lists only kinds with an entry in disabledKindDescriptions;
 the map is open-ended, and a kind gains an entry when it has a meaningful
 replacement behavior. Deliberately unlisted: codes under -no-apply keeps the
 change prompt because change blocks are the deliverable of a dry run (see
-TheoryOfCodesComponents in codes/components.go); the goal command's done
+TheoryOfCodesComponents in pipeline/components.go); the goal command's done
 block is a command-specific completion contract, not a component-driven
 kind.
 `

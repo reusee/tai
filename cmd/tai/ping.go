@@ -13,9 +13,9 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/loops"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/phases"
+	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
 
@@ -47,7 +47,7 @@ other generation commands. The block format prompt requires a distinct
 delimiter per block: blocks sharing a delimiter would be mis-parsed as
 nested (see blocks.TheoryOfNestedBlockParsing), so identical delimiters
 cannot pass the test. Validation reads the blocks collected in
-loops.Result.RemainingBlocks: ping runs without components, so no block kind
+pipeline.Result.RemainingBlocks: ping runs without components, so no block kind
 is consumed. A validation failure prints the observed outcome and exits with
 status 1, making the command scriptable; on success the verdict is printed
 to the command Output writer after the streamed output.
@@ -225,8 +225,8 @@ func escapePingValue(value string) string {
 // decoded name-to-value pairs are significant — any equivalent escaping
 // passes. Only parsed blocks are inspected: prose around the blocks is
 // discarded by ParserState and never appears in
-// loops.Result.RemainingBlocks. See TheoryOfPingCommand.
-func validatePingBlocks(result loops.Result, specs []PingBlockSpec) error {
+// pipeline.Result.RemainingBlocks. See TheoryOfPingCommand.
+func validatePingBlocks(result pipeline.Result, specs []PingBlockSpec) error {
 	emitted := result.RemainingBlocks
 	var problems []string
 	if len(emitted) != len(specs) {
@@ -279,7 +279,7 @@ var PingCommand = Command{
 		recorder *records.Recorder,
 		getDefaultGenerator generators.GetDefaultGenerator,
 		buildGenerate phases.BuildGenerate,
-		loopRun loops.Run,
+		loopRun pipeline.Run,
 		randomPingBlocks RandomPingBlocks,
 		extra flags.ExtraSystemPrompt,
 		familyExtra flags.FamilyExtraSystemPrompt,
@@ -343,9 +343,9 @@ var PingCommand = Command{
 		// is enabled. Parsed blocks are collected in result.RemainingBlocks
 		// because no component consumes them. The result is filled into
 		// result as the run progresses; the iterator yields the terminal
-		// error, if any. See loops.TheoryOfLoops and TheoryOfTUI.
-		var result loops.Result
-		for e := range loopRun(ctx, loops.RunOptions{
+		// error, if any. See pipeline.TheoryOfLoops and TheoryOfTUI.
+		var result pipeline.Result
+		for e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
