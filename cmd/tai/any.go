@@ -12,7 +12,7 @@ import (
 
 const TheoryOfAnyCommand = `
 The "any" subcommand provides code generation for arbitrary text files by
-selecting the "any" CodeProvider, which delegates to anytexts.CodeProvider.
+selecting the "any" PartsProvider, which delegates to anytexts.PartsProvider.
 It reuses the full codes.Generate pipeline — including dynamic context,
 immediate apply, shell and continue blocks, and round statistics — by wiring
 codes.Module into the dscope scope. This makes "tai any" the general-purpose
@@ -23,8 +23,8 @@ var AnyCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
 		func(
-			provider anytexts.CodeProvider,
-		) codetypes.CodeProvider {
+			provider anytexts.PartsProvider,
+		) codetypes.PartsProvider {
 			return provider
 		},
 	},

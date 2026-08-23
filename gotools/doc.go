@@ -21,7 +21,7 @@ project files — for example, an external package being integrated — or for
 project packages whose full source would consume too much of the context
 budget.
 
-Doc parts are appended in CodeProvider.Parts after extra files, as part of the
+Doc parts are appended in PartsProvider.Parts after extra files, as part of the
 volatile suffix: project files form the stable prefix for LLM prefix caching,
 while doc content varies by request like extra files. Documentation is
 truncated from the end when the token budget is exhausted, so packages

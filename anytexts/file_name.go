@@ -14,7 +14,7 @@ NameMatch compiles the patterns once and accepts a path when any pattern
 matches; an empty Match (flag unset) accepts everything, so the filter is
 inert by default. Every file collection path applies the same NameMatch so
 the flag behaves uniformly across commands: anytexts.IterFiles filters its
-directory traversal, gotools.CodeProvider filters the collected project
+directory traversal, gotools.PartsProvider filters the collected project
 files during context assembly (before SimplifyFiles, so the visibility
 budget is computed from the filtered set), and the ai command filters its
 globbed -file results. go-src symbol resolution reads the unfiltered file

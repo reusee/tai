@@ -5,8 +5,8 @@ import (
 	"github.com/reusee/tai/codes/codetypes"
 )
 
-func (Module) CodeProvider(
-	anyTextsProvider anytexts.CodeProvider,
-) codetypes.CodeProvider {
+func (Module) PartsProvider(
+	anyTextsProvider anytexts.PartsProvider,
+) codetypes.PartsProvider {
 	return anyTextsProvider
 }

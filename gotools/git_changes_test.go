@@ -279,7 +279,7 @@ func TestPartsOrdersFocusPackagesByGitChanges(t *testing.T) {
 	scope.Fork(
 		func() LoadDir { return LoadDir(root) },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(1<<20, countTokens, nil)
@@ -366,7 +366,7 @@ func TestPartsOrdersContextPackagesByGitChanges(t *testing.T) {
 		func() LoadPatterns { return LoadPatterns{"./focus/..."} },
 		func() ContextPatterns { return ContextPatterns{"./actx", "./bctx"} },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(1<<20, countTokens, nil)

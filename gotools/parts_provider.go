@@ -14,12 +14,12 @@ import (
 	"github.com/reusee/tai/pathutil"
 )
 
-type CodeProvider struct {
+type PartsProvider struct {
 	GetFiles        dscope.Inject[GetFiles]
 	NameMatch       dscope.Inject[anytexts.NameMatch]
 	SimplifyFiles   dscope.Inject[SimplifyFiles]
 	Logger          dscope.Inject[logs.Logger]
-	AnyTexts        dscope.Inject[anytexts.CodeProvider]
+	AnyTexts        dscope.Inject[anytexts.PartsProvider]
 	LoadDir         dscope.Inject[LoadDir]
 	ShowTokenCounts dscope.Inject[ShowTokenCounts]
 	Envs            dscope.Inject[Envs]
@@ -27,7 +27,7 @@ type CodeProvider struct {
 	DocPatterns     dscope.Inject[DocPatterns]
 }
 
-var _ codetypes.CodeProvider = CodeProvider{}
+var _ codetypes.PartsProvider = PartsProvider{}
 
 const TheoryOfExtraFileContext = `
 Extra files requested via patterns are appended after project files to preserve
@@ -47,7 +47,7 @@ type pendingExtraPart struct {
 	path   string
 }
 
-func (c CodeProvider) Parts(
+func (c PartsProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),
 	patterns []string,
@@ -78,7 +78,7 @@ func (c CodeProvider) Parts(
 	// their content as reference even though it cannot modify them.
 	// The read-only marker in the file context instructs the model not
 	// to emit change blocks targeting these files.
-	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
+	// See TheoryOfFocusFileDirectoryCheck in anytexts/parts_provider.go.
 	for _, file := range files {
 		if !file.PackageIsRoot {
 			continue
@@ -452,7 +452,7 @@ func isExcludedPath(relPath string, excludePatterns []string) bool {
 // filters build new slices in order — files is the cached GetFiles
 // result, so its backing array must not be mutated — and preserve the
 // deterministic input order. See anytexts.TheoryOfMatchFiltering.
-func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
+func (c PartsProvider) filterFiles(files []*File, patterns []string) []*File {
 	nameMatch := c.NameMatch()
 	matched := make([]*File, 0, len(files))
 	for _, f := range files {
@@ -490,9 +490,9 @@ func (c CodeProvider) filterFiles(files []*File, patterns []string) []*File {
 	return filtered
 }
 
-func (Module) CodeProvider(
+func (Module) PartsProvider(
 	inject dscope.InjectStruct,
-) (ret CodeProvider) {
+) (ret PartsProvider) {
 	inject(&ret)
 	return
 }

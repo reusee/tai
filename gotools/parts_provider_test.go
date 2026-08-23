@@ -26,7 +26,7 @@ func TestContextPrompt(t *testing.T) {
 			return LoadDir(dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 
 		parts, err := provider.Parts(256, generators.DeepseekTokenCounterFn, nil)
@@ -99,7 +99,7 @@ func TestPartsIncludesWorkingDirectoryHint(t *testing.T) {
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(1<<20, countTokens, nil)
@@ -136,7 +136,7 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 			return LoadDir(dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		// Exclude the dep1 directory. The pattern "pkg" must match both
 		// files exactly named "pkg" and all files under the "pkg/"
@@ -280,7 +280,7 @@ use (
 			return LoadDir(mod1Dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{"!*.md"})
 		if err != nil {
@@ -358,7 +358,7 @@ func main() {}
 			return LoadDir(dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		// Without patterns: large embed file should be excluded, small should be included
 		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
@@ -417,7 +417,7 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 	// carries the "(read-only)" note, because focus Go files are no
 	// longer emitted individually. The package's content still provides
 	// useful reference context.
-	// See TheoryOfFocusFileDirectoryCheck in anytexts/code_provider.go.
+	// See TheoryOfFocusFileDirectoryCheck in anytexts/parts_provider.go.
 	//
 	// The module root is placed under /var/tmp (not /tmp) so that
 	// sibling directories like dep1 are outside writable dirs. If
@@ -472,7 +472,7 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 			return LoadPatterns{"../dep1"}
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(1<<20, countTokens, nil)
@@ -527,7 +527,7 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 		func() LoadDir { return LoadDir(root) },
 		func() logs.Logger { return logger },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		_, err := provider.Parts(1<<20, countTokens, nil)

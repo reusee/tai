@@ -143,7 +143,7 @@ func BenchmarkExported(b *testing.B) {
 	).Fork(
 		func() LoadDir { return LoadDir(root) },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
 		if err != nil {
@@ -209,7 +209,7 @@ module test
 			return LoadDir(dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(8192, countTokens, nil)
@@ -915,7 +915,7 @@ func Foo() {
 			return LoadDir(dir)
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		// Simplification stops when the context fits within the dynamic

@@ -26,11 +26,11 @@ and general-purpose file modification capabilities.
 type HasFiles bool
 
 func (Module) HasFiles(
-	codeProvider anytexts.CodeProvider,
+	partsProvider anytexts.PartsProvider,
 	flagFiles flags.Files,
 ) HasFiles {
 	patterns := slices.Collect(maps.Keys(flagFiles))
-	for info, err := range codeProvider.IterFiles(patterns) {
+	for info, err := range partsProvider.IterFiles(patterns) {
 		ce(err)
 		_ = info
 		return true

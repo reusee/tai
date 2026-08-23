@@ -25,7 +25,7 @@ func TestContextPrompt(t *testing.T) {
 			}
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
@@ -47,7 +47,7 @@ func TestContextPrompt(t *testing.T) {
 	})
 }
 
-func TestCodeProviderFromCurrentDir(t *testing.T) {
+func TestPartsProviderFromCurrentDir(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -66,7 +66,7 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
@@ -88,7 +88,7 @@ func TestCodeProviderFromCurrentDir(t *testing.T) {
 	})
 }
 
-func TestCodeProviderIncludesWorkingDirectoryHint(t *testing.T) {
+func TestPartsProviderIncludesWorkingDirectoryHint(t *testing.T) {
 	// The working directory hint must be appended after all file contents
 	// so the model can construct correct absolute paths for change block
 	// file-path attributes. The path is dynamic — it changes per
@@ -112,7 +112,7 @@ func TestCodeProviderIncludesWorkingDirectoryHint(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
@@ -178,7 +178,7 @@ func TestSymlinks(t *testing.T) {
 			new(Module),
 			modes.ForTest(t),
 		).Call(func(
-			provider CodeProvider,
+			provider PartsProvider,
 			countTokens generators.BPETokenCounter,
 		) {
 			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"link"})
@@ -230,7 +230,7 @@ func TestSymlinks(t *testing.T) {
 			new(Module),
 			modes.ForTest(t),
 		).Call(func(
-			provider CodeProvider,
+			provider PartsProvider,
 			countTokens generators.BPETokenCounter,
 		) {
 			parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
@@ -277,7 +277,7 @@ func TestSymlinks(t *testing.T) {
 			new(Module),
 			modes.ForTest(t),
 		).Call(func(
-			provider CodeProvider,
+			provider PartsProvider,
 			countTokens generators.BPETokenCounter,
 		) {
 			// A directly-specified focus file that resolves outside
@@ -326,7 +326,7 @@ func TestSymlinks(t *testing.T) {
 			new(Module),
 			modes.ForTest(t),
 		).Call(func(
-			provider CodeProvider,
+			provider PartsProvider,
 			countTokens generators.BPETokenCounter,
 		) {
 			// A directly-specified focus directory that resolves outside
@@ -371,7 +371,7 @@ func TestFocusFileOutsideWritableDirs(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{externalPath})
@@ -426,7 +426,7 @@ func TestFileOrderingByPath(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
@@ -481,7 +481,7 @@ func TestExcludePatternDirectoryPrefix(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{".", "!./pkg"})
@@ -588,7 +588,7 @@ func TestBinaryFileTokenBudget(t *testing.T) {
 			"image/png": true,
 		}),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		// With DeepseekTokenCounterFn, the text file markers + content
 		// ("``` begin of file a.txt\nhello\n``` end of file a.txt\n")
@@ -646,7 +646,7 @@ func TestIterFilesHiddenFileDirectlyMatched(t *testing.T) {
 		new(Module),
 		modes.ForTest(t),
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		// Directly specifying a hidden file via pattern should include it
@@ -715,7 +715,7 @@ func TestMatchFlagFiltersFiles(t *testing.T) {
 
 	// The -match flag reaches the file filter through the same path as
 	// the tai command: flags.Parse forks flags.Match into the scope, and
-	// the CodeProvider's injected NameMatch builds its regex filter from
+	// the PartsProvider's injected NameMatch builds its regex filter from
 	// the forked value. See TheoryOfMatchFiltering.
 	scope := dscope.New(
 		new(Module),
@@ -726,7 +726,7 @@ func TestMatchFlagFiltersFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope.Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})

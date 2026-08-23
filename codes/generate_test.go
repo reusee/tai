@@ -1057,7 +1057,7 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Chats { return flags.Chats{"hello"} },
 		func() Debug { return Debug(true) },
 		func() *records.Recorder { return nil },
@@ -1105,7 +1105,7 @@ func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Chats { return flags.Chats{"hello"} },
 		func() *records.Recorder { return nil },
 		func() generators.GetDefaultGenerator {

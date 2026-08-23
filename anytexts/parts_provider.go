@@ -83,7 +83,7 @@ files share the same path (impossible in practice).
 
 const TheoryOfWorkingDirectoryHint = `
 The working directory hint appends the absolute path of the process working
-directory after all file contents provided by CodeProvider, together with a
+directory after all file contents provided by PartsProvider, together with a
 directive to construct change block file-path attributes as absolute paths
 within it. The apply layer resolves such paths relative to the working
 directory, so the hint gives the model the base path it needs instead of
@@ -128,7 +128,7 @@ marking pattern-matched paths as direct matches, while paths discovered
 during directory traversal are not.
 `
 
-type CodeProvider struct {
+type PartsProvider struct {
 	FileNameOK       dscope.Inject[FileNameOK]
 	NameMatch        dscope.Inject[NameMatch]
 	Logger           dscope.Inject[logs.Logger]
@@ -136,7 +136,7 @@ type CodeProvider struct {
 	IncludeMimeTypes dscope.Inject[IncludeMimeTypes]
 }
 
-var _ codetypes.CodeProvider = CodeProvider{}
+var _ codetypes.PartsProvider = PartsProvider{}
 
 type FileInfo struct {
 	Path     string
@@ -147,7 +147,7 @@ type FileInfo struct {
 	ReadOnly bool
 }
 
-func (c CodeProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
+func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 	return func(yield func(FileInfo, error) bool) {
 
 		if len(patterns) == 0 {
@@ -429,10 +429,10 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 
 // WorkingDirectoryPart returns a Text part carrying the absolute path of
 // the process working directory, or nil when the directory cannot be
-// determined. CodeProvider.Parts appends it after all file contents so
+// determined. PartsProvider.Parts appends it after all file contents so
 // the model can construct correct absolute paths for change block
 // file-path attributes. It is exported because
-// gotools.CodeProvider.Parts appends the same hint after the Go file
+// gotools.PartsProvider.Parts appends the same hint after the Go file
 // contents. See TheoryOfWorkingDirectoryHint.
 func WorkingDirectoryPart() generators.Part {
 	cwd, err := os.Getwd()
@@ -501,7 +501,7 @@ func isExcludedPath(path string, excludePatterns []string) bool {
 	return false
 }
 
-func (c CodeProvider) Parts(
+func (c PartsProvider) Parts(
 	maxTokens int,
 	countTokens func(string) (int, error),
 	patterns []string,
@@ -626,7 +626,7 @@ func (c CodeProvider) Parts(
 		parts = append(parts, part)
 	}
 
-	c.Logger().Info("anytexts.CodeProvider",
+	c.Logger().Info("anytexts.PartsProvider",
 		"max tokens", maxTokens,
 		"total tokens", totalTokens,
 	)
@@ -634,9 +634,9 @@ func (c CodeProvider) Parts(
 	return
 }
 
-func (Module) CodeProvider(
+func (Module) PartsProvider(
 	inject dscope.InjectStruct,
-) (ret CodeProvider) {
+) (ret PartsProvider) {
 	inject(&ret)
 	return
 }

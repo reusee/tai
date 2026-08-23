@@ -19,7 +19,7 @@ func TestSystemPromptGoSrcBlock(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
@@ -38,7 +38,7 @@ func TestGoSrcComponentResolvesSymbols(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() gotools.ResolveGoSymbols {
 			return func(symbols []string) ([]generators.Part, error) {
 				return []generators.Part{generators.Text("resolved: " + strings.Join(symbols, ","))}, nil
@@ -81,7 +81,7 @@ func TestGoSrcComponentEmptyBodyFeedback(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() gotools.ResolveGoSymbols {
 			return func(symbols []string) ([]generators.Part, error) {
 				resolverCalled = true

@@ -12,11 +12,11 @@ import (
 	"github.com/reusee/tai/modes"
 )
 
-type mockCodeProvider struct{}
+type mockPartsProvider struct{}
 
-var _ codetypes.CodeProvider = mockCodeProvider{}
+var _ codetypes.PartsProvider = mockPartsProvider{}
 
-func (mockCodeProvider) Parts(int, func(string) (int, error), []string) ([]generators.Part, error) {
+func (mockPartsProvider) Parts(int, func(string) (int, error), []string) ([]generators.Part, error) {
 	return nil, nil
 }
 
@@ -27,7 +27,7 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
@@ -47,7 +47,7 @@ func TestSystemPromptRequestContextNotCompletionSignal(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
@@ -63,7 +63,7 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
@@ -81,7 +81,7 @@ func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() gotools.ExtraSystemPrompt {
 			return gotools.ExtraSystemPrompt{"go-specific system prompt"}
 		},
@@ -99,7 +99,7 @@ func TestSystemPromptContinueBlock(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Plan { return true },
 	).Call(func(
 		prompt SystemPrompt,
@@ -121,7 +121,7 @@ func TestSystemPromptMandatoryPlanning(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Plan { return true },
 	).Call(func(
 		prompt SystemPrompt,
@@ -147,7 +147,7 @@ func TestSystemPromptDecompositionPrecedesAnalysis(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Plan { return true },
 	).Call(func(
 		prompt SystemPrompt,
@@ -170,7 +170,7 @@ func TestSystemPromptTaskDecompositionStrategies(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() flags.Plan { return true },
 	).Call(func(
 		prompt SystemPrompt,
@@ -219,7 +219,7 @@ func TestSystemPromptSummaryBlock(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {

@@ -135,8 +135,8 @@ var GoalCommand = Command{
 		modes.ForProduction(),
 		func() NoHuman { return NoHuman(true) },
 		func(
-			provider gotools.CodeProvider,
-		) codetypes.CodeProvider {
+			provider gotools.PartsProvider,
+		) codetypes.PartsProvider {
 			return provider
 		},
 		func(

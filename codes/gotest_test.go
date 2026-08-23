@@ -20,7 +20,7 @@ func TestSystemPromptGoTestBlock(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		prompt SystemPrompt,
 	) {
@@ -52,7 +52,7 @@ func TestGoTestComponentPassTriggersRoundWithOutput(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		comps CodesComponents,
 	) {
@@ -91,7 +91,7 @@ func TestGoTestComponentFailTriggersRound(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 	).Call(func(
 		comps CodesComponents,
 	) {
@@ -119,7 +119,7 @@ func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() generators.ModelFamily { return "gemini" },
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}
@@ -143,7 +143,7 @@ func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
 		modes.ForTest(t),
 		new(Module),
 	).Fork(
-		func() codetypes.CodeProvider { return mockCodeProvider{} },
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
 		func() generators.ModelFamily { return "other" },
 		func() flags.FamilyExtraSystemPrompt {
 			return flags.FamilyExtraSystemPrompt{"gemini": {"gemini family prompt"}}

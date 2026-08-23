@@ -162,10 +162,10 @@ func TestFilesGoFileContentCached(t *testing.T) {
 	})
 }
 
-func TestCodeProviderMatchFlagFiltersFiles(t *testing.T) {
+func TestPartsProviderMatchFlagFiltersFiles(t *testing.T) {
 	// The -match regex include filter applies to the project files the
 	// gotools pipeline assembles into the context — through the
-	// CodeProvider's injected NameMatch, the same filter the anytexts
+	// PartsProvider's injected NameMatch, the same filter the anytexts
 	// pipeline uses — so the flag works uniformly across the go and any
 	// commands. See anytexts.TheoryOfMatchFiltering.
 	scope := dscope.New(
@@ -182,7 +182,7 @@ func TestCodeProviderMatchFlagFiltersFiles(t *testing.T) {
 			return flags.Match{`main\.go$`: true}
 		},
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 	) {
 		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
 		if err != nil {
@@ -348,7 +348,7 @@ func main() {
 		func() LoadDir { return LoadDir(root) },
 	).Call(func(
 		getFiles GetFiles,
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		files, err := getFiles()

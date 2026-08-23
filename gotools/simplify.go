@@ -47,7 +47,7 @@ SimplifyFiles step logs the allocation view: focus package documentation
 tokens (the pinned full-doc blocks from which the budget derives), the
 dynamic context budget derived from them, and how the context packages
 consume that budget by visibility level (short-doc packages, doc-only
-packages, code-only packages, full packages). The CodeProvider.Parts step
+packages, code-only packages, full packages). The PartsProvider.Parts step
 logs the assembly view: how the final prompt token total is composed of
 focus project files, context project files (focus-package documentation
 blocks carry the context-file marker and are counted with context tokens

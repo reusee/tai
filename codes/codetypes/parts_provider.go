@@ -2,7 +2,7 @@ package codetypes
 
 import "github.com/reusee/tai/generators"
 
-type CodeProvider interface {
+type PartsProvider interface {
 	Parts(
 		maxTokens int,
 		countTokens func(string) (int, error),

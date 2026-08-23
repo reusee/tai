@@ -542,7 +542,7 @@ func (Module) GenerateWithResult(
 }
 
 func (Module) GenerateWithResultWithStats(
-	codeProvider codetypes.CodeProvider,
+	partsProvider codetypes.PartsProvider,
 	comps CodesComponents,
 	systemPrompt SystemPrompt,
 	logger logs.Logger,
@@ -656,12 +656,12 @@ func (Module) GenerateWithResultWithStats(
 		}
 
 		// user prompt
-		userPromptParts, err := codeProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
+		userPromptParts, err := partsProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
 			return loops.Result{}, nil, err
 		}
 
-		// Component user prompt parts are appended after code provider parts.
+		// Component user prompt parts are appended after parts provider parts.
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
 
 		// Concatenate the text parts with strings.Builder for token counting.

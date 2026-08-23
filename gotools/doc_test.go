@@ -50,7 +50,7 @@ func TestDocPatternsAccumulatesAcrossInvocations(t *testing.T) {
 	}
 }
 
-func TestCodeProviderIncludesPackageDoc(t *testing.T) {
+func TestPartsProviderIncludesPackageDoc(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 
@@ -77,7 +77,7 @@ func Foo() int { return 42 }
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/mypkg"} },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		parts, err := provider.Parts(1<<20, countTokens, nil)
@@ -104,7 +104,7 @@ func Foo() int { return 42 }
 	})
 }
 
-func TestCodeProviderDocErrorSurfaces(t *testing.T) {
+func TestPartsProviderDocErrorSurfaces(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 
@@ -126,7 +126,7 @@ func TestCodeProviderDocErrorSurfaces(t *testing.T) {
 		func() LoadDir { return LoadDir(root) },
 		func() DocPatterns { return DocPatterns{"example.com/docpkg/nonexistent"} },
 	).Call(func(
-		provider CodeProvider,
+		provider PartsProvider,
 		countTokens generators.BPETokenCounter,
 	) {
 		_, err := provider.Parts(1<<20, countTokens, nil)

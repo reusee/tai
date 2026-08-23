@@ -14,7 +14,7 @@ import (
 type UserPrompt []generators.Part
 
 func (Module) UserPrompt(
-	codeProvider anytexts.CodeProvider,
+	partsProvider anytexts.PartsProvider,
 	getDefaultGenerator generators.GetDefaultGenerator,
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
@@ -39,7 +39,7 @@ func (Module) UserPrompt(
 	ce(err)
 	maxInputTokens -= systemPromptTokens
 
-	parts, err := codeProvider.Parts(
+	parts, err := partsProvider.Parts(
 		maxInputTokens,
 		generator.CountTokens,
 		slices.Collect(maps.Keys(flagFiles)),
