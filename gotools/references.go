@@ -44,9 +44,11 @@ through Origin so generic instantiations fold onto the declared method or
 function, deduplicated by the referencing top-level declaration within a
 file, sorted by file and declaration name, and capped at
 maxGoSrcReferencesPerSymbol with an explicit truncation note.
-Standard-library dependencies and hidden packages are excluded from
-the index, matching the context loader's boundaries (see
-TheoryOfHiddenPackages and TheoryOfStdLibExclusion).
+Standard-library dependencies, hidden packages, and the go tool's
+synthesized test-binary packages ("<path>.test": binary mains with no
+real source, only the generated _testmain.go, whose references would be
+noise) are excluded from the index, matching the context loader's
+boundaries (see TheoryOfHiddenPackages and TheoryOfStdLibExclusion).
 `
 
 // maxGoSrcReferencesPerSymbol caps the references reported for one symbol:
@@ -64,8 +66,9 @@ type GetTypeCheckedPackages func() ([]*packages.Package, error)
 // TypeCheckedPackages provider: loads the root and context patterns with
 // NeedTypes, NeedTypesInfo, and NeedSyntax, walks the import graph so
 // dependencies type-checked from source are indexed too, and excludes
-// standard-library dependencies and hidden packages, matching the context
-// loader's boundaries. See TheoryOfGoSrcReferences.
+// standard-library dependencies, hidden packages, and the go tool's
+// synthesized test-binary packages, matching the context loader's
+// boundaries. See TheoryOfGoSrcReferences.
 func (Module) TypeCheckedPackages(
 	noTests NoTests,
 	envs Envs,
@@ -137,6 +140,13 @@ func (Module) TypeCheckedPackages(
 				continue
 			}
 			if isHidden != nil && isHidden(basePkgPath(pkg.PkgPath)) {
+				continue
+			}
+			// The go tool synthesizes a test-binary main package ("<path>.test")
+			// for every tested package. It has no real source — only the
+			// generated _testmain.go — so references reported from it are noise:
+			// exclude it from the reference index. See TheoryOfGoSrcReferences.
+			if strings.HasSuffix(basePkgPath(pkg.PkgPath), ".test") {
 				continue
 			}
 			kept = append(kept, pkg)

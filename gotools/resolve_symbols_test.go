@@ -348,6 +348,27 @@ func TestRefsUses(t *testing.T) {
 		if !strings.Contains(got, "example.com/refs: UseWidget (") {
 			t.Fatalf("expected UseWidget reference, got:\n%s", got)
 		}
+
+		// The go tool's synthesized test-binary package (example.com/refs.test)
+		// is excluded from the reference index: it has no real source, only the
+		// generated _testmain.go, and the reference its main function makes to
+		// TestRefsUses would be noise. TestRefsUses is referenced by nothing
+		// else, so excluding the binary leaves it with no references at all.
+		// See TheoryOfGoSrcReferences.
+		parts, err = resolve([]string{"TestRefsUses"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		if !strings.Contains(got, "``` begin of source example.com/refs.TestRefsUses") {
+			t.Fatalf("expected source block for TestRefsUses, got:\n%s", got)
+		}
+		if strings.Contains(got, "refs.test") {
+			t.Fatalf("expected no references from the test binary package, got:\n%s", got)
+		}
+		if strings.Contains(got, "begin of references example.com/refs.TestRefsUses") {
+			t.Fatalf("expected no references block for TestRefsUses, got:\n%s", got)
+		}
 	})
 
 	// Truncation: 120 additional callers exceed maxGoSrcReferencesPerSymbol.
