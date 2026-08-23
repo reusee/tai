@@ -13,52 +13,52 @@ import (
 	"github.com/reusee/tai/nets"
 )
 
-func TestParseRequestContextBody(t *testing.T) {
+func TestParseReadBody(t *testing.T) {
 	tests := []struct {
 		name     string
 		body     string
-		expected []RequestContextRequest
+		expected []ReadRequest
 		wantErr  bool
 	}{
 		{
 			name: "single file",
 			body: `<file path="src/main.go" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "file", Path: "src/main.go"},
 			},
 		},
 		{
 			name: "single fetch",
 			body: `<fetch addr="https://example.com/api" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "fetch", Addr: "https://example.com/api"},
 			},
 		},
 		{
 			name: "fetch with headers",
 			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" referer="https://ref.example.com" cookie="session=abc123" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 			},
 		},
 		{
 			name: "fetch with partial headers",
 			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0"},
 			},
 		},
 		{
 			name: "single glob",
 			body: `<glob pattern="src/*.go" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "glob", Pattern: "src/*.go"},
 			},
 		},
 		{
 			name: "multiple mixed",
 			body: `<file path="a.go" />` + "\n" + `<fetch addr="https://x.com" />` + "\n" + `<file path="b.go" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "file", Path: "a.go"},
 				{Type: "fetch", Addr: "https://x.com"},
 				{Type: "file", Path: "b.go"},
@@ -67,7 +67,7 @@ func TestParseRequestContextBody(t *testing.T) {
 		{
 			name: "multiple mixed with glob",
 			body: `<file path="a.go" />` + "\n" + `<glob pattern="*.go" />` + "\n" + `<fetch addr="https://x.com" />`,
-			expected: []RequestContextRequest{
+			expected: []ReadRequest{
 				{Type: "file", Path: "a.go"},
 				{Type: "glob", Pattern: "*.go"},
 				{Type: "fetch", Addr: "https://x.com"},
@@ -97,7 +97,7 @@ func TestParseRequestContextBody(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseRequestContextBody(tc.body)
+			got, err := parseReadBody(tc.body)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -310,7 +310,7 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextFile(t *testing.T) {
+func TestFetchReadRequestsFile(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -324,10 +324,10 @@ func TestFetchRequestContextFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "file", Path: "test.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -340,7 +340,7 @@ func TestFetchRequestContextFile(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextGlob(t *testing.T) {
+func TestFetchReadRequestsGlob(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -355,10 +355,10 @@ func TestFetchRequestContextGlob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "glob", Pattern: "*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -377,7 +377,7 @@ func TestFetchRequestContextGlob(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
+func TestFetchReadRequestsGlobDoubleStar(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -395,10 +395,10 @@ func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "glob", Pattern: "**/*.go"},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -414,7 +414,7 @@ func TestFetchRequestContextGlobDoubleStar(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextFetch(t *testing.T) {
+func TestFetchReadRequestsFetch(t *testing.T) {
 	responseBody := "fetch response body"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(responseBody))
@@ -427,10 +427,10 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	}
 	defer root.Close()
 
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "fetch", Addr: server.URL},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -443,7 +443,7 @@ func TestFetchRequestContextFetch(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextHeaders(t *testing.T) {
+func TestFetchReadRequestsHeaders(t *testing.T) {
 	var gotUserAgent, gotReferer, gotCookie string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUserAgent = r.Header.Get("User-Agent")
@@ -459,10 +459,10 @@ func TestFetchRequestContextHeaders(t *testing.T) {
 	}
 	defer root.Close()
 
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -484,7 +484,7 @@ func TestFetchRequestContextHeaders(t *testing.T) {
 	}
 }
 
-func TestFetchRequestContextError(t *testing.T) {
+func TestFetchReadRequestsError(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -493,10 +493,10 @@ func TestFetchRequestContextError(t *testing.T) {
 	defer root.Close()
 
 	// File not found
-	requests := []RequestContextRequest{
+	requests := []ReadRequest{
 		{Type: "file", Path: "nonexistent.txt"},
 	}
-	parts := fetchRequestContext(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -509,26 +509,25 @@ func TestFetchRequestContextError(t *testing.T) {
 	}
 }
 
-func TestRequestContextPromptsRequireSummary(t *testing.T) {
-	// The request-context prompts must not license omitting the summary
+func TestReadBlockPromptsRequireSummary(t *testing.T) {
+	// The read prompts must not license omitting the summary
 	// block: the stop rule is phrased like the shell prompt's ("stop and
 	// end the response with a summary block"), and the block is declared
 	// not to replace the summary block. A bare "stop generating and wait"
 	// contradicts SummaryBlockSystemPrompt's every-response requirement
 	// and is the most likely cause of missing summary blocks after
-	// request-context blocks. See TheoryOfRequestContext and
-	// TheoryOfSummaryBlocks.
-	if !strings.Contains(RequestContextSystemPrompt, "request-context block is NOT a completion signal") {
-		t.Fatal("system prompt must state that the request-context block is not a completion signal and a summary block is still required")
+	// read blocks. See TheoryOfReadBlocks and TheoryOfSummaryBlocks.
+	if !strings.Contains(ReadBlockSystemPrompt, "read block is NOT a completion signal") {
+		t.Fatal("system prompt must state that the read block is not a completion signal and a summary block is still required")
 	}
-	if !strings.Contains(RequestContextSystemPrompt, "end the response with a summary block") {
+	if !strings.Contains(ReadBlockSystemPrompt, "end the response with a summary block") {
 		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
 	}
-	if strings.Contains(RequestContextSystemPrompt, "stop generating and wait for the system to provide") {
+	if strings.Contains(ReadBlockSystemPrompt, "stop generating and wait for the system to provide") {
 		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
 	}
-	if !strings.Contains(RequestContextRestatePrompt, "does NOT replace the summary block") {
-		t.Fatal("restate prompt must state that a request-context block does not replace the summary block")
+	if !strings.Contains(ReadBlockRestatePrompt, "does NOT replace the summary block") {
+		t.Fatal("restate prompt must state that a read block does not replace the summary block")
 	}
 }
 
@@ -582,11 +581,10 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 	}
 }
 
-func TestProcessRequestContextBlocksPreservesNonRequestContextBlocks(t *testing.T) {
-	// ProcessRequestContextBlocks only processes request-context blocks.
-	// Non-request-context blocks are not passed to it (filtered by
-	// ProcessComponents), so this test verifies that request-context
-	// blocks are processed correctly.
+func TestProcessReadBlocksAppendsFetchedContent(t *testing.T) {
+	// ProcessReadBlocks only processes read blocks. Non-read blocks
+	// are not passed to it (filtered by ProcessComponents), so this test
+	// verifies that read blocks are processed correctly.
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -600,16 +598,16 @@ func TestProcessRequestContextBlocksPreservesNonRequestContextBlocks(t *testing.
 	}
 
 	state := generators.NewPrompts("", nil)
-	rcBlocks := []Block{
-		{Kind: "request-context", Body: `<file path="test.txt" />`},
+	readBlocks := []Block{
+		{Kind: "read", Body: `<file path="test.txt" />`},
 	}
 
-	newState, hasRC, err := ProcessRequestContextBlocks(rcBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	newState, hasRead, err := ProcessReadBlocks(readBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasRC {
-		t.Fatal("expected hasRC=true")
+	if !hasRead {
+		t.Fatal("expected hasRead=true")
 	}
 
 	// Verify content was appended to state.
@@ -628,7 +626,7 @@ func TestProcessRequestContextBlocksPreservesNonRequestContextBlocks(t *testing.
 	}
 }
 
-func TestProcessRequestContextBlocksFiltersByKind(t *testing.T) {
+func TestProcessReadBlocksFiltersByKind(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -643,34 +641,34 @@ func TestProcessRequestContextBlocksFiltersByKind(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 
-	// Non-request-context blocks must not set hasRC or append content.
-	// Before kind filtering, hasRequestContext was set unconditionally
+	// Non-read blocks must not set hasRead or append content.
+	// Before kind filtering, hasRead was set unconditionally
 	// for every block, causing false positives and parse attempts on
-	// non-request-context bodies.
+	// non-read bodies.
 	blocks := []Block{
 		{Kind: "change", Body: "some change"},
 		{Kind: "summary", Body: "- done"},
 	}
-	_, hasRC, err := ProcessRequestContextBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	_, hasRead, err := ProcessReadBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasRC {
-		t.Fatal("expected hasRC=false for non-request-context blocks")
+	if hasRead {
+		t.Fatal("expected hasRead=false for non-read blocks")
 	}
 
-	// Mixed blocks: only request-context blocks should be processed.
+	// Mixed blocks: only read blocks should be processed.
 	mixed := []Block{
 		{Kind: "change", Body: "some change"},
-		{Kind: "request-context", Body: `<file path="test.txt" />`},
+		{Kind: "read", Body: `<file path="test.txt" />`},
 		{Kind: "summary", Body: "- done"},
 	}
-	newState, hasRC, err := ProcessRequestContextBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	newState, hasRead, err := ProcessReadBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasRC {
-		t.Fatal("expected hasRC=true for mixed blocks with request-context")
+	if !hasRead {
+		t.Fatal("expected hasRead=true for mixed blocks with read")
 	}
 	found := false
 	for c := range newState.Contents() {
@@ -683,6 +681,6 @@ func TestProcessRequestContextBlocksFiltersByKind(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("expected request-context block to be processed in mixed blocks")
+		t.Fatal("expected read block to be processed in mixed blocks")
 	}
 }

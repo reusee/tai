@@ -14,7 +14,7 @@ the session without interfering with block processing or state management. Summa
 blocks are always enabled because they have no side effects and help the user
 understand what the model did and thought in each round without reading the full
 output. The summary requirement is shared by every kind prompt: each kind whose
-prompt stops and waits for the next round (shell, go-test, go-src, request-context)
+prompt stops and waits for the next round (shell, go-test, go-src, read)
 phrases its stop rule as "end the response with a summary block" and declares that
 its block does not replace the summary, so no stop instruction conflicts with the
 every-response requirement. A round with no summary block and no component-

@@ -33,10 +33,10 @@ for autonomous, single-shot task execution.
 
 The system prompt carries a disabled-blocks notice
 (components.DisabledBlocksNotice) listing shell, continue, go-test, go-src,
-and request-context: the single-shot loop runs with no components, so these
-kinds are never processed here, and without the notice the model could emit
-them from habit and have them silently ignored while implying actions that
-never happened. Change is not listed: it is handled by the BlockHandler (or
+and read: the single-shot loop runs with no components, so these kinds are
+never processed here, and without the notice the model could emit them from
+habit and have them silently ignored while implying actions that never
+happened. Change is not listed: it is handled by the BlockHandler (or
 dry-run under -no-apply) whenever hasFiles included the change prompt. The
 notice is static for this command, so it sits directly after the base prompt
 inside the stable prefix region. See components.TheoryOfDisabledBlocks.
@@ -88,7 +88,7 @@ func (Module) SystemPrompt(
 	// after the base prompt inside the stable prefix region. See
 	// components.TheoryOfDisabledBlocks and TheoryOfNextCommand.
 	ret += "\n\n" + SystemPrompt(components.DisabledBlocksNotice(
-		"shell", "continue", "go-test", "go-src", "request-context",
+		"shell", "continue", "go-test", "go-src", "read",
 	))
 
 	if hasFiles {

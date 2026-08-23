@@ -16,8 +16,8 @@ import (
 	"github.com/reusee/tai/pathutil"
 )
 
-const TheoryOfRequestContext = `
-The request-context block lets the model request additional context during a
+const TheoryOfReadBlocks = `
+The read block lets the model request additional context during a
 generation cycle: it emits XML tags describing the desired context; the generate
 loop detects the block via ParserState, fetches the requested data, appends it as
 user content, and initiates another generation request. The block is strictly
@@ -41,24 +41,24 @@ for recursive directory traversal via doublestar; when ** appears as a complete
 path segment, it matches zero or more directories.
 
 Like every kind whose prompt stops and waits for the next round (shell, go-test,
-go-src), the request-context prompt carries the summary discipline: the block does
-not replace the summary block, the prompt requires a summary block in the same
-round after the request-context block, and the stop rule is phrased as "stop
+go-src), the read prompt carries the summary discipline: the block does not
+replace the summary block, the prompt requires a summary block in the same
+round after the read block, and the stop rule is phrased as "stop
 generating, end the response with a summary block, and wait" — the same wording as
 the shell prompt — so the stop instruction never licenses omitting the summary
 block. At the loop level the block still completes the round (see
 loops.TheoryOfLoops), but the summary block remains required so the round
 statistics and the summary display carry the round's narrative.
 
-Only request-context blocks are consumed from ParserState during context
+Only read blocks are consumed from ParserState during context
 processing; blocks of other kinds are preserved so they remain available after the
 context is provided.
 `
 
-const RequestContextSystemPrompt = `
-**Request-Context Block Kind:**
+const ReadBlockSystemPrompt = `
+Read Block Kind:
 
-Use the "request-context" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a request-context block. The system will fetch the requested data and provide it as user input for the next generation turn.
+Use the "read" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a read block. The system will fetch the requested data and provide it as user input for the next generation turn.
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
@@ -68,26 +68,26 @@ Use the "request-context" kind to request additional context needed to complete 
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
-- After emitting a request-context block, stop generating, end the response with a summary block, and wait for the system to provide the requested context.
-- The request-context block is NOT a completion signal. MUST still emit a summary block in the same round, after the request-context block. Every round must end with a summary block.
-- Do not include request-context blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
+- After emitting a read block, stop generating, end the response with a summary block, and wait for the system to provide the requested context.
+- The read block is NOT a completion signal. MUST still emit a summary block in the same round, after the read block. Every round must end with a summary block.
+- Do not include read blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
 
 **Example use:**
-- To read a file: emit a request-context block whose body contains <file path="..." />.
-- To fetch a web page with custom headers: emit a request-context block whose body contains <fetch addr="..." user-agent="..." referer="..." cookie="..." />.
-- To discover files: emit a request-context block whose body contains <glob pattern="..." />.
+- To read a file: emit a read block whose body contains <file path="..." />.
+- To fetch a web page with custom headers: emit a read block whose body contains <fetch addr="..." user-agent="..." referer="..." cookie="..." />.
+- To discover files: emit a read block whose body contains <glob pattern="..." />.
 `
 
-const RequestContextRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a request-context block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
+const ReadBlockRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a read block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
-- After emitting a request-context block, stop and end the response with a summary block, then wait for the system to provide the context.
-- A request-context block does NOT replace the summary block. MUST still emit a summary block in the same round, after the request-context block.
-- The request-context block is read-only: never use it for writes or side effects.
-- Do not emit change blocks in the same response as a request-context block. Request context first, then emit changes after the context is provided.`
+- After emitting a read block, stop and end the response with a summary block, then wait for the system to provide the context.
+- A read block does NOT replace the summary block. MUST still emit a summary block in the same round, after the read block.
+- The read block is read-only: never use it for writes or side effects.
+- Do not emit change blocks in the same response as a read block. Request the context first, then emit changes after the context is provided.`
 
-// RequestContextRequest represents a single context request parsed from the block body.
-type RequestContextRequest struct {
+// ReadRequest represents a single context request parsed from the block body.
+type ReadRequest struct {
 	Type      string
 	Path      string
 	Addr      string
@@ -97,10 +97,10 @@ type RequestContextRequest struct {
 	Pattern   string
 }
 
-// parseRequestContextBody parses the XML tags in a request-context block body.
-func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
+// parseReadBody parses the XML tags in a read block body.
+func parseReadBody(body string) ([]ReadRequest, error) {
 	decoder := xml.NewDecoder(strings.NewReader(body))
-	var requests []RequestContextRequest
+	var requests []ReadRequest
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {
@@ -124,7 +124,7 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 			if path == "" {
 				return nil, fmt.Errorf("file tag missing path attribute")
 			}
-			requests = append(requests, RequestContextRequest{Type: "file", Path: path})
+			requests = append(requests, ReadRequest{Type: "file", Path: path})
 		case "fetch":
 			var addr, userAgent, referer, cookie string
 			for _, attr := range start.Attr {
@@ -142,7 +142,7 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 			if addr == "" {
 				return nil, fmt.Errorf("fetch tag missing addr attribute")
 			}
-			requests = append(requests, RequestContextRequest{
+			requests = append(requests, ReadRequest{
 				Type:      "fetch",
 				Addr:      addr,
 				UserAgent: userAgent,
@@ -159,16 +159,16 @@ func parseRequestContextBody(body string) ([]RequestContextRequest, error) {
 			if pattern == "" {
 				return nil, fmt.Errorf("glob tag missing pattern attribute")
 			}
-			requests = append(requests, RequestContextRequest{Type: "glob", Pattern: pattern})
+			requests = append(requests, ReadRequest{Type: "glob", Pattern: pattern})
 		}
 	}
 	return requests, nil
 }
 
-// fetchRequestContext fetches the requested context and returns parts.
+// fetchReadRequests fetches the requested context and returns parts.
 // File read errors and fetch errors are returned as error text parts rather
 // than aborting the entire generation, so the model can adapt.
-func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, requests []RequestContextRequest) []generators.Part {
+func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, requests []ReadRequest) []generators.Part {
 	var parts []generators.Part
 	for _, req := range requests {
 		switch req.Type {
@@ -198,39 +198,38 @@ func fetchRequestContext(ctx context.Context, root *os.Root, httpClient nets.HTT
 	return parts
 }
 
-// ProcessRequestContextBlocks checks request-context blocks, fetches the
-// requested content, and appends it as user content to the state. Only
-// blocks with Kind "request-context" are processed. The hasRequestContext
-// flag indicates whether any request-context blocks were found, so callers
-// can trigger a new round. See TheoryOfRequestContext.
-func ProcessRequestContextBlocks(
+// ProcessReadBlocks checks read blocks, fetches the requested content, and
+// appends it as user content to the state. Only blocks with Kind "read" are
+// processed. The hasRead flag indicates whether any read blocks were found, so
+// callers can trigger a new round. See TheoryOfReadBlocks.
+func ProcessReadBlocks(
 	blocks []Block,
 	ctx context.Context,
 	root *os.Root,
 	httpClient nets.HTTPClient,
 	state generators.State,
 ) (generators.State, bool, error) {
-	hasRequestContext := false
+	hasRead := false
 	for _, block := range blocks {
-		if block.Kind != "request-context" {
+		if block.Kind != "read" {
 			continue
 		}
-		hasRequestContext = true
-		requests, parseErr := parseRequestContextBody(block.Body)
+		hasRead = true
+		requests, parseErr := parseReadBody(block.Body)
 		if parseErr != nil {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
-					generators.Text(fmt.Sprintf("[request-context parse error: %v]\n\n", parseErr)),
+					generators.Text(fmt.Sprintf("[read block parse error: %v]\n\n", parseErr)),
 				},
 			})
 			if appendErr != nil {
-				return state, hasRequestContext, appendErr
+				return state, hasRead, appendErr
 			}
 			continue
 		}
-		parts := fetchRequestContext(ctx, root, httpClient, requests)
+		parts := fetchReadRequests(ctx, root, httpClient, requests)
 		if len(parts) > 0 {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
@@ -238,11 +237,11 @@ func ProcessRequestContextBlocks(
 				Parts: parts,
 			})
 			if appendErr != nil {
-				return state, hasRequestContext, appendErr
+				return state, hasRead, appendErr
 			}
 		}
 	}
-	return state, hasRequestContext, nil
+	return state, hasRead, nil
 }
 
 // readContextFile reads a local file at the given path. Absolute paths are
@@ -253,7 +252,7 @@ func ProcessRequestContextBlocks(
 // two dots (e.g., "..hidden", "..."). Absolute paths are resolved relative to
 // the root directory when within it, or read directly from the filesystem when
 // outside it, so the model can reference files in system directories like /tmp.
-// See TheoryOfRequestContext.
+// See TheoryOfReadBlocks.
 func readContextFile(root *os.Root, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
@@ -264,7 +263,7 @@ func readContextFile(root *os.Root, path string) (string, error) {
 	// Absolute paths are permitted as explicit references. os.Root methods
 	// reject absolute paths, so convert to a root-relative path when the
 	// absolute path is within the root, or fall back to os.ReadFile for
-	// paths outside the root. See TheoryOfRequestContext.
+	// paths outside the root. See TheoryOfReadBlocks.
 	if filepath.IsAbs(path) {
 		rootDir, err := filepath.Abs(root.Name())
 		if err != nil {
@@ -335,7 +334,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 	return filtered, nil
 }
 
-func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req RequestContextRequest) (string, error) {
+func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req ReadRequest) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.Addr, nil)
 	if err != nil {
 		return "", err

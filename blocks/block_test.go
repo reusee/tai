@@ -931,14 +931,14 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 	// by the equivalent guard in the gotools package. See
 	// TheoryOfBlockFormatGeneral.
 	prompts := map[string]string{
-		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
-		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
-		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
-		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
-		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,
-		"SummaryBlockRestatePrompt":   SummaryBlockRestatePrompt,
-		"RequestContextSystemPrompt":  RequestContextSystemPrompt,
-		"RequestContextRestatePrompt": RequestContextRestatePrompt,
+		"ContinueBlockSystemPrompt":  ContinueBlockSystemPrompt,
+		"ContinueBlockRestatePrompt": ContinueBlockRestatePrompt,
+		"ShellBlockSystemPrompt":     ShellBlockSystemPrompt,
+		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
+		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
+		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
+		"ReadBlockSystemPrompt":      ReadBlockSystemPrompt,
+		"ReadBlockRestatePrompt":     ReadBlockRestatePrompt,
 	}
 	for name, prompt := range prompts {
 		if strings.Contains(prompt, "<<DELIMITER") {
@@ -964,14 +964,14 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		}
 	}
 	kindPrompts := map[string]string{
-		"ContinueBlockSystemPrompt":   ContinueBlockSystemPrompt,
-		"ContinueBlockRestatePrompt":  ContinueBlockRestatePrompt,
-		"ShellBlockSystemPrompt":      ShellBlockSystemPrompt,
-		"ShellBlockRestatePrompt":     ShellBlockRestatePrompt,
-		"SummaryBlockSystemPrompt":    SummaryBlockSystemPrompt,
-		"SummaryBlockRestatePrompt":   SummaryBlockRestatePrompt,
-		"RequestContextSystemPrompt":  RequestContextSystemPrompt,
-		"RequestContextRestatePrompt": RequestContextRestatePrompt,
+		"ContinueBlockSystemPrompt":  ContinueBlockSystemPrompt,
+		"ContinueBlockRestatePrompt": ContinueBlockRestatePrompt,
+		"ShellBlockSystemPrompt":     ShellBlockSystemPrompt,
+		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
+		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
+		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
+		"ReadBlockSystemPrompt":      ReadBlockSystemPrompt,
+		"ReadBlockRestatePrompt":     ReadBlockRestatePrompt,
 	}
 	for name, prompt := range kindPrompts {
 		if strings.Contains(prompt, "uncommon Chinese two-character word") {
@@ -1041,7 +1041,7 @@ func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
 	kindReferences := []string{
 		"go-test",
 		"go-src",
-		"request-context",
+		"read block",
 		"shell",
 		"summary block",
 		"continue block",

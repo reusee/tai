@@ -62,7 +62,7 @@ type ProcessContext struct {
 	// by ProcessComponents.
 	Blocks []blocks.Block
 	// State is the current generators state. Components may modify it
-	// (e.g., request-context appends fetched resources).
+	// (e.g., read appends fetched resources).
 	State generators.State
 	// Root is the filesystem root for file operations.
 	Root *os.Root

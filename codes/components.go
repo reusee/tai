@@ -18,7 +18,7 @@ the ai command's AIComponents).
 
 The codes module reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, request-context) and appending summary, read-only files (prompt-only),
+go-src, read) and appending summary, read-only files (prompt-only),
 mandatory planning (prompt-only, conditional), and extra system prompt
 (prompt-only).
 
@@ -47,17 +47,17 @@ for the next round.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for the
-next round. Like request-context it is read-only context fetching, but
-unconditional: symbol resolution reuses the packages the loader already
-fetched, so it is always available in the codes pipeline. MaxRounds bounds
-the fetch loop so a model cannot chain symbol requests indefinitely.
+next round. Like read it is read-only context fetching, but unconditional:
+symbol resolution reuses the packages the loader already fetched, so it is
+always available in the codes pipeline. MaxRounds bounds the fetch loop so
+a model cannot chain symbol requests indefinitely.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
 blocks.
 
 ExtraSystemPrompt is also a prompt-only Component. Change, go-test, go-src,
-and request-context components carry RestatePrompt fields — short critical
+and read components carry RestatePrompt fields — short critical
 reminders that reinforce block format rules. Restate prompts are placed at
 the end of the user prompt via ComponentSet.UserPromptParts(), not in the
 system prompt, so they are the last content the model reads before
@@ -67,12 +67,11 @@ The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
 that reinforces the requirement to emit a summary block in every response as
 the round completion signal. The generation loop checks for the summary block
 to distinguish a normally ended round from truncated output; a round carrying
-a component-triggering block (request-context, shell, continue, go-test,
-go-src) is also complete without a summary block, because the model is
-waiting for component processing rather than truncated (see
-loops.TheoryOfLoops). Every kind prompt that stops and waits states the
-summary requirement with the same wording, so no stop instruction licenses
-omitting the summary block.
+a component-triggering block (read, shell, continue, go-test, go-src) is also
+complete without a summary block, because the model is waiting for component
+processing rather than truncated (see loops.TheoryOfLoops). Every kind prompt
+that stops and waits states the summary requirement with the same wording, so
+no stop instruction licenses omitting the summary block.
 `
 
 const TheoryOfFamilyExtraSystemPrompt = `
@@ -172,10 +171,9 @@ func (Module) CodesComponents(
 	// Go-src component: resolves go-src block symbols to declaration
 	// source. Read-only and unconditional: symbol resolution reuses the
 	// packages the loader already fetched, so it is always available in
-	// the codes pipeline. Placed with request-context before shell and
-	// continue so fetched context is available for the next generation
-	// round. See gotools.TheoryOfGoSrcBlocks and
-	// gotools.TheoryOfGoSrcResolution.
+	// the codes pipeline. Placed with read before shell and continue
+	// so fetched context is available for the next generation round.
+	// See gotools.TheoryOfGoSrcBlocks and gotools.TheoryOfGoSrcResolution.
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
 		PromptSection: gotools.GoSrcBlockSystemPrompt,
@@ -205,29 +203,28 @@ func (Module) CodesComponents(
 		},
 	})
 
-	// Request-context component: always enabled — dynamic context has no
-	// toggle; the model may request additional files and network resources
+	// Read component: always enabled — dynamic context has no toggle; the
+	// model may request additional files and network resources
 	// mid-generation in every codes session. Processed before
 	// shell/continue so fetched context is available for the next
-	// generation round. RestatePrompt carries the request-context restate
-	// prompt. See blocks.TheoryOfRequestContext.
+	// generation round. RestatePrompt carries the read restate prompt.
+	// See blocks.TheoryOfReadBlocks.
 	comps = append(comps, components.Component{
-		Kind:          "request-context",
-		PromptSection: blocks.RequestContextSystemPrompt,
-		RestatePrompt: blocks.RequestContextRestatePrompt,
-		MaxRounds:     maxRequestContextRounds,
+		Kind:          "read",
+		PromptSection: blocks.ReadBlockSystemPrompt,
+		RestatePrompt: blocks.ReadBlockRestatePrompt,
+		MaxRounds:     maxReadRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			state, hasRC, err := blocks.ProcessRequestContextBlocks(
+			state, hasRead, err := blocks.ProcessReadBlocks(
 				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
 			)
 			result := components.ProcessResult{
 				Err: err,
 			}
-			// Only set State when request-context blocks were
-			// found and fetched content was appended, so that
-			// result.State != nil reliably signals a state
-			// modification that triggers a new round.
-			if hasRC {
+			// Only set State when read blocks were found and fetched
+			// content was appended, so that result.State != nil reliably
+			// signals a state modification that triggers a new round.
+			if hasRead {
 				result.State = state
 			}
 			return result

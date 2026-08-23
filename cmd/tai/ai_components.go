@@ -27,14 +27,14 @@ which must be computed at call time.
 
 Disabled blocks are announced explicitly: the set carries
 components.DisabledBlocksComponent listing every kind this session cannot
-process — the codes-pipeline kinds (change, go-test, go-src,
-request-context), the deliberately excluded continue (OnIdle is the sole
-input gateway), and conditionally shell (-shell off) and memory
-(-no-memory). Without the notice the model may emit these kinds from habit;
-the blocks would be silently ignored while implying actions that never
-happened. The notice is static per configuration and placed before the
-config-derived extras and the dynamic memory section, keeping the cacheable
-prefix stable. See components.TheoryOfDisabledBlocks.
+process — the codes-pipeline kinds (change, go-test, go-src, read), the
+deliberately excluded continue (OnIdle is the sole input gateway), and
+conditionally shell (-shell off) and memory (-no-memory). Without the notice
+the model may emit these kinds from habit; the blocks would be silently
+ignored while implying actions that never happened. The notice is static per
+configuration and placed before the config-derived extras and the dynamic
+memory section, keeping the cacheable prefix stable. See
+components.TheoryOfDisabledBlocks.
 
 The memory component is appended last, after the static shell and
 extra prompt components, so that the dynamic user profile text — which
@@ -129,15 +129,15 @@ func (Module) AIComponents(
 	// process so the model does not emit them from habit — an unprocessed
 	// block is silently ignored while implying an action that never
 	// happened. The ai command processes only shell and memory blocks: the
-	// codes-pipeline kinds (change, go-test, go-src, request-context) have
-	// no processor here, and continue is deliberately excluded because
+	// codes-pipeline kinds (change, go-test, go-src, read) have no
+	// processor here, and continue is deliberately excluded because
 	// OnIdle is the sole input gateway. Shell is listed when the flag is
 	// off, memory when -no-memory is set. The notice is static per
 	// configuration and placed before the config-derived extras and the
 	// dynamic memory section, keeping the cacheable prefix stable. See
 	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
 	disabledKinds := []string{
-		"change", "continue", "go-test", "go-src", "request-context",
+		"change", "continue", "go-test", "go-src", "read",
 	}
 	if !bool(flagShell) {
 		disabledKinds = append(disabledKinds, "shell")
@@ -162,8 +162,8 @@ func (Module) AIComponents(
 	// Family-specific extra system prompts: top-level prompts keyed by
 	// the model family. The family is resolved from the scope via
 	// generators.ModelFamily; when the family matches a key, the
-	// corresponding prompts are appended as prompt-only components after
-	// the generic extra prompts. See codes.TheoryOfFamilyExtraSystemPrompt.
+	// corresponding prompts are appended after the generic extra prompts
+	// as prompt-only components. See codes.TheoryOfFamilyExtraSystemPrompt.
 	for _, prompt := range familyExtra[string(modelFamily)] {
 		if prompt != "" {
 			comps = append(comps, components.Component{

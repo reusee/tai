@@ -10,19 +10,19 @@ const TheoryOfGoSrcBlocks = `
 The go-src block is the symbol-level context-fetching kind: the model lists
 Go symbol names — one per line — and the system resolves each symbol to its
 declaration source, returned as user content in the next generation round.
-It complements request-context: request-context fetches files and network
-resources, while go-src fetches declaration source within the packages the
-Go pipeline already loaded. Its purpose is precision under the visibility
-system: a package shown at documentation visibility carries only go doc
-output, so the model knows declaration signatures but not implementations;
-go-src lets the model pull exactly the implementations it needs instead of
-re-fetching whole files (see TheoryOfVisibilityAllocation). Focus
-packages are pinned at documentation level, which makes go-src the primary
-path from the declaration surface to the implementation: the initial
-context carries only declarations and test-function names, and the model
-fetches exactly the source it needs before understanding, modifying, or
-reviewing any focus declaration — including test functions, which the
-focus package block lists by name.
+It complements read: read fetches files and network resources, while go-src
+fetches declaration source within the packages the Go pipeline already
+loaded. Its purpose is precision under the visibility system: a package
+shown at documentation visibility carries only go doc output, so the model
+knows declaration signatures but not implementations; go-src lets the model
+pull exactly the implementations it needs instead of re-fetching whole
+files (see TheoryOfVisibilityAllocation). Focus packages are pinned at
+documentation level, which makes go-src the primary path from the
+declaration surface to the implementation: the initial context carries only
+declarations and test-function names, and the model fetches exactly the
+source it needs before understanding, modifying, or reviewing any focus
+declaration — including test functions, which the focus package block lists
+by name.
 
 The block body is opaque to the mechanism: each non-empty line is one
 symbol name in the go doc form [<pkg>.][<sym>.][<methodOrField>] — a
@@ -59,11 +59,11 @@ symbols.
 The go-test and go-src mechanisms are Go-specific, so they live in this
 package together with the resolver (ResolveGoSymbols, which needs the
 parsed ASTs); the blocks package defines only the generic block format
-and the language-neutral kinds. Like request-context, go-src is
-strictly read-only and is not a completion signal: a round carrying a
-go-src block still needs a summary block, and because the kind is
-processable it participates in the triggering-block check, so such a
-round is not retried as truncated output (see loops.TheoryOfLoops).
+and the language-neutral kinds. Like read, go-src is strictly read-only
+and is not a completion signal: a round carrying a go-src block still
+needs a summary block, and because the kind is processable it
+participates in the triggering-block check, so such a round is not
+retried as truncated output (see loops.TheoryOfLoops).
 `
 
 const GoSrcBlockSystemPrompt = `

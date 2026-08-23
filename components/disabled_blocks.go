@@ -17,12 +17,12 @@ command had run).
 DisabledBlocksNotice closes the gap by explicitly listing the kinds that are
 NOT available in the current session, each with a replacement behavior
 (shell: state the command in prose; continue: deliver the complete answer in
-this response; change: describe the modification; go-test, go-src,
-request-context: state the need in prose). DisabledBlocksComponent wraps the
-notice as a prompt-only Component: no Kind, no Process function, so it never
-enters Processable and cannot consume blocks. An empty notice (no kinds, or
-only unknown kinds) renders the component inert — every assembly method
-skips it. CommonComponents itself carries no notices: each caller owns its
+this response; change: describe the modification; go-test, go-src, read:
+state the need in prose). DisabledBlocksComponent wraps the notice as a
+prompt-only Component: no Kind, no Process function, so it never enters
+Processable and cannot consume blocks. An empty notice (no kinds, or only
+unknown kinds) renders the component inert — every assembly method skips
+it. CommonComponents itself carries no notices: each caller owns its
 complete disabled list in a single notice component, so a prompt never shows
 the notice twice.
 
@@ -53,13 +53,13 @@ The block kinds listed below are NOT available in this session. A block of a dis
 // behavior. The map is open-ended: a kind gains an entry when it has a
 // meaningful replacement behavior. See TheoryOfDisabledBlocks.
 var disabledKindDescriptions = map[string]string{
-	"shell":           "- `shell` — shell execution is disabled in this session; commands are never run. Do not emit shell blocks. When a command matters, state the command (or its expected output) in plain text instead.",
-	"continue":        "- `continue` — continue blocks are not accepted in this session: the body is never fed back and no round is started by one. Do not emit continue blocks. Deliver the complete answer in this response.",
-	"change":          "- `change` — change blocks are not processed in this session and nothing is written to files. Do not emit change blocks. When a file modification is required, describe it precisely in plain text (path, operation, content) instead.",
-	"go-test":         "- `go-test` — tests are never run in this session. Do not emit go-test blocks. When test verification matters, state in plain text which tests to run and what result is expected.",
-	"go-src":          "- `go-src` — symbol sources are not fetched in this session. Do not emit go-src blocks. Work from the context already provided.",
-	"request-context": "- `request-context` — additional files and network resources are not fetched in this session. Do not emit request-context blocks. When essential content is missing, state exactly what is needed, then stop.",
-	"memory":          "- `memory` — the user profile is not updated in this session. Do not emit memory blocks.",
+	"shell":    "- `shell` — shell execution is disabled in this session; commands are never run. Do not emit shell blocks. When a command matters, state the command (or its expected output) in plain text instead.",
+	"continue": "- `continue` — continue blocks are not accepted in this session: the body is never fed back and no round is started by one. Do not emit continue blocks. Deliver the complete answer in this response.",
+	"change":   "- `change` — change blocks are not processed in this session and nothing is written to files. Do not emit change blocks. When a file modification is required, describe it precisely in plain text (path, operation, content) instead.",
+	"go-test":  "- `go-test` — tests are never run in this session. Do not emit go-test blocks. When test verification matters, state in plain text which tests to run and what result is expected.",
+	"go-src":   "- `go-src` — symbol sources are not fetched in this session. Do not emit go-src blocks. Work from the context already provided.",
+	"read":     "- `read` — additional files and network resources are not fetched in this session. Do not emit read blocks. When essential content is missing, state exactly what is needed, then stop.",
+	"memory":   "- `memory` — the user profile is not updated in this session. Do not emit memory blocks.",
 }
 
 // DisabledBlocksNotice returns a system prompt section that explicitly

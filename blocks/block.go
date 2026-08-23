@@ -51,7 +51,7 @@ const TheoryOfDeferredExecution = `
 Blocks are a request protocol, not a tool-call protocol. The model emits
 blocks inside one response; the loop parses and processes them only after
 the response ends, and every outcome — shell and go-test output,
-request-context fetches, go-src sources, change-block apply results — is
+read-block fetches, go-src sources, change-block apply results — is
 fed back as user content at the start of the next round. Nothing executes
 and nothing returns mid-response. Change blocks are the same: applied
 atomically after the round succeeds, with apply errors reported in the

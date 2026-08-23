@@ -197,7 +197,7 @@ Quality strategies determine how correctness is ensured:
   checks) after implementation, before declaring the task complete.
 - Risk-driven: isolate high-uncertainty tasks as probing rounds that validate
   critical assumptions before committing to a path.
-- Context-collection-first: gather context (via request-context blocks) before
+- Context-collection-first: gather context (via read blocks) before
   making changes, so the model never acts on unverified assumptions.
 
 Scheduling strategies determine ordering and sizing:

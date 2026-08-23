@@ -54,9 +54,9 @@ Architectural constraints:
   declaration surface, so the model never starts from nothing (see
   gotools.TheoryOfContextStrategy). Implementation source is fetched on
   demand with go-src blocks — a targeted pull from the known surface, not
-  semantic-search probing. Request-context blocks serve external resources
-  unavailable at construction time (network fetches, glob expansion), not
-  as a substitute for upfront context.
+  semantic-search probing. Read blocks serve external resources unavailable
+  at construction time (network fetches, glob expansion), not as a
+  substitute for upfront context.
 
 - Multi-round generation is task decomposition, not conversation. Continue
   blocks split large tasks into bounded rounds; shell and go-test blocks run
@@ -87,8 +87,8 @@ round's summary, and the parts that determine whether the next round
 starts. The parts are the round's return value: when any exist, they are
 appended to the state as user content and the next round begins. The
 summary and the parts are both determined before the round ends: the
-summary by the model's summary blocks (or synthesis on truncation), and
-the parts by ProcessComponents. The round logic lives in loopState.runRound;
+summary by the model's summary blocks (or synthesis on truncation), and the
+parts by ProcessComponents. The round logic lives in loopState.runRound;
 the main loop in Run simply executes rounds and continues while
 roundResult.continueNext is true. A retry is a re-execution of the phase
 chain within the same round, triggered by a missing completion (no summary
@@ -110,7 +110,7 @@ use a continue block to carry over the remaining work into subsequent rounds,
 preventing repeated truncation loops. Short or empty outputs are retried directly.
 See states.TheoryOfHandoff.
 
-Component-triggering blocks (request-context, shell, continue, go-test) also
+Component-triggering blocks (read, shell, continue, go-test) also
 serve as completion signals: a round with such blocks but no summary block is
 not retried, because the model is waiting for component processing (e.g.,
 fetched context, shell output) rather than truncated. Retrying would discard
@@ -1147,7 +1147,7 @@ func isAbnormalFinishReason(reason string) bool {
 
 // hasTriggeringBlocks reports whether any block in collectedBlocks
 // matches a processable component's kind. When the model emits
-// component-triggering blocks (e.g., request-context, shell, continue)
+// component-triggering blocks (e.g., read, shell, continue)
 // without a summary block, the round is still considered complete
 // because the model is waiting for component processing — retrying
 // would discard the blocks and produce the same output again.

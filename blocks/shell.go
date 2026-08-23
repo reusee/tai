@@ -25,7 +25,7 @@ multiple shell blocks in one response, but only when their commands are independ
 of one another: every shell block in a response executes only after the response
 ends, so no shell block can use the output of another shell block from the same
 response. Content that depends on shell output — whether a change block or a
-request-context block — must never be emitted in the same response as the shell
+read block — must never be emitted in the same response as the shell
 blocks it depends on: the model would act on results it has not yet received,
 creating pointless loops. After the last shell block, the model should end the
 response with a summary block and wait for the results before emitting dependent
@@ -50,7 +50,7 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - A timeout of 30 seconds is enforced per command.
 - Shell output is NOT available in the current response: it is returned as user content only at the start of the NEXT round, after ALL shell blocks in the response have been executed.
 - You MAY emit multiple shell blocks in one response, but only when their commands are independent of one another: no shell block can use the output of another shell block from the same response.
-- Do NOT emit change blocks or request-context blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
+- Do NOT emit change blocks or read blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
 - After the last shell block, stop generating, end the response with a summary block, and wait for the results.
 - When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
 **Security policy**: Only commands in the allowed list are executed. Allowed command categories:
@@ -80,7 +80,7 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 `
 
 const ShellBlockRestatePrompt = `- Shell block: emit a shell block whose body is the shell command to execute. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
-- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or request-context blocks that depend on the shell output until the results arrive.`
+- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or read blocks that depend on the shell output until the results arrive.`
 
 const shellTimeout = 30 * time.Second
 

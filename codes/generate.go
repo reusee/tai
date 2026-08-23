@@ -52,7 +52,7 @@ errors. When the apply flag is disabled, no handler is set and all blocks are
 collected, preserving the no-apply behavior.
 `
 
-const maxRequestContextRounds = 5
+const maxReadRounds = 5
 
 const maxGoTestRounds = 10
 
@@ -479,8 +479,8 @@ errors; this retry handles successful-but-incomplete output.
 Completion is detected by checking the externally collected blocks for summary
 kind and the finish reason in the state for abnormal termination. A round is
 complete when a summary block is present AND the finish reason is not abnormal;
-a round carrying a component-triggering block (request-context, shell, continue,
-go-test, go-src) is also complete without a summary block, because the model is
+a round carrying a component-triggering block (read, shell, continue, go-test,
+go-src) is also complete without a summary block, because the model is
 waiting for component processing rather than truncated (see loops.TheoryOfLoops).
 Because blocks are collected by the BlockHandler during AppendContent (not stored
 in ParserState), the check is a simple scan of the collected slice. The finish

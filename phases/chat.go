@@ -160,7 +160,7 @@ func (Module) BuildChatPhase(
 const TheoryOfIdleHandler = `
 The IdleHandler mechanism separates automated action processing from
 interactive user input. When a generation round ends and no component
-(continue, shell, go-test, request-context) triggers a new round, the
+(continue, shell, go-test, read) triggers a new round, the
 loop invokes the IdleHandler to prompt the user for input. This ensures
 that automated actions are always processed before the user is prompted:
 the model can chain multiple rounds of shell execution, continue block
