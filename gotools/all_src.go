@@ -22,7 +22,7 @@ var (
 type AllSrc bool
 
 func (a AllSrc) ConfigPaths() []string {
-	return []string{"go.all_src", "all_src"}
+	return []string{"go.all_src"}
 }
 
 func (a AllSrc) HandleConfig(path string, values []*cue.Value) (any, error) {
