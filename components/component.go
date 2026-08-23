@@ -2,7 +2,6 @@ package components
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -116,11 +115,6 @@ type Component struct {
 	// streaming, summary blocks processed in runPhaseWithRetry, memory
 	// blocks processed post-loop).
 	Process ComponentProcessFunc
-	// MaxRounds limits the number of consecutive rounds this component can
-	// trigger by producing Parts or modifying State. 0 means no limit. Used
-	// to prevent infinite loops (e.g., read components that keep
-	// requesting more context).
-	MaxRounds int
 }
 
 // ComponentSet is an ordered collection of Component.
@@ -204,9 +198,9 @@ func (c ComponentSet) Processable() []Component {
 // matched by any component), the updated State (if any component modified it),
 // combined Parts from all components, whether any component triggered a new
 // round (produced Parts or modified State), and an error if any component
-// failed. When enforceMaxRounds is true and roundCounts is non-nil, per-
-// component MaxRounds limits are enforced, preventing infinite loops from
-// components that keep producing output.
+// failed. There are no per-component round limits: a component may trigger
+// rounds for as long as the model keeps emitting its blocks, and run-duration
+// control belongs to the caller via loops.RunOptions.MaxRounds.
 //
 // Both the ai command and the codes module call this function, so the
 // component processing loop is identical across all generation commands —
@@ -218,8 +212,6 @@ func ProcessComponents(
 	state generators.State,
 	root *os.Root,
 	httpClient nets.HTTPClient,
-	roundCounts map[string]int,
-	enforceMaxRounds bool,
 ) (
 	remainingBlocks []blocks.Block,
 	newState generators.State,
@@ -258,25 +250,13 @@ func ProcessComponents(
 			return allBlocks, state, combinedParts, triggered, result.Err
 		}
 
-		componentTriggered := false
 		if result.State != nil {
 			state = result.State
-			componentTriggered = true
+			triggered = true
 		}
 		if len(result.Parts) > 0 {
 			combinedParts = append(combinedParts, result.Parts...)
-			componentTriggered = true
-		}
-
-		if componentTriggered {
 			triggered = true
-			if enforceMaxRounds && comp.MaxRounds > 0 && roundCounts != nil {
-				roundCounts[comp.Kind]++
-				if roundCounts[comp.Kind] > comp.MaxRounds {
-					return allBlocks, state, combinedParts, triggered,
-						fmt.Errorf("max %s rounds (%d) exceeded", comp.Kind, comp.MaxRounds)
-				}
-			}
 		}
 	}
 

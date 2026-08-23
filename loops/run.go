@@ -216,7 +216,6 @@ type loopState struct {
 	state  generators.State
 
 	remainingBlocks []blocks.Block
-	roundCounts     map[string]int
 	maxRetries      int
 
 	parseErrorCorrectionRounds int
@@ -256,8 +255,8 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// optionally invokes the caller's BlockHandler.
 		parserHandler := func(block blocks.Block) error {
 			// Report every parsed block to the interaction
-			// recorder, whether or not it is consumed by the
-			// caller's BlockHandler.
+			// recorder, whether or not it is consumed by
+			// the caller's BlockHandler.
 			if ls.rec != nil && ls.rec.Enabled() {
 				ls.rec.Block(block)
 			}
@@ -598,7 +597,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 	var cerr error
 	roundRemaining, ls.state, combinedParts, triggered, cerr = components.ProcessComponents(
 		ls.ctx, ls.opts.Components, collectedBlocks, ls.state,
-		ls.opts.Root, ls.opts.HTTPClient, ls.roundCounts, true,
+		ls.opts.Root, ls.opts.HTTPClient,
 	)
 	if cerr != nil {
 		ls.recordRoundError(cerr)
@@ -986,15 +985,14 @@ func (Module) Run(
 
 			// The loop state carries the mutable state of the run.
 			ls := &loopState{
-				ctx:         ctx,
-				opts:        opts,
-				rec:         rec,
-				result:      result,
-				yield:       yield,
-				state:       opts.InitialState,
-				roundCounts: make(map[string]int),
-				maxRetries:  opts.MaxRetries,
-				logger:      logger,
+				ctx:        ctx,
+				opts:       opts,
+				rec:        rec,
+				result:     result,
+				yield:      yield,
+				state:      opts.InitialState,
+				maxRetries: opts.MaxRetries,
+				logger:     logger,
 			}
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries

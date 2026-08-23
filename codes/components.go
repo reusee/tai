@@ -40,8 +40,7 @@ output (stdout and stderr) is always fed back to the model as Parts,
 triggering a new round regardless of whether tests pass or fail: the model
 needs the results to decide whether to continue, and withholding output on
 pass causes the system to exit prematurely when the model intended to
-proceed. MaxRounds bounds the test-fix loop so a model cannot rerun tests
-indefinitely. The go-test component is placed after change so tests run
+proceed. The go-test component is placed after change so tests run
 against the updated source, and before summary so test output is available
 for the next round.
 
@@ -49,8 +48,7 @@ The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for the
 next round. Like read it is read-only context fetching, but unconditional:
 symbol resolution reuses the packages the loader already fetched, so it is
-always available in the codes pipeline. MaxRounds bounds the fetch loop so
-a model cannot chain symbol requests indefinitely.
+always available in the codes pipeline.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing
@@ -150,15 +148,13 @@ func (Module) CodesComponents(
 	// new round regardless of whether tests pass or fail: the model needs
 	// the results to decide whether to continue, and withholding output on
 	// pass causes the system to exit prematurely when the model intended
-	// to proceed. MaxRounds bounds the test-fix loop. Placed after change
-	// so tests run against updated source, and before summary so test
-	// output is available for the next round.
+	// to proceed. Placed after change so tests run against updated source,
+	// and before summary so test output is available for the next round.
 	// See TheoryOfCodesComponents and gotools.TheoryOfGoTestBlocks.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
 		PromptSection: gotools.GoTestBlockSystemPrompt,
 		RestatePrompt: gotools.GoTestBlockRestatePrompt,
-		MaxRounds:     maxGoTestRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			parts, err := gotools.ProcessGoTestBlocks(pctx.Blocks, ctx)
 			return components.ProcessResult{
@@ -178,7 +174,6 @@ func (Module) CodesComponents(
 		Kind:          "go-src",
 		PromptSection: gotools.GoSrcBlockSystemPrompt,
 		RestatePrompt: gotools.GoSrcBlockRestatePrompt,
-		MaxRounds:     maxGoSrcRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			symbols := gotools.ParseGoSrcSymbols(pctx.Blocks)
 			if len(symbols) == 0 {
@@ -213,7 +208,6 @@ func (Module) CodesComponents(
 		Kind:          "read",
 		PromptSection: blocks.ReadBlockSystemPrompt,
 		RestatePrompt: blocks.ReadBlockRestatePrompt,
-		MaxRounds:     maxReadRounds,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			state, hasRead, err := blocks.ProcessReadBlocks(
 				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
