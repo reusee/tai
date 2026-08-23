@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/debugs"
 	"github.com/reusee/tai/generators"
+	"github.com/reusee/tai/modes"
 )
 
 type alwaysRetryableGenerator struct {
@@ -43,9 +44,12 @@ func TestBuildGenerateRetryLimit(t *testing.T) {
 
 	// phases.Module's BuildChatPhase provider requires logs.Logger and
 	// debugs.Tap. Include debugs.Module (which embeds logs.Module) so
-	// both are resolvable. See the user's instruction to use real dscope
+	// both are resolvable, and modes.ForTest to supply the *testing.T
+	// that logs.Writer consumes, routing test logs to t.Output.
+	// See the user's instruction to use real dscope
 	// instances with Call rather than direct method calls.
 	dscope.New(
+		modes.ForTest(t),
 		new(Module),
 		new(debugs.Module),
 	).Call(func(
@@ -68,6 +72,7 @@ func TestBuildGenerateRetryThenSuccess(t *testing.T) {
 	gen := &retryThenSuccessGenerator{calls: &calls, succeedAt: 2}
 
 	dscope.New(
+		modes.ForTest(t),
 		new(Module),
 		new(debugs.Module),
 	).Call(func(
@@ -103,6 +108,7 @@ func TestBuildGenerateNonRetryableErrorReturnsState(t *testing.T) {
 	gen := &nonRetryableErrorGenerator{}
 
 	dscope.New(
+		modes.ForTest(t),
 		new(Module),
 		new(debugs.Module),
 	).Call(func(
@@ -144,6 +150,7 @@ func TestBuildGenerateNonRetryableErrorPreservesPartialOutput(t *testing.T) {
 	gen := &partialOutputGenerator{calls: &calls}
 
 	dscope.New(
+		modes.ForTest(t),
 		new(Module),
 		new(debugs.Module),
 	).Call(func(

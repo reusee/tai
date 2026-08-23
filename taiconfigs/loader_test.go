@@ -8,6 +8,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/configs"
 	"github.com/reusee/tai/flags"
+	"github.com/reusee/tai/modes"
 )
 
 func TestFindGoModuleRoot(t *testing.T) {
@@ -70,6 +71,7 @@ func TestConfigsLoaderIncludesGoModuleRoot(t *testing.T) {
 	}
 
 	dscope.New(
+		modes.ForTest(t),
 		new(Module),
 	).Call(func(loader configs.Loader) {
 		var name flags.ModelName
