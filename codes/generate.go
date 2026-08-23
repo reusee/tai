@@ -570,7 +570,7 @@ func (Module) GenerateWithResultWithStats(
 	return func(ctx context.Context, output io.Writer) (loops.Result, []RoundStat, error) {
 
 		// Open a root on the current directory to restrict all file I/O
-		// to the project tree. See TheoryOfRequestContext.
+		// to the project tree. See blocks.TheoryOfReadBlocks.
 		root, err := os.OpenRoot(".")
 		if err != nil {
 			return loops.Result{}, nil, err

@@ -298,7 +298,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 	}
 	// Resolve the pattern relative to the root directory so that
 	// doublestar.FilepathGlob searches within the root's tree,
-	// not the process's current working directory. See TheoryOfRequestContext.
+	// not the process's current working directory. See TheoryOfReadBlocks.
 	rootDir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
@@ -316,7 +316,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 	}
 	// Filter matches to those within the root. Convert absolute paths
 	// to root-relative paths for the stat check, since os.Root methods
-	// do not accept absolute paths. See TheoryOfRequestContext.
+	// do not accept absolute paths. See TheoryOfReadBlocks.
 	var filtered []string
 	for _, m := range matches {
 		relPath := m

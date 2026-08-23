@@ -57,7 +57,7 @@ message occurs maxConsecutiveGoalErrors times in a row, the goal command stops
 early with a diagnostic message instead of burning the remaining iterations on
 a persistent failure.
 
-The gotools.CodeProvider is the default for the goal command. The gotools
+The gotools.PartsProvider is the default for the goal command. The gotools
 pipeline holds no process-level caches: all caches, such as loaded packages
 and parsed ASTs, are defined within scope provider functions. Because each
 goal loop resolves a fresh GenerateWithResultWithStats from a reset scope,

@@ -561,7 +561,7 @@ func focusTestNamesSection(lp *LogicalPackage) string {
 // focusPackageReadOnly reports whether a focus package's files live
 // outside the writable directories. Focus Go files are no longer emitted
 // individually, so the per-file read-only annotation in
-// CodeProvider.Parts cannot reach the focus documentation block; the
+// PartsProvider.Parts cannot reach the focus documentation block; the
 // note is carried in the block's begin marker instead, preserving the
 // instruction that change blocks must not target read-only files. The
 // first file decides; a check error is treated as not read-only. See

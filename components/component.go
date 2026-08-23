@@ -21,7 +21,7 @@ A Component with a Process function is processed in the main generation loop; a
 Component without one (prompt-only or informational) contributes its
 PromptSection to the system prompt but is not invoked during output processing.
 A Component can also contribute UserPromptParts, which are prepended to the
-user's input similar to how CodeProvider.Parts provides context. ComponentSet is
+user's input similar to how PartsProvider.Parts provides context. ComponentSet is
 an ordered collection of Components that provides PromptSections
 (concatenating all system prompt contributions), RestatePrompts (concatenating
 all restate/reminder prompt contributions), UserPromptParts (concatenating all
@@ -105,7 +105,7 @@ type Component struct {
 	RestatePrompt string
 	// UserPromptParts are user prompt parts contributed by this component.
 	// These are prepended to the user's input, similar to how
-	// CodeProvider.Parts provides context. Unlike PromptSection which goes
+	// PartsProvider.Parts provides context. Unlike PromptSection which goes
 	// into the system prompt, UserPromptParts goes into the user content.
 	// Empty for components that contribute only to the system prompt.
 	UserPromptParts []generators.Part
@@ -118,7 +118,7 @@ type Component struct {
 	Process ComponentProcessFunc
 	// MaxRounds limits the number of consecutive rounds this component can
 	// trigger by producing Parts or modifying State. 0 means no limit. Used
-	// to prevent infinite loops (e.g., request-context components that keep
+	// to prevent infinite loops (e.g., read components that keep
 	// requesting more context).
 	MaxRounds int
 }
@@ -165,7 +165,7 @@ func (c ComponentSet) RestatePrompts() string {
 
 // UserPromptParts returns the concatenated user prompt parts from all
 // components, in registration order. These are prepended to the user's
-// input, similar to how CodeProvider.Parts provides context. Unlike
+// input, similar to how PartsProvider.Parts provides context. Unlike
 // PromptSections which goes into the system prompt, UserPromptParts goes
 // into the user content. Restate prompts are appended as the last user
 // prompt part so critical format reminders are the last thing the model
