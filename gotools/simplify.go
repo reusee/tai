@@ -23,23 +23,24 @@ via go doc -all -cmd (per-package output, not per-file; the -u flag is
 deliberately omitted for context packages so the reference stays focused
 on exported symbols, and added for focus packages so the model sees the
 complete surface of the packages it edits, alongside the package's test
-function names). Level VisibilityCode: full Go code without test files
-(raw file content). Level VisibilityAll: all files including tests,
-non-Go files, and embed files (raw file content).
+function names and file names). Level VisibilityCode: full Go code
+without test files (raw file content). Level VisibilityAll: all files
+including tests, non-Go files, and embed files (raw file content).
 
 The water-filling algorithm upgrades packages from their minimum visibility
 to higher levels as the budget allows, processing packages in priority order.
 See TheoryOfVisibilityAllocation in visibility.go.
 
 Focus packages are pinned at full documentation (documentation plus
-test-function names) and do not count against the budget; the model fetches
-focus implementation source on demand with go-src blocks. The -all-src flag
-pins focus at full source instead (VisibilityAll): every focus file including
-tests is emitted at full content and no focus documentation block is
-produced. Focus files explicitly requested via -file and non-Go focus files
-(which go doc cannot summarize) are still emitted at full content. File
-ordering (see TheoryOfFileOrdering in files.go) places stable context files
-first and volatile focus files last, maximizing the common prefix between
+test-function names and file names) and do not count against the budget;
+the model fetches focus implementation source on demand with go-src
+blocks. The -all-src flag pins focus at full source instead
+(VisibilityAll): every focus file including tests is emitted at full
+content and no focus documentation block is produced. Focus files
+explicitly requested via -file and non-Go focus files (which go doc
+cannot summarize) are still emitted at full content. File ordering (see
+TheoryOfFileOrdering in files.go) places stable context files first and
+volatile focus files last, maximizing the common prefix between
 consecutive requests for LLM prefix caching.
 `
 

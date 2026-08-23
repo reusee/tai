@@ -21,7 +21,7 @@ that actually reach a documentation level. The eager approach ran go doc -all
 -cmd for every non-focus package in the dependency graph during
 precomputeTokenCounts, spawning one Go toolchain subprocess per package —
 hundreds of processes for a typical project — even though most packages end
-invisible or at the code/full levels, where the doc output is never used.
+up invisible or at the code/full levels, where the doc output is never used.
 There are two documentation levels — short doc (go doc without -all) and
 full doc (go doc -all -cmd) — and each is produced by its own subprocess
 invocation, cached independently on the package (shortDocComputed,
@@ -66,8 +66,8 @@ package to code, whose costs are precomputed. This turns a systemic go
 doc failure into a graceful degradation to code visibility instead of
 making every such package permanently invisible. A focus package is the
 exception: it is pinned at full documentation and never upgraded, so
-its block is still emitted with a failure note and the test-function
-names, keeping the package discoverable for go-src fetches.
+its block is still emitted with a failure note, the test-function names,
+and the file names, keeping the package discoverable for go-src fetches.
 `
 
 const TheoryOfContextStrategy = `
@@ -163,10 +163,10 @@ unaffordable packages.
 
 Focus packages are pinned at full documentation: their initial context is
 the declaration surface — go doc -all -cmd -u output plus the package's
-test-function names — and the model fetches implementation source on
-demand with go-src blocks. The -all-src flag switches the pin to full
-source (VisibilityAll): every focus file including tests enters the
-initial context, the focus documentation block is not produced, and
+test-function names and file names — and the model fetches implementation
+source on demand with go-src blocks. The -all-src flag switches the pin
+to full source (VisibilityAll): every focus file including tests enters
+the initial context, the focus documentation block is not produced, and
 go-src fetching is unnecessary for focus declarations. Pinning bounds
 the initial context of large projects without sacrificing detail: the
 model pulls exactly the declarations it needs. The water-fill never
@@ -478,12 +478,13 @@ func computePackageShortDoc(
 // computeFocusPackageDoc computes the full-doc block for a focus package:
 // go doc -all -cmd -u output (unexported symbols included, because the
 // model edits focus packages) followed by the package's test function
-// names, wrapped in "focus package" markers so the model can distinguish
-// the focus declaration surface from context documentation. The block is
-// the focus package's pinned terminal visibility, so it is emitted even
-// when go doc fails — carrying a failure note and the test names —
-// keeping the package discoverable for go-src fetches. A countTokens
-// failure falls back to empty content, matching the non-focus path. See
+// names and file names, wrapped in "focus package" markers so the model
+// can distinguish the focus declaration surface from context
+// documentation. The block is the focus package's pinned terminal
+// visibility, so it is emitted even when go doc fails — carrying a
+// failure note, the test names, and the file names — keeping the package
+// discoverable for go-src fetches. A countTokens failure falls back to
+// empty content, matching the non-focus path. See
 // TheoryOfVisibilityAllocation and TheoryOfLazyPackageDoc.
 func computeFocusPackageDoc(
 	lp *LogicalPackage,
@@ -504,6 +505,7 @@ func computeFocusPackageDoc(
 		body.WriteString(text)
 	}
 	body.WriteString(focusTestNamesSection(lp))
+	body.WriteString(focusFileNamesSection(lp))
 
 	content := "``` begin of focus package " + lp.PkgPath + readOnlyNote + "\n" +
 		body.String() +
@@ -556,6 +558,32 @@ func focusTestNamesSection(lp *LogicalPackage) string {
 	names = slices.Compact(names)
 	var b strings.Builder
 	b.WriteString("\nTest functions in this package (fetch a test's source with a go-src block naming the function):\n")
+	for _, name := range names {
+		b.WriteString("- " + name + "\n")
+	}
+	return b.String()
+}
+
+// focusFileNamesSection lists the file names of a focus package: every
+// file of the package — Go source, test source, and other package files
+// — as a section of the focus documentation block. The model sees the
+// package's declaration surface and test-function names but not which
+// files make up the package; the file list lets it construct file paths
+// for change blocks and choose read blocks for whole-file views without
+// paying the token cost of the file contents. Names are deduplicated and
+// sorted for deterministic output. See TheoryOfVisibilityAllocation.
+func focusFileNamesSection(lp *LogicalPackage) string {
+	var names []string
+	for _, f := range lp.Files {
+		names = append(names, f.Path)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	var b strings.Builder
+	b.WriteString("\nFiles in this package:\n")
 	for _, name := range names {
 		b.WriteString("- " + name + "\n")
 	}

@@ -25,14 +25,14 @@ pull exactly the implementations it needs instead of re-fetching whole
 files (see TheoryOfVisibilityAllocation). Focus packages are pinned at
 documentation level, which makes go-src the primary path from the
 declaration surface to the implementation: the initial context carries only
-declarations and test-function names, and the model fetches exactly the
-source it needs before understanding, modifying, or reviewing any focus
-declaration — including test functions, which the focus package block lists
-by name. Under the -all-src flag focus packages are pinned at full source,
-so the initial context already carries every focus declaration's
-implementation and go-src fetching is unnecessary for focus declarations;
-the kind remains the fetch path for context packages at documentation
-visibility.
+declarations, test-function names, and file names, and the model fetches
+exactly the source it needs before understanding, modifying, or reviewing
+any focus declaration — including test functions, which the focus package
+block lists by name. Under the -all-src flag focus packages are pinned at
+full source, so the initial context already carries every focus
+declaration's implementation and go-src fetching is unnecessary for focus
+declarations; the kind remains the fetch path for context packages at
+documentation visibility.
 
 The block body is opaque to the mechanism: each non-empty line is one
 symbol name in the go doc form [<pkg>.][<sym>.][<methodOrField>] — a
@@ -84,7 +84,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 **Rules:**
 - Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies).
 - Prefer go-src over read for Go source code: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file read provides. Use a read block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
-- Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names. Their implementation source is NOT included initially.
+- Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names and a list of the package's source file names. Their implementation source is NOT included initially.
 - Before understanding, modifying, or reviewing any focus declaration, fetch its source with a go-src block naming the declaration. Do not reason about, edit, or review a focus declaration from its documentation alone — fetch the source first, then act.
 - Test functions listed in a focus package block (TestXxx, BenchmarkXxx, FuzzXxx, ExampleXxx) may be fetched by name like any other symbol. Fetch a test's source before modifying it or when checking behavior related to your change.
 - The body contains ONLY symbol names, one per line, with no prose. Each non-empty line is one symbol.
@@ -106,7 +106,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 
 const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of its callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
 - When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package qualifier (full import path, path suffix, or the package's declared name — e.g., doublestar.Glob for a …/v4 module) restricting the match to that package; prefer the full import path, which identifies exactly one loaded package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
-- Focus packages appear as documentation only (declaration surface plus test-function names). Before understanding, modifying, or reviewing any focus declaration — including a listed test function — fetch its source with a go-src block naming the declaration; do not act on documentation alone.
+- Focus packages appear as documentation only (declaration surface plus test-function names and file names). Before understanding, modifying, or reviewing any focus declaration — including a listed test function — fetch its source with a go-src block naming the declaration; do not act on documentation alone.
 - A symbol that is a loaded package (exact import path or package name) returns that package's go doc documentation: focus packages include command and unexported documentation, context packages the exported API.
 - The resolved source names the defining file; use that file path as the change block's file-path. go-src returns an in-memory snapshot of the files loaded at context assembly and does not re-read the disk: a file modified by change blocks in this session still shows its pre-modification content. Verify applied changes with go-test blocks or by reading the file, not by re-fetching with go-src.
 - Each resolved source part is followed by a references report listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration and possibly truncated at 100 — use it to judge blast radius and callers before changing the symbol.

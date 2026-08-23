@@ -88,9 +88,10 @@ func TestSimplify(t *testing.T) {
 func TestFocusPackageDocumentationContext(t *testing.T) {
 	// Focus packages are pinned at documentation level: the initial
 	// context carries go doc -all -cmd -u output (unexported symbols
-	// included) plus the package's test-function names, and the model
-	// fetches implementation source on demand with go-src blocks. Non-Go
-	// focus files stay at full content. See TheoryOfVisibilityAllocation.
+	// included) plus the package's test-function names and file names,
+	// and the model fetches implementation source on demand with go-src
+	// blocks. Non-Go focus files stay at full content. See
+	// TheoryOfVisibilityAllocation.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 
@@ -167,6 +168,11 @@ func BenchmarkExported(b *testing.B) {
 		}
 		if !strings.Contains(got, "TestExported") || !strings.Contains(got, "BenchmarkExported") {
 			t.Fatalf("expected the test function names:\n%s", got)
+		}
+		if !strings.Contains(got, "Files in this package:") ||
+			!strings.Contains(got, "focusdoc.go") ||
+			!strings.Contains(got, "focusdoc_test.go") {
+			t.Fatalf("expected the package file names in the focus block:\n%s", got)
 		}
 		if !strings.Contains(got, "focus note content") {
 			t.Fatalf("expected the non-Go focus file at full content:\n%s", got)
