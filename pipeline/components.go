@@ -48,7 +48,11 @@ The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for
 the next round. Like read it is read-only context fetching, but unconditional:
 symbol resolution reuses the packages the loader already fetched, so it is
-always available in the codes pipeline.
+always available in the codes pipeline. The codes session presents both
+kinds, and the go-src prompt teaches their division of labor: Go source is
+fetched by symbol — gaining the defining file, line, and the references
+report — while read serves non-Go files, whole-file views, glob discovery,
+and network resources. See gotools.TheoryOfGoSrcBlocks.
 
 Read-only files and mandatory planning are prompt-only Components: they
 contribute system prompt sections without defining a block kind or processing

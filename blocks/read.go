@@ -25,6 +25,13 @@ read-only: it must not produce any side effects such as writing files or making
 state-changing API calls. The order of XML tags within the block determines the
 order of context parts in the appended user message.
 
+Symbol-level source fetching belongs to a dedicated kind where one exists:
+the codes pipeline teaches go-src — which appends a references report of the
+resolved declarations' callers — as the preferred path for Go source, so read
+keeps whole files, glob discovery, and network resources. The read prompt
+itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
+division of labor.
+
 The file tag permits absolute paths as explicit references while rejecting relative
 paths that escape the current directory via parent-directory traversal, balancing
 flexibility with a basic sanity check. Absolute paths are resolved relative to the

@@ -10,9 +10,15 @@ const TheoryOfGoSrcBlocks = `
 The go-src block is the symbol-level context-fetching kind: the model lists
 Go symbol names — one per line — and the system resolves each symbol to its
 declaration source, returned as user content in the next generation round.
-It complements read: read fetches files and network resources, while go-src
-fetches declaration source within the packages the Go pipeline already
-loaded. Its purpose is precision under the visibility system: a package
+It complements read under a taught division of labor: for Go source code
+the prompts prefer go-src, because a fetch returns the exact declaration
+with its doc comments, the defining file and line, and a references
+report of the symbol's callers — none of which a whole-file read
+provides. The read kind keeps what go-src cannot fetch: non-Go files,
+whole-file views, glob file discovery, and network resources. The
+division is taught only in the go-src prompts; the read prompt stays
+language-neutral because the blocks package defines no Go-specific kind.
+The kind's purpose is precision under the visibility system: a package
 shown at documentation visibility carries only go doc output, so the model
 knows declaration signatures but not implementations; go-src lets the model
 pull exactly the implementations it needs instead of re-fetching whole
@@ -77,11 +83,12 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 
 **Rules:**
 - Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies).
+- Prefer go-src over read for Go source code: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file read provides. Use a read block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
 - Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names. Their implementation source is NOT included initially.
 - Before understanding, modifying, or reviewing any focus declaration, fetch its source with a go-src block naming the declaration. Do not reason about, edit, or review a focus declaration from its documentation alone — fetch the source first, then act.
 - Test functions listed in a focus package block (TestXxx, BenchmarkXxx, FuzzXxx, ExampleXxx) may be fetched by name like any other symbol. Fetch a test's source before modifying it or when checking behavior related to your change.
 - The body contains ONLY symbol names, one per line, with no prose. Each non-empty line is one symbol.
-- Symbol forms follow go doc: a plain name for a top-level declaration (function, type, const, var), e.g. NewReader; TypeName.MethodName for a method, e.g. Reader.Read; and an optional package qualifier that restricts matching to that package, e.g. encoding/json.Marshal, json.Marshal, or doublestar.Glob. The qualifier may be the full import path, a proper suffix of it, or the package's declared name — the declared-name form addresses major-version packages whose last path segment is a version (doublestar for …/v4). An optional leading * receiver prefix is ignored. Generic parameter lists on the type name are ignored (Pair.Swap and Pair[A, B].Swap both resolve). Do not qualify names with a package qualifier unless restricting to a specific loaded package.
+- Symbol forms follow go doc: a plain name for a top-level declaration (function, type, const, var), e.g. NewReader; TypeName.MethodName for a method, e.g. Reader.Read; and an optional package qualifier that restricts matching to that package, e.g., encoding/json.Marshal, json.Marshal, or doublestar.Glob. The qualifier may be the full import path, a proper suffix of it, or the package's declared name — the declared-name form addresses major-version packages whose last path segment is a version (doublestar for …/v4). An optional leading * receiver prefix is ignored. Generic parameter lists on the type name are ignored (Pair.Swap and Pair[A, B].Swap both resolve). Do not qualify names with a package qualifier unless restricting to a specific loaded package.
 - Prefer the full import path as the package qualifier: an import path identifies exactly one loaded package, while a bare package name or a path suffix may match several packages that share the name and return redundant results.
 - A symbol that is itself a package — an exact loaded package import path (e.g., encoding/json) or package name (e.g., json) — returns that package's go doc documentation instead of declaration source. Focus packages include command and unexported documentation; context packages show the exported API.
 - Name matching follows go doc's case rule: a lower-case letter in the query matches either case in the target, an upper-case letter matches exactly.
@@ -97,7 +104,8 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Only use go-src blocks in Go projects.
 `
 
-const GoSrcBlockRestatePrompt = `- When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package qualifier (full import path, path suffix, or the package's declared name — e.g., doublestar.Glob for a …/v4 module) restricting the match to that package; prefer the full import path, which identifies exactly one loaded package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
+const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of its callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
+- When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package qualifier (full import path, path suffix, or the package's declared name — e.g., doublestar.Glob for a …/v4 module) restricting the match to that package; prefer the full import path, which identifies exactly one loaded package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
 - Focus packages appear as documentation only (declaration surface plus test-function names). Before understanding, modifying, or reviewing any focus declaration — including a listed test function — fetch its source with a go-src block naming the declaration; do not act on documentation alone.
 - A symbol that is a loaded package (exact import path or package name) returns that package's go doc documentation: focus packages include command and unexported documentation, context packages the exported API.
 - The resolved source names the defining file; use that file path as the change block's file-path. go-src returns an in-memory snapshot of the files loaded at context assembly and does not re-read the disk: a file modified by change blocks in this session still shows its pre-modification content. Verify applied changes with go-test blocks or by reading the file, not by re-fetching with go-src.
