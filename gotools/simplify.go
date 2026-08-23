@@ -33,11 +33,13 @@ See TheoryOfVisibilityAllocation in visibility.go.
 
 Focus packages are pinned at full documentation (documentation plus
 test-function names) and do not count against the budget; the model fetches
-focus implementation source on demand with go-src blocks. Focus files
-explicitly requested via -file and non-Go focus files (which go doc
-cannot summarize) are still emitted at full content. File ordering (see
-TheoryOfFileOrdering in files.go) places stable context files first and
-volatile focus files last, maximizing the common prefix between
+focus implementation source on demand with go-src blocks. The -all-src flag
+pins focus at full source instead (VisibilityAll): every focus file including
+tests is emitted at full content and no focus documentation block is
+produced. Focus files explicitly requested via -file and non-Go focus files
+(which go doc cannot summarize) are still emitted at full content. File
+ordering (see TheoryOfFileOrdering in files.go) places stable context files
+first and volatile focus files last, maximizing the common prefix between
 consecutive requests for LLM prefix caching.
 `
 
@@ -70,6 +72,7 @@ func (Module) SimplifyFiles(
 	envs Envs,
 	workspace Workspace,
 	hidden HiddenPatterns,
+	allSrc AllSrc,
 ) SimplifyFiles {
 	return func(files []*File, maxTokens int, countTokens func(string) (int, error)) ([]*File, error) {
 		rootPkgs, err := getRootPackages()
@@ -137,6 +140,20 @@ func (Module) SimplifyFiles(
 			}
 		}
 
+		// 2.6. -all-src pins focus packages at full source: raise the
+		// focus minimum visibility to VisibilityAll before allocation.
+		// allocateVisibility reads this minimum to pin focus packages,
+		// and prefetchPackageDocs selects packages whose minimum is
+		// exactly VisibilityDoc, so focus go doc subprocesses are
+		// skipped naturally. See TheoryOfVisibilityAllocation.
+		if allSrc {
+			for _, lp := range logicalPkgs {
+				if lp.Category == CategoryFocus {
+					lp.MinVisibility = VisibilityAll
+				}
+			}
+		}
+
 		// 3. Compute distances via BFS from focus packages
 		computeDistances(logicalPkgs)
 
@@ -145,15 +162,16 @@ func (Module) SimplifyFiles(
 
 		// 5. Pre-compute per-file token counts at the code and full
 		// visibility levels for the packages whose costs the allocation
-		// requires up front, concurrently: context packages and any
-		// package containing files always emitted at full content
-		// (DoNotSimplify files and the non-Go files of focus packages).
-		// Focus packages pinned at full documentation need no file costs.
-		// All other packages have their costs computed lazily only when
-		// the allocation probes them; packages that receive no visibility
-		// never run the tokenizer. See TheoryOfLazyVisibilityCosts in
-		// visibility.go.
-		if err := precomputeTokenCounts(logicalPkgs, countTokens); err != nil {
+		// requires up front, concurrently: context packages, any package
+		// containing files always emitted at full content (DoNotSimplify
+		// files and the non-Go files of focus packages), and — under
+		// -all-src — focus packages themselves, whose full-level costs the
+		// focus pin consumes immediately. Focus packages pinned at full
+		// documentation need no file costs. All other packages have their
+		// costs computed lazily only when the allocation probes them;
+		// packages that receive no visibility never run the tokenizer.
+		// See TheoryOfLazyVisibilityCosts in visibility.go.
+		if err := precomputeTokenCounts(logicalPkgs, bool(allSrc), countTokens); err != nil {
 			return nil, err
 		}
 
@@ -205,13 +223,16 @@ func (Module) SimplifyFiles(
 			// Files always emitted at full content regardless of the
 			// package's visibility level: files explicitly requested via
 			// -file (DoNotSimplify) and the non-Go files of focus
-			// packages, which go doc cannot summarize.
+			// packages, which go doc cannot summarize. Under -all-src the
+			// package itself is at VisibilityAll and its per-level loop
+			// below already emits every file, so the non-Go exception must
+			// not apply — the file would be emitted twice.
 			renderedAtAll := make(map[*File]renderedFile)
 			for _, rf := range lp.RenderedFiles[VisibilityAll] {
 				renderedAtAll[rf.file] = rf
 			}
 			for _, f := range lp.Files {
-				nonGoFocus := lp.Category == CategoryFocus && !f.IsGoFile
+				nonGoFocus := lp.Category == CategoryFocus && !f.IsGoFile && lp.Visibility != VisibilityAll
 				if !f.DoNotSimplify && !nonGoFocus {
 					continue
 				}
@@ -412,21 +433,17 @@ func compareFilesForOutput(a, b *File) int {
 	return 0
 }
 
-// logTokenComposition logs the context token composition after visibility
-// allocation: focus package documentation tokens, the dynamic context
-// budget derived from them, and how the context packages consume that
-// budget by visibility level. The composition makes it possible to see at
-// a glance whether the context budget is dominated by short-doc, doc-only,
-// code-only, or full packages, and how many packages are invisible. See
-// TheoryOfTokenComposition.
 func logTokenComposition(
 	logger logs.Logger,
 	logicalPkgs []*LogicalPackage,
 ) {
+	// Focus tokens are read at the focus packages' pinned visibility
+	// level: documentation tokens by default, full-source tokens under
+	// -all-src.
 	focusTokens := 0
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			focusTokens += lp.TokensByLevel[VisibilityDoc]
+			focusTokens += lp.TokensByLevel[lp.Visibility]
 		}
 	}
 	var contextTokensByLevel [5]int

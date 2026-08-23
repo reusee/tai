@@ -464,7 +464,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 				// documentation is probed too.
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
-				MinVisibility:       VisibilityAll,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
@@ -519,7 +519,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			{
 				PkgPath:             "focus",
 				Category:            CategoryFocus,
-				MinVisibility:       VisibilityAll,
+				MinVisibility:       VisibilityDoc,
 				Visibility:          VisibilityInvisible,
 				BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			},
@@ -620,7 +620,7 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 		{
 			PkgPath:             "focus",
 			Category:            CategoryFocus,
-			MinVisibility:       VisibilityAll,
+			MinVisibility:       VisibilityDoc,
 			Visibility:          VisibilityInvisible,
 			BudgetTokensByLevel: [5]int{0, 0, 0, 0, 100},
 			TokensByLevel:       [5]int{0, 0, 0, 0, 100},

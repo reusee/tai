@@ -96,9 +96,10 @@ fetch mechanism.
 
 const TheoryOfVisibilityAllocation = `
 The context token budget for non-focus packages is dynamic: it is derived
-from the total token count of the focus packages' documentation so that
-large declaration surfaces receive a proportionally larger context
-budget. The budget is focusTokens / 4, rounded to the nearest multiple of
+from the total token count of the focus packages at their pinned level —
+documentation by default, full source under -all-src — so that large
+focus surfaces receive a proportionally larger context budget. The budget
+is focusTokens / 4, rounded to the nearest multiple of
 contextTokenBudgetUnit (32K), with a floor at one unit. A repository
 whose focus packages total 128K documentation tokens gets a 32K context
 budget; a 200K documentation surface gets a 64K budget. This scaling
@@ -163,19 +164,22 @@ unaffordable packages.
 Focus packages are pinned at full documentation: their initial context is
 the declaration surface — go doc -all -cmd -u output plus the package's
 test-function names — and the model fetches implementation source on
-demand with go-src blocks. Pinning bounds the initial context of large
-projects without sacrificing detail: the model pulls exactly the
-declarations it needs. The water-fill never upgrades pinned focus
-packages (upgrading would reintroduce the full-source initial context),
-focus never counts against the context budget, and the budget derives
-from the focus documentation size, so the same focus packages always
-produce the same budget. Focus files still reach the context at full
-content when explicitly requested via -file (DoNotSimplify) and when
-they are non-Go files, which go doc cannot summarize; the focus
-documentation block carries the writable-dir read-only annotation in
-its begin marker, because focus Go files are no longer emitted
-individually. The construction principle therefore holds among
-non-focus packages; the pinned focus level is independent of it by
+demand with go-src blocks. The -all-src flag switches the pin to full
+source (VisibilityAll): every focus file including tests enters the
+initial context, the focus documentation block is not produced, and
+go-src fetching is unnecessary for focus declarations. Pinning bounds
+the initial context of large projects without sacrificing detail: the
+model pulls exactly the declarations it needs. The water-fill never
+upgrades pinned focus packages (upgrading would reintroduce the
+full-source initial context), focus never counts against the context
+budget, and the budget derives from the focus tokens at the pinned
+level, so the same focus packages always produce the same budget. Focus
+files still reach the context at full content when explicitly requested
+via -file (DoNotSimplify) and when they are non-Go files, which go doc
+cannot summarize; the focus documentation block carries the writable-dir
+read-only annotation in its begin marker, because focus Go files are no
+longer emitted individually. The construction principle therefore holds
+among non-focus packages; the pinned focus level is independent of it by
 design.
 `
 
@@ -692,10 +696,12 @@ func renderFileAtLevel(
 // precomputeTokenCounts renders and token-counts files at the code and
 // full visibility levels, in parallel, for the packages whose costs the
 // visibility allocation requires up front: context packages (their
-// code-level cost is the first minimum-visibility decision) and any
-// package containing files always emitted at full content — DoNotSimplify
-// files (explicitly requested via -file) and the non-Go files of focus
-// packages, which go doc cannot summarize. Focus packages pinned at full
+// code-level cost is the first minimum-visibility decision), any package
+// containing files always emitted at full content — DoNotSimplify files
+// (explicitly requested via -file) and the non-Go files of focus packages,
+// which go doc cannot summarize — and, under -all-src, focus packages
+// themselves, whose full-level costs the focus pin at the top of
+// allocateVisibility consumes immediately. Focus packages pinned at full
 // documentation need no file costs: their budget contribution is their
 // documentation size, so focus source files are never rendered or
 // token-counted unless a file is explicitly requested. All other packages
@@ -703,10 +709,10 @@ func renderFileAtLevel(
 // are probed; packages that receive no visibility never run the
 // tokenizer. Documentation-level costs are NOT computed here: they are
 // computed by computePackageShortDoc and computePackageDoc, lazily, for
-// packages that reach a documentation level. See
-// TheoryOfLazyVisibilityCosts.
+// packages that reach a documentation level. See TheoryOfLazyVisibilityCosts.
 func precomputeTokenCounts(
 	logicalPkgs []*LogicalPackage,
+	allSrc bool,
 	countTokens func(string) (int, error),
 ) error {
 	var wg sync.WaitGroup
@@ -716,6 +722,7 @@ func precomputeTokenCounts(
 
 	for _, lp := range logicalPkgs {
 		if lp.Category != CategoryContext &&
+			!(allSrc && lp.Category == CategoryFocus) &&
 			!slices.ContainsFunc(lp.Files, func(f *File) bool {
 				return f.DoNotSimplify || (lp.Category == CategoryFocus && !f.IsGoFile)
 			}) {
@@ -837,26 +844,38 @@ func allocateVisibility(
 	// reintroduce the full-source initial context this scheme exists to
 	// avoid. The documentation cost is computed here because the context
 	// budget derives from it (a no-op when prefetchPackageDocs already
-	// computed it). See TheoryOfVisibilityAllocation.
+	// computed it). Under -all-src (MinVisibility raised to VisibilityAll
+	// by SimplifyFiles), focus packages are instead pinned at full source
+	// including tests; the full-level costs are computed here because the
+	// budget derives from them. See TheoryOfVisibilityAllocation.
 	for _, lp := range logicalPkgs {
-		if lp.Category == CategoryFocus {
-			computeDoc(lp)
-			lp.Visibility = VisibilityDoc
+		if lp.Category != CategoryFocus {
+			continue
 		}
+		if lp.MinVisibility == VisibilityAll {
+			if err := ensureCosts(lp); err != nil {
+				return err
+			}
+			lp.Visibility = VisibilityAll
+			continue
+		}
+		computeDoc(lp)
+		lp.Visibility = VisibilityDoc
 	}
 
 	// The context token budget is dynamic: it is derived from the total
-	// token count of the focus packages' documentation (focusTokens / 4,
-	// rounded to the nearest multiple of contextTokenBudgetUnit, floored
-	// at one unit), so large declaration surfaces allocate proportionally
-	// larger budgets for context packages. The computation is
-	// deterministic — identical focus packages produce an identical
-	// budget — preserving the LLM prefix cache. See
+	// token count of the focus packages at their pinned level —
+	// documentation by default, full source under -all-src — as
+	// focusTokens / 4, rounded to the nearest multiple of
+	// contextTokenBudgetUnit, floored at one unit, so large focus surfaces
+	// allocate proportionally larger budgets for context packages. The
+	// computation is deterministic — identical focus packages produce an
+	// identical budget — preserving the LLM prefix cache. See
 	// TheoryOfVisibilityAllocation.
 	focusTokens := 0
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
-			focusTokens += lp.TokensByLevel[VisibilityDoc]
+			focusTokens += lp.TokensByLevel[lp.Visibility]
 		}
 	}
 	remaining := calculateMaxContextTokens(focusTokens)

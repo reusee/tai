@@ -22,7 +22,11 @@ declaration surface to the implementation: the initial context carries only
 declarations and test-function names, and the model fetches exactly the
 source it needs before understanding, modifying, or reviewing any focus
 declaration — including test functions, which the focus package block lists
-by name.
+by name. Under the -all-src flag focus packages are pinned at full source,
+so the initial context already carries every focus declaration's
+implementation and go-src fetching is unnecessary for focus declarations;
+the kind remains the fetch path for context packages at documentation
+visibility.
 
 The block body is opaque to the mechanism: each non-empty line is one
 symbol name in the go doc form [<pkg>.][<sym>.][<methodOrField>] — a

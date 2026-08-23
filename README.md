@@ -114,6 +114,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-fast-model` | Set the fast model for summarization |
 | `-file` | Add a file to the context |
 | `-doc` | Add a package whose documentation (go doc -all -cmd) is included in the context |
+| `-all-src` | Include full source of focus packages, including tests, in the context |
 | `-shell` | Enable shell block execution |
 | `-stdin` | Add standard input content to the chat messages |
 | `-plan` | Enable mandatory planning and multi-round generation |
@@ -171,7 +172,7 @@ Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `rea
 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
-3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names; implementation source is fetched on demand via go-src blocks. Non-Go focus files and files explicitly requested via `-file` are appended at full content last
+3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names; implementation source is fetched on demand via go-src blocks. Non-Go focus files and files explicitly requested via `-file` are appended at full content last. With `-all-src`, focus packages are included as full source code, including tests, instead of documentation
 4. Context packages are assigned a package-level visibility (invisible, short documentation, package documentation, code without tests, or full content) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
 5. Extra files from `-file` patterns are appended after focus files
 

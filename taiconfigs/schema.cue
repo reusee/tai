@@ -131,6 +131,11 @@ go?: {
 	// no_tests, if true, excludes test files from the context.
 	no_tests?: bool
 
+	// all_src, if true, includes the full source code of focus packages,
+	// including tests, as their initial context instead of package
+	// documentation.
+	all_src?: bool
+
 	// show_token_counts, if true, displays token counts for each included file.
 	show_token_counts?: bool
 
