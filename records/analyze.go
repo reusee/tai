@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/phases"
 )
 
 const analysisSystemPrompt = `你是一个AI工具交互分析器。tai是一个AI辅助编码工具，其工作方式为：模型输出带有边界分隔符的结构化块——change块用于修改代码文件，shell块用于执行shell命令，go-test块用于运行Go测试，continue块用于触发下一轮生成，summary块用于标记当前轮次正常结束，read块用于请求更多上下文。一次生成过程按"轮次"组织：每轮模型输出内容，系统解析其中的块并处理（应用代码修改、执行命令、运行测试），随后根据continue块和组件结果决定是否进入下一轮。整个过程可能发生重试（输出截断、解析错误、应用失败）。
@@ -34,7 +33,7 @@ const analysisSystemPrompt = `你是一个AI工具交互分析器。tai是一个
 func runAnalysis(
 	ctx context.Context,
 	generator generators.Generator,
-	buildGenerate phases.BuildGenerate,
+	buildGenerate generators.BuildGenerate,
 	recorder *Recorder,
 	sessionID int64,
 	output io.Writer,
@@ -88,7 +87,7 @@ type RunAnalysis func(ctx context.Context, sessionID int64, output io.Writer) er
 func (Module) RunAnalysis(
 	recorder *Recorder,
 	getDefaultGenerator generators.GetDefaultGenerator,
-	buildGenerate phases.BuildGenerate,
+	buildGenerate generators.BuildGenerate,
 ) RunAnalysis {
 	return func(ctx context.Context, sessionID int64, output io.Writer) error {
 		generator, err := getDefaultGenerator()

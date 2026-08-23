@@ -7,7 +7,6 @@ import (
 
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/phases"
 )
 
 type fakeInteractionRecorder struct {
@@ -63,7 +62,7 @@ func TestRunRecordsRound(t *testing.T) {
 			Components:          nil,
 			InteractionRecorder: rec,
 			Command:             "test-command",
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
@@ -95,7 +94,7 @@ func TestRunRecordsDisabled(t *testing.T) {
 			InitialState:        generators.NewPrompts("", nil),
 			Components:          nil,
 			InteractionRecorder: rec,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
 			},
 		})
@@ -116,7 +115,7 @@ func TestRunRecordsRoundError(t *testing.T) {
 			InitialState:        generators.NewPrompts("", nil),
 			Components:          nil,
 			InteractionRecorder: rec,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return errorPhase(errors.New("boom"))
 			},
 		})
@@ -134,7 +133,7 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("no summary")
@@ -170,7 +169,7 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 func TestRunRecordsParseError(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
@@ -195,7 +194,7 @@ func TestRunRecordsDecisionEvents(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")

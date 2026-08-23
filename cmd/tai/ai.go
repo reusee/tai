@@ -16,7 +16,6 @@ import (
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
@@ -49,7 +48,7 @@ default for safety; the -shell flag enables it.
 
 The continue block is deliberately not part of the ai command. In an
 interactive chat the user's next input arrives through OnIdle
-(phases.BuildChatIdle) after the round ends; a continue component would feed
+(pipeline.BuildChatIdle) after the round ends; a continue component would feed
 the model's own body back as user content, bypassing the prompt and allowing
 the model to emit meaningless self-prompts such as "Please provide the next
 task or user input." See TheoryOfAIComponents.
@@ -81,7 +80,7 @@ the generate phase (not chat); the chat prompt is handled by OnIdle, which is
 invoked by the loop as a fallback when no component triggers. This ensures the
 model can chain multiple rounds of autonomous shell execution without user
 intervention, and the user is only prompted when the model has no pending
-automated actions. See phases.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
+automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
 The user prompt places file context first, then the static restate prompts,
@@ -119,8 +118,8 @@ var AICommand = Command{
 		getSystemPrompt AISystemPrompt,
 		comps AIComponents,
 		updateMemoryFromBlock memories.UpdateMemoryFromBlock,
-		buildGenerate phases.BuildGenerate,
-		buildChatIdle phases.BuildChatIdle,
+		buildGenerate generators.BuildGenerate,
+		buildChatIdle pipeline.BuildChatIdle,
 		getDefaultGenerator generators.GetDefaultGenerator,
 		flagFiles flags.Files,
 		nameMatch anytexts.NameMatch,
@@ -243,7 +242,7 @@ var AICommand = Command{
 
 		// When NoHuman is set, OnIdle is nil so the loop ends without
 		// prompting for input, enabling unattended operation.
-		var onIdle phases.IdleHandler
+		var onIdle pipeline.IdleHandler
 		if !bool(noHuman) {
 			onIdle = buildChatIdle(generator, nil)
 		}
@@ -257,7 +256,7 @@ var AICommand = Command{
 		// passed explicitly so the session is captured when -record is
 		// enabled. The result is filled into result as the run progresses;
 		// the iterator yields the terminal error, if any.
-		// See phases.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
+		// See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 		var result pipeline.Result
 		for e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
@@ -265,7 +264,7 @@ var AICommand = Command{
 			Components:          comps.ComponentSet,
 			Command:             "ai",
 			InteractionRecorder: recorder,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
 			OnRoundSuccess: func(roundState generators.State, summaries []string) error {

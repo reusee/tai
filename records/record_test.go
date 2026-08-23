@@ -11,7 +11,6 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/phases"
 )
 
 // stubGetDefaultGenerator satisfies dscope.New validation for
@@ -26,12 +25,12 @@ func stubGetDefaultGenerator() generators.GetDefaultGenerator {
 }
 
 // stubBuildGenerate satisfies dscope.New validation for records.Module's
-// RunAnalysis provider, which depends on phases.BuildGenerate. The stub
+// RunAnalysis provider, which depends on generators.BuildGenerate. The stub
 // returns a pass-through phase; it is never invoked by non-analysis
 // tests. See TheoryOfInteractionRecording.
-func stubBuildGenerate() phases.BuildGenerate {
-	return func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-		return func(cont phases.Phase) phases.Phase {
+func stubBuildGenerate() generators.BuildGenerate {
+	return func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+		return func(cont generators.Phase) generators.Phase {
 			return cont
 		}
 	}

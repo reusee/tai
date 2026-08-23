@@ -10,7 +10,6 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/phases"
 )
 
 type analysisMockGenerator struct{}
@@ -38,20 +37,20 @@ func TestRunAnalysis(t *testing.T) {
 		new(Module),
 		// RunAnalysis provider 的依赖必须在 new(Module) 同一层已定义，
 		// 否则 dscope.New 校验 records.Module 时会因缺少
-		// generators.GetDefaultGenerator / phases.BuildGenerate 而 panic。
+		// generators.GetDefaultGenerator / generators.BuildGenerate 而 panic。
 		func() generators.GetDefaultGenerator {
 			return func() (generators.Generator, error) {
 				return analysisMockGenerator{}, nil
 			}
 		},
-		func() phases.BuildGenerate {
+		func() generators.BuildGenerate {
 			// The stub's phase must invoke generator.Generate, mirroring
-			// phases.BuildGenerate: runAnalysis drives the returned phase
+			// generators.BuildGenerate: runAnalysis drives the returned phase
 			// chain, and the mock generator's output reaches the buffer
 			// through the Output state layer only when Generate runs.
-			return func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-				return func(cont phases.Phase) phases.Phase {
-					return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			return func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+				return func(cont generators.Phase) generators.Phase {
+					return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 						newState, err := generator.Generate(ctx, state, options)
 						if err != nil {
 							return nil, state, err

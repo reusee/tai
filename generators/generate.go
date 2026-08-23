@@ -1,11 +1,9 @@
-package phases
+package generators
 
 import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/reusee/tai/generators"
 )
 
 const TheoryOfGenerateRetry = `
@@ -22,12 +20,16 @@ phase returns the input state so that callers like pipeline.Run can pass a valid
 state to OnPhaseError.
 `
 
-type BuildGenerate func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder
+// BuildGenerate builds the generate phase for a generator. It lives in the
+// generators package — next to Generator, State, and the retry machinery —
+// because every consumer of the phase chain (the pipeline loop, records'
+// analysis pass) already depends on generators.
+type BuildGenerate func(generator Generator, options *GenerateOptions) PhaseBuilder
 
 func (Module) BuildGenerate() BuildGenerate {
-	return func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder {
+	return func(generator Generator, options *GenerateOptions) PhaseBuilder {
 		return func(cont Phase) Phase {
-			return func(ctx context.Context, state generators.State) (Phase, generators.State, error) {
+			return func(ctx context.Context, state State) (Phase, State, error) {
 
 				state0 := state
 
@@ -37,14 +39,14 @@ func (Module) BuildGenerate() BuildGenerate {
 					newState, err := generator.Generate(ctx, state, options)
 					if err != nil {
 						lastErr = err
-						if errors.Is(err, generators.ErrRetryable) {
+						if errors.Is(err, ErrRetryable) {
 							continue
 						}
 						// If the generator produced partial output before the
 						// error, return that state so the caller (pipeline.Run)
 						// can detect the content increase and trigger a retry
 						// with summarization. See TheoryOfGenerateRetry.
-						if newState != nil && generators.CountContents(newState) > generators.CountContents(state) {
+						if newState != nil && CountContents(newState) > CountContents(state) {
 							return nil, newState, err
 						}
 						// Return the input state (not nil) so callers like
@@ -54,8 +56,8 @@ func (Module) BuildGenerate() BuildGenerate {
 					state = newState
 					return cont, RedoCheckpoint{
 						upstream:  state,
-						state0:    state0,
-						generator: generator,
+						State0:    state0,
+						Generator: generator,
 					}, nil
 				}
 

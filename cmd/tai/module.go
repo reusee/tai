@@ -7,7 +7,6 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/memories"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
@@ -15,7 +14,6 @@ import (
 type Module struct {
 	dscope.Module
 	Generators generators.Module
-	Phases     phases.Module
 	Flags      flags.Module
 	Memories   memories.Module
 	Modes      modes.ModuleForProduction

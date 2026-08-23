@@ -141,7 +141,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `changes` | Change block parsing and application |
 | `blocks` | Heredoc block format parsing |
 | `components` | Component mechanism for block processing |
-| `phases` | Phase chain (generate, chat) |
 | `configs` | CUE configuration loading |
 | `flags` | Command-line flag parsing |
 | `security` | Container isolation and shell security |

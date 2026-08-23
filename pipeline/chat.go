@@ -1,4 +1,4 @@
-package phases
+package pipeline
 
 import (
 	"context"
@@ -15,10 +15,13 @@ import (
 	"github.com/reusee/tai/logs"
 )
 
-type BuildChat func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder
+// BuildChat builds the interactive chat phase: it prompts the user for
+// input, handles the chat commands (/quit, /regen, /write, /tap), and
+// chains generate -> chat so each user input triggers a generation round.
+type BuildChat func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder
 
 func (Module) BuildChatPhase(
-	buildGen BuildGenerate,
+	buildGen generators.BuildGenerate,
 	logger logs.Logger,
 	tap debugs.Tap,
 ) (buildChat BuildChat) {
@@ -31,9 +34,9 @@ func (Module) BuildChatPhase(
 		return filepath.Join(dir, "ai-chat-history.json"), nil
 	})
 
-	buildChat = func(generator generators.Generator, options *generators.GenerateOptions) PhaseBuilder {
-		return func(cont Phase) Phase {
-			return func(ctx context.Context, state generators.State) (Phase, generators.State, error) {
+	buildChat = func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+		return func(cont generators.Phase) generators.Phase {
+			return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 
 				line := liner.NewLiner()
 				defer line.Close()
@@ -83,15 +86,15 @@ func (Module) BuildChatPhase(
 					return cont, state, nil
 
 				case "/regen":
-					checkpoint, ok := generators.As[RedoCheckpoint](state)
+					checkpoint, ok := generators.As[generators.RedoCheckpoint](state)
 					if !ok {
 						return nil, nil, fmt.Errorf("no redo checkpoint")
 					}
-					return buildGen(checkpoint.generator, options)(
+					return buildGen(checkpoint.Generator, options)(
 						buildChat(generator, options)(
 							cont,
 						),
-					), checkpoint.state0, nil
+					), checkpoint.State0, nil
 
 				case "/write":
 					out, err := os.Create(".AI")
@@ -255,7 +258,7 @@ func (Module) BuildChatIdle(
 					return state, false, nil
 
 				case "/regen":
-					checkpoint, ok := generators.As[RedoCheckpoint](state)
+					checkpoint, ok := generators.As[generators.RedoCheckpoint](state)
 					if !ok {
 						return state, false, fmt.Errorf("no redo checkpoint")
 					}
@@ -263,7 +266,7 @@ func (Module) BuildChatIdle(
 					// regenerates from the checkpoint. The loop's
 					// PhaseBuilder (generate only) will call the model
 					// with this state.
-					return checkpoint.state0, true, nil
+					return checkpoint.State0, true, nil
 
 				case "/write":
 					out, err := os.Create(".AI")

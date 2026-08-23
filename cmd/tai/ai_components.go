@@ -49,8 +49,8 @@ TheoryOfPrefixCaching in generators/state_func_map.go.
 
 The shell component is reused from components.CommonComponents. The continue
 component is deliberately excluded. In the interactive ai chat, the user's
-next input is provided through phases.BuildChatIdle (OnIdle), invoked by the
-generation loop when no component triggers. A continue block would have its
+next input is provided through pipeline.BuildChatIdle (OnIdle), invoked by
+the generation loop when no component triggers. A continue block would have its
 body fed back as user content without a human supplying it, letting the model
 drive an unlimited self-prompt loop and emit meaningless content such as
 "Please provide the next task or user input." Because OnIdle is the single

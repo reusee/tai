@@ -12,7 +12,6 @@ import (
 	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
@@ -264,7 +263,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -281,9 +280,9 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		Output(os.Stdout),
 		nil,
 		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
-		func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-			return func(cont phases.Phase) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+			return func(cont generators.Phase) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 					return nil, state, nil
 				}
 			}
@@ -361,7 +360,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		return func(yield func(error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, phases.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -376,9 +375,9 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		Output(os.Stdout),
 		nil,
 		func() (generators.Generator, error) { return aiMockGenerator{}, nil },
-		func(generator generators.Generator, options *generators.GenerateOptions) phases.PhaseBuilder {
-			return func(cont phases.Phase) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+		func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+			return func(cont generators.Phase) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 					return nil, state, nil
 				}
 			}

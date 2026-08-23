@@ -16,7 +16,6 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline/codetypes"
 	"github.com/reusee/tai/records"
 )
@@ -457,7 +456,7 @@ when a model consistently truncates. Change blocks from a truncated attempt are
 NOT applied: the retry discards the partial output entirely and regenerates from
 the pre-round state, avoiding incomplete or malformed change blocks. This is
 distinct from the generator-level retry (see TheoryOfRetry in generators/gemini.go
-and TheoryOfGenerateRetry in phases/generate.go), which handles transient API
+and TheoryOfGenerateRetry in generators/generate.go), which handles transient API
 errors; this retry handles successful-but-incomplete output.
 
 Completion is detected by checking the externally collected blocks for summary
@@ -533,7 +532,7 @@ func (Module) GenerateWithResultWithStats(
 	getDefaultGenerator generators.GetDefaultGenerator,
 	getDefaultSummarizer GetDefaultSummarizer,
 	getHandoffGenerator GetHandoffGenerator,
-	buildGenerate phases.BuildGenerate,
+	buildGenerate generators.BuildGenerate,
 	maxTokens flags.MaxTokens,
 	buildChangeBlockHandler changes.BuildChangeBlockHandler,
 	patterns Patterns,
@@ -752,7 +751,7 @@ func (Module) GenerateWithResultWithStats(
 			InitialState: state,
 			Components:   comps.ComponentSet,
 			BlockHandler: blockHandler,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
 			Root:                root,

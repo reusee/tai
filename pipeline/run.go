@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/records"
 )
 
@@ -789,7 +788,7 @@ type RunOptions struct {
 	// If consumed is true, the block is not passed to ProcessComponents.
 	BlockHandler BlockHandler
 	// PhaseBuilder builds the phase chain for each round.
-	PhaseBuilder func(generators.Generator) phases.Phase
+	PhaseBuilder func(generators.Generator) generators.Phase
 	// Root is the filesystem root for ProcessComponents. Optional.
 	Root *os.Root
 	// HTTPClient is the HTTP client for ProcessComponents. Optional.
@@ -865,8 +864,8 @@ type RunOptions struct {
 	// decide whether to continue with another round. If OnIdle returns
 	// continue=true, a new round starts. If false or OnIdle is nil,
 	// the loop ends. OnIdle is only invoked in multi-round mode (when
-	// Components is non-empty). See phases.TheoryOfIdleHandler.
-	OnIdle phases.IdleHandler
+	// Components is non-empty). See TheoryOfIdleHandler.
+	OnIdle IdleHandler
 }
 
 // formatHandoffPrompt formats the retry user prompt with the handoff content.

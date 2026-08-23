@@ -1,4 +1,4 @@
-package phases
+package generators
 
 import (
 	"context"
@@ -7,21 +7,19 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-
-	"github.com/reusee/tai/generators"
 )
 
-type mockState struct {
-	contents     []*generators.Content
+type checkpointMockState struct {
+	contents     []*Content
 	systemPrompt string
-	funcMap      map[string]*generators.Function
-	unwrapped    generators.State
+	funcMap      map[string]*Function
+	unwrapped    State
 	flushErr     error
 	appendErr    error
 }
 
-func (m *mockState) Contents() iter.Seq[*generators.Content] {
-	return func(yield func(*generators.Content) bool) {
+func (m *checkpointMockState) Contents() iter.Seq[*Content] {
+	return func(yield func(*Content) bool) {
 		for _, c := range m.contents {
 			if !yield(c) {
 				return
@@ -29,12 +27,12 @@ func (m *mockState) Contents() iter.Seq[*generators.Content] {
 		}
 	}
 }
-func (m *mockState) AppendContent(c *generators.Content) (generators.State, error) {
+func (m *checkpointMockState) AppendContent(c *Content) (State, error) {
 	if m.appendErr != nil {
 		return nil, m.appendErr
 	}
 	newContents := append(slices.Clone(m.contents), c)
-	return &mockState{
+	return &checkpointMockState{
 		contents:     newContents,
 		systemPrompt: m.systemPrompt,
 		funcMap:      m.funcMap,
@@ -43,9 +41,9 @@ func (m *mockState) AppendContent(c *generators.Content) (generators.State, erro
 		appendErr:    m.appendErr,
 	}, nil
 }
-func (m *mockState) SystemPrompt() string { return m.systemPrompt }
-func (m *mockState) Functions() iter.Seq[*generators.Function] {
-	return func(yield func(*generators.Function) bool) {
+func (m *checkpointMockState) SystemPrompt() string { return m.systemPrompt }
+func (m *checkpointMockState) Functions() iter.Seq[*Function] {
+	return func(yield func(*Function) bool) {
 		for _, v := range m.funcMap {
 			if !yield(v) {
 				return
@@ -53,42 +51,44 @@ func (m *mockState) Functions() iter.Seq[*generators.Function] {
 		}
 	}
 }
-func (m *mockState) Flush() (generators.State, error) {
+func (m *checkpointMockState) Flush() (State, error) {
 	if m.flushErr != nil {
 		return nil, m.flushErr
 	}
 	return m, nil
 }
-func (m *mockState) Unwrap() generators.State { return m.unwrapped }
+func (m *checkpointMockState) Unwrap() State { return m.unwrapped }
 
-type mockGenerator struct{}
+type checkpointMockGenerator struct{}
 
-func (m *mockGenerator) Spec() generators.Spec           { return generators.Spec{} }
-func (m *mockGenerator) CountTokens(string) (int, error) { return 0, nil }
-func (m *mockGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+func (m *checkpointMockGenerator) Spec() Spec { return Spec{} }
+func (m *checkpointMockGenerator) CountTokens(string) (int, error) {
+	return 0, nil
+}
+func (m *checkpointMockGenerator) Generate(ctx context.Context, state State, options *GenerateOptions) (State, error) {
 	return state, nil
 }
 
 func TestRedoCheckpoint(t *testing.T) {
-	upstream := &mockState{
-		contents:     []*generators.Content{{Role: "user"}},
+	upstream := &checkpointMockState{
+		contents:     []*Content{{Role: "user"}},
 		systemPrompt: "system",
-		funcMap:      map[string]*generators.Function{"foo": {}},
+		funcMap:      map[string]*Function{"foo": {}},
 		unwrapped:    nil,
 	}
-	state0 := &mockState{
-		contents: []*generators.Content{{Role: "user", Parts: []generators.Part{generators.Text("state0")}}},
+	state0 := &checkpointMockState{
+		contents: []*Content{{Role: "user", Parts: []Part{Text("state0")}}},
 	}
-	generator := &mockGenerator{}
+	generator := &checkpointMockGenerator{}
 
 	checkpoint := RedoCheckpoint{
 		upstream:  upstream,
-		state0:    state0,
-		generator: generator,
+		State0:    state0,
+		Generator: generator,
 	}
 
 	t.Run("Contents", func(t *testing.T) {
-		var got, want []*generators.Content
+		var got, want []*Content
 		for c := range checkpoint.Contents() {
 			got = append(got, c)
 		}
@@ -107,11 +107,11 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 	t.Run("FuncMap", func(t *testing.T) {
-		got := make(map[string]*generators.Function)
+		got := make(map[string]*Function)
 		for fn := range checkpoint.Functions() {
 			got[fn.Decl.Name] = fn
 		}
-		want := make(map[string]*generators.Function)
+		want := make(map[string]*Function)
 		for fn := range upstream.Functions() {
 			want[fn.Decl.Name] = fn
 		}
@@ -127,7 +127,7 @@ func TestRedoCheckpoint(t *testing.T) {
 	})
 
 	t.Run("AppendContent", func(t *testing.T) {
-		newContent := &generators.Content{Role: "model"}
+		newContent := &Content{Role: "model"}
 		newState, err := checkpoint.AppendContent(newContent)
 		if err != nil {
 			t.Fatalf("AppendContent() returned an error: %v", err)
@@ -138,12 +138,12 @@ func TestRedoCheckpoint(t *testing.T) {
 			t.Fatalf("AppendContent() did not return a RedoCheckpoint")
 		}
 
-		var expectedContents []*generators.Content
+		var expectedContents []*Content
 		for c := range upstream.Contents() {
 			expectedContents = append(expectedContents, c)
 		}
 		expectedContents = append(expectedContents, newContent)
-		var gotContents []*generators.Content
+		var gotContents []*Content
 		for c := range newCheckpoint.Contents() {
 			gotContents = append(gotContents, c)
 		}
@@ -151,19 +151,19 @@ func TestRedoCheckpoint(t *testing.T) {
 			t.Errorf("new checkpoint has wrong contents")
 		}
 
-		if newCheckpoint.state0 != state0 {
-			t.Errorf("state0 was not preserved")
+		if newCheckpoint.State0 != state0 {
+			t.Errorf("State0 was not preserved")
 		}
-		if newCheckpoint.generator != generator {
-			t.Errorf("generator was not preserved")
+		if newCheckpoint.Generator != generator {
+			t.Errorf("Generator was not preserved")
 		}
 	})
 
 	t.Run("AppendContent error", func(t *testing.T) {
 		testErr := errors.New("append error")
-		upstreamWithErr := &mockState{appendErr: testErr}
+		upstreamWithErr := &checkpointMockState{appendErr: testErr}
 		checkpointWithErr := RedoCheckpoint{upstream: upstreamWithErr}
-		_, err := checkpointWithErr.AppendContent(&generators.Content{})
+		_, err := checkpointWithErr.AppendContent(&Content{})
 		if !errors.Is(err, testErr) {
 			t.Errorf("expected error %v, got %v", testErr, err)
 		}
@@ -184,17 +184,17 @@ func TestRedoCheckpoint(t *testing.T) {
 			t.Errorf("new checkpoint has wrong upstream")
 		}
 
-		if newCheckpoint.state0 != state0 {
-			t.Errorf("state0 was not preserved")
+		if newCheckpoint.State0 != state0 {
+			t.Errorf("State0 was not preserved")
 		}
-		if newCheckpoint.generator != generator {
-			t.Errorf("generator was not preserved")
+		if newCheckpoint.Generator != generator {
+			t.Errorf("Generator was not preserved")
 		}
 	})
 
 	t.Run("Flush error", func(t *testing.T) {
 		testErr := errors.New("flush error")
-		upstreamWithErr := &mockState{flushErr: testErr}
+		upstreamWithErr := &checkpointMockState{flushErr: testErr}
 		checkpointWithErr := RedoCheckpoint{upstream: upstreamWithErr}
 		_, err := checkpointWithErr.Flush()
 		if !errors.Is(err, testErr) {

@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
@@ -278,7 +277,7 @@ var PingCommand = Command{
 		output Output,
 		recorder *records.Recorder,
 		getDefaultGenerator generators.GetDefaultGenerator,
-		buildGenerate phases.BuildGenerate,
+		buildGenerate generators.BuildGenerate,
 		loopRun pipeline.Run,
 		randomPingBlocks RandomPingBlocks,
 		extra flags.ExtraSystemPrompt,
@@ -351,7 +350,7 @@ var PingCommand = Command{
 			Components:          nil,
 			Command:             "ping",
 			InteractionRecorder: recorder,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
 		}, &result) {

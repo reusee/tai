@@ -17,7 +17,6 @@ import (
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/nets"
-	"github.com/reusee/tai/phases"
 )
 
 func withRun(t *testing.T, fn func(Run)) {
@@ -43,8 +42,8 @@ func runOnce(run Run, opts RunOptions) (Result, error) {
 
 // appendPhase creates a phase that appends text content and returns nil
 // (end of phase chain).
-func appendPhase(text string) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func appendPhase(text string) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, err := state.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -59,8 +58,8 @@ func appendPhase(text string) phases.Phase {
 // appendPhaseWithFinish creates a phase that appends text content and a
 // finish reason, then returns nil (end of phase chain). Used to test
 // retry behavior for abnormal finish reasons like "length".
-func appendPhaseWithFinish(text string, finishReason string) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func appendPhaseWithFinish(text string, finishReason string) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, err := state.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -84,8 +83,8 @@ func appendPhaseWithFinish(text string, finishReason string) phases.Phase {
 // appendPhaseWithUsage creates a phase that appends text content and a
 // token usage part, then returns nil (end of phase chain). Used to test
 // the round usage log record. See TheoryOfUsageLogging.
-func appendPhaseWithUsage(text string, usage generators.Usage) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func appendPhaseWithUsage(text string, usage generators.Usage) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, err := state.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -107,8 +106,8 @@ func appendPhaseWithUsage(text string, usage generators.Usage) phases.Phase {
 // appendThenErrorPhase creates a phase that appends text content, then
 // returns the given error. Used to test error retry when content has been
 // output before the error occurs.
-func appendThenErrorPhase(text string, err error) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func appendThenErrorPhase(text string, err error) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, appendErr := state.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -124,8 +123,8 @@ func appendThenErrorPhase(text string, err error) phases.Phase {
 // so ParserState.Flush collects parse errors from unclosed blocks. Used
 // to test parse-error correction in the loop. See
 // TheoryOfParseErrorCollection.
-func appendPhaseWithFlush(text string) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func appendPhaseWithFlush(text string) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, err := state.AppendContent(&generators.Content{
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text(text)},
@@ -144,7 +143,7 @@ func appendPhaseWithFlush(text string) phases.Phase {
 func TestRunParseErrorCorrection(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				// Emit an unclosed block (no closing delimiter) — a
@@ -191,7 +190,7 @@ func TestRunParseErrorCorrection(t *testing.T) {
 func TestRunParseErrorCorrectionBound(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			// Persistently emit an unclosed block — a parse error every
 			// round. The correction loop must stop after
@@ -218,7 +217,7 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				// A complete shell block followed by an unclosed change
@@ -298,7 +297,7 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 
 		// Every round emits a complete shell block (triggers a new round)
 		// plus an unclosed change block (parse error).
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			return appendPhaseWithFlush(
 				"<<齉爩 shell\necho hi\n齉爩\n" +
 					"<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
@@ -343,8 +342,8 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 }
 
 // errorPhase creates a phase that returns an error.
-func errorPhase(err error) phases.Phase {
-	return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+func errorPhase(err error) generators.Phase {
+	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		return nil, state, err
 	}
 }
@@ -355,7 +354,7 @@ func TestRunSingleRound(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("hello world")
 			},
 		})
@@ -380,7 +379,7 @@ func TestRunSingleRound(t *testing.T) {
 func TestRunMultiRoundTriggered(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
@@ -459,7 +458,7 @@ func TestRunBlockHandlerConsumed(t *testing.T) {
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
 			BlockHandler: blockHandler,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 			},
 			HTTPClient: nets.HTTPClient{},
@@ -492,7 +491,7 @@ func TestRunPhaseError(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return errorPhase(expectedErr)
 			},
 			OnPhaseError: onPhaseError,
@@ -512,7 +511,7 @@ func TestRunPhaseError(t *testing.T) {
 func TestRunRetryOnMissingCompletion(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				// No completion block — should trigger retry.
@@ -546,7 +545,7 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		var successSummaries [][]string
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return appendPhase("always incomplete")
 		}
@@ -599,7 +598,7 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				// Summary block present but finish reason is "length"
@@ -634,7 +633,7 @@ func TestRunRetryOnAbnormalFinishReason(t *testing.T) {
 func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return appendPhaseWithFinish("<<龘靐 summary\nDone.\n龘靐\n", "stop")
 		}
@@ -662,7 +661,7 @@ func TestRunNoRetryOnNormalFinishReason(t *testing.T) {
 func TestRunRetryMaxRetries(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return appendPhase("always incomplete")
 		}
@@ -712,7 +711,7 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
 			OnRoundStart: onRoundStart,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				round++
 				if round == 1 {
 					return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
@@ -746,7 +745,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			InitialState:   generators.NewPrompts("", nil),
 			Components:     nil,
 			OnRoundSuccess: onRoundSuccess,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nRound 1 done.\n龘靐\n")
 			},
 		})
@@ -791,7 +790,7 @@ func TestRunLogsRoundUsage(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhaseWithUsage("model output", usage)
 			},
 		})
@@ -841,8 +840,8 @@ func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 					s, err := state.AppendContent(&generators.Content{
 						Role:  generators.RoleLog,
 						Parts: []generators.Part{usage1},
@@ -894,7 +893,7 @@ func TestRunOnRoundSuccessError(t *testing.T) {
 			InitialState:   generators.NewPrompts("", nil),
 			Components:     nil,
 			OnRoundSuccess: onRoundSuccess,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("hello")
 			},
 		})
@@ -914,7 +913,7 @@ func TestRunEmptyComponentsSingleShot(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				phaseCalled = true
 				return appendPhase("single shot")
 			},
@@ -951,7 +950,7 @@ func TestRunMaxRounds(t *testing.T) {
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
 			MaxRounds:    3,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				callCount++
 				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 			},
@@ -979,8 +978,8 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 			Generator:    nil,
 			InitialState: initialState,
 			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
-				return func(ctx context.Context, state generators.State) (phases.Phase, generators.State, error) {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 					return nil, nil, errors.New("generate failed")
 				}
 			},
@@ -998,7 +997,7 @@ func TestRunPhaseErrorNilStateFallback(t *testing.T) {
 func TestRunRetryOnErrorWithContent(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendThenErrorPhase("partial model output", errors.New("something went wrong"))
@@ -1052,7 +1051,7 @@ func TestRunRetryOnErrorWithContent(t *testing.T) {
 func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendThenErrorPhase(
@@ -1100,7 +1099,7 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return appendThenErrorPhase("some output", errors.New("always fails"))
 		}
@@ -1127,7 +1126,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 	withRun(t, func(run Run) {
 		t.Run("MissingCompletion", func(t *testing.T) {
 			callCount := 0
-			phaseBuilder := func(g generators.Generator) phases.Phase {
+			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
@@ -1172,7 +1171,7 @@ func TestRunRetryFeedbackIncludesAttemptNumber(t *testing.T) {
 
 		t.Run("Error", func(t *testing.T) {
 			callCount := 0
-			phaseBuilder := func(g generators.Generator) phases.Phase {
+			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
 					return appendThenErrorPhase("partial output", errors.New("some error"))
@@ -1221,7 +1220,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 	withRun(t, func(run Run) {
 		t.Run("MissingCompletion", func(t *testing.T) {
 			callCount := 0
-			phaseBuilder := func(g generators.Generator) phases.Phase {
+			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
 					return appendPhase("incomplete output without summary")
@@ -1266,7 +1265,7 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 
 		t.Run("Error", func(t *testing.T) {
 			callCount := 0
-			phaseBuilder := func(g generators.Generator) phases.Phase {
+			phaseBuilder := func(g generators.Generator) generators.Phase {
 				callCount++
 				if callCount == 1 {
 					return appendThenErrorPhase("partial output", errors.New("some error"))
@@ -1320,7 +1319,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 		}
 
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
@@ -1358,7 +1357,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 func TestRunRetryPromptIsIncludedDirectly(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("incomplete output without summary")
@@ -1436,7 +1435,7 @@ func TestFormatHandoffPrompt(t *testing.T) {
 func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return appendThenErrorPhase("some content", errors.New("some error"))
 		}
@@ -1460,7 +1459,7 @@ func TestRunOnErrorNoRetryWhenDisabled(t *testing.T) {
 func TestRunRetryOnErrorNoContentNoRetry(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			return errorPhase(errors.New("system error"))
 		}
@@ -1487,7 +1486,7 @@ func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
 		genCount := 0
 		idleCount := 0
 
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			genCount++
 			return appendPhase("model output")
 		}
@@ -1501,7 +1500,7 @@ func TestRunOnIdleCalledWhenNoComponentTriggers(t *testing.T) {
 			},
 		}
 
-		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+		onIdle := IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
 			idleCount++
 			if idleCount <= 2 {
 				state, _ = state.AppendContent(&generators.Content{
@@ -1537,7 +1536,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 		genCount := 0
 		idleCount := 0
 
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			genCount++
 			return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 		}
@@ -1553,7 +1552,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 			},
 		}
 
-		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+		onIdle := IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
 			idleCount++
 			return state, false, nil
 		})
@@ -1581,7 +1580,7 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 func TestRunOnIdleError(t *testing.T) {
 	withRun(t, func(run Run) {
 		expectedErr := errors.New("idle error")
-		onIdle := phases.IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
+		onIdle := IdleHandler(func(ctx context.Context, state generators.State) (generators.State, bool, error) {
 			return state, false, expectedErr
 		})
 
@@ -1598,7 +1597,7 @@ func TestRunOnIdleError(t *testing.T) {
 			Generator:    nil,
 			InitialState: generators.NewPrompts("", nil),
 			Components:   comps,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("model output")
 			},
 			OnIdle: onIdle,
@@ -1616,7 +1615,7 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 	withRun(t, func(run Run) {
 		genCount := 0
 
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			genCount++
 			return appendPhase("model output")
 		}
@@ -1649,7 +1648,7 @@ func TestRunOnIdleNilNoEffect(t *testing.T) {
 func TestRunRemainingBlocksAccumulateAcrossRounds(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("<<龘靐 done\ngoal achieved\n龘靐\n<<齉爩 other\ntrigger\n齉爩\n")
@@ -1775,7 +1774,7 @@ func TestRunStateDecorators(t *testing.T) {
 					}
 				},
 			},
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("hello")
 			},
 		})
@@ -1799,7 +1798,7 @@ func TestRunStateDecorators(t *testing.T) {
 func TestRunStateModificationTriggersRound(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		phaseBuilder := func(g generators.Generator) phases.Phase {
+		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
 				return appendPhase("<<龘靐 state-modifier\nrequest\n龘靐\n")

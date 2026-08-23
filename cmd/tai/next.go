@@ -14,7 +14,6 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/modes"
-	"github.com/reusee/tai/phases"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/records"
 )
@@ -147,8 +146,8 @@ var NextCommand = Command{
 		systemPrompt SystemPrompt,
 		userPrompt UserPrompt,
 		logger logs.Logger,
-		buildGenerate phases.BuildGenerate,
-		buildChat phases.BuildChat,
+		buildGenerate generators.BuildGenerate,
+		buildChat pipeline.BuildChat,
 		flagThoughts flags.Thoughts,
 		apply flags.Apply,
 		buildChangeBlockHandler changes.BuildChangeBlockHandler,
@@ -197,8 +196,8 @@ var NextCommand = Command{
 		// When -summarize-thoughts is enabled, the Output layer suppresses
 		// raw thoughts and the summarizer writes periodic summaries in their
 		// place, mirroring the generation pipeline. In TUI mode os.Stdout is
-		// discarded and the tuiOutputState decorator streams raw thoughts to
-		// the Output tab while the forked pipeline.ThoughtSummaryWriter
+		// discarded and the tuiOutputState decorator streams raw thoughts
+		// to the Output tab while the forked pipeline.ThoughtSummaryWriter
 		// routes summaries to the Summary tab. See TheoryOfNextCommand and
 		// pipeline.TheoryOfThoughtsSummarize.
 		if showThoughts && bool(summarizeThoughts) {
@@ -244,7 +243,7 @@ var NextCommand = Command{
 			BlockHandler:        blockHandler,
 			Command:             "next",
 			InteractionRecorder: recorder,
-			PhaseBuilder: func(g generators.Generator) phases.Phase {
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
 			},
 			OnRoundStart: func() {
