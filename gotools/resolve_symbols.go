@@ -152,14 +152,21 @@ func (Module) ResolveGoSymbols(
 				parts = append(parts, generators.Text(fmt.Sprintf(
 					"``` begin of source %s %s:%d\n%s\n``` end of source %s\n\n",
 					m.qualifiedName, m.filePath, m.line, m.source, m.qualifiedName)))
-				// Each resolved source part is followed by the references
-				// report for the same symbol when references exist. See
+				// Each resolved source part is followed by the references,
+				// callees, and interface relations reports for the same
+				// symbol when the reports have content. See
 				// TheoryOfGoSrcReferences.
 				if index := ensureRefIndex(); index != nil {
 					objects := index.objectsFor(m)
 					refs, truncated := index.referencesFor(objects)
 					if len(refs) > 0 || truncated {
 						parts = append(parts, formatReferencesPart(m.qualifiedName, refs, truncated))
+					}
+					if callees, truncated := index.calleesFor(m); len(callees) > 0 || truncated {
+						parts = append(parts, formatCalleesPart(m.qualifiedName, callees, truncated))
+					}
+					if lines, truncated := index.interfaceRelationsFor(objects); len(lines) > 0 || truncated {
+						parts = append(parts, formatInterfaceRelationsPart(m.qualifiedName, lines, truncated))
 					}
 				}
 			}

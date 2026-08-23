@@ -49,6 +49,28 @@ synthesized test-binary packages ("<path>.test": binary mains with no
 real source, only the generated _testmain.go, whose references would be
 noise) are excluded from the index, matching the context loader's
 boundaries (see TheoryOfHiddenPackages and TheoryOfStdLibExclusion).
+
+The callee (out-edge) report reuses the same Uses index from the reverse
+direction: the uses whose identifier position falls inside the
+declaration's byte range name the symbols the declaration references.
+Objects declared inside the range itself — locals, parameters, results,
+receivers, labels, and the declaration's own name — are excluded, as are
+fields (no package-level name), package-name references (the function
+entry already carries the package), and objects of packages outside the
+index, so every reported name is directly fetchable by a follow-up go-src
+block; together with the references report this gives a one-step
+bidirectional closure over the loaded packages.
+
+Interface relations are the third report: fetching a named type lists the
+indexed interfaces it satisfies (value or pointer method set), and
+fetching an interface lists the indexed concrete types implementing it,
+with a leading * marking a pointer-only method set. Candidates are the
+package-level named types of the indexed packages, collected once per
+index and sorted for determinism; generics are skipped on both sides
+(satisfaction is decidable only for an instantiation) and zero-method
+interfaces are skipped (every type satisfies them). Satisfaction is
+structural — method Ids — so candidates collected from a base package
+variant match objects resolved through any variant.
 `
 
 // maxGoSrcReferencesPerSymbol caps the references reported for one symbol:
@@ -167,10 +189,13 @@ type indexedSyntaxFile struct {
 	tf   *token.File
 }
 
-// indexedUse is one use site recorded in TypesInfo.Uses.
+// indexedUse is one use site recorded in TypesInfo.Uses. The used object is
+// carried alongside so out-edge reports can classify the use without a
+// second lookup. See TheoryOfGoSrcReferences.
 type indexedUse struct {
 	loc   *indexedSyntaxFile
 	ident *ast.Ident
+	obj   types.Object
 }
 
 // symbolReference is one reference to a resolved symbol: the referencing
@@ -194,28 +219,42 @@ type useKey struct {
 }
 
 // typeCheckIndex indexes the type-checked load for go-src reference
-// reporting: syntax files by token.File and by path, and use sites grouped
-// by the used object. See TheoryOfGoSrcReferences.
+// reporting: syntax files by token.File and by path, use sites grouped by
+// the used object (the in-edge direction) and by file (the out-edge
+// direction), the indexed package paths, and the named-type candidates for
+// the interface relations report. See TheoryOfGoSrcReferences.
 type typeCheckIndex struct {
 	byToken map[*token.File]*indexedSyntaxFile
 	byName  map[string][]*indexedSyntaxFile
 	uses    map[types.Object][]indexedUse
+
+	pkgs            []*packages.Package
+	usesByFile      map[string][]indexedUse
+	pkgPaths        map[string]bool
+	ifaceCandidates []namedCandidate
+	typeCandidates  []namedCandidate
 }
 
 // buildTypeCheckIndex builds the reference index over the type-checked
 // packages: every syntax file is indexed by its token.File and path, and
-// every TypesInfo.Uses entry is grouped under its (normalized) object.
+// every TypesInfo.Uses entry is grouped under its (normalized) object and
+// by file. The usable packages, their base import paths, and their
+// named-type candidates feed the callee and interface relations reports.
 // See TheoryOfGoSrcReferences.
 func buildTypeCheckIndex(pkgs []*packages.Package) *typeCheckIndex {
 	index := &typeCheckIndex{
-		byToken: make(map[*token.File]*indexedSyntaxFile),
-		byName:  make(map[string][]*indexedSyntaxFile),
-		uses:    make(map[types.Object][]indexedUse),
+		byToken:    make(map[*token.File]*indexedSyntaxFile),
+		byName:     make(map[string][]*indexedSyntaxFile),
+		uses:       make(map[types.Object][]indexedUse),
+		usesByFile: make(map[string][]indexedUse),
+		pkgPaths:   make(map[string]bool),
 	}
 	for _, pkg := range pkgs {
 		if pkg.TypesInfo == nil || pkg.Fset == nil {
 			continue
 		}
+		index.pkgs = append(index.pkgs, pkg)
+		index.pkgPaths[basePkgPath(pkg.PkgPath)] = true
 		for _, f := range pkg.Syntax {
 			if f == nil {
 				continue
@@ -237,9 +276,12 @@ func buildTypeCheckIndex(pkgs []*packages.Package) *typeCheckIndex {
 				continue
 			}
 			obj = normalizeObject(obj)
-			index.uses[obj] = append(index.uses[obj], indexedUse{loc: loc, ident: ident})
+			use := indexedUse{loc: loc, ident: ident, obj: obj}
+			index.uses[obj] = append(index.uses[obj], use)
+			index.usesByFile[loc.tf.Name()] = append(index.usesByFile[loc.tf.Name()], use)
 		}
 	}
+	index.collectInterfaceCandidates()
 	return index
 }
 

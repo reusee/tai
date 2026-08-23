@@ -12,12 +12,14 @@ Go symbol names — one per line — and the system resolves each symbol to its
 declaration source, returned as user content in the next generation round.
 It complements read under a taught division of labor: for Go source code
 the prompts prefer go-src, because a fetch returns the exact declaration
-with its doc comments, the defining file and line, and a references
-report of the symbol's callers — none of which a whole-file read
-provides. The read kind keeps what go-src cannot fetch: non-Go files,
-whole-file views, glob file discovery, and network resources. The
-division is taught only in the go-src prompts; the read prompt stays
-language-neutral because the blocks package defines no Go-specific kind.
+with its doc comments, the defining file and line, a references report of
+the symbol's callers, a callees report of the package-qualified symbols it
+uses, and interface relations for named types and interfaces — none of
+which a whole-file read provides. The read kind keeps what go-src cannot
+fetch: non-Go files, whole-file views, glob file discovery, and network
+resources. The division is taught only in the go-src prompts; the read
+prompt stays language-neutral because the blocks package defines no
+Go-specific kind.
 The kind's purpose is precision under the visibility system: a package
 shown at documentation visibility carries only go doc output, so the model
 knows declaration signatures but not implementations; go-src lets the model
@@ -96,6 +98,8 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Only symbols in packages loaded in this session can be resolved. Symbols that match nothing are reported in the next round; correct the name and try again.
 - The returned source includes the declaration's doc comments and names the defining file (with line) where the declaration lives. Use that file path as the change block's file-path attribute so modifications target the exact file the source was read from.
 - Each resolved source part is followed by a references report: a "begin of references" block listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration and possibly truncated at 100 entries. Use it to judge the blast radius and find callers before changing the symbol.
+- Each resolved source part is followed by a callees report: a "begin of callees" block listing the package-qualified symbols the declaration references — called functions and methods, used types, constants, variables — deduplicated, sorted, possibly truncated. Every name is directly fetchable by a later go-src block, so out-edges are pulled precisely without guessing the import path behind bare pkg.Fn text.
+- Fetching a named type or interface appends an interface relations report: a "begin of interface relations" block listing "satisfies pkg.I" lines (interfaces a concrete type fulfills via its value or pointer method set) or "implemented by pkg.N" / "implemented by *pkg.N" lines (loaded concrete types implementing a fetched interface; the leading * marks a pointer-only method set). Polymorphism is invisible in plain source text: use the report to jump between an interface and its implementations in one step.
 - go-src resolves against an in-memory snapshot of the files loaded when the context was assembled; it does not re-read the disk. A file modified by change blocks during this session still yields its pre-modification content when the same symbol is fetched again. Verify applied changes with go-test blocks or by reading the file from disk (e.g., cat), not by re-fetching with go-src.
 - Do not emit change blocks whose content depends on the requested source: request the source first, then emit changes in a subsequent response after the source is provided.
 - After emitting a go-src block, stop generating, end the response with a summary block, and wait: the requested source arrives as user content in the next round.
@@ -104,12 +108,13 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Only use go-src blocks in Go projects.
 `
 
-const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of its callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
+const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of the symbol's callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
 - When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package qualifier (full import path, path suffix, or the package's declared name — e.g., doublestar.Glob for a …/v4 module) restricting the match to that package; prefer the full import path, which identifies exactly one loaded package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
 - Focus packages appear as documentation only (declaration surface plus test-function names and file names). Before understanding, modifying, or reviewing any focus declaration — including a listed test function — fetch its source with a go-src block naming the declaration; do not act on documentation alone.
 - A symbol that is a loaded package (exact import path or package name) returns that package's go doc documentation: focus packages include command and unexported documentation, context packages the exported API.
 - The resolved source names the defining file; use that file path as the change block's file-path. go-src returns an in-memory snapshot of the files loaded at context assembly and does not re-read the disk: a file modified by change blocks in this session still shows its pre-modification content. Verify applied changes with go-test blocks or by reading the file, not by re-fetching with go-src.
 - Each resolved source part is followed by a references report listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration and possibly truncated at 100 — use it to judge blast radius and callers before changing the symbol.
+- Reports follow every resolved source part: references (callers), callees (package-qualified symbols the declaration uses — fetch them by name in go-src blocks), and interface relations for named types and interfaces (satisfies / implemented by).
 - A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.`
 
 // ParseGoSrcSymbols extracts the symbol names from go-src blocks: each

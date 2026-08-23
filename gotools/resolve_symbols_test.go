@@ -403,6 +403,170 @@ func TestRefsUses(t *testing.T) {
 	})
 }
 
+func TestResolveGoSymbolsCalleesAndInterfaceRelations(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/reports\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Circle implements Shape with a value receiver; Pen with a pointer
+	// receiver (pointer-only method set); Plain implements nothing.
+	shapesSource := `package reports
+
+// Shape is the polymorphic surface.
+type Shape interface {
+	// Area returns the area.
+	Area() int
+}
+
+// Circle carries a radius.
+type Circle struct {
+	R int
+}
+
+// Area returns the circle area.
+func (c Circle) Area() int { return c.R * c.R }
+
+// Pen is a pointer-receiver implementer.
+type Pen struct{}
+
+// Area returns the pen area.
+func (p *Pen) Area() int { return 0 }
+
+// Plain implements nothing.
+type Plain struct{}
+`
+	if err := os.WriteFile(filepath.Join(dir, "shapes.go"), []byte(shapesSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Render's body uses a concrete type, a concrete method, an interface
+	// method, a stdlib function, a local helper, locals, and a field —
+	// exercising every callee exclusion rule. Loopy only calls itself.
+	usesSource := `package reports
+
+import "strings"
+
+// Render draws a shape next to a circle.
+func Render(s Shape) string {
+	c := Circle{R: 2}
+	total := c.Area() + s.Area()
+	return strings.TrimSpace(crafted(total))
+}
+
+// crafted is a lowercase helper.
+func crafted(n int) string { return "n" }
+
+// Loopy only calls itself.
+func Loopy(n int) int {
+	if n > 0 {
+		return Loopy(n - 1)
+	}
+	return 0
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "uses.go"), []byte(usesSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(dir) },
+	).Call(func(resolve ResolveGoSymbols) {
+
+		// The callees report lists the declaration's out-edges as
+		// package-qualified names; locals, fields, package names, and
+		// stdlib symbols are not reported because they are not
+		// go-src-fetchable. See TheoryOfGoSrcReferences.
+		parts, err := resolve([]string{"Render"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of callees example.com/reports.Render",
+			"\nexample.com/reports.Circle\n",
+			"\nexample.com/reports.Circle.Area\n",
+			"\nexample.com/reports.Shape\n",
+			"\nexample.com/reports.Shape.Area\n",
+			"\nexample.com/reports.crafted\n",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in resolved output:\n%s", want, got)
+			}
+		}
+		for _, unwanted := range []string{
+			"\nstrings.TrimSpace\n",
+			"\nstrings\n",
+			"\nexample.com/reports.total\n",
+			"\nexample.com/reports.c\n",
+		} {
+			if strings.Contains(got, unwanted) {
+				t.Fatalf("unexpected %q in resolved output:\n%s", unwanted, got)
+			}
+		}
+
+		// A declaration whose only call is itself produces no callees
+		// report: the self-reference is an object declared inside the
+		// declaration's own range and is excluded like any local.
+		parts, err = resolve([]string{"Loopy"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		if strings.Contains(got, "begin of callees") {
+			t.Fatalf("expected no callees block for Loopy, got:\n%s", got)
+		}
+
+		// Fetching an interface lists the loaded concrete types
+		// implementing it; a leading * marks a pointer-only method set.
+		parts, err = resolve([]string{"Shape"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		for _, want := range []string{
+			"``` begin of interface relations example.com/reports.Shape",
+			"implemented by example.com/reports.Circle\n",
+			"implemented by *example.com/reports.Pen\n",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected %q in resolved output:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "implemented by example.com/reports.Pen\n") {
+			t.Fatalf("expected Pen to be pointer-only, got:\n%s", got)
+		}
+		if strings.Contains(got, "implemented by example.com/reports.Plain") {
+			t.Fatalf("expected Plain not to implement Shape, got:\n%s", got)
+		}
+
+		// Fetching a concrete type lists the interfaces it satisfies,
+		// via value or pointer method set.
+		for _, symbol := range []string{"Circle", "Pen"} {
+			parts, err = resolve([]string{symbol})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = partsText(t, parts)
+			if !strings.Contains(got, "\nsatisfies example.com/reports.Shape\n") {
+				t.Fatalf("expected %s to satisfy Shape, got:\n%s", symbol, got)
+			}
+		}
+
+		// A type with no interface relations produces no report.
+		parts, err = resolve([]string{"Plain"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = partsText(t, parts)
+		if strings.Contains(got, "begin of interface relations") {
+			t.Fatalf("expected no interface relations block for Plain, got:\n%s", got)
+		}
+	})
+}
+
 func TestResolveGoSymbolsPackageNameQualifier(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOWORK", "")
