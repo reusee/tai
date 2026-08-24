@@ -39,16 +39,28 @@ func (Module) UserPrompt(
 	ce(err)
 	maxInputTokens -= systemPromptTokens
 
+	// File patterns come from a map (flags.Files); Go map iteration
+	// order is randomized per range, so the keys must be sorted before
+	// reaching Parts. Pattern order reaches the prompt bytes: IterFiles
+	// enqueues pattern matches in order and deduplicates followed symlink
+	// targets by first-wins, so two aliases of one directory yield
+	// different file paths depending on which pattern is seen first.
+	// Sorting makes the emitted file set — and therefore the prompt
+	// prefix — byte-identical across runs with equal configuration.
+	// pipeline.Module.Patterns sorts the same map for the codes pipeline;
+	// see TheoryOfPrefixCaching in generators/state_func_map.go.
+	patterns := slices.Collect(maps.Keys(flagFiles))
+	slices.Sort(patterns)
 	parts, err := partsProvider.Parts(
 		maxInputTokens,
 		generator.CountTokens,
-		slices.Collect(maps.Keys(flagFiles)),
+		patterns,
 	)
 	ce(err)
 
-	// Restate prompts are placed at the end of the user prompt, not the
-	// system prompt, so critical format reminders are the last thing the
-	// model reads before generating. The unified block format restate
+	// Restate prompts are placed at the end of the user prompt, not in
+	// the system prompt, so critical format reminders are the last thing
+	// the model reads before generating. The unified block format restate
 	// prompt precedes the change-specific restate prompt, so the model
 	// is reminded of the shared heredoc format before the change-specific
 	// rules. The two constants are joined with a blank line so they stay

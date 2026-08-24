@@ -391,6 +391,111 @@ func TestUserPromptRestateJoinBlankLine(t *testing.T) {
 	})
 }
 
+// TestUserPromptFilePatternsDeterministic verifies that the file patterns
+// passed to the parts provider are sorted: flags.Files is a map, and Go
+// map iteration order is randomized per range. IterFiles deduplicates
+// followed symlink targets by first-wins, so with two symlink aliases of
+// one directory the unsorted pattern order decides which alias path
+// reaches the prompt. Resolving UserPrompt repeatedly from one map must
+// produce byte-identical file parts, or the LLM prefix cache is
+// invalidated run to run.
+func TestUserPromptFilePatternsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two symlink aliases of one shared directory: whichever alias
+	// IterFiles dequeues first is followed; the other is skipped by the
+	// visited-symlinks set, so the pattern order picks the emitted path.
+	if err := os.Mkdir("target", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("target/notes.md", []byte("# Notes\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", "aliasA"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink("target", "aliasB"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	flagFiles := flags.Files{
+		"aliasA": true,
+		"aliasB": true,
+	}
+
+	// Each resolution ranges over the same map afresh, so unsorted keys
+	// produce a different pattern order — and different prompt bytes —
+	// across resolutions with overwhelming probability. Sorted keys
+	// always pick aliasA ("aliasA" < "aliasB"), so every resolution is
+	// byte-identical. The generator is wrapped because aiMockGenerator
+	// carries zero ContextTokens, which would leave the parts provider a
+	// negative token budget and skip every file.
+	var want string
+	for i := 0; i < 16; i++ {
+		var got string
+		dscope.New(
+			new(Module),
+		).Fork(
+			modes.ForTest(t),
+			func() generators.GetDefaultGenerator {
+				return func() (generators.Generator, error) {
+					return userPromptMockGenerator{}, nil
+				}
+			},
+			func() flags.Files {
+				return flagFiles
+			},
+		).Call(func(
+			userPrompt UserPrompt,
+		) {
+			var sb strings.Builder
+			for _, part := range userPrompt {
+				if text, ok := part.(generators.Text); ok {
+					sb.WriteString(string(text))
+				}
+			}
+			got = sb.String()
+		})
+		if i == 0 {
+			want = got
+			if !strings.Contains(want, "aliasA/notes.md") {
+				t.Fatalf("expected the sorted-first alias in the prompt, got:\n%s", want)
+			}
+			if strings.Contains(want, "aliasB/notes.md") {
+				t.Fatalf("expected the second alias to be deduplicated, got:\n%s", want)
+			}
+			continue
+		}
+		if got != want {
+			t.Fatalf("user prompt differs across resolutions with equal configuration;\nfirst:\n%s\nlater:\n%s", want, got)
+		}
+	}
+}
+
+// userPromptMockGenerator adapts aiMockGenerator with a realistic context
+// window: the parts provider skips every file when the token budget is
+// non-positive, so tests asserting on file parts need a positive
+// ContextTokens.
+type userPromptMockGenerator struct {
+	aiMockGenerator
+}
+
+func (userPromptMockGenerator) Spec() generators.Spec {
+	maxGenerate := 1024
+	return generators.Spec{
+		ContextTokens:     1 << 20,
+		MaxGenerateTokens: &maxGenerate,
+	}
+}
+
 func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {
 	// The ignore section derives from a map, and maps.Keys iteration order
 	// is non-deterministic. The SystemPrompt must sort ignore items so the
