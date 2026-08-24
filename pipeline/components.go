@@ -184,9 +184,12 @@ func (Module) CodesComponents(
 				// An empty go-src block is a format error the model can
 				// correct: feed back a usage hint instead of a silent
 				// no-op, so the next round can list the symbols properly.
+				// The feedback ends with a blank line so consecutive
+				// parts stay paragraph-separated; see
+				// generators.TheoryOfContentUnitSeparation.
 				return components.ProcessResult{
 					Parts: []generators.Part{
-						generators.Text("The go-src block body was empty; list one Go symbol per line (plain names or TypeName.MethodName).\n"),
+						generators.Text("The go-src block body was empty; list one Go symbol per line (plain names or TypeName.MethodName).\n\n"),
 					},
 				}
 			}
@@ -298,8 +301,8 @@ func (Module) CodesComponents(
 
 	// Family-specific extra system prompts: top-level and go-specific
 	// prompts keyed by the model family. The family is resolved from the
-	// scope via generators.ModelFamily; when the family matches a key,
-	// the corresponding prompts are appended as prompt-only components
+	// scope via generators.ModelFamily; when the family matches a key, the
+	// corresponding prompts are appended as prompt-only components
 	// after the generic extra prompts. See
 	// TheoryOfFamilyExtraSystemPrompt.
 	for _, prompt := range familyExtra[string(modelFamily)] {

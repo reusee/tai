@@ -82,6 +82,26 @@ func TestProcessGoTestBlocks(t *testing.T) {
 	})
 }
 
+func TestGoTestOutputEndsWithBlankLine(t *testing.T) {
+	// The go-test output unit ends with a blank line so consecutive parts
+	// in the same round stay paragraph-separated. See
+	// generators.TheoryOfContentUnitSeparation.
+	bs := []blocks.Block{
+		{Kind: "go-test", Body: "-run\n___nonexistent___"},
+	}
+	parts, err := ProcessGoTestBlocks(bs, context.Background())
+	if err != nil {
+		t.Fatalf("ProcessGoTestBlocks failed: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	output := string(parts[0].(generators.Text))
+	if !strings.HasSuffix(output, "\n\n") {
+		t.Fatalf("go test output must end with a blank line, got %q", output)
+	}
+}
+
 func TestProcessGoTestBlocksEmpty(t *testing.T) {
 	parts, err := ProcessGoTestBlocks(nil, context.Background())
 	if err != nil {

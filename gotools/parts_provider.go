@@ -198,9 +198,12 @@ func (c PartsProvider) Parts(
 				if info.ReadOnly {
 					readOnlyNote = " (read-only)"
 				}
+				// The part ends with a blank line so consecutive units
+				// stay paragraph-separated. See
+				// generators.TheoryOfContentUnitSeparation.
 				text := "``` begin of context file " + info.Path + readOnlyNote + "\n" +
 					string(info.Content) + "\n" +
-					"``` end of context file " + info.Path + "\n"
+					"``` end of context file " + info.Path + "\n\n"
 
 				numTokens, err := countTokens(text)
 				if err != nil {
@@ -223,7 +226,10 @@ func (c PartsProvider) Parts(
 					readOnlyNote = ", read-only"
 				}
 				beginMarker := "``` begin of context file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"
-				endMarker := "\n``` end of context file " + info.Path + "\n"
+				// The end marker ends with a blank line so consecutive
+				// units stay paragraph-separated. See
+				// generators.TheoryOfContentUnitSeparation.
+				endMarker := "\n``` end of context file " + info.Path + "\n\n"
 
 				// Count text markers for the token budget. Binary content itself
 				// cannot be accurately counted by a text tokenizer, but the markers
@@ -311,7 +317,10 @@ func (c PartsProvider) Parts(
 		for _, name := range names {
 			b.WriteString("- " + name + "\n")
 		}
-		b.WriteString("``` end of module root files " + listing.Dir + "\n")
+		// The listing ends with a blank line so consecutive units stay
+		// paragraph-separated. See
+		// generators.TheoryOfContentUnitSeparation.
+		b.WriteString("``` end of module root files " + listing.Dir + "\n\n")
 		content := b.String()
 		tokens, err := countTokens(content)
 		if err != nil {

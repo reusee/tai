@@ -239,6 +239,46 @@ func BarMarker() int { return 43 }
 	}
 }
 
+func TestRenderedPackageUnitsEndWithBlankLine(t *testing.T) {
+	// Package documentation blocks end with a blank line so consecutive
+	// units stay paragraph-separated after verbatim part concatenation.
+	// See generators.TheoryOfContentUnitSeparation.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/blankline\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "blankline.go"), []byte("package blankline\n\n// Foo returns 42.\nfunc Foo() int { return 42 }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fullContent, _, err := renderPackageDoc(
+		"example.com/blankline",
+		root,
+		withModModEnv(os.Environ()),
+		generators.DeepseekTokenCounterFn,
+	)
+	if err != nil {
+		t.Fatalf("renderPackageDoc failed: %v", err)
+	}
+	if !strings.HasSuffix(fullContent, "\n\n") {
+		t.Fatalf("full doc must end with a blank line, got %q", fullContent)
+	}
+
+	shortContent, _, err := renderShortDoc(
+		"example.com/blankline",
+		root,
+		withModModEnv(os.Environ()),
+		generators.DeepseekTokenCounterFn,
+	)
+	if err != nil {
+		t.Fatalf("renderShortDoc failed: %v", err)
+	}
+	if !strings.HasSuffix(shortContent, "\n\n") {
+		t.Fatalf("short doc must end with a blank line, got %q", shortContent)
+	}
+}
+
 func TestRenderPackageDocDoesNotModifyGoSum(t *testing.T) {
 	// go doc must not modify go.sum: the load environment injects
 	// -mod=mod so go list can update go.mod when it is out of sync, but

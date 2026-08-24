@@ -345,6 +345,52 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 	})
 }
 
+func TestUserPromptRestateJoinBlankLine(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+	).Fork(
+		modes.ForTest(t),
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return aiMockGenerator{}, nil
+			}
+		},
+	).Call(func(
+		userPrompt UserPrompt,
+	) {
+		// The unified block format restate prompt and the change restate
+		// prompt must be separated by a blank line so the two constants
+		// stay distinct paragraphs. See
+		// generators.TheoryOfContentUnitSeparation.
+		for _, part := range userPrompt {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			if strings.Contains(string(text), "**CRITICAL**") {
+				if !strings.Contains(string(text), "No blank lines are required before or after a block.\n\n**CRITICAL**") {
+					t.Fatalf("block format restate and change restate must be separated by a blank line, got:\n%s", string(text))
+				}
+				return
+			}
+		}
+		t.Fatal("restate prompt part not found in user prompt")
+	})
+}
+
 func TestSystemPromptIgnoreOrderDeterministic(t *testing.T) {
 	// The ignore section derives from a map, and maps.Keys iteration order
 	// is non-deterministic. The SystemPrompt must sort ignore items so the

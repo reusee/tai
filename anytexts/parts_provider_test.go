@@ -88,6 +88,49 @@ func TestPartsProviderFromCurrentDir(t *testing.T) {
 	})
 }
 
+func TestPartsSeparatesUnitsWithBlankLine(t *testing.T) {
+	// Every content unit must end with a blank line so consecutive units
+	// stay paragraph-separated after verbatim part concatenation. See
+	// generators.TheoryOfContentUnitSeparation.
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("test.txt", []byte("test content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Call(func(
+		provider PartsProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 2 {
+			t.Fatalf("expected 2 parts (file content, working directory hint), got %d", len(parts))
+		}
+		for i, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				t.Fatalf("part %d: got %#v", i, part)
+			}
+			if !strings.HasSuffix(string(text), "\n\n") {
+				t.Fatalf("part %d must end with a blank line so consecutive units stay separated, got %q", i, string(text))
+			}
+		}
+	})
+}
+
 func TestPartsProviderIncludesWorkingDirectoryHint(t *testing.T) {
 	// The working directory hint must be appended after all file contents
 	// so the model can construct correct absolute paths for change block

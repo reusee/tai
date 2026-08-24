@@ -28,6 +28,29 @@ func TestProcessShellBlocks(t *testing.T) {
 	}
 }
 
+func TestProcessShellBlocksSeparatesOutputsWithBlankLine(t *testing.T) {
+	// Each shell output unit ends with a blank line so consecutive outputs
+	// in the same round stay paragraph-separated after verbatim part
+	// concatenation. See generators.TheoryOfContentUnitSeparation.
+	blocks := []Block{
+		{Kind: "shell", Body: "echo one"},
+		{Kind: "shell", Body: "echo two"},
+	}
+	parts, err := ProcessShellBlocks(blocks, context.Background())
+	if err != nil {
+		t.Fatalf("ProcessShellBlocks failed: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	for i, part := range parts {
+		output := string(part.(generators.Text))
+		if !strings.HasSuffix(output, "\n\n") {
+			t.Fatalf("shell output %d must end with a blank line, got %q", i, output)
+		}
+	}
+}
+
 func TestProcessShellBlocksCommandFailure(t *testing.T) {
 	blocks := []Block{
 		{Kind: "shell", Body: "cat /nonexistent"},

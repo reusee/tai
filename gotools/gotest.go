@@ -103,7 +103,10 @@ const goTestTimeout = 120 * time.Second
 // executeGoTest runs `go test` with the given arguments and returns the
 // output and whether the tests failed. The working directory is determined
 // via os.Getwd and included in the output so the model can construct
-// absolute paths for subsequent test runs. See TheoryOfGoTestBlocks.
+// absolute paths for subsequent test runs. The output ends with a blank
+// line so consecutive parts in the same round stay paragraph-separated;
+// see generators.TheoryOfContentUnitSeparation.
+// See TheoryOfGoTestBlocks.
 //
 // Arguments are parsed from a newline-separated list: each non-empty line
 // becomes a separate argument passed directly to the go binary via
@@ -151,10 +154,10 @@ func executeGoTest(ctx context.Context, args string) (string, bool) {
 	err := cmd.Run()
 	cmdStr := "go test " + strings.Join(testArgs, " ")
 	if err != nil {
-		return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand failed with error: %v\nStdout:\n%s\nStderr:\n%s",
+		return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand failed with error: %v\nStdout:\n%s\nStderr:\n%s\n\n",
 			workDir, cmdStr, err, stdout.String(), stderr.String()), true
 	}
-	return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand succeeded.\nStdout:\n%s\nStderr:\n%s",
+	return fmt.Sprintf("Working directory: %s\nGo test command: %s\n\nCommand succeeded.\nStdout:\n%s\nStderr:\n%s\n\n",
 		workDir, cmdStr, stdout.String(), stderr.String()), false
 }
 

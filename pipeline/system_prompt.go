@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"strings"
+
 	"github.com/reusee/prompts"
 )
 
@@ -233,8 +235,15 @@ func (Module) SystemPrompt(
 	// block-format, component, and extra prompts come from
 	// comps.PromptSections(). Restate prompts are placed at the end of
 	// the user prompt via ComponentSet.UserPromptParts(), not in the
-	// system prompt.
-	// See TheoryOfCodesComponents.
-	return SystemPrompt(prompts.Codes + "\n" +
-		comps.PromptSections())
+	// system prompt. The base prompt's trailing whitespace is trimmed and
+	// the sections are joined with a blank line, so the base prompt and
+	// the first section are always separated by a blank line regardless
+	// of the base constant's edge newlines. See TheoryOfCodesComponents
+	// and generators.TheoryOfContentUnitSeparation.
+	base := strings.TrimRight(prompts.Codes, " \t\n\r")
+	sections := comps.PromptSections()
+	if sections == "" {
+		return SystemPrompt(base + "\n")
+	}
+	return SystemPrompt(base + "\n\n" + sections)
 }

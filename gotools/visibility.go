@@ -346,7 +346,10 @@ func goDocShortOutput(pkgPath, dir string, envs []string) (string, error) {
 // The -u flag is deliberately omitted: including unexported symbols
 // roughly doubles the doc output for most packages without adding
 // API-level reference value. Focus packages use -u via
-// computeFocusPackageDoc. See goDocOutput for the invocation.
+// computeFocusPackageDoc. The block ends with a blank line so
+// consecutive units stay paragraph-separated; see
+// generators.TheoryOfContentUnitSeparation. See goDocOutput for the
+// invocation.
 func renderPackageDoc(
 	pkgPath string,
 	dir string,
@@ -360,7 +363,7 @@ func renderPackageDoc(
 
 	content = "``` begin of context package " + pkgPath + "\n" +
 		text +
-		"``` end of context package " + pkgPath + "\n"
+		"``` end of context package " + pkgPath + "\n\n"
 
 	tokens, err = countTokens(content)
 	if err != nil {
@@ -373,9 +376,11 @@ func renderPackageDoc(
 // the output with context package markers. Short doc is per-package: the
 // package overview and the top-level symbol index without per-symbol
 // documentation, so it costs a fraction of the full documentation and
-// serves as the water-fill's first documentation step when the budget is
-// tight. If go doc fails, computePackageShortDoc treats the short doc as
-// empty. See goDocShortOutput for the invocation.
+// serves as the water-fill's first documentation step when the budget
+// is tight. If go doc fails, computePackageShortDoc treats the short doc
+// as empty. The block ends with a blank line so consecutive units stay
+// paragraph-separated; see generators.TheoryOfContentUnitSeparation.
+// See goDocShortOutput for the invocation.
 func renderShortDoc(
 	pkgPath string,
 	dir string,
@@ -389,7 +394,7 @@ func renderShortDoc(
 
 	content = "``` begin of context package " + pkgPath + "\n" +
 		text +
-		"``` end of context package " + pkgPath + "\n"
+		"``` end of context package " + pkgPath + "\n\n"
 
 	tokens, err = countTokens(content)
 	if err != nil {
@@ -485,8 +490,10 @@ func computePackageShortDoc(
 // documentation. The block is the focus package's pinned terminal
 // visibility, so it is emitted even when go doc fails — carrying a
 // failure note, the test names, and the file names — keeping the package
-// discoverable for go-src fetches. A countTokens failure falls back to
-// empty content, matching the non-focus path. See
+// discoverable for go-src fetches. The block ends with a blank line so
+// consecutive units stay paragraph-separated; see
+// generators.TheoryOfContentUnitSeparation. A countTokens failure falls
+// back to empty content, matching the non-focus path. See
 // TheoryOfVisibilityAllocation and TheoryOfLazyPackageDoc.
 func computeFocusPackageDoc(
 	lp *LogicalPackage,
@@ -511,7 +518,7 @@ func computeFocusPackageDoc(
 
 	content := "``` begin of focus package " + lp.PkgPath + readOnlyNote + "\n" +
 		body.String() +
-		"``` end of focus package " + lp.PkgPath + "\n"
+		"``` end of focus package " + lp.PkgPath + "\n\n"
 
 	tokens, err := countTokens(content)
 	if err != nil {

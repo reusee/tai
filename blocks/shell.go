@@ -107,7 +107,10 @@ func executeShellCommand(ctx context.Context, cmdStr string) string {
 // generator parts. Only blocks with Kind "shell" are processed; blocks of
 // other kinds are skipped. Each command is validated against the security
 // allowlist before execution; rejected commands return an error message as
-// user content instead of being executed. The provided context allows
+// user content instead of being executed. Each output part ends with a
+// blank line so consecutive parts in the same round stay
+// paragraph-separated after verbatim part concatenation; see
+// generators.TheoryOfContentUnitSeparation. The provided context allows
 // callers to cancel long-running commands. See security.TheoryOfShellSecurity.
 func ProcessShellBlocks(blocks []Block, ctx context.Context) ([]generators.Part, error) {
 	if len(blocks) == 0 {
@@ -121,13 +124,13 @@ func ProcessShellBlocks(blocks []Block, ctx context.Context) ([]generators.Part,
 		cmdStr := block.Body
 		if err := security.ValidateShellCommand(cmdStr); err != nil {
 			parts = append(parts, generators.Text(
-				fmt.Sprintf("Shell command rejected: %s\n\nError: %v\n", cmdStr, err),
+				fmt.Sprintf("Shell command rejected: %s\n\nError: %v\n\n", cmdStr, err),
 			))
 			continue
 		}
 		output := executeShellCommand(ctx, cmdStr)
 		parts = append(parts, generators.Text(
-			fmt.Sprintf("Shell command: %s\n\n%s", cmdStr, output),
+			fmt.Sprintf("Shell command: %s\n\n%s\n\n", cmdStr, output),
 		))
 	}
 	return parts, nil

@@ -433,7 +433,10 @@ func isUnderExternalDir(path string, externalDirs map[string]bool) bool {
 // the model can construct correct absolute paths for change block
 // file-path attributes. It is exported because
 // gotools.PartsProvider.Parts appends the same hint after the Go file
-// contents. See TheoryOfWorkingDirectoryHint.
+// contents. The hint ends with a blank line so the content that follows —
+// typically the restate prompts — starts a fresh paragraph; see
+// generators.TheoryOfContentUnitSeparation.
+// See TheoryOfWorkingDirectoryHint.
 func WorkingDirectoryPart() generators.Part {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -441,7 +444,7 @@ func WorkingDirectoryPart() generators.Part {
 	}
 	return generators.Text(
 		"Working directory: " + cwd + "\n" +
-			"Construct change block file-path attributes as absolute paths within this working directory.\n",
+			"Construct change block file-path attributes as absolute paths within this working directory.\n\n",
 	)
 }
 
@@ -538,9 +541,12 @@ func (c PartsProvider) Parts(
 			if info.ReadOnly {
 				readOnlyNote = " (read-only)"
 			}
+			// The part ends with a blank line so consecutive units stay
+			// paragraph-separated after verbatim part concatenation. See
+			// generators.TheoryOfContentUnitSeparation.
 			text := "``` begin of file " + info.Path + readOnlyNote + "\n" +
 				string(info.Content) + "\n" +
-				"``` end of file " + info.Path + "\n"
+				"``` end of file " + info.Path + "\n\n"
 
 			numTokens, err := countTokens(text)
 			if err != nil {
@@ -577,7 +583,10 @@ func (c PartsProvider) Parts(
 				readOnlyNote = ", read-only"
 			}
 			beginMarker := "``` begin of file " + info.Path + " (binary, " + info.MimeType + ")" + readOnlyNote + "\n"
-			endMarker := "\n``` end of file " + info.Path + "\n"
+			// The end marker ends with a blank line so consecutive units
+			// stay paragraph-separated. See
+			// generators.TheoryOfContentUnitSeparation.
+			endMarker := "\n``` end of file " + info.Path + "\n\n"
 
 			// Count text markers for the token budget. Binary content itself
 			// cannot be accurately counted by a text tokenizer, but the markers

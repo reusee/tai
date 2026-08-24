@@ -51,9 +51,11 @@ func (Module) UserPrompt(
 	// model reads before generating. The unified block format restate
 	// prompt precedes the change-specific restate prompt, so the model
 	// is reminded of the shared heredoc format before the change-specific
-	// rules. See blocks.TheoryOfBlockFormatGeneral.
+	// rules. The two constants are joined with a blank line so they stay
+	// separate paragraphs. See blocks.TheoryOfBlockFormatGeneral and
+	// generators.TheoryOfContentUnitSeparation.
 	if hasFiles {
-		parts = append(parts, generators.Text(blocks.BlockFormatRestatePrompt+"\n"+changes.ChangeBlockRestatePrompt()))
+		parts = append(parts, generators.Text(blocks.BlockFormatRestatePrompt+"\n\n"+changes.ChangeBlockRestatePrompt()))
 	}
 
 	return UserPrompt(parts)

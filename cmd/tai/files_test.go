@@ -53,6 +53,9 @@ func TestFilePathToPartsTextFile(t *testing.T) {
 	if !strings.Contains(s, path) {
 		t.Fatal("text file missing path in marker")
 	}
+	if !strings.HasSuffix(s, "\n\n") {
+		t.Fatal("file part must end with a blank line so consecutive parts stay paragraph-separated")
+	}
 }
 
 func TestFilePathToPartsBinaryFile(t *testing.T) {

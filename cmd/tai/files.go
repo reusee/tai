@@ -50,10 +50,13 @@ func filePathToParts(path string) ([]generators.Part, error) {
 		}
 	}
 
+	// Every unit ends with a blank line so consecutive parts stay
+	// paragraph-separated after verbatim part concatenation. See
+	// generators.TheoryOfContentUnitSeparation.
 	if isText {
 		text := "``` begin of file " + path + readOnlyNote + "\n" +
 			string(content) + "\n" +
-			"``` end of file " + path + "\n"
+			"``` end of file " + path + "\n\n"
 		return []generators.Part{generators.Text(text)}, nil
 	}
 
@@ -63,6 +66,6 @@ func filePathToParts(path string) ([]generators.Part, error) {
 			Content:  content,
 			MimeType: mtype.String(),
 		},
-		generators.Text("\n``` end of file " + path + "\n"),
+		generators.Text("\n``` end of file " + path + "\n\n"),
 	}, nil
 }

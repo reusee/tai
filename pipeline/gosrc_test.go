@@ -107,6 +107,12 @@ func TestGoSrcComponentEmptyBodyFeedback(t *testing.T) {
 			if !strings.Contains(string(result.Parts[0].(generators.Text)), "one Go symbol per line") {
 				t.Fatalf("unexpected feedback: %q", result.Parts[0])
 			}
+			// The feedback ends with a blank line so consecutive parts in
+			// the same round stay paragraph-separated. See
+			// generators.TheoryOfContentUnitSeparation.
+			if !strings.HasSuffix(string(result.Parts[0].(generators.Text)), "\n\n") {
+				t.Fatalf("feedback part must end with a blank line, got %q", result.Parts[0])
+			}
 			return
 		}
 		t.Fatal("go-src component not found")
