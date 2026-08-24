@@ -111,6 +111,24 @@ func transitionBoundaries(display []taiui.Line) []int {
 	return indices
 }
 
+// transitionJumpStops returns the scroll offsets the [ and ] keys walk
+// through, one pair per section transition: the exit stop anchors the
+// previous section's last line at the bottom of the pane (offset
+// boundary - paneHeight, clamped to the content start), and the entry
+// stop anchors the new section's first line at the top of the pane
+// (offset boundary). The stops are listed in transition order, not
+// sorted by offset — sections shorter than the pane interleave the two —
+// so jumpToTransition selects by offset comparison, not list position.
+// See TheoryOfTUI.
+func transitionJumpStops(display []taiui.Line, paneHeight int) []int {
+	boundaries := transitionBoundaries(display)
+	stops := make([]int, 0, len(boundaries)*2)
+	for _, b := range boundaries {
+		stops = append(stops, max(b-paneHeight, 0), b)
+	}
+	return stops
+}
+
 func outputPanel(t *TUI, box taiui.Box, lines []taiui.Line) taiui.Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
@@ -193,7 +211,7 @@ var tuiHelpLines = []string{
 	"up / down\tscroll focused pane",
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
-	"[ / ]\tjump to previous / next section",
+	"[ / ]\tjump to previous / next section start or end",
 	"click\tselect / toggle tab under cursor",
 	"wheel / drag\tscroll pane under cursor",
 	"q / Ctrl-C\tquit (press again to confirm)",

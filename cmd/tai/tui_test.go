@@ -2227,6 +2227,30 @@ func TestTransitionBoundaries(t *testing.T) {
 			t.Fatalf("expected boundaries [2 3], got %v", got)
 		}
 	})
+
+	t.Run("JumpStops", func(t *testing.T) {
+		lines := []taiui.Line{
+			{Text: "a", Color: outputColorUserLine},
+			{Text: "b", Color: taiui.NoColor},
+			{Text: "c", Color: taiui.NoColor},
+			{Text: "d", Color: outputColorThoughtLine},
+		}
+		// Boundaries sit at display indices 1 and 3; with a pane height
+		// of 2 each boundary contributes an exit stop (boundary-2,
+		// clamped to the content start) and an entry stop (the boundary
+		// itself). Duplicate offsets are fine: navigation compares
+		// strictly, so a repeated stop is passed over in one press.
+		got := transitionJumpStops(lines, 2)
+		want := []int{0, 1, 1, 3}
+		if len(got) != len(want) {
+			t.Fatalf("expected stops %v, got %v", want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("expected stops %v, got %v", want, got)
+			}
+		}
+	})
 }
 
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
@@ -2327,16 +2351,25 @@ func TestTUIPanelColorsUseAnsi16Palette(t *testing.T) {
 }
 
 func TestTUIJumpToTransition(t *testing.T) {
-	// The [ ] shortcuts must jump the Output tab's view to the nearest
-	// role or thoughts transition, letting the user quickly browse the
-	// whole output. The Output tab colors each section by its role and
+	// The [ ] shortcuts must jump the Output tab's view through the
+	// section transitions, letting the user quickly browse the whole
+	// output. The Output tab colors each section by its role and
 	// thinking state, so a transition is a color change between
-	// consecutive display lines. See TheoryOfTUI.
+	// consecutive display lines. Each transition yields two stops — the
+	// previous section's end anchored at the pane bottom and the new
+	// section's start anchored at the pane top — so the walk covers both
+	// sides of every change. See TheoryOfTUI.
 
 	// setupLong builds an output long enough to scroll, with sections
 	// (plain, thought, plain, tool, plain) whose transitions sit at
 	// display indices 20, 21, 41, and 42: the thought and tool sections
-	// each contribute an entry boundary and an exit boundary.
+	// each contribute an entry boundary and an exit boundary. With the
+	// full-height output pane (box height 8, pane height 7 after the
+	// one-row label strip), each boundary contributes an exit stop at
+	// boundary-7 and an entry stop at the boundary, so the forward walk
+	// visits offsets 13, 14, 20, 21, 34, 35, 41, 42: at each change the
+	// view first shows the previous section's end at the pane bottom,
+	// then the new section's start at the pane top.
 	setupLong := func(t *testing.T) *TUI {
 		t.Helper()
 		tui := newTUIForTest()
@@ -2370,27 +2403,43 @@ func TestTUIJumpToTransition(t *testing.T) {
 	t.Run("Next", func(t *testing.T) {
 		tui := setupLong(t)
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 at the first transition, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 13 {
+			t.Fatalf("expected offset 13 at the plain section's end stop, got %d", tui.scrolls[0].Offset)
 		}
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
 		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 14 {
+			t.Fatalf("expected offset 14 at the thought section's end stop, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 20 {
+			t.Fatalf("expected offset 20 at the thought entry stop, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 21 {
-			t.Fatalf("expected offset 21 at the thought exit transition, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected offset 21 at the middle entry stop, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 34 {
+			t.Fatalf("expected offset 34 at the middle section's end stop, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 35 {
+			t.Fatalf("expected offset 35 at the tool section's end stop, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 41 {
-			t.Fatalf("expected offset 41 at the tool entry transition, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected offset 41 at the tool entry stop, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 42 {
-			t.Fatalf("expected offset 42 at the tool exit transition, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected offset 42 at the tail entry stop, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(1)
 		if tui.scrolls[0].Offset != 42 {
-			t.Fatalf("expected the view to stay at 42 past the last transition, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected the view to stay at 42 past the last stop, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2402,16 +2451,32 @@ func TestTUIJumpToTransition(t *testing.T) {
 			t.Fatalf("expected offset 41 after the prev-jump, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 35 {
+			t.Fatalf("expected offset 35 after the second prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 34 {
+			t.Fatalf("expected offset 34 after the third prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 21 {
-			t.Fatalf("expected offset 21 after the second prev-jump, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected offset 21 after the fourth prev-jump, got %d", tui.scrolls[0].Offset)
 		}
 		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 after the third prev-jump, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected offset 20 after the fifth prev-jump, got %d", tui.scrolls[0].Offset)
 		}
-		// Past the first transition the [ key must reach the very
-		// beginning of the content: the first display line is never a
-		// boundary, so without the fallback the start of the first
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 14 {
+			t.Fatalf("expected offset 14 after the sixth prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(-1)
+		if tui.scrolls[0].Offset != 13 {
+			t.Fatalf("expected offset 13 after the seventh prev-jump, got %d", tui.scrolls[0].Offset)
+		}
+		// Past the first transition's exit stop the [ key must reach the
+		// very beginning of the content: the first display line is never
+		// a stop, so without the fallback the start of the first
 		// section would be unreachable.
 		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 0 {
@@ -2427,12 +2492,12 @@ func TestTUIJumpToTransition(t *testing.T) {
 		// Before the first render the scroll offset is the tail sentinel;
 		// the jump clamps it against the fresh display so it anchors at
 		// the content end, and the previous jump lands on the last
-		// transition.
+		// stop.
 		tui := setupLong(t)
 		tui.scrolls[0].Offset = 1 << 30
 		tui.jumpToTransition(-1)
 		if tui.scrolls[0].Offset != 42 {
-			t.Fatalf("expected the last transition when jumping back from the tail, got %d", tui.scrolls[0].Offset)
+			t.Fatalf("expected the last stop when jumping back from the tail, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2449,8 +2514,8 @@ func TestTUIJumpToTransition(t *testing.T) {
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("expected the output tab focused after the jump, got %d", tui.tabs.Focus)
 		}
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 after the jump, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 13 {
+			t.Fatalf("expected offset 13 after the jump, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2463,8 +2528,10 @@ func TestTUIJumpToTransition(t *testing.T) {
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("the jump must take the focus on the output tab, got %d", tui.tabs.Focus)
 		}
-		if tui.scrolls[0].Offset != 20 {
-			t.Fatalf("expected offset 20 after the jump, got %d", tui.scrolls[0].Offset)
+		// The output pane is smaller here (box height 6, pane height 5),
+		// so the first stop sits at boundary 20 minus 5.
+		if tui.scrolls[0].Offset != 15 {
+			t.Fatalf("expected offset 15 after the jump, got %d", tui.scrolls[0].Offset)
 		}
 	})
 

@@ -113,11 +113,17 @@ side by side, a vertical split line) and horizontal splitting (tabs
 stacked, a horizontal split line). The default is horizontal splitting: the
 tabs are stacked vertically, one above the other. Tab cycles the focus among
 the expanded tabs, skipping collapsed ones; the [ and ] keys jump
-the Output tab's view to the previous and next section transition — a role change or a
+the Output tab's view through the section transitions — a role change or a
 thought/non-thought change — so the user can quickly browse the whole output:
 the Output tab colors each section by its role and thinking state, so a
-transition is a color change between consecutive wrapped display lines. A
-backward jump with no earlier transition falls back to the very beginning of
+transition is a color change between consecutive wrapped display lines.
+Each transition contributes two jump stops: the exit stop anchors the
+previous section's last line at the bottom of the pane — the view ends
+exactly at the change — and the entry stop anchors the new section's first
+line at the top of the pane. Walking the stops with ] visits, for every
+change, first how the previous section ends and then how the new one
+begins, so both sides of a change are reachable, not only section starts.
+A backward jump with no earlier stop falls back to the very beginning of
 the output, so the start of the first section — a display line that is never
 itself a transition — is always reachable by section navigation. The
 jump stops following the tail, and a collapsed Output tab expands and takes
@@ -1238,18 +1244,22 @@ func (t *TUI) scrollTo(top int) {
 }
 
 // jumpToTransition moves the Output tab's view to the nearest section
-// transition in the given direction: -1 for the previous role or
-// thoughts change, +1 for the next. A transition is a color change
-// between consecutive wrapped display lines: the Output tab colors each
-// section by its role and thinking state (see captureContent), and
-// WrapLinesColored carries a source line's color onto every wrapped
-// display line. The jump targets the same display-line coordinate space
-// as the scroll offsets. A collapsed Output tab expands on the jump, and
-// the jump takes the focus so the result is visible; the jump stops
-// following the tail. A backward jump with no earlier transition falls
-// back to the very beginning of the content, so the [ key always reaches
-// the start of the first section — a display line that is never itself a
-// transition (see transitionBoundaries). See TheoryOfTUI.
+// transition stop in the given direction: -1 for the previous stop, +1
+// for the next. Each transition contributes two stops: the exit stop
+// shows how the previous section ends — its last line anchored at the
+// bottom of the pane — and the entry stop shows how the new section
+// begins — its first line anchored at the top. A transition is a color
+// change between consecutive wrapped display lines: the Output tab
+// colors each section by its role and thinking state (see
+// captureContent), and WrapLinesColored carries a source line's color
+// onto every wrapped display line. The jump targets the same
+// display-line coordinate space as the scroll offsets. A collapsed
+// Output tab expands on the jump, and the jump takes the focus so the
+// result is visible; the jump stops following the tail. A backward jump
+// with no earlier stop falls back to the very beginning of the content,
+// so the [ key always reaches the start of the first section — a display
+// line that is never itself a transition (see transitionBoundaries). See
+// TheoryOfTUI.
 func (t *TUI) jumpToTransition(direction int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1275,30 +1285,30 @@ func (t *TUI) jumpToTransition(direction int) {
 	// minus its one-row label strip, matching render's scroll updates.
 	paneHeight := max(box.Height()-1, 1)
 	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
-	boundaries := transitionBoundaries(display)
+	stops := transitionJumpStops(display, paneHeight)
 	target := -1
 	if direction < 0 {
-		// previous: the largest boundary before the view start
-		for i := len(boundaries) - 1; i >= 0; i-- {
-			if boundaries[i] < offset {
-				target = boundaries[i]
-				break
+		// previous: the closest stop below the view start. The stop
+		// list is in transition order, not offset order, so the closest
+		// stop is found by comparison, not by list position.
+		for _, s := range stops {
+			if s < offset && (target < 0 || s > target) {
+				target = s
 			}
 		}
-		// When no boundary precedes the view start — the view is at or
-		// before the first section's transition — jump to the very
+		// When no stop precedes the view start — the view is at or
+		// before the first transition's exit stop — jump to the very
 		// beginning of the content. The first display line is never a
-		// boundary (see transitionBoundaries), so without this fallback
+		// stop (see transitionBoundaries), so without this fallback
 		// the [ key could not reach the start of the first section.
 		if target < 0 {
 			target = 0
 		}
 	} else {
-		// next: the smallest boundary after the view start
-		for _, b := range boundaries {
-			if b > offset {
-				target = b
-				break
+		// next: the closest stop above the view start
+		for _, s := range stops {
+			if s > offset && (target < 0 || s < target) {
+				target = s
 			}
 		}
 	}
