@@ -35,7 +35,12 @@ script.
 
 Line-start requirement: the opening marker must appear at the beginning of a line;
 the closing marker (the delimiter alone) must be on its own line. A << not at the
-start of a line is regular content and will not start a block.
+start of a line is regular content and will not start a block. The prompts state
+the rule twice: abstractly, and as a mechanical emission-time self-check — before
+emitting <<, the model verifies the preceding character is a newline and emits a
+newline first otherwise — because models occasionally violate the abstract rule
+but can execute a concrete check. Naming the common violation shapes (prose
+run-on, list bullets, code fences) tells the model where the risk concentrates.
 
 Unclosed block detection: an opening marker at line start without a matching closing
 line is a malformed block; the parser reports an error rather than silently skipping
@@ -181,6 +186,7 @@ DELIMITER
 
 **Line-Start Requirement (CRITICAL):**
 - The opening marker (<<DELIMITER kind(...)) MUST appear at the beginning of a line — immediately after a newline character or at the very start of the response.
+- **Self-check (run it every time)**: Before emitting <<, look at the character you are writing it after. It MUST be a newline — or nothing, when the marker is the first output of the response. When anything else precedes it — a word, a punctuation mark, a space, a list bullet, a code fence — emit a newline first, then the marker.
 - The closing marker (DELIMITER) MUST appear on its own line — the delimiter alone, with nothing else on that line.
 - NEVER place the opening marker at the end of a line of text. If prose immediately precedes a block, end the prose with a newline first, then start the marker on its own new line.
 - Any ` + "`<<`" + ` that is not at the start of a line is treated as regular content and will NOT be recognized as a block marker; the block will be silently ignored and its content will be lost.
@@ -210,7 +216,7 @@ DELIMITER
 - The flow is always: emit the blocks, end the response, and wait; read the results that arrive as the next user message, then continue.
 `
 
-const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker line MUST start at the beginning of its own line, immediately after a newline. The closing line is the delimiter alone on its own line. NEVER glue the opening marker to the end of a prose line — the block will be silently ignored and its content will be lost.
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker MUST start at the beginning of its own line. Before emitting '<<', check the preceding character: it MUST be a newline (or the start of the response); when anything else precedes it — a word, punctuation, a space, a list bullet, a code fence — emit a newline first, then the marker. NEVER glue the opening marker to the end of a prose line — a mid-line marker is silently ignored and its content will be lost. The closing line is the delimiter alone on its own line.
 - **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the function-call header 'kind(param="value")' ending with ')', or bare 'kind' if no parameters. Closing marker: the EXACT SAME delimiter alone on its own line.
 - **The DELIMITER MUST be an uncommon Chinese two-character word** (e.g., 龃龉, 彳亍, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word.
 - Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.

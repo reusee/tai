@@ -1032,6 +1032,24 @@ func TestBlockFormatPromptsStateDeferredExecution(t *testing.T) {
 	}
 }
 
+func TestBlockFormatPromptsLineStartSelfCheck(t *testing.T) {
+	// The line-start rule must be stated as a mechanical emission-time
+	// self-check, not only as an abstract placement rule: models
+	// occasionally emit blocks mid-line, and the parser discards them.
+	// See TheoryOfBlockFormatGeneral.
+	for name, prompt := range map[string]string{
+		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
+		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
+	} {
+		if !strings.Contains(prompt, "Before emitting") {
+			t.Fatalf("%s must instruct a self-check before emitting the opening marker", name)
+		}
+		if !strings.Contains(prompt, "newline first") {
+			t.Fatalf("%s must instruct emitting a newline first when the preceding character is not a newline", name)
+		}
+	}
+}
+
 func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
 	// The block format prompts must stay kind-agnostic: third-party
 	// programs may embed them without providing any tai-implemented
