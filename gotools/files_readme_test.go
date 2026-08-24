@@ -9,7 +9,12 @@ import (
 	"github.com/reusee/tai/modes"
 )
 
-func TestFilesIncludesRootMarkdownWhenNoRootGoFiles(t *testing.T) {
+func TestModuleRootMarkdownListedWhenNoRootGoFiles(t *testing.T) {
+	// Module-root markdown files are no longer package files: a module
+	// root may carry no Go package, so its markdown is enumerated by
+	// GetModuleRootFiles and emitted as a separate listing part instead
+	// of being emitted at full content. See TheoryOfNonGoFiles in
+	// module_root.go.
 	root := t.TempDir()
 
 	// Create go.mod at the module root
@@ -18,13 +23,12 @@ func TestFilesIncludesRootMarkdownWhenNoRootGoFiles(t *testing.T) {
 	}
 
 	// Create README.md at the module root (no .go files at root)
-	readmeContent := "# Test Project\n\nThis is a test."
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readmeContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Test Project\n\nThis is a test."), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a Go package in a subdirectory so the module root has no
-	// direct .go files and does not appear in rootPkgDirs naturally.
+	// direct .go files and does not appear in rootPkgDirs.
 	subDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatal(err)
@@ -44,24 +48,41 @@ func TestFilesIncludesRootMarkdownWhenNoRootGoFiles(t *testing.T) {
 		},
 	).Call(func(
 		getFiles GetFiles,
+		getModuleRootFiles GetModuleRootFiles,
 	) {
 		files, err := getFiles()
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		foundReadme := false
 		for _, f := range files {
 			if filepath.Base(f.Path) == "README.md" {
-				foundReadme = true
-				if !f.PackageIsRoot {
-					t.Error("README.md should be marked as PackageIsRoot")
-				}
-				break
+				t.Fatalf("README.md must not be a package file, got %s", f.Path)
 			}
 		}
-		if !foundReadme {
-			t.Fatal("README.md should be discovered even when the module root has no .go files")
+
+		listings, err := getModuleRootFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, listing := range listings {
+			if filepath.Clean(listing.Dir) != filepath.Clean(root) {
+				continue
+			}
+			found = true
+			readmePath := filepath.Join(root, "README.md")
+			foundReadme := false
+			for _, path := range listing.Files {
+				if filepath.Clean(path) == filepath.Clean(readmePath) {
+					foundReadme = true
+				}
+			}
+			if !foundReadme {
+				t.Fatalf("module-root listing of %s must contain README.md, got %v", root, listing.Files)
+			}
+		}
+		if !found {
+			t.Fatalf("module root %s must be listed even when it has no .go files, got %+v", root, listings)
 		}
 	})
 }

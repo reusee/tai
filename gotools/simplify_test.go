@@ -41,15 +41,16 @@ func TestSimplify(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Focus packages are pinned at documentation level: the output is
-		// the dep1 context file, the focus package's go doc block, and
-		// the non-Go focus file a.txt (the only PackageIsRoot entry, so
-		// it sorts last). main.go's full content must not appear.
-		// See TheoryOfVisibilityAllocation.
-		if len(files) < 3 {
+		// the dep1 context file and the focus package's go doc block.
+		// main.go and the non-Go focus file a.txt are never emitted as
+		// files — every focus file is present by name in the focus
+		// documentation block's file list. See TheoryOfNonGoFiles in
+		// module_root.go.
+		if len(files) < 2 {
 			t.Fatalf("got %v", len(files))
 		}
 		t.Logf("num files: %v", len(files))
-		var foundDep1, foundFocusDoc, foundATxt bool
+		var foundDep1, foundFocusDoc bool
 		for _, f := range files {
 			switch f.Path {
 			case filepath.Join(dir, "..", "dep1", "dep1.go"):
@@ -58,14 +59,18 @@ func TestSimplify(t *testing.T) {
 					t.Fatalf("dep1.go should be at a code visibility level, got %q", f.Confirmed.What)
 				}
 			case filepath.Join(dir, "a.txt"):
-				foundATxt = true
+				t.Fatalf("a.txt must not be emitted at full content; non-Go focus files are listed by name only")
 			case filepath.Join(dir, "main.go"):
 				t.Fatalf("main.go must not appear at full content; focus packages are documentation-only")
 			}
 			if strings.Contains(f.Confirmed.What, "focus go doc -u") {
 				foundFocusDoc = true
-				if !strings.Contains(string(f.Confirmed.Content), "begin of focus package") {
-					t.Fatalf("focus documentation block missing its marker:\n%s", f.Confirmed.Content)
+				content := string(f.Confirmed.Content)
+				if !strings.Contains(content, "begin of focus package") {
+					t.Fatalf("focus documentation block missing its marker:\n%s", content)
+				}
+				if !strings.Contains(content, filepath.Join(dir, "a.txt")) {
+					t.Fatalf("focus documentation block must list a.txt in its file list:\n%s", content)
 				}
 			}
 		}
@@ -74,12 +79,6 @@ func TestSimplify(t *testing.T) {
 		}
 		if !foundFocusDoc {
 			t.Fatal("focus package documentation block not found in output")
-		}
-		if !foundATxt {
-			t.Fatal("a.txt not found in output")
-		}
-		if files[len(files)-1].Path != filepath.Join(dir, "a.txt") {
-			t.Fatalf("a.txt should be the last output file, got %v", files[len(files)-1].Path)
 		}
 
 	})
@@ -90,8 +89,10 @@ func TestFocusPackageDocumentationContext(t *testing.T) {
 	// context carries go doc -all -cmd -u output (unexported symbols
 	// included) plus the package's test-function names and file names,
 	// and the model fetches implementation source on demand with go-src
-	// blocks. Non-Go focus files stay at full content. See
-	// TheoryOfVisibilityAllocation.
+	// blocks. Non-Go focus files are present by name only, in the file
+	// list; their contents are fetched on demand with read blocks. See
+	// TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
+	// module_root.go.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 
@@ -169,13 +170,16 @@ func BenchmarkExported(b *testing.B) {
 		if !strings.Contains(got, "TestExported") || !strings.Contains(got, "BenchmarkExported") {
 			t.Fatalf("expected the test function names:\n%s", got)
 		}
-		if !strings.Contains(got, "Files in this package:") ||
+		if !strings.Contains(got, "Files in this package") ||
 			!strings.Contains(got, "focusdoc.go") ||
 			!strings.Contains(got, "focusdoc_test.go") {
 			t.Fatalf("expected the package file names in the focus block:\n%s", got)
 		}
-		if !strings.Contains(got, "focus note content") {
-			t.Fatalf("expected the non-Go focus file at full content:\n%s", got)
+		if !strings.Contains(got, "notes.txt") {
+			t.Fatalf("expected the non-Go focus file to be listed by name:\n%s", got)
+		}
+		if strings.Contains(got, "focus note content") {
+			t.Fatalf("non-Go focus file contents must not appear in the initial context:\n%s", got)
 		}
 	})
 }

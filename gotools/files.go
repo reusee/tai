@@ -116,8 +116,6 @@ func (Module) Files(
 	getContextPackages GetContextPackages,
 	logger logs.Logger,
 	debug Debug,
-	loadDir LoadDir,
-	workspace Workspace,
 	hidden HiddenPatterns,
 ) GetFiles {
 	return sync.OnceValues(func() (files []*File, err error) {
@@ -358,9 +356,8 @@ func (Module) Files(
 		// root packages directories
 		// Hidden packages do not anchor root package directories: a hidden
 		// package's directory README is documentation of a hidden package,
-		// so a hidden package must not contribute markdown files. The
-		// module-root and workspace-module anchor selections below skip
-		// hidden packages the same way. See TheoryOfHiddenPackages.
+		// so a hidden package must not contribute markdown files. See
+		// TheoryOfHiddenPackages.
 		rootPkgDirs := make(map[string]*packages.Package)
 		for _, pkg := range rootPkgs {
 			if isHidden != nil && isHidden(pkg.PkgPath) {
@@ -369,54 +366,6 @@ func (Module) Files(
 			for _, file := range pkg.GoFiles {
 				rootPkgDirs[filepath.Dir(file)] = pkg
 				break
-			}
-		}
-		// Also include the module root directory for .md file scanning.
-		// When the module root has no direct .go files (e.g., all Go code
-		// lives in subdirectories), the root directory does not appear in
-		// rootPkgDirs and top-level documentation like README.md would be
-		// missed. Associate the root directory with an existing root
-		// package so .md files discovered there are treated as root
-		// package files (PackageIsRoot=true) and survive simplification.
-		// Only add the module root when it matches the LoadDir. When
-		// LoadDir is a subdirectory of the module root, the module root
-		// may contain files outside the writable directories (e.g., when
-		// running tests from a package subdirectory), and pulling them in
-		// would cause the focus file writable check to reject them at
-		// collection time.
-		loadDirPath := filepath.Clean(string(loadDir))
-		for _, pkg := range rootPkgs {
-			if isHidden != nil && isHidden(pkg.PkgPath) {
-				continue
-			}
-			if pkg.Module != nil && pkg.Module.Dir != "" {
-				rootDir := filepath.Clean(pkg.Module.Dir)
-				if rootDir == loadDirPath {
-					if _, ok := rootPkgDirs[rootDir]; !ok {
-						rootPkgDirs[rootDir] = pkg
-					}
-				}
-				break
-			}
-		}
-		// In workspace mode, add the root of every workspace module so
-		// that top-level documentation (README.md) in each module is
-		// discovered. See TheoryOfWorkspace.
-		if workspace != "" {
-			for _, moduleDir := range workspaceModules(string(workspace)) {
-				moduleDir = filepath.Clean(moduleDir)
-				if _, ok := rootPkgDirs[moduleDir]; ok {
-					continue
-				}
-				for _, pkg := range rootPkgs {
-					if isHidden != nil && isHidden(pkg.PkgPath) {
-						continue
-					}
-					if pkg.Module != nil && filepath.Clean(pkg.Module.Dir) == moduleDir {
-						rootPkgDirs[moduleDir] = pkg
-						break
-					}
-				}
 			}
 		}
 		// include .md files in root package directories

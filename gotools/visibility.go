@@ -121,7 +121,7 @@ cannot blank out the entire context: the budget is shared, and every
 package gets an independent chance to reach its minimum visibility.
 
 Short doc is the cheapest documentation level: go doc without -all, the
-package overview and top-level symbol index without per-symbol
+package overview and the top-level symbol index without per-symbol
 documentation. No category has short doc as its minimum visibility; it
 exists as the water-fill's first upgrade step from invisible, so a tight
 budget yields many briefly-documented packages instead of a few
@@ -174,13 +174,15 @@ upgrades pinned focus packages (upgrading would reintroduce the
 full-source initial context), focus never counts against the context
 budget, and the budget derives from the focus tokens at the pinned
 level, so the same focus packages always produce the same budget. Focus
-files still reach the context at full content when explicitly requested
-via -file (DoNotSimplify) and when they are non-Go files, which go doc
-cannot summarize; the focus documentation block carries the writable-dir
-read-only annotation in its begin marker, because focus Go files are no
-longer emitted individually. The construction principle therefore holds
-among non-focus packages; the pinned focus level is independent of it by
-design.
+files reach the context at full content only when explicitly requested
+via -file (DoNotSimplify); non-Go focus files — embed and markdown
+files — are listed by name in the focus documentation block's
+file-names section and fetched on demand with read blocks (see
+TheoryOfNonGoFiles in module_root.go). The focus documentation block
+carries the writable-dir read-only annotation in its begin marker,
+because focus Go files are no longer emitted individually. The
+construction principle therefore holds among non-focus packages; the
+pinned focus level is independent of it by design.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -188,20 +190,20 @@ File token costs (rendered content and token counts at the code and full
 visibility levels) are computed lazily, driven by the visibility
 allocation. Only packages whose costs the allocation requires up front are
 precomputed in parallel: context packages (their code-level cost is the
-first minimum-visibility decision) and any package containing files always
-emitted at full content — DoNotSimplify files and the non-Go files of
-focus packages, which go doc cannot summarize. Focus packages need no
-file costs at all: pinned at full documentation, their budget
-contribution is their documentation size, so focus source files are
-never rendered or token-counted unless a file is explicitly requested
-via -file. Every other package computes its costs on demand, exactly
-when the allocation probes it for a level that needs the file costs.
-Packages that receive no visibility — typically the long tail of
-external dependencies and standard library packages — never run the
-tokenizer, and packages that stop at a documentation level never pay
-the cost of counting their source files. The eagerly computed and
-on-demand values are identical because token counting is deterministic,
-so the allocation outcome is unchanged; laziness only avoids the work.
+first minimum-visibility decision) and any package containing files
+always emitted at full content (DoNotSimplify files, explicitly
+requested via -file). Focus packages need no file costs at all: pinned
+at full documentation, their budget contribution is their documentation
+size, so focus files are never rendered or token-counted unless a file
+is explicitly requested via -file. Every other package computes its
+costs on demand, exactly when the allocation probes it for a level that
+needs the file costs. Packages that receive no visibility — typically
+the long tail of external dependencies and standard library packages —
+never run the tokenizer, and packages that stop at a documentation
+level never pay the cost of counting their source files. The eagerly
+computed and on-demand values are identical because token counting is
+deterministic, so the allocation outcome is unchanged; laziness only
+avoids the work.
 
 The water-fill's probe sequence bounds the on-demand computes
 automatically: a package whose predecessor is stuck at invisible is
@@ -569,9 +571,13 @@ func focusTestNamesSection(lp *LogicalPackage) string {
 // — as a section of the focus documentation block. The model sees the
 // package's declaration surface and test-function names but not which
 // files make up the package; the file list lets it construct file paths
-// for change blocks and choose read blocks for whole-file views without
-// paying the token cost of the file contents. Names are deduplicated and
-// sorted for deterministic output. See TheoryOfVisibilityAllocation.
+// for change blocks without paying the token cost of the file contents.
+// The list is also the only in-context presence of the package's non-Go
+// files (embed files, other package files, markdown): their contents
+// are never emitted, and the model fetches them on demand with read
+// blocks. Names are deduplicated and sorted for deterministic output.
+// See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
+// module_root.go.
 func focusFileNamesSection(lp *LogicalPackage) string {
 	var names []string
 	for _, f := range lp.Files {
@@ -583,7 +589,7 @@ func focusFileNamesSection(lp *LogicalPackage) string {
 	slices.Sort(names)
 	names = slices.Compact(names)
 	var b strings.Builder
-	b.WriteString("\nFiles in this package:\n")
+	b.WriteString("\nFiles in this package (non-Go file contents are not included in the context; fetch them with read blocks when needed):\n")
 	for _, name := range names {
 		b.WriteString("- " + name + "\n")
 	}
@@ -725,14 +731,13 @@ func renderFileAtLevel(
 // full visibility levels, in parallel, for the packages whose costs the
 // visibility allocation requires up front: context packages (their
 // code-level cost is the first minimum-visibility decision), any package
-// containing files always emitted at full content — DoNotSimplify files
-// (explicitly requested via -file) and the non-Go files of focus packages,
-// which go doc cannot summarize — and, under -all-src, focus packages
+// containing files always emitted at full content (DoNotSimplify files,
+// explicitly requested via -file), and, under -all-src, focus packages
 // themselves, whose full-level costs the focus pin at the top of
 // allocateVisibility consumes immediately. Focus packages pinned at full
 // documentation need no file costs: their budget contribution is their
-// documentation size, so focus source files are never rendered or
-// token-counted unless a file is explicitly requested. All other packages
+// documentation size, so focus files are never rendered or token-counted
+// unless a file is explicitly requested via -file. All other packages
 // have their costs computed lazily by allocateVisibility only when they
 // are probed; packages that receive no visibility never run the
 // tokenizer. Documentation-level costs are NOT computed here: they are
@@ -752,7 +757,7 @@ func precomputeTokenCounts(
 		if lp.Category != CategoryContext &&
 			!(allSrc && lp.Category == CategoryFocus) &&
 			!slices.ContainsFunc(lp.Files, func(f *File) bool {
-				return f.DoNotSimplify || (lp.Category == CategoryFocus && !f.IsGoFile)
+				return f.DoNotSimplify
 			}) {
 			continue
 		}

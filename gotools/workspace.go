@@ -13,9 +13,9 @@ module listed in a go.work file, packages are loaded from the workspace root
 so that all workspace packages become root (focus) packages. The go command
 rejects the default pattern "./..." from a non-module workspace root, so in
 workspace mode the default "./..." is replaced with one "./<module>/..."
-pattern per workspace module. The root of each workspace module is scanned
-for top-level documentation (README.md) just like the load directory's
-module root.
+pattern per workspace module. The root of each workspace module contributes
+its top-level documentation (markdown files) to the module-root listing part
+just like the load directory's module root; see TheoryOfNonGoFiles.
 
 Workspace mode activates only when the load directory is the workspace root
 or the root of a module listed in go.work whose root lies strictly below the

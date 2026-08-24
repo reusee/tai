@@ -40,8 +40,9 @@ use (
 	}
 
 	// mod2 keeps its Go package in a subdirectory so the module root has
-	// no direct .go files: the root is only added to the markdown scan via
-	// the workspace module handling.
+	// no direct .go files: the root contributes only to the module-root
+	// markdown listing, not to the package file set.
+	// See TheoryOfNonGoFiles in module_root.go.
 	mod2Dir := filepath.Join(root, "mod2")
 	if err := os.MkdirAll(filepath.Join(mod2Dir, "sub"), 0755); err != nil {
 		t.Fatal(err)
@@ -52,7 +53,8 @@ use (
 	if err := os.WriteFile(filepath.Join(mod2Dir, "sub", "mod2.go"), []byte("package sub\n\nfunc Foo() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(mod2Dir, "README.md"), []byte("# mod2\n"), 0644); err != nil {
+	readmePath := filepath.Join(mod2Dir, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# mod2\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,6 +70,7 @@ use (
 	).Call(func(
 		workspace Workspace,
 		getFiles GetFiles,
+		getModuleRootFiles GetModuleRootFiles,
 	) {
 		if workspace == "" {
 			t.Fatal("workspace not detected")
@@ -79,15 +82,13 @@ use (
 		if err != nil {
 			t.Fatal(err)
 		}
-		var mod1Go, mod2Go, mod2Readme *File
+		var mod1Go, mod2Go *File
 		for _, f := range files {
 			switch f.Path {
 			case filepath.Join(mod1Dir, "main.go"):
 				mod1Go = f
 			case filepath.Join(mod2Dir, "sub", "mod2.go"):
 				mod2Go = f
-			case filepath.Join(mod2Dir, "README.md"):
-				mod2Readme = f
 			}
 		}
 		if mod1Go == nil {
@@ -102,11 +103,34 @@ use (
 		if !mod2Go.ModuleIsRoot {
 			t.Error("mod2.go module should be a root module in workspace mode")
 		}
-		if mod2Readme == nil {
-			t.Fatal("mod2 README.md should be discovered from the workspace module root")
+
+		// The workspace module root's markdown is listed by
+		// GetModuleRootFiles; mod1Dir is itself a package directory
+		// (main.go at the root), so only mod2Dir produces a listing.
+		listings, err := getModuleRootFiles()
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !mod2Readme.PackageIsRoot {
-			t.Error("mod2 README.md should be a root package file")
+		var mod2Listing *ModuleRootFiles
+		for i, listing := range listings {
+			if filepath.Clean(listing.Dir) == filepath.Clean(mod1Dir) {
+				t.Fatalf("mod1Dir is a package directory and must not produce a module-root listing")
+			}
+			if filepath.Clean(listing.Dir) == filepath.Clean(mod2Dir) {
+				mod2Listing = &listings[i]
+			}
+		}
+		if mod2Listing == nil {
+			t.Fatalf("mod2Dir module-root listing not found in %+v", listings)
+		}
+		foundReadme := false
+		for _, path := range mod2Listing.Files {
+			if filepath.Clean(path) == filepath.Clean(readmePath) {
+				foundReadme = true
+			}
+		}
+		if !foundReadme {
+			t.Fatalf("mod2Dir listing must contain README.md, got %v", mod2Listing.Files)
 		}
 	})
 }

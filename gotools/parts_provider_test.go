@@ -35,15 +35,17 @@ func TestContextPrompt(t *testing.T) {
 		}
 
 		// Focus packages are pinned at documentation level: dep1.go is
-		// loaded as a context file, a.txt is a non-Go focus file at full
-		// content, and the focus package appears as a documentation
-		// block. main.go's full content must not appear.
-		// See TheoryOfVisibilityAllocation.
-		if len(parts) < 3 {
+		// loaded as a context file and the focus package appears as a
+		// documentation block. main.go's full content must not appear,
+		// and the non-Go focus file a.txt is present by name in the
+		// documentation block's file list only.
+		// See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
+		// module_root.go.
+		if len(parts) < 2 {
 			t.Fatalf("got %v", len(parts))
 		}
 
-		var foundDep1, foundATxt, foundFocusDoc bool
+		var foundDep1, foundATxtName, foundFocusDoc bool
 		for _, part := range parts {
 			t.Logf("%s\n", part)
 			text, ok := part.(generators.Text)
@@ -54,24 +56,27 @@ func TestContextPrompt(t *testing.T) {
 			if strings.Contains(s, filepath.Join(dir, "..", "dep1", "dep1.go")) {
 				foundDep1 = true
 			}
-			if strings.Contains(s, filepath.Join(dir, "a.txt")) {
-				foundATxt = true
+			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
+				t.Fatalf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
+			}
+			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "a.txt")) {
+				t.Fatalf("a.txt must not appear at full content; non-Go focus files are listed by name only:\n%s", s)
 			}
 			if strings.Contains(s, "begin of focus package") {
 				foundFocusDoc = true
-			}
-			if strings.Contains(s, "begin of focus file "+filepath.Join(dir, "main.go")) {
-				t.Errorf("main.go must not appear at full content; focus packages are documentation-only:\n%s", s)
+				if strings.Contains(s, filepath.Join(dir, "a.txt")) {
+					foundATxtName = true
+				}
 			}
 		}
 		if !foundDep1 {
 			t.Errorf("dep1.go not found")
 		}
-		if !foundATxt {
-			t.Errorf("a.txt not found")
-		}
 		if !foundFocusDoc {
 			t.Errorf("focus package documentation not found")
+		}
+		if !foundATxtName {
+			t.Errorf("a.txt not listed in the focus package documentation")
 		}
 
 	})
@@ -227,10 +232,12 @@ func TestIsExcludedPathMatchesBasename(t *testing.T) {
 }
 
 func TestExcludePatternExcludesWorkspaceMarkdown(t *testing.T) {
-	// In workspace mode, markdown files in sibling modules are
-	// automatically included. An exclusion pattern like "!*.md" must
-	// exclude them even though their relative path from the load
-	// directory is "../mod2/README.md". See TheoryOfExclusionPatterns.
+	// In workspace mode, markdown files in sibling modules are listed by
+	// the module-root listing part. An exclusion pattern like "!*.md"
+	// must exclude the name from that listing too — its relative path
+	// from the load directory is "../mod2/README.md", matched by the
+	// basename rule. See TheoryOfExclusionPatterns and
+	// TheoryOfNonGoFiles in module_root.go.
 	root := t.TempDir()
 	t.Setenv("GOWORK", "")
 
@@ -288,8 +295,8 @@ use (
 		}
 		for _, part := range parts {
 			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "begin of focus file "+readmePath) {
-					t.Fatal("workspace sibling README.md should be excluded by !*.md pattern")
+				if strings.Contains(string(text), readmePath) {
+					t.Fatalf("workspace sibling README.md should be excluded by !*.md pattern, including from the module-root listing")
 				}
 			}
 		}
@@ -348,8 +355,8 @@ func main() {}
 	// Full paths for checking file markers. main.go contains //go:embed
 	// directives that reference both filenames, so checking for the bare
 	// filename would always match. Instead, check for the begin marker
-	// with the full path to determine whether the file is included as a
-	// separate context/focus entry.
+	// with the full path to determine whether the file is included at
+	// full content.
 	largePath := filepath.Join(dir, "large.txt")
 	smallPath := filepath.Join(dir, "small.txt")
 
@@ -360,35 +367,47 @@ func main() {}
 	).Call(func(
 		provider PartsProvider,
 	) {
-		// Without patterns: large embed file should be excluded, small should be included
+		// Without patterns: the large embed file is excluded entirely
+		// (not even listed), and the small embed file is present by name
+		// in the focus documentation block's file list — neither is
+		// emitted at full content. See TheoryOfNonGoFiles in
+		// module_root.go.
 		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		var foundLarge, foundSmall bool
+		var foundSmallName, foundLarge bool
 		for _, part := range parts {
 			if text, ok := part.(generators.Text); ok {
 				s := string(text)
 				if strings.Contains(s, "begin of focus file "+largePath) ||
 					strings.Contains(s, "begin of context file "+largePath) {
-					foundLarge = true
+					t.Fatal("large embed file must not be emitted at full content by default")
 				}
 				if strings.Contains(s, "begin of focus file "+smallPath) ||
 					strings.Contains(s, "begin of context file "+smallPath) {
-					foundSmall = true
+					t.Fatal("small embed file must not be emitted at full content; non-Go files are listed by name only")
+				}
+				if strings.Contains(s, smallPath) {
+					foundSmallName = true
+				}
+				if strings.Contains(s, largePath) {
+					foundLarge = true
 				}
 			}
 		}
 		if foundLarge {
 			t.Fatal("large embed file should be excluded by default")
 		}
-		if !foundSmall {
-			t.Fatal("small embed file should be included")
+		if !foundSmallName {
+			t.Fatal("small embed file should be listed by name in the focus documentation")
 		}
 
-		// With -file pattern: large embed file should be included
-		parts, err = provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{"large.txt"})
+		// With an explicit -file pattern naming the file by its absolute
+		// path: the file is requested, so it is emitted at full content
+		// as an extra context file.
+		parts, err = provider.Parts(1<<20, generators.DeepseekTokenCounterFn, []string{largePath})
 		if err != nil {
 			t.Fatal(err)
 		}

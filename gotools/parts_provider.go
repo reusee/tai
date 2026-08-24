@@ -25,6 +25,7 @@ type PartsProvider struct {
 	Envs            dscope.Inject[Envs]
 	Workspace       dscope.Inject[Workspace]
 	DocPatterns     dscope.Inject[DocPatterns]
+	ModuleRootFiles dscope.Inject[GetModuleRootFiles]
 }
 
 var _ codetypes.PartsProvider = PartsProvider{}
@@ -61,7 +62,7 @@ func (c PartsProvider) Parts(
 	// -file patterns, and package documentation from -doc patterns. The
 	// composition is logged at the end so the user can see where the
 	// context tokens are spent. See TheoryOfTokenComposition.
-	var focusTokens, contextTokens, extraTokens, docTokens int
+	var focusTokens, contextTokens, extraTokens, docTokens, moduleRootTokens int
 
 	files, err := c.GetFiles()()
 	if err != nil {
@@ -277,6 +278,53 @@ func (c PartsProvider) Parts(
 		parts = append(parts, generators.Text(file.Confirmed.Content))
 	}
 
+	// Module-root markdown listings follow the project files: the listing
+	// derives from the same project structure, so it belongs to the
+	// stable region of the prompt, before request-varying extras. A
+	// module root may carry no Go package, so its markdown files are not
+	// package files; the listing keeps them discoverable by name, and
+	// their contents are fetched on demand with read blocks. See
+	// TheoryOfNonGoFiles.
+	listings, err := c.ModuleRootFiles()()
+	if err != nil {
+		return nil, err
+	}
+	nameMatch := c.NameMatch()
+	for _, listing := range listings {
+		var names []string
+		for _, path := range listing.Files {
+			if !nameMatch(path) {
+				continue
+			}
+			relPath, relErr := filepath.Rel(string(c.LoadDir()), path)
+			if relErr == nil && isExcludedPath(relPath, excludePatterns) {
+				continue
+			}
+			names = append(names, path)
+		}
+		if len(names) == 0 {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("``` begin of module root files " + listing.Dir + "\n")
+		b.WriteString("Markdown files at this module root (contents are not included in the context; fetch them with read blocks when needed):\n")
+		for _, name := range names {
+			b.WriteString("- " + name + "\n")
+		}
+		b.WriteString("``` end of module root files " + listing.Dir + "\n")
+		content := b.String()
+		tokens, err := countTokens(content)
+		if err != nil {
+			return nil, err
+		}
+		totalTokens += tokens
+		moduleRootTokens += tokens
+		parts = append(parts, generators.Text(content))
+		if c.ShowTokenCounts() {
+			c.Logger().Info("module root listing", "dir", listing.Dir, "files", len(names), "tokens", tokens)
+		}
+	}
+
 	// Add extra files after project files — these form the volatile suffix.
 	// Extra files vary by request pattern; placing them last ensures they
 	// cannot shift the position of stable project file content.
@@ -351,6 +399,7 @@ func (c PartsProvider) Parts(
 		"context", contextTokens,
 		"extra", extraTokens,
 		"doc", docTokens,
+		"module_root", moduleRootTokens,
 		"total", totalTokens,
 	)
 
@@ -389,8 +438,12 @@ to prevent large embedded assets (e.g., binary blobs, templates, static files)
 from consuming the token budget. These files can still be included explicitly
 via the -file flag, which adds them as extra context files. The 64KB threshold
 is chosen because embed files below this size are typically configuration or
-small templates that provide useful context, while larger files are almost
+small templates worth keeping discoverable, while larger files are almost
 always static assets that add noise without aiding code generation.
+
+Below the threshold, embed files are collected like every other non-Go file
+and appear by name in the package's file-names section; their content is
+never emitted in the initial context (see TheoryOfNonGoFiles).
 `
 
 // isExcludedPath checks whether the given relative path is excluded by any

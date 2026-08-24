@@ -37,8 +37,10 @@ the model fetches focus implementation source on demand with go-src
 blocks. The -all-src flag pins focus at full source instead
 (VisibilityAll): every focus file including tests is emitted at full
 content and no focus documentation block is produced. Focus files
-explicitly requested via -file and non-Go focus files (which go doc
-cannot summarize) are still emitted at full content. File ordering (see
+explicitly requested via -file are still emitted at full content; every
+other focus file — Go source and non-Go files alike — is present by name
+only, in the focus documentation block's file list (see
+TheoryOfNonGoFiles in module_root.go). File ordering (see
 TheoryOfFileOrdering in files.go) places stable context files first and
 volatile focus files last, maximizing the common prefix between
 consecutive requests for LLM prefix caching.
@@ -165,12 +167,12 @@ func (Module) SimplifyFiles(
 		// visibility levels for the packages whose costs the allocation
 		// requires up front, concurrently: context packages, any package
 		// containing files always emitted at full content (DoNotSimplify
-		// files and the non-Go files of focus packages), and — under
-		// -all-src — focus packages themselves, whose full-level costs the
-		// focus pin consumes immediately. Focus packages pinned at full
-		// documentation need no file costs. All other packages have their
-		// costs computed lazily only when the allocation probes them;
-		// packages that receive no visibility never run the tokenizer.
+		// files), and — under -all-src — focus packages themselves, whose
+		// full-level costs the focus pin consumes immediately. Focus
+		// packages pinned at full documentation need no file costs. All
+		// other packages have their costs computed lazily only when the
+		// allocation probes them; packages that receive no visibility
+		// never run the tokenizer.
 		// See TheoryOfLazyVisibilityCosts in visibility.go.
 		if err := precomputeTokenCounts(logicalPkgs, bool(allSrc), countTokens); err != nil {
 			return nil, err
@@ -223,32 +225,28 @@ func (Module) SimplifyFiles(
 		for _, lp := range logicalPkgs {
 			// Files always emitted at full content regardless of the
 			// package's visibility level: files explicitly requested via
-			// -file (DoNotSimplify) and the non-Go files of focus
-			// packages, which go doc cannot summarize. Under -all-src the
-			// package itself is at VisibilityAll and its per-level loop
-			// below already emits every file, so the non-Go exception must
-			// not apply — the file would be emitted twice.
+			// -file (DoNotSimplify). Non-Go focus files are not emitted
+			// at full content — they appear by name in the focus
+			// documentation block's file list (see TheoryOfNonGoFiles in
+			// module_root.go). Under -all-src the package itself is at
+			// VisibilityAll and its per-level loop below already emits
+			// every file.
 			renderedAtAll := make(map[*File]renderedFile)
 			for _, rf := range lp.RenderedFiles[VisibilityAll] {
 				renderedAtAll[rf.file] = rf
 			}
 			for _, f := range lp.Files {
-				nonGoFocus := lp.Category == CategoryFocus && !f.IsGoFile && lp.Visibility != VisibilityAll
-				if !f.DoNotSimplify && !nonGoFocus {
+				if !f.DoNotSimplify {
 					continue
 				}
 				rf, ok := renderedAtAll[f]
 				if !ok {
 					continue
 				}
-				what := "full content (non-Go focus file)"
-				if f.DoNotSimplify {
-					what = fmt.Sprintf("visibility level %d (do not simplify)", VisibilityAll)
-				}
 				f.LogicalPkgPath = lp.PkgPath
 				f.PackageDistanceFromRoot = lp.Distance
 				f.Confirmed = &Transformed{
-					What:      what,
+					What:      fmt.Sprintf("visibility level %d (do not simplify)", VisibilityAll),
 					Content:   []byte(rf.content),
 					NumTokens: rf.tokens,
 				}
