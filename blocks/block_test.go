@@ -1066,15 +1066,29 @@ func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
 	// a non-summary block (e.g., a go-src block) violates the
 	// every-response summary requirement without noticing. The check
 	// names the consequence: the response is discarded and retried, so
-	// none of its blocks take effect. See TheoryOfSummaryBlocks.
+	// none of its blocks take effect. The prompts must also cover the
+	// fetch-only response shape — a response whose only blocks are
+	// read, go-src, shell, or go-test blocks still requires the summary
+	// — and state why the summary is non-omittable: the system reads it
+	// as its only proof that the response was generated completely and
+	// followed the rules. See TheoryOfSummaryBlocks.
 	if !strings.Contains(SummaryBlockSystemPrompt, "Closing self-check") {
 		t.Fatal("system prompt must teach the closing self-check")
 	}
 	if !strings.Contains(SummaryBlockSystemPrompt, "No other block kind can close a response") {
 		t.Fatal("system prompt must state that no other block kind can close a response")
 	}
+	if !strings.Contains(SummaryBlockSystemPrompt, "read, go-src, shell, or go-test blocks") {
+		t.Fatal("system prompt must cover the fetch-only response shape: a response whose only blocks are fetching kinds still requires the summary")
+	}
+	if !strings.Contains(SummaryBlockSystemPrompt, "never omittable") {
+		t.Fatal("system prompt must state that the summary is never omittable")
+	}
 	if !strings.Contains(SummaryBlockRestatePrompt, "Closing self-check") {
 		t.Fatal("restate prompt must teach the closing self-check")
+	}
+	if !strings.Contains(SummaryBlockRestatePrompt, "read, go-src, shell, or go-test blocks") {
+		t.Fatal("restate prompt must cover the fetch-only response shape")
 	}
 }
 

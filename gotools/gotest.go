@@ -61,10 +61,11 @@ feedback naming the missing summary: the go-test block is discarded with the
 failed attempt and must be re-emitted together with the summary block —
 re-emission is what makes the test run happen (see pipeline.TheoryOfLoops). This
 applies to every round, including debug rounds where tests fail and the go-test
-component produces Parts that trigger a new round; the go-test prompt states the
-summary requirement with the same wording as the shell prompt and adds the
-sequence rule that the block after the go-test block's closing line must be the
-summary block.
+component produces Parts that trigger a new round; the go-test prompt phrases
+its stop rule summary-first — emit the summary block immediately after the
+go-test block's closing line, then end the response — mirroring the shell
+prompt, and adds the sequence rule that the block after the go-test block's
+closing line must be the summary block.
 
 ProcessGoTestBlocks always returns test output, regardless of whether tests pass
 or fail; the go-test component feeds it back as user content, always triggering a
@@ -88,6 +89,7 @@ Use the "go-test" kind to run Go tests and receive the output as part of the nex
 - Both stdout and stderr are captured and fed back as user content in the next round, regardless of whether tests pass or fail.
 - Prefer running tests after applying change blocks to verify correctness.
 - Close the go-test block with its closing line before emitting any other block (e.g., the summary block): the closing line must appear before the next block's opening marker.
+- After the go-test block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results — never stop at the closing line itself.
 - The go-test block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block.
 - Never end a response on a go-test block: after the go-test block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted, so the test run is lost unless re-requested with the summary.
 - The go-test block should appear before the summary block in the response.
@@ -99,6 +101,7 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
 - Both stdout and stderr are fed back as user content in the next round, regardless of whether tests pass or fail. Fix any failures and try again.
 - Only use go-test blocks in Go projects.
+- After the go-test block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results — never stop at the closing line itself.
 - A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
 - Never end a response on a go-test block: after the go-test block's closing line, the next block MUST be the summary block.`
 

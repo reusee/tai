@@ -73,7 +73,11 @@ package together with the resolver (ResolveGoSymbols, which needs the
 parsed ASTs); the blocks package defines only the generic block format
 and the language-neutral kinds. Like read, go-src is strictly read-only
 and is not a completion signal: a round carrying a go-src block still
-needs a summary block. A round that ends on a go-src block without a
+needs a summary block, and the stop rule is phrased summary-first —
+emit the summary block immediately after the last go-src block's closing
+line, then end the response — so no stop instruction licenses halting at
+the closing line, the observed failure shape of a lone go-src block
+ending a response. A round that ends on a go-src block without a
 summary is retried with feedback naming the missing summary; the go-src
 block is discarded with the failed attempt and must be re-emitted
 together with the summary block — re-emission is what makes the symbol
@@ -86,7 +90,7 @@ Go-Src Block Kind:
 Use the "go-src" kind to request the source code of Go symbols that were not fully included in the context. The system resolves each symbol to its declaration source and provides it as user content in the next generation round.
 
 **Rules:**
-- Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies).
+- Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies). Only use go-src blocks in Go projects.
 - Prefer go-src over read for Go source code: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file read provides. Use a read block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
 - Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names and a list of the package's source file names. Their implementation source is NOT included initially.
 - Before understanding, modifying, or reviewing any focus declaration, fetch its source with a go-src block naming the declaration. Do not reason about, edit, or review a focus declaration from its documentation alone — fetch the source first, then act.
@@ -104,11 +108,10 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Fetching a named type or interface appends an interface relations report: a "begin of interface relations" block listing "satisfies pkg.I" lines (interfaces a concrete type fulfills via its value or pointer method set) or "implemented by pkg.N" / "implemented by *pkg.N" lines (loaded concrete types implementing a fetched interface; the leading * marks a pointer-only method set). Polymorphism is invisible in plain source text: use the report to jump between an interface and its implementations in one step.
 - go-src resolves against an in-memory snapshot of the files loaded when the context was assembled; it does not re-read the disk. A file modified by change blocks during this session still yields its pre-modification content when the same symbol is fetched again. Verify applied changes with go-test blocks or by reading the file from disk (e.g., cat), not by re-fetching with go-src.
 - Do not emit change blocks whose content depends on the requested source: request the source first, then emit changes in a subsequent response after the source is provided.
-- After emitting a go-src block, stop generating, end the response with a summary block, and wait: the requested source arrives as user content in the next round.
+- After the last go-src block's closing line, emit the summary block IMMEDIATELY, then end the response and wait: the requested source arrives as user content in the next round.
 - Close the go-src block with its closing line before emitting any other block (e.g., the summary block).
 - The go-src block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-src block. Every round must end with a summary block.
-- Never end a response on a go-src block: after the go-src block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted, so the symbol requests are lost unless re-emitted with the summary.
-- Only use go-src blocks in Go projects.
+- Never end a response on a go-src block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete and retried, and its blocks are discarded — so the symbol requests are lost unless re-emitted with the summary.
 `
 
 const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of the symbol's callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
@@ -118,6 +121,7 @@ const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a
 - The resolved source names the defining file; use that file path as the change block's file-path. go-src returns an in-memory snapshot of the files loaded at context assembly and does not re-read the disk: a file modified by change blocks in this session still shows its pre-modification content. Verify applied changes with go-test blocks or by reading the file, not by re-fetching with go-src.
 - Each resolved source part is followed by a references report listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration and possibly truncated at 100 — use it to judge blast radius and callers before changing the symbol.
 - Reports follow every resolved source part: references (callers), selector packages (full import paths of packages used in selector expressions within the declaration), and interface relations for named types and interfaces (satisfies / implemented by).
+- After the last go-src block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the source — never stop at the closing line itself.
 - A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.
 - Never end a response on a go-src block: after the go-src block's closing line, the next block MUST be the summary block.`
 

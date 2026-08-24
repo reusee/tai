@@ -511,20 +511,24 @@ func TestFetchReadRequestsError(t *testing.T) {
 
 func TestReadBlockPromptsRequireSummary(t *testing.T) {
 	// The read prompts must not license omitting the summary
-	// block: the stop rule is phrased like the shell prompt's ("stop and
-	// end the response with a summary block"), and the block is declared
-	// not to replace the summary block. A bare "stop generating and wait"
-	// contradicts SummaryBlockSystemPrompt's every-response requirement
-	// and is the most likely cause of missing summary blocks after
+	// block: the stop rule is phrased summary-first — emit the summary
+	// block IMMEDIATELY after the last read block's closing line, then
+	// end the response — and the block is declared not to replace the
+	// summary block. A bare "stop generating ..." instruction placed
+	// before the summary requirement makes the model halt at the closing
+	// line and is the most likely cause of missing summary blocks after
 	// read blocks. See TheoryOfReadBlocks and TheoryOfSummaryBlocks.
 	if !strings.Contains(ReadBlockSystemPrompt, "read block is NOT a completion signal") {
 		t.Fatal("system prompt must state that the read block is not a completion signal and a summary block is still required")
 	}
-	if !strings.Contains(ReadBlockSystemPrompt, "end the response with a summary block") {
-		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
+	if !strings.Contains(ReadBlockSystemPrompt, "emit the summary block IMMEDIATELY") {
+		t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last read block")
 	}
-	if strings.Contains(ReadBlockSystemPrompt, "stop generating and wait for the system to provide") {
-		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
+	if strings.Contains(ReadBlockSystemPrompt, "stop generating") {
+		t.Fatal("system prompt must not carry a bare stop instruction before the summary requirement")
+	}
+	if !strings.Contains(ReadBlockSystemPrompt, "never stop at") {
+		t.Fatal("system prompt must forbid stopping at a read block's closing line")
 	}
 	if !strings.Contains(ReadBlockSystemPrompt, "Never end a response on a read block") {
 		t.Fatal("system prompt must state the sequence rule: the block after a read block must be the summary block")

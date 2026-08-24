@@ -88,19 +88,24 @@ func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
 }
 
 func TestGoSrcPromptsEndWithSummary(t *testing.T) {
-	// The go-src stop rule must be phrased like the shell prompt's: stop
-	// generating, end the response with a summary block, and wait. A bare
-	// "stop generating and wait" licenses omitting the summary block and
-	// contradicts the every-response requirement of
-	// blocks.SummaryBlockSystemPrompt. The prompt must also state the
-	// sequence rule — the block after the go-src block's closing line
-	// must be the summary block — so a response never ends on the go-src
-	// block itself. See TheoryOfGoSrcBlocks.
-	if !strings.Contains(GoSrcBlockSystemPrompt, "end the response with a summary block") {
-		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
+	// The go-src stop rule must be phrased summary-first: emit the
+	// summary block IMMEDIATELY after the last go-src block's closing
+	// line, then end the response and wait. A bare "stop generating"
+	// instruction placed before the summary requirement makes the model
+	// halt at the closing line — the observed failure shape of a lone
+	// go-src block ending a response — and contradicts the
+	// every-response requirement of blocks.SummaryBlockSystemPrompt.
+	// The prompt must also state the sequence rule — the block after the
+	// go-src block's closing line must be the summary block. See
+	// TheoryOfGoSrcBlocks.
+	if !strings.Contains(GoSrcBlockSystemPrompt, "emit the summary block IMMEDIATELY") {
+		t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last go-src block")
 	}
-	if strings.Contains(GoSrcBlockSystemPrompt, "stop generating and wait:") {
-		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
+	if strings.Contains(GoSrcBlockSystemPrompt, "stop generating") {
+		t.Fatal("system prompt must not carry a bare stop instruction before the summary requirement")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "never stop at") {
+		t.Fatal("system prompt must forbid stopping at a go-src block's closing line")
 	}
 	if !strings.Contains(GoSrcBlockSystemPrompt, "Never end a response on a go-src block") {
 		t.Fatal("system prompt must state the sequence rule: the block after a go-src block must be the summary block")

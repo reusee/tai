@@ -38,8 +38,12 @@ func TestGoBlockPromptsNeverEndOnKind(t *testing.T) {
 	// summary block is the mandatory completion signal — a response that
 	// ends on the kind's own block is discarded and retried, so the rule
 	// prevents the model from ending a response on a go-src or go-test
-	// block without the summary. See TheoryOfGoSrcBlocks and
-	// TheoryOfGoTestBlocks.
+	// block without the summary. The stop rule must also be phrased
+	// summary-first — emit the summary block IMMEDIATELY after the
+	// kind's closing line, then end the response — because a bare stop
+	// instruction makes the model halt at the closing line, the observed
+	// failure shape of a lone go-src block ending a response. See
+	// TheoryOfGoSrcBlocks and TheoryOfGoTestBlocks.
 	prompts := map[string]string{
 		"GoTestBlockSystemPrompt":  GoTestBlockSystemPrompt,
 		"GoTestBlockRestatePrompt": GoTestBlockRestatePrompt,
@@ -53,6 +57,12 @@ func TestGoBlockPromptsNeverEndOnKind(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Never end a response on a "+kind+" block") {
 			t.Fatalf("%s must state the sequence rule: never end a response on a %s block; the next block must be the summary block", name, kind)
+		}
+		if !strings.Contains(prompt, "emit the summary block IMMEDIATELY") {
+			t.Fatalf("%s must phrase the stop rule summary-first: emit the summary block immediately after the %s block", name, kind)
+		}
+		if !strings.Contains(prompt, "never stop at") {
+			t.Fatalf("%s must forbid stopping at a %s block's closing line", name, kind)
 		}
 	}
 }

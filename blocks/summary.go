@@ -19,14 +19,23 @@ No block kind replaces or implies the summary: a round that ends without a
 summary block is retried, including rounds carrying component-triggering blocks
 (see pipeline.TheoryOfLoops), and the retry feedback names the missing summary.
 Every kind whose prompt stops and waits for the next round (shell, go-test,
-go-src, read) phrases its stop rule as "end the response with a summary block",
-declares that its block does not replace the summary, and adds the sequence rule
-that the block after its closing line must be the summary block; the summary
-prompts add a closing self-check so the model verifies its last block before
-ending the response. When the retry budget is exhausted, the loop synthesizes a
-summary so the round statistics and the summary display keep the round's
-narrative. When no changes were made, the summary block body should be "No
-changes were needed." so the model still signals normal completion.
+go-src, read) phrases its stop rule summary-first — emit the summary block
+immediately after the kind's closing line, then end the response — and forbids
+stopping at the closing line itself; no stop-and-wait prompt places a bare stop
+instruction before the summary requirement, because a model that reads "stop"
+first halts at the closing line and omits the summary, the observed failure
+shape of a lone go-src block ending a response. Each prompt declares that its
+block does not replace the summary and adds the sequence rule that the block
+after its closing line must be the summary block; the summary prompts add a
+closing self-check so the model verifies its last block before ending the
+response, and they explicitly cover the fetch-only response shape — a response
+whose only blocks are read, go-src, shell, or go-test blocks still requires the
+summary, because the system reads the summary as its only proof that the
+response was generated completely and followed the rules. When the retry budget
+is exhausted, the loop synthesizes a summary so the round statistics and the
+summary display keep the round's narrative. When no changes were made, the
+summary block body should be "No changes were needed." so the model still
+signals normal completion.
 `
 
 const SummaryBlockSystemPrompt = `
@@ -40,11 +49,13 @@ Use the "summary" kind to provide a brief description of the current generation 
 - The body MUST contain ONLY the markdown bullet list in the "- " format; each item is a single short, concise phrase describing what was done or thought in this round. No prose and no other text inside the block.
 - Keep each list item brief and easy to scan. Do not write long sentences or dense paragraphs.
 - The summary is displayed to the user after generation ends, alongside round statistics.
-- A summary block is required in EVERY response, even when no change blocks are emitted. When no changes were made, use "No changes were needed." as the only bullet point. Omitting the summary block is a rule violation: the system discards the entire response and retries it, so none of its blocks take effect.
+- A summary block is required in EVERY response, even when no change blocks are emitted — including a response whose only blocks are read, go-src, shell, or go-test blocks. When no changes were made, use "No changes were needed." as the only bullet point.
+- The summary block is the completion signal the system uses to verify that the response was generated completely and followed the rules; without it the system cannot confirm the round ended normally. It is never omittable, never deferrable to a later response, and never replaceable by any other block. Omitting it is a rule violation: the system discards the entire response and retries it, so none of its blocks take effect.
 - **Closing self-check (run it every time)**: before ending a response, look at the last block you emitted. If it is anything other than a summary block — or a continue block that follows a summary block — the response is incomplete: emit the summary block now. No other block kind can close a response; a response that ends without a summary block is discarded and retried, so none of its blocks take effect.
 `
 
 const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary block whose body is a bullet list of what was done.
 - The summary block MUST appear after all other blocks. When a continue block is present, the summary block comes before it, and the continue block is the last block.
-- A summary block is required in every response, even when no change blocks are emitted. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
+- A summary block is required in every response, even when no change blocks are emitted — including a response whose only blocks are read, go-src, shell, or go-test blocks. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
+- The summary block is the completion signal the system uses to verify the response was generated completely and followed the rules; it is never omittable and never replaced by another block.
 - Closing self-check: before ending the response, check the last block you emitted. If it is not a summary block (and not a continue block following one), emit the summary block now. A response ending on any other block is discarded and retried; none of its blocks take effect.`

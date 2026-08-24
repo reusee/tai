@@ -50,15 +50,16 @@ path segment, it matches zero or more directories.
 Like every kind whose prompt stops and waits for the next round (shell, go-test,
 go-src), the read prompt carries the summary discipline: the block does not
 replace the summary block, the prompt requires a summary block in the same
-round after the read block, and the stop rule is phrased as "stop
-generating, end the response with a summary block, and wait" — the same wording as
-the shell prompt — so the stop instruction never licenses omitting the summary
-block. The prompt also adds the sequence rule that the block after the last read
-block's closing line must be the summary block. At the loop level a read block
-never completes a round on its own: a round carrying read blocks but no summary
-block is retried with feedback naming the missing summary, and the read blocks
-are discarded with the failed attempt and must be re-emitted together with the
-summary block (see pipeline.TheoryOfLoops).
+round after the read block, and the stop rule is phrased summary-first — emit
+the summary block immediately after the last read block's closing line, then
+end the response and wait — the same wording as the shell prompt, so no stop
+instruction licenses halting at the closing line. The prompt also adds the
+sequence rule that the block after the last read block's closing line must be
+the summary block. At the loop level a read block never completes a round on
+its own: a round carrying read blocks but no summary block is retried with
+feedback naming the missing summary, and the read blocks are discarded with
+the failed attempt and must be re-emitted together with the summary block
+(see pipeline.TheoryOfLoops).
 
 Only read blocks are consumed from ParserState during context
 processing; blocks of other kinds are preserved so they remain available after the
@@ -78,9 +79,9 @@ Use the "read" kind to request additional context needed to complete the task. W
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
-- After emitting a read block, stop generating, end the response with a summary block, and wait for the system to provide the requested context.
+- After the last read block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the requested context.
 - The read block is NOT a completion signal. MUST still emit a summary block in the same round, after the read block. Every round must end with a summary block.
-- Never end a response on a read block: after the last read block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted.
+- Never end a response on a read block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete, and it is discarded and retried — its blocks are discarded, so the context requests are lost unless re-emitted.
 - Do not include read blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
 
 **Example use:**
@@ -92,7 +93,7 @@ Use the "read" kind to request additional context needed to complete the task. W
 const ReadBlockRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a read block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
-- After emitting a read block, stop and end the response with a summary block, then wait for the system to provide the context.
+- After the last read block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the context — never stop at the closing line itself.
 - A read block does NOT replace the summary block. MUST still emit a summary block in the same round, after the read block.
 - Never end a response on a read block: after the read block's closing line, the next block MUST be the summary block.
 - The read block is read-only: never use it for writes or side effects.
