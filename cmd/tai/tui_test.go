@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3/color"
-	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/pipeline"
@@ -28,9 +26,6 @@ func newTUIForTest() *TUI {
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
 		showThoughts: true,
-		// No drag-scroll is in progress until a mouse press starts one.
-		// See TheoryOfMouseSupport.
-		mouseDragTab: -1,
 	}
 }
 
@@ -917,32 +912,6 @@ func TestReadTUIKeysTransitions(t *testing.T) {
 	}
 }
 
-func TestParseMouseKey(t *testing.T) {
-	button, x, y, ok := parseMouseKey("mouse-left@12,34")
-	if !ok || button != "left" || x != 12 || y != 34 {
-		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
-	}
-	button, x, y, ok = parseMouseKey("mouse-release@12,34")
-	if !ok || button != "release" || x != 12 || y != 34 {
-		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
-	}
-	button, x, y, ok = parseMouseKey("mouse-leftdrag@4,4")
-	if !ok || button != "leftdrag" || x != 4 || y != 4 {
-		t.Fatalf("got %q, %d, %d, %v", button, x, y, ok)
-	}
-	for _, bad := range []string{
-		"plain@1,2",      // missing the mouse prefix
-		"mouse-left",     // missing coordinates
-		"mouse-left@a,b", // non-numeric coordinates
-		"mouse-left@1",   // missing the y coordinate
-		"mouse-@1,2",     // empty event kind
-	} {
-		if _, _, _, ok := parseMouseKey(bad); ok {
-			t.Fatalf("expected %q to be invalid", bad)
-		}
-	}
-}
-
 func TestTUINumberKeySemantics(t *testing.T) {
 	tui := newTUIForTest()
 	tui.tabs.AutoExpand(0)
@@ -993,6 +962,8 @@ func TestTUINumberKeySemantics(t *testing.T) {
 }
 
 func TestTUIMousePress(t *testing.T) {
+	// The subtests drive the public behavior through handleMouseKey, the
+	// same path the session's key loop takes.
 	t.Run("CollapsedStripExpandsAndFocuses", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.width, tui.height = 80, 45
@@ -1001,12 +972,15 @@ func TestTUIMousePress(t *testing.T) {
 		tui.tabs.Focus = 0
 		// Horizontal split: the output tab occupies rows 0..42, the
 		// collapsed summary tab row 43, the collapsed logs tab row 44.
-		tui.mousePress(5, 43)
+		tui.handleMouseKey("mouse-left@5,43")
 		if !tui.tabs.Expanded[1] {
 			t.Fatal("pressing a collapsed tab's strip must expand it")
 		}
 		if tui.tabs.Focus != 1 {
 			t.Fatalf("expected the focus on the pressed tab, got %d", tui.tabs.Focus)
+		}
+		if !tui.scrolls[1].Follow {
+			t.Fatal("expanding must resume following the tail")
 		}
 	})
 
@@ -1016,7 +990,7 @@ func TestTUIMousePress(t *testing.T) {
 		tui.tabs.Expanded = []bool{true, false, false}
 		tui.tabs.HasContent = []bool{true, false, false}
 		tui.tabs.Focus = 0
-		tui.mousePress(5, 0)
+		tui.handleMouseKey("mouse-left@5,0")
 		if tui.tabs.Expanded[0] {
 			t.Fatal("pressing the focused tab's label strip must collapse it")
 		}
@@ -1033,7 +1007,7 @@ func TestTUIMousePress(t *testing.T) {
 		tui.tabs.Focus = 0
 		// The summary tab's label strip is its top row (row 33); the
 		// output tab occupies rows 0..32.
-		tui.mousePress(5, 33)
+		tui.handleMouseKey("mouse-left@5,33")
 		if !tui.tabs.Expanded[1] {
 			t.Fatal("the summary tab must stay expanded")
 		}
@@ -1051,34 +1025,28 @@ func TestTUIMousePress(t *testing.T) {
 		tui.scrolls[0].MaxOffset = 100
 		tui.scrolls[0].Offset = 10
 
-		tui.mousePress(5, 10)
+		tui.handleMouseKey("mouse-left@5,10")
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("expected the focus on the output tab, got %d", tui.tabs.Focus)
 		}
-		if tui.mouseDragTab != 0 {
-			t.Fatalf("expected a drag attached to the output tab, got %d", tui.mouseDragTab)
-		}
 		// Dragging up reveals earlier content.
-		tui.mouseDrag(5, 5)
+		tui.handleMouseKey("mouse-leftdrag@5,5")
 		if tui.scrolls[0].Offset != 15 {
 			t.Fatalf("expected offset 15 after dragging up, got %d", tui.scrolls[0].Offset)
 		}
 		// Dragging down reveals the tail.
-		tui.mouseDrag(5, 15)
+		tui.handleMouseKey("mouse-leftdrag@5,15")
 		if tui.scrolls[0].Offset != 5 {
 			t.Fatalf("expected offset 5 after dragging down, got %d", tui.scrolls[0].Offset)
 		}
 		// The drag offset clamps at the content extent.
-		tui.mouseDrag(5, 200)
+		tui.handleMouseKey("mouse-leftdrag@5,200")
 		if tui.scrolls[0].Offset != 0 {
 			t.Fatalf("expected offset 0 after clamping, got %d", tui.scrolls[0].Offset)
 		}
-		tui.mouseRelease()
-		if tui.mouseDragTab != -1 {
-			t.Fatalf("expected the drag ended, got %d", tui.mouseDragTab)
-		}
+		tui.handleMouseKey("mouse-release@5,10")
 		// A drag after the release is a no-op.
-		tui.mouseDrag(5, 0)
+		tui.handleMouseKey("mouse-leftdrag@5,0")
 		if tui.scrolls[0].Offset != 0 {
 			t.Fatalf("expected the offset unchanged after release, got %d", tui.scrolls[0].Offset)
 		}
@@ -1178,20 +1146,6 @@ func TestScrollClamp(t *testing.T) {
 	}
 	if got := taiui.ClampOffset(1<<30, 2, 3); got != 0 {
 		t.Fatalf("tail sentinel with fitted content should clamp to 0, got %d", got)
-	}
-}
-
-func TestTUIMouseReportingSequences(t *testing.T) {
-	ft := &fakeTty{}
-	tui := &TUI{tty: ft, mouseDragTab: -1}
-	tui.enableMouse()
-	if got := ft.written.String(); got != taiui.MouseEnableSequence {
-		t.Fatalf("unexpected enable sequence: %q", got)
-	}
-	ft.written.Reset()
-	tui.disableMouse()
-	if got := ft.written.String(); got != taiui.MouseDisableSequence {
-		t.Fatalf("unexpected disable sequence: %q", got)
 	}
 }
 
@@ -1531,7 +1485,7 @@ func TestTUIQuitConfirmation(t *testing.T) {
 		if tui.handleQuitKey() {
 			t.Fatal("the first quit key press must not quit")
 		}
-		if !tui.confirmQuit {
+		if !tui.quit.Pending() {
 			t.Fatal("the first quit key press must set the confirmation state")
 		}
 		if !tui.handleQuitKey() {
@@ -1542,11 +1496,11 @@ func TestTUIQuitConfirmation(t *testing.T) {
 	t.Run("AnyOtherKeyCancels", func(t *testing.T) {
 		tui := newTUIForTest()
 		tui.handleQuitKey()
-		if !tui.confirmQuit {
+		if !tui.quit.Pending() {
 			t.Fatal("expected the confirmation state after the first quit key")
 		}
 		tui.cancelConfirmQuit()
-		if tui.confirmQuit {
+		if tui.quit.Pending() {
 			t.Fatal("a non-quit key must cancel the pending quit confirmation")
 		}
 		if tui.handleQuitKey() {
@@ -1560,13 +1514,13 @@ func TestTUIQuitConfirmation(t *testing.T) {
 		tui.screen = taiui.NewTerminalScreen(&sb, 80, 10)
 		tui.width = 80
 		tui.height = 10
-		tui.confirmQuit = true
+		tui.handleQuitKey()
 		tui.render()
 		if !strings.Contains(sb.String(), "Quit?") {
 			t.Fatalf("expected the quit confirmation bar in the rendered output, got: %q", sb.String())
 		}
 		sb.Reset()
-		tui.confirmQuit = false
+		tui.cancelConfirmQuit()
 		tui.render()
 		if strings.Contains(sb.String(), "Quit?") {
 			t.Fatalf("expected no confirmation bar without a pending confirmation, got: %q", sb.String())
@@ -2207,52 +2161,6 @@ func TestTuiStateFinishReasonColor(t *testing.T) {
 	}
 }
 
-func TestTransitionBoundaries(t *testing.T) {
-	t.Run("Empty", func(t *testing.T) {
-		if got := transitionBoundaries(nil); len(got) != 0 {
-			t.Fatalf("expected no boundaries for no lines, got %v", got)
-		}
-	})
-
-	t.Run("ColorChanges", func(t *testing.T) {
-		lines := []taiui.Line{
-			{Text: "a", Color: outputColorUserLine},
-			{Text: "b", Color: outputColorUserLine},
-			{Text: "c", Color: taiui.NoColor},
-			{Text: "d", Color: outputColorThoughtLine},
-			{Text: "e", Color: outputColorThoughtLine},
-		}
-		got := transitionBoundaries(lines)
-		if len(got) != 2 || got[0] != 2 || got[1] != 3 {
-			t.Fatalf("expected boundaries [2 3], got %v", got)
-		}
-	})
-
-	t.Run("JumpStops", func(t *testing.T) {
-		lines := []taiui.Line{
-			{Text: "a", Color: outputColorUserLine},
-			{Text: "b", Color: taiui.NoColor},
-			{Text: "c", Color: taiui.NoColor},
-			{Text: "d", Color: outputColorThoughtLine},
-		}
-		// Boundaries sit at display indices 1 and 3; with a pane height
-		// of 2 each boundary contributes an exit stop (boundary-2,
-		// clamped to the content start) and an entry stop (the boundary
-		// itself). Duplicate offsets are fine: navigation compares
-		// strictly, so a repeated stop is passed over in one press.
-		got := transitionJumpStops(lines, 2)
-		want := []int{0, 1, 1, 3}
-		if len(got) != len(want) {
-			t.Fatalf("expected stops %v, got %v", want, got)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("expected stops %v, got %v", want, got)
-			}
-		}
-	})
-}
-
 func TestTuiStateSummaryLinesPlain(t *testing.T) {
 	tui := newTUIForTest()
 	writeModelOutput(tui, "<<龘靐 summary\n- done\n龘靐\n")
@@ -2734,31 +2642,6 @@ func TestTuiStateWriteThoughtSummaryEmpty(t *testing.T) {
 	}
 }
 
-// fakeTty is a minimal tty.Tty implementation for testing the TUI's
-// terminal writes, such as the mouse reporting sequences. Reads return
-// io.EOF as if the terminal delivered no input.
-type fakeTty struct {
-	written bytes.Buffer
-}
-
-func (f *fakeTty) Start() error { return nil }
-
-func (f *fakeTty) Stop() error { return nil }
-
-func (f *fakeTty) Drain() error { return nil }
-
-func (f *fakeTty) NotifyResize(chan<- bool) {}
-
-func (f *fakeTty) WindowSize() (tty.WindowSize, error) {
-	return tty.WindowSize{Width: 80, Height: 24}, nil
-}
-
-func (f *fakeTty) Read([]byte) (int, error) { return 0, io.EOF }
-
-func (f *fakeTty) Write(p []byte) (int, error) { return f.written.Write(p) }
-
-func (f *fakeTty) Close() error { return nil }
-
 func TestTuiThoughtSummaryWriter(t *testing.T) {
 	// The writer returned by ThoughtSummaryWriter appends to the Summary
 	// tab's signals and notifies the render loop, mirroring tuiWriter and
@@ -2857,18 +2740,11 @@ func TestTUIWrappedDisplayCache(t *testing.T) {
 	if len(display1) != 1 || display1[0].Text != "hello" {
 		t.Fatalf("unexpected display1: %v", display1)
 	}
-	if tui.outputCache.count != 1 {
-		t.Fatalf("expected cached count 1, got %d", tui.outputCache.count)
-	}
 
 	tui.write([]byte("partial text"))
 	display2 := wrappedDisplay(tui, 0, box)
 	if len(display2) != 2 || display2[1].Text != "partial text" {
 		t.Fatalf("unexpected display2: %v", display2)
-	}
-	// Completed count in cache stays 1 while partial line is appended on the fly.
-	if tui.outputCache.count != 1 {
-		t.Fatalf("expected cached count 1, got %d", tui.outputCache.count)
 	}
 
 	tui.write([]byte("\nworld\n"))
@@ -2876,18 +2752,13 @@ func TestTUIWrappedDisplayCache(t *testing.T) {
 	if len(display3) != 3 || display3[1].Text != "partial text" || display3[2].Text != "world" {
 		t.Fatalf("unexpected display3: %v", display3)
 	}
-	if tui.outputCache.count != 3 {
-		t.Fatalf("expected cached count 3, got %d", tui.outputCache.count)
-	}
 
-	// Width resize resets the cache.
+	// Width resize re-wraps the whole content; the incremental cache
+	// internals are covered by taiui's own tests.
 	boxWider := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
 	displayWider := wrappedDisplay(tui, 0, boxWider)
 	if len(displayWider) != 3 {
 		t.Fatalf("expected 3 lines after resize, got %d", len(displayWider))
-	}
-	if tui.outputCache.width != 79 {
-		t.Fatalf("expected cache width 79, got %d", tui.outputCache.width)
 	}
 }
 
@@ -2903,17 +2774,11 @@ func TestTUIWrappedDisplayLargeOutputPerformance(t *testing.T) {
 	if len(display) != 50000 {
 		t.Fatalf("expected 50000 display lines, got %d", len(display))
 	}
-	if tui.outputCache.count != 50000 {
-		t.Fatalf("expected 50000 cached lines, got %d", tui.outputCache.count)
-	}
 
 	// Appending one new line wraps incrementally.
 	tui.output.Append(taiui.NoColor, "new final line\n")
 	display2 := wrappedDisplay(tui, 0, box)
 	if len(display2) != 50001 {
 		t.Fatalf("expected 50001 display lines, got %d", len(display2))
-	}
-	if tui.outputCache.count != 50001 {
-		t.Fatalf("expected 50001 cached lines, got %d", tui.outputCache.count)
 	}
 }

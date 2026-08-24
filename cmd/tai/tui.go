@@ -7,7 +7,6 @@ import (
 	"io"
 	"iter"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -36,7 +35,11 @@ by the taiui library (see taiui.TheoryOfLines, taiui.TheoryOfTabs, and
 taiui.TheoryOfScrollState): colored line buffers, wrapped colored lines,
 alternating log backgrounds, grouped colored text, tab auto-expansion and
 focus order, weighted panel layout, collapsed strips, and follow-tail
-scroll offsets. This command wires them with tai-specific capture:
+scroll offsets, together with the incremental wrap cache (taiui.WrapCache),
+per-tab panel construction (taiui.TabPanel and taiui.PaneHeight), pointer
+tab interaction (taiui.TabMouse), section navigation, quit confirmation
+and help overlays, and the session event loop (taiui.Session). This
+command wires them with tai-specific capture:
 generators.Content is converted to taiui.Line by captureContent, summary
 blocks are parsed into Summary-tab lines by parseSummaries, and the request
 lifecycle is tracked by isGeneratingLog and outputTabLabel.
@@ -138,10 +141,10 @@ loses the session.
 taiuidemo pattern: render() computes the wrapped display lines of each
 expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
-(outputPanel, summaryPanel, logsPanel, buildRoot). wrappedDisplay uses
-an incremental wrapping cache so that when new output streams in, only
-the newly arrived completed lines and the trailing partial line are
-wrapped, avoiding O(N) full re-wrapping of large buffers on every frame.
+(one taiui.TabPanel per tab, plus buildRoot). wrappedDisplay feeds each
+tab's content through a taiui.WrapCache so that when new output streams
+in, only the newly arrived completed lines and the trailing partial line
+are wrapped, avoiding O(N) full re-wrapping of large buffers on every frame.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
 buffers, tab machine, scroll offsets, signals, and session flags.
@@ -226,12 +229,13 @@ content moves with the pointer rather than tracking incremental motion
 deltas that would be lost when a motion event is skipped. The release
 that ends the drag carries no button number; any release ends it.
 
-Mouse reporting is enabled on start and disabled on every exit path
-(MouseEnableSequence and MouseDisableSequence in the taiui package), so
-the terminal returns to ordinary input handling when the TUI stops. The
-message parser in taiui.ReadKeys decodes the SGR mouse sequences into
-key names carrying the cell coordinates; the TUI routes those names
-through handleMouseKey. See taiui.TheoryOfMouseInput.
+Mouse reporting is enabled on start and disabled on every exit path by
+the taiui.Session that drives the TUI loop (MouseEnableSequence and
+MouseDisableSequence in the taiui package), so the terminal returns to
+ordinary input handling when the TUI stops. taiui.ReadKeys decodes the
+SGR mouse sequences into key names carrying the cell coordinates, and
+the parsed events route onto taiui.TabMouse through handleMouseKey. See
+taiui.TheoryOfMouseInput and taiui.TheoryOfMouseInteraction.
 `
 
 // Tui enables the terminal UI mode.
@@ -546,13 +550,6 @@ func (w usageWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type wrappedDisplayCache struct {
-	width int
-	base  taiui.Color
-	count int
-	lines []taiui.Line
-}
-
 type TUI struct {
 	mu       sync.Mutex
 	output   *taiui.LineBuffer
@@ -562,20 +559,20 @@ type TUI struct {
 	signals  []taiui.Line
 	parseBuf []byte
 
-	outputCache  wrappedDisplayCache
-	summaryCache wrappedDisplayCache
-	logsCache    wrappedDisplayCache
-	displayBuf   [3][]taiui.Line
+	outputCache  taiui.WrapCache
+	summaryCache taiui.WrapCache
+	logsCache    taiui.WrapCache
 
 	// finished reports whether the generation session has ended. It
 	// clears the Output tab's "generating..." hint.
 	finished bool
-	// confirmQuit reports whether a quit confirmation is pending. The
-	// first press of a quit key (q, Q, or Ctrl-C) sets it and shows a
-	// confirmation bar at the bottom of the screen; a second quit key
-	// press quits, and any other key cancels the confirmation before
-	// its normal processing. See TheoryOfTUI.
-	confirmQuit bool
+	// quit is the two-press quit confirmation state: the first press of
+	// a quit key (q, Q, or Ctrl-C) arms it and shows a confirmation bar
+	// (taiui.QuitConfirmBar) at the bottom of the screen; a second quit
+	// key press quits, and any other key cancels the confirmation before
+	// its normal processing. See TheoryOfTUI and
+	// taiui.TheoryOfSessionChrome.
+	quit taiui.QuitConfirm
 	// generating reports whether a generation request is in flight. It
 	// is set when the generator's "generating" log record is observed
 	// and cleared by a finish line ("[Finish: ...]") or by the session
@@ -621,21 +618,17 @@ type TUI struct {
 	// first output never gets a leading blank line separator.
 	hasOutput bool
 
-	// mouseDragTab is the tab whose scroll view a drag-scroll is
-	// attached to, or -1 when the mouse is not dragging. mouseDragStartY
-	// and mouseDragStartOffset anchor the drag to the press origin, so
-	// the content moves with the pointer even when motion events are
-	// skipped. See TheoryOfMouseSupport.
-	mouseDragTab         int
-	mouseDragStartY      int
-	mouseDragStartOffset int
+	// mouse is the pointer interaction state over the tab layout: wheel
+	// scrolling, press-driven tab switching, and drag-scrolling anchored
+	// to the press origin. Its zero value is inert. See
+	// taiui.TheoryOfMouseInteraction.
+	mouse taiui.TabMouse
 
 	tty      tty.Tty
 	screen   *taiui.TerminalScreen
 	updateCh chan struct{}
 	width    int
 	height   int
-	runErr   error
 }
 
 func newTUI() (*TUI, error) {
@@ -671,14 +664,11 @@ func newTUI() (*TUI, error) {
 			{Offset: 1 << 30},
 			{Offset: 1 << 30},
 		},
-		// No drag-scroll is in progress until a mouse press starts one.
-		// See TheoryOfMouseSupport.
-		mouseDragTab: -1,
-		tty:          t,
-		screen:       taiui.NewTerminalScreen(t, width, height),
-		updateCh:     make(chan struct{}, 1),
-		width:        width,
-		height:       height,
+		tty:      t,
+		screen:   taiui.NewTerminalScreen(t, width, height),
+		updateCh: make(chan struct{}, 1),
+		width:    width,
+		height:   height,
 	}, nil
 }
 
@@ -884,32 +874,75 @@ func (t *TUI) cycleFocus() {
 	t.tabs.CycleFocus()
 }
 
-// handleQuitKey processes a quit key press (q, Q, or Ctrl-C). The
-// first press sets confirmQuit, which shows a confirmation bar at the
-// bottom of the screen; the second press confirms the quit. It returns
-// true when the TUI should quit. Any other key cancels the
-// confirmation via cancelConfirmQuit. See TheoryOfTUI.
 func (t *TUI) handleQuitKey() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.confirmQuit {
-		return true
-	}
-	t.confirmQuit = true
-	return false
+	return t.quit.QuitKeyPressed()
 }
 
-// cancelConfirmQuit cancels a pending quit confirmation. Every key
-// other than a quit key calls it before its normal processing, so an
-// accidental q press is undone by the next key. See TheoryOfTUI.
 func (t *TUI) cancelConfirmQuit() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.confirmQuit = false
+	t.quit.Cancel()
 }
 
 func (t *TUI) Stop() error {
 	return t.tty.Stop()
+}
+
+func (t *TUI) handleKey(key string) bool {
+	// taiui.ReadKeys returns generic key names ("q", "s", "?", "[", "]");
+	// mapTUIKey translates the TUI's key bindings to semantic names so
+	// the dispatch below reads as a table of actions, not a table of
+	// characters. Generic key names the TUI does not bind (arrows,
+	// function keys, mouse events) pass through unchanged. See
+	// TheoryOfTUIKeyMapping.
+	key = mapTUIKey(key)
+	// Any key other than a quit key cancels a pending quit
+	// confirmation before its normal processing, so an accidental q
+	// press never loses the session. See TheoryOfTUI.
+	if key != "quit" {
+		t.cancelConfirmQuit()
+	}
+	switch {
+	case strings.HasPrefix(key, taiui.MouseKeyPrefix):
+		t.handleMouseKey(key)
+	case key == "tab":
+		t.cycleFocus()
+	case key == "1":
+		t.toggleTab(0)
+	case key == "2":
+		t.toggleTab(1)
+	case key == "3":
+		t.toggleTab(2)
+	case key == "split":
+		t.toggleSplit()
+	case key == "prev-transition":
+		t.jumpToTransition(-1)
+	case key == "next-transition":
+		t.jumpToTransition(1)
+	case key == "up":
+		t.scroll(-1)
+	case key == "down":
+		t.scroll(1)
+	case key == "pageup":
+		t.pageScroll(-1)
+	case key == "pagedown":
+		t.pageScroll(1)
+	case key == "home":
+		t.scrollTo(0)
+	case key == "end":
+		t.scrollTo(1 << 30)
+	case key == "help":
+		t.toggleHelp()
+	case key == "quit":
+		// The first quit key press shows a confirmation bar; a second
+		// press confirms the quit. See TheoryOfTUI.
+		if t.handleQuitKey() {
+			t.mu.Lock()
+			height := t.height
+			t.mu.Unlock()
+			fmt.Fprintf(t.tty, "\x1b[%d;1H", height)
+			return true
+		}
+	}
+	return false
 }
 
 const TheoryOfTUIKeyMapping = `
@@ -950,30 +983,28 @@ func (t *TUI) toggleSplit() {
 }
 
 func (t *TUI) Run(gen func()) error {
-	io.WriteString(t.tty, "\x1b[?25l")
-	defer func() {
-		io.WriteString(t.tty, "\x1b[0m\x1b[?25h")
-		t.Stop()
-	}()
-	// Enable SGR mouse reporting (button events, button-held motion, and
-	// SGR extended coordinates) so wheel, click, and drag events arrive
-	// as input, and disable it on every exit path so the terminal returns
-	// to ordinary input handling. See TheoryOfMouseSupport.
-	t.enableMouse()
-	defer t.disableMouse()
-
-	resizeCh := make(chan bool, 4)
-	t.tty.NotifyResize(resizeCh)
-	keyCh := make(chan string, 16)
-	go taiui.ReadKeys(t.tty, keyCh)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.mu.Lock()
-				t.runErr = fmt.Errorf("panic: %v", r)
-				t.mu.Unlock()
-				t.write([]byte(fmt.Sprintf("[panic] %v\n", r)))
+	// The taiui.Session owns the terminal lifecycle — cursor hiding,
+	// mouse reporting, key decoding, resize notification, and the
+	// coalesced update channel — and recovers a panic in gen into the
+	// returned error. The TUI supplies only its behavior: rendering,
+	// key dispatch, resize bookkeeping, and the generation function.
+	// See taiui.TheoryOfSession and TheoryOfTUI.
+	sess := &taiui.Session{
+		Tty:    t.tty,
+		Screen: t.screen,
+		Update: t.updateCh,
+		Mouse:  true,
+		Render: t.render,
+		Key:    t.handleKey,
+		OnResize: func(width, height int) {
+			t.mu.Lock()
+			t.width, t.height = width, height
+			t.mu.Unlock()
+		},
+		Gen: gen,
+		GenEnd: func(err error) {
+			if err != nil {
+				t.write([]byte(err.Error() + "\n"))
 			}
 			t.mu.Lock()
 			// The session has ended: clear the in-flight hint with the
@@ -985,232 +1016,30 @@ func (t *TUI) Run(gen func()) error {
 			t.handoff = false
 			t.mu.Unlock()
 			t.notify()
-		}()
-		gen()
-	}()
-
-	for {
-		t.render()
-		select {
-		case key := <-keyCh:
-			// taiui.ReadKeys returns generic key names ("q", "s", "?",
-			// "[", "]"); mapTUIKey translates the TUI's key bindings to
-			// semantic names so the switch below reads as a table of
-			// actions, not a table of characters. Generic key names that
-			// the TUI does not bind (arrows, function keys, mouse events)
-			// pass through unchanged. See TheoryOfTUIKeyMapping.
-			key = mapTUIKey(key)
-			// Any key other than a quit key cancels a pending quit
-			// confirmation before its normal processing, so an
-			// accidental q press never loses the session. See
-			// TheoryOfTUI.
-			if key != "quit" {
-				t.cancelConfirmQuit()
-			}
-			switch {
-			case strings.HasPrefix(key, taiui.MouseKeyPrefix):
-				t.handleMouseKey(key)
-			case key == "tab":
-				t.cycleFocus()
-			case key == "1":
-				t.toggleTab(0)
-			case key == "2":
-				t.toggleTab(1)
-			case key == "3":
-				t.toggleTab(2)
-			case key == "split":
-				t.toggleSplit()
-			case key == "prev-transition":
-				t.jumpToTransition(-1)
-			case key == "next-transition":
-				t.jumpToTransition(1)
-			case key == "up":
-				t.scroll(-1)
-			case key == "down":
-				t.scroll(1)
-			case key == "pageup":
-				t.pageScroll(-1)
-			case key == "pagedown":
-				t.pageScroll(1)
-			case key == "home":
-				t.scrollTo(0)
-			case key == "end":
-				t.scrollTo(1 << 30)
-			case key == "help":
-				t.toggleHelp()
-			case key == "quit":
-				// The first quit key press shows a confirmation bar; a
-				// second press confirms the quit. See TheoryOfTUI.
-				if t.handleQuitKey() {
-					t.mu.Lock()
-					height := t.height
-					err := t.runErr
-					t.mu.Unlock()
-					fmt.Fprintf(t.tty, "\x1b[%d;1H", height)
-					return err
-				}
-			}
-		case <-t.updateCh:
-		case <-resizeCh:
-			if ws, err := t.tty.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
-				t.mu.Lock()
-				t.width, t.height = ws.Width, ws.Height
-				t.mu.Unlock()
-				t.screen.Resize(ws.Width, ws.Height)
-			}
-		}
+		},
 	}
+	return sess.Run()
 }
 
-// enableMouse switches the terminal into SGR mouse reporting (button
-// events, button-held motion, and extended coordinates). It is called
-// when the TUI starts, so wheel, click, and drag events arrive as input.
-// See TheoryOfMouseSupport.
-func (t *TUI) enableMouse() {
-	io.WriteString(t.tty, taiui.MouseEnableSequence)
-}
-
-// disableMouse restores the terminal to ordinary input handling. It is
-// deferred from every path out of TUI.Run, so mouse reporting never
-// leaks after the TUI stops. See TheoryOfMouseSupport.
-func (t *TUI) disableMouse() {
-	io.WriteString(t.tty, taiui.MouseDisableSequence)
-}
-
-// tabAt returns the index of the tab whose panel box contains the given
-// 0-based cell coordinates, or -1 when the point is outside every panel.
-// The tab boxes tile the screen (expanded panels and collapsed strips are
-// laid out without gaps), so a point normally falls in exactly one panel.
-// See TheoryOfMouseSupport.
-func (t *TUI) tabAt(x, y int) int {
-	boxes := t.tabs.Boxes(t.width, t.height)
-	for idx, box := range boxes {
-		if x >= box.Left && x < box.Right && y >= box.Top && y < box.Bottom {
-			return idx
-		}
-	}
-	return -1
-}
-
-// parseMouseKey splits a mouse key name emitted by taiui.ReadKeys into its
-// event kind and 0-based cell coordinates: "mouse-left@12,34" returns
-// ("left", 12, 34, true). See taiui.TheoryOfMouseInput.
-func parseMouseKey(key string) (button string, x, y int, ok bool) {
-	name, coord, found := strings.Cut(key, "@")
-	if !found || name == "" {
-		return "", 0, 0, false
-	}
-	button = strings.TrimPrefix(name, taiui.MouseKeyPrefix)
-	if button == "" || button == name {
-		return "", 0, 0, false
-	}
-	xStr, yStr, found := strings.Cut(coord, ",")
-	if !found {
-		return "", 0, 0, false
-	}
-	var err error
-	if x, err = strconv.Atoi(xStr); err != nil {
-		return "", 0, 0, false
-	}
-	if y, err = strconv.Atoi(yStr); err != nil {
-		return "", 0, 0, false
-	}
-	return button, x, y, true
-}
-
-// handleMouseKey routes a mouse key name to the tab interaction it
-// describes. Wheel events scroll the pane under the cursor; a left press
-// switches or collapses tabs and starts a drag-scroll; a release ends it.
-// Middle and right presses, no-button motion, and wheel releases are
-// ignored. See TheoryOfMouseSupport.
 func (t *TUI) handleMouseKey(key string) {
-	button, x, y, ok := parseMouseKey(key)
+	event, x, y, ok := taiui.ParseMouseKey(key)
 	if !ok {
 		return
 	}
-	switch button {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch event {
 	case "wheel-up":
-		t.mouseScroll(x, y, -1)
+		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, -1)
 	case "wheel-down":
-		t.mouseScroll(x, y, 1)
+		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
-		t.mousePress(x, y)
+		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
 	case "release":
-		t.mouseRelease()
+		t.mouse.Release()
 	case "leftdrag":
-		t.mouseDrag(x, y)
+		t.mouse.Drag(t.tabs, t.scrolls[:], y)
 	}
-}
-
-// mousePress handles a left-button press at the given cell. A press on a
-// collapsed tab's strip expands and focuses it, resuming the live tail. A
-// press on an expanded tab's label strip toggles it like its number key:
-// pressing the focused tab collapses it, pressing another tab's strip
-// takes the focus without collapsing. A press inside an expanded tab's
-// scroll area focuses the tab and records the drag origin for
-// drag-scrolling. See TheoryOfMouseSupport.
-func (t *TUI) mousePress(x, y int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// A new press always ends any previous drag interaction.
-	t.mouseDragTab = -1
-	idx := t.tabAt(x, y)
-	if idx < 0 {
-		return
-	}
-	box := t.tabs.Boxes(t.width, t.height)[idx]
-	if !t.tabs.Expanded[idx] {
-		t.tabs.Toggle(idx)
-		t.scrolls[idx].Follow = true
-		return
-	}
-	if y == box.Top {
-		t.tabs.Toggle(idx)
-		return
-	}
-	if t.tabs.Focus != idx {
-		t.tabs.Toggle(idx)
-	}
-	t.mouseDragTab = idx
-	t.mouseDragStartY = y
-	t.mouseDragStartOffset = t.scrolls[idx].Offset
-}
-
-// mouseScroll scrolls the tab whose panel is under the given cell by delta
-// rows in response to a wheel event. The wheel targets the pane under the
-// cursor without changing the focus, so the user can read any pane while
-// keyboard navigation stays put; scrolling a collapsed tab is a no-op. See
-// TheoryOfMouseSupport.
-func (t *TUI) mouseScroll(x, y, delta int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	idx := t.tabAt(x, y)
-	if idx < 0 || !t.tabs.Expanded[idx] {
-		return
-	}
-	t.scrolls[idx].Scroll(delta)
-}
-
-// mouseDrag scrolls the tab that the press started in by the pointer's
-// movement since the press: dragging up reveals earlier content, dragging
-// down reveals the tail. The scroll offset is anchored to the press origin
-// so the content follows the pointer even when motion events are skipped.
-// See TheoryOfMouseSupport.
-func (t *TUI) mouseDrag(x, y int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.mouseDragTab < 0 || !t.tabs.Expanded[t.mouseDragTab] {
-		return
-	}
-	offset := t.mouseDragStartOffset + (t.mouseDragStartY - y)
-	t.scrolls[t.mouseDragTab].ScrollTo(offset)
-}
-
-// mouseRelease ends an in-progress drag-scroll.
-func (t *TUI) mouseRelease() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.mouseDragTab = -1
 }
 
 func (t *TUI) scroll(delta int) {
@@ -1223,13 +1052,6 @@ func (t *TUI) scroll(delta int) {
 	t.scrolls[idx].Scroll(delta)
 }
 
-// pageScroll scrolls the focused pane by one page. The page size is the
-// pane's scroll view height minus one row, so one line of the previous
-// view remains on screen: page down keeps the previous last row at the
-// top, page up keeps the previous first row at the bottom. The page
-// size is derived from the focused pane's actual layout, so in stacked
-// (horizontal split) mode it matches the pane height rather than the
-// full terminal height.
 func (t *TUI) pageScroll(direction int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1243,7 +1065,7 @@ func (t *TUI) pageScroll(direction int) {
 		return
 	}
 	// The scroll view is the panel box minus the one-row label strip.
-	paneHeight := max(box.Height()-1, 1)
+	paneHeight := taiui.PaneHeight(box)
 	t.scrolls[idx].PageScroll(direction, paneHeight)
 }
 
@@ -1259,23 +1081,6 @@ func (t *TUI) scrollTo(top int) {
 	t.scrolls[idx].ScrollTo(top)
 }
 
-// jumpToTransition moves the Output tab's view to the nearest section
-// transition stop in the given direction: -1 for the previous stop, +1
-// for the next. Each transition contributes two stops: the exit stop
-// shows how the previous section ends — its last line anchored at the
-// bottom of the pane — and the entry stop shows how the new section
-// begins — its first line anchored at the top. A transition is a color
-// change between consecutive wrapped display lines: the Output tab
-// colors each section by its role and thinking state (see
-// captureContent), and WrapLinesColored carries a source line's color
-// onto every wrapped display line. The jump targets the same
-// display-line coordinate space as the scroll offsets. A collapsed
-// Output tab expands on the jump, and the jump takes the focus so the
-// result is visible; the jump stops following the tail. A backward jump
-// with no earlier stop falls back to the very beginning of the content,
-// so the [ key always reaches the start of the first section — a display
-// line that is never itself a transition (see transitionBoundaries). See
-// TheoryOfTUI.
 func (t *TUI) jumpToTransition(direction int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1299,36 +1104,16 @@ func (t *TUI) jumpToTransition(direction int) {
 	// offset (e.g., the tail sentinel before the first render) anchors
 	// the jump at the content end. The pane height is the panel box
 	// minus its one-row label strip, matching render's scroll updates.
-	paneHeight := max(box.Height()-1, 1)
+	paneHeight := taiui.PaneHeight(box)
 	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
-	stops := transitionJumpStops(display, paneHeight)
-	target := -1
-	if direction < 0 {
-		// previous: the closest stop below the view start. The stop
-		// list is in transition order, not offset order, so the closest
-		// stop is found by comparison, not by list position.
-		for _, s := range stops {
-			if s < offset && (target < 0 || s > target) {
-				target = s
-			}
-		}
-		// When no stop precedes the view start — the view is at or
-		// before the first transition's exit stop — jump to the very
-		// beginning of the content. The first display line is never a
-		// stop (see transitionBoundaries), so without this fallback
-		// the [ key could not reach the start of the first section.
-		if target < 0 {
-			target = 0
-		}
-	} else {
-		// next: the closest stop above the view start
-		for _, s := range stops {
-			if s > offset && (target < 0 || s < target) {
-				target = s
-			}
-		}
-	}
-	if target < 0 {
+	// The stops come from taiui.TransitionJumpStops (each transition
+	// contributes the exit stop and the entry stop) and the selection —
+	// including the backward fallback to the very beginning of the
+	// content — from taiui.JumpStopOffset. See
+	// taiui.TheoryOfSectionNavigation.
+	stops := taiui.TransitionJumpStops(display, paneHeight)
+	target, ok := taiui.JumpStopOffset(stops, offset, direction)
+	if !ok {
 		return
 	}
 	// The target is clamped to the content extent so the offset is valid
@@ -1340,11 +1125,6 @@ func (t *TUI) jumpToTransition(direction int) {
 	t.scrolls[0].Follow = false
 }
 
-// render presents the current state through a fresh element tree. It
-// computes the wrapped display lines of each expanded tab, updates the
-// scroll offsets against the fresh display lengths, and builds the root
-// element with plain functions; there is no provider graph or cached view
-// scope. See TheoryOfTUI.
 func (t *TUI) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1371,7 +1151,7 @@ func (t *TUI) render() {
 		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
 		}
-		t.scrolls[idx].Update(len(displays[idx]), max(boxes[idx].Height()-1, 1))
+		t.scrolls[idx].Update(len(displays[idx]), taiui.PaneHeight(boxes[idx]))
 	}
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
