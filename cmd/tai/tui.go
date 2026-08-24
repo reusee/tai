@@ -128,7 +128,11 @@ change, first how the previous section ends and then how the new one
 begins, so both sides of a change are reachable, not only section starts.
 A backward jump with no earlier stop falls back to the very beginning of
 the output, so the start of the first section — a display line that is never
-itself a transition — is always reachable by section navigation. The
+itself a transition — is always reachable by section navigation. A forward
+jump with no later stop falls back to the live tail, the symmetric
+endpoint, so the ] key always moves the view to a defined position —
+without the fallback the key would silently do nothing whenever the view
+sits in the last section or the output has one uniform section. The
 jump stops following the tail, and a collapsed Output tab expands and takes
 the focus so the jump result is visible. When the generation
 finishes, the TUI stays open so the output can be browsed, and q (or Ctrl-C)
@@ -1114,7 +1118,18 @@ func (t *TUI) jumpToTransition(direction int) {
 	stops := taiui.TransitionJumpStops(display, paneHeight)
 	target, ok := taiui.JumpStopOffset(stops, offset, direction)
 	if !ok {
-		return
+		if direction < 0 {
+			return
+		}
+		// No stop lies ahead: the view sits at or past the last section
+		// transition, or the output has a single uniform section. The
+		// forward key falls back to the live tail, mirroring the
+		// backward fallback to the content start, so it always moves
+		// the view to a well-defined endpoint instead of silently doing
+		// nothing. The tail sentinel is clamped to the content extent
+		// below; landing on the last row lets the next render's Update
+		// resume following the tail.
+		target = 1 << 30
 	}
 	// The target is clamped to the content extent so the offset is valid
 	// immediately; a transition beyond the last view position shows at

@@ -2345,9 +2345,18 @@ func TestTUIJumpToTransition(t *testing.T) {
 		if tui.scrolls[0].Offset != 42 {
 			t.Fatalf("expected offset 42 at the tail entry stop, got %d", tui.scrolls[0].Offset)
 		}
+		// Past the last stop no transition lies ahead: the forward key
+		// falls back to the live tail — the symmetric endpoint of the
+		// backward fallback to the content start — instead of silently
+		// doing nothing. The display holds 62 lines and the pane shows
+		// 7, so the tail offset is 55.
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 42 {
-			t.Fatalf("expected the view to stay at 42 past the last stop, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 55 {
+			t.Fatalf("expected offset 55 at the live tail past the last stop, got %d", tui.scrolls[0].Offset)
+		}
+		tui.jumpToTransition(1)
+		if tui.scrolls[0].Offset != 55 {
+			t.Fatalf("expected the view to stay at the tail, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
@@ -2463,15 +2472,21 @@ func TestTUIJumpToTransition(t *testing.T) {
 		tui.tabs.Expanded = []bool{true, false, false}
 		tui.tabs.HasContent = []bool{true, false, false}
 		tui.tabs.Focus = 0
-		tui.scrolls[0].Offset = 0
 		tui.screen = taiui.NewTerminalScreen(&strings.Builder{}, 80, 10)
 		tui.width = 80
 		tui.height = 10
 		// All lines share the default color: no transitions to jump to.
-		tui.write([]byte("line one\nline two\n"))
+		// The forward key must still move the view — the whole output is
+		// one section, so it falls back to the live tail — just as the
+		// backward key falls back to the very beginning. With 20 lines
+		// in a 7-row pane the tail offset is 13.
+		for i := 0; i < 20; i++ {
+			tui.write([]byte(fmt.Sprintf("line %02d\n", i)))
+		}
+		tui.scrolls[0].Offset = 0
 		tui.jumpToTransition(1)
-		if tui.scrolls[0].Offset != 0 {
-			t.Fatalf("expected the view unchanged without transitions, got %d", tui.scrolls[0].Offset)
+		if tui.scrolls[0].Offset != 13 {
+			t.Fatalf("expected the ] key to reach the live tail without transitions, got %d", tui.scrolls[0].Offset)
 		}
 	})
 
