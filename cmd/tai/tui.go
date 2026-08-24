@@ -158,6 +158,22 @@ pipeline.HandoffObserver provider drives the title state: HandoffStart sets
 the handoff flag, HandoffEnd clears it.
 `
 
+// TheoryOfTUIDisplayFork documents why the generation loop is resolved
+// after the TUI display writer forks. See forkTUIDisplay.
+const TheoryOfTUIDisplayFork = `
+The TUI display writers (the Logs pane, the Output tab, and the
+Summary-tab signal writers) are forked into the scope before the
+generation loop is resolved from it. pipeline.Run — Module.Run — binds
+pipeline.UsageWriter and logs.Logger from the scope at
+provider-resolution time, so the loop must be resolved AFTER the forks
+take effect: a loop resolved before them binds the pre-fork providers —
+a nil UsageWriter and the Logger built during startup on the real stderr
+— so the per-round "[Usage]" line bypasses the Summary tab, paints the
+raw terminal, and vanishes on the next repaint. The state-decorator Run
+wrapper is layered in a second fork so its pipeline.Run def does not
+resolve itself recursively.
+`
+
 const TheoryOfSummaryExtraction = `
 taiui summary extraction theory:
 - Summary blocks are extracted into the Summary tab only from the model's
@@ -1399,6 +1415,57 @@ func tuiShowThoughts(thoughts flags.Thoughts) bool {
 	return true
 }
 
+// forkTUIDisplay layers the TUI display writers onto scope and returns
+// the scope the command runs in. The generation loop is resolved AFTER
+// the writer forks take effect: Module.Run binds pipeline.UsageWriter and
+// logs.Logger from the scope at provider-resolution time, so a loop
+// resolved before the forks would keep the pre-fork providers — a nil
+// UsageWriter and the raw-stderr Logger — and the per-round usage line
+// would bypass the Summary tab, paint the raw terminal, and vanish on
+// the next repaint. The state-decorator wrapper is layered in a second
+// fork so its pipeline.Run def does not resolve itself recursively. See
+// TheoryOfTUIDisplayFork, pipeline.TheoryOfUsageLogging, and TheoryOfTUI.
+func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
+	scope = scope.Fork(
+		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
+		// Command-level output (ping verdicts, goal banners, applied
+		// notices) goes to the Output tab via the dscope-resolved Output
+		// writer. Generation output is captured separately and never
+		// routed here. See TheoryOfCommandOutput.
+		func() Output { return Output(tui.Writer()) },
+		// Periodic thought summaries are routed to the Summary tab so
+		// the condensed reasoning appears alongside the round summaries
+		// and finish signals, while the Output tab keeps streaming the
+		// raw thoughts. See pipeline.TheoryOfThoughtsSummarize and
+		// TheoryOfTUI.
+		func() pipeline.ThoughtSummaryWriter { return pipeline.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
+		// Per-round token usage lines are routed to the Summary tab so
+		// they read as round signals alongside summaries and finish
+		// reasons; without the fork the usage goes to the logger and
+		// the Logs pane. See pipeline.TheoryOfUsageLogging.
+		func() pipeline.UsageWriter { return pipeline.UsageWriter(tui.UsageWriter()) },
+		// Handoff generation streams to the Output tab and reports its
+		// lifecycle through the HandoffObserver, so the title shows
+		// "Output (handoff...)" while a handoff request is in flight.
+		// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
+		func() pipeline.HandoffWriter { return pipeline.HandoffWriter(tui.Writer()) },
+		func() pipeline.HandoffObserver { return tui },
+		// The round statistics table is routed to the Output tab: the
+		// pipeline prints it via a deferred call at the end of the
+		// session, and the generation output writer it receives is the
+		// redirected null device in TUI mode. See
+		// pipeline.TheoryOfRoundStatistics.
+		func() pipeline.RoundStatsWriter { return pipeline.RoundStatsWriter(tui.Writer()) },
+	)
+	// Resolve the loop from the display scope so Module.Run binds the
+	// TUI's UsageWriter (Summary tab) and the Logs-pane Logger at
+	// provider-resolution time. See TheoryOfTUIDisplayFork.
+	loopRun := scope.Get[pipeline.Run]()
+	return scope.Fork(func() pipeline.Run {
+		return withTUIOutputObserver(loopRun, tui)
+	})
+}
+
 func runWithTUI(command Command, scope dscope.Scope) {
 	tui, err := newTUI()
 	if err != nil {
@@ -1439,17 +1506,6 @@ func runWithTUI(command Command, scope dscope.Scope) {
 		_, _ = io.Copy(tui.Writer(), pr)
 	}()
 
-	// The state decorator wraps the generation state so model output —
-	// text, thoughts, tool calls, finish reasons — is read directly from
-	// the state and forwarded to the TUI. This replaces the previous
-	// stdout-pipe capture and finish-reason observer: the TUI no longer
-	// captures model output through a pipe, and the Round tab never
-	// scans rendered output for "[Finish: ...]" markers. The decorator
-	// is passed through RunOptions.StateDecorators by wrapping the
-	// pipeline.Run provider: the original Run is resolved before the fork,
-	// and the wrapper appends the decorator to the options before
-	// delegating. See TheoryOfTUI.
-	originalRun := scope.Get[pipeline.Run]()
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
 	// -summarize-thoughts adds periodic summaries in the Summary tab but
 	// never suppresses the raw stream, because blanking the focused
@@ -1458,40 +1514,12 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	// scope before the generation goroutine starts, so the policy is
 	// fixed for the session. See TheoryOfTUI.
 	tui.showThoughts = tuiShowThoughts(scope.Get[flags.Thoughts]())
-	scope = scope.Fork(
-		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
-		// Command-level output (ping verdicts, goal banners, applied
-		// notices) goes to the Output tab via the dscope-resolved Output
-		// writer. Generation output is captured separately and never
-		// routed here. See TheoryOfCommandOutput.
-		func() Output { return Output(tui.Writer()) },
-		// Periodic thought summaries are routed to the Summary tab so
-		// the condensed reasoning appears alongside the round summaries
-		// and finish signals, while the Output tab keeps streaming the
-		// raw thoughts. See pipeline.TheoryOfThoughtsSummarize and
-		// TheoryOfTUI.
-		func() pipeline.ThoughtSummaryWriter { return pipeline.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
-		// Per-round token usage lines are routed to the Summary tab so
-		// they read as round signals alongside summaries and finish
-		// reasons; without the fork the usage goes to the logger and
-		// the Logs pane. See pipeline.TheoryOfUsageLogging.
-		func() pipeline.UsageWriter { return pipeline.UsageWriter(tui.UsageWriter()) },
-		// Handoff generation streams to the Output tab and reports its
-		// lifecycle through the HandoffObserver, so the title shows
-		// "Output (handoff...)" while a handoff request is in flight.
-		// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
-		func() pipeline.HandoffWriter { return pipeline.HandoffWriter(tui.Writer()) },
-		func() pipeline.HandoffObserver { return tui },
-		// The round statistics table is routed to the Output tab: the
-		// pipeline prints it via a deferred call at the end of the
-		// session, and the generation output writer it receives is the
-		// redirected null device in TUI mode. See
-		// pipeline.TheoryOfRoundStatistics.
-		func() pipeline.RoundStatsWriter { return pipeline.RoundStatsWriter(tui.Writer()) },
-		func() pipeline.Run {
-			return withTUIOutputObserver(originalRun, tui)
-		},
-	)
+	// Fork the display writers (Logs pane, Output tab, Summary-tab
+	// signals) and rebind the generation loop to them; the loop's
+	// state-decorator wrapper is layered on top so model output is
+	// captured from the generation state. The loop must be resolved
+	// after the writer forks — see TheoryOfTUIDisplayFork.
+	scope = forkTUIDisplay(scope, tui)
 	// Display the user's chat input (flags.Chats) at the top of the
 	// Output tab before the command starts generating. The chat lives in
 	// the initial generation state, which the tuiOutputState decorator
