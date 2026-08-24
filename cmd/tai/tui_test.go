@@ -2783,10 +2783,10 @@ func TestTuiThoughtSummaryWriter(t *testing.T) {
 }
 
 func TestTuiUsageWriter(t *testing.T) {
-	tui, err := newTUI()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// TUI tests must use newTUIForTest: newTUI opens the controlling
+	// terminal and switches it to raw mode via Start, and a test that
+	// never calls Stop leaves the terminal corrupted (needing `reset`).
+	tui := newTUIForTest()
 	line := "[Usage] round 1: prompt 100, cached 20, completion 50, thoughts 10"
 	if _, err := tui.UsageWriter().Write([]byte(line)); err != nil {
 		t.Fatal(err)
