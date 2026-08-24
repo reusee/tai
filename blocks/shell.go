@@ -52,6 +52,7 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - You MAY emit multiple shell blocks in one response, but only when their commands are independent of one another: no shell block can use the output of another shell block from the same response.
 - Do NOT emit change blocks or read blocks whose content depends on the shell output: the results have not arrived yet, so emitting them before the results arrive creates pointless loops.
 - After the last shell block, stop generating, end the response with a summary block, and wait for the results.
+- Never end a response on a shell block: after the last shell block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted.
 - When the results arrive as user content in the next round (formatted as "Shell command: <command>" followed by the output), read them before emitting anything else. If another command is needed, emit a new shell block in that round and wait for its results in the following round.
 **Security policy**: Only commands in the allowed list are executed. Allowed command categories:
   - File viewing: ls, cat, head, tail, wc, file, stat, tree, du, df
@@ -80,7 +81,8 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 `
 
 const ShellBlockRestatePrompt = `- Shell block: emit a shell block whose body is the shell command to execute. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
-- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or read blocks that depend on the shell output until the results arrive.`
+- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. After the last shell block, stop and end the response with a summary block. Do not emit change blocks or read blocks that depend on the shell output until the results arrive.
+- Never end a response on a shell block: after the last shell block's closing line, the next block MUST be the summary block.`
 
 const shellTimeout = 30 * time.Second
 

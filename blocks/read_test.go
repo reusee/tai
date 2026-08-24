@@ -526,8 +526,14 @@ func TestReadBlockPromptsRequireSummary(t *testing.T) {
 	if strings.Contains(ReadBlockSystemPrompt, "stop generating and wait for the system to provide") {
 		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
 	}
+	if !strings.Contains(ReadBlockSystemPrompt, "Never end a response on a read block") {
+		t.Fatal("system prompt must state the sequence rule: the block after a read block must be the summary block")
+	}
 	if !strings.Contains(ReadBlockRestatePrompt, "does NOT replace the summary block") {
 		t.Fatal("restate prompt must state that a read block does not replace the summary block")
+	}
+	if !strings.Contains(ReadBlockRestatePrompt, "Never end a response on a read block") {
+		t.Fatal("restate prompt must state the sequence rule: the block after a read block must be the summary block")
 	}
 }
 

@@ -50,27 +50,29 @@ TestFoo or -run TestBar/subcase) produce faster, more focused feedback and avoid
 noise from unrelated test failures. The model should only fall back to package-level
 or ./... runs when it needs a broad sanity check or does not yet know which tests
 are relevant. After modifying or adding a test function, the go-test block should
-name that function in the -run argument so the verification is directly tied to the
-change.
+name that function in the -run argument so the verification is directly tied to
+the change.
 
 The go-test block does not carry the round's narrative — that is the summary
 block's role. When the model emits a go-test block, it must still emit a summary
 block in the same round to describe what was done, including the test
-verification. A round with a go-test block but no summary block is not retried —
-the block itself signals that the model is waiting for component processing (see
-pipeline.TheoryOfLoops) — but the round statistics and the summary display then lose
-the round's narrative, which is why the go-test prompt states the summary
-requirement with the same wording as the shell prompt. This applies to every
-round, including debug rounds where tests fail and the go-test component produces
-Parts that trigger a new round.
+verification. A round with a go-test block but no summary block is retried with
+feedback naming the missing summary: the go-test block is discarded with the
+failed attempt and must be re-emitted together with the summary block —
+re-emission is what makes the test run happen (see pipeline.TheoryOfLoops). This
+applies to every round, including debug rounds where tests fail and the go-test
+component produces Parts that trigger a new round; the go-test prompt states the
+summary requirement with the same wording as the shell prompt and adds the
+sequence rule that the block after the go-test block's closing line must be the
+summary block.
 
 ProcessGoTestBlocks always returns test output, regardless of whether tests pass
 or fail; the go-test component feeds it back as user content, always triggering a
 new round. Some models run tests first and need the results to decide whether to
-continue; withholding output on pass causes the system to exit prematurely when
-the model intended to proceed. By always feeding back stdout and stderr, the model
-can see pass results and continue its workflow, or see failure output and debug
-the issues.
+continue; withholding output on pass causes the system to exit prematurely when they
+intended to proceed after seeing the test results. By always feeding back stdout and
+stderr, the model can see pass results and continue its workflow, or see failure
+output and debug the issues.
 `
 
 const GoTestBlockSystemPrompt = `
@@ -86,7 +88,8 @@ Use the "go-test" kind to run Go tests and receive the output as part of the nex
 - Both stdout and stderr are captured and fed back as user content in the next round, regardless of whether tests pass or fail.
 - Prefer running tests after applying change blocks to verify correctness.
 - Close the go-test block with its closing line before emitting any other block (e.g., the summary block): the closing line must appear before the next block's opening marker.
-- The go-test block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block. Without a summary, the system assumes the output was truncated and retries the round unnecessarily.
+- The go-test block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-test block, describing what was done (including running tests). Every round — including debug rounds where tests fail — must end with a summary block.
+- Never end a response on a go-test block: after the go-test block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted, so the test run is lost unless re-requested with the summary.
 - The go-test block should appear before the summary block in the response.
 `
 
@@ -96,7 +99,8 @@ const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test bl
 - **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
 - Both stdout and stderr are fed back as user content in the next round, regardless of whether tests pass or fail. Fix any failures and try again.
 - Only use go-test blocks in Go projects.
-- A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.`
+- A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
+- Never end a response on a go-test block: after the go-test block's closing line, the next block MUST be the summary block.`
 
 const goTestTimeout = 120 * time.Second
 

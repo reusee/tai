@@ -73,9 +73,11 @@ package together with the resolver (ResolveGoSymbols, which needs the
 parsed ASTs); the blocks package defines only the generic block format
 and the language-neutral kinds. Like read, go-src is strictly read-only
 and is not a completion signal: a round carrying a go-src block still
-needs a summary block, and because the kind is processable it
-participates in the triggering-block check, so such a round is not
-retried as truncated output (see pipeline.TheoryOfLoops).
+needs a summary block. A round that ends on a go-src block without a
+summary is retried with feedback naming the missing summary; the go-src
+block is discarded with the failed attempt and must be re-emitted
+together with the summary block — re-emission is what makes the symbol
+requests take effect (see pipeline.TheoryOfLoops).
 `
 
 const GoSrcBlockSystemPrompt = `
@@ -105,6 +107,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - After emitting a go-src block, stop generating, end the response with a summary block, and wait: the requested source arrives as user content in the next round.
 - Close the go-src block with its closing line before emitting any other block (e.g., the summary block).
 - The go-src block is NOT a completion signal. MUST still emit a summary block in the same round, after the go-src block. Every round must end with a summary block.
+- Never end a response on a go-src block: after the go-src block's closing line, the next block MUST be the summary block. A response that ends without a summary block is treated as incomplete and retried — its blocks are discarded and must be re-emitted, so the symbol requests are lost unless re-emitted with the summary.
 - Only use go-src blocks in Go projects.
 `
 
@@ -115,7 +118,8 @@ const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a
 - The resolved source names the defining file; use that file path as the change block's file-path. go-src returns an in-memory snapshot of the files loaded at context assembly and does not re-read the disk: a file modified by change blocks in this session still shows its pre-modification content. Verify applied changes with go-test blocks or by reading the file, not by re-fetching with go-src.
 - Each resolved source part is followed by a references report listing which top-level declarations reference the symbol, one per line as "package path: enclosing top-level declaration (file)", deduplicated per top-level declaration and possibly truncated at 100 — use it to judge blast radius and callers before changing the symbol.
 - Reports follow every resolved source part: references (callers), selector packages (full import paths of packages used in selector expressions within the declaration), and interface relations for named types and interfaces (satisfies / implemented by).
-- A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.`
+- A go-src block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-src block.
+- Never end a response on a go-src block: after the go-src block's closing line, the next block MUST be the summary block.`
 
 // ParseGoSrcSymbols extracts the symbol names from go-src blocks: each
 // non-empty, trimmed body line is one symbol. Blocks of other kinds are

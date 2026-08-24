@@ -94,13 +94,14 @@ chain within the same round, triggered by a missing completion (no summary
 block) or an error after content output. Retries count as loops in round
 statistics.
 
-Retry on missing completion and handoff: a round without a summary block,
-or with an abnormal finish reason (e.g., "length" from max-token truncation),
-was truncated mid-stream — the generation limit hit before the model emitted
-its closing summary block, or the model emitted a summary and continued until
-cut off. Truncation often happens because the model attempted too many changes
-in a single turn. The round is retried from the original pre-generation State.
-When output meets the minimum threshold, the handoff process creates a
+Retry on missing completion and handoff: a round without a summary block —
+whether the generation limit truncated the model mid-stream before its
+closing summary block, the model emitted a summary and continued until cut
+off, or the model ended its response without one — or with an abnormal
+finish reason (e.g., "length" from max-token truncation), is retried from
+the original pre-generation State. Truncation often happens because the
+model attempted too many changes in a single turn. When output meets the
+minimum threshold, the handoff process creates a
 self-contained summary carrying forward established conclusions, attempted
 changes, and task-partitioning guidance. The retry user prompt explicitly
 instructs the model to partition extensive modifications: implement an initial
@@ -109,16 +110,21 @@ use a continue block to carry over the remaining work into subsequent rounds,
 preventing repeated truncation loops. Short or empty outputs are retried directly.
 See TheoryOfHandoff.
 
-Component-triggering blocks (read, shell, continue, go-test) also
-serve as completion signals: a round with such blocks but no summary block is
-not retried, because the model is waiting for component processing (e.g.,
-fetched context, shell output) rather than truncated. Retrying would discard
-the blocks and produce the same output again.
+The summary block is non-negotiable: every round that ends without a summary
+block is retried when RetryOnMissingCompletion is enabled, including rounds
+whose blocks trigger components (read, shell, continue, go-test, go-src). No
+block kind replaces or implies the summary. The retry feedback names the
+violation — missingSummaryRetryPrefix when the response simply ended without
+the summary block, incompleteOutputHandoffPrefix when the finish reason shows
+truncation — states the attempt number, and instructs the model to re-emit
+every block it intends to take effect together with the summary block,
+because the failed attempt's blocks were discarded.
 
 When the retry budget is exhausted and the final attempt still lacks a summary
 block, the loop synthesizes a summary from the round's output and appends it
 to the state as a summary block, so the round has a completion signal for the round
-statistics and the TUI's Summary tab.
+statistics and the TUI's Summary tab. The synthesis applies to every exhausted
+round, including rounds whose blocks trigger components.
 
 Retry on error: an error after content output retries from the state that includes
 the partial output, appending the error context and the handoff summary as user content.
@@ -163,6 +169,8 @@ const defaultMaxRetries = 3
 const maxParseErrorRounds = 3
 
 const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Truncation typically occurs when attempting too many changes in a single response, exceeding the output limit. If the planned modifications are extensive, do NOT attempt to emit all changes at once. Instead, partition the work: implement a manageable initial subset of change blocks in this round, and use a continue block to carry over the remaining tasks into subsequent rounds. Re-emit every block you intend to take effect in this round. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work on disk, and no next step to carry forward without implementation. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, decisions, and attempted changes. Use it as reference to partition and guide your work, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
+
+const missingSummaryRetryPrefix = "[System note: Your previous response ended WITHOUT the required summary block. This is retry attempt %d of %d. The summary block is MANDATORY in every response: it is the completion signal the system uses to verify that generation ended normally and followed the rules. No other block — change, shell, go-test, go-src, read, continue — replaces or implies it. The previous attempt was discarded: its structured blocks were NOT processed. Re-emit every block you intend to take effect, then close the response with a summary block (a \"- \" bullet list of what was done; \"No changes were needed.\" when nothing was done). Never end a response on any block other than the summary block.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The
@@ -430,19 +438,12 @@ func (ls *loopState) runRound() (roundResult, error) {
 			break
 		}
 
-		// Component-triggering blocks (e.g., request-context, shell,
-		// continue) serve as completion signals: the model is waiting
-		// for component processing, not truncated. Skip the retry and
-		// proceed to component processing. See TheoryOfLoops.
-		if hasTriggeringBlocks(collectedBlocks, ls.opts.Components) {
-			break
-		}
-
-		// Check for completion: a summary block signals normal
-		// completion, but an abnormal finish reason (e.g.,
-		// "length" from max-token truncation) overrides the
-		// summary signal and triggers retry. See
-		// TheoryOfSummaryCompletionRetry in generate.go.
+		// Check for completion: the summary block is the only
+		// completion signal — no other block kind (read, shell,
+		// continue, go-test, go-src) completes a round — and an
+		// abnormal finish reason (e.g., "length" from max-token
+		// truncation) overrides the summary signal and triggers
+		// retry. See TheoryOfSummaryCompletionRetry in generate.go.
 		hasCompletion := len(roundSummaries) > 0
 		finishReason := extractFinishReason(phaseState, generators.CountContents(ls.state))
 		isAbnormalFinish := isAbnormalFinishReason(finishReason)
@@ -487,18 +488,33 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		}
 
-		// Append the retry prompt.
+		// Append the retry feedback. The feedback always names the
+		// reason and the attempt number: an abnormal finish reason
+		// frames the retry as truncation; any other missing-summary
+		// round is a rule violation — the model ended its response
+		// without the mandatory summary block — so the feedback says
+		// so explicitly. Blocks from the failed attempt were
+		// discarded, so the model must re-emit every block it intends
+		// to take effect, together with the summary block. The
+		// handoff prompt, when one was produced, follows the prefix.
+		// See TheoryOfLoops and TheoryOfSummaryCompletionRetry.
+		prefixTemplate := incompleteOutputHandoffPrefix
+		if !isAbnormalFinish {
+			prefixTemplate = missingSummaryRetryPrefix
+		}
+		retryParts := []generators.Part{
+			generators.Text(fmt.Sprintf(prefixTemplate, retry+1, ls.maxRetries)),
+		}
 		if retryPrompt != "" {
-			var appendErr error
-			ls.state, appendErr = ls.state.AppendContent(&generators.Content{
-				Role: generators.RoleUser,
-				Parts: []generators.Part{
-					generators.Text(formatHandoffPrompt(retryPrompt, retry+1, ls.maxRetries)),
-				},
-			})
-			if appendErr != nil {
-				break
-			}
+			retryParts = append(retryParts, generators.Text(retryPrompt))
+		}
+		var appendErr error
+		ls.state, appendErr = ls.state.AppendContent(&generators.Content{
+			Role:  generators.RoleUser,
+			Parts: retryParts,
+		})
+		if appendErr != nil {
+			break
 		}
 
 		// Reset for retry.
@@ -515,13 +531,14 @@ func (ls *loopState) runRound() (roundResult, error) {
 		return roundResult{state: phaseState}, roundErr
 	}
 
-	// When the retry budget is exhausted and the final attempt
-	// still produced no summary block, synthesize a summary from
-	// the round's output and append it to the state as a summary
-	// block. Skip synthesis when the round has component-triggering
-	// blocks: the model is waiting for component processing, not
-	// truncated. See TheoryOfLoops.
-	if len(roundSummaries) == 0 && !hasTriggeringBlocks(collectedBlocks, ls.opts.Components) && ls.opts.Handoff != nil {
+	// When the retry budget is exhausted and the final attempt still
+	// produced no summary block, synthesize a summary from the round's
+	// output and append it to the state as a summary block. The
+	// synthesis applies to every exhausted round — including rounds
+	// whose blocks trigger components — because the summary block is
+	// mandatory in every response: the round statistics and the TUI's
+	// Summary tab need the completion signal. See TheoryOfLoops.
+	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
 		if incompleteText != "" {
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
@@ -867,8 +884,11 @@ type RunOptions struct {
 	// RetryOnMissingCompletion enables retry when no summary block is
 	// found in the collected blocks after a round, or when the finish
 	// reason indicates abnormal termination (e.g., "length" from
-	// max-token truncation). This handles truncated output where the
-	// model is cut off mid-stream.
+	// max-token truncation). The summary block is the mandatory
+	// completion signal — no other block kind (read, shell, continue,
+	// go-test, go-src) replaces or implies it — so every round missing
+	// a summary block is retried, including rounds whose blocks trigger
+	// components. See TheoryOfSummaryCompletionRetry in generate.go.
 	RetryOnMissingCompletion bool
 	// RetryOnError enables retry when any error occurs after the model
 	// has output content during a round. The loop summarizes the
@@ -1182,25 +1202,6 @@ var abnormalFinishReasons = map[string]bool{
 // generate.go.
 func isAbnormalFinishReason(reason string) bool {
 	return abnormalFinishReasons[strings.ToLower(reason)]
-}
-
-// hasTriggeringBlocks reports whether any block in collectedBlocks
-// matches a processable component's kind. When the model emits
-// component-triggering blocks (e.g., read, shell, continue)
-// without a summary block, the round is still considered complete
-// because the model is waiting for component processing — retrying
-// would discard the blocks and produce the same output again.
-// See TheoryOfLoops.
-func hasTriggeringBlocks(collectedBlocks []blocks.Block, comps components.ComponentSet) bool {
-	processable := comps.Processable()
-	for _, block := range collectedBlocks {
-		for _, comp := range processable {
-			if comp.Kind != "" && block.Kind == comp.Kind {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // formatParseErrors formats collected parse errors as user content fed

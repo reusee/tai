@@ -51,10 +51,13 @@ other extensions with entirely different body conventions.
 
 For complex tasks, the model maintains a task list in the continue block body.
 In each round, the model selects one or a few tasks from the list to execute,
-produces the corresponding change blocks, and ends with a continue block
-containing the updated task list — marking completed tasks and listing
-remaining tasks. This cycle repeats until all tasks are complete, at which
-point a summary block is used instead.
+produces the corresponding change blocks, and ends with a summary block
+followed by a continue block containing the updated task list — marking
+completed tasks and listing remaining tasks. The continue block does not
+replace the summary block: the summary is mandatory in every response, and a
+round ending on a continue block alone is retried as incomplete. This cycle
+repeats until all tasks are complete, at which point the final round ends with
+only a summary block.
 
 Decomposition must precede any action, including analysis and reasoning, not
 just code changes. A composite task such as "find bugs and fix" contains an
@@ -117,8 +120,10 @@ output bounded so that no single response approaches the limit.
   decompose it into a concrete task list, and note dependencies between tasks.
   Emit NO change blocks in the planning round. For small tasks the plan can be
   brief — a short task list is sufficient.
-- The planning round MUST end with a continue block containing the task list,
-  never only a summary block, because no changes have been produced yet.
+- The planning round MUST end with a summary block followed by a continue
+  block containing the task list. The continue block does not replace the
+  summary block: a response ending without a summary block is incomplete and
+  retried, its blocks discarded.
 - During planning, select and blend task decomposition strategies (see the
   Task Decomposition Strategies section below) to produce the initial task
   list. No single strategy suffices; blend structural, adaptive, quality, and
@@ -130,12 +135,14 @@ output bounded so that no single response approaches the limit.
   handles only a subset. Do not perform analysis first and then decompose only
   the fix phase — the analysis round itself may exceed the generation limit.
 - Each subsequent round executes one or a few tasks from the list, then ends
-  with a continue block carrying the updated task list (completed tasks marked,
-  remaining tasks listed), until all tasks are complete.
+  with a summary block followed by a continue block carrying the updated task
+  list (completed tasks marked, remaining tasks listed), until all tasks are
+  complete.
 - Keep each execution round small. When in doubt, split finer: more rounds
   with less output per round is always safer than fewer rounds that risk
   truncation.
-- The final round ends with a summary block instead of a continue block.
+- The final round ends with only a summary block; do not emit a continue
+  block after it.
 - This mandate applies to EVERY task, including apparently trivial ones, and
   supersedes any guidance elsewhere that permits completing simple tasks in a
   single response without a continue block.

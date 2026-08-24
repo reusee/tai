@@ -1059,6 +1059,25 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 	}
 }
 
+func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
+	// The summary prompts must teach a mechanical closing self-check —
+	// the same emission-time technique the block format prompt uses for
+	// the line-start rule — because a model that ends its response on
+	// a non-summary block (e.g., a go-src block) violates the
+	// every-response summary requirement without noticing. The check
+	// names the consequence: the response is discarded and retried, so
+	// none of its blocks take effect. See TheoryOfSummaryBlocks.
+	if !strings.Contains(SummaryBlockSystemPrompt, "Closing self-check") {
+		t.Fatal("system prompt must teach the closing self-check")
+	}
+	if !strings.Contains(SummaryBlockSystemPrompt, "No other block kind can close a response") {
+		t.Fatal("system prompt must state that no other block kind can close a response")
+	}
+	if !strings.Contains(SummaryBlockRestatePrompt, "Closing self-check") {
+		t.Fatal("restate prompt must teach the closing self-check")
+	}
+}
+
 func TestBlockFormatPromptsNoNegativeExamples(t *testing.T) {
 	// Negative examples are deliberately omitted from the block format
 	// prompts: a model may imitate a displayed bad pattern, so the

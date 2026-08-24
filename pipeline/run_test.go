@@ -541,6 +541,87 @@ func TestRunRetryOnMissingCompletion(t *testing.T) {
 	})
 }
 
+func TestRunRetryOnTriggeringBlockWithoutSummary(t *testing.T) {
+	// A round that emits a component-triggering block (e.g., go-src)
+	// but no summary block violates the every-response summary
+	// requirement: the summary block is the completion signal, so the
+	// round is retried with feedback naming the missing summary block,
+	// and the triggering block from the failed attempt is discarded —
+	// the model must re-emit it alongside the summary block. See
+	// TheoryOfSummaryCompletionRetry and blocks.TheoryOfSummaryBlocks.
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			switch callCount {
+			case 1:
+				// A go-src block with no summary block.
+				return appendPhase("<<建安 go-src\nfoo.Bar\n建安\n")
+			case 2:
+				// The retry re-emits the go-src block together with
+				// the mandatory summary block.
+				return appendPhase("<<建安 go-src\nfoo.Bar\n建安\n<<贞观 summary\nDone.\n贞观\n")
+			default:
+				return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			}
+		}
+
+		comps := components.ComponentSet{
+			{
+				Kind: "go-src",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("resolved source")},
+					}
+				},
+			},
+		}
+
+		result, err := runOnce(run, RunOptions{
+			Generator:                nil,
+			InitialState:             generators.NewPrompts("", nil),
+			Components:               comps,
+			PhaseBuilder:             phaseBuilder,
+			RetryOnMissingCompletion: true,
+			MaxRetries:               3,
+			HTTPClient:               nets.HTTPClient{},
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "summary", Prompt: "retry prompt"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 3 {
+			t.Fatalf("expected 3 calls (retry once for missing summary, then component-triggered round), got %d", callCount)
+		}
+
+		foundFeedback := false
+		foundResolved := false
+		for c := range result.FinalState.Contents() {
+			if c.Role != generators.RoleUser {
+				continue
+			}
+			for _, p := range c.Parts {
+				if text, ok := p.(generators.Text); ok {
+					if strings.Contains(string(text), "WITHOUT the required summary block") {
+						foundFeedback = true
+					}
+					if strings.Contains(string(text), "resolved source") {
+						foundResolved = true
+					}
+				}
+			}
+		}
+		if !foundFeedback {
+			t.Fatal("expected missing-summary retry feedback in state")
+		}
+		if !foundResolved {
+			t.Fatal("expected resolved source in state after retry")
+		}
+	})
+}
+
 func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
@@ -1853,9 +1934,14 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			if callCount == 1 {
-				return appendPhase("<<龘靐 state-modifier\nrequest\n龘靐\n")
+				// The state-modifier block is emitted together with
+				// the mandatory summary block: no block kind completes
+				// a round on its own, so a triggering block without a
+				// summary would be retried rather than processed.
+				// See TheoryOfSummaryCompletionRetry.
+				return appendPhase("<<建安 state-modifier\nrequest\n建安\n<<贞观 summary\nRound 1 done.\n贞观\n")
 			}
-			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			return appendPhase("<<贞观 summary\nDone.\n贞观\n")
 		}
 
 		comps := components.ComponentSet{
@@ -1886,7 +1972,7 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if callCount != 2 {
-			t.Fatalf("expected 2 rounds (state modification triggers next, no retry for missing summary), got %d", callCount)
+			t.Fatalf("expected 2 rounds (state modification triggers next), got %d", callCount)
 		}
 
 		found := false

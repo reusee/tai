@@ -179,5 +179,8 @@ func TestShellPromptsWaitForResults(t *testing.T) {
 		if !strings.Contains(prompt, "independent") {
 			t.Fatalf("%s must state that multiple shell blocks are only allowed when their commands are independent", name)
 		}
+		if !strings.Contains(prompt, "Never end a response on a shell block") {
+			t.Fatalf("%s must state the sequence rule: the block after the last shell block must be the summary block", name)
+		}
 	}
 }

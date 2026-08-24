@@ -72,12 +72,14 @@ generating.
 The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
 that reinforces the requirement to emit a summary block in every response as
 the round completion signal. The generation loop checks for the summary block
-to distinguish a normally ended round from truncated output; a round carrying
-a component-triggering block (read, shell, continue, go-test, go-src) is also
-complete without a summary block, because the model is waiting for component
-processing rather than truncated (see TheoryOfLoops). Every kind prompt
-that stops and waits states the summary requirement with the same wording, so
-no stop instruction licenses omitting the summary block.
+to distinguish a normally ended round from truncated or non-conforming output:
+no other block kind completes a round, so a round carrying component-triggering
+blocks (read, shell, continue, go-test, go-src) without a summary block is
+retried with feedback naming the missing summary (see TheoryOfLoops). Every
+kind prompt that stops and waits states the summary requirement with the same
+wording and adds the sequence rule — the block after the kind's closing line
+must be the summary block — so no stop instruction licenses omitting the
+summary block.
 `
 
 const TheoryOfFamilyExtraSystemPrompt = `

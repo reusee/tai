@@ -32,6 +32,31 @@ func TestGoBlockPromptsFormatGuards(t *testing.T) {
 	}
 }
 
+func TestGoBlockPromptsNeverEndOnKind(t *testing.T) {
+	// Every Go-specific kind prompt must state the sequence rule: the
+	// block after the kind's closing line must be the summary block. The
+	// summary block is the mandatory completion signal — a response that
+	// ends on the kind's own block is discarded and retried, so the rule
+	// prevents the model from ending a response on a go-src or go-test
+	// block without the summary. See TheoryOfGoSrcBlocks and
+	// TheoryOfGoTestBlocks.
+	prompts := map[string]string{
+		"GoTestBlockSystemPrompt":  GoTestBlockSystemPrompt,
+		"GoTestBlockRestatePrompt": GoTestBlockRestatePrompt,
+		"GoSrcBlockSystemPrompt":   GoSrcBlockSystemPrompt,
+		"GoSrcBlockRestatePrompt":  GoSrcBlockRestatePrompt,
+	}
+	for name, prompt := range prompts {
+		kind := "go-test"
+		if strings.Contains(name, "GoSrc") {
+			kind = "go-src"
+		}
+		if !strings.Contains(prompt, "Never end a response on a "+kind+" block") {
+			t.Fatalf("%s must state the sequence rule: never end a response on a %s block; the next block must be the summary block", name, kind)
+		}
+	}
+}
+
 func TestProcessGoTestBlocks(t *testing.T) {
 	t.Run("TestsFail", func(t *testing.T) {
 		// -run and Test[ on separate lines. Test[ is an invalid

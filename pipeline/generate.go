@@ -440,37 +440,39 @@ func fallbackRetryState(
 }
 
 const TheoryOfSummaryCompletionRetry = `
-The summary block is the primary completion signal for each generation round. When
-a round ends without a summary block or any component-triggering block (see
-TheoryOfLoops), or when the finish reason indicates abnormal termination
-(e.g., "length" from max-token truncation), the model's output was likely truncated
-mid-stream — the generation limit was reached before the model could emit its
-closing summary block, or the model emitted a summary but continued generating and
-was cut off. Truncation often occurs because the model attempted too many changes
-in a single response. In both cases, the round is retried from the original
-pre-generation State. State immutability (see TheoryOfStateImmutability in
-generators/state.go) is the foundation for this retry: the pre-generation State is
-unaffected by the failed attempt, so retrying starts from a clean snapshot rather
-than corrupted partial state. The retry count is bounded to prevent infinite loops
-when a model consistently truncates. Change blocks from a truncated attempt are
-NOT applied: the retry discards the partial output entirely and regenerates from
-the pre-round state, avoiding incomplete or malformed change blocks. This is
-distinct from the generator-level retry (see TheoryOfRetry in generators/gemini.go
-and TheoryOfGenerateRetry in generators/generate.go), which handles transient API
-errors; this retry handles successful-but-incomplete output.
+The summary block is the mandatory completion signal for each generation round. A
+round is complete only when a summary block is present AND the finish reason is
+not abnormal. A round missing the summary block has one of three causes: the
+generation limit truncated the model mid-stream before its closing summary
+block; the model emitted a summary and continued generating until it was cut
+off; or the model violated the every-response rule and simply ended its output
+without one. All three are retried from the original pre-generation State.
+State immutability (see TheoryOfStateImmutability in generators/state.go) is
+the foundation for this retry: the pre-generation State is unaffected by the
+failed attempt, so retrying starts from a clean snapshot rather than corrupted
+partial state. The retry count is bounded to prevent infinite loops when a
+model consistently truncates or omits the summary. Change blocks from a failed
+attempt are NOT applied: the retry discards the partial output entirely and
+regenerates from the pre-round state, avoiding incomplete or malformed change
+blocks. This is distinct from the generator-level retry (see TheoryOfRetry in
+generators/gemini.go and TheoryOfGenerateRetry in generators/generate.go),
+which handles transient API errors; this retry handles successful-but-incomplete
+or non-conforming output.
 
 Completion is detected by checking the externally collected blocks for summary
-kind and the finish reason in the state for abnormal termination. A round is
-complete when a summary block is present AND the finish reason is not abnormal;
-a round carrying a component-triggering block (read, shell, continue, go-test,
-go-src) is also complete without a summary block, because the model is
-waiting for component processing rather than truncated (see TheoryOfLoops).
-Because blocks are collected by the BlockHandler during AppendContent (not stored
-in ParserState), the check is a simple scan of the collected slice. The finish
-reason is extracted from RoleLog content appended by the generator. On retry, the
+kind and the finish reason in the state for abnormal termination. No block kind
+other than summary completes a round: a component-triggering block (read,
+shell, continue, go-test, go-src) without a summary block is a rule violation,
+not a completed round, so such rounds are retried with the missing-summary
+feedback (missingSummaryRetryPrefix); an abnormal finish reason instead frames
+the retry as truncation (incompleteOutputHandoffPrefix). Because blocks are
+collected by the BlockHandler during AppendContent (not stored in ParserState),
+the check is a simple scan of the collected slice. The finish reason is
+extracted from RoleLog content appended by the generator. On retry, the
 collected blocks are reset alongside the MemoryStore in the onPhaseStart
-callback, ensuring both external states are consistent with the rolled-back State
-(see TheoryOfParserState in blocks/parser_state.go).
+callback, ensuring both external states are consistent with the rolled-back
+State (see TheoryOfParserState in blocks/parser_state.go); re-emitting the
+blocks in the retry round is what makes them take effect.
 
 This retry uses handoff (TheoryOfHandoff) to carry forward established
 conclusions, attempted changes, and partitioning guidance into the next round,
@@ -774,28 +776,17 @@ func (Module) GenerateWithResultWithStats(
 
 				elapsed := time.Since(roundStartTime)
 
-				summaryText := ""
-				var handoffErr error
-				if len(summaries) > 0 {
-					summaryText = strings.Join(summaries, "\n")
-				} else {
-					if incompleteText := ExtractIncompleteOutput(roundState, prevContentCount); incompleteText != "" {
-						var handoff *Handoff
-						handoff, handoffErr = createHandoff(runCtx, incompleteText)
-						if handoffErr == nil && handoff != nil {
-							summaryText = handoff.Summary
-						}
-					}
-				}
+				// The loop guarantees a summary for every round: the
+				// model's summary blocks, or the synthesized summary
+				// appended when the retry budget is exhausted (see
+				// TheoryOfLoops). No handoff fallback runs here: a
+				// handoff is an extra model request for error
+				// recovery, never a substitute for the model's own
+				// summary block.
+				summaryText := strings.Join(summaries, "\n")
 				roundStats, prevContentCount = collectRoundStats(
 					roundStats, roundState, prevContentCount, elapsed, summaryText,
 				)
-
-				if handoffErr != nil {
-					fatalErr = handoffErr
-					cancel()
-					return nil
-				}
 
 				roundStartTime = time.Now()
 				return nil

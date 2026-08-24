@@ -92,11 +92,17 @@ func TestGoSrcPromptsEndWithSummary(t *testing.T) {
 	// generating, end the response with a summary block, and wait. A bare
 	// "stop generating and wait" licenses omitting the summary block and
 	// contradicts the every-response requirement of
-	// blocks.SummaryBlockSystemPrompt. See TheoryOfGoSrcBlocks.
+	// blocks.SummaryBlockSystemPrompt. The prompt must also state the
+	// sequence rule — the block after the go-src block's closing line
+	// must be the summary block — so a response never ends on the go-src
+	// block itself. See TheoryOfGoSrcBlocks.
 	if !strings.Contains(GoSrcBlockSystemPrompt, "end the response with a summary block") {
 		t.Fatal("system prompt must phrase the stop rule as ending the response with a summary block")
 	}
 	if strings.Contains(GoSrcBlockSystemPrompt, "stop generating and wait:") {
 		t.Fatal("system prompt must not carry a stop instruction that omits the summary block")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "Never end a response on a go-src block") {
+		t.Fatal("system prompt must state the sequence rule: the block after a go-src block must be the summary block")
 	}
 }
