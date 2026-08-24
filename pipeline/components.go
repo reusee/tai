@@ -19,8 +19,8 @@ the ai command's AIComponents).
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
 go-src, read) and appending summary, read-only files (prompt-only),
-mandatory planning (prompt-only, conditional), and extra system prompt
-(prompt-only).
+hidden packages (prompt-only, conditional), mandatory planning (prompt-only,
+conditional), and extra system prompt (prompt-only).
 
 The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
 as the first prompt-only component: every block-using component set must carry
@@ -54,15 +54,19 @@ fetched by symbol — gaining the defining file, line, and the references
 report — while read serves non-Go files, whole-file views, glob discovery,
 and network resources. See gotools.TheoryOfGoSrcBlocks.
 
-Read-only files and mandatory planning are prompt-only Components: they
-contribute system prompt sections without defining a block kind or processing
-blocks.
+Read-only files, hidden packages, and mandatory planning are prompt-only
+Components: they contribute system prompt sections without defining a block
+kind or processing blocks. The hidden-packages notice
+(gotools.HiddenPackagesSystemPrompt, from the go.hidden configuration)
+appears only when at least one pattern is configured; it lists the hidden
+import-path patterns so the model neither fetches their symbols nor reads
+their files. See gotools.TheoryOfHiddenPackages.
 
 ExtraSystemPrompt is also a prompt-only Component. Change, go-test, go-src,
 and read components carry RestatePrompt fields — short critical
 reminders that reinforce block format rules. Restate prompts are placed at
-the end of the user prompt via ComponentSet.UserPromptParts(), not in the
-system prompt, so they are the last content the model reads before
+the end of the user prompt via ComponentSet.UserPromptParts(), not in
+the system prompt, so they are the last content the model reads before
 generating.
 
 The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
@@ -110,6 +114,7 @@ func (Module) CodesComponents(
 	flagShell flags.Shell,
 	applyChangeBlocks changes.ApplyChangeBlocks,
 	resolveGoSymbols gotools.ResolveGoSymbols,
+	hiddenPatterns gotools.HiddenPatterns,
 ) CodesComponents {
 	var comps components.ComponentSet
 
@@ -264,6 +269,18 @@ func (Module) CodesComponents(
 	comps = append(comps, components.Component{
 		PromptSection: ReadOnlyFilesSystemPrompt,
 	})
+
+	// Hidden packages: prompt-only component listing the go.hidden
+	// import-path patterns. Visible code may still reference a hidden
+	// package's import path, so without the notice the model could
+	// discover the package and burn rounds on go-src and read blocks
+	// that the hide renders futile. The notice appears only when at
+	// least one pattern is configured. See gotools.TheoryOfHiddenPackages.
+	if section := gotools.HiddenPackagesSystemPrompt(hiddenPatterns); section != "" {
+		comps = append(comps, components.Component{
+			PromptSection: section,
+		})
+	}
 
 	// Mandatory planning: prompt-only component, conditional on plan.
 	if bool(plan) {

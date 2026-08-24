@@ -138,6 +138,37 @@ func TestCodesComponentsIncludesFamilyExtraSystemPrompt(t *testing.T) {
 	})
 }
 
+func TestCodesComponentsIncludesHiddenPackages(t *testing.T) {
+	var defaultPrompt string
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+	).Call(func(comps CodesComponents) {
+		defaultPrompt = comps.PromptSections()
+	})
+	if strings.Contains(defaultPrompt, "Hidden Packages") {
+		t.Fatal("no hidden patterns configured must not produce a hidden-packages section")
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+		func() gotools.HiddenPatterns { return gotools.HiddenPatterns{"example.com/foo/bar/..."} },
+	).Call(func(comps CodesComponents) {
+		prompt := comps.PromptSections()
+		if !strings.Contains(prompt, "Hidden Packages") {
+			t.Fatal("expected hidden-packages section in system prompt")
+		}
+		if !strings.Contains(prompt, "example.com/foo/bar/...") {
+			t.Fatal("expected the configured pattern in the system prompt")
+		}
+	})
+}
+
 func TestCodesComponentsExcludesNonMatchingFamilyPrompt(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),

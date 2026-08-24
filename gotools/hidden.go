@@ -32,6 +32,15 @@ and import-graph discovery cannot unhide a package. Explicit -doc
 references (go.doc_patterns) are per-invocation requests for API-level
 reference material and, like all flags, override config values, so they
 are not subject to the hide.
+
+The hide is announced in the system prompt: pipeline.CodesComponents
+appends a prompt-only component carrying HiddenPackagesSystemPrompt
+(sorted, deduplicated patterns; empty when unconfigured). Visible code may
+still reference a hidden package's import path, so without the notice the
+model could discover the package and burn rounds on go-src fetches that
+report not found. The notice also instructs the model not to read the
+hidden packages' files: read blocks are language-neutral and mechanically
+unrestricted, so file reads are governed by prompt instruction only.
 `
 
 var _ configs.Config = HiddenPatterns(nil)
@@ -70,6 +79,44 @@ func (h HiddenPatterns) HandleConfig(path string, values []*cue.Value) (any, err
 // HiddenPatterns provides the default hidden package pattern list: none.
 func (Module) HiddenPatterns() HiddenPatterns {
 	return nil
+}
+
+// HiddenPackagesSystemPrompt returns a system prompt section listing the
+// import-path patterns of packages hidden from this session, or "" when
+// no pattern is configured. Hidden packages contribute no code,
+// documentation, or go-src-resolvable symbols, so the section states the
+// exclusion and its replacement behavior — work from the provided context
+// and state any limitation in prose — preventing wasted go-src and read
+// rounds on packages that can never be fetched through context assembly.
+// Patterns are trimmed, sorted, and deduplicated so equal configurations
+// produce byte-identical prompts, preserving the LLM prefix cache.
+// See TheoryOfHiddenPackages.
+func HiddenPackagesSystemPrompt(patterns HiddenPatterns) string {
+	var cleaned []string
+	for _, pattern := range patterns {
+		if pattern = strings.TrimSpace(pattern); pattern != "" {
+			cleaned = append(cleaned, pattern)
+		}
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	slices.Sort(cleaned)
+	cleaned = slices.Compact(cleaned)
+
+	var sb strings.Builder
+	sb.WriteString("**Hidden Packages:**\n\n")
+	sb.WriteString("The packages matching the import-path patterns below are hidden from this session by configuration: their source, documentation, and symbols are excluded from the context, and go-src resolution reports their symbols as not found. A pattern ending in \"/...\" hides the base package and every subpackage; any other pattern hides exactly that import path.\n\n")
+	for _, pattern := range cleaned {
+		sb.WriteString("- ")
+		sb.WriteString(pattern)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n**Rules:**\n")
+	sb.WriteString("- Do NOT emit go-src blocks for symbols of hidden packages: they cannot be resolved, and the fetch wastes a round.\n")
+	sb.WriteString("- Do NOT emit read blocks for files of hidden packages: their content is excluded by design and must not be read.\n")
+	sb.WriteString("- Do NOT speculate about hidden packages' contents; work from the context provided. When a task seems to require a hidden package, state the limitation in prose instead of attempting to fetch it.\n")
+	return sb.String()
 }
 
 // newHiddenPackageMatcher compiles hidden patterns into a membership test

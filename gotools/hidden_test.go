@@ -52,6 +52,46 @@ func TestNewHiddenPackageMatcher(t *testing.T) {
 	}
 }
 
+func TestHiddenPackagesSystemPrompt(t *testing.T) {
+	if got := HiddenPackagesSystemPrompt(nil); got != "" {
+		t.Errorf("no patterns must produce an empty prompt, got %q", got)
+	}
+	if got := HiddenPackagesSystemPrompt(HiddenPatterns{"", "  "}); got != "" {
+		t.Errorf("whitespace-only patterns must produce an empty prompt, got %q", got)
+	}
+
+	got := HiddenPackagesSystemPrompt(HiddenPatterns{
+		"example.com/baz",
+		"example.com/foo/bar/...",
+		"example.com/baz",
+		"  example.com/qux  ",
+	})
+	for _, want := range []string{
+		"Hidden Packages",
+		"example.com/foo/bar/...",
+		"example.com/baz",
+		"example.com/qux",
+		"go-src",
+		"read blocks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt must mention %q", want)
+		}
+	}
+
+	// Equal pattern sets must produce byte-identical prompts regardless
+	// of input order and duplication, preserving the LLM prefix cache.
+	again := HiddenPackagesSystemPrompt(HiddenPatterns{
+		"example.com/qux",
+		"example.com/baz",
+		"example.com/foo/bar/...",
+		"example.com/baz",
+	})
+	if got != again {
+		t.Error("equal pattern sets must produce byte-identical prompts")
+	}
+}
+
 // TestHiddenPackagesExcludeFilesAndDocs verifies end to end that a
 // go.hidden pattern removes the matched packages' files from the loaded
 // file set and their documentation from the simplified output, while
