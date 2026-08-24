@@ -98,6 +98,52 @@ func TestParserStateStreamParsing(t *testing.T) {
 	}
 }
 
+func TestParserStateLenientFullStopStreaming(t *testing.T) {
+	var got []Block
+	var state generators.State = NewParserState(
+		generators.NewPrompts("", nil),
+		func(block Block) error {
+			got = append(got, block)
+			return nil
+		},
+	)
+	var err error
+	state, err = state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text("prose。<<龃龉 change(op=\"MODIFY\")\nbody"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("unexpected blocks before the closing marker: %+v", got)
+	}
+	state, err = state.AppendContent(&generators.Content{
+		Role: generators.RoleModel,
+		Parts: []generators.Part{
+			generators.Text("\n龃龉\n"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("blocks = %+v", got)
+	}
+	if got[0].Kind != "change" || got[0].Body != "body" {
+		t.Fatalf("block = %+v", got[0])
+	}
+	state, err = state.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := state.(*ParserState).ParseErrors(); len(errs) > 0 {
+		t.Fatalf("parse errors = %v", errs)
+	}
+}
+
 func TestParserStateMultipleBlocks(t *testing.T) {
 	upstream := &mockState{systemPrompt: "system prompt"}
 	var collectedBlocks []Block

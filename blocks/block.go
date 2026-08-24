@@ -138,6 +138,30 @@ An opening line with a valid two-character Han delimiter followed by an invalid 
 incomplete function-call header is a malformed block reported as a parse error.
 `
 
+// TheoryOfLenientOpeningMarkers documents the lenient acceptance of opening
+// markers glued to the end of a prose line. See the constant body for the
+// rule and its rationale.
+const TheoryOfLenientOpeningMarkers = `
+Models occasionally glue the opening marker to the end of a prose line,
+immediately after a Chinese full stop (。), violating the line-start rule.
+The parser accepts this shape leniently: when << directly follows 。 and the
+rest of the line parses as a complete opening (a valid two-character Han
+delimiter plus a valid or bare kind header, with nothing after it on the
+line), the marker is treated as an opening candidate.
+
+The lenient form yields a block only when its closing delimiter is found
+later. A lenient opening that never closes, or whose header is malformed, is
+not a block and not a parse error: the marker stays regular content, scanning
+continues past it, and it never surfaces in ParseErrors. This differs from
+the strict line-start form, where an unclosed or malformed opening is a parse
+error fed back for self-correction.
+
+Nesting detection inside a block body remains strict: only line-start nested
+openings are tracked by the closing-marker stack. The prompts keep teaching
+the line-start rule unchanged; the leniency is a recovery path for
+nonconforming output, not an advertised format.
+`
+
 const TheoryOfBareKinds = `
 Models may emit block opening markers with a bare kind when no parameters are needed:
 <<DELIMITER kind instead of <<DELIMITER kind(). Both forms are accepted on equal footing.
@@ -278,10 +302,17 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		}
 		idx += searchFrom
 
-		// The opening marker must be at the beginning of a line.
+		// The opening marker must be at the beginning of a line. As a
+		// lenient exception, a marker glued directly after a Chinese
+		// full stop (。) at the end of a prose sentence is accepted as
+		// an opening candidate; see TheoryOfLenientOpeningMarkers.
+		lenient := false
 		if idx > 0 && content[idx-1] != '\n' {
-			searchFrom = idx + 2
-			continue
+			if !precededByFullStop(content, idx) {
+				searchFrom = idx + 2
+				continue
+			}
+			lenient = true
 		}
 		blockStart := idx
 
@@ -291,7 +322,9 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		// own line, which cannot exist after EOF. The line is still
 		// parsed as an opening marker so the truncation is reported as
 		// an unclosed-block error instead of silently dropping the
-		// block as prose. See TheoryOfBlockFormat.
+		// block as prose. The lenient full-stop form is the exception:
+		// its unclosed result is skipped silently. See
+		// TheoryOfBlockFormat and TheoryOfLenientOpeningMarkers.
 		lineStart := idx + 2
 		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
 		if lineEnd == -1 {
@@ -305,6 +338,15 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		// <<DELIMITER <kind ...> ... DELIMITER
 		// See TheoryOfBlockFormat.
 		if r, matched := tryParseBlock(content, openingLine, lineEnd, blockStart); matched {
+			if lenient && !r.ok {
+				// A lenient opening that never closes, or whose
+				// header is malformed, is regular content, not a
+				// parse error. Skip it and keep scanning so later
+				// block markers are still found. See
+				// TheoryOfLenientOpeningMarkers.
+				searchFrom = idx + 2
+				continue
+			}
 			return r.block, r.start, r.end, r.ok, r.err
 		}
 
@@ -531,6 +573,15 @@ func extractDelimiter(s string) string {
 		}
 	}
 	return delimiter
+}
+
+// precededByFullStop reports whether the << marker at byte offset idx in
+// content is immediately preceded by a Chinese full stop (。, U+3002),
+// the lenient opening form glued to the end of a prose sentence. See
+// TheoryOfLenientOpeningMarkers.
+func precededByFullStop(content []byte, idx int) bool {
+	const fullStop = "。"
+	return idx >= len(fullStop) && string(content[idx-len(fullStop):idx]) == fullStop
 }
 
 // maxParseErrorContentLength caps the amount of block content included in a
