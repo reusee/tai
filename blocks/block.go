@@ -143,11 +143,15 @@ incomplete function-call header is a malformed block reported as a parse error.
 // rule and its rationale.
 const TheoryOfLenientOpeningMarkers = `
 Models occasionally glue the opening marker to the end of a prose line,
-immediately after a Chinese full stop (。), violating the line-start rule.
-The parser accepts this shape leniently: when << directly follows 。 and the
-rest of the line parses as a complete opening (a valid two-character Han
-delimiter plus a valid or bare kind header, with nothing after it on the
-line), the marker is treated as an opening candidate.
+immediately after a punctuation mark, violating the line-start rule. The
+parser accepts this shape leniently for the common Chinese and English
+punctuation marks: the marks that end a sentence or a clause, the marks
+that close a quotation or a bracket, the ellipsis, and the em dash, in
+their ASCII, fullwidth, and CJK forms. lenientPunctuationMarks holds the
+exact set. When << directly follows such a mark and the rest of the line
+parses as a complete opening (a valid two-character Han delimiter plus a
+valid or bare kind header, with nothing after it on the line), the marker
+is treated as an opening candidate.
 
 The lenient form yields a block only when its closing delimiter is found
 later. A lenient opening that never closes, or whose header is malformed, is
@@ -303,12 +307,13 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		idx += searchFrom
 
 		// The opening marker must be at the beginning of a line. As a
-		// lenient exception, a marker glued directly after a Chinese
-		// full stop (。) at the end of a prose sentence is accepted as
-		// an opening candidate; see TheoryOfLenientOpeningMarkers.
+		// lenient exception, a marker glued directly after a common
+		// Chinese or English punctuation mark at the end of a prose
+		// sentence is accepted as an opening candidate; see
+		// TheoryOfLenientOpeningMarkers.
 		lenient := false
 		if idx > 0 && content[idx-1] != '\n' {
-			if !precededByFullStop(content, idx) {
+			if !precededByPunctuation(content, idx) {
 				searchFrom = idx + 2
 				continue
 			}
@@ -322,8 +327,8 @@ func parseFirstBlock(content []byte) (block Block, start int, end int, ok bool, 
 		// own line, which cannot exist after EOF. The line is still
 		// parsed as an opening marker so the truncation is reported as
 		// an unclosed-block error instead of silently dropping the
-		// block as prose. The lenient full-stop form is the exception:
-		// its unclosed result is skipped silently. See
+		// block as prose. The lenient punctuation-glued form is the
+		// exception: its unclosed result is skipped silently. See
 		// TheoryOfBlockFormat and TheoryOfLenientOpeningMarkers.
 		lineStart := idx + 2
 		lineEnd := bytes.IndexByte(content[lineStart:], '\n')
@@ -422,6 +427,36 @@ func tryParseBlock(content []byte, openingLine string, lineEnd, blockStart int) 
 		Hints:     findDelimiterCollisionHints(content, bodyStart, delimiter),
 	}
 	return
+}
+
+// lenientPunctuationMarks lists the punctuation marks after which an opening
+// marker glued to the end of a prose line is accepted leniently: the marks
+// that end a sentence or a clause and the marks that close a quotation or a
+// bracket, in their ASCII and Chinese/fullwidth forms. Opening brackets and
+// quotes are excluded, because prose does not end with them. The marks are
+// complete runes, so byte-suffix matching never splits a multi-byte rune.
+// See TheoryOfLenientOpeningMarkers.
+var lenientPunctuationMarks = []string{
+	// ASCII sentence and clause enders, closing brackets, closing quotes.
+	".", ",", ";", ":", "!", "?", ")", "]", "}", "'", "\"", ">",
+	// Chinese and fullwidth marks, including CJK closing brackets and
+	// quotes, the ellipsis, and the em dash.
+	"。", "．", "，", "、", "；", "：", "！", "？", "…", "—",
+	"）", "］", "｝", "＞", "》", "〉", "】", "」", "』", "”", "’",
+}
+
+// precededByPunctuation reports whether the << marker at byte offset idx in
+// content is immediately preceded by a common Chinese or English punctuation
+// mark (see lenientPunctuationMarks): the lenient opening form glued to the
+// end of a prose sentence. See TheoryOfLenientOpeningMarkers.
+func precededByPunctuation(content []byte, idx int) bool {
+	prefix := content[:idx]
+	for _, mark := range lenientPunctuationMarks {
+		if bytes.HasSuffix(prefix, []byte(mark)) {
+			return true
+		}
+	}
+	return false
 }
 
 func nestedOpeningDelimiter(line string) (delimiter string, ok bool) {
@@ -573,15 +608,6 @@ func extractDelimiter(s string) string {
 		}
 	}
 	return delimiter
-}
-
-// precededByFullStop reports whether the << marker at byte offset idx in
-// content is immediately preceded by a Chinese full stop (。, U+3002),
-// the lenient opening form glued to the end of a prose sentence. See
-// TheoryOfLenientOpeningMarkers.
-func precededByFullStop(content []byte, idx int) bool {
-	const fullStop = "。"
-	return idx >= len(fullStop) && string(content[idx-len(fullStop):idx]) == fullStop
 }
 
 // maxParseErrorContentLength caps the amount of block content included in a

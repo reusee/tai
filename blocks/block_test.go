@@ -543,6 +543,62 @@ func TestParseFirstBlockLenientAfterFullStop(t *testing.T) {
 	}
 }
 
+func TestParseFirstBlockLenientAfterPunctuation(t *testing.T) {
+	// A marker glued directly after any common Chinese or English
+	// punctuation mark parses as a block when the closing delimiter
+	// follows. See TheoryOfLenientOpeningMarkers.
+	for _, mark := range lenientPunctuationMarks {
+		content := []byte("prose" + mark + "<<龃龉 change(op=\"MODIFY\")\nbody\n龃龉\n")
+		block, start, end, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("mark %q: %v", mark, err)
+		}
+		if !ok {
+			t.Fatalf("mark %q: expected the lenient opening to parse as a block", mark)
+		}
+		if block.Kind != "change" || block.Attributes["op"] != "MODIFY" || block.Body != "body" {
+			t.Fatalf("mark %q: block = %+v", mark, block)
+		}
+		if string(content[start:start+2]) != "<<" {
+			t.Fatalf("mark %q: start = %d, expected the << position", mark, start)
+		}
+		if end != len(content) {
+			t.Fatalf("mark %q: end = %d, want %d", mark, end, len(content))
+		}
+	}
+
+	// A marker preceded by a space, a letter, or a digit stays regular
+	// content: only punctuation admits the lenient form.
+	for _, prefix := range []string{"prose ", "prose", "42"} {
+		block, _, _, ok, err := ParseFirstBlock([]byte(prefix + "<<龃龉 change(op=\"MODIFY\")\nbody\n龃龉\n"))
+		if err != nil {
+			t.Fatalf("prefix %q: unexpected error: %v", prefix, err)
+		}
+		if ok {
+			t.Fatalf("prefix %q: unexpected block: %+v", prefix, block)
+		}
+	}
+
+	// A lenient opening after a non-full-stop mark that never closes is
+	// not a block and not an error, and does not hide a later block.
+	block, _, _, ok, err := ParseFirstBlock([]byte("prose.<<龃龉 change(op=\"MODIFY\")\nno close\n<<彳亍 summary\nok\n彳亍\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || block.Kind != "summary" || block.Body != "ok" {
+		t.Fatalf("block = %+v, ok = %v", block, ok)
+	}
+
+	// A malformed header after the punctuation mark is skipped silently.
+	block, _, _, ok, err = ParseFirstBlock([]byte("prose，<<龃龉 change(bad\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatalf("unexpected block: %+v", block)
+	}
+}
+
 func TestParseFirstBlockLeadingWhitespaceAfterMarker(t *testing.T) {
 	content := []byte("<< 龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n")
 	block, _, _, ok, err := ParseFirstBlock(content)
