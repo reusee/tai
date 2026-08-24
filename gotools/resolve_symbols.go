@@ -153,8 +153,8 @@ func (Module) ResolveGoSymbols(
 					"``` begin of source %s %s:%d\n%s\n``` end of source %s\n\n",
 					m.qualifiedName, m.filePath, m.line, m.source, m.qualifiedName)))
 				// Each resolved source part is followed by the references,
-				// callees, and interface relations reports for the same
-				// symbol when the reports have content. See
+				// selector packages, and interface relations reports for the
+				// same symbol when the reports have content. See
 				// TheoryOfGoSrcReferences.
 				if index := ensureRefIndex(); index != nil {
 					objects := index.objectsFor(m)
@@ -162,8 +162,8 @@ func (Module) ResolveGoSymbols(
 					if len(refs) > 0 || truncated {
 						parts = append(parts, formatReferencesPart(m.qualifiedName, refs, truncated))
 					}
-					if callees, truncated := index.calleesFor(m); len(callees) > 0 || truncated {
-						parts = append(parts, formatCalleesPart(m.qualifiedName, callees, truncated))
+					if paths := index.selectorPackagesFor(m); len(paths) > 0 {
+						parts = append(parts, formatSelectorPackagesPart(m.qualifiedName, paths))
 					}
 					if lines, truncated := index.interfaceRelationsFor(objects); len(lines) > 0 || truncated {
 						parts = append(parts, formatInterfaceRelationsPart(m.qualifiedName, lines, truncated))

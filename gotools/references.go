@@ -50,16 +50,13 @@ real source, only the generated _testmain.go, whose references would be
 noise) are excluded from the index, matching the context loader's
 boundaries (see TheoryOfHiddenPackages and TheoryOfStdLibExclusion).
 
-The callee (out-edge) report reuses the same Uses index from the reverse
-direction: the uses whose identifier position falls inside the
-declaration's byte range name the symbols the declaration references.
-Objects declared inside the range itself — locals, parameters, results,
-receivers, labels, and the declaration's own name — are excluded, as are
-fields (no package-level name), package-name references (the function
-entry already carries the package), and objects of packages outside the
-index, so every reported name is directly fetchable by a follow-up go-src
-block; together with the references report this gives a one-step
-bidirectional closure over the loaded packages.
+The selector packages report lists the imported packages referenced via
+selector expressions (pkg.Name) within the declaration's byte range,
+mapped to their full import paths. The model sees the declaration's source
+with import aliases, and this report resolves each alias used in a
+selector to its complete import path without the model scanning the
+import block, so follow-up go-src blocks can use the full path as the
+package qualifier directly.
 
 Interface relations are the third report: fetching a named type lists the
 indexed interfaces it satisfies (value or pointer method set), and
@@ -190,7 +187,7 @@ type indexedSyntaxFile struct {
 }
 
 // indexedUse is one use site recorded in TypesInfo.Uses. The used object is
-// carried alongside so out-edge reports can classify the use without a
+// carried alongside so the reference index can classify the use without a
 // second lookup. See TheoryOfGoSrcReferences.
 type indexedUse struct {
 	loc   *indexedSyntaxFile
@@ -220,16 +217,15 @@ type useKey struct {
 
 // typeCheckIndex indexes the type-checked load for go-src reference
 // reporting: syntax files by token.File and by path, use sites grouped by
-// the used object (the in-edge direction) and by file (the out-edge
-// direction), the indexed package paths, and the named-type candidates for
-// the interface relations report. See TheoryOfGoSrcReferences.
+// the used object (the in-edge direction), the indexed package paths, and
+// the named-type candidates for the interface relations report. See
+// TheoryOfGoSrcReferences.
 type typeCheckIndex struct {
 	byToken map[*token.File]*indexedSyntaxFile
 	byName  map[string][]*indexedSyntaxFile
 	uses    map[types.Object][]indexedUse
 
 	pkgs            []*packages.Package
-	usesByFile      map[string][]indexedUse
 	pkgPaths        map[string]bool
 	ifaceCandidates []namedCandidate
 	typeCandidates  []namedCandidate
@@ -237,17 +233,16 @@ type typeCheckIndex struct {
 
 // buildTypeCheckIndex builds the reference index over the type-checked
 // packages: every syntax file is indexed by its token.File and path, and
-// every TypesInfo.Uses entry is grouped under its (normalized) object and
-// by file. The usable packages, their base import paths, and their
-// named-type candidates feed the callee and interface relations reports.
+// every TypesInfo.Uses entry is grouped under its (normalized) object.
+// The usable packages, their base import paths, and their named-type
+// candidates feed the selector packages and interface relations reports.
 // See TheoryOfGoSrcReferences.
 func buildTypeCheckIndex(pkgs []*packages.Package) *typeCheckIndex {
 	index := &typeCheckIndex{
-		byToken:    make(map[*token.File]*indexedSyntaxFile),
-		byName:     make(map[string][]*indexedSyntaxFile),
-		uses:       make(map[types.Object][]indexedUse),
-		usesByFile: make(map[string][]indexedUse),
-		pkgPaths:   make(map[string]bool),
+		byToken:  make(map[*token.File]*indexedSyntaxFile),
+		byName:   make(map[string][]*indexedSyntaxFile),
+		uses:     make(map[types.Object][]indexedUse),
+		pkgPaths: make(map[string]bool),
 	}
 	for _, pkg := range pkgs {
 		if pkg.TypesInfo == nil || pkg.Fset == nil {
@@ -278,7 +273,6 @@ func buildTypeCheckIndex(pkgs []*packages.Package) *typeCheckIndex {
 			obj = normalizeObject(obj)
 			use := indexedUse{loc: loc, ident: ident, obj: obj}
 			index.uses[obj] = append(index.uses[obj], use)
-			index.usesByFile[loc.tf.Name()] = append(index.usesByFile[loc.tf.Name()], use)
 		}
 	}
 	index.collectInterfaceCandidates()
@@ -409,6 +403,57 @@ func (index *typeCheckIndex) referencesFor(objects []types.Object) (refs []symbo
 	return refs, false
 }
 
+// selectorPackagesFor collects the imported packages referenced via
+// selector expressions (pkg.Name) within the declaration's byte range,
+// mapped to their full import paths. The report lets the model use the
+// full path as a package qualifier in follow-up go-src blocks without
+// scanning the import block. See TheoryOfGoSrcReferences.
+func (index *typeCheckIndex) selectorPackagesFor(decl symbolDeclaration) []string {
+	seen := make(map[string]bool)
+	for _, loc := range index.byName[decl.filePath] {
+		if loc.pkg.TypesInfo == nil {
+			continue
+		}
+		ast.Inspect(loc.file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			off := loc.tf.Offset(sel.Pos())
+			if off < decl.startOffset || off >= decl.endOffset {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			obj := loc.pkg.TypesInfo.Uses[ident]
+			if obj == nil {
+				return true
+			}
+			pkgName, ok := obj.(*types.PkgName)
+			if !ok {
+				return true
+			}
+			if pkgName.Imported() == nil {
+				return true
+			}
+			path := pkgName.Imported().Path()
+			if path == "" || seen[path] {
+				return true
+			}
+			seen[path] = true
+			return true
+		})
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // enclosingTopLevelName names the top-level declaration containing pos:
 // a function's name, a "Type.Method" form for methods, the first name of a
 // value or type spec inside a GenDecl, the declaration keyword between
@@ -466,5 +511,19 @@ func formatReferencesPart(qualified string, refs []symbolReference, truncated bo
 		fmt.Fprintf(&b, "... truncated at %d references\n", maxGoSrcReferencesPerSymbol)
 	}
 	fmt.Fprintf(&b, "``` end of references %s\n\n", qualified)
+	return generators.Text(b.String())
+}
+
+// formatSelectorPackagesPart renders the selector packages report that
+// follows a resolved declaration's source part: one full import path per
+// line for each package used as a selector prefix within the declaration.
+// See TheoryOfGoSrcReferences.
+func formatSelectorPackagesPart(qualified string, paths []string) generators.Part {
+	var b strings.Builder
+	fmt.Fprintf(&b, "``` begin of selector packages %s\n", qualified)
+	for _, path := range paths {
+		fmt.Fprintf(&b, "%s\n", path)
+	}
+	fmt.Fprintf(&b, "``` end of selector packages %s\n\n", qualified)
 	return generators.Text(b.String())
 }

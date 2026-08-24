@@ -403,7 +403,7 @@ func TestRefsUses(t *testing.T) {
 	})
 }
 
-func TestResolveGoSymbolsCalleesAndInterfaceRelations(t *testing.T) {
+func TestResolveGoSymbolsSelectorPackagesAndInterfaceRelations(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOWORK", "")
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/reports\n\ngo 1.21\n"), 0644); err != nil {
@@ -439,9 +439,10 @@ type Plain struct{}
 	if err := os.WriteFile(filepath.Join(dir, "shapes.go"), []byte(shapesSource), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Render's body uses a concrete type, a concrete method, an interface
-	// method, a stdlib function, a local helper, locals, and a field —
-	// exercising every callee exclusion rule. Loopy only calls itself.
+	// Render's body uses a stdlib package selector (strings.TrimSpace)
+	// and local selectors (c.Area, s.Area). The selector packages report
+	// lists only the full import path of the stdlib package used in a
+	// selector expression. Loopy has no selector expressions.
 	usesSource := `package reports
 
 import "strings"
@@ -475,48 +476,43 @@ func Loopy(n int) int {
 		func() LoadDir { return LoadDir(dir) },
 	).Call(func(resolve ResolveGoSymbols) {
 
-		// The callees report lists the declaration's out-edges as
-		// package-qualified names; locals, fields, package names, and
-		// stdlib symbols are not reported because they are not
-		// go-src-fetchable. See TheoryOfGoSrcReferences.
+		// The selector packages report lists the full import paths of
+		// packages used in selector expressions within the declaration.
+		// Render uses strings.TrimSpace, so "strings" is reported.
+		// Local selectors (c.Area, s.Area) do not contribute because
+		// their prefixes are local variables, not package names. See
+		// TheoryOfGoSrcReferences.
 		parts, err := resolve([]string{"Render"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		got := partsText(t, parts)
-		for _, want := range []string{
-			"``` begin of callees example.com/reports.Render",
-			"\nexample.com/reports.Circle\n",
-			"\nexample.com/reports.Circle.Area\n",
-			"\nexample.com/reports.Shape\n",
-			"\nexample.com/reports.Shape.Area\n",
-			"\nexample.com/reports.crafted\n",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("expected %q in resolved output:\n%s", want, got)
-			}
+		if !strings.Contains(got, "``` begin of selector packages example.com/reports.Render") {
+			t.Fatalf("expected selector packages block for Render, got:\n%s", got)
 		}
+		if !strings.Contains(got, "\nstrings\n") {
+			t.Fatalf("expected \"strings\" in selector packages, got:\n%s", got)
+		}
+		// The report contains only package import paths, not local
+		// selectors or type names from the same package.
 		for _, unwanted := range []string{
-			"\nstrings.TrimSpace\n",
-			"\nstrings\n",
-			"\nexample.com/reports.total\n",
-			"\nexample.com/reports.c\n",
+			"\nexample.com/reports.Circle\n",
+			"\nexample.com/reports.Shape\n",
 		} {
 			if strings.Contains(got, unwanted) {
-				t.Fatalf("unexpected %q in resolved output:\n%s", unwanted, got)
+				t.Fatalf("unexpected %q in selector packages:\n%s", unwanted, got)
 			}
 		}
 
-		// A declaration whose only call is itself produces no callees
-		// report: the self-reference is an object declared inside the
-		// declaration's own range and is excluded like any local.
+		// A declaration with no selector expressions produces no
+		// selector packages report.
 		parts, err = resolve([]string{"Loopy"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		got = partsText(t, parts)
-		if strings.Contains(got, "begin of callees") {
-			t.Fatalf("expected no callees block for Loopy, got:\n%s", got)
+		if strings.Contains(got, "begin of selector packages") {
+			t.Fatalf("expected no selector packages block for Loopy, got:\n%s", got)
 		}
 
 		// Fetching an interface lists the loaded concrete types
