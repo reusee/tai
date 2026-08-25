@@ -32,13 +32,18 @@ textual pseudo-call fallback) emitted by the model.
 Block parsing scans every block in the output, not just the first, because a
 memory block may be preceded by continue, shell, or summary blocks. Only the
 memory kind is consumed; other blocks are skipped and the scan advances past
-them. Unclosed blocks are also skipped during scanning. The pseudo-call
-fallback extracts textual update_user_profile(...) calls when the model fails
-to use the memory block format.
+them. Unclosed blocks are also skipped during scanning. The memory block body
+may carry both <memory-item> additions and <memory-delete> deletions. The
+pseudo-call fallback extracts textual update_user_profile(...) and
+delete_user_profile(...) calls when the model fails to use the memory block
+format.
 
-Memory updates are merged additively: new items are appended to the existing
-item list, and a deduplication step prevents the same item from being recorded
-twice. The merge never prunes items.
+Memory updates carry two directions: additions and deletions. Additions are
+appended to the existing item list with deduplication. Deletions remove items
+by exact string match and take precedence over additions emitted in the same
+round: a contradictory add-and-delete pair for the same item resolves to
+deleted. A deletion-only round still persists an entry, possibly with an
+empty item list. Otherwise the deletion would be lost on the next read.
 
 File access is guarded by an advisory lock file with PID-based stale detection
 and exponential backoff. Writes are atomic: content is written to a temporary
@@ -231,10 +236,18 @@ func (Module) Memory(
 }
 
 type memoryRoot struct {
-	Items []string `xml:"memory-item"`
+	Items   []string `xml:"memory-item"`
+	Deletes []string `xml:"memory-delete"`
 }
 
-func parseMemoryItems(text string) ([]string, error) {
+// memoryUpdate is the parsed result of one assistant output: items to add
+// to the profile and items to delete from it. See TheoryOfMemory.
+type memoryUpdate struct {
+	Adds    []string
+	Deletes []string
+}
+
+func parseMemoryUpdate(text string) (memoryUpdate, error) {
 	content := []byte(text)
 	for {
 		block, _, end, ok, err := blocks.ParseFirstBlock(content)
@@ -245,17 +258,20 @@ func parseMemoryItems(text string) ([]string, error) {
 				content = content[end:]
 				continue
 			}
-			return nil, err
+			return memoryUpdate{}, err
 		}
 		if !ok {
-			return nil, nil
+			return memoryUpdate{}, nil
 		}
 		if block.Kind == "memory" {
 			var mem memoryRoot
 			if err := xml.Unmarshal([]byte(block.Body), &mem); err != nil {
-				return nil, err
+				return memoryUpdate{}, err
 			}
-			return mem.Items, nil
+			return memoryUpdate{
+				Adds:    mem.Items,
+				Deletes: mem.Deletes,
+			}, nil
 		}
 		// Skip non-memory blocks (e.g., continue, shell, summary) and
 		// continue scanning for a memory block. Without this, a memory
@@ -265,11 +281,11 @@ func parseMemoryItems(text string) ([]string, error) {
 }
 
 // UpdateMemoryFromBlock is a dscope-provided function that extracts memory
-// items from memory blocks and textual pseudo-calls in the assistant output,
-// then merges them with the current profile and persists the result. The
-// dscope-provided dependencies (CurrentMemory, AppendMemory) are injected
-// at provider resolution time; only the runtime values (model, assistantText)
-// are passed as function arguments. See TheoryOfMemory.
+// additions and deletions from memory blocks and textual pseudo-calls in the
+// assistant output, then merges them with the current profile and persists
+// the result. The dscope-provided dependencies (CurrentMemory, AppendMemory)
+// are injected at provider resolution time; only the runtime values (model,
+// assistantText) are passed as function arguments. See TheoryOfMemory.
 type UpdateMemoryFromBlock func(model string, assistantText string) error
 
 func (Module) UpdateMemoryFromBlock(
@@ -278,30 +294,23 @@ func (Module) UpdateMemoryFromBlock(
 	logger logs.Logger,
 ) UpdateMemoryFromBlock {
 	return func(model string, assistantText string) error {
-		items, err := parseMemoryItems(assistantText)
+		update, err := parseMemoryUpdate(assistantText)
 		if err != nil {
 			return err
 		}
 
-		// Pseudo-call recovery: detect textual update_user_profile(...) calls
-		// that the model emits instead of using the memory block format.
-		// See TheoryOfMemory.
-		items = append(items, parsePseudoCallItems(assistantText)...)
+		// Pseudo-call recovery: detect textual update_user_profile(...)
+		// and delete_user_profile(...) calls that the model emits instead
+		// of using the memory block format. See TheoryOfMemory.
+		update.Adds = append(update.Adds, parsePseudoCallItems(assistantText)...)
+		update.Deletes = append(update.Deletes, parsePseudoCallDeletes(assistantText)...)
 
-		if len(items) == 0 {
+		if len(update.Adds) == 0 && len(update.Deletes) == 0 {
 			return nil
 		}
 
-		// Deduplicate items from memory blocks and pseudo-calls.
-		seen := make(map[string]bool)
-		var uniqueItems []string
-		for _, item := range items {
-			if !seen[item] {
-				seen[item] = true
-				uniqueItems = append(uniqueItems, item)
-			}
-		}
-		items = uniqueItems
+		update.Adds = deduplicateStrings(update.Adds)
+		update.Deletes = deduplicateStrings(update.Deletes)
 
 		current, err := currentMemory()
 		if err != nil {
@@ -315,14 +324,7 @@ func (Module) UpdateMemoryFromBlock(
 		if current != nil {
 			currentItems = current.Items
 		}
-
-		finalItems := slices.Clone(items)
-		for _, currentItem := range currentItems {
-			found := slices.Contains(items, currentItem)
-			if !found {
-				finalItems = append(finalItems, currentItem)
-			}
-		}
+		finalItems := mergeMemoryItems(currentItems, update)
 
 		if err := appendMemory(&MemoryEntry{
 			Time:  time.Now(),
@@ -344,18 +346,53 @@ func (Module) UpdateMemoryFromBlock(
 	}
 }
 
+// deduplicateStrings returns items with duplicates removed, preserving the
+// first occurrence of each item.
+func deduplicateStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	var ret []string
+	for _, item := range items {
+		if !seen[item] {
+			seen[item] = true
+			ret = append(ret, item)
+		}
+	}
+	return ret
+}
+
+// mergeMemoryItems merges one update into the current item list: additions
+// come first, then surviving current items. Deletion takes precedence over
+// addition in the same round. See TheoryOfMemory.
+func mergeMemoryItems(currentItems []string, update memoryUpdate) []string {
+	deleteSet := make(map[string]bool, len(update.Deletes))
+	for _, item := range update.Deletes {
+		deleteSet[item] = true
+	}
+	ret := []string{}
+	for _, item := range update.Adds {
+		if !deleteSet[item] {
+			ret = append(ret, item)
+		}
+	}
+	for _, item := range currentItems {
+		if !deleteSet[item] && !slices.Contains(ret, item) {
+			ret = append(ret, item)
+		}
+	}
+	return ret
+}
+
 var pseudoCallRegex = regexp.MustCompile(`update_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
+
+var deletePseudoCallRegex = regexp.MustCompile(`delete_user_profile\s*\(\s*(?:items\s*[=:])?\s*(\[[\s\S]*?\])\s*\)`)
 
 var quotedItemRegex = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
 
-// parsePseudoCallItems scans text for textual update_user_profile(...)
-// pseudo-calls and extracts the quoted items from the array argument.
-// This is a fallback for when the model fails to use the memory block
-// format and instead writes the call as plain text. The extraction
-// handles both double-quoted and single-quoted strings, matching the
-// robustness requirements described in TheoryOfMemory.
-func parsePseudoCallItems(text string) []string {
-	matches := pseudoCallRegex.FindAllStringSubmatch(text, -1)
+// extractQuotedItems finds every match of a pseudo-call regex in text and
+// extracts the quoted items from the captured array argument. It handles
+// both double-quoted and single-quoted strings. See TheoryOfMemory.
+func extractQuotedItems(regex *regexp.Regexp, text string) []string {
+	matches := regex.FindAllStringSubmatch(text, -1)
 	var items []string
 	for _, match := range matches {
 		if len(match) < 2 {
@@ -373,6 +410,24 @@ func parsePseudoCallItems(text string) []string {
 		}
 	}
 	return items
+}
+
+// parsePseudoCallItems scans text for textual update_user_profile(...)
+// pseudo-calls and extracts the quoted items from the array argument.
+// This is a fallback for when the model fails to use the memory block
+// format and instead writes the call as plain text. The extraction
+// handles both double-quoted and single-quoted strings, matching the
+// robustness requirements described in TheoryOfMemory.
+func parsePseudoCallItems(text string) []string {
+	return extractQuotedItems(pseudoCallRegex, text)
+}
+
+// parsePseudoCallDeletes scans text for textual delete_user_profile(...)
+// pseudo-calls and extracts the quoted items to delete from the array
+// argument. It is the deletion counterpart of parsePseudoCallItems.
+// See TheoryOfMemory.
+func parsePseudoCallDeletes(text string) []string {
+	return extractQuotedItems(deletePseudoCallRegex, text)
 }
 
 // GetModelID derives a stable model identifier from a generator spec,

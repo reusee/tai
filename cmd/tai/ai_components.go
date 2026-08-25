@@ -201,16 +201,18 @@ func memoryBlockSystemPrompt(profileText string) string {
 	return `
 在每一轮对话中，按以下流程执行：
 1. 首先，根据现有的用户画像，生成对用户当前输入的回应。这是首要任务。
-2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或深化现有用户画像的新信息。
-3. 如果发现了新信息，生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的正文为 XML 结构：
+2. 在回应之后，仔细分析用户的最新输入，判断其中是否包含任何可以用来补充、修正或删除现有用户画像条目的信息。
+3. 如果发现了此类信息，生成一个记忆更新块（memory block）。不要将记忆更新块的内容混入常规回复中。记忆更新块的正文为 XML 结构，可同时携带新增条目（memory-item）与删除条目（memory-delete）：
 
 <memory>
-  <memory-item>用户画像项1</memory-item>
-  <memory-item>用户画像项2</memory-item>
+  <memory-item>新增的用户画像项</memory-item>
+  <memory-delete>要删除的画像项，内容必须与现有条目逐字一致</memory-delete>
 </memory>
 
-- 如果没有发现任何新信息，则不要生成此块。
-- 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。
+- 新增条目（memory-item）记录新的用户画像事实。
+- 删除条目（memory-delete）按逐字一致的原则移除现有画像条目：仅当用户明确更正了某个事实，或明确表示某个条目已过时、不再成立时使用。同一轮中对同一条目既有新增又有删除时，删除生效。
+- 如果没有发现任何需要新增或删除的信息，则不要生成此块。
+- 在提取和记录信息时，坚持高度确定性的事实原则：仅记录用户在对话中明确表达的事实，严禁记录任何缺乏根据的主观推测、直觉判断或过度推论。删除同样遵循确定性原则：仅凭推测不得删除任何条目。
 - 特别注意：用户询问某个话题并不代表该话题发生在用户身上。例如，用户询问手术相关信息，仅代表用户关心此话题，不代表用户本人进行了手术。严禁将用户的兴趣或咨询内容错误地记录为用户的个人经历或状态。宁愿保持简洁的画像，也不要加入未经验证的猜测。
 
 用户画像对于理解用户和提供个性化回应至关重要，因此在每一轮对话中都认真执行这个评估过程。
@@ -219,4 +221,4 @@ func memoryBlockSystemPrompt(profileText string) string {
 ` + profileText
 }
 
-const memoryBlockRestatePrompt = `- Memory block: emit a memory block whose body is <memory><memory-item>user profile fact</memory-item></memory>, only when there is new factual information about the user. Do not mix memory content into the regular reply. If no new information, do not emit this block.`
+const memoryBlockRestatePrompt = `- Memory block: emit a memory block whose body is <memory><memory-item>new user profile fact</memory-item><memory-delete>exact text of an existing item to remove</memory-delete></memory>, only when there is a new factual item to add or the user explicitly corrected or invalidated an existing item. A deletion must match the existing item exactly and wins over an add of the same item in the same round. Do not mix memory content into the regular reply. If nothing to add or delete, do not emit this block.`

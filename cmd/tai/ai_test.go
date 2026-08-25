@@ -181,6 +181,25 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	})
 }
 
+func TestMemoryPromptsTeachDeletion(t *testing.T) {
+	// The processing side (memories.UpdateMemoryFromBlock) parses
+	// <memory-delete> entries and delete_user_profile pseudo-calls, with
+	// deletion taking precedence over addition in the same round. The ai
+	// command's memory prompts must teach the deletion syntax, otherwise
+	// the mechanism is unreachable through normal model output. See
+	// memories.TheoryOfMemory.
+	prompt := memoryBlockSystemPrompt("")
+	if !strings.Contains(prompt, "memory-delete") {
+		t.Fatal("memoryBlockSystemPrompt must teach the memory-delete element")
+	}
+	if !strings.Contains(prompt, "删除生效") {
+		t.Fatal("memoryBlockSystemPrompt must state that deletion wins over addition in the same round")
+	}
+	if !strings.Contains(memoryBlockRestatePrompt, "memory-delete") {
+		t.Fatal("memoryBlockRestatePrompt must teach the memory-delete element")
+	}
+}
+
 func TestAIComponentsExcludesContinueComponent(t *testing.T) {
 	dscope.New(
 		new(Module),

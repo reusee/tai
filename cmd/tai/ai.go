@@ -30,7 +30,9 @@ profiling policy — lives in the memories package (see memories.TheoryOfMemory)
 This command wires memories into the dscope graph, feeds the current profile
 into the memory Component's prompt section (assembled into the system prompt
 via comps.PromptSections), and invokes memories.UpdateMemoryFromBlock after
-each generation round to merge newly learned items into the profile.
+each generation round to apply memory additions and deletions: deletions
+remove items by exact string match and win over a same-round addition. The
+memory prompts teach both the memory-item and memory-delete elements.
 
 The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
 is excluded from the buffer used for memory block parsing. Thoughts may contain
