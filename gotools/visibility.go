@@ -45,7 +45,7 @@ prefetchPackageDocs with bounded concurrency, hiding the per-subprocess
 latency that a serial probe loop would incur; the allocation's own
 computeDoc calls then short-circuit via the docComputed guard. Short doc is
 never prefetched: no category has short doc as its minimum visibility, so
-it is probed only by the water-fill.
+it is probed only by the water-fill and by the focus overflow downgrade.
 
 The water-fill phase gates both documentation upgrades (invisible→short
 doc and short doc→full doc) on the immediate predecessor: a package whose
@@ -68,6 +68,10 @@ making every such package permanently invisible. A focus package is the
 exception: it is pinned at full documentation and never upgraded, so
 its block is still emitted with a failure note, the test-function names,
 and the file names, keeping the package discoverable for go-src fetches.
+The overflow downgrade (see TheoryOfVisibilityAllocation) is the one path
+that places a focus package at the short-doc level: computePackageShortDoc
+routes focus packages to computeFocusPackageShortDoc, whose block keeps
+the focus markers, the test-function names, and the file names.
 `
 
 const TheoryOfContextStrategy = `
@@ -183,6 +187,22 @@ carries the writable-dir read-only annotation in its begin marker,
 because focus Go files are no longer emitted individually. The
 construction principle therefore holds among non-focus packages; the
 pinned focus level is independent of it by design.
+
+Focus overflow downgrade: when the pinned focus tokens exceed the
+generator token budget — the user-prompt budget Parts derives from the
+model's context window and passes to SimplifyFiles — the focus block
+alone overflows the model's window and no context trimming can save the
+request. allocateVisibility downgrades focus packages to the short-doc
+level and re-derives the context budget from the downgraded tokens: the
+focus block becomes the package overview and top-level symbol index
+(unexported symbols included, matching the focus -u convention) plus the
+test-function and file names, so every symbol and file name stays
+discoverable for go-src and read fetching at a fraction of the full-doc
+cost. The downgrade is a single step — full documentation or -all-src
+source down to short doc — applies only when the budget is positive,
+and if the short-doc surface still exceeds it the request proceeds
+oversized rather than dropping focus packages entirely; files explicitly
+requested via -file keep their full content regardless.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -320,11 +340,17 @@ func goDocOutput(pkgPath, dir string, envs []string, focus bool) (string, error)
 // goDocShortOutput runs `go doc -cmd` without -all for the package and
 // returns the raw text with a guaranteed trailing newline. The output is
 // the package overview and the top-level symbol index — a fraction of the
-// full documentation's size — used by the short-doc visibility level. The
-// invocation shares the read-only module environment with goDocOutput. See
+// full documentation's size — used by the short-doc visibility level; a
+// focus package adds -u so unexported symbols stay in the index, keeping
+// the downgraded focus block a usable go-src index. The invocation shares
+// the read-only module environment with goDocOutput. See
 // TheoryOfGoDocReadonly and TheoryOfLazyPackageDoc.
-func goDocShortOutput(pkgPath, dir string, envs []string) (string, error) {
-	args := []string{"doc", "-cmd", pkgPath}
+func goDocShortOutput(pkgPath, dir string, envs []string, focus bool) (string, error) {
+	args := []string{"doc", "-cmd"}
+	if focus {
+		args = append(args, "-u")
+	}
+	args = append(args, pkgPath)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	cmd.Env = withoutModModEnv(envs)
@@ -387,7 +413,7 @@ func renderShortDoc(
 	envs []string,
 	countTokens func(string) (int, error),
 ) (content string, tokens int, err error) {
-	text, err := goDocShortOutput(pkgPath, dir, envs)
+	text, err := goDocShortOutput(pkgPath, dir, envs, false)
 	if err != nil {
 		return "", 0, err
 	}
@@ -450,14 +476,17 @@ func computePackageDoc(
 // computePackageShortDoc computes and caches the short-doc output for a
 // logical package: go doc without -all, wrapped with context package
 // markers. It is the production computeShortDoc used by allocateVisibility
-// via SimplifyFiles, invoked only for non-focus packages: focus packages
-// are pinned at full documentation and never occupy the short-doc level.
-// On success the short-doc budget cost is the token count; on failure the
-// short doc is treated as empty: VisibilityShortDoc costs nothing and
-// emits nothing, and the water-fill can still upgrade the package to full
-// doc or code. The shortDocComputed guard makes the call idempotent: each
-// package runs the short-doc subprocess at most once, independently of
-// the full-doc computation. See TheoryOfLazyPackageDoc.
+// via SimplifyFiles. Focus packages are routed to
+// computeFocusPackageShortDoc: when the pinned focus surface exceeds the
+// generator token budget, allocateVisibility downgrades focus packages to
+// the short-doc level, and their block keeps the focus markers plus the
+// test-function and file names. On success the short-doc budget cost is
+// the token count; on failure the short doc is treated as empty:
+// VisibilityShortDoc costs nothing and emits nothing, and the water-fill
+// can still upgrade the package to full doc or code. The
+// shortDocComputed guard makes the call idempotent: each package runs the
+// short-doc subprocess at most once, independently of the full-doc
+// computation. See TheoryOfLazyPackageDoc and TheoryOfVisibilityAllocation.
 func computePackageShortDoc(
 	lp *LogicalPackage,
 	dir string,
@@ -465,6 +494,10 @@ func computePackageShortDoc(
 	countTokens func(string) (int, error),
 ) {
 	if lp.shortDocComputed {
+		return
+	}
+	if lp.Category == CategoryFocus {
+		computeFocusPackageShortDoc(lp, dir, envs, countTokens)
 		return
 	}
 	content, tokens, err := renderShortDoc(lp.PkgPath, dir, []string(envs), countTokens)
@@ -479,6 +512,57 @@ func computePackageShortDoc(
 		lp.BudgetTokensByLevel[VisibilityShortDoc] = tokens
 		lp.TokensByLevel[VisibilityShortDoc] = tokens
 	}
+	lp.shortDocComputed = true
+}
+
+// computeFocusPackageShortDoc computes the short-doc block for a focus
+// package: go doc -cmd -u output (the package overview and the top-level
+// symbol index, unexported symbols included) followed by the package's
+// test function names and file names, wrapped in "focus package" markers.
+// It is produced when allocateVisibility downgrades the focus pin because
+// the pinned focus tokens exceed the generator token budget (see
+// TheoryOfVisibilityAllocation): the short-doc block keeps every symbol
+// name, test name, and file name in context, so go-src and read fetching
+// still work, at a fraction of the full-doc token cost. Like
+// computeFocusPackageDoc it is emitted even when go doc fails, carrying a
+// failure note plus the test names and file names. The block ends with a
+// blank line so consecutive units stay paragraph-separated; see
+// generators.TheoryOfContentUnitSeparation. A countTokens failure falls
+// back to empty content, matching the non-focus path.
+func computeFocusPackageShortDoc(
+	lp *LogicalPackage,
+	dir string,
+	envs Envs,
+	countTokens func(string) (int, error),
+) {
+	readOnlyNote := ""
+	if focusPackageReadOnly(lp) {
+		readOnlyNote = " (read-only)"
+	}
+
+	var body strings.Builder
+	if text, err := goDocShortOutput(lp.PkgPath, dir, []string(envs), true); err != nil {
+		body.WriteString("(go doc failed: " + err.Error() +
+			"; fetch declarations with go-src blocks)\n")
+	} else {
+		body.WriteString(text)
+	}
+	body.WriteString(focusTestNamesSection(lp))
+	body.WriteString(focusFileNamesSection(lp))
+
+	content := "``` begin of focus package " + lp.PkgPath + readOnlyNote + "\n" +
+		body.String() +
+		"``` end of focus package " + lp.PkgPath + "\n\n"
+
+	tokens, err := countTokens(content)
+	if err != nil {
+		content = ""
+		tokens = 0
+	}
+	lp.ShortDocContent = content
+	lp.ShortDocTokens = tokens
+	lp.BudgetTokensByLevel[VisibilityShortDoc] = tokens
+	lp.TokensByLevel[VisibilityShortDoc] = tokens
 	lp.shortDocComputed = true
 }
 
@@ -854,6 +938,7 @@ func allocateVisibility(
 	logicalPkgs []*LogicalPackage,
 	logger logs.Logger,
 	debug Debug,
+	maxTokens int,
 	computeShortDoc func(lp *LogicalPackage),
 	computeDoc func(lp *LogicalPackage),
 	computeCosts func(lp *LogicalPackage) error,
@@ -887,7 +972,9 @@ func allocateVisibility(
 	// computed it). Under -all-src (MinVisibility raised to VisibilityAll
 	// by SimplifyFiles), focus packages are instead pinned at full source
 	// including tests; the full-level costs are computed here because the
-	// budget derives from them. See TheoryOfVisibilityAllocation.
+	// budget derives from them. When the pinned tokens exceed the
+	// generator budget, the pin is downgraded to short doc below.
+	// See TheoryOfVisibilityAllocation.
 	for _, lp := range logicalPkgs {
 		if lp.Category != CategoryFocus {
 			continue
@@ -916,6 +1003,39 @@ func allocateVisibility(
 	for _, lp := range logicalPkgs {
 		if lp.Category == CategoryFocus {
 			focusTokens += lp.TokensByLevel[lp.Visibility]
+		}
+	}
+
+	// Focus overflow downgrade: when the pinned focus tokens exceed the
+	// generator token budget (the user-prompt budget Parts derives from
+	// the model's context window and passes to SimplifyFiles), the focus
+	// block alone overflows the model's window and no context trimming
+	// can save the request. Focus packages are downgraded to the
+	// short-doc level — the package overview and top-level symbol index
+	// plus the test-function and file names — and the context budget is
+	// re-derived from the downgraded tokens, so the context allocation
+	// below runs against the smaller budget. The downgrade is a single
+	// step and applies only when maxTokens > 0; a maxTokens of 0 disables
+	// the check. See TheoryOfVisibilityAllocation.
+	if maxTokens > 0 && focusTokens > maxTokens {
+		for _, lp := range logicalPkgs {
+			if lp.Category != CategoryFocus {
+				continue
+			}
+			computeShortDoc(lp)
+			lp.Visibility = VisibilityShortDoc
+		}
+		focusTokens = 0
+		for _, lp := range logicalPkgs {
+			if lp.Category == CategoryFocus {
+				focusTokens += lp.TokensByLevel[lp.Visibility]
+			}
+		}
+		if debug {
+			logger.Info("focus visibility downgraded to short doc",
+				"max tokens", maxTokens,
+				"downgraded focus tokens", focusTokens,
+			)
 		}
 	}
 	remaining := calculateMaxContextTokens(focusTokens)

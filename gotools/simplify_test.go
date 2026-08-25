@@ -36,7 +36,11 @@ func TestSimplify(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		files, err = simplifyFiles(files, 256, generators.DeepseekTokenCounterFn)
+		// A large budget keeps the focus pin at full documentation: a
+		// small maxTokens would trigger the overflow downgrade to short
+		// doc and replace the focus documentation block this test
+		// asserts on. See TheoryOfVisibilityAllocation.
+		files, err = simplifyFiles(files, 1<<20, generators.DeepseekTokenCounterFn)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -299,7 +303,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			},
 		}
 
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -345,7 +349,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			},
 		}
 
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -388,7 +392,7 @@ func TestAllocateVisibilityUnaffordablePackageDoesNotBlockOthers(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 0
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -440,7 +444,7 @@ func TestAllocateVisibilityGuaranteesContextPackages(t *testing.T) {
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, nil); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -500,7 +504,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			lp.TokensByLevel[VisibilityDoc] = 100
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -574,7 +578,7 @@ func TestAllocateVisibilityLazyDocComputation(t *testing.T) {
 			// allocation behaves as if the doc were pre-computed.
 			lp.docComputed = true
 		}
-		if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, computeDoc, nil); err != nil {
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, computeDoc, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -653,7 +657,7 @@ func TestAllocateVisibilityLazyCostComputation(t *testing.T) {
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, nil, nil, computeCosts); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, nil, nil, computeCosts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -715,7 +719,7 @@ func TestAllocateVisibilityShortDoc(t *testing.T) {
 		},
 	}
 
-	if err := allocateVisibility(pkgs, logs.Logger{}, false, computeShortDoc, nil, nil); err != nil {
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 0, computeShortDoc, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -725,6 +729,135 @@ func TestAllocateVisibilityShortDoc(t *testing.T) {
 	if len(shortDocCalls) != 1 || shortDocCalls[0] != "directimport" {
 		t.Fatalf("expected short doc computed exactly once for directimport, got %v", shortDocCalls)
 	}
+}
+
+func TestAllocateVisibilityDowngradesFocusToShortDoc(t *testing.T) {
+	// When the pinned focus tokens exceed the generator token budget, the
+	// focus block alone overflows the model's window: allocateVisibility
+	// downgrades focus packages to the short-doc level and re-derives the
+	// context budget from the downgraded tokens. The re-derivation is
+	// observable through the context allocation: a package whose full doc
+	// is affordable only under the full-doc-derived budget (65536 from
+	// 200<<10 focus tokens) becomes unaffordable under the
+	// short-doc-derived floor (32768). A maxTokens of 0 disables the
+	// check. See TheoryOfVisibilityAllocation.
+	t.Run("downgrades and re-derives the budget", func(t *testing.T) {
+		var docCalls, shortDocCalls []string
+		computeDoc := func(lp *LogicalPackage) {
+			if lp.docComputed {
+				return
+			}
+			docCalls = append(docCalls, lp.PkgPath)
+			lp.DocContent = "doc"
+			lp.DocTokens = 200 << 10
+			lp.BudgetTokensByLevel[VisibilityDoc] = 200 << 10
+			lp.TokensByLevel[VisibilityDoc] = 200 << 10
+			lp.docComputed = true
+		}
+		computeShortDoc := func(lp *LogicalPackage) {
+			if lp.shortDocComputed {
+				return
+			}
+			shortDocCalls = append(shortDocCalls, lp.PkgPath)
+			lp.ShortDocContent = "short doc"
+			lp.ShortDocTokens = 1 << 10
+			lp.BudgetTokensByLevel[VisibilityShortDoc] = 1 << 10
+			lp.TokensByLevel[VisibilityShortDoc] = 1 << 10
+			lp.shortDocComputed = true
+		}
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
+			},
+			{
+				// Full doc costs 40000: affordable when the budget derives
+				// from the full focus doc (65536) but not from the
+				// downgraded short doc (32768 floor), proving the budget
+				// was re-derived after the downgrade.
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 40000, 40000, 40000},
+			},
+		}
+
+		// The pinned focus doc (200<<10) exceeds the generator budget
+		// (150<<10), so the downgrade fires.
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 150<<10, computeShortDoc, computeDoc, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		if pkgs[0].Visibility != VisibilityShortDoc {
+			t.Fatalf("focus should be downgraded to short doc, got %d", pkgs[0].Visibility)
+		}
+		if len(shortDocCalls) == 0 || shortDocCalls[0] != "focus" {
+			t.Fatalf("expected short doc computed for the focus downgrade first, got %v", shortDocCalls)
+		}
+		if len(docCalls) == 0 || docCalls[0] != "focus" {
+			t.Fatalf("expected full doc computed for the focus pin first, got %v", docCalls)
+		}
+		// Under the pre-downgrade budget (65536) samemodule would have
+		// been allocated at full doc; under the re-derived floor (32768)
+		// it cannot afford full doc and lands at short doc.
+		if pkgs[1].Visibility != VisibilityShortDoc {
+			t.Fatalf("samemodule should be at short doc under the re-derived budget, got %d", pkgs[1].Visibility)
+		}
+	})
+
+	t.Run("keeps full doc when focus fits", func(t *testing.T) {
+		// The fake doc costs are keyed by package: the focus doc drives
+		// the overflow check, while samemodule's smaller doc cost drives
+		// its own affordability.
+		computeDoc := func(lp *LogicalPackage) {
+			if lp.docComputed {
+				return
+			}
+			tokens := 200 << 10
+			if lp.PkgPath != "focus" {
+				tokens = 40000
+			}
+			lp.DocContent = "doc"
+			lp.DocTokens = tokens
+			lp.BudgetTokensByLevel[VisibilityDoc] = tokens
+			lp.TokensByLevel[VisibilityDoc] = tokens
+			lp.docComputed = true
+		}
+		pkgs := []*LogicalPackage{
+			{
+				PkgPath:             "focus",
+				Category:            CategoryFocus,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 1 << 30},
+			},
+			{
+				PkgPath:             "samemodule",
+				Category:            CategorySameModule,
+				MinVisibility:       VisibilityDoc,
+				Visibility:          VisibilityInvisible,
+				BudgetTokensByLevel: [5]int{0, 1 << 30, 40000, 1 << 30, 1 << 30},
+			},
+		}
+
+		// A budget larger than the 200<<10 focus doc tokens: no
+		// downgrade, focus pins at full doc, and the 65536 budget derived
+		// from it affords samemodule's 40000-token doc.
+		if err := allocateVisibility(pkgs, logs.Logger{}, false, 1<<20, nil, computeDoc, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		if pkgs[0].Visibility != VisibilityDoc {
+			t.Fatalf("focus should stay pinned at full doc, got %d", pkgs[0].Visibility)
+		}
+		if pkgs[1].Visibility != VisibilityDoc {
+			t.Fatalf("samemodule should be at full doc under the full-doc-derived budget, got %d", pkgs[1].Visibility)
+		}
+	})
 }
 
 func TestMatchPattern(t *testing.T) {

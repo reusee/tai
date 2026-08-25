@@ -22,8 +22,8 @@ documentation's size). Level VisibilityDoc: full package documentation
 via go doc -all -cmd (per-package output, not per-file; the -u flag is
 deliberately omitted for context packages so the reference stays focused
 on exported symbols, and added for focus packages so the model sees the
-complete surface of the packages it edits, alongside the package's test
-function names and file names). Level VisibilityCode: full Go code
+complete surface of the packages it edits, alongside the package's
+test-function names and file names). Level VisibilityCode: full Go code
 without test files (raw file content). Level VisibilityAll: all files
 including tests, non-Go files, and embed files (raw file content).
 
@@ -34,7 +34,10 @@ See TheoryOfVisibilityAllocation in visibility.go.
 Focus packages are pinned at full documentation (documentation plus
 test-function names and file names) and do not count against the budget;
 the model fetches focus implementation source on demand with go-src
-blocks. The -all-src flag pins focus at full source instead
+blocks. When the pinned focus tokens exceed the generator token budget,
+the focus pin downgrades to short doc and the budget re-derives from the
+downgraded tokens (see TheoryOfVisibilityAllocation in visibility.go).
+The -all-src flag pins focus at full source instead
 (VisibilityAll): every focus file including tests is emitted at full
 content and no focus documentation block is produced. Focus files
 explicitly requested via -file are still emitted at full content; every
@@ -189,13 +192,17 @@ func (Module) SimplifyFiles(
 		// probes are launched concurrently by prefetchPackageDocs first,
 		// hiding the subprocess latency; the hooks' calls then
 		// short-circuit via the docComputed guard. Short doc is computed
-		// only by the water-fill, because no category has it as a minimum
-		// visibility. go doc runs from the load directory (or workspace
-		// root in workspace mode) so it can resolve package import paths.
-		// The computeCosts hook delegates to computePackageCosts, which
-		// renders and token-counts a package's files only when the
-		// allocation probes it. See TheoryOfLazyPackageDoc and
-		// TheoryOfLazyVisibilityCosts in visibility.go.
+		// only by the water-fill and by the focus overflow downgrade,
+		// because no category has it as a minimum visibility. go doc runs
+		// from the load directory (or workspace root in workspace mode) so
+		// it can resolve package import paths. The computeCosts hook
+		// delegates to computePackageCosts, which renders and token-counts
+		// a package's files only when the allocation probes it. maxTokens
+		// is the user-prompt token budget from Parts; when the pinned
+		// focus tokens exceed it, allocateVisibility downgrades the focus
+		// pin to short doc and re-derives the context budget. See
+		// TheoryOfLazyPackageDoc, TheoryOfLazyVisibilityCosts, and
+		// TheoryOfVisibilityAllocation in visibility.go.
 		dir := string(loadDir)
 		if workspace != "" {
 			dir = string(workspace)
@@ -210,7 +217,7 @@ func (Module) SimplifyFiles(
 		computeCosts := func(lp *LogicalPackage) error {
 			return computePackageCosts(lp, countTokens)
 		}
-		if err := allocateVisibility(logicalPkgs, logger, debug, computeShortDoc, computeDoc, computeCosts); err != nil {
+		if err := allocateVisibility(logicalPkgs, logger, debug, maxTokens, computeShortDoc, computeDoc, computeCosts); err != nil {
 			return nil, err
 		}
 
@@ -264,6 +271,13 @@ func (Module) SimplifyFiles(
 			// it correctly.
 			if lp.Visibility == VisibilityShortDoc && lp.ShortDocContent != "" {
 				what := fmt.Sprintf("visibility level %d (go doc short)", VisibilityShortDoc)
+				if lp.Category == CategoryFocus {
+					// A focus package reaches the short-doc level through
+					// the overflow downgrade; the distinct What records
+					// it. See TheoryOfVisibilityAllocation in
+					// visibility.go.
+					what = fmt.Sprintf("visibility level %d (focus go doc short -u)", VisibilityShortDoc)
+				}
 				if docFile := packageDocFile(lp, lp.ShortDocContent, lp.ShortDocTokens, what); docFile != nil {
 					result = append(result, docFile)
 				}
