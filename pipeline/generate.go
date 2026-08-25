@@ -398,6 +398,11 @@ func handoffRetryState(
 			fallbackState, fallbackCount, fallbackSummary := fallbackRetryState(errState, phaseErr)
 			return fallbackState, fallbackCount, fallbackSummary, handoffErr
 		} else if handoff != nil {
+			// Account the handoff request's own token spend: inject the
+			// summed usage into the state the caller scans for round
+			// statistics, before the retry feedback is built on top of
+			// it. See TheoryOfHandoffUsageAccounting.
+			errState = appendHandoffUsage(errState, prevContentCount, handoff.Usage)
 			prefix := fmt.Sprintf(
 				"[System note: The previous generation attempt was interrupted by an error after producing partial output: %v. This is a retry. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n",
 				phaseErr,
@@ -815,7 +820,13 @@ func (Module) GenerateWithResultWithStats(
 						return createHandoff(runCtx, text)
 					},
 				)
-				roundStats, _ = collectRoundStats(roundStats, errState, prevContentCount, elapsed, summary)
+				// Scan the returned state rather than the error state:
+				// the success path injects the handoff request's own
+				// usage into newState (see
+				// TheoryOfHandoffUsageAccounting), and the fallback path
+				// differs only by usage-free appended content, so
+				// scanning either yields the same last usage there.
+				roundStats, _ = collectRoundStats(roundStats, newState, prevContentCount, elapsed, summary)
 				prevContentCount = newContentCount
 
 				if handoffErr != nil {

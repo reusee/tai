@@ -206,6 +206,47 @@ func TestHandoffRetryState(t *testing.T) {
 	})
 }
 
+func TestHandoffRetryStateInjectsUsage(t *testing.T) {
+	// The success path injects the handoff request's own spend into the
+	// returned state: the last usage in the state equals the main
+	// generation's usage plus the handoff usage, so the caller's
+	// statistics scan accounts both. See
+	// TheoryOfHandoffUsageAccounting.
+	base := generators.NewPrompts("", []*generators.Content{
+		{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("question")}},
+		{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+			Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100, TokenCountCached: 20},
+			Candidates: struct{ TokenCount int }{TokenCount: 50},
+			Thoughts:   struct{ TokenCount int }{TokenCount: 10},
+		}}},
+	})
+	partial, err := base.AppendContent(&generators.Content{
+		Role:  generators.RoleAssistant,
+		Parts: []generators.Part{generators.Text(strings.Repeat("partial output words ", 10))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoffUsage := generators.Usage{}
+	handoffUsage.Prompt.TokenCount = 7
+	handoffUsage.Candidates.TokenCount = 3
+	handoffUsage.Thoughts.TokenCount = 1
+
+	state, _, _, err := handoffRetryState(partial, errors.New("boom"), 1, func(text string) (*Handoff, error) {
+		return &Handoff{Summary: "condensed", Prompt: "condensed", Usage: handoffUsage}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := extractLastUsage(state, 0)
+	if got.Prompt.TokenCount != 107 || got.Prompt.TokenCountCached != 20 ||
+		got.Candidates.TokenCount != 53 || got.Thoughts.TokenCount != 11 {
+		t.Fatalf("expected injected usage (107, 20, 53, 11), got (%d, %d, %d, %d)",
+			got.Prompt.TokenCount, got.Prompt.TokenCountCached,
+			got.Candidates.TokenCount, got.Thoughts.TokenCount)
+	}
+}
+
 func TestHandoffSystemPromptSelfContainedAndReferenceOriented(t *testing.T) {
 	// The handoff prompt must emphasize self-contained extraction,
 	// task partitioning across rounds using continue blocks, and that
@@ -919,6 +960,85 @@ func TestCreateHandoffParsesHandoffBlockBody(t *testing.T) {
 	}
 }
 
+// handoffUsageMockGenerator emits canned responses, each followed by a
+// fixed usage part, so createHandoff's cross-attempt usage accumulation
+// can be verified deterministically.
+type handoffUsageMockGenerator struct {
+	responses []string
+	usage     generators.Usage
+	calls     int
+}
+
+func (g *handoffUsageMockGenerator) Spec() generators.Spec {
+	return generators.Spec{Name: "handoff-usage-mock", Model: "mock-handoff"}
+}
+
+func (g *handoffUsageMockGenerator) CountTokens(text string) (int, error) {
+	return len(text), nil
+}
+
+func (g *handoffUsageMockGenerator) Generate(ctx context.Context, state generators.State, options *generators.GenerateOptions) (generators.State, error) {
+	if g.calls >= len(g.responses) {
+		return state, errors.New("no more responses")
+	}
+	response := g.responses[g.calls]
+	g.calls++
+	newState, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleModel,
+		Parts: []generators.Part{generators.Text(response)},
+	})
+	if err != nil {
+		return state, err
+	}
+	return newState.AppendContent(&generators.Content{
+		Role:  generators.RoleLog,
+		Parts: []generators.Part{g.usage},
+	})
+}
+
+func TestCreateHandoffAccumulatesUsageAcrossAttempts(t *testing.T) {
+	// The delivered Handoff must report the token spend of every
+	// generating attempt: the first response lacks a valid handoff
+	// block and is retried, and the second succeeds. The accumulated
+	// usage equals the sum of both attempts. See
+	// TheoryOfHandoffUsageAccounting.
+	gen := &handoffUsageMockGenerator{
+		responses: []string{
+			"I cannot produce a valid block.",
+			"<<黿鼍 handoff\nThe condensed handoff content.\n黿鼍",
+		},
+		usage: generators.Usage{
+			Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 11, TokenCountCached: 2},
+			Candidates: struct{ TokenCount int }{TokenCount: 5},
+			Thoughts:   struct{ TokenCount int }{TokenCount: 1},
+		},
+	}
+	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
+	input := strings.Repeat("long incomplete text ", 10)
+
+	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, input, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff == nil {
+		t.Fatal("expected handoff")
+	}
+	if handoff.Summary != "The condensed handoff content." {
+		t.Fatalf("unexpected summary %q", handoff.Summary)
+	}
+	if gen.calls != 2 {
+		t.Fatalf("expected 2 generating attempts, got %d", gen.calls)
+	}
+	want := generators.Usage{
+		Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 22, TokenCountCached: 4},
+		Candidates: struct{ TokenCount int }{TokenCount: 10},
+		Thoughts:   struct{ TokenCount int }{TokenCount: 2},
+	}
+	if handoff.Usage != want {
+		t.Fatalf("expected accumulated usage %+v, got %+v", want, handoff.Usage)
+	}
+}
+
 func TestCreateHandoffSkipsShortOutput(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
 		responses: []string{"handoff text"},
@@ -1233,6 +1353,59 @@ func TestCollectRoundStats(t *testing.T) {
 		}
 		if stats[0].Summary != "no usage summary" {
 			t.Fatalf("expected summary 'no usage summary', got %q", stats[0].Summary)
+		}
+	})
+}
+
+func TestAppendHandoffUsageSumsLastAndHandoff(t *testing.T) {
+	t.Run("SumsLastAndHandoff", func(t *testing.T) {
+		var state generators.State = generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hi")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt:     struct{ TokenCount, TokenCountCached int }{TokenCount: 100, TokenCountCached: 10},
+				Candidates: struct{ TokenCount int }{TokenCount: 50},
+				Thoughts:   struct{ TokenCount int }{TokenCount: 20},
+			}}},
+		})
+		handoffUsage := generators.Usage{}
+		handoffUsage.Prompt.TokenCount = 7
+		handoffUsage.Candidates.TokenCount = 3
+		handoffUsage.Thoughts.TokenCount = 1
+
+		newState := appendHandoffUsage(state, 0, handoffUsage)
+		got := extractLastUsage(newState, 0)
+		if got.Prompt.TokenCount != 107 || got.Prompt.TokenCountCached != 10 ||
+			got.Candidates.TokenCount != 53 || got.Thoughts.TokenCount != 21 {
+			t.Fatalf("expected summed usage (107, 10, 53, 21), got (%d, %d, %d, %d)",
+				got.Prompt.TokenCount, got.Prompt.TokenCountCached,
+				got.Candidates.TokenCount, got.Thoughts.TokenCount)
+		}
+	})
+
+	t.Run("ZeroSumSkipped", func(t *testing.T) {
+		state := generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hi")}},
+		})
+		newState := appendHandoffUsage(state, 0, generators.Usage{})
+		if generators.CountContents(newState) != generators.CountContents(state) {
+			t.Fatal("expected no injected content for a zero-sum usage")
+		}
+	})
+
+	t.Run("WindowBaselineExcludesEarlierUsage", func(t *testing.T) {
+		// A usage part before the baseline window must not be picked up:
+		// the window starts at sinceContentCount, so an earlier round's
+		// usage cannot leak into the injected sum.
+		var state generators.State = generators.NewPrompts("", []*generators.Content{
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hi")}},
+			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
+				Prompt: struct{ TokenCount, TokenCountCached int }{TokenCount: 999},
+			}}},
+			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("next")}},
+		})
+		newState := appendHandoffUsage(state, 2, generators.Usage{})
+		if generators.CountContents(newState) != generators.CountContents(state) {
+			t.Fatal("expected no injection when the window holds no usage")
 		}
 	})
 }

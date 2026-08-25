@@ -380,6 +380,13 @@ func (ls *loopState) runRound() (roundResult, error) {
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
+								// Account the handoff request's own token
+								// spend before the failed round is recorded.
+								// The window starts at the failed attempt's
+								// base, so usage retained from earlier error
+								// retries is never re-attributed to this
+								// attempt. See TheoryOfHandoffUsageAccounting.
+								phaseState = appendHandoffUsage(phaseState, prevCount, handoff.Usage)
 							}
 						}
 					}
@@ -467,15 +474,21 @@ func (ls *loopState) runRound() (roundResult, error) {
 		}
 
 		// Perform handoff summary on incomplete output if threshold met.
+		// attemptBase is both the incomplete-output window and the
+		// usage-injection window: the injection sums this attempt's
+		// own last usage with the handoff spend, never a prior
+		// attempt's. See TheoryOfHandoffUsageAccounting.
 		summary := ""
 		retryPrompt := ""
+		attemptBase := generators.CountContents(ls.state)
 		if ls.opts.Handoff != nil {
-			incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
+			incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 			if incompleteText != "" {
 				handoff, rerr := ls.opts.Handoff(incompleteText)
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
+					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}
 			}
 		}
@@ -539,9 +552,15 @@ func (ls *loopState) runRound() (roundResult, error) {
 	// mandatory in every response: the round statistics and the TUI's
 	// Summary tab need the completion signal. See TheoryOfLoops.
 	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
-		incompleteText := ExtractIncompleteOutput(phaseState, generators.CountContents(ls.state))
+		attemptBase := generators.CountContents(ls.state)
+		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
+				// Account the handoff request's own token spend so the
+				// synthesized completion's round statistics and usage
+				// line include it. The window starts at the final
+				// attempt's base. See TheoryOfHandoffUsageAccounting.
+				phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				var appendErr error
 				phaseState, appendErr = phaseState.AppendContent(&generators.Content{
 					Role: generators.RoleLog,

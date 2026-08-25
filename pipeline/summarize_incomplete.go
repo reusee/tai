@@ -64,6 +64,24 @@ system prompt; the user content carries only the dynamic incomplete
 output. The same split applies to thought summarization.
 `
 
+// TheoryOfHandoffUsageAccounting explains how the handoff request's own
+// token usage reaches round statistics; the constant body carries the
+// mechanism and its boundaries. See also TheoryOfRoundStatistics and
+// TheoryOfUsageLogging.
+const TheoryOfHandoffUsageAccounting = `Handoff usage accounting: the handoff summarizer runs on throwaway
+per-attempt states, so its Usage parts never reach the collectors,
+which scan only the main generation state. The spend travels with the
+delivered Handoff value, accumulated across all generating attempts,
+and callers inject one RoleLog usage content before the round is
+recorded, carrying the failed attempt's own last usage plus the handoff
+usage. The injection window starts at the attempt's pre-generation
+base, so a prior attempt's usage — retained in the state on error
+retries — is never re-attributed, and the retry base predates the
+injection, so the next attempt never rescans it; last-Usage collection
+and RoleLog invisibility to the model keep the accounting exact. Only a
+produced Handoff accounts usage: a handoff failing on every attempt
+leaves its spend outside the statistics.`
+
 // Handoff holds the outcome of summarizing interrupted or truncated output
 // for a self-contained handoff to the next round. See TheoryOfHandoff.
 type Handoff struct {
@@ -71,6 +89,11 @@ type Handoff struct {
 	Summary string
 	// Prompt is the self-contained summary fed to the retry round as user input.
 	Prompt string
+	// Usage is the token usage of the handoff generation itself, summed
+	// across all of its attempts. Callers inject it into the generation
+	// state so round statistics include the handoff's spend.
+	// See TheoryOfHandoffUsageAccounting.
+	Usage generators.Usage
 }
 
 // HandoffWriter receives the streamed output of a handoff generation
@@ -231,6 +254,11 @@ func createHandoff(
 	recordSystemPrompt(fullHandoffSystemPrompt())
 
 	var lastErr error
+	// totalUsage accumulates the token usage of every generating attempt,
+	// including attempts whose response lacked a valid handoff block, so
+	// the delivered Handoff reports the full spend of producing it.
+	// See TheoryOfHandoffUsageAccounting.
+	var totalUsage generators.Usage
 	for attempt := range maxHandoffRetries {
 		// The handoff model is a single model; the generator slice has
 		// one element. The modulo is retained for safety but always
@@ -244,7 +272,7 @@ func createHandoff(
 			},
 		})
 
-		outputText, thoughts, err := runHandoffAttempt(ctx, generator, incompleteText, writer)
+		outputText, thoughts, attemptUsage, err := runHandoffAttempt(ctx, generator, incompleteText, writer)
 		if err != nil {
 			lastErr = err
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
@@ -263,6 +291,10 @@ func createHandoff(
 				attempt+1, maxHandoffRetries, generator.Spec().Model, err)
 			continue
 		}
+		totalUsage.Prompt.TokenCount += attemptUsage.Prompt.TokenCount
+		totalUsage.Prompt.TokenCountCached += attemptUsage.Prompt.TokenCountCached
+		totalUsage.Candidates.TokenCount += attemptUsage.Candidates.TokenCount
+		totalUsage.Thoughts.TokenCount += attemptUsage.Thoughts.TokenCount
 
 		recordContent(&generators.Content{
 			Role: generators.RoleModel,
@@ -282,6 +314,7 @@ func createHandoff(
 			return &Handoff{
 				Summary: handoffText,
 				Prompt:  handoffText,
+				Usage:   totalUsage,
 			}, nil
 		}
 		lastErr = fmt.Errorf("no valid handoff block found in response")
@@ -312,7 +345,7 @@ func runHandoffAttempt(
 	generator generators.Generator,
 	incompleteText string,
 	writer io.Writer,
-) (string, []string, error) {
+) (string, []string, generators.Usage, error) {
 	var state generators.State
 	state = generators.NewPrompts(fullHandoffSystemPrompt(), []*generators.Content{
 		{
@@ -329,9 +362,12 @@ func runHandoffAttempt(
 	}
 	newState, err := generator.Generate(ctx, state, &generators.GenerateOptions{})
 	if err != nil {
-		return "", nil, err
+		return "", nil, generators.Usage{}, err
 	}
-	return buf.String(), extractModelThoughts(newState), nil
+	// The attempt's final usage is read from the throwaway state so the
+	// spend can travel with the delivered Handoff. See
+	// TheoryOfHandoffUsageAccounting.
+	return buf.String(), extractModelThoughts(newState), extractLastUsage(newState, 0), nil
 }
 
 // extractModelThoughts collects the Thought parts of the model contents
@@ -356,6 +392,72 @@ func extractModelThoughts(state generators.State) []string {
 		}
 	}
 	return thoughts
+}
+
+// extractLastUsage returns the last Usage part found in the state's
+// contents at or after sinceContentCount, or the zero value when none
+// exists. Generators append the final usage of a generation as a Usage
+// part, so scanning the generated state yields the spend of that
+// generation. Used to carry the handoff attempt's usage out of its
+// throwaway state and to verify the injected sums in tests. See
+// TheoryOfHandoffUsageAccounting.
+func extractLastUsage(state generators.State, sinceContentCount int) generators.Usage {
+	if state == nil {
+		return generators.Usage{}
+	}
+	var usage generators.Usage
+	i := 0
+	for c := range state.Contents() {
+		if i >= sinceContentCount {
+			for _, p := range c.Parts {
+				if u, ok := p.(generators.Usage); ok {
+					usage = u
+				}
+			}
+		}
+		i++
+	}
+	return usage
+}
+
+// appendHandoffUsage appends one RoleLog content carrying the round's
+// token usage including the handoff request's spend: the last usage
+// already recorded since sinceContentCount (the generating attempt's
+// final usage) plus handoffUsage, accumulated across the handoff's
+// attempts. The statistics collectors take the last Usage part of the
+// scanned window, so the sum becomes the round's accounted usage;
+// RoleLog content is filtered out of API message assembly, so the
+// injection is invisible to the model. States are immutable and the
+// retry base predates the injection, so the following attempt's scan
+// window never double counts it. An append failure skips the
+// injection: usage accounting is best effort and must not fail the
+// recovery path. A fully zero sum adds no information and is skipped,
+// so an empty handoff usage cannot shadow a real one with zeros.
+// See TheoryOfHandoffUsageAccounting.
+func appendHandoffUsage(
+	state generators.State,
+	sinceContentCount int,
+	handoffUsage generators.Usage,
+) generators.State {
+	total := extractLastUsage(state, sinceContentCount)
+	total.Prompt.TokenCount += handoffUsage.Prompt.TokenCount
+	total.Prompt.TokenCountCached += handoffUsage.Prompt.TokenCountCached
+	total.Candidates.TokenCount += handoffUsage.Candidates.TokenCount
+	total.Thoughts.TokenCount += handoffUsage.Thoughts.TokenCount
+	if total.Prompt.TokenCount == 0 &&
+		total.Prompt.TokenCountCached == 0 &&
+		total.Candidates.TokenCount == 0 &&
+		total.Thoughts.TokenCount == 0 {
+		return state
+	}
+	newState, err := state.AppendContent(&generators.Content{
+		Role:  generators.RoleLog,
+		Parts: []generators.Part{total},
+	})
+	if err != nil {
+		return state
+	}
+	return newState
 }
 
 // handoffResponseDetail renders the recorded detail of one handoff attempt.

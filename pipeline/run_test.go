@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -891,6 +892,155 @@ func TestRunLogsRoundUsage(t *testing.T) {
 			if !strings.Contains(output, want) {
 				t.Fatalf("expected %q in log output, got: %s", want, output)
 			}
+		}
+	})
+}
+
+func TestRunHandoffUsageReachesRoundUsageLog(t *testing.T) {
+	// The handoff request's own token spend must reach the per-round
+	// usage line: both attempts miss the summary, so the round ends via
+	// the exhausted-synthesis path whose injected usage lands in the
+	// round's final state — the logged usage (107/20/53/11) is the main
+	// attempt's usage plus the handoff usage. See
+	// TheoryOfHandoffUsageAccounting and TheoryOfUsageLogging.
+	var buf bytes.Buffer
+	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() logs.Logger { return logger },
+	).Call(func(run Run) {
+		mainUsage := generators.Usage{}
+		mainUsage.Prompt.TokenCount = 100
+		mainUsage.Prompt.TokenCountCached = 20
+		mainUsage.Candidates.TokenCount = 50
+		mainUsage.Thoughts.TokenCount = 10
+		handoffUsage := generators.Usage{}
+		handoffUsage.Prompt.TokenCount = 7
+		handoffUsage.Candidates.TokenCount = 3
+		handoffUsage.Thoughts.TokenCount = 1
+
+		callCount := 0
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				callCount++
+				return appendPhaseWithUsage(
+					fmt.Sprintf("incomplete attempt %d output", callCount),
+					mainUsage,
+				)
+			},
+			RetryOnMissingCompletion: true,
+			MaxRetries:               1,
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "handoff summary", Prompt: "retry prompt", Usage: handoffUsage}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output := buf.String()
+		for _, want := range []string{
+			"msg=usage",
+			"round=1",
+			"prompt=107",
+			"cached=20",
+			"completion=53",
+			"thoughts=11",
+		} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("expected %q in log output, got: %s", want, output)
+			}
+		}
+	})
+}
+
+func TestRunHandoffUsageRetryWindowIsPerAttempt(t *testing.T) {
+	// On error retries the partial output is retained in the state, so
+	// a prior attempt's usage part stays visible in later attempts'
+	// states. The handoff usage injection must window from the failed
+	// attempt's own base: an attempt that errors before emitting a usage
+	// part must not have the prior attempt's usage re-attributed to it.
+	// See TheoryOfHandoffUsageAccounting.
+	withRun(t, func(run Run) {
+		usage1 := generators.Usage{}
+		usage1.Prompt.TokenCount = 100
+		usage1.Prompt.TokenCountCached = 20
+		usage1.Candidates.TokenCount = 50
+		usage1.Thoughts.TokenCount = 10
+		handoffUsage := generators.Usage{}
+		handoffUsage.Prompt.TokenCount = 7
+		handoffUsage.Candidates.TokenCount = 3
+		handoffUsage.Thoughts.TokenCount = 1
+
+		texts := []string{
+			"first partial output",
+			"second partial output",
+			"third partial output",
+		}
+		callCount := 0
+		var truncatedStates []generators.State
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+					callCount++
+					newState, err := state.AppendContent(&generators.Content{
+						Role:  generators.RoleAssistant,
+						Parts: []generators.Part{generators.Text(texts[callCount-1])},
+					})
+					if err != nil {
+						return nil, state, err
+					}
+					if callCount == 1 {
+						// Only the first attempt reports usage; the later
+						// attempts error before emitting a usage part.
+						newState, err = newState.AppendContent(&generators.Content{
+							Role:  generators.RoleLog,
+							Parts: []generators.Part{usage1},
+						})
+						if err != nil {
+							return nil, state, err
+						}
+					}
+					return nil, newState, errors.New("boom")
+				}
+			},
+			RetryOnError: true,
+			MaxRetries:   2,
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "handoff summary", Prompt: "retry prompt", Usage: handoffUsage}, nil
+			},
+			OnRoundTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
+				truncatedStates = append(truncatedStates, truncatedState)
+				return nil
+			},
+		})
+		if err == nil {
+			t.Fatal("expected a terminal error after the retry budget was exhausted")
+		}
+		if len(truncatedStates) != 2 {
+			t.Fatalf("expected 2 truncated records, got %d", len(truncatedStates))
+		}
+		first := extractLastUsage(truncatedStates[0], 0)
+		if first.Prompt.TokenCount != 107 || first.Prompt.TokenCountCached != 20 ||
+			first.Candidates.TokenCount != 53 || first.Thoughts.TokenCount != 11 {
+			t.Fatalf("expected first injection (107, 20, 53, 11), got (%d, %d, %d, %d)",
+				first.Prompt.TokenCount, first.Prompt.TokenCountCached,
+				first.Candidates.TokenCount, first.Thoughts.TokenCount)
+		}
+		second := extractLastUsage(truncatedStates[1], 0)
+		if second.Prompt.TokenCount != 7 || second.Prompt.TokenCountCached != 0 ||
+			second.Candidates.TokenCount != 3 || second.Thoughts.TokenCount != 1 {
+			t.Fatalf("expected second injection (7, 0, 3, 1) — the attempt's own window only — got (%d, %d, %d, %d)",
+				second.Prompt.TokenCount, second.Prompt.TokenCountCached,
+				second.Candidates.TokenCount, second.Thoughts.TokenCount)
 		}
 	})
 }
