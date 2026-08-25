@@ -74,6 +74,27 @@ func TestParseReadBody(t *testing.T) {
 			},
 		},
 		{
+			name: "lsp by symbol",
+			body: `<lsp method="definition" symbol="Reader.Read" />`,
+			expected: []ReadRequest{
+				{Type: "lsp", Method: "definition", Symbol: "Reader.Read"},
+			},
+		},
+		{
+			name: "lsp by position",
+			body: `<lsp method="hover" path="src/main.go" line="12" column="5" />`,
+			expected: []ReadRequest{
+				{Type: "lsp", Method: "hover", Path: "src/main.go", Line: 12, Column: 5},
+			},
+		},
+		{
+			name: "lsp workspace symbol query",
+			body: `<lsp method="workspace/symbol" query="Builder" />`,
+			expected: []ReadRequest{
+				{Type: "lsp", Method: "workspace/symbol", Query: "Builder"},
+			},
+		},
+		{
 			name:     "empty body",
 			body:     "",
 			expected: nil,
@@ -91,6 +112,16 @@ func TestParseReadBody(t *testing.T) {
 		{
 			name:    "glob missing pattern",
 			body:    `<glob />`,
+			wantErr: true,
+		},
+		{
+			name:    "lsp missing method",
+			body:    `<lsp symbol="Foo" />`,
+			wantErr: true,
+		},
+		{
+			name:    "lsp invalid line",
+			body:    `<lsp method="hover" path="a.go" line="twelve" />`,
 			wantErr: true,
 		},
 	}
@@ -327,7 +358,7 @@ func TestFetchReadRequestsFile(t *testing.T) {
 	requests := []ReadRequest{
 		{Type: "file", Path: "test.txt"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -354,11 +385,38 @@ func TestFetchReadRequestsGlob(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("b"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "c.txt"), []byte("c"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Match .go files
+	matches, err := globFiles(root, "*.go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d: %v", len(matches), matches)
+	}
+
+	// No matches
+	matches, err = globFiles(root, "*.nonexistent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected 0 matches, got %d: %v", len(matches), matches)
+	}
+
+	// Path escape
+	_, err = globFiles(root, "../../../etc/*")
+	if err == nil {
+		t.Fatal("expected error for path escape")
+	}
 
 	requests := []ReadRequest{
 		{Type: "glob", Pattern: "*.go"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -398,7 +456,7 @@ func TestFetchReadRequestsGlobDoubleStar(t *testing.T) {
 	requests := []ReadRequest{
 		{Type: "glob", Pattern: "**/*.go"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -430,7 +488,7 @@ func TestFetchReadRequestsFetch(t *testing.T) {
 	requests := []ReadRequest{
 		{Type: "fetch", Addr: server.URL},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -462,7 +520,7 @@ func TestFetchReadRequestsHeaders(t *testing.T) {
 	requests := []ReadRequest{
 		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -496,7 +554,7 @@ func TestFetchReadRequestsError(t *testing.T) {
 	requests := []ReadRequest{
 		{Type: "file", Path: "nonexistent.txt"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, requests)
+	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -612,7 +670,7 @@ func TestProcessReadBlocksAppendsFetchedContent(t *testing.T) {
 		{Kind: "read", Body: `<file path="test.txt" />`},
 	}
 
-	newState, hasRead, err := ProcessReadBlocks(readBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	newState, hasRead, err := ProcessReadBlocks(readBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +717,7 @@ func TestProcessReadBlocksFiltersByKind(t *testing.T) {
 		{Kind: "change", Body: "some change"},
 		{Kind: "summary", Body: "- done"},
 	}
-	_, hasRead, err := ProcessReadBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	_, hasRead, err := ProcessReadBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +731,7 @@ func TestProcessReadBlocksFiltersByKind(t *testing.T) {
 		{Kind: "read", Body: `<file path="test.txt" />`},
 		{Kind: "summary", Body: "- done"},
 	}
-	newState, hasRead, err := ProcessReadBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, state)
+	newState, hasRead, err := ProcessReadBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}

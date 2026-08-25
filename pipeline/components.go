@@ -54,6 +54,18 @@ fetched by symbol — gaining the defining file, line, and the references
 report — while read serves non-Go files, whole-file views, glob discovery,
 and network resources. See gotools.TheoryOfGoSrcBlocks.
 
+The read component carries the session's language-server handler. blocks
+parses the lsp tag language-neutrally and defines the LSPHandler contract;
+gotools provides the gopls-backed handler — one gopls process per
+directory, lazily started at the first lsp request (see
+gotools.TheoryOfGopls). The Go-specific lsp tag documentation
+(gotools.LSPReadTagSystemPrompt) is appended to the read prompt only when
+the handler is attached, keeping the base read prompt language-neutral. A
+nil handler keeps the section out of the prompt entirely; an lsp tag
+emitted in such a session returns an explicit unavailability error part
+rather than being silently ignored, matching the disabled-blocks
+philosophy (see components.TheoryOfDisabledBlocks).
+
 Read-only files, hidden packages, and mandatory planning are prompt-only
 Components: they contribute system prompt sections without defining a block
 kind or processing blocks. The hidden-packages notice
@@ -117,6 +129,7 @@ func (Module) CodesComponents(
 	applyChangeBlocks changes.ApplyChangeBlocks,
 	resolveGoSymbols gotools.ResolveGoSymbols,
 	hiddenPatterns gotools.HiddenPatterns,
+	lspHandler blocks.LSPHandler,
 ) CodesComponents {
 	var comps components.ComponentSet
 
@@ -216,15 +229,25 @@ func (Module) CodesComponents(
 	// model may request additional files and network resources
 	// mid-generation in every codes session. Processed before
 	// shell/continue so fetched context is available for the next
-	// generation round. RestatePrompt carries the read restate prompt.
-	// See blocks.TheoryOfReadBlocks.
+	// generation round. The session's language-server handler is attached
+	// when one resolves; its Go-specific lsp tag documentation is appended
+	// to the read prompt only then. A nil handler keeps the section out of
+	// the prompt; an emitted lsp tag then returns an explicit
+	// unavailability error part instead of being silently ignored.
+	// RestatePrompt carries the read restate prompt. See
+	// blocks.TheoryOfReadBlocks, gotools.TheoryOfGopls, and
+	// TheoryOfCodesComponents.
+	readPrompt := blocks.ReadBlockSystemPrompt
+	if lspHandler != nil {
+		readPrompt += gotools.LSPReadTagSystemPrompt
+	}
 	comps = append(comps, components.Component{
 		Kind:          "read",
-		PromptSection: blocks.ReadBlockSystemPrompt,
+		PromptSection: readPrompt,
 		RestatePrompt: blocks.ReadBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			state, hasRead, err := blocks.ProcessReadBlocks(
-				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, pctx.State,
+				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
 			)
 			result := components.ProcessResult{
 				Err: err,

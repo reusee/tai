@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -31,6 +32,15 @@ resolved declarations' callers — as the preferred path for Go source, so read
 keeps whole files, glob discovery, and network resources. The read prompt
 itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
 division of labor.
+
+The lsp tag is read's language-server extension point: blocks parses the
+tag and defines the LSPHandler contract language-neutrally, while a session
+with a language server injects a handler — Go sessions attach gopls, see
+gotools.TheoryOfGopls, and append the Go-specific lsp tag documentation to
+the read prompt only when the handler is attached. A session without a
+language server resolves a nil handler: the lsp documentation is omitted
+from the prompt, and an emitted lsp tag returns an explicit unavailability
+error part rather than being silently ignored.
 
 The file tag permits absolute paths as explicit references while rejecting relative
 paths that escape the current directory via parent-directory traversal, balancing
@@ -108,7 +118,46 @@ type ReadRequest struct {
 	Referer   string
 	Cookie    string
 	Pattern   string
+
+	// LSP tag fields. Method is the required language-server method; the
+	// remaining fields select the query target. Line and Column are
+	// 1-based; 0 means absent.
+	Method string
+	Symbol string
+	Query  string
+	Line   int
+	Column int
 }
+
+// LSPQuery carries one language-server query parsed from an lsp tag. The
+// query shape is defined by blocks so tag parsing stays language-neutral,
+// while the handler implementation is injected by the session (Go sessions
+// attach gopls; see gotools.TheoryOfGopls).
+type LSPQuery struct {
+	// Method is the requested language-server method (e.g. "definition",
+	// "references", "hover", "workspace/symbol").
+	Method string
+	// Path is the file the query targets, relative to the project root or
+	// absolute. May be empty for symbol-only queries.
+	Path string
+	// Symbol names a symbol for symbol-based queries, bare ("Read") or
+	// qualified ("Reader.Read").
+	Symbol string
+	// Query is the free-text search string for workspace/symbol.
+	Query string
+	// Line and Column locate a position within Path. Both are 1-based;
+	// 0 means absent. Handlers convert them to the protocol's 0-based
+	// coordinates.
+	Line   int
+	Column int
+}
+
+// LSPHandler answers one language-server query, returning the rendered
+// result text. A nil handler means no language server is available in the
+// session; fetchReadRequests then returns an explicit unavailability error
+// part for every lsp tag instead of silently ignoring it.
+// See TheoryOfReadBlocks and gotools.TheoryOfGopls.
+type LSPHandler func(ctx context.Context, q LSPQuery) (string, error)
 
 // parseReadBody parses the XML tags in a read block body.
 func parseReadBody(body string) ([]ReadRequest, error) {
@@ -173,6 +222,52 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 				return nil, fmt.Errorf("glob tag missing pattern attribute")
 			}
 			requests = append(requests, ReadRequest{Type: "glob", Pattern: pattern})
+		case "lsp":
+			var method, path, symbol, query, lineStr, colStr string
+			for _, attr := range start.Attr {
+				switch attr.Name.Local {
+				case "method":
+					method = attr.Value
+				case "path":
+					path = attr.Value
+				case "symbol":
+					symbol = attr.Value
+				case "query":
+					query = attr.Value
+				case "line":
+					lineStr = attr.Value
+				case "column":
+					colStr = attr.Value
+				}
+			}
+			if method == "" {
+				return nil, fmt.Errorf("lsp tag missing method attribute")
+			}
+			line := 0
+			if lineStr != "" {
+				var err error
+				line, err = strconv.Atoi(lineStr)
+				if err != nil {
+					return nil, fmt.Errorf("lsp tag line attribute must be a number: %q", lineStr)
+				}
+			}
+			column := 0
+			if colStr != "" {
+				var err error
+				column, err = strconv.Atoi(colStr)
+				if err != nil {
+					return nil, fmt.Errorf("lsp tag column attribute must be a number: %q", colStr)
+				}
+			}
+			requests = append(requests, ReadRequest{
+				Type:   "lsp",
+				Method: method,
+				Path:   path,
+				Symbol: symbol,
+				Query:  query,
+				Line:   line,
+				Column: column,
+			})
 		}
 	}
 	return requests, nil
@@ -181,7 +276,7 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 // fetchReadRequests fetches the requested context and returns parts.
 // File read errors and fetch errors are returned as error text parts rather
 // than aborting the entire generation, so the model can adapt.
-func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, requests []ReadRequest) []generators.Part {
+func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, lsp LSPHandler, requests []ReadRequest) []generators.Part {
 	var parts []generators.Part
 	for _, req := range requests {
 		switch req.Type {
@@ -206,9 +301,49 @@ func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPC
 				continue
 			}
 			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"glob\" pattern=%q>\n%s\n</context>\n\n", req.Pattern, strings.Join(matches, "\n"))))
+		case "lsp":
+			label := lspLabel(req)
+			if lsp == nil {
+				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"lsp\" method=%q>\n[error: no language server is available in this session; do not emit lsp tags]\n</context>\n\n", label)))
+				continue
+			}
+			text, err := lsp(ctx, LSPQuery{
+				Method: req.Method,
+				Path:   req.Path,
+				Symbol: req.Symbol,
+				Query:  req.Query,
+				Line:   req.Line,
+				Column: req.Column,
+			})
+			if err != nil {
+				parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"lsp\" method=%q>\n[error: %v]\n</context>\n\n", label, err)))
+				continue
+			}
+			parts = append(parts, generators.Text(fmt.Sprintf("<context type=\"lsp\" method=%q>\n%s\n</context>\n\n", label, text)))
 		}
 	}
 	return parts
+}
+
+// lspLabel builds the display label of an lsp request for its context part:
+// the method plus its primary target (symbol, query, or path position).
+func lspLabel(req ReadRequest) string {
+	label := req.Method
+	switch {
+	case req.Symbol != "":
+		label += " " + req.Symbol
+	case req.Query != "":
+		label += " " + req.Query
+	case req.Path != "":
+		label += " " + req.Path
+		if req.Line > 0 {
+			label += fmt.Sprintf(":%d", req.Line)
+			if req.Column > 0 {
+				label += fmt.Sprintf(":%d", req.Column)
+			}
+		}
+	}
+	return label
 }
 
 // ProcessReadBlocks checks read blocks, fetches the requested content, and
@@ -220,6 +355,7 @@ func ProcessReadBlocks(
 	ctx context.Context,
 	root *os.Root,
 	httpClient nets.HTTPClient,
+	lsp LSPHandler,
 	state generators.State,
 ) (generators.State, bool, error) {
 	hasRead := false
@@ -242,7 +378,7 @@ func ProcessReadBlocks(
 			}
 			continue
 		}
-		parts := fetchReadRequests(ctx, root, httpClient, requests)
+		parts := fetchReadRequests(ctx, root, httpClient, lsp, requests)
 		if len(parts) > 0 {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
