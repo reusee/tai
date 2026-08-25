@@ -38,6 +38,16 @@ go-test, continue, summary, done), and reports malformed blocks via
 ParseError. Round lifecycle events — RoundStart, RoundSuccess, RoundTruncated,
 RoundError — delimit one generation pass through the phase chain.
 
+Model-produced streaming contents are merged at record time: consecutive
+contents with the model or assistant role are buffered and coalesced into a
+single event, with adjacent Text parts (and adjacent Thought parts)
+concatenated verbatim — the same semantics as generators.Content.Merge. A
+streamed response therefore produces one readable content event per
+contiguous run instead of one event per streaming chunk. The buffer flushes
+before every other event write and before the round counter advances, so a
+merged content never crosses a round boundary, a non-model content, or any
+other event in the transcript.
+
 Recording is enabled by the -record flag (or the "record" config path) and
 disabled by -no-record. When disabled, the Recorder still opens the database
 so the record subcommand can query sessions, but no events are written.
@@ -149,6 +159,13 @@ type Recorder struct {
 	enabled   bool
 	sessionID int64
 	round     int
+
+	// pendingModel buffers model-produced streaming contents (model or
+	// assistant role) until the next event write or round boundary, so
+	// consecutive streaming chunks are recorded as one merged event
+	// instead of one event per chunk. Guarded by mu.
+	// See TheoryOfInteractionRecording.
+	pendingModel *generators.Content
 }
 
 const schema = `
@@ -219,6 +236,7 @@ func (r *Recorder) StartSession(command string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.round = 0
+	r.pendingModel = nil
 	res, err := r.db.Exec(
 		`INSERT INTO sessions (command, start_time) VALUES (?, ?)`,
 		command, time.Now().Format(time.RFC3339),
@@ -237,6 +255,7 @@ func (r *Recorder) EndSession(err error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	status := "success"
 	var errMsg string
 	if err != nil {
@@ -257,16 +276,20 @@ func (r *Recorder) SystemPrompt(prompt string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	r.insertEventLocked(0, "system_prompt", prompt)
 }
 
-// RoundStart marks the beginning of a generation round.
+// RoundStart marks the beginning of a generation round. Buffered model
+// contents are flushed into the previous round before the counter advances,
+// so a merged content never crosses a round boundary.
 func (r *Recorder) RoundStart() {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	r.round++
 	r.insertEventLocked(r.round, "round_start", "")
 }
@@ -279,6 +302,7 @@ func (r *Recorder) RoundSuccess(summaries []string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	detail := "success"
 	if len(summaries) > 0 {
 		detail += "\n" + strings.Join(summaries, "\n")
@@ -294,6 +318,7 @@ func (r *Recorder) RoundTruncated() {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	r.insertEventLocked(r.round, "round_end", "truncated")
 }
 
@@ -304,6 +329,7 @@ func (r *Recorder) RoundError(err error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	detail := "error"
 	if err != nil {
 		detail += "\n" + err.Error()
@@ -314,17 +340,47 @@ func (r *Recorder) RoundError(err error) {
 // Content records a content appended to the generation state. The role is
 // carried in the event type (content_user, content_model, content_tool,
 // content_log); the detail renders the parts as readable text.
+// Model-produced contents (model or assistant role) arrive as many small
+// streaming chunks; consecutive ones are buffered and merged into a single
+// event so the transcript stays readable. See TheoryOfInteractionRecording.
 func (r *Recorder) Content(content *generators.Content) {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if content == nil {
+		return
+	}
+	if isModelRole(content.Role) {
+		if r.pendingModel == nil {
+			r.pendingModel = content
+			return
+		}
+		if merged, ok := r.pendingModel.Merge(content); ok {
+			r.pendingModel = merged
+			return
+		}
+		// The roles differ (model vs assistant): close the current
+		// merged run and start a new one.
+		r.flushPendingModelLocked()
+		r.pendingModel = content
+		return
+	}
+	r.flushPendingModelLocked()
 	detail := contentDetail(content)
 	if detail == "" {
 		return
 	}
 	r.insertEventLocked(r.round, "content_"+string(content.Role), detail)
+}
+
+// isModelRole reports whether the role carries model-produced streaming
+// output. Generators emit either RoleModel (Gemini) or RoleAssistant
+// (OpenAI-compatible); both are merged at record time. See
+// TheoryOfInteractionRecording.
+func isModelRole(role generators.Role) bool {
+	return role == generators.RoleModel || role == generators.RoleAssistant
 }
 
 // Block records a structured block parsed from the model output. Kindless
@@ -335,6 +391,7 @@ func (r *Recorder) Block(block blocks.Block) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	kind := block.Kind
 	if kind == "" {
 		kind = "unknown"
@@ -353,6 +410,7 @@ func (r *Recorder) ParseError(parseErr *blocks.BlockParseError) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	var b strings.Builder
 	fmt.Fprintf(&b, "kind=%s boundary=%s", parseErr.BlockKind, parseErr.Boundary)
 	if parseErr.Line > 0 {
@@ -383,7 +441,26 @@ func (r *Recorder) Event(typ string, detail string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.flushPendingModelLocked()
 	r.insertEventLocked(r.round, typ, detail)
+}
+
+// flushPendingModelLocked writes the buffered model-produced contents as a
+// single merged event and clears the buffer. It is called before every other
+// event write and — in RoundStart — before the round counter advances, so a
+// merged content never crosses a round boundary or another event in the
+// transcript. See TheoryOfInteractionRecording.
+func (r *Recorder) flushPendingModelLocked() {
+	pending := r.pendingModel
+	r.pendingModel = nil
+	if pending == nil {
+		return
+	}
+	detail := contentDetail(pending)
+	if detail == "" {
+		return
+	}
+	r.insertEventLocked(r.round, "content_"+string(pending.Role), detail)
 }
 
 func (r *Recorder) insertEventLocked(round int, typ, detail string) {

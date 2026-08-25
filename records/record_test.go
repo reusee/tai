@@ -387,3 +387,106 @@ func TestRecorderEvent(t *testing.T) {
 		}
 	})
 }
+
+func TestRecorderMergesStreamedModelContents(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.SystemPrompt("prompt")
+		recorder.RoundStart()
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleUser,
+			Parts: []generators.Part{generators.Text("user question")},
+		})
+		// Simulated streaming: many small model contents must be
+		// recorded as one merged event, with adjacent Text parts
+		// concatenated verbatim and Thought parts kept distinct.
+		for _, chunk := range []string{"stream", "ed ", "answer"} {
+			recorder.Content(&generators.Content{
+				Role:  generators.RoleAssistant,
+				Parts: []generators.Part{generators.Text(chunk)},
+			})
+		}
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Thought("reasoning")},
+		})
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleAssistant,
+			Parts: []generators.Part{generators.Text("tail")},
+		})
+		recorder.RoundSuccess([]string{"- done"})
+		recorder.EndSession(nil)
+
+		var count int
+		if err := recorder.db.QueryRow(
+			`SELECT COUNT(*) FROM events WHERE type = 'content_assistant'`,
+		).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 merged content_assistant event, got %d", count)
+		}
+
+		var id int64
+		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		text, err := Transcript(recorder, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"streamed answer",
+			"[thought]\nreasoning",
+			"tail",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("transcript missing %q:\n%s", want, text)
+			}
+		}
+	})
+}
+
+func TestRecorderModelMergeBreaksAtRoundBoundary(t *testing.T) {
+	withRecorder(t, true, func(recorder *Recorder) {
+		recorder.StartSession("test")
+		recorder.RoundStart()
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleModel,
+			Parts: []generators.Part{generators.Text("round 1 output")},
+		})
+		recorder.RoundSuccess(nil)
+		recorder.RoundStart()
+		recorder.Content(&generators.Content{
+			Role:  generators.RoleModel,
+			Parts: []generators.Part{generators.Text("round 2 output")},
+		})
+		recorder.RoundSuccess(nil)
+		recorder.EndSession(nil)
+
+		rows, err := recorder.db.Query(
+			`SELECT round FROM events WHERE type = 'content_model' ORDER BY id`,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var got []int
+		for rows.Next() {
+			var round int
+			if err := rows.Scan(&round); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, round)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 content_model events (one per round), got %d", len(got))
+		}
+		if got[0] != 1 || got[1] != 2 {
+			t.Fatalf("expected rounds 1 and 2, got %v", got)
+		}
+	})
+}
