@@ -193,7 +193,14 @@ func (Module) SimplifyFiles(
 		// hiding the subprocess latency; the hooks' calls then
 		// short-circuit via the docComputed guard. Short doc is computed
 		// only by the water-fill and by the focus overflow downgrade,
-		// because no category has it as a minimum visibility. go doc runs
+		// because no category has it as a minimum visibility. When the
+		// downgrade is certain — the pinned focus tokens, already computed
+		// by prefetchPackageDocs above or by precomputeTokenCounts under
+		// -all-src, exceed maxTokens — prefetchFocusShortDocs precomputes
+		// every focus package's short doc concurrently, so the downgrade
+		// loop's computeShortDoc calls short-circuit via the
+		// shortDocComputed guard instead of running one serial go doc
+		// subprocess per focus package. go doc runs
 		// from the load directory (or workspace root in workspace mode) so
 		// it can resolve package import paths. The computeCosts hook
 		// delegates to computePackageCosts, which renders and token-counts
@@ -208,6 +215,7 @@ func (Module) SimplifyFiles(
 			dir = string(workspace)
 		}
 		prefetchPackageDocs(logicalPkgs, dir, envs, countTokens)
+		prefetchFocusShortDocs(logicalPkgs, dir, envs, countTokens, maxTokens)
 		computeShortDoc := func(lp *LogicalPackage) {
 			computePackageShortDoc(lp, dir, envs, countTokens)
 		}

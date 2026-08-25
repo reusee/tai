@@ -43,9 +43,14 @@ direct-import packages): the doc cost must be known before affordability
 can be decided. These unconditional probes are launched concurrently by
 prefetchPackageDocs with bounded concurrency, hiding the per-subprocess
 latency that a serial probe loop would incur; the allocation's own
-computeDoc calls then short-circuit via the docComputed guard. Short doc is
-never prefetched: no category has short doc as its minimum visibility, so
-it is probed only by the water-fill and by the focus overflow downgrade.
+computeDoc calls then short-circuit via the docComputed guard. Short doc
+has no category minimum, so the water-fill probes it lazily; the focus
+overflow downgrade is the exception — it computes every focus package's
+short doc unconditionally — so when its condition already holds (the
+pinned focus tokens, computed by the earlier phases, exceed the generator
+budget), prefetchFocusShortDocs launches those probes concurrently before
+the allocation and the downgrade loop short-circuits via the
+shortDocComputed guard.
 
 The water-fill phase gates both documentation upgrades (invisible→short
 doc and short doc→full doc) on the immediate predecessor: a package whose
@@ -897,9 +902,11 @@ func precomputeTokenCounts(
 // via the docComputed guard. Packages whose minimum visibility is below
 // full documentation are not prefetched: the water-fill probes their short
 // doc or full doc only when the budget survives every higher-priority
-// package, which is rare for the low-priority long tail. Short doc is
-// never prefetched because no category has it as a minimum visibility.
-// See TheoryOfLazyPackageDoc.
+// package, which is rare for the low-priority long tail. Short doc is not
+// prefetched here because no category has it as a minimum visibility; the
+// focus overflow downgrade's unconditional short-doc probes are prefetched
+// separately by prefetchFocusShortDocs when the downgrade condition
+// already holds. See TheoryOfLazyPackageDoc.
 func prefetchPackageDocs(
 	logicalPkgs []*LogicalPackage,
 	dir string,
@@ -917,9 +924,17 @@ func prefetchPackageDocs(
 	}
 
 	// Bound concurrency: each probe spawns a Go toolchain subprocess, and
-	// spawning dozens at once would exhaust file descriptors and memory on
-	// smaller machines.
-	workers := min(runtime.NumCPU(), 8)
+	// the cap must stay within ordinary file-descriptor and memory budgets.
+	// The probes are subprocess-latency-bound rather than CPU-bound — a
+	// worker spends most of its time waiting on process startup, module
+	// cache reads, and doc generation — so the cap scales past NumCPU and
+	// matches the in-process tokenizer pool's cap in precomputeTokenCounts.
+	// Large projects run one probe per focus, same-module, and
+	// direct-import package (hundreds of subprocesses under the default
+	// ./... focus pattern); the previous cap of NumCPU, at most 8,
+	// serialized those waits into the dominant cost between the
+	// "get files done" and "context token composition" logs.
+	workers := min(runtime.NumCPU()*4, 32)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, workers)
 	for _, lp := range jobs {
@@ -929,6 +944,71 @@ func prefetchPackageDocs(
 			defer wg.Done()
 			defer func() { <-sem }()
 			computePackageDoc(lp, dir, envs, countTokens)
+		}(lp)
+	}
+	wg.Wait()
+}
+
+// prefetchFocusShortDocs precomputes focus packages' short-doc blocks in
+// parallel when the focus overflow downgrade is certain, so the downgrade
+// loop in allocateVisibility short-circuits via the shortDocComputed guard
+// instead of running one serial go doc subprocess per focus package. The
+// downgrade is certain exactly when the focus tokens at the pinned level —
+// documentation by default, full source under -all-src — exceed the
+// generator budget; the pinned costs are already computed by
+// prefetchPackageDocs (documentation) or precomputeTokenCounts (full
+// source), and the sum mirrors the focusTokens total allocateVisibility
+// evaluates after its pin loop. A large project under the default ./...
+// focus pattern has hundreds of focus packages, so the serial downgrade
+// dominated the wait between "get files done" and
+// "context token composition"; the parallel path mirrors
+// prefetchPackageDocs. When the downgrade will not trigger — or the
+// pinned costs are not yet known, which the production wiring never
+// produces — nothing is prefetched and the downgrade loop runs the probes
+// itself, unchanged. See TheoryOfLazyPackageDoc and
+// TheoryOfVisibilityAllocation.
+func prefetchFocusShortDocs(
+	logicalPkgs []*LogicalPackage,
+	dir string,
+	envs Envs,
+	countTokens func(string) (int, error),
+	maxTokens int,
+) {
+	if maxTokens <= 0 {
+		return
+	}
+	var jobs []*LogicalPackage
+	pinnedTokens := 0
+	for _, lp := range logicalPkgs {
+		if lp.Category != CategoryFocus {
+			continue
+		}
+		// The pin level mirrors allocateVisibility's focus pin:
+		// VisibilityAll when -all-src raised the minimum, otherwise full
+		// documentation.
+		pinLevel := VisibilityDoc
+		if lp.MinVisibility == VisibilityAll {
+			pinLevel = VisibilityAll
+		}
+		pinnedTokens += lp.TokensByLevel[pinLevel]
+		jobs = append(jobs, lp)
+	}
+	if len(jobs) == 0 || pinnedTokens <= maxTokens {
+		return
+	}
+
+	// Same concurrency bound and rationale as prefetchPackageDocs: the
+	// probes are subprocess-latency-bound, not CPU-bound.
+	workers := min(runtime.NumCPU()*4, 32)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+	for _, lp := range jobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(lp *LogicalPackage) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			computePackageShortDoc(lp, dir, envs, countTokens)
 		}(lp)
 	}
 	wg.Wait()

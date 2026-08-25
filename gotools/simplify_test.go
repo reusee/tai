@@ -731,6 +731,91 @@ func TestAllocateVisibilityShortDoc(t *testing.T) {
 	}
 }
 
+func TestPrefetchFocusShortDocs(t *testing.T) {
+	// The focus overflow downgrade computes every focus package's short
+	// doc unconditionally. When the downgrade condition already holds —
+	// the pinned focus tokens exceed the generator budget —
+	// prefetchFocusShortDocs precomputes the short docs concurrently so
+	// the downgrade loop in allocateVisibility short-circuits via the
+	// shortDocComputed guard; when the condition does not hold, short
+	// doc stays fully lazy. See TheoryOfLazyPackageDoc and
+	// TheoryOfVisibilityAllocation in visibility.go.
+	countTokens := func(s string) (int, error) { return len(s), nil }
+
+	newPkgs := func() []*LogicalPackage {
+		return []*LogicalPackage{
+			{
+				PkgPath:       "focusa",
+				Category:      CategoryFocus,
+				MinVisibility: VisibilityDoc,
+				TokensByLevel: [5]int{0, 0, 300, 0, 0},
+			},
+			{
+				PkgPath:       "focusb",
+				Category:      CategoryFocus,
+				MinVisibility: VisibilityDoc,
+				TokensByLevel: [5]int{0, 0, 300, 0, 0},
+			},
+			{
+				// The -all-src pin: the pinned level is full source, so
+				// the overflow sum reads TokensByLevel[VisibilityAll].
+				PkgPath:       "focusall",
+				Category:      CategoryFocus,
+				MinVisibility: VisibilityAll,
+				TokensByLevel: [5]int{0, 0, 0, 0, 400},
+			},
+			{
+				PkgPath:       "other",
+				Category:      CategoryOtherModule,
+				MinVisibility: VisibilityInvisible,
+			},
+		}
+	}
+
+	// Pinned focus tokens (1000) exactly match the budget: the downgrade
+	// condition is strict inequality, so no short-doc probe is launched
+	// and every package stays un-computed.
+	pkgs := newPkgs()
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 1000)
+	for _, lp := range pkgs {
+		if lp.shortDocComputed {
+			t.Fatalf("expected %s short doc to stay lazy", lp.PkgPath)
+		}
+	}
+
+	// Pinned focus tokens (1000) exceed the budget (999): the downgrade
+	// is certain, so every focus package's short doc is computed — in the
+	// module-less temp dir the subprocess fails, which still records
+	// shortDocComputed and non-empty short-doc content — while the
+	// non-focus package stays untouched.
+	pkgs = newPkgs()
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 999)
+	for _, lp := range pkgs {
+		if lp.Category != CategoryFocus {
+			if lp.shortDocComputed {
+				t.Fatalf("expected non-focus %s short doc untouched", lp.PkgPath)
+			}
+			continue
+		}
+		if !lp.shortDocComputed {
+			t.Fatalf("expected focus %s short doc computed", lp.PkgPath)
+		}
+		if lp.ShortDocContent == "" || lp.TokensByLevel[VisibilityShortDoc] == 0 {
+			t.Fatalf("expected focus %s short-doc content recorded", lp.PkgPath)
+		}
+	}
+
+	// A zero budget disables the downgrade check in allocateVisibility,
+	// so the prefetch must not fire either.
+	pkgs = newPkgs()
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 0)
+	for _, lp := range pkgs {
+		if lp.shortDocComputed {
+			t.Fatalf("expected %s short doc to stay lazy with maxTokens 0", lp.PkgPath)
+		}
+	}
+}
+
 func TestAllocateVisibilityDowngradesFocusToShortDoc(t *testing.T) {
 	// When the pinned focus tokens exceed the generator token budget, the
 	// focus block alone overflows the model's window: allocateVisibility
