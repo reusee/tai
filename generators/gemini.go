@@ -277,6 +277,23 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		)
 		g.recordEvent("api_call", fmt.Sprintf("gemini generate content: model=%s effort=%s non_streaming=%v", g.spec.Model, g.spec.ReasoningEffort, nonStreaming))
 
+		// Streaming speed measurements: TimeToFirstToken spans from the
+		// attempt start to the arrival of the first output content part
+		// (body text or reasoning thought), and GenerateDuration spans
+		// from that token to the emission of the final usage.
+		// Non-streaming attempts never set firstTokenAt, so the durations
+		// stay zero and display sites omit the speed section.
+		// See TheoryOfUsageTiming.
+		attemptStarted := time.Now()
+		var firstTokenAt time.Time
+		finalizeUsage := func(usage *Usage) {
+			if usage == nil || firstTokenAt.IsZero() {
+				return
+			}
+			usage.TimeToFirstToken = firstTokenAt.Sub(attemptStarted)
+			usage.GenerateDuration = time.Since(firstTokenAt)
+		}
+
 		newState := ret
 		hasContent := false
 		var terminalReason string
@@ -330,6 +347,10 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 						newContent.Parts = append(newContent.Parts, p)
 					}
 				}
+				// Record the arrival of the first streamed output content.
+				if !nonStreaming && len(newContent.Parts) > 0 && firstTokenAt.IsZero() {
+					firstTokenAt = time.Now()
+				}
 				var err error
 				if newState, err = newState.AppendContent(newContent); err != nil {
 					return err
@@ -338,6 +359,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 
 			if reason := candidate.FinishReason; reason != "" {
 				if lastUsage != nil {
+					finalizeUsage(lastUsage)
 					var err error
 					if newState, err = newState.AppendContent(&Content{
 						Role:  RoleLog,
@@ -392,6 +414,7 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		}
 
 		if lastUsage != nil {
+			finalizeUsage(lastUsage)
 			var err error
 			if newState, err = newState.AppendContent(&Content{
 				Role:  RoleLog,

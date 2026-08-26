@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/blocks"
@@ -855,10 +856,9 @@ func TestRunLogsRoundUsage(t *testing.T) {
 	// The Run loop must record the aggregated token usage of each round
 	// to the logger, so token consumption is visible in log output and in
 	// the TUI's Logs pane, not only in the end-of-session statistics
-	// table. The logger is forked directly so the test controls the
-	// output sink; forking the logs.Writer would be ignored when the
-	// logger provider detects a systemd service (which creates only a
-	// journal handler). See TheoryOfUsageLogging.
+	// table. Streaming timings ride along as one-decimal string keys so
+	// the fractional digit survives the text handler.
+	// See TheoryOfUsageLogging and TheoryOfUsageTiming.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	dscope.New(
@@ -872,6 +872,8 @@ func TestRunLogsRoundUsage(t *testing.T) {
 		usage.Prompt.TokenCountCached = 20
 		usage.Candidates.TokenCount = 50
 		usage.Thoughts.TokenCount = 10
+		usage.TimeToFirstToken = time.Second * 3 / 2 // logs as ttft_seconds=1.5
+		usage.GenerateDuration = 2 * time.Second     // 60 generated tokens / 2s -> 30.0
 
 		_, err := runOnce(run, RunOptions{
 			Generator:    nil,
@@ -893,6 +895,8 @@ func TestRunLogsRoundUsage(t *testing.T) {
 			"cached=20",
 			"completion=50",
 			"thoughts=10",
+			"ttft_seconds=1.5",
+			"tokens_per_second=30.0",
 		} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("expected %q in log output, got: %s", want, output)

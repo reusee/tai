@@ -183,13 +183,19 @@ func (s Output) AppendContent(content *Content) (_ State, err error) {
 				if _, err := fmt.Fprint(s.w, "\n"); err != nil {
 					return nil, err
 				}
-				if err := print(false, fmt.Sprintf(
-					"[Usage: prompt=%d, cached=%d, completion=%d, thoughts=%d]",
+				// SpeedSuffix appends the streaming speed measurements
+				// when present, and is empty otherwise, keeping the
+				// plain line intact for unmeasured usages.
+				// See TheoryOfUsageTiming.
+				usageLine := fmt.Sprintf(
+					"[Usage: prompt=%d, cached=%d, completion=%d, thoughts=%d",
 					ret.lastUsage.Prompt.TokenCount,
 					ret.lastUsage.Prompt.TokenCountCached,
 					ret.lastUsage.Candidates.TokenCount,
 					ret.lastUsage.Thoughts.TokenCount,
-				)); err != nil {
+				)
+				usageLine += ret.lastUsage.SpeedSuffix() + "]"
+				if err := print(false, usageLine); err != nil {
 					return nil, err
 				}
 			}

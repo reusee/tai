@@ -973,13 +973,16 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		if ev.Detail != "" {
 			outcome = " (" + ev.Detail + ")"
 		}
+		// SpeedSuffix carries the streaming ttft and average generation
+		// speed when measured, staying empty for unmeasured usages.
+		// See TheoryOfUsageTiming.
 		return logLines(fmt.Sprintf("[Usage] round %d%s: prompt %d, cached %d, completion %d, thoughts %d",
 			ev.Round, outcome,
 			ev.Usage.Prompt.TokenCount,
 			ev.Usage.Prompt.TokenCountCached,
 			ev.Usage.Candidates.TokenCount,
 			ev.Usage.Thoughts.TokenCount,
-		))
+		) + ev.Usage.SpeedSuffix())
 	case pipeline.EventFinish:
 		return logLines("[Finish: " + ev.Detail + "]")
 	case pipeline.EventThoughtSummary:

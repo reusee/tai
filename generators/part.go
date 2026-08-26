@@ -1,6 +1,9 @@
 package generators
 
 import (
+	"fmt"
+	"time"
+
 	"google.golang.org/genai"
 )
 
@@ -110,6 +113,19 @@ type FinishReason string
 
 func (FinishReason) isPart() {}
 
+const TheoryOfUsageTiming = `
+Streaming generators measure generation speed onto the Usage part:
+TimeToFirstToken spans from sending the request to the arrival of the
+first output content (body text or reasoning thought), and
+GenerateDuration spans from that first token to the end of the stream.
+Average speed is derived at display time as generated tokens (candidates
+plus thoughts) divided by GenerateDuration, rendered with one decimal.
+Non-streaming requests leave both durations zero, and every display
+site omits the speed section for an unmeasured usage instead of
+printing zeros or dividing by zero. Formatting lives in Usage.SpeedSuffix
+so all display surfaces render the same fragment.
+`
+
 type Usage struct {
 	Prompt struct {
 		TokenCount       int
@@ -121,6 +137,45 @@ type Usage struct {
 	Thoughts struct {
 		TokenCount int
 	}
+	// TimeToFirstToken is the duration from sending the request to the
+	// first streamed output token (body text or reasoning thought).
+	// Zero when unmeasured, e.g. non-streaming requests.
+	// See TheoryOfUsageTiming.
+	TimeToFirstToken time.Duration
+	// GenerateDuration is the duration from the first output token to
+	// the end of the stream. Zero when unmeasured.
+	// See TheoryOfUsageTiming.
+	GenerateDuration time.Duration
+}
+
+// HasSpeed reports whether the usage carries streaming timing
+// measurements; display sites consult it before rendering the speed
+// section. See TheoryOfUsageTiming.
+func (u Usage) HasSpeed() bool {
+	return u.TimeToFirstToken > 0 && u.GenerateDuration > 0
+}
+
+// GeneratedTokens returns the number of tokens the model generated:
+// completion tokens plus reasoning-thought tokens. Both are produced
+// during GenerateDuration, so their sum is the numerator of the
+// average speed.
+func (u Usage) GeneratedTokens() int {
+	return u.Candidates.TokenCount + u.Thoughts.TokenCount
+}
+
+// SpeedSuffix renders the measured generation speed as a comma-led
+// fragment such as ", ttft 1.2s, 45.3 tok/s", empty when the usage
+// carries no timing. Display sites append it verbatim to their usage
+// lines so the fragment stays identical across outputs.
+// See TheoryOfUsageTiming.
+func (u Usage) SpeedSuffix() string {
+	if !u.HasSpeed() {
+		return ""
+	}
+	return fmt.Sprintf(", ttft %.1fs, %.1f tok/s",
+		u.TimeToFirstToken.Seconds(),
+		float64(u.GeneratedTokens())/u.GenerateDuration.Seconds(),
+	)
 }
 
 func (Usage) isPart() {}

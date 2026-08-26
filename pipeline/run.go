@@ -147,6 +147,15 @@ event's Detail, and in the rendered line's "(error)" suffix), so token
 consumption is traceable for every attempt, including retries. Rounds that
 record no token usage emit nothing.
 
+Streaming requests measure speed onto the final usage (see
+generators.TheoryOfUsageTiming): the loop appends the one-decimal keys
+ttft_seconds and tokens_per_second to the usage log entry, and the TUI's
+"[Usage]" line ends with the same fragment rendered by
+generators.Usage.SpeedSuffix. Non-streaming usages carry no timings, so
+the keys and the fragment are omitted rather than printed as zeros. The
+statistics table keeps count-only columns and takes its duration from
+the loop's own clock, not from these per-request measurements.
+
 The usage is extracted by scanning the state's contents appended since the
 start of the round and taking the final Usage part, rather than summing
 intermediate usage snapshots that may be emitted by streaming providers
@@ -802,7 +811,9 @@ func (ls *loopState) runRound() (roundResult, error) {
 // recordRoundUsage records the aggregated token usage of one round: to
 // the run's event stream as an EventUsage (the display source for a live
 // consumer) and as a "usage" log entry. Rounds that record no token
-// usage emit nothing. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+// usage emit nothing. Streaming rounds additionally append the measured
+// timing keys ttft_seconds and tokens_per_second; unmeasured usages
+// leave them out. See TheoryOfUsageLogging and TheoryOfLoopEvents.
 func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
 	// The usage is the last Usage part among the contents appended since
 	// the round started, not a sum of streaming snapshots.
@@ -829,6 +840,16 @@ func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int
 	}
 	if outcome != "" {
 		args = append([]any{"outcome", outcome}, args...)
+	}
+	// One-decimal string fields keep the fractional digit visible in the
+	// text handler output; float values would print "30" instead of
+	// "30.0". See TheoryOfUsageTiming.
+	if usage.HasSpeed() {
+		args = append(args,
+			"ttft_seconds", fmt.Sprintf("%.1f", usage.TimeToFirstToken.Seconds()),
+			"tokens_per_second", fmt.Sprintf("%.1f",
+				float64(usage.GeneratedTokens())/usage.GenerateDuration.Seconds()),
+		)
 	}
 	ls.logger.InfoContext(ls.ctx, "usage", args...)
 }

@@ -1904,11 +1904,13 @@ func TestWithTUIOutputObserver(t *testing.T) {
 
 // TestTUIHandleEventRendersKinds verifies the per-kind rendering of the
 // Events tab: the finish line carries the log color and clears the
-// generating hint, the usage line carries the outcome marker, the thought
-// summary header carries the thought color, round starts and empty-summary
-// round successes render log lines, and an unknown kind renders a generic
-// event line. Each event is stored as one line group; consecutive events
-// are shaded alternately. See TheoryOfTUI.
+// generating hint, the usage line carries the outcome marker, a
+// streaming-measured usage line ends with the ttft and speed fragment,
+// the thought summary header carries the thought color, round starts and
+// empty-summary round successes render log lines, and an unknown kind
+// renders a generic event line. Each event is stored as one line group;
+// consecutive events are shaded alternately. See TheoryOfTUI and
+// TheoryOfUsageTiming.
 func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
@@ -1932,6 +1934,17 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	}
 	if last[0].Color != outputColorLogLine {
 		t.Fatalf("expected log color for the usage line, got %v", last[0].Color)
+	}
+
+	measuredUsage := generators.Usage{}
+	measuredUsage.Candidates.TokenCount = 20
+	measuredUsage.TimeToFirstToken = 300 * time.Millisecond // ttft 0.3s
+	measuredUsage.GenerateDuration = 200 * time.Millisecond // 20 tokens / 0.2s -> 100.0 tok/s
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 5, Usage: measuredUsage})
+	measuredLines := tui.events[len(tui.events)-1]
+	wantMeasured := "[Usage] round 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
+	if measuredLines[0].Text != wantMeasured {
+		t.Fatalf("unexpected measured usage line: %q", measuredLines[0].Text)
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventThoughtSummary, Summary: "- point"})

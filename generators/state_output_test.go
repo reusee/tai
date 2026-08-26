@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOutput(t *testing.T) {
@@ -279,6 +280,55 @@ func TestOutputUsage(t *testing.T) {
 		}
 		if strings.Contains(got, "prompt=30") {
 			t.Fatal("usage should not be cumulative")
+		}
+	})
+
+	t.Run("no speed when unmeasured", func(t *testing.T) {
+		// An unmeasured usage (zero durations, e.g. a non-streaming
+		// request) must render without the speed section instead of
+		// printing zeros. See TheoryOfUsageTiming.
+		buf := new(bytes.Buffer)
+		output := NewOutput(NewPrompts("", nil), buf, true)
+		state := State(output)
+
+		usage := Usage{}
+		usage.Prompt.TokenCount = 10
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage},
+		})
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{FinishReason("stop")},
+		})
+		if strings.Contains(buf.String(), "tok/s") || strings.Contains(buf.String(), "ttft") {
+			t.Fatalf("unexpected speed section in %q", buf.String())
+		}
+	})
+
+	t.Run("streaming speed", func(t *testing.T) {
+		// The measured fragment is rendered once per usage: ttft keeps
+		// one decimal place, and speed divides generated tokens by the
+		// generation duration, also at one decimal place.
+		// See TheoryOfUsageTiming.
+		buf := new(bytes.Buffer)
+		output := NewOutput(NewPrompts("", nil), buf, true)
+		state := State(output)
+
+		usage := Usage{}
+		usage.Candidates.TokenCount = 453
+		usage.TimeToFirstToken = 6 * time.Second / 5 // renders as ttft 1.2s
+		usage.GenerateDuration = 10 * time.Second    // 453 tokens / 10s -> 45.3 tok/s
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{usage},
+		})
+		state, _ = state.AppendContent(&Content{
+			Role:  RoleLog,
+			Parts: []Part{FinishReason("stop")},
+		})
+		if !strings.Contains(buf.String(), ", ttft 1.2s, 45.3 tok/s") {
+			t.Fatalf("got %q", buf.String())
 		}
 	})
 }

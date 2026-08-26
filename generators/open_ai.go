@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/debugs"
@@ -248,6 +249,33 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 
+	// Streaming speed measurements: TimeToFirstToken spans from sending
+	// the request to the arrival of the first streamed output content
+	// part (body text or reasoning thought), and GenerateDuration spans
+	// from that token to the emission of the final usage. The
+	// non-streaming path never calls markFirstToken, keeping the
+	// durations at zero so display sites omit the speed section.
+	// See TheoryOfUsageTiming.
+	requestStarted := time.Now()
+	var firstTokenAt time.Time
+	markFirstToken := func(contents []*Content) {
+		if firstTokenAt.IsZero() {
+			for _, content := range contents {
+				if content != nil && len(content.Parts) > 0 {
+					firstTokenAt = time.Now()
+					break
+				}
+			}
+		}
+	}
+	finalizeUsage := func(usage *Usage) {
+		if usage == nil || firstTokenAt.IsZero() {
+			return
+		}
+		usage.TimeToFirstToken = firstTokenAt.Sub(requestStarted)
+		usage.GenerateDuration = time.Since(firstTokenAt)
+	}
+
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		o.recordEvent("api_error", fmt.Sprintf("openai request failed: %v", err))
@@ -309,6 +337,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 			usage.Candidates.TokenCount -= lastUsage.CompletionTokensDetails.ReasoningTokens
 			usage.Thoughts.TokenCount = lastUsage.CompletionTokensDetails.ReasoningTokens
 		}
+		finalizeUsage(&usage)
 		var err error
 		if ret, err = ret.AppendContent(&Content{
 			Role:  RoleLog,
@@ -405,6 +434,7 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return err
 			} else {
+				markFirstToken(contents)
 				for _, content := range contents {
 					if o.Debug() {
 						o.Logger().InfoContext(ctx, "OpenAI content",
@@ -459,6 +489,8 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 				o.recordEvent("api_error", fmt.Sprintf("openai stream parse failed: %v", err))
 				return ret, err
 			}
+
+			markFirstToken(newContents)
 
 			for _, content := range newContents {
 				if o.Debug() {
