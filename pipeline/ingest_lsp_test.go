@@ -17,9 +17,9 @@ import (
 )
 
 func TestSystemPromptIncludesLSPTag(t *testing.T) {
-	// The lsp tag section is appended to the read prompt when the
+	// The lsp tag section is appended to the ingest prompt when the
 	// gopls-backed handler resolves in the scope. See
-	// gotools.TheoryOfGopls and blocks.TheoryOfReadBlocks.
+	// gotools.TheoryOfGopls and blocks.TheoryOfIngestBlocks.
 	dscope.New(
 		modes.ForTest(t),
 		new(Module),
@@ -34,7 +34,7 @@ func TestSystemPromptIncludesLSPTag(t *testing.T) {
 	})
 }
 
-func TestReadComponentPassesLSPHandler(t *testing.T) {
+func TestIngestComponentPassesLSPHandler(t *testing.T) {
 	var gotQuery blocks.LSPQuery
 	fake := blocks.LSPHandler(func(ctx context.Context, q blocks.LSPQuery) (string, error) {
 		gotQuery = q
@@ -58,7 +58,7 @@ func TestReadComponentPassesLSPHandler(t *testing.T) {
 		remaining, newState, _, triggered, err := components.ProcessComponents(
 			context.Background(),
 			comps.ComponentSet,
-			[]blocks.Block{{Kind: "read", Body: `<lsp method="hover" symbol="Foo" />`}},
+			[]blocks.Block{{Kind: "ingest", Body: `<lsp method="hover" symbol="Foo" />`}},
 			generators.NewPrompts("", nil),
 			root,
 			nets.HTTPClient{&http.Client{}},
@@ -67,7 +67,7 @@ func TestReadComponentPassesLSPHandler(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !triggered {
-			t.Fatal("expected the read component to trigger a new round")
+			t.Fatal("expected the ingest component to trigger a new round")
 		}
 		if len(remaining) != 0 {
 			t.Fatalf("expected no remaining blocks, got %d", len(remaining))

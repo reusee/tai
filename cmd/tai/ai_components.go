@@ -27,7 +27,7 @@ which must be computed at call time.
 
 Disabled blocks are announced explicitly: the set carries
 components.DisabledBlocksComponent listing every kind this session cannot
-process — the pipeline kinds (change, go-test, go-src, read), the
+process — the pipeline kinds (change, go-test, go-src, ingest), the
 deliberately excluded continue (OnIdle is the sole input gateway), and
 conditionally shell (-shell off) and memory (-no-memory). Without the notice
 the model may emit these kinds from habit; the blocks would be silently
@@ -129,7 +129,7 @@ func (Module) AIComponents(
 	// process so the model does not emit them from habit — an unprocessed
 	// block is silently ignored while implying an action that never
 	// happened. The ai command processes only shell and memory blocks: the
-	// pipeline kinds (change, go-test, go-src, read) have no
+	// pipeline kinds (change, go-test, go-src, ingest) have no
 	// processor here, and continue is deliberately excluded because
 	// OnIdle is the sole input gateway. Shell is listed when the flag is
 	// off, memory when -no-memory is set. The notice is static per
@@ -137,7 +137,7 @@ func (Module) AIComponents(
 	// dynamic memory section, keeping the cacheable prefix stable. See
 	// components.TheoryOfDisabledBlocks and TheoryOfAIComponents.
 	disabledKinds := []string{
-		"change", "continue", "go-test", "go-src", "read",
+		"change", "continue", "go-test", "go-src", "ingest",
 	}
 	if !bool(flagShell) {
 		disabledKinds = append(disabledKinds, "shell")

@@ -43,24 +43,24 @@ func TestGoSrcPromptsDescribePackageSymbols(t *testing.T) {
 	}
 }
 
-func TestGoSrcPromptsPreferGoSrcOverRead(t *testing.T) {
-	// The go-src prompts must teach the division of labor with read:
+func TestGoSrcPromptsPreferGoSrcOverIngest(t *testing.T) {
+	// The go-src prompts must teach the division of labor with ingest:
 	// Go source is fetched by symbol — gaining the defining file and the
-	// references report — while read serves non-Go files, whole-file
+	// references report — while ingest serves non-Go files, whole-file
 	// views, glob discovery, and network resources. See
 	// TheoryOfGoSrcBlocks.
 	for name, prompt := range map[string]string{
 		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
 		"GoSrcBlockRestatePrompt": GoSrcBlockRestatePrompt,
 	} {
-		if !strings.Contains(prompt, "Prefer go-src over read") {
+		if !strings.Contains(prompt, "Prefer go-src over ingest") {
 			t.Fatalf("%s does not teach the go-src preference for Go source", name)
 		}
 		if !strings.Contains(prompt, "references report") {
 			t.Fatalf("%s does not cite the references report as the reason for the preference", name)
 		}
 		if !strings.Contains(prompt, "non-Go files") {
-			t.Fatalf("%s does not delineate the read block's remaining uses", name)
+			t.Fatalf("%s does not delineate the ingest block's remaining uses", name)
 		}
 	}
 }

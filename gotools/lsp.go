@@ -11,10 +11,10 @@ import (
 	"github.com/reusee/tai/blocks"
 )
 
-const LSPReadTagSystemPrompt = `
+const LSPIngestTagSystemPrompt = `
 **LSP Tag (Go sessions, gopls):**
 
-In Go projects a language server (gopls) is attached to this session. Inside a read block, use the <lsp> tag to query it for precise navigation data.
+In Go projects a language server (gopls) is attached to this session. Inside an ingest block, use the <lsp> tag to query it for precise navigation data.
 
 **Tag forms:**
 - ` + "`<lsp method=\"definition\" symbol=\"Reader.Read\" />`" + ` — jump to the declaration of a symbol. The symbol may be bare (Read) or qualified (Reader.Read); a qualified form finds the method on the named type.
@@ -27,7 +27,7 @@ In Go projects a language server (gopls) is attached to this session. Inside a r
 **Rules:**
 - path is relative to the project root or absolute; line and column are 1-based (column defaults to 1).
 - Symbol-based queries resolve through workspace-wide symbol search; when several symbols share a name, prefer the qualified TypeName.Method form.
-- Results are read-only navigation data, delivered in the next round like every other read tag.
+- Results are read-only navigation data, delivered in the next round like every other ingest tag.
 - Division of labor with go-src: go-src fetches the declaration source of loaded project symbols (with the references report); the lsp tag serves hover at arbitrary positions, file outlines, project-wide symbol search, and type/implementation navigation across the whole module.
 `
 
@@ -442,10 +442,10 @@ func goplsLSPHandler(
 }
 
 // LSPHandler provides the gopls-backed language-server handler for the
-// read block's lsp tag. The gopls process runs at the workspace root in
+// ingest block's lsp tag. The gopls process runs at the workspace root in
 // workspace mode (or the load directory, or the working directory when no
 // directory is configured), matching the loader's view of the module
-// graph. See TheoryOfGopls and blocks.TheoryOfReadBlocks.
+// graph. See TheoryOfGopls and blocks.TheoryOfIngestBlocks.
 func (Module) LSPHandler(
 	loadDir LoadDir,
 	workspace Workspace,

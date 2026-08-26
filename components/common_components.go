@@ -11,7 +11,7 @@ CommonComponents returns the components shared across all generation commands:
 shell (conditional on the shell flag) and continue. These are generic,
 side-effect-free components that any generation pipeline may use regardless of
 whether it performs code modification or dynamic context fetching. Commands
-that need additional components (e.g., change for code generation, read for
+that need additional components (e.g., change for code generation, ingest for
 dynamic context, summary for round statistics, read-only files for prompt-only
 rules) prepend or append their specific components to this common set. The
 common components are constructed once and reused by both the ai command (via
@@ -31,7 +31,7 @@ prompt, improving the model's adherence to the boundary-delimited block format
 across all generation commands.
 
 Components carry no per-kind round bounds: a session may chain any number of
-shell, continue, go-test, go-src, or read rounds, so a model can run as long
+shell, continue, go-test, go-src, or ingest rounds, so a model can run as long
 as the task requires. Run-duration control belongs to the caller, not the
 component layer — pipeline.RunOptions.MaxRounds caps the total rounds of a whole
 run (0 means unlimited) — and an unattended operator terminates the process

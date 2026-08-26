@@ -18,7 +18,7 @@ the ai command's AIComponents).
 
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
-go-src, read) and appending summary, read-only files (prompt-only),
+go-src, ingest) and appending summary, read-only files (prompt-only),
 hidden packages (prompt-only, conditional), mandatory planning (prompt-only,
 conditional), and extra system prompt (prompt-only).
 
@@ -46,21 +46,21 @@ for the next round.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for
-the next round. Like read it is read-only context fetching, but unconditional:
+the next round. Like ingest it is read-only context fetching, but unconditional:
 symbol resolution reuses the packages the loader already fetched, so it is
 always available in the codes pipeline. The codes session presents both
 kinds, and the go-src prompt teaches their division of labor: Go source is
 fetched by symbol — gaining the defining file, line, and the references
-report — while read serves non-Go files, whole-file views, glob discovery,
+report — while ingest serves non-Go files, whole-file views, glob discovery,
 and network resources. See gotools.TheoryOfGoSrcBlocks.
 
-The read component carries the session's language-server handler. blocks
+The ingest component carries the session's language-server handler. blocks
 parses the lsp tag language-neutrally and defines the LSPHandler contract;
 gotools provides the gopls-backed handler — one gopls process per
 directory, lazily started at the first lsp request (see
 gotools.TheoryOfGopls). The Go-specific lsp tag documentation
-(gotools.LSPReadTagSystemPrompt) is appended to the read prompt only when
-the handler is attached, keeping the base read prompt language-neutral. A
+(gotools.LSPIngestTagSystemPrompt) is appended to the ingest prompt only when
+the handler is attached, keeping the base ingest prompt language-neutral. A
 nil handler keeps the section out of the prompt entirely; an lsp tag
 emitted in such a session returns an explicit unavailability error part
 rather than being silently ignored, matching the disabled-blocks
@@ -75,7 +75,7 @@ import-path patterns so the model neither fetches their symbols nor reads
 their files. See gotools.TheoryOfHiddenPackages.
 
 ExtraSystemPrompt is also a prompt-only Component. Change, go-test, go-src,
-and read components carry RestatePrompt fields — short critical
+and ingest components carry RestatePrompt fields — short critical
 reminders that reinforce block format rules. Restate prompts are placed at
 the end of the user prompt via ComponentSet.UserPromptParts(), not in
 the system prompt, so they are the last content the model reads before
@@ -86,7 +86,7 @@ that reinforces the requirement to emit a summary block in every response as
 the round completion signal. The generation loop checks for the summary block
 to distinguish a normally ended round from truncated or non-conforming output:
 no other block kind completes a round, so a round carrying component-triggering
-blocks (read, shell, continue, go-test, go-src) without a summary block is
+blocks (ingest, shell, continue, go-test, go-src) without a summary block is
 retried with feedback naming the missing summary (see TheoryOfLoops). Every
 kind prompt that stops and waits states the summary requirement with the same
 wording and adds the sequence rule — the block after the kind's closing line
@@ -191,7 +191,7 @@ func (Module) CodesComponents(
 	// Go-src component: resolves go-src block symbols to declaration
 	// source. Read-only and unconditional: symbol resolution reuses the
 	// packages the loader already fetched, so it is always available in
-	// the codes pipeline. Placed with read before shell and continue
+	// the codes pipeline. Placed with ingest before shell and continue
 	// so fetched context is available for the next generation round.
 	// See gotools.TheoryOfGoSrcBlocks and gotools.TheoryOfGoSrcResolution.
 	comps = append(comps, components.Component{
@@ -225,37 +225,37 @@ func (Module) CodesComponents(
 		},
 	})
 
-	// Read component: always enabled — dynamic context has no toggle; the
+	// Ingest component: always enabled — dynamic context has no toggle; the
 	// model may request additional files and network resources
 	// mid-generation in every codes session. Processed before
 	// shell/continue so fetched context is available for the next
 	// generation round. The session's language-server handler is attached
 	// when one resolves; its Go-specific lsp tag documentation is appended
-	// to the read prompt only then. A nil handler keeps the section out of
+	// to the ingest prompt only then. A nil handler keeps the section out of
 	// the prompt; an emitted lsp tag then returns an explicit
 	// unavailability error part instead of being silently ignored.
-	// RestatePrompt carries the read restate prompt. See
-	// blocks.TheoryOfReadBlocks, gotools.TheoryOfGopls, and
+	// RestatePrompt carries the ingest restate prompt. See
+	// blocks.TheoryOfIngestBlocks, gotools.TheoryOfGopls, and
 	// TheoryOfCodesComponents.
-	readPrompt := blocks.ReadBlockSystemPrompt
+	ingestPrompt := blocks.IngestBlockSystemPrompt
 	if lspHandler != nil {
-		readPrompt += gotools.LSPReadTagSystemPrompt
+		ingestPrompt += gotools.LSPIngestTagSystemPrompt
 	}
 	comps = append(comps, components.Component{
-		Kind:          "read",
-		PromptSection: readPrompt,
-		RestatePrompt: blocks.ReadBlockRestatePrompt,
+		Kind:          "ingest",
+		PromptSection: ingestPrompt,
+		RestatePrompt: blocks.IngestBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
-			state, hasRead, err := blocks.ProcessReadBlocks(
+			state, hasIngest, err := blocks.ProcessIngestBlocks(
 				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
 			)
 			result := components.ProcessResult{
 				Err: err,
 			}
-			// Only set State when read blocks were found and fetched
+			// Only set State when ingest blocks were found and fetched
 			// content was appended, so that result.State != nil reliably
 			// signals a state modification that triggers a new round.
-			if hasRead {
+			if hasIngest {
 				result.State = state
 			}
 			return result
@@ -298,7 +298,7 @@ func (Module) CodesComponents(
 	// Hidden packages: prompt-only component listing the go.hidden
 	// import-path patterns. Visible code may still reference a hidden
 	// package's import path, so without the notice the model could
-	// discover the package and burn rounds on go-src and read blocks
+	// discover the package and burn rounds on go-src and ingest blocks
 	// that the hide renders futile. The notice appears only when at
 	// least one pattern is configured. See gotools.TheoryOfHiddenPackages.
 	if section := gotools.HiddenPackagesSystemPrompt(hiddenPatterns); section != "" {

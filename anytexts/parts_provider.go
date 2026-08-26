@@ -116,7 +116,7 @@ matching semantics alongside the doublestar path match, so "pkg" excludes both
 following gitignore-style semantics, so files in subdirectories or sibling
 workspace modules (paths containing "..") are still excluded. This ensures
 consistent ** semantics across all file matching contexts: IterFiles glob
-expansion, isExcludedPath pattern matching, read block glob tags, and
+expansion, isExcludedPath pattern matching, ingest block glob tags, and
 gotools exclusion/embed-requested checks.
 
 Hidden files (those whose basename starts with ".") are skipped during

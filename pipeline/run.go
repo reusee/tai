@@ -18,11 +18,6 @@ import (
 	"github.com/reusee/tai/records"
 )
 
-// TheoryOfContextPhilosophy articulates the system's single-shot context
-// construction philosophy. All context the model needs is assembled upfront
-// through pruning, simplification, and token budgeting — not discovered
-// through multi-turn conversation. This constant is referenced by other
-// theories to prevent suggestions that rely on long-conversation patterns.
 const TheoryOfContextPhilosophy = `
 The system provides all context the model needs in a single generation
 request, not through multi-turn conversation. This single-shot approach sets
@@ -53,7 +48,7 @@ Architectural constraints:
   declaration surface, so the model never starts from nothing (see
   gotools.TheoryOfContextStrategy). Implementation source is fetched on
   demand with go-src blocks — a targeted pull from the known surface, not
-  semantic-search probing. Read blocks serve external resources unavailable
+  semantic-search probing. Ingest blocks serve external resources unavailable
   at construction time (network fetches, glob expansion), not as a
   substitute for upfront context.
 
@@ -66,7 +61,6 @@ summarized to free budget, conversation history as knowledge base — violate
 this philosophy and are out of scope.
 `
 
-// TheoryOfLoops documents the unified generation loop.
 const TheoryOfLoops = `
 The pipeline unifies the generation loop pattern across all generation
 commands (go, any, ai, next). The core pattern:
@@ -83,8 +77,8 @@ truncation, error), retry decisions and handoffs, synthesized completion
 summaries, per-round token usage, component-triggered and idle
 continuations — is yielded as an Event as it occurs (see
 TheoryOfLoopEvents). The terminal error, if any, arrives with the final
-yield's error component when the run stops. Callers may suspend and
-resume the run via iter.Pull2, inspecting the result between pulls.
+yield's error component when the run stops. Callers may suspend and resume
+the run via iter.Pull2, inspecting the result between pulls.
 
 A round is one pass through the phase chain, producing a summary and parts.
 The round's outcome is captured by roundResult: the updated state, the
@@ -118,7 +112,7 @@ See TheoryOfHandoff.
 
 The summary block is non-negotiable: every round that ends without a summary
 block is retried when RetryOnMissingCompletion is enabled, including rounds
-whose blocks trigger components (read, shell, continue, go-test, go-src). No
+whose blocks trigger components (ingest, shell, continue, go-test, go-src). No
 block kind replaces or implies the summary. The retry feedback names the
 violation — missingSummaryRetryPrefix when the response simply ended without
 the summary block, incompleteOutputHandoffPrefix when the finish reason shows

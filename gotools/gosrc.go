@@ -10,15 +10,15 @@ const TheoryOfGoSrcBlocks = `
 The go-src block is the symbol-level context-fetching kind: the model lists
 Go symbol names — one per line — and the system resolves each symbol to its
 declaration source, returned as user content in the next generation round.
-It complements read under a taught division of labor: for Go source code
+It complements ingest under a taught division of labor: for Go source code
 the prompts prefer go-src, because a fetch returns the exact declaration
 with its doc comments, the defining file and line, a references report of
 the symbol's callers, a selector packages report listing the full import
 paths of packages used in selector expressions within the declaration, and
 interface relations for named types and interfaces — none of which a
-whole-file read provides. The read kind keeps what go-src cannot fetch:
+whole-file ingest provides. The ingest kind keeps what go-src cannot fetch:
 non-Go files, whole-file views, glob discovery, and network resources. The
-division is taught only in the go-src prompts; the read prompt stays
+division is taught only in the go-src prompts; the ingest prompt stays
 language-neutral because the blocks package defines no Go-specific kind.
 The kind's purpose is precision under the visibility system: a package
 shown at documentation visibility carries only go doc output, so the model
@@ -71,7 +71,7 @@ symbols.
 The go-test and go-src mechanisms are Go-specific, so they live in this
 package together with the resolver (ResolveGoSymbols, which needs the
 parsed ASTs); the blocks package defines only the generic block format
-and the language-neutral kinds. Like read, go-src is strictly read-only
+and the language-neutral kinds. Like ingest, go-src is strictly read-only
 and is not a completion signal: a round carrying a go-src block still
 needs a summary block, and the stop rule is phrased summary-first —
 emit the summary block immediately after the last go-src block's closing
@@ -91,12 +91,12 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 
 **Rules:**
 - Use go-src blocks when you need the implementation of a Go symbol that the context shows only as a signature or documentation (e.g., a package included at documentation visibility shows go doc output without function bodies). Only use go-src blocks in Go projects.
-- Prefer go-src over read for Go source code: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file read provides. Use a read block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
+- Prefer go-src over ingest for Go source code: a fetch returns the exact declaration, names its defining file and line (usable as the change block file-path), and appends a references report of the symbol's callers — none of which a whole-file ingest provides. Use an ingest block only for what go-src cannot fetch: non-Go files, a whole-file view (imports, file layout, adjacent declarations), glob file discovery, or network resources.
 - Focus packages appear in the context as documentation only: the declaration surface (go doc -all -cmd -u output) plus a list of the package's test-function names and a list of the package's source file names. Their implementation source is NOT included initially.
 - Before understanding, modifying, or reviewing any focus declaration, fetch its source with a go-src block naming the declaration. Do not reason about, edit, or review a focus declaration from its documentation alone — fetch the source first, then act.
 - Test functions listed in a focus package block (TestXxx, BenchmarkXxx, FuzzXxx, ExampleXxx) may be fetched by name like any other symbol. Fetch a test's source before modifying it or when checking behavior related to your change.
 - The body contains ONLY symbol names, one per line, with no prose. Each non-empty line is one symbol.
-- Symbol forms follow go doc: a plain name for a top-level declaration (function, type, const, var), e.g. NewReader; TypeName.MethodName for a method, e.g. Reader.Read; and an optional package qualifier that restricts matching to that package, e.g., encoding/json.Marshal, json.Marshal, or doublestar.Glob. The qualifier may be the full import path, a proper suffix of it, or the package's declared name — the declared-name form addresses major-version packages whose last path segment is a version (doublestar for …/v4). An optional leading * receiver prefix is ignored. Generic parameter lists on the type name are ignored (Pair.Swap and Pair[A, B].Swap both resolve). Do not qualify names with a package qualifier unless restricting to a specific loaded package.
+- Symbol forms follow go doc: a plain name for a top-level declaration (function, type, const, var), e.g., NewReader; TypeName.MethodName for a method, e.g., Reader.Read; and an optional package qualifier that restricts matching to that package, e.g., encoding/json.Marshal, json.Marshal, or doublestar.Glob. The qualifier may be the full import path, a proper suffix of it, or the package's declared name — the declared-name form addresses major-version packages whose last path segment is a version (doublestar for …/v4). An optional leading * receiver prefix is ignored. Generic parameter lists on the type name are ignored (Pair.Swap and Pair[A, B].Swap both resolve). Do not qualify names with a package qualifier unless restricting to a specific loaded package.
 - Prefer the full import path as the package qualifier: an import path identifies exactly one loaded package, while a bare package name or a path suffix may match several packages that share the name and return redundant results.
 - A symbol that is itself a package — an exact loaded package import path (e.g., encoding/json) or package name (e.g., json) — returns that package's go doc documentation instead of declaration source. Focus packages include command and unexported documentation; context packages show the exported API.
 - Name matching follows go doc's case rule: a lower-case letter in the query matches either case in the target, an upper-case letter matches exactly.
@@ -114,7 +114,7 @@ Use the "go-src" kind to request the source code of Go symbols that were not ful
 - Never end a response on a go-src block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete and retried, and its blocks are discarded — so the symbol requests are lost unless re-emitted with the summary.
 `
 
-const GoSrcBlockRestatePrompt = `- Prefer go-src over read for Go source code: a fetch returns the declaration, its defining file and line, and a references report of the symbol's callers. Use read only for non-Go files, whole-file views, glob discovery, or network resources.
+const GoSrcBlockRestatePrompt = `- Prefer go-src over ingest for Go source code: a fetch returns the declaration, its defining file and line, and a references report of the symbol's callers. Use ingest only for non-Go files, whole-file views, glob discovery, or network resources.
 - When you need the implementation of a Go symbol that the context shows only as a signature or documentation, emit a go-src block whose body lists symbol names, one per line. Symbol forms follow go doc: plain names for top-level declarations, TypeName.MethodName for methods, and an optional package qualifier (full import path, path suffix, or the package's declared name — e.g., doublestar.Glob for a …/v4 module) restricting the match to that package; prefer the full import path, which identifies exactly one loaded package. A leading * receiver prefix and generic parameter lists on the type name are ignored. Lower-case query letters match either case; upper-case letters match exactly. Only symbols in packages loaded in this session can be resolved; unmatched names are reported back. Only use go-src blocks in Go projects.
 - Focus packages appear as documentation only (declaration surface plus test-function names and file names). Before understanding, modifying, or reviewing any focus declaration — including a listed test function — fetch its source with a go-src block naming the declaration; do not act on documentation alone.
 - A symbol that is a loaded package (exact import path or package name) returns that package's go doc documentation: focus packages include command and unexported documentation, context packages the exported API.

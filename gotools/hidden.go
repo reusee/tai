@@ -39,7 +39,7 @@ appends a prompt-only component carrying HiddenPackagesSystemPrompt
 still reference a hidden package's import path, so without the notice the
 model could discover the package and burn rounds on go-src fetches that
 report not found. The notice also instructs the model not to read the
-hidden packages' files: read blocks are language-neutral and mechanically
+hidden packages' files: ingest blocks are language-neutral and mechanically
 unrestricted, so file reads are governed by prompt instruction only.
 `
 

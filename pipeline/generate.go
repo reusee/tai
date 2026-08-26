@@ -466,7 +466,7 @@ or non-conforming output.
 
 Completion is detected by checking the externally collected blocks for summary
 kind and the finish reason in the state for abnormal termination. No block kind
-other than summary completes a round: a component-triggering block (read,
+other than summary completes a round: a component-triggering block (ingest,
 shell, continue, go-test, go-src) without a summary block is a rule violation,
 not a completed round, so such rounds are retried with the missing-summary
 feedback (missingSummaryRetryPrefix); an abnormal finish reason instead frames

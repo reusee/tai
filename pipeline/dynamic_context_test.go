@@ -21,7 +21,7 @@ func (mockPartsProvider) Parts(int, func(string) (int, error), []string) ([]gene
 }
 
 func TestSystemPromptDynamicContext(t *testing.T) {
-	// Dynamic context is always enabled: the read section is an
+	// Dynamic context is always enabled: the ingest section is an
 	// unconditional part of the codes system prompt.
 	dscope.New(
 		modes.ForTest(t),
@@ -31,17 +31,17 @@ func TestSystemPromptDynamicContext(t *testing.T) {
 	).Call(func(
 		prompt SystemPrompt,
 	) {
-		if !strings.Contains(string(prompt), "Read Block Kind") {
-			t.Fatal("system prompt must include read block section")
+		if !strings.Contains(string(prompt), "Ingest Block Kind") {
+			t.Fatal("system prompt must include ingest block section")
 		}
 	})
 }
 
-func TestSystemPromptReadBlockNotCompletionSignal(t *testing.T) {
+func TestSystemPromptIngestBlockNotCompletionSignal(t *testing.T) {
 	// Mirrors TestSystemPromptGoSrcBlock: the assembled codes system prompt
-	// must teach that a read block does not replace the summary block, so
+	// must teach that an ingest block does not replace the summary block, so
 	// the stop-and-wait instruction never licenses omitting the round's
-	// summary block. See blocks.TheoryOfReadBlocks and
+	// summary block. See blocks.TheoryOfIngestBlocks and
 	// blocks.TheoryOfSummaryBlocks.
 	dscope.New(
 		modes.ForTest(t),
@@ -52,8 +52,8 @@ func TestSystemPromptReadBlockNotCompletionSignal(t *testing.T) {
 		prompt SystemPrompt,
 	) {
 		s := string(prompt)
-		if !strings.Contains(s, "read block is NOT a completion signal") {
-			t.Fatal("system prompt must state that read block is not a completion signal and summary is still required")
+		if !strings.Contains(s, "ingest block is NOT a completion signal") {
+			t.Fatal("system prompt must state that ingest block is not a completion signal and summary is still required")
 		}
 	})
 }

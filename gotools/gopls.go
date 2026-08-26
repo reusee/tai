@@ -19,7 +19,7 @@ import (
 
 const TheoryOfGopls = `
 gopls is the session's language server for Go workspaces, exposed to the
-model through the read block's lsp tag (see blocks.TheoryOfReadBlocks).
+model through the ingest block's lsp tag (see blocks.TheoryOfIngestBlocks).
 The client starts lazily: no gopls process exists until the first lsp
 request, so sessions that never query a language server pay nothing. One
 gopls process per workspace directory is cached for the process lifetime
@@ -44,7 +44,7 @@ Symbol-targeted queries resolve the symbol through workspace/symbol and
 prefer an exact name-and-container match, so a qualified form finds the
 method on the named type rather than an arbitrary same-named symbol. The
 lsp tag's scope is mechanically unrestricted, including hidden packages:
-like the read block's file tag, hidden-package exclusion is governed by
+like the ingest block's file tag, hidden-package exclusion is governed by
 prompt instruction only (see TheoryOfHiddenPackages).
 `
 

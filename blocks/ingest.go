@@ -17,8 +17,8 @@ import (
 	"github.com/reusee/tai/pathutil"
 )
 
-const TheoryOfReadBlocks = `
-The read block lets the model request additional context during a
+const TheoryOfIngestBlocks = `
+The ingest block lets the model request additional context during a
 generation cycle: it emits XML tags describing the desired context; the generate
 loop detects the block via ParserState, fetches the requested data, appends it as
 user content, and initiates another generation request. The block is strictly
@@ -26,18 +26,23 @@ read-only: it must not produce any side effects such as writing files or making
 state-changing API calls. The order of XML tags within the block determines the
 order of context parts in the appended user message.
 
+The kind is named "ingest" rather than "read" deliberately: "read" collides
+with tool names the model has internalized from training, and the collision
+produces inertia — the model follows the familiar tool's conventions instead
+of this block protocol. An uncommon kind name eliminates the collision.
+
 Symbol-level source fetching belongs to a dedicated kind where one exists:
 the codes pipeline teaches go-src — which appends a references report of the
-resolved declarations' callers — as the preferred path for Go source, so read
-keeps whole files, glob discovery, and network resources. The read prompt
+resolved declarations' callers — as the preferred path for Go source, so ingest
+keeps whole files, glob discovery, and network resources. The ingest prompt
 itself stays language-neutral; see gotools.TheoryOfGoSrcBlocks for the
 division of labor.
 
-The lsp tag is read's language-server extension point: blocks parses the
+The lsp tag is ingest's language-server extension point: blocks parses the
 tag and defines the LSPHandler contract language-neutrally, while a session
 with a language server injects a handler — Go sessions attach gopls, see
 gotools.TheoryOfGopls, and append the Go-specific lsp tag documentation to
-the read prompt only when the handler is attached. A session without a
+the ingest prompt only when the handler is attached. A session without a
 language server resolves a nil handler: the lsp documentation is omitted
 from the prompt, and an emitted lsp tag returns an explicit unavailability
 error part rather than being silently ignored.
@@ -58,28 +63,28 @@ for recursive directory traversal via doublestar; when ** appears as a complete
 path segment, it matches zero or more directories.
 
 Like every kind whose prompt stops and waits for the next round (shell, go-test,
-go-src), the read prompt carries the summary discipline: the block does not
+go-src), the ingest prompt carries the summary discipline: the block does not
 replace the summary block, the prompt requires a summary block in the same
-round after the read block, and the stop rule is phrased summary-first — emit
-the summary block immediately after the last read block's closing line, then
+round after the ingest block, and the stop rule is phrased summary-first — emit
+the summary block immediately after the last ingest block's closing line, then
 end the response and wait — the same wording as the shell prompt, so no stop
 instruction licenses halting at the closing line. The prompt also adds the
-sequence rule that the block after the last read block's closing line must be
-the summary block. At the loop level a read block never completes a round on
-its own: a round carrying read blocks but no summary block is retried with
-feedback naming the missing summary, and the read blocks are discarded with
+sequence rule that the block after the last ingest block's closing line must be
+the summary block. At the loop level an ingest block never completes a round on
+its own: a round carrying ingest blocks but no summary block is retried with
+feedback naming the missing summary, and the ingest blocks are discarded with
 the failed attempt and must be re-emitted together with the summary block
 (see pipeline.TheoryOfLoops).
 
-Only read blocks are consumed from ParserState during context
+Only ingest blocks are consumed from ParserState during context
 processing; blocks of other kinds are preserved so they remain available after the
 context is provided.
 `
 
-const ReadBlockSystemPrompt = `
-Read Block Kind:
+const IngestBlockSystemPrompt = `
+Ingest Block Kind:
 
-Use the "read" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit a read block. The system will fetch the requested data and provide it as user input for the next generation turn.
+Use the "ingest" kind to request additional context needed to complete the task. When a file needs to be read or a network resource fetched, emit an ingest block. The system will fetch the requested data and provide it as user input for the next generation turn.
 
 **Supported XML Tags:**
 - ` + "`<file path=\"...\" />`" + `: Read a local file at the given path. The path should be relative to the project root or absolute.
@@ -89,28 +94,28 @@ Use the "read" kind to request additional context needed to complete the task. W
 **Rules:**
 - The order of XML tags determines the order of context parts in the response.
 - This block is strictly read-only. It must not produce any side effects.
-- After the last read block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the requested context.
-- The read block is NOT a completion signal. MUST still emit a summary block in the same round, after the read block. Every round must end with a summary block.
-- Never end a response on a read block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete, and it is discarded and retried — its blocks are discarded, so the context requests are lost unless re-emitted.
-- Do not include read blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
+- After the last ingest block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the requested context.
+- The ingest block is NOT a completion signal. MUST still emit a summary block in the same round, after the ingest block. Every round must end with a summary block.
+- Never end a response on an ingest block, and never stop at its closing line: stopping there omits the mandatory summary block, the response is treated as incomplete, and it is discarded and retried — its blocks are discarded, so the context requests are lost unless re-emitted.
+- Do not include ingest blocks alongside change blocks in the same response. If more context is needed, request it first, then emit change blocks in a subsequent response after the context is provided.
 
 **Example use:**
-- To read a file: emit a read block whose body contains <file path="..." />.
-- To fetch a web page with custom headers: emit a read block whose body contains <fetch addr="..." user-agent="..." referer="..." cookie="..." />.
-- To discover files: emit a read block whose body contains <glob pattern="..." />.
+- To read a file: emit an ingest block whose body contains <file path="..." />.
+- To fetch a web page with custom headers: emit an ingest block whose body contains <fetch addr="..." user-agent="..." referer="..." cookie="..." />.
+- To discover files: emit an ingest block whose body contains <glob pattern="..." />.
 `
 
-const ReadBlockRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a read block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
+const IngestBlockRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit an ingest block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
 - The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
 - The glob tag lists files matching a pattern without reading their contents.
-- After the last read block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the context — never stop at the closing line itself.
-- A read block does NOT replace the summary block. MUST still emit a summary block in the same round, after the read block.
-- Never end a response on a read block: after the read block's closing line, the next block MUST be the summary block.
-- The read block is read-only: never use it for writes or side effects.
-- Do not emit change blocks in the same response as a read block. Request the context first, then emit changes after the context is provided.`
+- After the last ingest block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the context — never stop at the closing line itself.
+- An ingest block does NOT replace the summary block. MUST still emit a summary block in the same round, after the ingest block.
+- Never end a response on an ingest block: after the ingest block's closing line, the next block MUST be the summary block.
+- The ingest block is read-only: never use it for writes or side effects.
+- Do not emit change blocks in the same response as an ingest block. Request the context first, then emit changes after the context is provided.`
 
-// ReadRequest represents a single context request parsed from the block body.
-type ReadRequest struct {
+// IngestRequest represents a single context request parsed from the block body.
+type IngestRequest struct {
 	Type      string
 	Path      string
 	Addr      string
@@ -154,15 +159,15 @@ type LSPQuery struct {
 
 // LSPHandler answers one language-server query, returning the rendered
 // result text. A nil handler means no language server is available in the
-// session; fetchReadRequests then returns an explicit unavailability error
+// session; fetchIngestRequests then returns an explicit unavailability error
 // part for every lsp tag instead of silently ignoring it.
-// See TheoryOfReadBlocks and gotools.TheoryOfGopls.
+// See TheoryOfIngestBlocks and gotools.TheoryOfGopls.
 type LSPHandler func(ctx context.Context, q LSPQuery) (string, error)
 
-// parseReadBody parses the XML tags in a read block body.
-func parseReadBody(body string) ([]ReadRequest, error) {
+// parseIngestBody parses the XML tags in an ingest block body.
+func parseIngestBody(body string) ([]IngestRequest, error) {
 	decoder := xml.NewDecoder(strings.NewReader(body))
-	var requests []ReadRequest
+	var requests []IngestRequest
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {
@@ -186,7 +191,7 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 			if path == "" {
 				return nil, fmt.Errorf("file tag missing path attribute")
 			}
-			requests = append(requests, ReadRequest{Type: "file", Path: path})
+			requests = append(requests, IngestRequest{Type: "file", Path: path})
 		case "fetch":
 			var addr, userAgent, referer, cookie string
 			for _, attr := range start.Attr {
@@ -204,7 +209,7 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 			if addr == "" {
 				return nil, fmt.Errorf("fetch tag missing addr attribute")
 			}
-			requests = append(requests, ReadRequest{
+			requests = append(requests, IngestRequest{
 				Type:      "fetch",
 				Addr:      addr,
 				UserAgent: userAgent,
@@ -221,7 +226,7 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 			if pattern == "" {
 				return nil, fmt.Errorf("glob tag missing pattern attribute")
 			}
-			requests = append(requests, ReadRequest{Type: "glob", Pattern: pattern})
+			requests = append(requests, IngestRequest{Type: "glob", Pattern: pattern})
 		case "lsp":
 			var method, path, symbol, query, lineStr, colStr string
 			for _, attr := range start.Attr {
@@ -259,7 +264,7 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 					return nil, fmt.Errorf("lsp tag column attribute must be a number: %q", colStr)
 				}
 			}
-			requests = append(requests, ReadRequest{
+			requests = append(requests, IngestRequest{
 				Type:   "lsp",
 				Method: method,
 				Path:   path,
@@ -273,10 +278,10 @@ func parseReadBody(body string) ([]ReadRequest, error) {
 	return requests, nil
 }
 
-// fetchReadRequests fetches the requested context and returns parts.
+// fetchIngestRequests fetches the requested context and returns parts.
 // File read errors and fetch errors are returned as error text parts rather
 // than aborting the entire generation, so the model can adapt.
-func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, lsp LSPHandler, requests []ReadRequest) []generators.Part {
+func fetchIngestRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPClient, lsp LSPHandler, requests []IngestRequest) []generators.Part {
 	var parts []generators.Part
 	for _, req := range requests {
 		switch req.Type {
@@ -327,7 +332,7 @@ func fetchReadRequests(ctx context.Context, root *os.Root, httpClient nets.HTTPC
 
 // lspLabel builds the display label of an lsp request for its context part:
 // the method plus its primary target (symbol, query, or path position).
-func lspLabel(req ReadRequest) string {
+func lspLabel(req IngestRequest) string {
 	label := req.Method
 	switch {
 	case req.Symbol != "":
@@ -346,11 +351,11 @@ func lspLabel(req ReadRequest) string {
 	return label
 }
 
-// ProcessReadBlocks checks read blocks, fetches the requested content, and
-// appends it as user content to the state. Only blocks with Kind "read" are
-// processed. The hasRead flag indicates whether any read blocks were found, so
-// callers can trigger a new round. See TheoryOfReadBlocks.
-func ProcessReadBlocks(
+// ProcessIngestBlocks checks ingest blocks, fetches the requested content, and
+// appends it as user content to the state. Only blocks with Kind "ingest" are
+// processed. The hasIngest flag indicates whether any ingest blocks were found,
+// so callers can trigger a new round. See TheoryOfIngestBlocks.
+func ProcessIngestBlocks(
 	blocks []Block,
 	ctx context.Context,
 	root *os.Root,
@@ -358,27 +363,27 @@ func ProcessReadBlocks(
 	lsp LSPHandler,
 	state generators.State,
 ) (generators.State, bool, error) {
-	hasRead := false
+	hasIngest := false
 	for _, block := range blocks {
-		if block.Kind != "read" {
+		if block.Kind != "ingest" {
 			continue
 		}
-		hasRead = true
-		requests, parseErr := parseReadBody(block.Body)
+		hasIngest = true
+		requests, parseErr := parseIngestBody(block.Body)
 		if parseErr != nil {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
 				Role: "user",
 				Parts: []generators.Part{
-					generators.Text(fmt.Sprintf("[read block parse error: %v]\n\n", parseErr)),
+					generators.Text(fmt.Sprintf("[ingest block parse error: %v]\n\n", parseErr)),
 				},
 			})
 			if appendErr != nil {
-				return state, hasRead, appendErr
+				return state, hasIngest, appendErr
 			}
 			continue
 		}
-		parts := fetchReadRequests(ctx, root, httpClient, lsp, requests)
+		parts := fetchIngestRequests(ctx, root, httpClient, lsp, requests)
 		if len(parts) > 0 {
 			var appendErr error
 			state, appendErr = state.AppendContent(&generators.Content{
@@ -386,11 +391,11 @@ func ProcessReadBlocks(
 				Parts: parts,
 			})
 			if appendErr != nil {
-				return state, hasRead, appendErr
+				return state, hasIngest, appendErr
 			}
 		}
 	}
-	return state, hasRead, nil
+	return state, hasIngest, nil
 }
 
 // readContextFile reads a local file at the given path. Absolute paths are
@@ -401,7 +406,7 @@ func ProcessReadBlocks(
 // two dots (e.g., "..hidden", "..."). Absolute paths are resolved relative to
 // the root directory when within it, or read directly from the filesystem when
 // outside it, so the model can reference files in system directories like /tmp.
-// See TheoryOfReadBlocks.
+// See TheoryOfIngestBlocks.
 func readContextFile(root *os.Root, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cleaned := filepath.Clean(path)
@@ -412,7 +417,7 @@ func readContextFile(root *os.Root, path string) (string, error) {
 	// Absolute paths are permitted as explicit references. os.Root methods
 	// reject absolute paths, so convert to a root-relative path when the
 	// absolute path is within the root, or fall back to os.ReadFile for
-	// paths outside the root. See TheoryOfReadBlocks.
+	// paths outside the root. See TheoryOfIngestBlocks.
 	if filepath.IsAbs(path) {
 		rootDir, err := filepath.Abs(root.Name())
 		if err != nil {
@@ -483,7 +488,7 @@ func globFiles(root *os.Root, pattern string) ([]string, error) {
 	return filtered, nil
 }
 
-func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req ReadRequest) (string, error) {
+func fetchURL(ctx context.Context, httpClient nets.HTTPClient, req IngestRequest) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.Addr, nil)
 	if err != nil {
 		return "", err

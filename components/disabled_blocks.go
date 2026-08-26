@@ -17,7 +17,7 @@ command had run).
 DisabledBlocksNotice closes the gap by explicitly listing the kinds that are
 NOT available in the current session, each with a replacement behavior
 (shell: state the command in prose; continue: deliver the complete answer in
-this response; change: describe the modification; go-test, go-src, read:
+this response; change: describe the modification; go-test, go-src, ingest:
 state the need in prose). DisabledBlocksComponent wraps the notice as a
 prompt-only Component: no Kind, no Process function, so it never enters
 Processable and cannot consume blocks. An empty notice (no kinds, or only
@@ -58,7 +58,7 @@ var disabledKindDescriptions = map[string]string{
 	"change":   "- `change` — change blocks are not processed in this session and nothing is written to files. Do not emit change blocks. When a file modification is required, describe it precisely in plain text (path, operation, content) instead.",
 	"go-test":  "- `go-test` — tests are never run in this session. Do not emit go-test blocks. When test verification matters, state in plain text which tests to run and what result is expected.",
 	"go-src":   "- `go-src` — symbol sources are not fetched in this session. Do not emit go-src blocks. Work from the context already provided.",
-	"read":     "- `read` — additional files and network resources are not fetched in this session. Do not emit read blocks. When essential content is missing, state exactly what is needed, then stop.",
+	"ingest":   "- `ingest` — additional files and network resources are not fetched in this session. Do not emit ingest blocks. When essential content is missing, state exactly what is needed, then stop.",
 	"memory":   "- `memory` — the user profile is not updated in this session. Do not emit memory blocks.",
 }
 

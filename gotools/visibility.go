@@ -186,7 +186,7 @@ level, so the same focus packages always produce the same budget. Focus
 files reach the context at full content only when explicitly requested
 via -file (DoNotSimplify); non-Go focus files — embed and markdown
 files — are listed by name in the focus documentation block's
-file-names section and fetched on demand with read blocks (see
+file-names section and fetched on demand with ingest blocks (see
 TheoryOfNonGoFiles in module_root.go). The focus documentation block
 carries the writable-dir read-only annotation in its begin marker,
 because focus Go files are no longer emitted individually. The
@@ -202,7 +202,7 @@ level and re-derives the context budget from the downgraded tokens: the
 focus block becomes the package overview and top-level symbol index
 (unexported symbols included, matching the focus -u convention) plus the
 test-function and file names, so every symbol and file name stays
-discoverable for go-src and read fetching at a fraction of the full-doc
+discoverable for go-src and ingest fetching at a fraction of the full-doc
 cost. The downgrade is a single step — full documentation or -all-src
 source down to short doc — applies only when the budget is positive,
 and if the short-doc surface still exceeds it the request proceeds

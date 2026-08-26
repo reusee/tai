@@ -13,52 +13,52 @@ import (
 	"github.com/reusee/tai/nets"
 )
 
-func TestParseReadBody(t *testing.T) {
+func TestParseIngestBody(t *testing.T) {
 	tests := []struct {
 		name     string
 		body     string
-		expected []ReadRequest
+		expected []IngestRequest
 		wantErr  bool
 	}{
 		{
 			name: "single file",
 			body: `<file path="src/main.go" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "file", Path: "src/main.go"},
 			},
 		},
 		{
 			name: "single fetch",
 			body: `<fetch addr="https://example.com/api" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "fetch", Addr: "https://example.com/api"},
 			},
 		},
 		{
 			name: "fetch with headers",
 			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" referer="https://ref.example.com" cookie="session=abc123" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 			},
 		},
 		{
 			name: "fetch with partial headers",
 			body: `<fetch addr="https://example.com/api" user-agent="MyBot/1.0" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "fetch", Addr: "https://example.com/api", UserAgent: "MyBot/1.0"},
 			},
 		},
 		{
 			name: "single glob",
 			body: `<glob pattern="src/*.go" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "glob", Pattern: "src/*.go"},
 			},
 		},
 		{
 			name: "multiple mixed",
 			body: `<file path="a.go" />` + "\n" + `<fetch addr="https://x.com" />` + "\n" + `<file path="b.go" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "file", Path: "a.go"},
 				{Type: "fetch", Addr: "https://x.com"},
 				{Type: "file", Path: "b.go"},
@@ -67,7 +67,7 @@ func TestParseReadBody(t *testing.T) {
 		{
 			name: "multiple mixed with glob",
 			body: `<file path="a.go" />` + "\n" + `<glob pattern="*.go" />` + "\n" + `<fetch addr="https://x.com" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "file", Path: "a.go"},
 				{Type: "glob", Pattern: "*.go"},
 				{Type: "fetch", Addr: "https://x.com"},
@@ -76,21 +76,21 @@ func TestParseReadBody(t *testing.T) {
 		{
 			name: "lsp by symbol",
 			body: `<lsp method="definition" symbol="Reader.Read" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "lsp", Method: "definition", Symbol: "Reader.Read"},
 			},
 		},
 		{
 			name: "lsp by position",
 			body: `<lsp method="hover" path="src/main.go" line="12" column="5" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "lsp", Method: "hover", Path: "src/main.go", Line: 12, Column: 5},
 			},
 		},
 		{
 			name: "lsp workspace symbol query",
 			body: `<lsp method="workspace/symbol" query="Builder" />`,
-			expected: []ReadRequest{
+			expected: []IngestRequest{
 				{Type: "lsp", Method: "workspace/symbol", Query: "Builder"},
 			},
 		},
@@ -128,7 +128,7 @@ func TestParseReadBody(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseReadBody(tc.body)
+			got, err := parseIngestBody(tc.body)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -341,7 +341,7 @@ func TestGlobFilesDoubleStar(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsFile(t *testing.T) {
+func TestFetchIngestRequestsFile(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -355,10 +355,10 @@ func TestFetchReadRequestsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "file", Path: "test.txt"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -371,7 +371,7 @@ func TestFetchReadRequestsFile(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsGlob(t *testing.T) {
+func TestFetchIngestRequestsGlob(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -404,7 +404,7 @@ func TestFetchReadRequestsGlob(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(matches) != 0 {
-		t.Fatalf("expected 0 matches, got %d: %v", len(matches), matches)
+		t.Fatalf("expected 0 matches, got %d", len(matches))
 	}
 
 	// Path escape
@@ -413,10 +413,10 @@ func TestFetchReadRequestsGlob(t *testing.T) {
 		t.Fatal("expected error for path escape")
 	}
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "glob", Pattern: "*.go"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -435,7 +435,7 @@ func TestFetchReadRequestsGlob(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsGlobDoubleStar(t *testing.T) {
+func TestFetchIngestRequestsGlobDoubleStar(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -453,10 +453,10 @@ func TestFetchReadRequestsGlobDoubleStar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "glob", Pattern: "**/*.go"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -472,7 +472,7 @@ func TestFetchReadRequestsGlobDoubleStar(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsFetch(t *testing.T) {
+func TestFetchIngestRequestsFetch(t *testing.T) {
 	responseBody := "fetch response body"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(responseBody))
@@ -485,10 +485,10 @@ func TestFetchReadRequestsFetch(t *testing.T) {
 	}
 	defer root.Close()
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "fetch", Addr: server.URL},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -501,7 +501,7 @@ func TestFetchReadRequestsFetch(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsHeaders(t *testing.T) {
+func TestFetchIngestRequestsHeaders(t *testing.T) {
 	var gotUserAgent, gotReferer, gotCookie string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUserAgent = r.Header.Get("User-Agent")
@@ -517,10 +517,10 @@ func TestFetchReadRequestsHeaders(t *testing.T) {
 	}
 	defer root.Close()
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "fetch", Addr: server.URL, UserAgent: "MyBot/1.0", Referer: "https://ref.example.com", Cookie: "session=abc123"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -542,7 +542,7 @@ func TestFetchReadRequestsHeaders(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsError(t *testing.T) {
+func TestFetchIngestRequestsError(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -551,10 +551,10 @@ func TestFetchReadRequestsError(t *testing.T) {
 	defer root.Close()
 
 	// File not found
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "file", Path: "nonexistent.txt"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -567,35 +567,35 @@ func TestFetchReadRequestsError(t *testing.T) {
 	}
 }
 
-func TestReadBlockPromptsRequireSummary(t *testing.T) {
-	// The read prompts must not license omitting the summary
+func TestIngestBlockPromptsRequireSummary(t *testing.T) {
+	// The ingest prompts must not license omitting the summary
 	// block: the stop rule is phrased summary-first — emit the summary
-	// block IMMEDIATELY after the last read block's closing line, then
+	// block IMMEDIATELY after the last ingest block's closing line, then
 	// end the response — and the block is declared not to replace the
 	// summary block. A bare "stop generating ..." instruction placed
 	// before the summary requirement makes the model halt at the closing
 	// line and is the most likely cause of missing summary blocks after
-	// read blocks. See TheoryOfReadBlocks and TheoryOfSummaryBlocks.
-	if !strings.Contains(ReadBlockSystemPrompt, "read block is NOT a completion signal") {
-		t.Fatal("system prompt must state that the read block is not a completion signal and a summary block is still required")
+	// ingest blocks. See TheoryOfIngestBlocks and TheoryOfSummaryBlocks.
+	if !strings.Contains(IngestBlockSystemPrompt, "ingest block is NOT a completion signal") {
+		t.Fatal("system prompt must state that the ingest block is not a completion signal and a summary block is still required")
 	}
-	if !strings.Contains(ReadBlockSystemPrompt, "emit the summary block IMMEDIATELY") {
-		t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last read block")
+	if !strings.Contains(IngestBlockSystemPrompt, "emit the summary block IMMEDIATELY") {
+		t.Fatal("system prompt must phrase the stop rule summary-first: emit the summary block immediately after the last ingest block")
 	}
-	if strings.Contains(ReadBlockSystemPrompt, "stop generating") {
+	if strings.Contains(IngestBlockSystemPrompt, "stop generating") {
 		t.Fatal("system prompt must not carry a bare stop instruction before the summary requirement")
 	}
-	if !strings.Contains(ReadBlockSystemPrompt, "never stop at") {
-		t.Fatal("system prompt must forbid stopping at a read block's closing line")
+	if !strings.Contains(IngestBlockSystemPrompt, "never stop at") {
+		t.Fatal("system prompt must forbid stopping at an ingest block's closing line")
 	}
-	if !strings.Contains(ReadBlockSystemPrompt, "Never end a response on a read block") {
-		t.Fatal("system prompt must state the sequence rule: the block after a read block must be the summary block")
+	if !strings.Contains(IngestBlockSystemPrompt, "Never end a response on an ingest block") {
+		t.Fatal("system prompt must state the sequence rule: the block after an ingest block must be the summary block")
 	}
-	if !strings.Contains(ReadBlockRestatePrompt, "does NOT replace the summary block") {
-		t.Fatal("restate prompt must state that a read block does not replace the summary block")
+	if !strings.Contains(IngestBlockRestatePrompt, "does NOT replace the summary block") {
+		t.Fatal("restate prompt must state that an ingest block does not replace the summary block")
 	}
-	if !strings.Contains(ReadBlockRestatePrompt, "Never end a response on a read block") {
-		t.Fatal("restate prompt must state the sequence rule: the block after a read block must be the summary block")
+	if !strings.Contains(IngestBlockRestatePrompt, "Never end a response on an ingest block") {
+		t.Fatal("restate prompt must state the sequence rule: the block after an ingest block must be the summary block")
 	}
 }
 
@@ -649,10 +649,10 @@ func TestGlobFilesAbsolutePattern(t *testing.T) {
 	}
 }
 
-func TestProcessReadBlocksAppendsFetchedContent(t *testing.T) {
-	// ProcessReadBlocks only processes read blocks. Non-read blocks
+func TestProcessIngestBlocksAppendsFetchedContent(t *testing.T) {
+	// ProcessIngestBlocks only processes ingest blocks. Non-ingest blocks
 	// are not passed to it (filtered by ProcessComponents), so this test
-	// verifies that read blocks are processed correctly.
+	// verifies that ingest blocks are processed correctly.
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -666,16 +666,16 @@ func TestProcessReadBlocksAppendsFetchedContent(t *testing.T) {
 	}
 
 	state := generators.NewPrompts("", nil)
-	readBlocks := []Block{
-		{Kind: "read", Body: `<file path="test.txt" />`},
+	ingestBlocks := []Block{
+		{Kind: "ingest", Body: `<file path="test.txt" />`},
 	}
 
-	newState, hasRead, err := ProcessReadBlocks(readBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
+	newState, hasIngest, err := ProcessIngestBlocks(ingestBlocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasRead {
-		t.Fatal("expected hasRead=true")
+	if !hasIngest {
+		t.Fatal("expected hasIngest=true")
 	}
 
 	// Verify content was appended to state.
@@ -694,7 +694,7 @@ func TestProcessReadBlocksAppendsFetchedContent(t *testing.T) {
 	}
 }
 
-func TestProcessReadBlocksFiltersByKind(t *testing.T) {
+func TestProcessIngestBlocksFiltersByKind(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -709,34 +709,34 @@ func TestProcessReadBlocksFiltersByKind(t *testing.T) {
 
 	state := generators.NewPrompts("", nil)
 
-	// Non-read blocks must not set hasRead or append content.
-	// Before kind filtering, hasRead was set unconditionally
+	// Non-ingest blocks must not set hasIngest or append content.
+	// Before kind filtering, hasIngest was set unconditionally
 	// for every block, causing false positives and parse attempts on
-	// non-read bodies.
+	// non-ingest bodies.
 	blocks := []Block{
 		{Kind: "change", Body: "some change"},
 		{Kind: "summary", Body: "- done"},
 	}
-	_, hasRead, err := ProcessReadBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
+	_, hasIngest, err := ProcessIngestBlocks(blocks, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasRead {
-		t.Fatal("expected hasRead=false for non-read blocks")
+	if hasIngest {
+		t.Fatal("expected hasIngest=false for non-ingest blocks")
 	}
 
-	// Mixed blocks: only read blocks should be processed.
+	// Mixed blocks: only ingest blocks should be processed.
 	mixed := []Block{
 		{Kind: "change", Body: "some change"},
-		{Kind: "read", Body: `<file path="test.txt" />`},
+		{Kind: "ingest", Body: `<file path="test.txt" />`},
 		{Kind: "summary", Body: "- done"},
 	}
-	newState, hasRead, err := ProcessReadBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
+	newState, hasIngest, err := ProcessIngestBlocks(mixed, context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasRead {
-		t.Fatal("expected hasRead=true for mixed blocks with read")
+	if !hasIngest {
+		t.Fatal("expected hasIngest=true for mixed blocks with ingest")
 	}
 	found := false
 	for c := range newState.Contents() {
@@ -749,6 +749,6 @@ func TestProcessReadBlocksFiltersByKind(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("expected read block to be processed in mixed blocks")
+		t.Fatal("expected ingest block to be processed in mixed blocks")
 	}
 }

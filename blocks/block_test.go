@@ -1063,8 +1063,8 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
 		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
 		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
-		"ReadBlockSystemPrompt":      ReadBlockSystemPrompt,
-		"ReadBlockRestatePrompt":     ReadBlockRestatePrompt,
+		"IngestBlockSystemPrompt":    IngestBlockSystemPrompt,
+		"IngestBlockRestatePrompt":   IngestBlockRestatePrompt,
 	}
 	for name, prompt := range prompts {
 		if strings.Contains(prompt, "<<DELIMITER") {
@@ -1096,8 +1096,8 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
 		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
 		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
-		"ReadBlockSystemPrompt":      ReadBlockSystemPrompt,
-		"ReadBlockRestatePrompt":     ReadBlockRestatePrompt,
+		"IngestBlockSystemPrompt":    IngestBlockSystemPrompt,
+		"IngestBlockRestatePrompt":   IngestBlockRestatePrompt,
 	}
 	for name, prompt := range kindPrompts {
 		if strings.Contains(prompt, "uncommon Chinese two-character word") {
@@ -1124,7 +1124,7 @@ func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
 	// names the consequence: the response is discarded and retried, so
 	// none of its blocks take effect. The prompts must also cover the
 	// fetch-only response shape — a response whose only blocks are
-	// read, go-src, shell, or go-test blocks still requires the summary
+	// ingest, go-src, shell, or go-test blocks still requires the summary
 	// — and state why the summary is non-omittable: the system reads it
 	// as its only proof that the response was generated completely and
 	// followed the rules. See TheoryOfSummaryBlocks.
@@ -1134,7 +1134,7 @@ func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
 	if !strings.Contains(SummaryBlockSystemPrompt, "No other block kind can close a response") {
 		t.Fatal("system prompt must state that no other block kind can close a response")
 	}
-	if !strings.Contains(SummaryBlockSystemPrompt, "read, go-src, shell, or go-test blocks") {
+	if !strings.Contains(SummaryBlockSystemPrompt, "ingest, go-src, shell, or go-test blocks") {
 		t.Fatal("system prompt must cover the fetch-only response shape: a response whose only blocks are fetching kinds still requires the summary")
 	}
 	if !strings.Contains(SummaryBlockSystemPrompt, "never omittable") {
@@ -1143,7 +1143,7 @@ func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
 	if !strings.Contains(SummaryBlockRestatePrompt, "Closing self-check") {
 		t.Fatal("restate prompt must teach the closing self-check")
 	}
-	if !strings.Contains(SummaryBlockRestatePrompt, "read, go-src, shell, or go-test blocks") {
+	if !strings.Contains(SummaryBlockRestatePrompt, "ingest, go-src, shell, or go-test blocks") {
 		t.Fatal("restate prompt must cover the fetch-only response shape")
 	}
 }
@@ -1218,7 +1218,7 @@ func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
 	kindReferences := []string{
 		"go-test",
 		"go-src",
-		"read block",
+		"ingest block",
 		"shell",
 		"summary block",
 		"continue block",

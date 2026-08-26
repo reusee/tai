@@ -13,9 +13,9 @@ Non-Go project files — embed files, other package files, and markdown —
 are never emitted at full content in the initial context; they are
 present by name only. Package-anchored non-Go files appear in the focus
 documentation block's file-names section, so the model knows they exist
-and reads or writes them on demand with read blocks and change blocks.
+and reads or writes them on demand with ingest blocks and change blocks.
 This extends the doc-first context strategy (TheoryOfContextStrategy)
-to non-Go content: the name list is the index, the read block is the
+to non-Go content: the name list is the index, the ingest block is the
 fetch.
 
 A module root may carry no Go package (no .go files at the root), so its

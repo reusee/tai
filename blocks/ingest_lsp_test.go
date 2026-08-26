@@ -11,8 +11,8 @@ import (
 	"github.com/reusee/tai/nets"
 )
 
-func TestParseReadBodyLSP(t *testing.T) {
-	got, err := parseReadBody(`<lsp method="references" symbol="Reader.Read" />`)
+func TestParseIngestBodyLSP(t *testing.T) {
+	got, err := parseIngestBody(`<lsp method="references" symbol="Reader.Read" />`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,17 +25,17 @@ func TestParseReadBodyLSP(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsLSPNilHandler(t *testing.T) {
+func TestFetchIngestRequestsLSPNilHandler(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
 
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "lsp", Method: "hover", Symbol: "Foo"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, nil, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -51,7 +51,7 @@ func TestFetchReadRequestsLSPNilHandler(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsLSPHandler(t *testing.T) {
+func TestFetchIngestRequestsLSPHandler(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -63,10 +63,10 @@ func TestFetchReadRequestsLSPHandler(t *testing.T) {
 		gotQuery = q
 		return "hover text", nil
 	})
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "lsp", Method: "hover", Path: "a.go", Line: 12},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, handler, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, handler, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -85,7 +85,7 @@ func TestFetchReadRequestsLSPHandler(t *testing.T) {
 	}
 }
 
-func TestFetchReadRequestsLSPHandlerError(t *testing.T) {
+func TestFetchIngestRequestsLSPHandlerError(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -95,10 +95,10 @@ func TestFetchReadRequestsLSPHandlerError(t *testing.T) {
 	handler := LSPHandler(func(ctx context.Context, q LSPQuery) (string, error) {
 		return "", context.DeadlineExceeded
 	})
-	requests := []ReadRequest{
+	requests := []IngestRequest{
 		{Type: "lsp", Method: "definition", Symbol: "Foo"},
 	}
-	parts := fetchReadRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, handler, requests)
+	parts := fetchIngestRequests(context.Background(), root, nets.HTTPClient{&http.Client{}}, handler, requests)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
