@@ -11,18 +11,14 @@ import (
 	"github.com/reusee/tai/pipeline"
 )
 
-// TestForkTUIDisplayBindsUsageWriter reproduces the bug where the
-// per-round "[Usage]" line bypassed the Summary tab: the generation loop
-// was resolved from the scope BEFORE the TUI writer forks, so Module.Run
-// bound the pre-fork providers (a nil UsageWriter and the raw-stderr
-// Logger) and recordRoundUsage wrote the usage record to the real
-// terminal, where the next repaint erased it. forkTUIDisplay resolves
-// the loop after the forks; this test drives one round through the
-// forked loop and asserts the usage line lands in the Summary tab's
-// signals. The event stream must carry the same round usage as an
-// EventUsage (see pipeline.TheoryOfLoopEvents), which the test also
-// asserts. See TheoryOfTUIDisplayFork and pipeline.TheoryOfUsageLogging.
-func TestForkTUIDisplayBindsUsageWriter(t *testing.T) {
+// TestForkTUIDisplayForwardsEventsToTUI verifies that the loop resolved
+// from the forked scope carries the TUI's event tap: withTUIOutputObserver
+// wraps pipeline.Run, so every EventUsage (like every other event) is
+// forwarded to the TUI's Events tab before the command's own consumer
+// sees it. There is no usage-writer fork — the event stream is the TUI's
+// single display source. See TheoryOfTUIDisplayFork,
+// pipeline.TheoryOfUsageLogging, and pipeline.TheoryOfLoopEvents.
+func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
 		dscope.New(modes.ForTest(t), new(pipeline.Module)),
@@ -77,14 +73,14 @@ func TestForkTUIDisplayBindsUsageWriter(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var texts []string
-	for _, line := range tui.signals {
+	for _, line := range tui.events {
 		texts = append(texts, line.Text)
 	}
 	joined := strings.Join(texts, "\n")
 	if !strings.Contains(joined, "[Usage] round 1") {
-		t.Fatalf("expected the usage line in the Summary tab signals, got %v", texts)
+		t.Fatalf("expected the usage line in the Events tab, got %v", texts)
 	}
 	if !strings.Contains(joined, "prompt 100") || !strings.Contains(joined, "thoughts 10") {
-		t.Fatalf("expected the usage counters in the Summary tab signals, got %v", texts)
+		t.Fatalf("expected the usage counters in the Events tab, got %v", texts)
 	}
 }

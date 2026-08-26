@@ -206,7 +206,7 @@ via a deferred call, so they are shown even when the session ends early due to
 an error. The table is written to the RoundStatsWriter provider when one is
 configured, and to the generation output writer otherwise: in TUI mode the
 output writer is the redirected null device, so the TUI forks RoundStatsWriter
-to its output pane — the same writer-provider routing thought summaries use.
+to its output pane.
 `
 
 // RoundStat records per-round token usage (prompt, completion, thoughts,
@@ -554,7 +554,6 @@ func (Module) GenerateWithResultWithStats(
 	loopRun Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
-	thoughtSummaryWriter ThoughtSummaryWriter,
 	roundStatsWriter RoundStatsWriter,
 	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
@@ -712,11 +711,7 @@ func (Module) GenerateWithResultWithStats(
 				return Result{}, nil, err
 			}
 			state = generators.NewOutput(state, output, false)
-			summaryWriter := output
-			if thoughtSummaryWriter != nil {
-				summaryWriter = thoughtSummaryWriter
-			}
-			state = NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
+			state = NewThoughtsSummarize(ctx, state, summarizer, output)
 		} else {
 			state = generators.NewOutput(state, output, showThoughts)
 		}

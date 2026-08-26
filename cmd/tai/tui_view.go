@@ -33,7 +33,7 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	case 0:
 		return t.outputCache.Colored(t.output, contentWidth)
 	case 1:
-		return t.summaryCache.Lines(t.signals, contentWidth)
+		return t.eventsCache.Lines(t.events, contentWidth)
 	case 2:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {

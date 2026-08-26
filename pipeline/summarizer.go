@@ -11,11 +11,13 @@ import (
 
 const TheoryOfThoughtsSummarize = `
 ThoughtsSummarize is a State layer that periodically condenses accumulated
-reasoning thoughts into concise summaries, writing them to a designated writer.
-The designated writer is the ThoughtSummaryWriter provider when non-nil,
-otherwise the generation output writer — the same stream the raw thoughts would
-have used. A display front-end such as tai's TUI forks ThoughtSummaryWriter to
-route the summaries to its own display. As models produce increasingly long
+reasoning thoughts into concise summaries, writing them to the generation
+output writer — the same stream the raw thoughts would have used. Each
+produced summary is also forwarded into the run's event stream as an
+EventThoughtSummary (the layer carries an emitter that Module.Run installs
+onto the guarded yield), so a display front-end such as tai's TUI renders
+the condensed reasoning in its Events tab from the event; there is no
+separate summary-writer provider. As models produce increasingly long
 reasoning traces, users struggle to extract key information from raw thought
 streams. ThoughtsSummarize addresses this by summarizing at a configurable
 interval (default 3 seconds), enabling users to quickly assess whether the
@@ -44,9 +46,9 @@ bullet-list summary without model preamble or trailing prose; if no block is
 found the raw text is returned as a fallback.
 
 Thought summarization serves user readability, not context compression.
-Summaries go to the output writer for the human reader; they are never fed
-back into the model. The system does not compress dialogue history. See
-TheoryOfContextPhilosophy.
+Summaries go to the output writer and the event stream for the human reader;
+they are never fed back into the model. The system does not compress dialogue
+history. See TheoryOfContextPhilosophy.
 `
 
 const SummarizeSystemPrompt = `Condense the model's internal reasoning into an extremely concise summary that helps the user quickly assess whether the model's thinking is on the right track.

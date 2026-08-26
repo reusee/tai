@@ -30,10 +30,9 @@ func newTUIForTest() *TUI {
 }
 
 // writeModelOutput feeds a text chunk through captureContent as model
-// output — the TUI's only summary-extraction path. Summary-body
-// extraction is role-aware: user-role content (retry feedback), command
-// output, and chat input are displayed but never scanned. See
-// TheoryOfSummaryExtraction.
+// output — the TUI's model-output display path. The Events tab renders
+// pipeline events only (handleEvent); captureContent performs no block
+// extraction.
 func writeModelOutput(tui *TUI, text string) {
 	tui.captureContent(&generators.Content{
 		Role:  generators.RoleModel,
@@ -123,29 +122,32 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 	tui := newTUIForTest()
 	var body strings.Builder
 	for i := 0; i < lines; i++ {
-		fmt.Fprintf(&body, "- line %d\n", i)
+		if i > 0 {
+			body.WriteString("\n")
+		}
+		fmt.Fprintf(&body, "- line %d", i)
 	}
-	writeModelOutput(tui, "<<黿鼍 summary\n"+body.String()+"黿鼍\n")
-	if len(tui.signals) != lines+1 {
-		t.Fatalf("expected %d signal lines, got %d", lines+1, len(tui.signals))
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: body.String()})
+	if len(tui.events) != lines+1 {
+		t.Fatalf("expected %d event lines, got %d", lines+1, len(tui.events))
 	}
-	if tui.signals[0].Text != "- line 0" {
-		t.Fatalf("expected the very first signal retained, got %q", tui.signals[0].Text)
+	if tui.events[0].Text != "- line 0" {
+		t.Fatalf("expected the very first event line retained, got %q", tui.events[0].Text)
 	}
-	if tui.signals[lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
-		t.Fatalf("expected the last signal retained, got %q", tui.signals[lines-1].Text)
+	if tui.events[lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
+		t.Fatalf("expected the last event line retained, got %q", tui.events[lines-1].Text)
 	}
-	if tui.signals[lines].Text != "" {
-		t.Fatalf("expected the trailing blank separator retained, got %q", tui.signals[lines].Text)
+	if tui.events[lines].Text != "" {
+		t.Fatalf("expected the trailing blank separator retained, got %q", tui.events[lines].Text)
 	}
 
 	tui2 := newTUIForTest()
 	const finishes = 3000
 	for i := 0; i < finishes; i++ {
-		tui2.finishReason("stop")
+		tui2.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	}
-	if len(tui2.signals) != finishes {
-		t.Fatalf("expected %d finish signals, got %d", finishes, len(tui2.signals))
+	if len(tui2.events) != finishes {
+		t.Fatalf("expected %d finish lines, got %d", finishes, len(tui2.events))
 	}
 }
 
@@ -228,12 +230,12 @@ func TestTuiStateRequesting(t *testing.T) {
 	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (generating...)" || !highlight {
 		t.Fatalf("expected generating hint with highlight, got label %q highlight %v", label, highlight)
 	}
-	tui.finishReason("stop")
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	if tui.generating {
-		t.Fatal("expected not generating after the finish reason")
+		t.Fatal("expected not generating after the finish event")
 	}
 	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" || highlight {
-		t.Fatalf("expected plain Output label after the finish reason, got label %q highlight %v", label, highlight)
+		t.Fatalf("expected plain Output label after the finish event, got label %q highlight %v", label, highlight)
 	}
 	tui.finished = true
 	if label, highlight := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output (done)" || highlight {
@@ -277,12 +279,12 @@ func TestTuiStateRequestingClearedByFinish(t *testing.T) {
 	if !tui.generating {
 		t.Fatal("expected generating after the generating log")
 	}
-	tui.finishReason("stop")
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	if tui.generating {
-		t.Fatal("expected not generating after the finish reason")
+		t.Fatal("expected not generating after the finish event")
 	}
 	if label, _ := outputTabLabel(tui.finished, tui.generating, tui.handoff); label != "Output" {
-		t.Fatalf("expected plain Output label after the finish reason, got %q", label)
+		t.Fatalf("expected plain Output label after the finish event, got %q", label)
 	}
 }
 
@@ -520,51 +522,6 @@ func TestTuiStatePartialLines(t *testing.T) {
 	}
 }
 
-func TestTuiStateParsesSummaries(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<龘靐 summary\n- one\n- two\n龘靐\n")
-	if len(tui.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "- one" || tui.signals[1].Text != "- two" || tui.signals[2].Text != "" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
-func TestTuiStateParsesSummariesAcrossChunks(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<龘靐 summary\n- one\n- tw")
-	writeModelOutput(tui, "o\n龘靐\n")
-	if len(tui.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "- one" || tui.signals[1].Text != "- two" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
-func TestTuiStateIgnoresOtherBlocks(t *testing.T) {
-	tui := newTUIForTest()
-	text := "<<齉爩 change(op=\"MODIFY\", target=\"Foo\", file-path=\"x.go\")\nfunc Foo() {}\n齉爩\n" +
-		"<<龘靐 summary\n- s\n龘靐\n"
-	writeModelOutput(tui, text)
-	if len(tui.signals) != 2 || tui.signals[0].Text != "- s" || tui.signals[1].Text != "" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
-func TestTuiStateParsesSummariesSkipsTruncatedFragment(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/x.go\")\nfunc Foo() {\n")
-	writeModelOutput(tui, "round 2 output\n<<爨虋 summary\n- done\n爨虋\n")
-	if len(tui.signals) != 2 {
-		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "- done" || tui.signals[1].Text != "" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
 func TestTuiOutputPreservesIndentation(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write([]byte("    func main() {\n        fmt.Println(1)\n    }\n"))
@@ -582,77 +539,6 @@ func TestTuiOutputPreservesIndentation(t *testing.T) {
 		if wrapped[i].Text != want[i] {
 			t.Fatalf("line %d: got %q, want %q", i, wrapped[i].Text, want[i])
 		}
-	}
-}
-
-func TestTuiStateParsesSummariesWaitsForStreamingBlock(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<爨虋 summary\n- not yet complete")
-	if len(tui.signals) != 0 {
-		t.Fatalf("expected no signals while the block is incomplete, got %v", tui.signals)
-	}
-	writeModelOutput(tui, "\n爨虋\n")
-	if len(tui.signals) != 2 || tui.signals[0].Text != "- not yet complete" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
-func TestTuiStateParsesSummariesKeepsPartialMarker(t *testing.T) {
-	t.Run("PartialDoubleLeftChevrons", func(t *testing.T) {
-		tui := newTUIForTest()
-		writeModelOutput(tui, "prose\n<<")
-		writeModelOutput(tui, "爨虋 summary\n- done\n爨虋\n")
-		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
-			t.Fatalf("unexpected signals: %v", tui.signals)
-		}
-	})
-	t.Run("SingleLeftChevron", func(t *testing.T) {
-		tui := newTUIForTest()
-		writeModelOutput(tui, "prose\n<")
-		writeModelOutput(tui, "<爨虋 summary\n- done\n爨虋\n")
-		if len(tui.signals) != 2 || tui.signals[0].Text != "- done" {
-			t.Fatalf("unexpected signals: %v", tui.signals)
-		}
-	})
-}
-
-func TestTuiStateCollectsFinishSignals(t *testing.T) {
-	tui := newTUIForTest()
-	tui.finishReason("stop")
-	if len(tui.signals) != 1 {
-		t.Fatalf("expected 1 finish signal, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "[Finish: stop]" {
-		t.Fatalf("unexpected signal: %q", tui.signals[0].Text)
-	}
-}
-
-func TestTuiStateSignalsCombineSummaryAndFinish(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<龘靐 summary\n- done\n龘靐\n")
-	tui.finishReason("stop")
-	if len(tui.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "- done" || tui.signals[1].Text != "" || tui.signals[2].Text != "[Finish: stop]" {
-		t.Fatalf("unexpected signals: %v", tui.signals)
-	}
-}
-
-func TestTuiStateFinishSignalExpandsSummaryTab(t *testing.T) {
-	tui := newTUIForTest()
-	tui.tabs.Expanded = []bool{true, false, false}
-	tui.tabs.HasContent = []bool{true, false, false}
-	tui.tabs.Focus = 0
-	tui.finishReason("stop")
-	if !tui.tabs.Expanded[1] {
-		t.Fatal("summary tab should auto-expand on a finish reason")
-	}
-	if tui.tabs.Focus != 0 {
-		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
-	}
-	if len(tui.signals) != 1 {
-		t.Fatalf("expected the finish signal, got %v", tui.signals)
 	}
 }
 
@@ -708,8 +594,8 @@ func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
 }
 
 func TestTuiStateSummaryTabTitle(t *testing.T) {
-	if tabNames[1] != "Summary" {
-		t.Fatalf("expected the summary tab title, got %q", tabNames[1])
+	if tabNames[1] != "Events" {
+		t.Fatalf("expected the events tab title, got %q", tabNames[1])
 	}
 }
 
@@ -1809,24 +1695,24 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	writeModelOutput(tui, "<<龘靐 summary\n- done\n龘靐\n")
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: "- done"})
 	if !tui.tabs.Expanded[1] {
-		t.Fatal("summary tab should auto-expand on a summary block")
+		t.Fatal("events tab should auto-expand on a rendered event")
 	}
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	if len(tui.signals) != 2 {
-		t.Fatalf("expected the summary signals, got %v", tui.signals)
+	if len(tui.events) != 2 {
+		t.Fatalf("expected the rendered event lines, got %v", tui.events)
 	}
 
 	tui2 := newTUIForTest()
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
-	writeModelOutput(tui2, "<<齉爩 change(op=\"MODIFY\", target=\"Foo\", file-path=\"x.go\")\nfunc Foo() {}\n齉爩\n")
+	tui2.handleEvent(pipeline.Event{Kind: pipeline.EventRoundStart, Round: 1})
 	if tui2.tabs.Expanded[1] {
-		t.Fatal("summary tab must not expand without a summary block or finish line")
+		t.Fatal("events tab must not expand on an unrendered event")
 	}
 }
 
@@ -1886,7 +1772,14 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	var gotOpts pipeline.RunOptions
 	run := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		gotOpts = opts
-		return func(yield func(pipeline.Event, error) bool) {}
+		return func(yield func(pipeline.Event, error) bool) {
+			// The run yields the finish reason and the round summary as
+			// events; the wrapper's tap must forward both to the TUI.
+			if !yield(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"}, nil) {
+				return
+			}
+			yield(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: "- done"}, nil)
+		}
 	}
 	wrapped := withTUIOutputObserver(run, tui)
 
@@ -1928,15 +1821,6 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err = state.AppendContent(&generators.Content{
-		Role: generators.RoleLog,
-		Parts: []generators.Part{
-			generators.FinishReason("stop"),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
@@ -1954,8 +1838,59 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	if !strings.Contains(output, "deep thinking\n\nanswer") {
 		t.Fatalf("expected a blank line between the thought and the answer, got %q", output)
 	}
-	if len(tui.signals) != 1 || tui.signals[0].Text != "[Finish: stop]" {
-		t.Fatalf("expected finish reason in round tab, got %v", tui.signals)
+	if tui.generating {
+		t.Fatal("expected the finish event to clear the generating hint")
+	}
+	var events strings.Builder
+	for _, line := range tui.events {
+		events.WriteString(line.Text)
+		events.WriteString("\n")
+	}
+	rendered := events.String()
+	if !strings.Contains(rendered, "[Finish: stop]") {
+		t.Fatalf("expected the finish line in the events tab, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "- done") {
+		t.Fatalf("expected the round summary in the events tab, got %q", rendered)
+	}
+}
+
+// TestTUIHandleEventRendersKinds verifies the per-kind rendering of the
+// Events tab: the finish line carries the log color and clears the
+// generating hint, the usage line carries the outcome marker, and the
+// thought summary header carries the thought color. See TheoryOfTUI.
+func TestTUIHandleEventRendersKinds(t *testing.T) {
+	tui := newTUIForTest()
+	tui.generating = true
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
+	if len(tui.events) != 1 {
+		t.Fatalf("expected 1 event line, got %v", tui.events)
+	}
+	if tui.events[0].Text != "[Finish: stop]" || tui.events[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected finish line: %+v", tui.events[0])
+	}
+	if tui.generating {
+		t.Fatal("expected the finish event to clear the generating hint")
+	}
+
+	usage := generators.Usage{}
+	usage.Prompt.TokenCount = 100
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 2, Detail: "error", Usage: usage})
+	last := tui.events[len(tui.events)-1]
+	if last.Text != "[Usage] round 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
+		t.Fatalf("unexpected usage line: %q", last.Text)
+	}
+	if last.Color != outputColorLogLine {
+		t.Fatalf("expected log color for the usage line, got %v", last.Color)
+	}
+
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventThoughtSummary, Summary: "- point"})
+	header := tui.events[len(tui.events)-2]
+	if header.Text != "[Thought Summary]:" || header.Color != outputColorThoughtLine {
+		t.Fatalf("unexpected thought summary header: %+v", header)
+	}
+	if body := tui.events[len(tui.events)-1]; body.Text != "- point" || body.Color != taiui.NoColor {
+		t.Fatalf("unexpected thought summary body: %+v", body)
 	}
 }
 
@@ -2149,28 +2084,6 @@ func TestTUICaptureContentThoughtColor(t *testing.T) {
 		if lines[i].Text != w.text || lines[i].Color != w.color {
 			t.Fatalf("line %d: got %+v, want text %q color %#x", i, lines[i], w.text, w.color)
 		}
-	}
-}
-
-func TestTuiStateFinishReasonColor(t *testing.T) {
-	tui := newTUIForTest()
-	tui.finishReason("stop")
-	if len(tui.signals) != 1 {
-		t.Fatalf("expected 1 finish signal, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "[Finish: stop]" || tui.signals[0].Color != outputColorLogLine {
-		t.Fatalf("unexpected signal: %+v", tui.signals[0])
-	}
-}
-
-func TestTuiStateSummaryLinesPlain(t *testing.T) {
-	tui := newTUIForTest()
-	writeModelOutput(tui, "<<龘靐 summary\n- done\n龘靐\n")
-	if len(tui.signals) != 2 {
-		t.Fatalf("expected 2 signal lines, got %v", tui.signals)
-	}
-	if tui.signals[0].Text != "- done" || tui.signals[0].Color != taiui.NoColor {
-		t.Fatalf("unexpected signal: %+v", tui.signals[0])
 	}
 }
 
@@ -2611,140 +2524,6 @@ func TestReadTUIKeysSS3AndVT220(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("key %d: expected %q, got %q", i, want[i], got[i])
 		}
-	}
-}
-
-func TestTuiStateWriteThoughtSummary(t *testing.T) {
-	// Thought summaries (-summarize-thoughts) go to the Summary tab, not
-	// the Output tab. The entry keeps the pipeline writer's "[Thought
-	// Summary]:" header — colored with the thought color to distinguish
-	// it from round summaries and finish signals — followed by the
-	// summary lines and a blank separator. See TheoryOfTUI.
-	tui := newTUIForTest()
-	tui.writeThoughtSummary([]byte("\n[Thought Summary]:\n- point one\n- point two\n\n"))
-	if len(tui.output.Lines()) != 0 {
-		t.Fatalf("thought summary must not enter the Output tab, got %v", tui.output.Lines())
-	}
-	if len(tui.signals) != 4 {
-		t.Fatalf("expected 4 signal lines (header, two points, blank), got %d: %v", len(tui.signals), tui.signals)
-	}
-	if tui.signals[0].Text != "[Thought Summary]:" || tui.signals[0].Color != outputColorThoughtLine {
-		t.Fatalf("unexpected header line: %+v", tui.signals[0])
-	}
-	if tui.signals[1].Text != "- point one" || tui.signals[2].Text != "- point two" {
-		t.Fatalf("unexpected summary lines: %v", tui.signals)
-	}
-	if tui.signals[3].Text != "" {
-		t.Fatalf("expected a blank separator, got %q", tui.signals[3].Text)
-	}
-	if !tui.tabs.Expanded[1] {
-		t.Fatal("summary tab should auto-expand on a thought summary")
-	}
-	if tui.tabs.Focus != 1 {
-		t.Fatalf("with no established focus, the first auto-expanded tab becomes the focus, got %d", tui.tabs.Focus)
-	}
-}
-
-func TestTuiStateWriteThoughtSummaryEmpty(t *testing.T) {
-	// An empty or whitespace-only summary produces no entry and does not
-	// expand the Summary tab.
-	tui := newTUIForTest()
-	tui.writeThoughtSummary(nil)
-	tui.writeThoughtSummary([]byte("\n\n"))
-	if len(tui.signals) != 0 {
-		t.Fatalf("expected no signals for empty thought summaries, got %v", tui.signals)
-	}
-	if tui.tabs.Expanded[1] {
-		t.Fatal("summary tab must not expand for an empty thought summary")
-	}
-}
-
-func TestTuiThoughtSummaryWriter(t *testing.T) {
-	// The writer returned by ThoughtSummaryWriter appends to the Summary
-	// tab's signals and notifies the render loop, mirroring tuiWriter and
-	// logsWriter.
-	tui := newTUIForTest()
-	tui.updateCh = make(chan struct{}, 1)
-	writer := tui.ThoughtSummaryWriter()
-	if _, err := writer.Write([]byte("[Thought Summary]:\n- done\n")); err != nil {
-		t.Fatal(err)
-	}
-	if len(tui.signals) != 3 {
-		t.Fatalf("expected 3 signal lines, got %d: %v", len(tui.signals), tui.signals)
-	}
-	if len(tui.output.Lines()) != 0 {
-		t.Fatal("thought summary writer must not write to the Output tab")
-	}
-	select {
-	case <-tui.updateCh:
-	default:
-		t.Fatal("expected a notification when a thought summary is written")
-	}
-}
-
-func TestTuiUsageWriter(t *testing.T) {
-	// TUI tests must use newTUIForTest: newTUI opens the controlling
-	// terminal and switches it to raw mode via Start, and a test that
-	// never calls Stop leaves the terminal corrupted (needing `reset`).
-	tui := newTUIForTest()
-	line := "[Usage] round 1: prompt 100, cached 20, completion 50, thoughts 10"
-	if _, err := tui.UsageWriter().Write([]byte(line)); err != nil {
-		t.Fatal(err)
-	}
-	if len(tui.signals) != 1 {
-		t.Fatalf("expected 1 signal line, got %d", len(tui.signals))
-	}
-	if tui.signals[0].Text != line {
-		t.Fatalf("unexpected signal %q", tui.signals[0].Text)
-	}
-	if tui.signals[0].Color != outputColorLogLine {
-		t.Fatalf("expected log color for the usage line")
-	}
-	if !tui.tabs.Expanded[1] {
-		t.Fatal("expected Summary tab to auto-expand on a usage line")
-	}
-	if !tui.scrolls[1].Follow {
-		t.Fatal("expected Summary tab to follow the tail")
-	}
-}
-
-func TestTuiStateDoesNotParseSummariesFromUserContent(t *testing.T) {
-	tui := newTUIForTest()
-	tui.captureContent(&generators.Content{
-		Role: generators.RoleUser,
-		Parts: []generators.Part{
-			generators.Text("[System note: The previous generation was truncated...]\n<<爨虋 summary\n- retry summary\n爨虋\n<<灪齾 continue\nretry content\n灪齾\n"),
-		},
-	})
-	if len(tui.signals) != 0 {
-		t.Fatalf("user-role retry feedback must not be extracted into the Summary tab, got %v", tui.signals)
-	}
-	if len(tui.output.Lines()) == 0 {
-		t.Fatal("user-role retry feedback must still be displayed in the Output tab")
-	}
-}
-
-func TestTuiStateParsesSummariesFromSynthesizedCompletion(t *testing.T) {
-	tui := newTUIForTest()
-	tui.captureContent(&generators.Content{
-		Role: generators.RoleLog,
-		Parts: []generators.Part{
-			generators.Text("<<爨虋 summary\n- synthesized\n爨虋\n"),
-		},
-	})
-	if len(tui.signals) != 2 || tui.signals[0].Text != "- synthesized" || tui.signals[1].Text != "" {
-		t.Fatalf("log-role synthesized summary must be extracted, got %v", tui.signals)
-	}
-}
-
-func TestTuiStateDoesNotParseSummariesFromCommandOutput(t *testing.T) {
-	tui := newTUIForTest()
-	tui.write([]byte("<<爨虋 summary\n- command output\n爨虋\n"))
-	if len(tui.signals) != 0 {
-		t.Fatalf("command output must not be scanned for summaries, got %v", tui.signals)
-	}
-	if len(tui.output.Lines()) == 0 {
-		t.Fatal("command output must still be displayed in the Output tab")
 	}
 }
 

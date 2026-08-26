@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
 	"github.com/reusee/dscope"
-	"github.com/reusee/tai/blocks"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -40,30 +38,35 @@ per-tab panel construction (taiui.TabPanel and taiui.PaneHeight), pointer
 tab interaction (taiui.TabMouse), section navigation, quit confirmation
 and help overlays, and the session event loop (taiui.Session). This
 command wires them with tai-specific capture:
-generators.Content is converted to taiui.Line by captureContent, summary
-blocks are parsed into Summary-tab lines by parseSummaries, and the request
-lifecycle is tracked by isGeneratingLog and outputTabLabel.
+generators.Content is converted to taiui.Line by captureContent, pipeline
+events are rendered into Events-tab lines by handleEvent and eventLines,
+and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
-tab streams the model output, the Summary tab collects the round completion
-signals — the bodies of summary blocks, the finish reasons ("[Finish: ...]"),
-the per-round usage lines ("[Usage] ..."), and the periodic thought
-summaries when -summarize-thoughts is enabled — and the Logs tab collects
-log records. The Logs tab renders consecutive
+tab streams the model output, the Events tab renders the generation loop's
+event stream — round summaries, truncations, retries, handoff and
+synthesized summaries, the finish reasons ("[Finish: ...]"), the per-round
+usage lines ("[Usage] ..."), the thought summaries when
+-summarize-thoughts is enabled, and the component/idle continuations — and
+the Logs tab collects
+log records. The Events tab's only content source is pipeline.Run:
+withTUIOutputObserver taps the run's event iterator and forwards every
+event to handleEvent, so every Events-tab line originates from a pipeline
+event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
+Output tab's "generating..." hint. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
 alternation stays subtle in either state. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
-by a blank line, tool calls render as markers, and finish reasons are read
-directly from the state's FinishReason parts. Raw thoughts are suppressed
+by a blank line, tool calls render as markers, and errors are shown inline.
+Raw thoughts are suppressed
 from the Output tab only when -no-thoughts is set; when
--summarize-thoughts is enabled, the raw stream keeps flowing to the
-Output tab while the periodic summaries stream to the Summary tab through
-the forked pipeline.ThoughtSummaryWriter. Per-round usage lines are routed
-to the Summary tab through the forked pipeline.UsageWriter instead of the
-Logs pane, so round usage reads as one of the round's signals (see
+-summarize-thoughts is enabled, the raw stream keeps flowing to
+the Output tab while the periodic summaries render in the Events tab from
+EventThoughtSummary (see pipeline.TheoryOfThoughtsSummarize), and the
+per-round usage lines render from EventUsage (see
 pipeline.TheoryOfUsageLogging). Suppressing the raw stream under
 -summarize-thoughts would blank the focused Output tab during long
 thinking phases — leaving no live feedback and making the session look
@@ -79,10 +82,13 @@ re-parsed or re-displayed, because unstructured text must not be
 imperfectly parsed. The one exception is the user's chat input: runWithTUI
 writes the flags.Chats content to the Output tab in the user role color
 before the command starts, so the user sees what the model was asked even
-though the chat lives in the initial state. Summary bodies are
-parsed from the streamed text parts, so the TUI never scans rendered text
-for "[Finish: ...]" markers and never captures model output through a
-stdout pipe; stdout is discarded in TUI mode, while stderr stays visible
+though the chat lives in the initial state. Round summaries are rendered
+from EventRoundSuccess, EventRoundTruncated, and
+EventSynthesizedSummary, so the TUI never parses streamed text for
+blocks, never scans rendered text for "[Finish: ...]" markers, and never
+captures model output through a
+stdout pipe; retry feedback cannot duplicate summary content because the
+loop's events are the single authority. stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
 results yellow, system messages cyan, log records red, and thoughts bright
@@ -90,7 +96,7 @@ magenta; model output keeps the default foreground. Role colors are ANSI 16
 palette colors, so text uses only the standard 16-color SGR codes; only
 backgrounds use true-color hex values. Colors are carried per output line
 through wrapping, so a wrapped line keeps its role color. The keys
-1, 2, and 3 select the corresponding tab (Output, Summary, Logs respectively):
+1, 2, and 3 select the corresponding tab (Output, Events, Logs respectively):
 pressing a focused tab's key collapses it to a thin strip showing the tab's
 key and title, and moves the focus to the expanded tab that was last focused
 (see the focus-order paragraph below); pressing a non-focused or collapsed
@@ -98,8 +104,8 @@ tab's key expands it (if collapsed) and takes the focus. Switching to an
 already-expanded tab keeps its current view; re-expanding a collapsed tab
 resumes following the live tail. All tabs are collapsed by default; a
 collapsed tab expands automatically the FIRST time content for it arrives —
-the Output tab on any streamed output, the Summary tab on a parsed summary
-block, a finish reason, a usage line, or a thought summary, the Logs tab
+the Output tab on any streamed output, the Events tab on its first rendered
+event line, the Logs tab
 on any log record — so the interface surfaces panes only when they have something
 to show. Subsequent content
 arrivals do not re-expand a tab the user collapsed. Auto-expansion never
@@ -151,7 +157,7 @@ in, only the newly arrived completed lines and the trailing partial line
 are wrapped, avoiding O(N) full re-wrapping of large buffers on every frame.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
-buffers, tab machine, scroll offsets, signals, and session flags.
+buffers, tab machine, scroll offsets, events, and session flags.
 `
 
 const TheoryOfTUIHandoff = `
@@ -168,38 +174,24 @@ the handoff flag, HandoffEnd clears it.
 // TheoryOfTUIDisplayFork documents why the generation loop is resolved
 // after the TUI display writer forks. See forkTUIDisplay.
 const TheoryOfTUIDisplayFork = `
-The TUI display writers (the Logs pane, the Output tab, and the
-Summary-tab signal writers) are forked into the scope before the
-generation loop is resolved from it. pipeline.Run — Module.Run — binds
-pipeline.UsageWriter and logs.Logger from the scope at
+The TUI display writers (the Logs pane and the Output tab) are forked
+into the scope before the generation loop is resolved from it.
+pipeline.Run — Module.Run — binds logs.Logger from the scope at
 provider-resolution time, so the loop must be resolved AFTER the forks
-take effect: a loop resolved before them binds the pre-fork providers —
-a nil UsageWriter and the Logger built during startup on the real stderr
-— so the per-round "[Usage]" line bypasses the Summary tab, paints the
-raw terminal, and vanishes on the next repaint. The state-decorator Run
+take effect: a loop resolved before them binds the pre-fork Logger built
+during startup on the real stderr, painting the raw terminal where the
+next repaint erases it. The Events tab needs no writer fork:
+withTUIOutputObserver, layered in the second fork's Run wrapper, taps
+the run's event iterator and forwards every event to the TUI (see
+pipeline.TheoryOfLoopEvents). The state-decorator and event-tap Run
 wrapper is layered in a second fork so its pipeline.Run def does not
 resolve itself recursively.
-`
-
-const TheoryOfSummaryExtraction = `
-taiui summary extraction theory:
-- Summary blocks are extracted into the Summary tab only from the model's
-  response stream (assistant/model roles) and from the loop's synthesized
-  completion signals (log-role summary blocks).
-- User-role content is displayed in the Output tab but never extracted:
-  the loop's retry feedback embeds the synthesized summary as a summary
-  block for the model's benefit, and extracting it would duplicate the
-  same summary content in the Summary tab whenever a truncated round is
-  retried (the retry prompt's summary plus the retry round's own summary
-  or the final synthesized completion signal).
-- Command output and the user's chat input are displayed but not scanned:
-  they are not model completion signals.
 `
 
 const TheoryOfTUINoTruncation = `
 Display buffers are unbounded and no information is ever truncated: the
 Output tab retains every streamed line, the Logs tab every log record, and
-the Summary tab every signal (summary block bodies and finish reasons). A
+the Events tab every event line. A
 bounded buffer silently drops the oldest entries past its ceiling, making
 the TUI's record of the session incomplete and shifting a scrolled-back
 view by one row on each new line. Whatever the volume, losing information
@@ -348,31 +340,7 @@ func (t *TUI) writeColored(color taiui.Color, p []byte) {
 	if t.tabs.AutoExpand(0) {
 		t.scrolls[0].Follow = true
 	}
-	// Summary blocks are not parsed here: extraction happens only for
-	// the model's response stream and the loop's synthesized completion
-	// signals in captureContent, so user-role retry feedback and command
-	// output never duplicate summary content into the Summary tab. The
-	// display order still matches the stream: captureContent parses each
-	// text part before the finish reason of the same content is
-	// processed. See TheoryOfSummaryExtraction.
 	t.output.Append(color, string(p))
-}
-
-func (t *TUI) finishReason(reason string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if reason == "" {
-		return
-	}
-	if t.tabs.AutoExpand(1) {
-		t.scrolls[1].Follow = true
-	}
-	// The finish reason marks the end of the generation request: the
-	// Output tab's "generating..." hint clears once the request has
-	// returned. A new request's "generating" log re-sets it.
-	// See TheoryOfTUI.
-	t.generating = false
-	t.signals = append(t.signals, taiui.Line{Text: "[Finish: " + reason + "]", Color: outputColorLogLine})
 }
 
 func (t *TUI) writeLogs(p []byte) {
@@ -388,55 +356,6 @@ func (t *TUI) writeLogs(p []byte) {
 		if isGeneratingLog(line) {
 			t.generating = true
 		}
-	}
-}
-
-// writeThoughtSummary appends a periodic thought summary to the Summary
-// tab. The pipeline writer prefixes each summary with a "[Thought
-// Summary]:" header line; the header line is colored with the thought
-// color to distinguish thought summaries from round summaries and finish
-// signals, and a blank separator terminates the entry. The summary
-// bypasses the Output tab entirely: the Output tab's write path parses
-// blocks (parseSummaries), and thought summaries are plain text destined
-// for the Summary tab, not the output stream. See TheoryOfTUI.
-func (t *TUI) writeThoughtSummary(p []byte) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	text := strings.TrimSpace(string(p))
-	if text == "" {
-		return
-	}
-	if t.tabs.AutoExpand(1) {
-		t.scrolls[1].Follow = true
-	}
-	for i, line := range strings.Split(text, "\n") {
-		color := taiui.NoColor
-		if i == 0 {
-			color = outputColorThoughtLine
-		}
-		t.signals = append(t.signals, taiui.Line{Text: line, Color: color})
-	}
-	t.signals = append(t.signals, taiui.Line{})
-}
-
-// writeUsage appends a per-round token usage line to the Summary tab.
-// The pipeline's UsageWriter (forked to TUI.UsageWriter by runWithTUI)
-// writes the "[Usage] round N: ..." line here, so round usage reads as
-// one of the round's signals — alongside summary bodies, finish reasons,
-// and thought summaries — instead of as a log record in the Logs tab.
-// The line uses the log color, matching finish signals. See TheoryOfTUI.
-func (t *TUI) writeUsage(p []byte) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	text := strings.TrimSpace(string(p))
-	if text == "" {
-		return
-	}
-	if t.tabs.AutoExpand(1) {
-		t.scrolls[1].Follow = true
-	}
-	for _, line := range strings.Split(text, "\n") {
-		t.signals = append(t.signals, taiui.Line{Text: line, Color: outputColorLogLine})
 	}
 }
 
@@ -456,77 +375,9 @@ func isGeneratingLog(line string) bool {
 		strings.Contains(line, `msg="generating" `)
 }
 
-func (t *TUI) parseSummaries(p []byte) {
-	t.parseBuf = append(t.parseBuf, p...)
-	for {
-		block, _, end, ok, err := blocks.ParseFirstBlock(t.parseBuf)
-		if err != nil {
-			// An unclosed or malformed block may still be streaming (its
-			// closing line has not arrived yet), so the buffer is kept while
-			// no complete block exists beyond the fragment's opening line.
-			// When a complete block does exist beyond it, the fragment cannot
-			// be a live block — its closing line would have arrived before
-			// that block's opening marker. Such a fragment is a truncated
-			// round, a malformed block, or prose that merely resembles an
-			// opener; skipping it un-wedges the buffer so summaries emitted
-			// after it are still extracted. See TheoryOfTUI.
-			if end > 0 && end < len(t.parseBuf) {
-				if _, _, _, tailOK, tailErr := blocks.ParseFirstBlock(t.parseBuf[end:]); tailErr == nil && tailOK {
-					t.parseBuf = t.parseBuf[end:]
-					continue
-				}
-			}
-			return // still streaming: wait for more output
-		}
-		if !ok {
-			// No block marker in the buffer. A block opener can be split
-			// across chunk boundaries at any byte position, so a trailing
-			// line that could become an opener ("<" or "<<"-prefixed) is
-			// retained until the next chunk completes it; otherwise the
-			// buffer holds only prose and is cleared. See TheoryOfTUI.
-			retain := 0
-			tail := t.parseBuf
-			if i := bytes.LastIndexByte(t.parseBuf, '\n'); i >= 0 {
-				tail = t.parseBuf[i+1:]
-			}
-			if len(tail) == 1 && tail[0] == '<' ||
-				len(tail) >= 2 && tail[0] == '<' && tail[1] == '<' {
-				retain = len(tail)
-			}
-			if retain > 0 {
-				t.parseBuf = t.parseBuf[len(t.parseBuf)-retain:]
-			} else {
-				t.parseBuf = nil
-			}
-			return
-		}
-		if block.Kind == "summary" {
-			body := strings.TrimSpace(block.Body)
-			if body != "" {
-				// A collapsed Summary tab expands automatically on the first
-				// summary block; the output text carrying the block
-				// already expanded the Output tab. See TheoryOfTUI.
-				if t.tabs.AutoExpand(1) {
-					t.scrolls[1].Follow = true
-				}
-				for _, line := range strings.Split(body, "\n") {
-					t.signals = append(t.signals, taiui.Line{Text: line})
-				}
-				t.signals = append(t.signals, taiui.Line{})
-			}
-		}
-		t.parseBuf = t.parseBuf[end:]
-		if len(t.parseBuf) == 0 {
-			return
-		}
-	}
-}
-
 type tuiWriter struct{ t *TUI }
 
 type logsWriter struct{ t *TUI }
-
-type thoughtSummaryWriter struct{ t *TUI }
 
 func (w tuiWriter) Write(p []byte) (int, error) {
 	w.t.write(p)
@@ -540,32 +391,17 @@ func (w logsWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (w thoughtSummaryWriter) Write(p []byte) (int, error) {
-	w.t.writeThoughtSummary(p)
-	w.t.notify()
-	return len(p), nil
-}
-
-type usageWriter struct{ t *TUI }
-
-func (w usageWriter) Write(p []byte) (int, error) {
-	w.t.writeUsage(p)
-	w.t.notify()
-	return len(p), nil
-}
-
 type TUI struct {
-	mu       sync.Mutex
-	output   *taiui.LineBuffer
-	logs     *taiui.StringBuffer
-	tabs     *taiui.Tabs
-	scrolls  [3]taiui.ScrollState
-	signals  []taiui.Line
-	parseBuf []byte
+	mu      sync.Mutex
+	output  *taiui.LineBuffer
+	logs    *taiui.StringBuffer
+	tabs    *taiui.Tabs
+	scrolls [3]taiui.ScrollState
+	events  []taiui.Line
 
-	outputCache  taiui.WrapCache
-	summaryCache taiui.WrapCache
-	logsCache    taiui.WrapCache
+	outputCache taiui.WrapCache
+	eventsCache taiui.WrapCache
+	logsCache   taiui.WrapCache
 
 	// finished reports whether the generation session has ended. It
 	// clears the Output tab's "generating..." hint.
@@ -579,7 +415,7 @@ type TUI struct {
 	quit taiui.QuitConfirm
 	// generating reports whether a generation request is in flight. It
 	// is set when the generator's "generating" log record is observed
-	// and cleared by a finish line ("[Finish: ...]") or by the session
+	// and cleared by an EventFinish or by the session
 	// ending. While a request is in flight the Output tab title keeps
 	// the "generating..." hint regardless of how long the model is
 	// silent (e.g., long thinking phases without streamed output).
@@ -599,7 +435,7 @@ type TUI struct {
 	// showThoughts reports whether raw reasoning thoughts are displayed
 	// in the Output tab. It is false only when -no-thoughts is set;
 	// -summarize-thoughts never suppresses the raw stream in the TUI —
-	// the periodic summaries stream to the Summary tab concurrently, so
+	// the periodic summaries render in the Events tab concurrently, so
 	// the focused Output tab keeps live feedback during long thinking
 	// phases. runWithTUI sets it before the generation goroutine starts;
 	// it is read only by captureContent on the generation goroutine. See
@@ -652,10 +488,10 @@ func newTUI() (*TUI, error) {
 	}
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
-		// streamed line, the Logs tab each log record, and the Summary
-		// tab each signal. Truncation would silently discard information,
-		// leaving the TUI's record of the session incomplete. See
-		// TheoryOfTUINoTruncation.
+		// streamed line, the Logs tab each log record, and the Events
+		// tab each event line. Truncation would silently discard
+		// information, leaving the TUI's record of the session
+		// incomplete. See TheoryOfTUINoTruncation.
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
 		tabs:   taiui.NewTabs(3),
@@ -688,56 +524,19 @@ func (t *TUI) LogsWriter() io.Writer {
 	return logsWriter{t}
 }
 
-// ThoughtSummaryWriter returns the writer that appends periodic thought
-// summaries (-summarize-thoughts) to the Summary tab. runWithTUI forks
-// the pipeline.ThoughtSummaryWriter provider to this writer so the
-// condensed reasoning appears in the Summary tab alongside the round
-// summaries and finish signals, not in the Output tab. See TheoryOfTUI.
-func (t *TUI) ThoughtSummaryWriter() io.Writer {
-	return thoughtSummaryWriter{t}
-}
-
-// UsageWriter returns the writer that appends per-round token usage lines
-// to the Summary tab. runWithTUI forks the pipeline.UsageWriter provider
-// to this writer so the round usage reads as one of the round's signals
-// alongside summaries and finish reasons, not as a log record in the
-// Logs tab. See TheoryOfTUI.
-func (t *TUI) UsageWriter() io.Writer {
-	return usageWriter{t}
-}
-
 func (t *TUI) captureContent(content *generators.Content) {
 	role := content.Role
 	for _, part := range content.Parts {
 		switch p := part.(type) {
 		case generators.Text:
 			if len(p) > 0 {
-				text := string(p)
-				// Summary blocks are extracted only from the model's
-				// response stream (model/assistant roles) and from the
-				// loop's synthesized completion signals (log-role summary
-				// blocks). User-role content — notably the retry feedback,
-				// which embeds the synthesized summary as a summary block
-				// for the model's benefit — is displayed in the Output tab
-				// but never extracted, so a truncated round's retry does
-				// not duplicate the same summary in the Summary tab. The
-				// parse runs under the state lock, like every other write
-				// to the display buffers, because render reads t.signals
-				// concurrently. See TheoryOfSummaryExtraction.
-				if role == generators.RoleModel ||
-					role == generators.RoleAssistant ||
-					role == generators.RoleLog {
-					t.mu.Lock()
-					t.parseSummaries([]byte(text))
-					t.mu.Unlock()
-				}
-				t.writeOutputPart(role, roleColor(role), false, text)
+				t.writeOutputPart(role, roleColor(role), false, string(p))
 			}
 		case generators.Thought:
 			if !t.showThoughts {
 				// Raw thoughts are suppressed when -no-thoughts is set.
 				// With -summarize-thoughts they keep streaming here while
-				// the periodic summaries go to the Summary tab. See
+				// the periodic summaries render in the Events tab. See
 				// TheoryOfTUI.
 				continue
 			}
@@ -748,8 +547,6 @@ func (t *TUI) captureContent(content *generators.Content) {
 			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Function Call: %s(%v)]", p.Name, p.Arguments))
 		case generators.CallResult:
 			t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Call Result: %s(%v)]", p.Name, p.Results))
-		case generators.FinishReason:
-			t.finishReason(string(p))
 		case generators.Error:
 			if p.Error != nil {
 				t.writeOutputPart(role, roleColor(role), false, fmt.Sprintf("[Error: %v]", p.Error))
@@ -1046,6 +843,108 @@ func (t *TUI) handleMouseKey(key string) {
 	}
 }
 
+// handleEvent renders one pipeline.Run event into the Events tab. It is
+// the Events tab's only content source: withTUIOutputObserver taps the
+// run's event iterator and forwards every event here, so every
+// Events-tab line originates from a pipeline event. See TheoryOfTUI and
+// pipeline.TheoryOfLoopEvents.
+func (t *TUI) handleEvent(ev pipeline.Event) {
+	lines := eventLines(ev)
+	if len(lines) == 0 {
+		return
+	}
+	t.mu.Lock()
+	// The finish reason marks the end of the generation request: the
+	// Output tab's "generating..." hint clears once the request has
+	// returned. A new request's "generating" log re-sets it.
+	if ev.Kind == pipeline.EventFinish {
+		t.generating = false
+	}
+	if t.tabs.AutoExpand(1) {
+		t.scrolls[1].Follow = true
+	}
+	t.events = append(t.events, lines...)
+	t.mu.Unlock()
+	t.notify()
+}
+
+// eventLines renders one pipeline event as Events-tab lines. Round
+// starts render nothing (structural noise), and a round success with no
+// summary renders nothing (single-shot commands like ai produce empty
+// summaries). Log-style events use the log color; the thought summary
+// header uses the thought color; summary bodies stay plain.
+func eventLines(ev pipeline.Event) []taiui.Line {
+	switch ev.Kind {
+	case pipeline.EventRoundStart:
+		return nil
+	case pipeline.EventRoundSuccess:
+		if strings.TrimSpace(ev.Summary) == "" {
+			return nil
+		}
+		return withBlank(summaryLines(ev.Summary))
+	case pipeline.EventRoundTruncated:
+		return logLines(fmt.Sprintf("[Round %d truncated (attempt %d/%d): %s]",
+			ev.Round, ev.Attempt, ev.MaxAttempts, ev.Detail))
+	case pipeline.EventRetry:
+		return logLines(fmt.Sprintf("[Retry attempt %d/%d] %v",
+			ev.Attempt, ev.MaxAttempts, ev.Err))
+	case pipeline.EventRoundError:
+		return logLines(fmt.Sprintf("[Round %d error] %v", ev.Round, ev.Err))
+	case pipeline.EventHandoff:
+		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", ev.Attempt, ev.MaxAttempts)
+		if ev.Attempt == 0 {
+			header = "[Handoff summary]"
+		}
+		return append(logLines(header), summaryLines(ev.Summary)...)
+	case pipeline.EventSynthesizedSummary:
+		return append(logLines("[Synthesized completion summary]"), summaryLines(ev.Summary)...)
+	case pipeline.EventUsage:
+		outcome := ""
+		if ev.Detail != "" {
+			outcome = " (" + ev.Detail + ")"
+		}
+		return logLines(fmt.Sprintf("[Usage] round %d%s: prompt %d, cached %d, completion %d, thoughts %d",
+			ev.Round, outcome,
+			ev.Usage.Prompt.TokenCount,
+			ev.Usage.Prompt.TokenCountCached,
+			ev.Usage.Candidates.TokenCount,
+			ev.Usage.Thoughts.TokenCount,
+		))
+	case pipeline.EventFinish:
+		return logLines("[Finish: " + ev.Detail + "]")
+	case pipeline.EventThoughtSummary:
+		return append(
+			[]taiui.Line{{Text: "[Thought Summary]:", Color: outputColorThoughtLine}},
+			summaryLines(ev.Summary)...,
+		)
+	case pipeline.EventComponentsTriggered:
+		return logLines(fmt.Sprintf("[Round %d continues] %s", ev.Round, ev.Detail))
+	case pipeline.EventIdle:
+		return logLines("[Idle input received; starting the next round]")
+	}
+	return nil
+}
+
+// logLines renders one single-line log-style event line in the log color.
+func logLines(text string) []taiui.Line {
+	return []taiui.Line{{Text: text, Color: outputColorLogLine}}
+}
+
+// summaryLines renders a multi-line summary body as plain lines.
+func summaryLines(s string) []taiui.Line {
+	var lines []taiui.Line
+	for _, line := range strings.Split(s, "\n") {
+		lines = append(lines, taiui.Line{Text: line})
+	}
+	return lines
+}
+
+// withBlank terminates an event's lines with a blank separator so
+// consecutive events stay visually distinct.
+func withBlank(lines []taiui.Line) []taiui.Line {
+	return append(lines, taiui.Line{})
+}
+
 func (t *TUI) scroll(delta int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1173,7 +1072,7 @@ func (t *TUI) render() {
 }
 
 var (
-	tabNames = [...]string{"Output", "Summary", "Logs"}
+	tabNames = [...]string{"Output", "Events", "Logs"}
 	// tabUnfocusBG is the dark blue background of every unfocused tab.
 	tabUnfocusBG int32 = 0x0a1428
 	// tabFocusBG is the dark gray background of the focused tab.
@@ -1181,6 +1080,13 @@ var (
 	tabActiveLabelFg int32 = 10
 )
 
+// withTUIOutputObserver connects a pipeline.Run to the TUI: it wraps the
+// state with the tuiOutputState decorator (streaming output content to
+// the Output tab) and taps the run's event iterator, forwarding every
+// event to handleEvent before the command's own consumer sees it. The
+// tap is the Events tab's only content source, so every Events-tab line
+// originates from a pipeline.Run event. See TheoryOfTUI and
+// pipeline.TheoryOfLoopEvents.
 func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
@@ -1193,16 +1099,23 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 				tui:      tui,
 			}
 		})
-		return run(ctx, opts, result)
+		inner := run(ctx, opts, result)
+		return func(yield func(pipeline.Event, error) bool) {
+			inner(func(ev pipeline.Event, err error) bool {
+				// Tap unconditionally: the terminal EventRoundError
+				// arrives with a non-nil error and must render too.
+				tui.handleEvent(ev)
+				return yield(ev, err)
+			})
+		}
 	}
 }
 
-// tuiShowThoughts returns whether the TUI's Output tab displays raw
-// reasoning thoughts. Only the -thoughts flag governs it:
-// -summarize-thoughts adds periodic summaries in the Summary tab but never
-// suppresses the raw stream, because blanking the focused Output tab during
-// long thinking phases leaves no live feedback and makes the session look
-// stalled. See TheoryOfTUI.
+// tuiShowThoughts returns whether the TUI's Output tab displays raw reasoning
+// thoughts. Only the -thoughts flag governs it: -summarize-thoughts adds
+// periodic summaries in the Events tab but never suppresses the raw stream,
+// because blanking the focused Output tab during long thinking phases leaves
+// no live feedback and makes the session look stalled. See TheoryOfTUI.
 func tuiShowThoughts(thoughts flags.Thoughts) bool {
 	if thoughts.Value != nil {
 		return *thoughts.Value
@@ -1211,15 +1124,17 @@ func tuiShowThoughts(thoughts flags.Thoughts) bool {
 }
 
 // forkTUIDisplay layers the TUI display writers onto scope and returns
-// the scope the command runs in. The generation loop is resolved AFTER
-// the writer forks take effect: Module.Run binds pipeline.UsageWriter and
-// logs.Logger from the scope at provider-resolution time, so a loop
-// resolved before the forks would keep the pre-fork providers — a nil
-// UsageWriter and the raw-stderr Logger — and the per-round usage line
-// would bypass the Summary tab, paint the raw terminal, and vanish on
-// the next repaint. The state-decorator wrapper is layered in a second
-// fork so its pipeline.Run def does not resolve itself recursively. See
-// TheoryOfTUIDisplayFork, pipeline.TheoryOfUsageLogging, and TheoryOfTUI.
+// the scope the command runs in. The Logs-pane and Output-tab writers
+// are forked before the generation loop is resolved from the scope,
+// because Module.Run binds logs.Logger at provider-resolution time: a
+// loop resolved before the forks would keep the pre-fork Logger built
+// on the real stderr, painting the raw terminal. The Events tab needs
+// no writer fork — withTUIOutputObserver, layered in the second fork's
+// Run wrapper, taps the run's event iterator and forwards every event
+// to the TUI (see pipeline.TheoryOfLoopEvents). The state-decorator Run
+// wrapper is layered in a second fork so its pipeline.Run def does not
+// resolve itself recursively. See TheoryOfTUIDisplayFork and
+// TheoryOfTUI.
 func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
@@ -1228,17 +1143,6 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// writer. Generation output is captured separately and never
 		// routed here. See TheoryOfCommandOutput.
 		func() Output { return Output(tui.Writer()) },
-		// Periodic thought summaries are routed to the Summary tab so
-		// the condensed reasoning appears alongside the round summaries
-		// and finish signals, while the Output tab keeps streaming the
-		// raw thoughts. See pipeline.TheoryOfThoughtsSummarize and
-		// TheoryOfTUI.
-		func() pipeline.ThoughtSummaryWriter { return pipeline.ThoughtSummaryWriter(tui.ThoughtSummaryWriter()) },
-		// Per-round token usage lines are routed to the Summary tab so
-		// they read as round signals alongside summaries and finish
-		// reasons; without the fork the usage goes to the logger and
-		// the Logs pane. See pipeline.TheoryOfUsageLogging.
-		func() pipeline.UsageWriter { return pipeline.UsageWriter(tui.UsageWriter()) },
 		// Handoff generation streams to the Output tab and reports its
 		// lifecycle through the HandoffObserver, so the title shows
 		// "Output (handoff...)" while a handoff request is in flight.
@@ -1253,8 +1157,8 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		func() pipeline.RoundStatsWriter { return pipeline.RoundStatsWriter(tui.Writer()) },
 	)
 	// Resolve the loop from the display scope so Module.Run binds the
-	// TUI's UsageWriter (Summary tab) and the Logs-pane Logger at
-	// provider-resolution time. See TheoryOfTUIDisplayFork.
+	// Logs-pane Logger at provider-resolution time. See
+	// TheoryOfTUIDisplayFork.
 	loopRun := scope.Get[pipeline.Run]()
 	return scope.Fork(func() pipeline.Run {
 		return withTUIOutputObserver(loopRun, tui)
@@ -1271,7 +1175,9 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	oldOut, oldErr := os.Stdout, os.Stderr
 
 	// The TUI is the display. Model output is captured from the
-	// generation state by the tuiOutputState decorator, and log records
+	// generation state by the tuiOutputState decorator, pipeline events
+	// reach the Events tab through the iterator tap layered by
+	// forkTUIDisplay, and log records
 	// are routed to the Logs pane via the forked logs.Writer. Writes to
 	// stdout would corrupt the TUI rendering, so they are discarded by
 	// redirecting to the null device; writes to stderr (e.g., command
@@ -1302,18 +1208,18 @@ func runWithTUI(command Command, scope dscope.Scope) {
 	}()
 
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
-	// -summarize-thoughts adds periodic summaries in the Summary tab but
+	// -summarize-thoughts adds periodic summaries in the Events tab but
 	// never suppresses the raw stream, because blanking the focused
 	// Output tab during long thinking phases leaves no live feedback and
 	// makes the session look stalled. The flag is resolved from the
 	// scope before the generation goroutine starts, so the policy is
 	// fixed for the session. See TheoryOfTUI.
 	tui.showThoughts = tuiShowThoughts(scope.Get[flags.Thoughts]())
-	// Fork the display writers (Logs pane, Output tab, Summary-tab
-	// signals) and rebind the generation loop to them; the loop's
-	// state-decorator wrapper is layered on top so model output is
-	// captured from the generation state. The loop must be resolved
-	// after the writer forks — see TheoryOfTUIDisplayFork.
+	// Fork the display writers (Logs pane, Output tab) and rebind the
+	// generation loop to them; the loop's state-decorator and event-tap
+	// wrapper is layered on top so model output is captured from the
+	// generation state and events reach the TUI. The loop must be
+	// resolved after the writer forks — see TheoryOfTUIDisplayFork.
 	scope = forkTUIDisplay(scope, tui)
 	// Display the user's chat input (flags.Chats) at the top of the
 	// Output tab before the command starts generating. The chat lives in

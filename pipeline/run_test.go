@@ -1050,58 +1050,6 @@ func TestRunHandoffUsageRetryWindowIsPerAttempt(t *testing.T) {
 	})
 }
 
-func TestRunUsageWriterReceivesUsage(t *testing.T) {
-	// When a UsageWriter is configured, the Run loop writes each round's
-	// usage line to the writer instead of the logger record: a display
-	// front-end (the TUI's Summary tab) owns the usage output, and the
-	// Logs pane is not duplicated. See TheoryOfUsageLogging.
-	var usageBuf bytes.Buffer
-	var logBuf bytes.Buffer
-	logger := logs.Logger{slog.New(slog.NewTextHandler(&logBuf, nil))}
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() logs.Logger { return logger },
-		func() UsageWriter { return UsageWriter(&usageBuf) },
-	).Call(func(run Run) {
-		usage := generators.Usage{}
-		usage.Prompt.TokenCount = 100
-		usage.Prompt.TokenCountCached = 20
-		usage.Candidates.TokenCount = 50
-		usage.Thoughts.TokenCount = 10
-
-		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				return appendPhaseWithUsage("model output", usage)
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		output := usageBuf.String()
-		for _, want := range []string{
-			"[Usage]",
-			"round 1",
-			"prompt 100",
-			"cached 20",
-			"completion 50",
-			"thoughts 10",
-		} {
-			if !strings.Contains(output, want) {
-				t.Fatalf("expected %q in usage writer output, got: %s", want, output)
-			}
-		}
-		if strings.Contains(logBuf.String(), "msg=usage") {
-			t.Fatalf("expected no usage log record when UsageWriter is configured, got: %s", logBuf.String())
-		}
-	})
-}
-
 func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
 	// If a generator emits multiple Usage parts during streaming (e.g., Gemini),
 	// logRoundUsage must take the final Usage snapshot rather than summing them.

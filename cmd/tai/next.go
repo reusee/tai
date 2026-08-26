@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"maps"
 	"os"
 	"slices"
@@ -54,10 +53,11 @@ causing blocks to be parsed but not applied to disk.
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
 output layer, mirroring the generation pipeline: when enabled (and thoughts are
 not hidden), the stdout Output layer suppresses raw thoughts and the
-summarizer writes periodic summaries to pipeline.ThoughtSummaryWriter —
-os.Stdout by default, or the TUI's Summary-tab writer when -tui forks the
-provider. In TUI mode the tuiOutputState decorator still streams raw
-thoughts to the Output tab. See pipeline.TheoryOfThoughtsSummarize.
+summarizer writes periodic summaries to the generation output stream
+(os.Stdout), and each summary also flows to the run's event stream as an
+EventThoughtSummary, which the TUI renders in its Events tab. In TUI mode the
+tuiOutputState decorator still streams raw thoughts to the Output tab. See
+pipeline.TheoryOfThoughtsSummarize.
 `
 
 type SystemPrompt string
@@ -156,28 +156,18 @@ var NextCommand = Command{
 		writeTimes *changes.FileWriteTimes,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-		thoughtSummaryWriter pipeline.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
 		generator, err := getDefaultGenerator()
 		ce(err)
 
-		// Open a root on the current directory to restrict all file I/O
-		// to the project tree during change block application.
 		root, err := os.OpenRoot(".")
 		ce(err)
 		defer root.Close()
 
-		// MemoryStore buffers change block modifications in memory during
-		// generation, deferring disk writes until the round succeeds.
-		// The underlying root store enables write conflict detection: a
-		// file modified externally since the last write is rejected at
-		// flush time. See changes.TheoryOfInMemoryApply and
-		// changes.TheoryOfWriteConflictDetection.
 		memStore := changes.NewMemoryStore(changes.NewRootStoreWithWriteTimes(root, writeTimes))
 
-		// generate
 		logger.Info("generate", "model", generator.Spec().Model)
 		var state generators.State
 		state = generators.NewPrompts(
@@ -193,22 +183,12 @@ var NextCommand = Command{
 		if flagThoughts.Value != nil {
 			showThoughts = *flagThoughts.Value
 		}
-		// When -summarize-thoughts is enabled, the Output layer suppresses
-		// raw thoughts and the summarizer writes periodic summaries in their
-		// place, mirroring the generation pipeline. In TUI mode os.Stdout is
-		// discarded and the tuiOutputState decorator streams raw thoughts
-		// to the Output tab while the forked pipeline.ThoughtSummaryWriter
-		// routes summaries to the Summary tab. See TheoryOfNextCommand and
-		// pipeline.TheoryOfThoughtsSummarize.
+
 		if showThoughts && bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			ce(err)
 			state = generators.NewOutput(state, os.Stdout, false)
-			summaryWriter := io.Writer(os.Stdout)
-			if thoughtSummaryWriter != nil {
-				summaryWriter = thoughtSummaryWriter
-			}
-			state = pipeline.NewThoughtsSummarize(ctx, state, summarizer, summaryWriter)
+			state = pipeline.NewThoughtsSummarize(ctx, state, summarizer, os.Stdout)
 		} else {
 			state = generators.NewOutput(state, os.Stdout, showThoughts)
 		}
@@ -259,8 +239,6 @@ var NextCommand = Command{
 		}
 		ce(err)
 
-		// Flush in-memory changes to disk after the generation round
-		// succeeds. See changes.TheoryOfInMemoryApply.
 		if bool(apply) {
 			err = memStore.Flush()
 			ce(err)

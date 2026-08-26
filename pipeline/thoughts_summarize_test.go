@@ -527,18 +527,6 @@ func TestThoughtsSummarizeUnwrap(t *testing.T) {
 	}
 }
 
-func TestThoughtSummaryWriterDefaultsToNil(t *testing.T) {
-	// The default provider returns nil, in which case summaries are
-	// written to the generation output stream — the same stream the raw
-	// thoughts would have used. A display front-end forks this type to
-	// route the summaries to its own display. See
-	// TheoryOfThoughtsSummarize.
-	m := new(Module)
-	if w := m.ThoughtSummaryWriter(); w != nil {
-		t.Fatal("expected the default thought summary writer to be nil")
-	}
-}
-
 func TestThoughtsSummarizeSystemPromptDelegates(t *testing.T) {
 	gen := &mockSummarizerGenerator{summary: "summary"}
 	summarizer := NewSummarizer(gen)

@@ -23,6 +23,15 @@ type ThoughtsSummarize struct {
 	accumulated   string
 	lastSummarize time.Time
 	ctx           context.Context
+
+	// eventEmitter forwards produced summaries into the run's event
+	// stream as EventThoughtSummary. The field is a pointer shared by
+	// every copy of the layer: Module.Run installs the emitter after the
+	// state chain is assembled, and the copies created by AppendContent
+	// and Flush keep forwarding through it. A nil pointer, or a nil
+	// pointed-to function, leaves the layer inert outside the loop.
+	// See TheoryOfLoopEvents.
+	eventEmitter *func(summary string)
 }
 
 // NewThoughtsSummarize creates a ThoughtsSummarize state layer. The interval
@@ -47,6 +56,7 @@ func NewThoughtsSummarize(
 		interval:      i,
 		lastSummarize: time.Now(),
 		ctx:           ctx,
+		eventEmitter:  new(func(summary string)),
 	}
 }
 
@@ -93,6 +103,7 @@ func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generator
 		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
 			return ret, err
 		}
+		ret.emitThoughtSummary(summary)
 		ret.accumulated = ""
 		ret.lastSummarize = time.Now()
 	}
@@ -113,6 +124,7 @@ func (s ThoughtsSummarize) AppendContent(content *generators.Content) (generator
 			if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
 				return ret, err
 			}
+			ret.emitThoughtSummary(summary)
 			ret.accumulated = remaining
 			ret.lastSummarize = time.Now()
 		}
@@ -167,6 +179,7 @@ func (s ThoughtsSummarize) Flush() (generators.State, error) {
 		if _, err := fmt.Fprintf(ret.writer, "\n[Thought Summary]:\n%s\n\n", summary); err != nil {
 			return ret, err
 		}
+		ret.emitThoughtSummary(summary)
 		ret.accumulated = ""
 	}
 
@@ -181,6 +194,35 @@ func (s ThoughtsSummarize) Flush() (generators.State, error) {
 
 func (s ThoughtsSummarize) Unwrap() generators.State {
 	return s.upstream
+}
+
+// emitThoughtSummary reports a produced summary to the run's event
+// stream when an emitter is installed. The guards keep the layer usable
+// outside the loop (tests, direct construction): with no emitter the
+// summary only reaches the writer. See TheoryOfLoopEvents.
+func (s ThoughtsSummarize) emitThoughtSummary(summary string) {
+	if s.eventEmitter == nil || *s.eventEmitter == nil {
+		return
+	}
+	(*s.eventEmitter)(summary)
+}
+
+// installThoughtSummaryEmitter walks the state chain for a
+// ThoughtsSummarize layer and binds its summary emitter, so summaries
+// produced during generation flow into the run's event stream as
+// EventThoughtSummary. Module.Run installs the emitter before the first
+// round; state copies share the emitter pointer, so every layer copy
+// created by AppendContent and Flush emits through the same function.
+// See TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
+func installThoughtSummaryEmitter(state generators.State, emit func(summary string)) {
+	for s := state; s != nil; s = s.Unwrap() {
+		if ts, ok := s.(ThoughtsSummarize); ok {
+			if ts.eventEmitter != nil {
+				*ts.eventEmitter = emit
+			}
+			return
+		}
+	}
 }
 
 // splitAtLastCompleteParagraph splits accumulated text at the last

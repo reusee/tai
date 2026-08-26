@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"os"
 	"sort"
 	"strings"
@@ -103,13 +102,14 @@ Thought Summarization:
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
 output layers, mirroring the generation pipeline: when enabled, the stdout
 Output layer suppresses raw thoughts and the summarizer writes periodic
-summaries to pipeline.ThoughtSummaryWriter — os.Stdout by default, or the
-TUI's Summary-tab writer when -tui forks the provider. In TUI mode the
-tuiOutputState decorator still streams raw thoughts to the Output tab, so
-both streams are visible concurrently. The buf layer that captures
+summaries to the generation output stream (os.Stdout), and each summary also
+flows to the run's event stream as an EventThoughtSummary, which the TUI
+renders in its Events tab (see pipeline.TheoryOfThoughtsSummarize and
+pipeline.TheoryOfLoopEvents). In TUI mode the tuiOutputState decorator still
+streams raw thoughts to the Output tab, so both streams are visible
+concurrently. The buf layer that captures
 assistant text for memory parsing always excludes thoughts, so
-summarization never interferes with memory block extraction. See
-pipeline.TheoryOfThoughtsSummarize.
+summarization never interferes with memory block extraction.
 `
 
 var AICommand = Command{
@@ -134,7 +134,6 @@ var AICommand = Command{
 		recorder *records.Recorder,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
 		summarizeThoughts flags.SummarizeThoughts,
-		thoughtSummaryWriter pipeline.ThoughtSummaryWriter,
 	) {
 		ctx := context.Background()
 
@@ -184,11 +183,6 @@ var AICommand = Command{
 
 		parts = append(parts, comps.UserPromptParts()...)
 
-		// The system prompt restate is the last user prompt part before
-		// the dynamic user input: the model re-reads the complete
-		// instructions verbatim immediately before generating, and the
-		// restate is built from the same text as the system prompt so
-		// the two can never diverge. See components.TheoryOfComponents.
 		parts = append(parts, components.SystemPromptRestate(systemPrompt))
 
 		parts = append(parts, generators.Text(
@@ -214,11 +208,7 @@ var AICommand = Command{
 		if bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
 			ce(err)
-			summaryWriter := io.Writer(os.Stdout)
-			if thoughtSummaryWriter != nil {
-				summaryWriter = thoughtSummaryWriter
-			}
-			baseState = pipeline.NewThoughtsSummarize(ctx, baseState, summarizer, summaryWriter)
+			baseState = pipeline.NewThoughtsSummarize(ctx, baseState, summarizer, os.Stdout)
 		}
 
 		prevBufLen := 0

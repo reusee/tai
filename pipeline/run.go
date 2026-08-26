@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
 	"os"
 	"strings"
@@ -138,19 +137,15 @@ const TheoryOfUsageLogging = `
 The token usage of each generation round is recorded by the Run loop itself,
 not by individual commands. After each round, the usage record carries the
 1-based round number and the prompt, cached, completion, and thought token
-counts from the round's final usage. When no UsageWriter is configured, the
-record is a "usage" log entry, so every generation command — go, any, ai,
-next, ping — shows token consumption in its logs and in the TUI's Logs pane.
-When a UsageWriter is configured (the TUI forks the provider to its Summary
-tab), a "[Usage] round N: ..." line is written to the writer instead of the
-logger record, so round usage reads as one of the round's signals alongside
-summaries and finish reasons and the Logs pane is not duplicated. A round
-that ends with an error carries an outcome marker ("error" in the log entry,
-"(error)" in the writer line), so token consumption is traceable for every
-attempt, including retries. Rounds that record no token usage emit nothing.
-Each recorded round usage is also yielded to the run's event stream as an
-EventUsage (see TheoryOfLoopEvents), so a live consumer observes usage as
-the run progresses.
+counts from the round's final usage. The record flows to the run's event
+stream as an EventUsage — the single display source for a live consumer;
+the TUI renders its "[Usage]" line from the event — and to a "usage" log
+entry, so every generation command — go, any, ai, next, ping — shows token
+consumption in its logs and in the TUI's Logs pane. A round that ends with
+an error carries an outcome marker ("error" in the log entry, in the
+event's Detail, and in the rendered line's "(error)" suffix), so token
+consumption is traceable for every attempt, including retries. Rounds that
+record no token usage emit nothing.
 
 The usage is extracted by scanning the state's contents appended since the
 start of the round and taking the final Usage part, rather than summing
@@ -205,8 +200,9 @@ var _ InteractionRecorder = (*records.Recorder)(nil)
 // mode). The result is filled into result as the run progresses, and
 // the returned iterator yields one Event per notable occurrence —
 // round lifecycle (start, success, truncation, error), retries and
-// handoffs, synthesized completion summaries, per-round token usage,
-// and component-triggered or idle continuations — with the terminal
+// handoffs, synthesized completion summaries, attempt finish reasons,
+// per-round token usage, periodic thought summaries, and
+// component-triggered or idle continuations — with the terminal
 // error, if any, arriving with the final yield's error component.
 // Callers may suspend and resume the run via iter.Pull2, inspecting
 // the result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
@@ -256,13 +252,12 @@ type loopState struct {
 
 	runErr error
 
-	// logger and usageWriter receive the aggregated token usage of each
-	// round: the writer receives the usage line when configured (a display
-	// front-end such as the TUI's Summary tab owns the output), and the
-	// logger records the "usage" log entry otherwise. Both are dscope
-	// provided, captured by the Run provider. See TheoryOfUsageLogging.
-	logger      logs.Logger
-	usageWriter UsageWriter
+	// logger records the aggregated token usage of each round as a
+	// "usage" log entry; the event stream (EventUsage) is the display
+	// source for a live consumer such as the TUI's Events tab. The
+	// logger is dscope provided, captured by the Run provider. See
+	// TheoryOfUsageLogging.
+	logger logs.Logger
 }
 
 func (ls *loopState) runRound() (roundResult, error) {
@@ -345,6 +340,17 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		} else {
 			phaseState = wrappedState
+		}
+
+		// The attempt's finish reason feeds both the event stream —
+		// every attempt's completion signal, including attempts that
+		// later fail — and the completion check below. The extraction
+		// window is exactly this attempt's contents: ls.state still
+		// holds the pre-attempt base on both the error-retry and
+		// truncation-retry paths. See TheoryOfLoopEvents.
+		finishReason := extractFinishReason(phaseState, generators.CountContents(ls.state))
+		if finishReason != "" {
+			ls.emitEvent(Event{Kind: EventFinish, Round: ls.round, Detail: finishReason})
 		}
 
 		if roundErr != nil {
@@ -491,7 +497,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// truncation) overrides the summary signal and triggers
 		// retry. See TheoryOfSummaryCompletionRetry in generate.go.
 		hasCompletion := len(roundSummaries) > 0
-		finishReason := extractFinishReason(phaseState, generators.CountContents(ls.state))
 		isAbnormalFinish := isAbnormalFinishReason(finishReason)
 
 		if hasCompletion && !isAbnormalFinish {
@@ -542,9 +547,9 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		}
 
-		// Report the truncated attempt to the event stream, carrying
-		// the handoff summary when one was produced. See
-		// TheoryOfLoopEvents.
+		// Report the truncated attempt to the event stream. See
+		// TheoryOfLoopEvents. The handoff summary is not repeated
+		// here: EventHandoff already carried it.
 		truncatedDetail := "missing completion (no summary block)"
 		if isAbnormalFinish {
 			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
@@ -554,7 +559,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 			Round:       ls.round,
 			Attempt:     retry + 1,
 			MaxAttempts: ls.maxRetries,
-			Summary:     summary,
 			Detail:      truncatedDetail,
 		})
 
@@ -615,7 +619,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 	// synthesis applies to every exhausted round — including rounds
 	// whose blocks trigger components — because the summary block is
 	// mandatory in every response: the round statistics and the TUI's
-	// Summary tab need the completion signal. See TheoryOfLoops.
+	// Events tab need the completion signal. See TheoryOfLoops.
 	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
 		attemptBase := generators.CountContents(ls.state)
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
@@ -796,10 +800,9 @@ func (ls *loopState) runRound() (roundResult, error) {
 }
 
 // recordRoundUsage records the aggregated token usage of one round: to
-// the UsageWriter when one is configured, otherwise as a "usage" log
-// entry, and always to the run's event stream so consumers observe
-// round usage as it occurs. Rounds that record no token usage emit
-// nothing. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+// the run's event stream as an EventUsage (the display source for a live
+// consumer) and as a "usage" log entry. Rounds that record no token
+// usage emit nothing. See TheoryOfUsageLogging and TheoryOfLoopEvents.
 func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
 	// The usage is the last Usage part among the contents appended since
 	// the round started, not a sum of streaming snapshots.
@@ -812,28 +815,11 @@ func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int
 		return
 	}
 	ls.emitEvent(Event{
-		Kind:  EventUsage,
-		Round: roundNumber,
-		Usage: usage,
+		Kind:   EventUsage,
+		Round:  roundNumber,
+		Usage:  usage,
+		Detail: outcome,
 	})
-	if ls.usageWriter != nil {
-		// A configured UsageWriter owns the usage output (the TUI routes
-		// the line to its Summary tab); the logger record is not
-		// duplicated. See TheoryOfUsageLogging.
-		outcomePart := ""
-		if outcome != "" {
-			outcomePart = " (" + outcome + ")"
-		}
-		fmt.Fprintf(ls.usageWriter, "[Usage] round %d%s: prompt %d, cached %d, completion %d, thoughts %d\n",
-			roundNumber,
-			outcomePart,
-			usage.Prompt.TokenCount,
-			usage.Prompt.TokenCountCached,
-			usage.Candidates.TokenCount,
-			usage.Thoughts.TokenCount,
-		)
-		return
-	}
 	args := []any{
 		"round", roundNumber,
 		"prompt", usage.Prompt.TokenCount,
@@ -932,7 +918,7 @@ type RunOptions struct {
 	// StateDecorators wrap the state before the loop starts, in order.
 	// Each decorator receives the state produced by the previous one.
 	// The default is none; commands that need to observe state (e.g., the
-	// TUI observing FinishReason parts) pass their own implementations.
+	// TUI observing output content) pass their own implementations.
 	// See StateDecorator.
 	StateDecorators []StateDecorator
 	// Components is the component set for block processing between rounds.
@@ -1114,26 +1100,9 @@ func (s recordedState) AppendContent(content *generators.Content) (generators.St
 	return recordedState{upstream: newUpstream, recorder: s.recorder}, nil
 }
 
-// UsageWriter receives the per-round token usage line of the generation
-// loop. The default provider returns nil, in which case the usage is
-// recorded as a "usage" log entry instead; a display front-end (e.g.,
-// tai's TUI) forks this type to route the line into its Summary tab, so
-// round usage reads as one of the round's signals alongside summaries
-// and finish reasons. See TheoryOfUsageLogging.
-type UsageWriter io.Writer
-
-// UsageWriter provides the default usage writer: none, so the Run loop
-// records each round's token usage to the logger. A display front-end
-// (e.g., tai's TUI) forks this provider to route the usage line to its
-// own display. See TheoryOfUsageLogging.
-func (Module) UsageWriter() UsageWriter {
-	return nil
-}
-
 func (Module) Run(
 	recorder InteractionRecorder,
 	logger logs.Logger,
-	usageWriter UsageWriter,
 ) Run {
 	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
 		if result == nil {
@@ -1154,15 +1123,14 @@ func (Module) Run(
 			// are yielded through the guarded emitEvent/emitTerminal
 			// methods. See TheoryOfLoopEvents.
 			ls := &loopState{
-				ctx:         ctx,
-				opts:        opts,
-				rec:         rec,
-				result:      result,
-				yield:       yield,
-				state:       opts.InitialState,
-				maxRetries:  opts.MaxRetries,
-				logger:      logger,
-				usageWriter: usageWriter,
+				ctx:        ctx,
+				opts:       opts,
+				rec:        rec,
+				result:     result,
+				yield:      yield,
+				state:      opts.InitialState,
+				maxRetries: opts.MaxRetries,
+				logger:     logger,
 			}
 			if ls.maxRetries == 0 && (opts.RetryOnMissingCompletion || opts.RetryOnError) {
 				ls.maxRetries = defaultMaxRetries
@@ -1204,7 +1172,7 @@ func (Module) Run(
 			ls.state, _ = RecordState(rec, ls.state)
 
 			// Apply the state decorators after recording so decorations (e.g.,
-			// observing FinishReason parts for a TUI) see every subsequent
+			// observing output content for a TUI) see every subsequent
 			// content append. Decorators are applied in order, each wrapping
 			// the state produced by the previous one. See StateDecorator.
 			for _, decorator := range opts.StateDecorators {
@@ -1212,6 +1180,16 @@ func (Module) Run(
 					ls.state = decorator(ls.state)
 				}
 			}
+
+			// Thought summaries produced during generation join the event
+			// stream: bind the ThoughtsSummarize layer's emitter, when the
+			// command wrapped one, to the guarded yield. Summaries are
+			// produced synchronously inside phase execution on this
+			// goroutine, so the reentrant yield is safe. See
+			// TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
+			installThoughtSummaryEmitter(ls.state, func(summary string) {
+				ls.emitEvent(Event{Kind: EventThoughtSummary, Round: ls.round, Summary: summary})
+			})
 
 			// The main loop: each iteration is one generation round. A
 			// round produces a summary and parts; when parts exist, the
@@ -1232,11 +1210,11 @@ func (Module) Run(
 					ls.finishWithError(err, outcome.state)
 					return
 				}
-				// Record the round's aggregated token usage — to the
-				// UsageWriter when configured (the TUI's Summary tab), to
-				// the logger otherwise — so token consumption is visible
-				// per round, not only in the end-of-session statistics
-				// table. See TheoryOfUsageLogging.
+				// Record the round's aggregated token usage — to the event
+				// stream (the display source for a live consumer) and to the
+				// logger — so token consumption is visible per round, not
+				// only in the end-of-session statistics table. See
+				// TheoryOfUsageLogging.
 				ls.recordRoundUsage(outcome.state, prevRoundContentCount, ls.round, "")
 				prevRoundContentCount = generators.CountContents(outcome.state)
 				if outcome.continueNext {

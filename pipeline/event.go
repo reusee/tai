@@ -9,22 +9,31 @@ import (
 const TheoryOfLoopEvents = `
 Run is the loop's single event iterator: every notable occurrence during a
 generation run — round lifecycle (start, success, truncation, error),
-retry decisions and handoffs, synthesized completion summaries, per-round
-token usage, component-triggered continuations, and idle-handler input —
-flows to the consumer as one Event stream (iter.Seq2[Event, error]),
-unifying the loop's architecture on the iterator pattern. Events are
-yielded as they occur; the terminal error, if any, arrives with the final
-yield's error component and ends the sequence. The *Result is still
-filled incrementally, so callers that only need the outcome drain the
-iterator and read the result, while callers that want live signals (a
-TUI, an observer) consume the events as they stream.
+retry decisions and handoffs, synthesized completion summaries, attempt
+finish reasons, per-round token usage, periodic thought summaries,
+component-triggered continuations, and idle-handler input — flows to the
+consumer as one Event stream (iter.Seq2[Event, error]), unifying the
+loop's architecture on the iterator pattern. Events are yielded as they
+occur; the terminal error, if any, arrives with the final yield's error
+component and ends the sequence. The *Result is still filled
+incrementally, so callers that only need the outcome drain the iterator
+and read the result, while callers that want live signals (a TUI, an
+observer) consume the events as they stream.
+
+The TUI's Events tab renders this stream directly (cmd/tai taps the
+iterator via withTUIOutputObserver), so every Events-tab line originates
+from a Run event: finish reasons (EventFinish) and thought summaries
+(EventThoughtSummary) are loop events, never side channels.
 
 loopState owns the guarded yield: after the consumer stops, the iterator
 contract forbids calling yield again, but the loop's bookkeeping — result
 filling, recorder calls, EndSession — must still complete, so further
 events are dropped instead of yielded. runRound executes inside Run's
 iterator body and emits through the same guarded yield, so there is
-exactly one event channel: the run's own iterator. Functions that produce
+exactly one event channel: the run's own iterator. Thought summaries are
+produced synchronously inside phase execution on the loop's goroutine
+(the ThoughtsSummarize state layer forwards through an emitter installed
+by Module.Run), so their reentrant yield is safe. Functions that produce
 values rather than occurrences — ProcessComponents, the Handoff option,
 the round callbacks — keep their signatures: they are steps of the loop,
 not streams, and the loop reports their outcomes as Events.
@@ -47,8 +56,9 @@ const (
 	EventRoundSuccess EventKind = "round-success"
 	// EventRoundTruncated reports an attempt that ended without a
 	// completion signal (no summary block or an abnormal finish
-	// reason) and is retried. Summary carries the handoff summary of
-	// the truncated attempt, Detail the reason.
+	// reason) and is retried; Detail carries the reason. The truncated
+	// attempt's handoff summary is not repeated here — EventHandoff
+	// already carries it.
 	EventRoundTruncated EventKind = "round-truncated"
 	// EventRetry reports an attempt that failed with an error after
 	// producing output and is retried; Err carries the error being
@@ -65,8 +75,19 @@ const (
 	// exhausted and a completion summary was synthesized from the
 	// round's output; Summary carries it.
 	EventSynthesizedSummary EventKind = "synthesized-summary"
-	// EventUsage reports a round's aggregated token usage.
+	// EventUsage reports a round's aggregated token usage; Detail
+	// carries the outcome marker ("error") for rounds that end with an
+	// error.
 	EventUsage EventKind = "usage"
+	// EventFinish reports the finish reason of one generation attempt
+	// (Detail carries the reason string). Emitted once per attempt,
+	// including attempts that later fail, so a live consumer observes
+	// every request's completion signal.
+	EventFinish EventKind = "finish"
+	// EventThoughtSummary reports a periodic thought summary produced
+	// by the ThoughtsSummarize state layer during generation; Summary
+	// carries the condensed text.
+	EventThoughtSummary EventKind = "thought-summary"
 	// EventComponentsTriggered reports that component output (or
 	// parse-error feedback) scheduled the next round; Detail
 	// describes the trigger.
@@ -93,8 +114,9 @@ type Event struct {
 	// and handoff events. Zero when not applicable.
 	MaxAttempts int
 	// Summary carries a summary text: the joined summary block bodies
-	// for EventRoundSuccess, the handoff summary for EventHandoff,
-	// EventRoundTruncated, and EventSynthesizedSummary.
+	// for EventRoundSuccess, the handoff summary for EventHandoff and
+	// EventSynthesizedSummary, and the condensed thought summary for
+	// EventThoughtSummary.
 	Summary string
 	// Summaries carries the round's summary block bodies for
 	// EventRoundSuccess.
@@ -108,8 +130,9 @@ type Event struct {
 	// and EventRoundError (the terminal error).
 	Err error
 	// Detail carries a human-readable description for less structured
-	// events (EventRetry, EventRoundTruncated,
-	// EventComponentsTriggered).
+	// events: the reason for EventRetry, EventRoundTruncated, and
+	// EventComponentsTriggered, the finish reason for EventFinish, and
+	// the outcome marker ("error") for EventUsage.
 	Detail string
 }
 
