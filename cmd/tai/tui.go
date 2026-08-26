@@ -44,12 +44,16 @@ and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Events tab renders the generation loop's
-event stream — round summaries, truncations, retries, handoff and
+event stream — round starts ("[Round N start]"), round summaries,
+truncations, retries, handoff and
 synthesized summaries, the finish reasons ("[Finish: ...]"), the per-round
 usage lines ("[Usage] ..."), the thought summaries when
 -summarize-thoughts is enabled, and the component/idle continuations — and
 the Logs tab collects
-log records. The Events tab's only content source is pipeline.Run:
+log records. Every event kind renders: a round success with no summary
+shows a completion line ("[Round N complete]"), and an unknown kind shows
+a generic "[Event <kind>]" line, so no pipeline event type is silently
+dropped. The Events tab's only content source is pipeline.Run:
 withTUIOutputObserver taps the run's event iterator and forwards every
 event to handleEvent, so every Events-tab line originates from a pipeline
 event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
@@ -872,18 +876,20 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	t.notify()
 }
 
-// eventLines renders one pipeline event as Events-tab lines. Round
-// starts render nothing (structural noise), and a round success with no
-// summary renders nothing (single-shot commands like ai produce empty
-// summaries). Log-style events use the log color; the thought summary
-// header uses the thought color; summary bodies stay plain.
+// eventLines renders one pipeline event as Events-tab lines. Every event
+// kind renders at least one line: a round start opens its round, a round
+// success with no summary (single-shot commands like ai produce empty
+// summaries) shows a completion line, and an unknown kind shows a generic
+// event line, so no pipeline event type is silently dropped. Log-style
+// events use the log color; the thought summary header uses the thought
+// color; summary bodies stay plain.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	switch ev.Kind {
 	case pipeline.EventRoundStart:
-		return nil
+		return logLines(fmt.Sprintf("[Round %d start]", ev.Round))
 	case pipeline.EventRoundSuccess:
 		if strings.TrimSpace(ev.Summary) == "" {
-			return nil
+			return logLines(fmt.Sprintf("[Round %d complete]", ev.Round))
 		}
 		return summaryLines(ev.Summary)
 	case pipeline.EventRoundTruncated:
@@ -925,8 +931,12 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return logLines(fmt.Sprintf("[Round %d continues] %s", ev.Round, ev.Detail))
 	case pipeline.EventIdle:
 		return logLines("[Idle input received; starting the next round]")
+	default:
+		if ev.Detail == "" {
+			return logLines(fmt.Sprintf("[Event %s]", ev.Kind))
+		}
+		return logLines(fmt.Sprintf("[Event %s] %s", ev.Kind, ev.Detail))
 	}
-	return nil
 }
 
 // logLines renders one single-line log-style event line in the log color.

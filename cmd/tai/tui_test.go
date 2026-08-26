@@ -1757,8 +1757,11 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
 	tui2.handleEvent(pipeline.Event{Kind: pipeline.EventRoundStart, Round: 1})
-	if tui2.tabs.Expanded[1] {
-		t.Fatal("events tab must not expand on an unrendered event")
+	if !tui2.tabs.Expanded[1] {
+		t.Fatal("events tab should auto-expand on the round start event")
+	}
+	if tui2.tabs.Focus != 0 {
+		t.Fatalf("auto-expand must not change an established focus, got %d", tui2.tabs.Focus)
 	}
 }
 
@@ -1905,9 +1908,11 @@ func TestWithTUIOutputObserver(t *testing.T) {
 
 // TestTUIHandleEventRendersKinds verifies the per-kind rendering of the
 // Events tab: the finish line carries the log color and clears the
-// generating hint, the usage line carries the outcome marker, and the
-// thought summary header carries the thought color. Each event is stored
-// as one line group closed by a blank separator. See TheoryOfTUI.
+// generating hint, the usage line carries the outcome marker, the thought
+// summary header carries the thought color, round starts and empty-summary
+// round successes render log lines, and an unknown kind renders a generic
+// event line. Each event is stored as one line group closed by a blank
+// separator. See TheoryOfTUI.
 func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
@@ -1940,6 +1945,24 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	}
 	if body := group[1]; body.Text != "- point" || body.Color != taiui.NoColor {
 		t.Fatalf("unexpected thought summary body: %+v", body)
+	}
+
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundStart, Round: 3})
+	group = tui.events[len(tui.events)-1]
+	if group[0].Text != "[Round 3 start]" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected round start line: %+v", group[0])
+	}
+
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 3})
+	group = tui.events[len(tui.events)-1]
+	if group[0].Text != "[Round 3 complete]" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected empty-summary completion line: %+v", group[0])
+	}
+
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventKind("custom-kind"), Detail: "note"})
+	group = tui.events[len(tui.events)-1]
+	if group[0].Text != "[Event custom-kind] note" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected generic event line: %+v", group[0])
 	}
 }
 
