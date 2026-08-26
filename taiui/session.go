@@ -70,6 +70,24 @@ type Session struct {
 	err error
 }
 
+// SetMouse enables or disables mouse reporting at runtime. Call it from
+// the Key callback: the callback and rendering execute serially on the
+// loop goroutine, and TerminalScreen.Present flushes its buffer before
+// returning, so the sequence never interleaves with rendered output.
+// The exit path unconditionally disables mouse reporting, so a disable
+// here is harmless when repeated at exit. Disabling hands text
+// selection back to the terminal; enabling restores pointer
+// interaction. See TheoryOfSession.
+func (s *Session) SetMouse(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if enabled {
+		io.WriteString(s.Tty, MouseEnableSequence)
+	} else {
+		io.WriteString(s.Tty, MouseDisableSequence)
+	}
+}
+
 // Err returns the session's recorded error: the panic recovered from
 // Gen, if any.
 func (s *Session) Err() error {

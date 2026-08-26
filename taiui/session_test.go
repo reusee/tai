@@ -110,6 +110,24 @@ func TestSessionLifecycleAndQuit(t *testing.T) {
 	}
 }
 
+func TestSessionSetMouse(t *testing.T) {
+	ttyDev := &sessionTty{in: make(chan string, 4)}
+	sess := &Session{Tty: ttyDev}
+
+	sess.SetMouse(true)
+	sess.SetMouse(false)
+
+	out := ttyDev.Written()
+	enable := strings.Index(out, MouseEnableSequence)
+	disable := strings.Index(out, MouseDisableSequence)
+	if enable < 0 || disable < 0 {
+		t.Fatalf("missing a mouse sequence in %q", out)
+	}
+	if !(enable < disable) {
+		t.Fatalf("unexpected mouse sequence order: enable %d disable %d", enable, disable)
+	}
+}
+
 func TestSessionRecoversGenPanic(t *testing.T) {
 	ttyDev := &sessionTty{in: make(chan string, 4)}
 	genEnded := make(chan struct{})

@@ -2543,6 +2543,14 @@ func TestMapTUIKey(t *testing.T) {
 	}
 }
 
+func TestMapTUIKeyMouse(t *testing.T) {
+	for _, key := range []string{"m", "M"} {
+		if got := mapTUIKey(key); got != "mouse" {
+			t.Fatalf("mapTUIKey(%q) = %q, want %q", key, got, "mouse")
+		}
+	}
+}
+
 func TestTUIHelpToggle(t *testing.T) {
 	tui := newTUIForTest()
 	if tui.showHelp {
@@ -2555,6 +2563,40 @@ func TestTUIHelpToggle(t *testing.T) {
 	tui.toggleHelp()
 	if tui.showHelp {
 		t.Fatal("toggleHelp must hide the help overlay on the second press")
+	}
+}
+
+func TestTUIToggleMouse(t *testing.T) {
+	// toggleMouse records a status line in the Logs tab, so the test
+	// constructs the buffers a running session would have. The session
+	// itself stays nil — only the recorded state flips, without touching
+	// a terminal; the taiui side owns the terminal-sequence test
+	// (TestSessionSetMouse).
+	tui := &TUI{
+		output:         taiui.NewLineBuffer(0),
+		logs:           taiui.NewStringBuffer(0),
+		tabs:           taiui.NewTabs(3),
+		updateCh:       make(chan struct{}, 8),
+		mouseReporting: true,
+	}
+	tui.toggleMouse()
+	if tui.mouseReporting {
+		t.Fatal("expected mouse reporting disabled after the first toggle")
+	}
+	logRecords := tui.logs.Lines()
+	lastLog := ""
+	if len(logRecords) > 0 {
+		lastLog = logRecords[len(logRecords)-1]
+	}
+	if !strings.Contains(lastLog, "mouse reporting off") {
+		t.Fatalf("expected a mouse-reporting line in the logs tab, got %v", logRecords)
+	}
+	if out := tui.output.Lines(); len(out) > 0 {
+		t.Fatalf("the output tab must not carry the notice, got %v", out)
+	}
+	tui.toggleMouse()
+	if !tui.mouseReporting {
+		t.Fatal("expected mouse reporting re-enabled after the second toggle")
 	}
 }
 

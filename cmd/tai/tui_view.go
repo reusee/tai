@@ -58,6 +58,7 @@ var tuiHelpLines = []string{
 	"[ / ]\tjump to previous / next section start or end",
 	"click\tselect / toggle tab under cursor",
 	"wheel / drag\tscroll pane under cursor",
+	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
 	"?\ttoggle this help overlay",
 }

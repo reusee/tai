@@ -125,7 +125,9 @@ other, total expanded+2), with the last tab absorbing the rounding
 remainder; collapsed tabs take one column (vertical split) or one row
 (horizontal split) each. The s key switches between vertical splitting (tabs
 side by side, a vertical split line) and horizontal splitting (tabs
-stacked, a horizontal split line). The default is horizontal splitting: the
+stacked, a horizontal split line). The m key toggles mouse reporting at
+runtime: while reporting is off, the terminal performs its own text
+selection and copy (see TheoryOfMouseSupport). The default is horizontal splitting: the
 tabs are stacked vertically, one above the other. Tab cycles the focus among
 the expanded tabs, skipping collapsed ones; the [ and ] keys jump
 the Output tab's view through the section transitions — a role change or a
@@ -238,6 +240,16 @@ ordinary input handling when the TUI stops. taiui.ReadKeys decodes the
 SGR mouse sequences into key names carrying the cell coordinates, and
 the parsed events route onto taiui.TabMouse through handleMouseKey. See
 taiui.TheoryOfMouseInput and taiui.TheoryOfMouseInteraction.
+
+Mouse reporting is also runtime-switchable: the m key toggles it via
+toggleMouse, which flips the recorded state and calls
+taiui.Session.SetMouse to write the enable or disable sequence. While
+reporting is off, the terminal performs its own text selection and copy
+and the wheel feeds the terminal scrollback, so the displayed output can
+be selected and copied; most terminals also offer Shift+drag as a
+selection bypass while reporting is on. Pressing m again restores the
+TUI's pointer interaction. Each toggle records the new state as a log
+line in the Logs tab.
 `
 
 // Tui enables the terminal UI mode.
@@ -470,6 +482,17 @@ type TUI struct {
 	// to the press origin. Its zero value is inert. See
 	// taiui.TheoryOfMouseInteraction.
 	mouse taiui.TabMouse
+
+	// session is the running taiui.Session, set by Run. The mouse key
+	// uses it to switch mouse reporting at runtime (see toggleMouse); it
+	// is nil until Run starts — tests construct a TUI without a session —
+	// so consumers treat nil as inert.
+	session *taiui.Session
+	// mouseReporting records whether terminal mouse reporting is
+	// currently enabled. While it is disabled, the terminal performs its
+	// own text selection and copy; see toggleMouse and
+	// TheoryOfMouseSupport.
+	mouseReporting bool
 
 	tty      tty.Tty
 	screen   *taiui.TerminalScreen
@@ -721,6 +744,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.toggleTab(2)
 	case key == "split":
 		t.toggleSplit()
+	case key == "mouse":
+		t.toggleMouse()
 	case key == "prev-transition":
 		t.jumpToTransition(-1)
 	case key == "next-transition":
@@ -772,6 +797,8 @@ func mapTUIKey(key string) string {
 		return "quit"
 	case "s", "S":
 		return "split"
+	case "m", "M":
+		return "mouse"
 	case "?":
 		return "help"
 	case "[":
@@ -788,6 +815,33 @@ func (t *TUI) toggleSplit() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.tabs.SplitVertical = !t.tabs.SplitVertical
+}
+
+// toggleMouse switches terminal mouse reporting at runtime. While
+// reporting is off, the terminal performs its own text selection and
+// copy (most terminals also offer Shift+drag as a bypass while
+// reporting is on) and wheel events feed the terminal scrollback;
+// pressing the key again restores the TUI's pointer interaction. The
+// new state is recorded as a log line in the Logs tab. The session
+// is nil until Run starts — tests construct a TUI without one —
+// in which case only the recorded state flips. The write and notify
+// happen after the lock is released; both take the TUI lock internally.
+// See TheoryOfMouseSupport and taiui.TheoryOfMouseInteraction.
+func (t *TUI) toggleMouse() {
+	t.mu.Lock()
+	session := t.session
+	enabled := !t.mouseReporting
+	t.mouseReporting = enabled
+	t.mu.Unlock()
+	if session != nil {
+		session.SetMouse(enabled)
+	}
+	state := "off"
+	if enabled {
+		state = "on"
+	}
+	t.writeLogs([]byte("mouse reporting " + state + "\n"))
+	t.notify()
 }
 
 func (t *TUI) Run(gen func()) error {
@@ -826,6 +880,12 @@ func (t *TUI) Run(gen func()) error {
 			t.notify()
 		},
 	}
+	// The session reference lets the mouse key switch mouse reporting
+	// at runtime (see toggleMouse); mouseReporting mirrors the Mouse
+	// flag above, which starts enabled. Both are written before
+	// sess.Run starts the loop, so handleKey reads them ordered.
+	t.session = sess
+	t.mouseReporting = true
 	return sess.Run()
 }
 
