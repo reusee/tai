@@ -45,10 +45,11 @@ boundary-delimited block with kind "handoff". The system parses the block
 body as the handoff content; if the model does not emit a valid handoff
 block (missing, malformed, or unclosed), the response is treated as empty
 and retried, preventing incorrect or incomplete content from being used as
-handoff instructions. Handoff generation is retried up to maxHandoffRetries
-times on failure or missing block; a persistent failure is logged and the
+handoff instructions. Handoff generation retries without an attempt limit
+on failure or missing block; the loop exits only when a valid handoff block
+is produced or the context is cancelled. Cancellation is logged and the
 caller retries with empty handoff content, so the run continues rather than
-aborting.
+aborting; a caller that wants a bound must supply a cancellable context.
 
 Handoff generation streams to the HandoffWriter provider when one is
 configured: the display writer receives the model's text and reasoning
@@ -157,10 +158,6 @@ BLOCK FORMAT REQUIREMENT (CRITICAL):
 - Do not output any prose before or after the block.
 - If you fail to emit a valid, properly closed handoff block, the system will treat the response as empty and retry, so ensure the block is well-formed with a matched opening marker and closing line.`
 
-// maxHandoffRetries bounds the number of attempts to generate a handoff summary
-// when generation fails or produces an empty response. See TheoryOfHandoff.
-const maxHandoffRetries = 3
-
 // fullHandoffSystemPrompt combines the handoff-specific instructions with the
 // unified block format prompt so the model knows both what to produce (a
 // handoff block) and how to format it (the heredoc-delimited block format).
@@ -259,7 +256,16 @@ func createHandoff(
 	// the delivered Handoff reports the full spend of producing it.
 	// See TheoryOfHandoffUsageAccounting.
 	var totalUsage generators.Usage
-	for attempt := range maxHandoffRetries {
+	// attempts counts the started attempts; after the loop it is the
+	// completed-attempt count reported by the abort log and event.
+	attempts := 0
+	// Retries are unbounded: the loop exits only when a valid handoff
+	// block is produced or the context is cancelled, never on an
+	// attempt count. See TheoryOfHandoff.
+	for ctx.Err() == nil {
+		attempt := attempts
+		attempts++
+
 		// The handoff model is a single model; the generator slice has
 		// one element. The modulo is retained for safety but always
 		// resolves to index 0.
@@ -277,7 +283,6 @@ func createHandoff(
 			lastErr = err
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
 				"attempt", attempt+1,
-				"max_attempts", maxHandoffRetries,
 				"model", generator.Spec().Model,
 				"err", err,
 			)
@@ -287,8 +292,8 @@ func createHandoff(
 					generators.Error{Error: err},
 				},
 			})
-			recordEvent("handoff attempt %d/%d failed: model=%s generation error: %v",
-				attempt+1, maxHandoffRetries, generator.Spec().Model, err)
+			recordEvent("handoff attempt %d failed: model=%s generation error: %v",
+				attempt+1, generator.Spec().Model, err)
 			continue
 		}
 		totalUsage.Prompt.TokenCount += attemptUsage.Prompt.TokenCount
@@ -320,23 +325,23 @@ func createHandoff(
 		lastErr = fmt.Errorf("no valid handoff block found in response")
 		logger.WarnContext(ctx, "handoff incomplete output: no valid handoff block found",
 			"attempt", attempt+1,
-			"max_attempts", maxHandoffRetries,
 			"model", generator.Spec().Model,
 		)
-		recordEvent("handoff attempt %d/%d failed: model=%s no valid handoff block found",
-			attempt+1, maxHandoffRetries, generator.Spec().Model)
+		recordEvent("handoff attempt %d failed: model=%s no valid handoff block found",
+			attempt+1, generator.Spec().Model)
 	}
 	if lastErr != nil {
-		err := fmt.Errorf("handoff incomplete output failed after %d attempts: %w", maxHandoffRetries, lastErr)
-		logger.ErrorContext(ctx, "handoff incomplete output failed",
-			"max_attempts", maxHandoffRetries,
+		err := fmt.Errorf("handoff incomplete output aborted after %d attempts: %w", attempts, lastErr)
+		logger.ErrorContext(ctx, "handoff incomplete output aborted",
+			"attempts", attempts,
 			"err", err,
 		)
-		recordEvent("handoff incomplete output failed after %d attempts: %v", maxHandoffRetries, lastErr)
+		recordEvent("handoff incomplete output aborted after %d attempts: %v", attempts, lastErr)
 	}
-	// A persistent handoff failure is not fatal: the caller retries with
-	// empty handoff content, so the run continues. The failure is logged
-	// and recorded above for visibility. See TheoryOfHandoff.
+	// A cancelled handoff is not fatal: the caller retries with empty
+	// handoff content, so the run continues rather than aborting. The
+	// cancellation is logged and recorded above for visibility. See
+	// TheoryOfHandoff.
 	return nil, nil
 }
 
