@@ -24,10 +24,10 @@ immutable state chain.
 ParserState is an immutable data structure: AppendContent and Flush return a new
 *ParserState rather than mutating in place. This preserves snapshot integrity for
 rollback and retry: the pre-generation State is unaffected by a failed attempt, so
-retrying starts from a clean snapshot. Because blocks are managed externally by the
-caller (via the handler closure), rollback consistency is achieved by resetting the
-external block collection alongside other external state (e.g., MemoryStore) in the
-retry callback.
+retrying starts from a clean snapshot. Because blocks are managed externally by
+the caller (via the handler closure), rollback consistency is achieved by resetting
+the external block collection alongside other external state (e.g., MemoryStore) in
+the retry callback.
 
 The parser is incremental: each AppendContent call appends new text to the buffer
 and re-attempts to parse complete blocks. A block is only complete when a matching
@@ -41,13 +41,18 @@ purpose is block extraction, not prose preservation.
 At Flush, an unclosed block (opening marker with no matching closing line) is
 collected as a parse error (see TheoryOfParseErrorCollection) rather than treated as
 a fatal error, because the caller can feed the error back to the model for
-self-correction. Complete blocks remaining in the buffer are discarded (not stored),
-because the handler is responsible for block management and should have been called
-during AppendContent. Any remaining unparseable fragments are discarded so content
-appended after Flush (e.g., from a subsequent generation cycle) is never combined
-with pre-Flush content within the same block. Delimiters are parsed as the text
-between << and the first whitespace or < character; this ensures the delimiter is
-extracted correctly regardless of what follows it on the opening line.
+self-correction. A complete block remaining in the buffer was not handled during
+AppendContent because the parser stopped at a preceding malformed block; Flush
+calls the handler for it so valid blocks are never lost. A handler error at Flush
+returns the new ParserState — upstream contents preserved, buffer advanced past the
+failing block — never nil, mirroring AppendContent: the state carries the partial
+output that the generation loop's error-retry gate needs to detect the content
+increase, so the error is fed back to the model for retry instead of stopping the
+loop. Any remaining unparseable fragments are discarded so content appended after
+Flush (e.g., from a subsequent generation cycle) is never combined with pre-Flush
+content within the same block. Delimiters are parsed as the text between << and the
+first whitespace or < character; this ensures the delimiter is extracted correctly
+regardless of what follows it on the opening line.
 `
 
 const TheoryOfParseErrorCollection = `
@@ -229,9 +234,9 @@ func (s *ParserState) Flush() (generators.State, error) {
 	// during AppendContent: the parser stops at the first malformed block,
 	// so complete blocks following it are not reached until Flush. The
 	// handler is called for them so valid blocks are never lost because a
-	// preceding block was malformed. See TheoryOfParseErrorCollection.
-	// Remaining unparseable fragments are discarded so post-flush content
-	// does not combine with pre-flush fragments.
+	// preceding block was malformed. Remaining unparseable fragments are
+	// discarded so post-flush content does not combine with pre-flush
+	// fragments.
 	// See TheoryOfParseErrorCollection.
 	buf := slices.Clone(s.buf)
 	parseErrors := slices.Clone(s.parseErrors)
@@ -258,10 +263,21 @@ func (s *ParserState) Flush() (generators.State, error) {
 		// A complete block remaining in the buffer at Flush was not
 		// handled during AppendContent (the parser stopped at a
 		// preceding malformed block). Handle it now so valid blocks are
-		// not lost. See TheoryOfParseErrorCollection.
+		// not lost. A handler error returns the new ParserState with the
+		// buffer advanced past the failing block — mirroring
+		// AppendContent — never nil: the upstream contents carry the
+		// partial output that the generation loop's error-retry gate
+		// needs to detect the content increase, so the error is fed
+		// back to the model for retry instead of stopping the loop.
+		// See TheoryOfParserState and TheoryOfParseErrorCollection.
 		if s.handler != nil {
 			if handlerErr := s.handler(block); handlerErr != nil {
-				return nil, handlerErr
+				return &ParserState{
+					upstream:    newUpstream,
+					buf:         buf[end:],
+					handler:     s.handler,
+					parseErrors: parseErrors,
+				}, handlerErr
 			}
 		}
 		buf = buf[end:]
