@@ -163,3 +163,91 @@ func TestWithoutModModEnv(t *testing.T) {
 		}
 	})
 }
+
+func TestWithReadonlyModEnv(t *testing.T) {
+	t.Run("no existing GOFLAGS", func(t *testing.T) {
+		envs := []string{"PATH=/usr/bin", "HOME=/root"}
+		result := withReadonlyModEnv(envs)
+		found := false
+		for _, e := range result {
+			if e == "GOFLAGS=-mod=readonly" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("GOFLAGS=-mod=readonly not added")
+		}
+		if len(result) != len(envs)+1 {
+			t.Fatalf("expected %d entries, got %d", len(envs)+1, len(result))
+		}
+	})
+
+	t.Run("existing GOFLAGS without mod", func(t *testing.T) {
+		envs := []string{"PATH=/usr/bin", "GOFLAGS=-trimpath"}
+		result := withReadonlyModEnv(envs)
+		found := false
+		for _, e := range result {
+			if e == "GOFLAGS=-trimpath -mod=readonly" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("GOFLAGS not merged correctly, got %v", result)
+		}
+		if len(result) != len(envs) {
+			t.Fatalf("expected same length, got %d", len(result))
+		}
+	})
+
+	t.Run("existing GOFLAGS with mod=mod replaced", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=mod"}
+		result := withReadonlyModEnv(envs)
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				if e != "GOFLAGS=-mod=readonly" {
+					t.Fatalf("expected -mod=readonly, got %q", e)
+				}
+			}
+		}
+	})
+
+	t.Run("existing GOFLAGS with mod=vendor replaced", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=vendor"}
+		result := withReadonlyModEnv(envs)
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				if strings.Contains(e, "-mod=vendor") {
+					t.Fatal("-mod=vendor should be replaced")
+				}
+				if !strings.Contains(e, "-mod=readonly") {
+					t.Fatalf("-mod=readonly missing, got %q", e)
+				}
+			}
+		}
+	})
+
+	t.Run("last GOFLAGS wins and duplicates removed", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=mod", "PATH=/usr/bin", "GOFLAGS=-trimpath"}
+		result := withReadonlyModEnv(envs)
+		count := 0
+		for _, e := range result {
+			if strings.HasPrefix(e, "GOFLAGS=") {
+				count++
+				if e != "GOFLAGS=-trimpath -mod=readonly" {
+					t.Fatalf("unexpected GOFLAGS %q", e)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("expected exactly one GOFLAGS, got %d: %v", count, result)
+		}
+	})
+
+	t.Run("does not modify original slice", func(t *testing.T) {
+		envs := []string{"GOFLAGS=-mod=mod"}
+		_ = withReadonlyModEnv(envs)
+		if envs[0] != "GOFLAGS=-mod=mod" {
+			t.Fatalf("original slice was modified: %v", envs)
+		}
+	})
+}

@@ -46,6 +46,14 @@ method on the named type rather than an arbitrary same-named symbol. The
 lsp tag's scope is mechanically unrestricted, including hidden packages:
 like the ingest block's file tag, hidden-package exclusion is governed by
 prompt instruction only (see TheoryOfHiddenPackages).
+
+The gopls process is started with its environment normalized to
+GOFLAGS=-mod=readonly (withReadonlyModEnv), so its module loading never
+rewrites go.mod or go.sum. The loader injects -mod=mod for go list (see
+TheoryOfModModEnv); without the normalization gopls would inherit that
+flag and silently write missing checksums. Replacing any existing -mod=
+flag with -mod=readonly makes gopls fail instead of modifying module
+files, matching the read-only treatment of the go doc tool.
 `
 
 const (
@@ -429,7 +437,10 @@ func getGoplsClient(ctx context.Context, dir string, envs Envs) (*goplsClient, e
 func startGopls(ctx context.Context, dir string, envs Envs) (*goplsClient, error) {
 	cmd := exec.Command("gopls", "-mode=stdio")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), envs...)
+	// gopls must never rewrite module files; normalize its environment to
+	// GOFLAGS=-mod=readonly, overriding the loader's -mod=mod injection.
+	// See TheoryOfGopls.
+	cmd.Env = withReadonlyModEnv(append(os.Environ(), envs...))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

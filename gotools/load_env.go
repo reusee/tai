@@ -67,3 +67,43 @@ func withoutModModEnv(envs []string) []string {
 	}
 	return ret
 }
+
+// withReadonlyModEnv returns a copy of envs with GOFLAGS set to include
+// -mod=readonly, replacing any existing -mod= flag. gopls uses this
+// normalization so its module loading never rewrites go.mod or go.sum,
+// even when the loader injected -mod=mod into the environment.
+// See TheoryOfGopls.
+func withReadonlyModEnv(envs []string) []string {
+	var goflags string
+	found := false
+	out := make([]string, 0, len(envs)+1)
+	for _, e := range envs {
+		if strings.HasPrefix(e, "GOFLAGS=") {
+			goflags = e
+			found = true
+			continue
+		}
+		out = append(out, e)
+	}
+	if !found {
+		return append(out, "GOFLAGS=-mod=readonly")
+	}
+	fields := strings.Fields(strings.TrimPrefix(goflags, "GOFLAGS="))
+	kept := make([]string, 0, len(fields)+1)
+	sawMod := false
+	for _, f := range fields {
+		if strings.HasPrefix(f, "-mod=") {
+			if !sawMod {
+				kept = append(kept, "-mod=readonly")
+				sawMod = true
+			}
+			continue
+		}
+		kept = append(kept, f)
+	}
+	if !sawMod {
+		kept = append(kept, "-mod=readonly")
+	}
+	out = append(out, "GOFLAGS="+strings.Join(kept, " "))
+	return out
+}
