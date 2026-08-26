@@ -28,62 +28,47 @@ func TestParseGoSrcSymbols(t *testing.T) {
 }
 
 func TestGoSrcPromptsDescribePackageSymbols(t *testing.T) {
-	// The go-src prompts must teach the package form: a symbol that is
-	// a loaded package's exact import path or package name returns the
+	// The go-src system prompt must teach the package form: a symbol that
+	// is a loaded package's exact import path or package name returns the
 	// package's go doc documentation, with command and unexported
 	// documentation for focus packages. See TheoryOfGoSrcBlocks.
-	for name, prompt := range map[string]string{
-		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt": GoSrcBlockRestatePrompt,
-	} {
-		if !strings.Contains(prompt, "go doc documentation") ||
-			!strings.Contains(prompt, "package name") {
-			t.Fatalf("%s does not describe package symbols", name)
-		}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "go doc documentation") ||
+		!strings.Contains(GoSrcBlockSystemPrompt, "package name") {
+		t.Fatal("GoSrcBlockSystemPrompt does not describe package symbols")
 	}
 }
 
 func TestGoSrcPromptsPreferGoSrcOverRead(t *testing.T) {
-	// The go-src prompts must teach the division of labor with read:
+	// The go-src prompt must teach the division of labor with read:
 	// Go source is fetched by symbol — gaining the defining file and the
 	// references report — while read serves non-Go files, whole-file
 	// views, glob discovery, and network resources. See
 	// TheoryOfGoSrcBlocks.
-	for name, prompt := range map[string]string{
-		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt": GoSrcBlockRestatePrompt,
-	} {
-		if !strings.Contains(prompt, "Prefer go-src over read") {
-			t.Fatalf("%s does not teach the go-src preference for Go source", name)
-		}
-		if !strings.Contains(prompt, "references report") {
-			t.Fatalf("%s does not cite the references report as the reason for the preference", name)
-		}
-		if !strings.Contains(prompt, "non-Go files") {
-			t.Fatalf("%s does not delineate the read block's remaining uses", name)
-		}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "Prefer go-src over read") {
+		t.Fatal("system prompt does not teach the go-src preference for Go source")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "references report") {
+		t.Fatal("system prompt does not cite the references report as the reason for the preference")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "non-Go files") {
+		t.Fatal("system prompt does not delineate the read block's remaining uses")
 	}
 }
 
 func TestGoSrcPromptsDescribeSnapshotAndFilePath(t *testing.T) {
-	// The go-src prompts must teach three facts about resolution results:
-	// prefer the import-path qualifier, the resolved source names the
-	// defining file (usable as a change block file-path), and resolution
-	// reads an in-memory snapshot that does not reflect change blocks
-	// applied during the session. See TheoryOfGoSrcBlocks.
-	for name, prompt := range map[string]string{
-		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt": GoSrcBlockRestatePrompt,
-	} {
-		if !strings.Contains(prompt, "full import path") {
-			t.Fatalf("%s does not recommend the import-path qualifier", name)
-		}
-		if !strings.Contains(prompt, "file-path") {
-			t.Fatalf("%s does not describe the defining file usage", name)
-		}
-		if !strings.Contains(prompt, "does not re-read") {
-			t.Fatalf("%s does not describe the snapshot semantics", name)
-		}
+	// The go-src system prompt must teach three facts about resolution
+	// results: prefer the import-path qualifier, the resolved source names
+	// the defining file (usable as a change block file-path), and
+	// resolution reads an in-memory snapshot that does not reflect change
+	// blocks applied during the session. See TheoryOfGoSrcBlocks.
+	if !strings.Contains(GoSrcBlockSystemPrompt, "full import path") {
+		t.Fatal("system prompt does not recommend the import-path qualifier")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "file-path") {
+		t.Fatal("system prompt does not describe the defining file usage")
+	}
+	if !strings.Contains(GoSrcBlockSystemPrompt, "does not re-read") {
+		t.Fatal("system prompt does not describe the snapshot semantics")
 	}
 }
 

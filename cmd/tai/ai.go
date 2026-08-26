@@ -85,17 +85,13 @@ intervention, and the user is only prompted when the model has no pending
 automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
-The user prompt places file context first, then the static restate prompts,
-and the dynamic user input last. The restate prompts remain immediately
-before the user input, so the model still reads the format reminders right
-before generating, while the static sections stay in the LLM prefix cache:
+The user prompt places file context first and the dynamic user input last:
 when the user input changes across sessions, only the final element changes,
-and the file context and restate prompts remain byte-identical and fully
-cacheable. This is the same dynamic-content-last principle that places the
-current time at the end of the system prompt (see AISystemPrompt) and the
-memory profile at the end of the system prompt sections (see
-TheoryOfAIComponents). See TheoryOfPrefixCaching in
-generators/state_func_map.go.
+and the file context remains byte-identical and fully cacheable. This is the
+same dynamic-content-last principle that places the current time at the end
+of the system prompt (see AISystemPrompt) and the memory profile at the end
+of the system prompt sections (see TheoryOfAIComponents). See
+TheoryOfPrefixCaching in generators/state_func_map.go.
 
 Thought Summarization:
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the

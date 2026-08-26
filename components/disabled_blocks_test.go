@@ -52,9 +52,6 @@ func TestDisabledBlocksComponent(t *testing.T) {
 		if comps.PromptSections() != "" {
 			t.Fatal("an empty notice must contribute no prompt section")
 		}
-		if comps.RestatePrompts() != "" {
-			t.Fatal("an empty notice must contribute no restate prompt")
-		}
 	})
 
 	t.Run("prompt-only with kinds", func(t *testing.T) {

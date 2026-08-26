@@ -288,7 +288,7 @@ func TestExtraSystemPrompt(t *testing.T) {
 	})
 }
 
-func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
+func TestSystemPromptChangeBlockPlacement(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -315,79 +315,11 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		},
 	).Call(func(
 		systemPrompt SystemPrompt,
-		userPrompt UserPrompt,
 	) {
 		s := string(systemPrompt)
 		if !strings.Contains(s, "Change Block Kind") {
 			t.Fatal("system prompt must include change block prompt when focus files are present")
 		}
-		// Restate prompt must NOT be in the system prompt (it is in the
-		// user prompt now). "Prefer precise modifications over WRITE"
-		// appears only in the change restate prompt; the system prompt's
-		// ChangeBlockPrompt has "Prefer Precise Modifications" with a
-		// parenthetical between "modifications" and "over WRITE", so the
-		// exact phrase is restate-only.
-		if strings.Contains(s, "Prefer precise modifications over WRITE") {
-			t.Fatal("system prompt must not include change block restate prompt")
-		}
-		// User prompt must include the restate prompt at the end.
-		foundRestate := false
-		for _, part := range userPrompt {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "Prefer precise modifications over WRITE") {
-					foundRestate = true
-				}
-			}
-		}
-		if !foundRestate {
-			t.Fatal("user prompt must include change block restate prompt when focus files are present")
-		}
-	})
-}
-
-func TestUserPromptRestateJoinBlankLine(t *testing.T) {
-	dir := t.TempDir()
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldWd)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("test.md", []byte("# Title\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
-		},
-	).Call(func(
-		userPrompt UserPrompt,
-	) {
-		// The unified block format restate prompt and the change restate
-		// prompt must be separated by a blank line so the two constants
-		// stay distinct paragraphs. See
-		// generators.TheoryOfContentUnitSeparation.
-		for _, part := range userPrompt {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			if strings.Contains(string(text), "**CRITICAL**") {
-				if !strings.Contains(string(text), "No blank lines are required before or after a block.\n\n**CRITICAL**") {
-					t.Fatalf("block format restate and change restate must be separated by a blank line, got:\n%s", string(text))
-				}
-				return
-			}
-		}
-		t.Fatal("restate prompt part not found in user prompt")
 	})
 }
 

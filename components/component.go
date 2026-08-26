@@ -13,8 +13,8 @@ import (
 const TheoryOfComponents = `
 Component is the unified extension mechanism for the generation pipeline. It
 generalizes beyond block processing: a Component can contribute a system prompt
-section, a restate/reminder prompt, user prompt parts, define a block kind for
-parsing, process blocks of that kind, or any combination thereof.
+section, user prompt parts, define a block kind for parsing, process blocks of
+that kind, or any combination thereof.
 
 A Component with a Process function is processed in the main generation loop; a
 Component without one (prompt-only or informational) contributes its
@@ -22,17 +22,11 @@ PromptSection to the system prompt but is not invoked during output processing.
 A Component can also contribute UserPromptParts, which are prepended to the
 user's input similar to how PartsProvider.Parts provides context. ComponentSet is
 an ordered collection of Components that provides PromptSections
-(concatenating all system prompt contributions), RestatePrompts (concatenating
-all restate/reminder prompt contributions), UserPromptParts (concatenating all
-user prompt parts, with restate prompts appended as the last element so
-critical format reminders are the last content the model reads before
-generating), and Processable (returning the subset with Process functions for
-the generation loop). PromptSections and RestatePrompts join their
-contributions with a blank line (two newlines) after trimming each section's
-trailing whitespace, so adjacent prompt sections never stick together. Restate
-prompts are placed at the end of the user prompt, not the system prompt, so
-critical format reminders are the last thing the model reads before
-generating.
+(concatenating all system prompt contributions), UserPromptParts (concatenating
+all user prompt parts), and Processable (returning the subset with Process
+functions for the generation loop). PromptSections joins its contributions with
+a blank line (two newlines) after trimming each section's trailing whitespace,
+so adjacent prompt sections never stick together.
 
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
@@ -47,8 +41,7 @@ The mechanism makes the coupling between prompt and processing explicit and
 machine-checkable. The system prompt assembly, user prompt assembly, and output
 processing loop share a single ComponentSet, ensuring that every prompt
 contribution is registered, every block kind has a matching processor, and
-every restate reminder and user prompt part is assembled through the same
-unified mechanism.
+every user prompt part is assembled through the same unified mechanism.
 `
 
 // ComponentProcessFunc processes blocks of a specific kind from the parser
@@ -82,8 +75,8 @@ type ProcessResult struct {
 }
 
 // Component is the unified extension mechanism for the generation pipeline.
-// A Component can contribute a system prompt section, a restate/reminder prompt,
-// user prompt parts, define a block kind, process blocks, or any combination.
+// A Component can contribute a system prompt section, user prompt parts,
+// define a block kind, process blocks, or any combination.
 // A Component with an empty Kind is a prompt-only component that contributes
 // its PromptSection to the system prompt but does not process blocks.
 // See TheoryOfComponents.
@@ -95,13 +88,6 @@ type Component struct {
 	// PromptSection is the system prompt text that teaches the model how
 	// to use this component. Empty if no prompt is needed.
 	PromptSection string
-	// RestatePrompt is a short critical reminder that reinforces the block
-	// format rules for this component. Unlike PromptSection which provides
-	// initial instructions, RestatePrompt is assembled separately via
-	// ComponentSet.RestatePrompts() to keep reminders grouped as a distinct
-	// section at the end of the system prompt. Empty if no restate prompt
-	// is needed.
-	RestatePrompt string
 	// UserPromptParts are user prompt parts contributed by this component.
 	// These are prepended to the user's input, similar to how
 	// PartsProvider.Parts provides context. Unlike PromptSection which goes
@@ -137,45 +123,16 @@ func (c ComponentSet) PromptSections() string {
 	return sb.String()
 }
 
-// RestatePrompts returns the concatenated restate/reminder prompt sections
-// from all components that have a non-empty RestatePrompt, in registration
-// order. These are short critical reminders that reinforce block format
-// rules, assembled separately from PromptSections to keep them grouped as
-// a distinct reminder section at the end of the system prompt. Each
-// section's trailing whitespace is trimmed and sections are joined with a
-// blank line (two newlines), so adjacent restate prompts never stick
-// together.
-func (c ComponentSet) RestatePrompts() string {
-	var sb strings.Builder
-	for _, comp := range c {
-		restate := strings.TrimRight(comp.RestatePrompt, " \t\n\r")
-		if restate != "" {
-			sb.WriteString(restate)
-			sb.WriteString("\n\n")
-		}
-	}
-	return sb.String()
-}
-
 // UserPromptParts returns the concatenated user prompt parts from all
 // components, in registration order. These are prepended to the user's
 // input, similar to how PartsProvider.Parts provides context. Unlike
 // PromptSections which goes into the system prompt, UserPromptParts goes
-// into the user content. Restate prompts are appended as the last user
-// prompt part so critical format reminders are the last thing the model
-// reads before generating. Components without UserPromptParts contribute
+// into the user content. Components without UserPromptParts contribute
 // nothing. See TheoryOfComponents.
 func (c ComponentSet) UserPromptParts() []generators.Part {
 	var parts []generators.Part
 	for _, comp := range c {
 		parts = append(parts, comp.UserPromptParts...)
-	}
-	// Append restate prompts at the end of user prompt parts so critical
-	// format reminders are the last content the model reads before
-	// generating. Restate prompts are placed in the user prompt, not the
-	// system prompt. See TheoryOfComponents.
-	if restate := c.RestatePrompts(); restate != "" {
-		parts = append(parts, generators.Text(restate))
 	}
 	return parts
 }

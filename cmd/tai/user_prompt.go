@@ -5,8 +5,6 @@ import (
 	"slices"
 
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
@@ -19,7 +17,6 @@ func (Module) UserPrompt(
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
-	hasFiles HasFiles,
 ) UserPrompt {
 
 	generator, err := getDefaultGenerator()
@@ -57,18 +54,6 @@ func (Module) UserPrompt(
 		patterns,
 	)
 	ce(err)
-
-	// Restate prompts are placed at the end of the user prompt, not in
-	// the system prompt, so critical format reminders are the last thing
-	// the model reads before generating. The unified block format restate
-	// prompt precedes the change-specific restate prompt, so the model
-	// is reminded of the shared heredoc format before the change-specific
-	// rules. The two constants are joined with a blank line so they stay
-	// separate paragraphs. See blocks.TheoryOfBlockFormatGeneral and
-	// generators.TheoryOfContentUnitSeparation.
-	if hasFiles {
-		parts = append(parts, generators.Text(blocks.BlockFormatRestatePrompt+"\n\n"+changes.ChangeBlockRestatePrompt()))
-	}
 
 	return UserPrompt(parts)
 }

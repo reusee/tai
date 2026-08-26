@@ -23,129 +23,6 @@ func (aiMockGenerator) Generate(context.Context, generators.State, *generators.G
 	return nil, nil
 }
 
-func TestAISystemPromptExcludesRestatePrompts(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
-		},
-	).Call(func(
-		getSystemPrompt AISystemPrompt,
-		comps AIComponents,
-	) {
-		prompt, err := getSystemPrompt()
-		if err != nil {
-			t.Fatal(err)
-		}
-		// System prompt must NOT contain restate prompts (they are placed
-		// at the end of the user prompt via UserPromptParts()).
-		if strings.Contains(prompt, "Block format (CRITICAL)") {
-			t.Fatal("system prompt must not include block format restate prompt")
-		}
-		if strings.Contains(prompt, "Continue block:") {
-			t.Fatal("system prompt must not include continue block restate prompt")
-		}
-		if strings.Contains(prompt, "Memory block:") {
-			t.Fatal("system prompt must not include memory block restate prompt")
-		}
-		// Restate prompts must be available via comps.RestatePrompts() and
-		// comps.UserPromptParts().
-		restate := comps.RestatePrompts()
-		if !strings.Contains(restate, "Block format (CRITICAL)") {
-			t.Fatal("restate prompts must include block format restate prompt")
-		}
-		if strings.Contains(restate, "Continue block:") {
-			t.Fatal("restate prompts must not include continue block restate prompt; the ai command does not process continue blocks")
-		}
-		if !strings.Contains(restate, "Memory block:") {
-			t.Fatal("restate prompts must include memory block restate prompt")
-		}
-		// UserPromptParts must include restate content.
-		userParts := comps.UserPromptParts()
-		foundRestate := false
-		for _, part := range userParts {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "Block format (CRITICAL)") {
-					foundRestate = true
-				}
-			}
-		}
-		if !foundRestate {
-			t.Fatal("UserPromptParts must include restate prompt content")
-		}
-	})
-}
-
-func TestAIRestatePromptsIncludeShellWhenEnabled(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
-		},
-		func() flags.Shell { return flags.Shell(true) },
-	).Call(func(
-		comps AIComponents,
-	) {
-		restate := comps.RestatePrompts()
-		if !strings.Contains(restate, "Shell block:") {
-			t.Fatal("restate prompts must include shell block restate prompt when shell is enabled")
-		}
-	})
-}
-
-func TestAIRestatePromptsExcludeShellWhenDisabled(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
-		},
-	).Call(func(
-		comps AIComponents,
-	) {
-		restate := comps.RestatePrompts()
-		if strings.Contains(restate, "Shell block:") {
-			t.Fatal("restate prompts must not include shell block restate prompt when shell is disabled")
-		}
-	})
-}
-
-func TestAIRestatePromptsExcludeMemoryWhenNoMemory(t *testing.T) {
-	dscope.New(
-		new(Module),
-	).Fork(
-		modes.ForTest(t),
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return aiMockGenerator{}, nil
-			}
-		},
-		func() NoMemory { return NoMemory(true) },
-	).Call(func(
-		comps AIComponents,
-	) {
-		restate := comps.RestatePrompts()
-		if strings.Contains(restate, "Memory block:") {
-			t.Fatal("restate prompts must not include memory block restate prompt when noMemory is true")
-		}
-		// Block format restate prompt should still be present
-		if !strings.Contains(restate, "Block format (CRITICAL)") {
-			t.Fatal("restate prompts must still include block format restate prompt when noMemory is true")
-		}
-	})
-}
-
 func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt,
 	// which AIComponents embeds as a prompt-only component. The memory
@@ -158,12 +35,6 @@ func TestMemoryPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	}
 	if strings.Contains(prompt, "<<MEMEND") {
 		t.Fatal("memoryBlockSystemPrompt must not display the legacy MEMEND example delimiter")
-	}
-	if strings.Contains(memoryBlockRestatePrompt, "uncommon Chinese two-character word") {
-		t.Fatal("memoryBlockRestatePrompt must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it")
-	}
-	if strings.Contains(memoryBlockRestatePrompt, "<<MEMEND") {
-		t.Fatal("memoryBlockRestatePrompt must not display the legacy MEMEND example delimiter")
 	}
 	dscope.New(
 		new(Module),
@@ -194,9 +65,6 @@ func TestMemoryPromptsTeachDeletion(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "删除生效") {
 		t.Fatal("memoryBlockSystemPrompt must state that deletion wins over addition in the same round")
-	}
-	if !strings.Contains(memoryBlockRestatePrompt, "memory-delete") {
-		t.Fatal("memoryBlockRestatePrompt must teach the memory-delete element")
 	}
 }
 

@@ -10,17 +10,15 @@ import (
 )
 
 func TestGoBlockPromptsFormatGuards(t *testing.T) {
-	// The Go-specific kind prompts migrated from the blocks package keep
-	// the two format guards the blocks package enforces for its own kind
-	// prompts: no literal '<<DELIMITER' template marker (the model imitates
-	// templates verbatim), and no restatement of the delimiter policy (the
-	// unified blocks.BlockFormatSystemPrompt covers it). See
+	// The Go-specific kind prompts keep the two format guards the blocks
+	// package enforces for its own kind prompts: no literal '<<DELIMITER'
+	// template marker (the model imitates templates verbatim), and no
+	// restatement of the delimiter policy (the unified
+	// blocks.BlockFormatSystemPrompt covers it). See
 	// blocks.TheoryOfBlockFormatGeneral.
 	prompts := map[string]string{
-		"GoTestBlockSystemPrompt":  GoTestBlockSystemPrompt,
-		"GoTestBlockRestatePrompt": GoTestBlockRestatePrompt,
-		"GoSrcBlockSystemPrompt":   GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt":  GoSrcBlockRestatePrompt,
+		"GoTestBlockSystemPrompt": GoTestBlockSystemPrompt,
+		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
 	}
 	for name, prompt := range prompts {
 		if strings.Contains(prompt, "<<DELIMITER") {
@@ -45,10 +43,8 @@ func TestGoBlockPromptsNeverEndOnKind(t *testing.T) {
 	// failure shape of a lone go-src block ending a response. See
 	// TheoryOfGoSrcBlocks and TheoryOfGoTestBlocks.
 	prompts := map[string]string{
-		"GoTestBlockSystemPrompt":  GoTestBlockSystemPrompt,
-		"GoTestBlockRestatePrompt": GoTestBlockRestatePrompt,
-		"GoSrcBlockSystemPrompt":   GoSrcBlockSystemPrompt,
-		"GoSrcBlockRestatePrompt":  GoSrcBlockRestatePrompt,
+		"GoTestBlockSystemPrompt": GoTestBlockSystemPrompt,
+		"GoSrcBlockSystemPrompt":  GoSrcBlockSystemPrompt,
 	}
 	for name, prompt := range prompts {
 		kind := "go-test"

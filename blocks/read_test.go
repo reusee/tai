@@ -568,7 +568,7 @@ func TestFetchReadRequestsError(t *testing.T) {
 }
 
 func TestReadBlockPromptsRequireSummary(t *testing.T) {
-	// The read prompts must not license omitting the summary
+	// The read prompt must not license omitting the summary
 	// block: the stop rule is phrased summary-first — emit the summary
 	// block IMMEDIATELY after the last read block's closing line, then
 	// end the response — and the block is declared not to replace the
@@ -590,12 +590,6 @@ func TestReadBlockPromptsRequireSummary(t *testing.T) {
 	}
 	if !strings.Contains(ReadBlockSystemPrompt, "Never end a response on a read block") {
 		t.Fatal("system prompt must state the sequence rule: the block after a read block must be the summary block")
-	}
-	if !strings.Contains(ReadBlockRestatePrompt, "does NOT replace the summary block") {
-		t.Fatal("restate prompt must state that a read block does not replace the summary block")
-	}
-	if !strings.Contains(ReadBlockRestatePrompt, "Never end a response on a read block") {
-		t.Fatal("restate prompt must state the sequence rule: the block after a read block must be the summary block")
 	}
 }
 

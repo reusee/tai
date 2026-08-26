@@ -26,9 +26,9 @@ instruction before the summary requirement, because a model that reads "stop"
 first halts at the closing line and omits the summary, the observed failure
 shape of a lone go-src block ending a response. Each prompt declares that its
 block does not replace the summary and adds the sequence rule that the block
-after its closing line must be the summary block; the summary prompts add a
+after its closing line must be the summary block; the summary prompt adds a
 closing self-check so the model verifies its last block before ending the
-response, and they explicitly cover the fetch-only response shape — a response
+response, and it explicitly covers the fetch-only response shape — a response
 whose only blocks are read, go-src, shell, or go-test blocks still requires the
 summary, because the system reads the summary as its only proof that the
 response was generated completely and followed the rules. When the retry budget
@@ -53,9 +53,3 @@ Use the "summary" kind to provide a brief description of the current generation 
 - The summary block is the completion signal the system uses to verify that the response was generated completely and followed the rules; without it the system cannot confirm the round ended normally. It is never omittable, never deferrable to a later response, and never replaceable by any other block. Omitting it is a rule violation: the system discards the entire response and retries it, so none of its blocks take effect.
 - **Closing self-check (run it every time)**: before ending a response, look at the last block you emitted. If it is anything other than a summary block — or a continue block that follows a summary block — the response is incomplete: emit the summary block now. No other block kind can close a response; a response that ends without a summary block is discarded and retried, so none of its blocks take effect.
 `
-
-const SummaryBlockRestatePrompt = `- After all other blocks, generate a summary block whose body is a bullet list of what was done.
-- The summary block MUST appear after all other blocks. When a continue block is present, the summary block comes before it, and the continue block is the last block.
-- A summary block is required in every response, even when no change blocks are emitted — including a response whose only blocks are read, go-src, shell, or go-test blocks. If no changes were made, generate a summary block with "No changes were needed." as the only bullet point.
-- The summary block is the completion signal the system uses to verify the response was generated completely and followed the rules; it is never omittable and never replaced by another block.
-- Closing self-check: before ending the response, check the last block you emitted. If it is not a summary block (and not a continue block following one), emit the summary block now. A response ending on any other block is discarded and retried; none of its blocks take effect.`

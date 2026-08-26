@@ -39,9 +39,6 @@ The continue block is a generic self-prompting mechanism with no prescribed cont
 - A continue block does NOT replace the summary block. A response carrying a continue block still requires a summary block before it: emit the summary block first, then the continue block. A response that ends without a summary block — including one that ends with only a continue block — is treated as incomplete and retried: its blocks are discarded and must be re-emitted.
 `
 
-const ContinueBlockRestatePrompt = `- Continue block: when another generation round is needed, emit a continue block whose body is the next user message content. It MUST be the last block in the response, after the summary block. The body is fed back verbatim as the next user message to trigger a new round.
-- A continue block does NOT replace the summary block: emit the summary block before it, every time. A response ending without a summary block is incomplete and retried; its blocks are discarded and must be re-emitted.`
-
 // ProcessContinueBlocks processes all continue blocks and returns their body
 // texts as generator parts. Only blocks with Kind "continue" are processed.
 // Each block's body becomes a Text part that will be fed back as the next

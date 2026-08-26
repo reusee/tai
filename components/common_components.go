@@ -25,11 +25,6 @@ command excludes continue) announces it through its own
 DisabledBlocksComponent, so each prompt carries one complete notice. See
 TheoryOfDisabledBlocks.
 
-Shell and continue components include RestatePrompt fields that provide short
-critical reminders reinforcing the block format rules at the end of the system
-prompt, improving the model's adherence to the boundary-delimited block format
-across all generation commands.
-
 Components carry no per-kind round bounds: a session may chain any number of
 shell, continue, go-test, go-src, or read rounds, so a model can run as long
 as the task requires. Run-duration control belongs to the caller, not the
@@ -46,7 +41,6 @@ func CommonComponents(shell bool) ComponentSet {
 		comps = append(comps, Component{
 			Kind:          "shell",
 			PromptSection: blocks.ShellBlockSystemPrompt,
-			RestatePrompt: blocks.ShellBlockRestatePrompt,
 			Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 				parts, err := blocks.ProcessShellBlocks(pctx.Blocks, ctx)
 				return ProcessResult{Parts: parts, Err: err}
@@ -56,7 +50,6 @@ func CommonComponents(shell bool) ComponentSet {
 	comps = append(comps, Component{
 		Kind:          "continue",
 		PromptSection: blocks.ContinueBlockSystemPrompt,
-		RestatePrompt: blocks.ContinueBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *ProcessContext) ProcessResult {
 			parts := blocks.ProcessContinueBlocks(pctx.Blocks)
 			return ProcessResult{Parts: parts}
