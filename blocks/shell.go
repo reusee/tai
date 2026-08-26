@@ -31,9 +31,8 @@ creating pointless loops. After the last shell block, the model emits the
 summary block immediately and only then ends the response, waiting for the
 results before emitting dependent content; the stop rule is phrased
 summary-first so no stop instruction licenses halting at a shell block's
-closing line. The system prompt and restate prompt (ShellBlockSystemPrompt,
-ShellBlockRestatePrompt) state these rules explicitly so the model waits for the
-results before proceeding.
+closing line. The system prompt (ShellBlockSystemPrompt) states these rules
+explicitly so the model waits for the results before proceeding.
 
 Shell command validation is handled by the security package
 (security.ValidateShellCommand), which enforces a command allowlist via AST-level
@@ -81,11 +80,6 @@ Use the "shell" kind to execute shell commands and receive the output as part of
 - If a command is rejected, the error message will be returned as user content. Adjust the command and try again.
 - Shell output triggers a new generation round so the model can act on the results.
 `
-
-const ShellBlockRestatePrompt = `- Shell block: emit a shell block whose body is the shell command to execute. The command runs with sh -c in the project root with a 30-second timeout. Only allowed commands are executed; rejected commands return an error message. Shell output triggers a new generation round.
-- Shell output is returned as user content only in the NEXT round, never in the current response: all shell blocks in a response execute only after the response ends. You MAY emit multiple shell blocks in one response, but only if their commands are independent — no shell block can rely on another shell block's output from the same response. Do not emit change blocks or ingest blocks that depend on the shell output until the results arrive.
-- After the last shell block's closing line, emit the summary block IMMEDIATELY, then end the response — never stop at the closing line itself.
-- Never end a response on a shell block: after the last shell block's closing line, the next block MUST be the summary block.`
 
 const shellTimeout = 30 * time.Second
 

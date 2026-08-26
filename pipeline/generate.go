@@ -12,6 +12,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -631,8 +632,13 @@ func (Module) GenerateWithResultWithStats(
 			return Result{}, nil, err
 		}
 
-		// Calculate remaining budget for user content
-		maxUserPromptTokens := maxInputTokens - systemPromptTokens - funcTokens - 1000
+		// Calculate remaining budget for user content. The system prompt is
+		// charged twice: once as the actual system prompt, and once for
+		// the verbatim restate appended at the end of the user prompt
+		// (components.SystemPromptRestate), which re-sends the full
+		// system prompt inside the user content. See
+		// components.TheoryOfComponents.
+		maxUserPromptTokens := maxInputTokens - systemPromptTokens*2 - funcTokens - 1000
 		if maxUserPromptTokens <= 0 {
 			return Result{}, nil, fmt.Errorf("token limit too low, need at least %d more", -maxUserPromptTokens)
 		}
@@ -653,6 +659,13 @@ func (Module) GenerateWithResultWithStats(
 
 		// Component user prompt parts are appended after parts provider parts.
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
+
+		// The system prompt restate is the last user prompt part before
+		// the dynamic chat input: the model re-reads the complete
+		// instructions verbatim immediately before generating, and the
+		// restate is built from the same text as the system prompt so the
+		// two can never diverge. See components.TheoryOfComponents.
+		userPromptParts = append(userPromptParts, components.SystemPromptRestate(string(systemPrompt)))
 
 		// Concatenate the text parts with strings.Builder for token counting.
 		userPromptText := buildUserPromptText(userPromptParts)

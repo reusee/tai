@@ -160,34 +160,29 @@ func TestShellPromptsWaitForResults(t *testing.T) {
 	// allowed, but a shell block whose command depends on another shell
 	// block's output — or a change block that depends on shell output —
 	// would act on results that have not yet arrived, creating pointless
-	// loops. The prompts must state the wait-for-results semantics
+	// loops. The prompt must state the wait-for-results semantics
 	// explicitly, and the stop rule must be phrased summary-first — emit
 	// the summary block IMMEDIATELY after the last shell block's closing
 	// line, then end the response — so no stop instruction licenses
 	// halting at the closing line and omitting the summary. See
 	// TheoryOfShellBlocks and TheoryOfSummaryBlocks.
-	prompts := map[string]string{
-		"ShellBlockSystemPrompt":  ShellBlockSystemPrompt,
-		"ShellBlockRestatePrompt": ShellBlockRestatePrompt,
+	prompt := ShellBlockSystemPrompt
+	if strings.Contains(prompt, "ONE shell block") {
+		t.Fatal("ShellBlockSystemPrompt must not restrict the model to a single shell block per response")
 	}
-	for name, prompt := range prompts {
-		if strings.Contains(prompt, "ONE shell block") {
-			t.Fatalf("%s must not restrict the model to a single shell block per response", name)
-		}
-		if !strings.Contains(prompt, "NEXT round") {
-			t.Fatalf("%s must state that shell output is returned only in the next round", name)
-		}
-		if !strings.Contains(prompt, "emit the summary block IMMEDIATELY") {
-			t.Fatalf("%s must phrase the stop rule summary-first: emit the summary block immediately after the last shell block", name)
-		}
-		if strings.Contains(prompt, "stop generating") {
-			t.Fatalf("%s must not carry a bare stop instruction before the summary requirement", name)
-		}
-		if !strings.Contains(prompt, "independent") {
-			t.Fatalf("%s must state that multiple shell blocks are only allowed when their commands are independent", name)
-		}
-		if !strings.Contains(prompt, "Never end a response on a shell block") {
-			t.Fatalf("%s must state the sequence rule: the block after the last shell block must be the summary block", name)
-		}
+	if !strings.Contains(prompt, "NEXT round") {
+		t.Fatal("ShellBlockSystemPrompt must state that shell output is returned only in the next round")
+	}
+	if !strings.Contains(prompt, "emit the summary block IMMEDIATELY") {
+		t.Fatal("ShellBlockSystemPrompt must phrase the stop rule summary-first: emit the summary block immediately after the last shell block")
+	}
+	if strings.Contains(prompt, "stop generating") {
+		t.Fatal("ShellBlockSystemPrompt must not carry a bare stop instruction before the summary requirement")
+	}
+	if !strings.Contains(prompt, "independent") {
+		t.Fatal("ShellBlockSystemPrompt must state that multiple shell blocks are only allowed when their commands are independent")
+	}
+	if !strings.Contains(prompt, "Never end a response on a shell block") {
+		t.Fatal("ShellBlockSystemPrompt must state the sequence rule: the block after the last shell block must be the summary block")
 	}
 }

@@ -74,23 +74,20 @@ appears only when at least one pattern is configured; it lists the hidden
 import-path patterns so the model neither fetches their symbols nor reads
 their files. See gotools.TheoryOfHiddenPackages.
 
-ExtraSystemPrompt is also a prompt-only Component. Change, go-test, go-src,
-and ingest components carry RestatePrompt fields — short critical
-reminders that reinforce block format rules. Restate prompts are placed at
-the end of the user prompt via ComponentSet.UserPromptParts(), not in
-the system prompt, so they are the last content the model reads before
-generating.
+ExtraSystemPrompt is also a prompt-only Component. The components carry no
+reminder text of their own: the late reminder role is filled by the verbatim
+system prompt restate (components.SystemPromptRestate), which the generation
+pipeline appends as the last user prompt part before the dynamic chat input.
+See TheoryOfComponents in the components package.
 
-The summary component carries a RestatePrompt (SummaryBlockRestatePrompt)
-that reinforces the requirement to emit a summary block in every response as
-the round completion signal. The generation loop checks for the summary block
-to distinguish a normally ended round from truncated or non-conforming output:
-no other block kind completes a round, so a round carrying component-triggering
-blocks (ingest, shell, continue, go-test, go-src) without a summary block is
-retried with feedback naming the missing summary (see TheoryOfLoops). Every
-kind prompt that stops and waits states the summary requirement with the same
-wording and adds the sequence rule — the block after the kind's closing line
-must be the summary block — so no stop instruction licenses omitting the
+The generation loop checks for the summary block to distinguish a normally
+ended round from truncated or non-conforming output: no other block kind
+completes a round, so a round carrying component-triggering blocks (ingest,
+shell, continue, go-test, go-src) without a summary block is retried with
+feedback naming the missing summary (see TheoryOfLoops). Every kind prompt
+that stops and waits states the summary requirement with the same wording
+and adds the sequence rule — the block after the kind's closing line must
+be the summary block — so no stop instruction licenses omitting the
 summary block.
 `
 
@@ -140,7 +137,6 @@ func (Module) CodesComponents(
 	// blocks.TheoryOfBlockFormatGeneral.
 	comps = append(comps, components.Component{
 		PromptSection: blocks.BlockFormatSystemPrompt,
-		RestatePrompt: blocks.BlockFormatRestatePrompt,
 	})
 
 	// Change component: prompt always included (from the change block
@@ -151,7 +147,6 @@ func (Module) CodesComponents(
 		comps = append(comps, components.Component{
 			Kind:          "change",
 			PromptSection: changes.ChangeBlockPrompt,
-			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 			Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 				err := applyChangeBlocks(pctx.Blocks, pctx.Root)
 				return components.ProcessResult{Err: err}
@@ -163,7 +158,6 @@ func (Module) CodesComponents(
 		comps = append(comps, components.Component{
 			Kind:          "change",
 			PromptSection: changes.ChangeBlockPrompt,
-			RestatePrompt: changes.ChangeBlockRestatePrompt(),
 		})
 	}
 
@@ -178,7 +172,6 @@ func (Module) CodesComponents(
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
 		PromptSection: gotools.GoTestBlockSystemPrompt,
-		RestatePrompt: gotools.GoTestBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			parts, err := gotools.ProcessGoTestBlocks(pctx.Blocks, ctx)
 			return components.ProcessResult{
@@ -197,7 +190,6 @@ func (Module) CodesComponents(
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
 		PromptSection: gotools.GoSrcBlockSystemPrompt,
-		RestatePrompt: gotools.GoSrcBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			symbols := gotools.ParseGoSrcSymbols(pctx.Blocks)
 			if len(symbols) == 0 {
@@ -234,8 +226,7 @@ func (Module) CodesComponents(
 	// to the ingest prompt only then. A nil handler keeps the section out of
 	// the prompt; an emitted lsp tag then returns an explicit
 	// unavailability error part instead of being silently ignored.
-	// RestatePrompt carries the ingest restate prompt. See
-	// blocks.TheoryOfIngestBlocks, gotools.TheoryOfGopls, and
+	// See blocks.TheoryOfIngestBlocks, gotools.TheoryOfGopls, and
 	// TheoryOfCodesComponents.
 	ingestPrompt := blocks.IngestBlockSystemPrompt
 	if lspHandler != nil {
@@ -244,7 +235,6 @@ func (Module) CodesComponents(
 	comps = append(comps, components.Component{
 		Kind:          "ingest",
 		PromptSection: ingestPrompt,
-		RestatePrompt: blocks.IngestBlockRestatePrompt,
 		Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
 			state, hasIngest, err := blocks.ProcessIngestBlocks(
 				pctx.Blocks, ctx, pctx.Root, pctx.HttpClient, lspHandler, pctx.State,
@@ -281,13 +271,10 @@ func (Module) CodesComponents(
 
 	// Summary component: processed in runPhaseWithRetry for completion detection
 	// and round statistics, not in the main component loop.
-	// RestatePrompt reinforces the requirement to emit a summary block in
-	// every response as the round completion signal. See
-	// TheoryOfCodesComponents.
+	// See TheoryOfCodesComponents.
 	comps = append(comps, components.Component{
 		Kind:          "summary",
 		PromptSection: blocks.SummaryBlockSystemPrompt,
-		RestatePrompt: blocks.SummaryBlockRestatePrompt,
 	})
 
 	// Read-only files: prompt-only component, no block kind.

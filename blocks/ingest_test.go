@@ -568,7 +568,7 @@ func TestFetchIngestRequestsError(t *testing.T) {
 }
 
 func TestIngestBlockPromptsRequireSummary(t *testing.T) {
-	// The ingest prompts must not license omitting the summary
+	// The ingest prompt must not license omitting the summary
 	// block: the stop rule is phrased summary-first — emit the summary
 	// block IMMEDIATELY after the last ingest block's closing line, then
 	// end the response — and the block is declared not to replace the
@@ -590,12 +590,6 @@ func TestIngestBlockPromptsRequireSummary(t *testing.T) {
 	}
 	if !strings.Contains(IngestBlockSystemPrompt, "Never end a response on an ingest block") {
 		t.Fatal("system prompt must state the sequence rule: the block after an ingest block must be the summary block")
-	}
-	if !strings.Contains(IngestBlockRestatePrompt, "does NOT replace the summary block") {
-		t.Fatal("restate prompt must state that an ingest block does not replace the summary block")
-	}
-	if !strings.Contains(IngestBlockRestatePrompt, "Never end a response on an ingest block") {
-		t.Fatal("restate prompt must state the sequence rule: the block after an ingest block must be the summary block")
 	}
 }
 

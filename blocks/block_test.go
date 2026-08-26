@@ -1057,14 +1057,10 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 	// by the equivalent guard in the gotools package. See
 	// TheoryOfBlockFormatGeneral.
 	prompts := map[string]string{
-		"ContinueBlockSystemPrompt":  ContinueBlockSystemPrompt,
-		"ContinueBlockRestatePrompt": ContinueBlockRestatePrompt,
-		"ShellBlockSystemPrompt":     ShellBlockSystemPrompt,
-		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
-		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
-		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
-		"IngestBlockSystemPrompt":    IngestBlockSystemPrompt,
-		"IngestBlockRestatePrompt":   IngestBlockRestatePrompt,
+		"ContinueBlockSystemPrompt": ContinueBlockSystemPrompt,
+		"ShellBlockSystemPrompt":    ShellBlockSystemPrompt,
+		"SummaryBlockSystemPrompt":  SummaryBlockSystemPrompt,
+		"IngestBlockSystemPrompt":   IngestBlockSystemPrompt,
 	}
 	for name, prompt := range prompts {
 		if strings.Contains(prompt, "<<DELIMITER") {
@@ -1075,29 +1071,19 @@ func TestKindPromptsNoLiteralDelimiterTemplate(t *testing.T) {
 
 func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 	// The delimiter policy mandates an uncommon Chinese two-character word
-	// per block. Only the unified block format prompts state the policy;
+	// per block. Only the unified block format prompt states the policy;
 	// kind prompts reference the general format and must not restate it.
 	// The Go-specific kind prompts (go-test, go-src) live in the gotools
 	// package and are covered by its equivalent guard. See
 	// TheoryOfBlockFormatGeneral.
-	policyPrompts := map[string]string{
-		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
-	}
-	for name, prompt := range policyPrompts {
-		if !strings.Contains(prompt, "uncommon Chinese two-character word") {
-			t.Fatalf("%s must mandate the uncommon-Chinese-two-character-word delimiter policy", name)
-		}
+	if !strings.Contains(BlockFormatSystemPrompt, "uncommon Chinese two-character word") {
+		t.Fatal("BlockFormatSystemPrompt must mandate the uncommon-Chinese-two-character-word delimiter policy")
 	}
 	kindPrompts := map[string]string{
-		"ContinueBlockSystemPrompt":  ContinueBlockSystemPrompt,
-		"ContinueBlockRestatePrompt": ContinueBlockRestatePrompt,
-		"ShellBlockSystemPrompt":     ShellBlockSystemPrompt,
-		"ShellBlockRestatePrompt":    ShellBlockRestatePrompt,
-		"SummaryBlockSystemPrompt":   SummaryBlockSystemPrompt,
-		"SummaryBlockRestatePrompt":  SummaryBlockRestatePrompt,
-		"IngestBlockSystemPrompt":    IngestBlockSystemPrompt,
-		"IngestBlockRestatePrompt":   IngestBlockRestatePrompt,
+		"ContinueBlockSystemPrompt": ContinueBlockSystemPrompt,
+		"ShellBlockSystemPrompt":    ShellBlockSystemPrompt,
+		"SummaryBlockSystemPrompt":  SummaryBlockSystemPrompt,
+		"IngestBlockSystemPrompt":   IngestBlockSystemPrompt,
 	}
 	for name, prompt := range kindPrompts {
 		if strings.Contains(prompt, "uncommon Chinese two-character word") {
@@ -1116,13 +1102,13 @@ func TestPromptsUseUncommonChineseDelimiterPolicy(t *testing.T) {
 }
 
 func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
-	// The summary prompts must teach a mechanical closing self-check —
+	// The summary prompt must teach a mechanical closing self-check —
 	// the same emission-time technique the block format prompt uses for
 	// the line-start rule — because a model that ends its response on
 	// a non-summary block (e.g., a go-src block) violates the
 	// every-response summary requirement without noticing. The check
 	// names the consequence: the response is discarded and retried, so
-	// none of its blocks take effect. The prompts must also cover the
+	// none of its blocks take effect. The prompt must also cover the
 	// fetch-only response shape — a response whose only blocks are
 	// ingest, go-src, shell, or go-test blocks still requires the summary
 	// — and state why the summary is non-omittable: the system reads it
@@ -1140,38 +1126,27 @@ func TestSummaryPromptsClosingSelfCheck(t *testing.T) {
 	if !strings.Contains(SummaryBlockSystemPrompt, "never omittable") {
 		t.Fatal("system prompt must state that the summary is never omittable")
 	}
-	if !strings.Contains(SummaryBlockRestatePrompt, "Closing self-check") {
-		t.Fatal("restate prompt must teach the closing self-check")
-	}
-	if !strings.Contains(SummaryBlockRestatePrompt, "ingest, go-src, shell, or go-test blocks") {
-		t.Fatal("restate prompt must cover the fetch-only response shape")
-	}
 }
 
 func TestBlockFormatPromptsNoNegativeExamples(t *testing.T) {
 	// Negative examples are deliberately omitted from the block format
-	// prompts: a model may imitate a displayed bad pattern, so the
-	// prompts state the rules directly and show only a correct example.
+	// prompt: a model may imitate a displayed bad pattern, so the
+	// prompt states the rules directly and shows only a correct example.
 	// See TheoryOfBlockFormatGeneral.
 	if !strings.Contains(BlockFormatSystemPrompt, "Do this") {
 		t.Fatal("BlockFormatSystemPrompt must keep the correct example")
 	}
-	for name, prompt := range map[string]string{
-		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
-	} {
-		if strings.Contains(prompt, "NOT this") {
-			t.Fatalf("%s must not display a negative example", name)
-		}
-		if strings.Contains(prompt, "Writing \"<<DELIMITER\"") {
-			t.Fatalf("%s must not display the forbidden literal pattern", name)
-		}
+	if strings.Contains(BlockFormatSystemPrompt, "NOT this") {
+		t.Fatal("BlockFormatSystemPrompt must not display a negative example")
+	}
+	if strings.Contains(BlockFormatSystemPrompt, "Writing \"<<DELIMITER\"") {
+		t.Fatal("BlockFormatSystemPrompt must not display the forbidden literal pattern")
 	}
 }
 
 func TestBlockFormatPromptsStateDeferredExecution(t *testing.T) {
 	// The deferred-execution contract is centralized in the unified block
-	// format prompts: blocks are processed only after the response ends,
+	// format prompt: blocks are processed only after the response ends,
 	// and results arrive as user content in the next round. Kind prompts
 	// may state kind-specific arrival details but must not restate the
 	// general principle. See TheoryOfDeferredExecution.
@@ -1181,13 +1156,8 @@ func TestBlockFormatPromptsStateDeferredExecution(t *testing.T) {
 	if !strings.Contains(BlockFormatSystemPrompt, "hallucination") {
 		t.Fatal("BlockFormatSystemPrompt must name the fabricated-result risk")
 	}
-	for name, prompt := range map[string]string{
-		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
-	} {
-		if !strings.Contains(prompt, "NEXT round") {
-			t.Fatalf("%s must state that block results arrive in the NEXT round", name)
-		}
+	if !strings.Contains(BlockFormatSystemPrompt, "NEXT round") {
+		t.Fatal("BlockFormatSystemPrompt must state that block results arrive in the NEXT round")
 	}
 }
 
@@ -1196,23 +1166,18 @@ func TestBlockFormatPromptsLineStartSelfCheck(t *testing.T) {
 	// self-check, not only as an abstract placement rule: models
 	// occasionally emit blocks mid-line, and the parser discards them.
 	// See TheoryOfBlockFormatGeneral.
-	for name, prompt := range map[string]string{
-		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
-	} {
-		if !strings.Contains(prompt, "Before emitting") {
-			t.Fatalf("%s must instruct a self-check before emitting the opening marker", name)
-		}
-		if !strings.Contains(prompt, "newline first") {
-			t.Fatalf("%s must instruct emitting a newline first when the preceding character is not a newline", name)
-		}
+	if !strings.Contains(BlockFormatSystemPrompt, "Before emitting") {
+		t.Fatal("BlockFormatSystemPrompt must instruct a self-check before emitting the opening marker")
+	}
+	if !strings.Contains(BlockFormatSystemPrompt, "newline first") {
+		t.Fatal("BlockFormatSystemPrompt must instruct emitting a newline first when the preceding character is not a newline")
 	}
 }
 
 func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
-	// The block format prompts must stay kind-agnostic: third-party
-	// programs may embed them without providing any tai-implemented
-	// kind, so they describe only the format and universally applicable
+	// The block format prompt must stay kind-agnostic: third-party
+	// programs may embed it without providing any tai-implemented
+	// kind, so it describes only the format and universally applicable
 	// rules. Kind semantics live in the kind prompts.
 	// See TheoryOfBlockFormatGeneral.
 	kindReferences := []string{
@@ -1226,14 +1191,9 @@ func TestBlockFormatPromptsAreKindAgnostic(t *testing.T) {
 		"changes will be lost",
 		"command output",
 	}
-	for name, prompt := range map[string]string{
-		"BlockFormatSystemPrompt":  BlockFormatSystemPrompt,
-		"BlockFormatRestatePrompt": BlockFormatRestatePrompt,
-	} {
-		for _, ref := range kindReferences {
-			if strings.Contains(prompt, ref) {
-				t.Fatalf("%s must not reference kind-specific semantics %q; see TheoryOfBlockFormatGeneral", name, ref)
-			}
+	for _, ref := range kindReferences {
+		if strings.Contains(BlockFormatSystemPrompt, ref) {
+			t.Fatalf("BlockFormatSystemPrompt must not reference kind-specific semantics %q; see TheoryOfBlockFormatGeneral", ref)
 		}
 	}
 }

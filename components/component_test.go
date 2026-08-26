@@ -24,19 +24,6 @@ func TestComponentSetPromptSections(t *testing.T) {
 	}
 }
 
-func TestComponentSetRestatePrompts(t *testing.T) {
-	comps := ComponentSet{
-		{Kind: "a", PromptSection: "prompt-a", RestatePrompt: "restate-a"},
-		{Kind: "b", PromptSection: "prompt-b"},
-		{Kind: "", PromptSection: "prompt-only", RestatePrompt: "restate-only"},
-		{Kind: "c", RestatePrompt: "restate-c"},
-	}
-	got := comps.RestatePrompts()
-	if got != "restate-a\n\nrestate-only\n\nrestate-c\n\n" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestComponentSetUserPromptParts(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", UserPromptParts: []generators.Part{generators.Text("part-a")}},
@@ -55,6 +42,25 @@ func TestComponentSetUserPromptParts(t *testing.T) {
 	}
 	if text, ok := parts[2].(generators.Text); !ok || text != "part-b2" {
 		t.Fatalf("expected part-b2, got %v", parts[2])
+	}
+}
+
+func TestSystemPromptRestate(t *testing.T) {
+	// The restate repeats the full system prompt verbatim under a short
+	// re-read instruction, so the reminder can never drift out of sync
+	// with the instructions, and it ends with a blank line so following
+	// content starts a fresh paragraph. See TheoryOfComponents and
+	// generators.TheoryOfContentUnitSeparation.
+	const prompt = "rule one\nrule two\n\n"
+	part := SystemPromptRestate(prompt)
+	if !strings.HasPrefix(string(part), systemPromptRestateHeader) {
+		t.Fatalf("restate must open with the re-read instruction header, got %q", string(part))
+	}
+	if !strings.Contains(string(part), "rule one\nrule two\n") {
+		t.Fatal("restate must repeat the system prompt verbatim")
+	}
+	if !strings.HasSuffix(string(part), "\n\n") {
+		t.Fatal("restate must end with a blank line so following content starts a fresh paragraph")
 	}
 }
 
@@ -149,13 +155,6 @@ func TestCommonComponents(t *testing.T) {
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
 		}
-		restate := comps.RestatePrompts()
-		if !strings.Contains(restate, "Shell block:") {
-			t.Fatal("RestatePrompts should contain shell block restate prompt")
-		}
-		if !strings.Contains(restate, "Continue block:") {
-			t.Fatal("RestatePrompts should contain continue block restate prompt")
-		}
 	})
 
 	t.Run("without shell", func(t *testing.T) {
@@ -173,13 +172,6 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
-		}
-		restate := comps.RestatePrompts()
-		if strings.Contains(restate, "Shell block:") {
-			t.Fatal("RestatePrompts should not contain shell block restate prompt when shell is disabled")
-		}
-		if !strings.Contains(restate, "Continue block:") {
-			t.Fatal("RestatePrompts should contain continue block restate prompt")
 		}
 	})
 }

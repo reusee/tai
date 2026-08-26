@@ -5,8 +5,7 @@ import (
 	"slices"
 
 	"github.com/reusee/tai/anytexts"
-	"github.com/reusee/tai/blocks"
-	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 )
@@ -19,7 +18,6 @@ func (Module) UserPrompt(
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
-	hasFiles HasFiles,
 ) UserPrompt {
 
 	generator, err := getDefaultGenerator()
@@ -37,7 +35,12 @@ func (Module) UserPrompt(
 	maxInputTokens -= maxGenerateTokens
 	systemPromptTokens, err := generator.CountTokens(string(systemPrompt))
 	ce(err)
-	maxInputTokens -= systemPromptTokens
+	// The system prompt is charged twice: once as the actual system
+	// prompt, and once for the verbatim restate appended at the end of
+	// the user prompt (components.SystemPromptRestate), which re-sends
+	// the full system prompt inside the user content. See
+	// components.TheoryOfComponents.
+	maxInputTokens -= systemPromptTokens * 2
 
 	// File patterns come from a map (flags.Files); Go map iteration
 	// order is randomized per range, so the keys must be sorted before
@@ -58,17 +61,14 @@ func (Module) UserPrompt(
 	)
 	ce(err)
 
-	// Restate prompts are placed at the end of the user prompt, not in
-	// the system prompt, so critical format reminders are the last thing
-	// the model reads before generating. The unified block format restate
-	// prompt precedes the change-specific restate prompt, so the model
-	// is reminded of the shared heredoc format before the change-specific
-	// rules. The two constants are joined with a blank line so they stay
-	// separate paragraphs. See blocks.TheoryOfBlockFormatGeneral and
+	// The system prompt restate is the last user prompt part before the
+	// dynamic user input: the model re-reads the complete instructions
+	// verbatim immediately before generating, and the restate is built
+	// from the same text as the system prompt so the two can never
+	// diverge. It ends with a blank line so the user input that follows
+	// starts a fresh paragraph. See components.TheoryOfComponents and
 	// generators.TheoryOfContentUnitSeparation.
-	if hasFiles {
-		parts = append(parts, generators.Text(blocks.BlockFormatRestatePrompt+"\n\n"+changes.ChangeBlockRestatePrompt()))
-	}
+	parts = append(parts, components.SystemPromptRestate(string(systemPrompt)))
 
 	return UserPrompt(parts)
 }

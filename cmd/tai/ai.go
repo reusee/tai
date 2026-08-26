@@ -10,6 +10,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/apps"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
@@ -85,17 +86,18 @@ intervention, and the user is only prompted when the model has no pending
 automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
 User Prompt Ordering and Prefix Cache:
-The user prompt places file context first, then the static restate prompts,
-and the dynamic user input last. The restate prompts remain immediately
-before the user input, so the model still reads the format reminders right
+The user prompt places file context first, then the verbatim system prompt
+restate, and the dynamic user input last. The restate repeats the full system
+prompt under a short re-read instruction
+(components.SystemPromptRestate), so the model re-reads every rule immediately
 before generating, while the static sections stay in the LLM prefix cache:
 when the user input changes across sessions, only the final element changes,
-and the file context and restate prompts remain byte-identical and fully
-cacheable. This is the same dynamic-content-last principle that places the
-current time at the end of the system prompt (see AISystemPrompt) and the
-memory profile at the end of the system prompt sections (see
-TheoryOfAIComponents). See TheoryOfPrefixCaching in
-generators/state_func_map.go.
+and the file context and the restate remain byte-identical and fully
+cacheable — the restate varies only when the system prompt itself varies.
+This is the same dynamic-content-last principle that places the current time
+at the end of the system prompt (see AISystemPrompt) and the memory profile
+at the end of the system prompt sections (see TheoryOfAIComponents). See
+TheoryOfPrefixCaching in generators/state_func_map.go.
 
 Thought Summarization:
 The -summarize-thoughts flag wires pipeline.NewThoughtsSummarize around the
@@ -168,9 +170,7 @@ var AICommand = Command{
 		var parts []generators.Part
 
 		for _, filePath := range files {
-			// The -match regex include filter applies to the ai command's
-			// file context exactly as it applies to the other commands.
-			// See anytexts.TheoryOfMatchFiltering.
+
 			if !nameMatch(filePath) {
 				continue
 			}
@@ -182,18 +182,15 @@ var AICommand = Command{
 			)
 		}
 
-		// Component user prompt parts (including restate prompts) precede
-		// the user input so the static format reminders remain in the LLM
-		// prefix cache across sessions; the dynamic user input is the last
-		// element the model reads before generating.
-		// See TheoryOfAiCommand.
 		parts = append(parts, comps.UserPromptParts()...)
 
-		// User input is wrapped with markers so the model can distinguish
-		// between reference file context and the task request. Placed last
-		// so the dynamic input is the only non-cached element of the user
-		// prompt.
-		// See TheoryOfAiCommand.
+		// The system prompt restate is the last user prompt part before
+		// the dynamic user input: the model re-reads the complete
+		// instructions verbatim immediately before generating, and the
+		// restate is built from the same text as the system prompt so
+		// the two can never diverge. See components.TheoryOfComponents.
+		parts = append(parts, components.SystemPromptRestate(systemPrompt))
+
 		parts = append(parts, generators.Text(
 			"\n``` begin of user input\n"+input+"\n``` end of user input\n",
 		))
@@ -209,19 +206,10 @@ var AICommand = Command{
 			},
 		)
 		buf := new(strings.Builder)
-		// When -summarize-thoughts is enabled, the stdout Output layer
-		// suppresses raw thoughts and the summarizer writes periodic
-		// summaries in their place, mirroring the generation pipeline. In
-		// TUI mode os.Stdout is discarded and the tuiOutputState decorator
-		// streams raw thoughts to the Output tab while the forked
-		// pipeline.ThoughtSummaryWriter routes summaries to the Summary
-		// tab. See TheoryOfAiCommand and
-		// pipeline.TheoryOfThoughtsSummarize.
+
 		outputShowThoughts := !bool(summarizeThoughts)
 		baseState = generators.NewOutput(baseState, os.Stdout, outputShowThoughts).WithTools(false)
-		// buf captures assistant text for memory block parsing.
-		// showThoughts=false excludes Thought parts so model reasoning
-		// does not interfere with memory block extraction.
+
 		baseState = generators.NewOutput(baseState, buf, false).WithTools(false)
 		if bool(summarizeThoughts) {
 			summarizer, err := getDefaultSummarizer()
@@ -233,13 +221,6 @@ var AICommand = Command{
 			baseState = pipeline.NewThoughtsSummarize(ctx, baseState, summarizer, summaryWriter)
 		}
 
-		// Memory is updated after each generation round via the OnRoundSuccess
-		// hook, before the user is prompted for the next input (OnIdle). This
-		// ensures memory is persisted incrementally rather than deferred until
-		// the chat session ends. The buf Output layer captures assistant text
-		// (showThoughts=false) for memory block parsing; prevBufLen tracks the
-		// buffer position to extract only the new text from each round.
-		// See TheoryOfAiCommand.
 		prevBufLen := 0
 
 		// When NoHuman is set, OnIdle is nil so the loop ends without

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/components"
 	"github.com/reusee/tai/flags"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
@@ -321,31 +322,25 @@ func TestSystemPromptAndUserPromptChangeBlockPlacement(t *testing.T) {
 		if !strings.Contains(s, "Change Block Kind") {
 			t.Fatal("system prompt must include change block prompt when focus files are present")
 		}
-		// Restate prompt must NOT be in the system prompt (it is in the
-		// user prompt now). "Prefer precise modifications over WRITE"
-		// appears only in the change restate prompt; the system prompt's
-		// ChangeBlockPrompt has "Prefer Precise Modifications" with a
-		// parenthetical between "modifications" and "over WRITE", so the
-		// exact phrase is restate-only.
-		if strings.Contains(s, "Prefer precise modifications over WRITE") {
-			t.Fatal("system prompt must not include change block restate prompt")
+		// The user prompt ends with the verbatim system prompt restate,
+		// so the change block rules — including the precise-modification
+		// guidance — are re-read right before generating. See
+		// components.TheoryOfComponents.
+		if len(userPrompt) == 0 {
+			t.Fatal("user prompt must have parts")
 		}
-		// User prompt must include the restate prompt at the end.
-		foundRestate := false
-		for _, part := range userPrompt {
-			if text, ok := part.(generators.Text); ok {
-				if strings.Contains(string(text), "Prefer precise modifications over WRITE") {
-					foundRestate = true
-				}
-			}
+		last := userPrompt[len(userPrompt)-1]
+		text, ok := last.(generators.Text)
+		if !ok || text != components.SystemPromptRestate(s) {
+			t.Fatalf("user prompt must end with the verbatim system prompt restate, got %T", last)
 		}
-		if !foundRestate {
-			t.Fatal("user prompt must include change block restate prompt when focus files are present")
+		if !strings.Contains(string(text), "Prefer Precise Modifications") {
+			t.Fatal("the restate must carry the change block prompt's guidance")
 		}
 	})
 }
 
-func TestUserPromptRestateJoinBlankLine(t *testing.T) {
+func TestUserPromptEndsWithSystemPromptRestate(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -370,24 +365,24 @@ func TestUserPromptRestateJoinBlankLine(t *testing.T) {
 		},
 	).Call(func(
 		userPrompt UserPrompt,
+		systemPrompt SystemPrompt,
 	) {
-		// The unified block format restate prompt and the change restate
-		// prompt must be separated by a blank line so the two constants
-		// stay distinct paragraphs. See
-		// generators.TheoryOfContentUnitSeparation.
-		for _, part := range userPrompt {
-			text, ok := part.(generators.Text)
-			if !ok {
-				continue
-			}
-			if strings.Contains(string(text), "**CRITICAL**") {
-				if !strings.Contains(string(text), "No blank lines are required before or after a block.\n\n**CRITICAL**") {
-					t.Fatalf("block format restate and change restate must be separated by a blank line, got:\n%s", string(text))
-				}
-				return
-			}
+		// The user prompt must end with the verbatim system prompt
+		// restate: the full system prompt repeated under a short re-read
+		// instruction, so the model re-reads every rule immediately
+		// before generating and the reminder can never drift out of sync
+		// with the instructions. See components.TheoryOfComponents.
+		if len(userPrompt) == 0 {
+			t.Fatal("user prompt must have parts")
 		}
-		t.Fatal("restate prompt part not found in user prompt")
+		last := userPrompt[len(userPrompt)-1]
+		text, ok := last.(generators.Text)
+		if !ok {
+			t.Fatalf("last user prompt part must be a text part, got %T", last)
+		}
+		if want := components.SystemPromptRestate(string(systemPrompt)); text != want {
+			t.Fatal("user prompt must end with the verbatim system prompt restate")
+		}
 	})
 }
 

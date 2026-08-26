@@ -62,10 +62,11 @@ AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the pipeline module's CodesComponents
 provider.
 
-RestatePrompts are included for the block format, memory, and shell
-components. Each RestatePrompt provides a short critical reminder that
-reinforces the block format rules. Restate prompts are placed at the end of the
-user prompt via ComponentSet.UserPromptParts(), not in the system prompt.
+The components carry no reminder text of their own: the late reminder role is
+filled by the verbatim system prompt restate
+(components.SystemPromptRestate), which the ai command appends as the last
+user prompt part before the dynamic user input. See
+components.TheoryOfComponents.
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only
@@ -101,12 +102,9 @@ func (Module) AIComponents(
 
 	// BlockFormatSystemPrompt is a prompt-only Component that teaches the
 	// model the boundary-delimited block format used by memory blocks.
-	// RestatePrompt reinforces the critical line-start and boundary
-	// uniqueness rules at the end of the system prompt.
 	// See TheoryOfAIComponents.
 	comps = append(comps, components.Component{
 		PromptSection: blocks.BlockFormatSystemPrompt,
-		RestatePrompt: blocks.BlockFormatRestatePrompt,
 	})
 
 	// Common components: shell (conditional on flagShell) only. The
@@ -179,7 +177,6 @@ func (Module) AIComponents(
 	// shell, and extra prompt sections remain byte-identical and fully
 	// cacheable. Processing is done post-loop in ai.go via
 	// memories.UpdateMemoryFromBlock, not in the generation loop.
-	// RestatePrompt reinforces the memory block format.
 	// See TheoryOfAIComponents.
 	if !noMemory {
 		var profileText string
@@ -189,7 +186,6 @@ func (Module) AIComponents(
 		comps = append(comps, components.Component{
 			Kind:          "memory",
 			PromptSection: memoryBlockSystemPrompt(profileText),
-			RestatePrompt: memoryBlockRestatePrompt,
 		})
 	}
 
@@ -220,5 +216,3 @@ func memoryBlockSystemPrompt(profileText string) string {
 用户画像：
 ` + profileText
 }
-
-const memoryBlockRestatePrompt = `- Memory block: emit a memory block whose body is <memory><memory-item>new user profile fact</memory-item><memory-delete>exact text of an existing item to remove</memory-delete></memory>, only when there is a new factual item to add or the user explicitly corrected or invalidated an existing item. A deletion must match the existing item exactly and wins over an add of the same item in the same round. Do not mix memory content into the regular reply. If nothing to add or delete, do not emit this block.`
