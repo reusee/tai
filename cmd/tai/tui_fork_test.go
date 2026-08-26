@@ -19,7 +19,9 @@ import (
 // terminal, where the next repaint erased it. forkTUIDisplay resolves
 // the loop after the forks; this test drives one round through the
 // forked loop and asserts the usage line lands in the Summary tab's
-// signals. See TheoryOfTUIDisplayFork and pipeline.TheoryOfUsageLogging.
+// signals. The event stream must carry the same round usage as an
+// EventUsage (see pipeline.TheoryOfLoopEvents), which the test also
+// asserts. See TheoryOfTUIDisplayFork and pipeline.TheoryOfUsageLogging.
 func TestForkTUIDisplayBindsUsageWriter(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
@@ -35,7 +37,8 @@ func TestForkTUIDisplayBindsUsageWriter(t *testing.T) {
 		usage.Thoughts.TokenCount = 10
 
 		var result pipeline.Result
-		for err := range run(context.Background(), pipeline.RunOptions{
+		var usageEvents []pipeline.Event
+		for ev, err := range run(context.Background(), pipeline.RunOptions{
 			InitialState: generators.NewPrompts("", nil),
 			PhaseBuilder: func(_ generators.Generator) generators.Phase {
 				return func(_ context.Context, state generators.State) (generators.Phase, generators.State, error) {
@@ -53,7 +56,21 @@ func TestForkTUIDisplayBindsUsageWriter(t *testing.T) {
 				}
 			},
 		}, &result) {
-			t.Fatal(err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Kind == pipeline.EventUsage {
+				usageEvents = append(usageEvents, ev)
+			}
+		}
+		if len(usageEvents) != 1 {
+			t.Fatalf("expected 1 EventUsage in the event stream, got %d", len(usageEvents))
+		}
+		if got := usageEvents[0].Usage.Prompt.TokenCount; got != 100 {
+			t.Fatalf("expected the round usage on EventUsage, got prompt tokens %d", got)
+		}
+		if got := usageEvents[0].Round; got != 1 {
+			t.Fatalf("expected round 1 on EventUsage, got %d", got)
 		}
 	})
 

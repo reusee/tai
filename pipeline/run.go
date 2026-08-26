@@ -66,6 +66,7 @@ summarized to free budget, conversation history as knowledge base — violate
 this philosophy and are out of scope.
 `
 
+// TheoryOfLoops documents the unified generation loop.
 const TheoryOfLoops = `
 The pipeline unifies the generation loop pattern across all generation
 commands (go, any, ai, next). The core pattern:
@@ -75,10 +76,15 @@ commands (go, any, ai, next). The core pattern:
 4. Process collected blocks through components (if any)
 5. Repeat until no components trigger or MaxRounds is reached
 
-Run is exposed as an iterator: func(ctx, opts, result *Result) iter.Seq[error].
-The result is filled incrementally as the run progresses, and the iterator
-yields the terminal error, if any, when the run stops. Callers may suspend
-and resume the run via iter.Pull, inspecting the result between pulls.
+Run is exposed as an event iterator: func(ctx, opts, result *Result)
+iter.Seq2[Event, error]. The result is filled incrementally as the run
+progresses; every notable occurrence — round lifecycle (start, success,
+truncation, error), retry decisions and handoffs, synthesized completion
+summaries, per-round token usage, component-triggered and idle
+continuations — is yielded as an Event as it occurs (see
+TheoryOfLoopEvents). The terminal error, if any, arrives with the final
+yield's error component when the run stops. Callers may suspend and
+resume the run via iter.Pull2, inspecting the result between pulls.
 
 A round is one pass through the phase chain, producing a summary and parts.
 The round's outcome is captured by roundResult: the updated state, the
@@ -148,6 +154,9 @@ summaries and finish reasons and the Logs pane is not duplicated. A round
 that ends with an error carries an outcome marker ("error" in the log entry,
 "(error)" in the writer line), so token consumption is traceable for every
 attempt, including retries. Rounds that record no token usage emit nothing.
+Each recorded round usage is also yielded to the run's event stream as an
+EventUsage (see TheoryOfLoopEvents), so a live consumer observes usage as
+the run progresses.
 
 The usage is extracted by scanning the state's contents appended since the
 start of the round and taking the final Usage part, rather than summing
@@ -200,10 +209,14 @@ var _ InteractionRecorder = (*records.Recorder)(nil)
 // components, and continues if a component triggers a new round.
 // When Components is empty, the loop runs a single round (single-shot
 // mode). The result is filled into result as the run progresses, and
-// the returned iterator yields the terminal error, if any, when the
-// run stops. Callers may suspend and resume the run via iter.Pull,
-// inspecting result between pulls. See TheoryOfLoops.
-type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error]
+// the returned iterator yields one Event per notable occurrence —
+// round lifecycle (start, success, truncation, error), retries and
+// handoffs, synthesized completion summaries, per-round token usage,
+// and component-triggered or idle continuations — with the terminal
+// error, if any, arriving with the final yield's error component.
+// Callers may suspend and resume the run via iter.Pull2, inspecting
+// the result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
+type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error]
 
 // roundResult is the outcome of one generation round: the updated state,
 // the round's summary, and the parts that determine whether the next
@@ -222,14 +235,23 @@ type roundResult struct {
 
 // loopState holds the mutable state of a generation loop run. The main loop
 // in Run executes rounds via runRound; the state here is updated by each round
-// and carried into the next. See TheoryOfLoops.
+// and carried into the next. Events are yielded through the guarded
+// emitEvent/emitTerminal methods: after the consumer stops, further events
+// are dropped so the loop's bookkeeping can still complete. See
+// TheoryOfLoops and TheoryOfLoopEvents.
 type loopState struct {
-	ctx    context.Context
-	opts   RunOptions
-	rec    InteractionRecorder
-	result *Result
-	yield  func(error) bool
-	state  generators.State
+	ctx     context.Context
+	opts    RunOptions
+	rec     InteractionRecorder
+	result  *Result
+	yield   func(Event, error) bool
+	stopped bool
+	state   generators.State
+
+	// round is the 1-based round number of the round being executed.
+	// Retries within a round share the round number; their events carry
+	// the attempt number separately. See TheoryOfLoopEvents.
+	round int
 
 	remainingBlocks []blocks.Block
 	maxRetries      int
@@ -250,11 +272,13 @@ type loopState struct {
 }
 
 func (ls *loopState) runRound() (roundResult, error) {
-	// Round start: report to the interaction recorder and reset
-	// per-round state (e.g., MemoryStore.Reset).
+	// Round start: report to the interaction recorder, reset per-round
+	// state (e.g., MemoryStore.Reset), and open the round in the event
+	// stream. See TheoryOfLoopEvents.
 	if ls.rec != nil && ls.rec.Enabled() {
 		ls.rec.RoundStart()
 	}
+	ls.emitEvent(Event{Kind: EventRoundStart, Round: ls.round})
 	if ls.opts.OnRoundStart != nil && !ls.skipOnRoundStart {
 		ls.opts.OnRoundStart()
 	}
@@ -354,6 +378,17 @@ func (ls *loopState) runRound() (roundResult, error) {
 						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, roundErr))
 					}
 
+					// Report the retry decision to the event stream.
+					// See TheoryOfLoopEvents.
+					ls.emitEvent(Event{
+						Kind:        EventRetry,
+						Round:       ls.round,
+						Attempt:     retry + 1,
+						MaxAttempts: ls.maxRetries,
+						Err:         roundErr,
+						Detail:      "error after partial output",
+					})
+
 					var retryParts []generators.Part
 					retryParts = append(retryParts, generators.Text(
 						fmt.Sprintf(errorRetryPrefix, roundErr.Error(), retry+1, ls.maxRetries)))
@@ -380,6 +415,16 @@ func (ls *loopState) runRound() (roundResult, error) {
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
 								retryPrompt = handoff.Prompt
+								// Report the produced handoff to the
+								// event stream. See TheoryOfLoopEvents.
+								ls.emitEvent(Event{
+									Kind:        EventHandoff,
+									Round:       ls.round,
+									Attempt:     retry + 1,
+									MaxAttempts: ls.maxRetries,
+									Summary:     handoff.Summary,
+									Handoff:     handoff,
+								})
 								// Account the handoff request's own token
 								// spend before the failed round is recorded.
 								// The window starts at the failed attempt's
@@ -488,10 +533,36 @@ func (ls *loopState) runRound() (roundResult, error) {
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
 					retryPrompt = handoff.Prompt
+					// Report the produced handoff to the event
+					// stream. See TheoryOfLoopEvents.
+					ls.emitEvent(Event{
+						Kind:        EventHandoff,
+						Round:       ls.round,
+						Attempt:     retry + 1,
+						MaxAttempts: ls.maxRetries,
+						Summary:     handoff.Summary,
+						Handoff:     handoff,
+					})
 					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}
 			}
 		}
+
+		// Report the truncated attempt to the event stream, carrying
+		// the handoff summary when one was produced. See
+		// TheoryOfLoopEvents.
+		truncatedDetail := "missing completion (no summary block)"
+		if isAbnormalFinish {
+			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
+		}
+		ls.emitEvent(Event{
+			Kind:        EventRoundTruncated,
+			Round:       ls.round,
+			Attempt:     retry + 1,
+			MaxAttempts: ls.maxRetries,
+			Summary:     summary,
+			Detail:      truncatedDetail,
+		})
 
 		// Record the truncated round in round statistics.
 		if ls.opts.OnRoundTruncated != nil {
@@ -556,6 +627,14 @@ func (ls *loopState) runRound() (roundResult, error) {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
+				// Report the synthesized completion summary to the
+				// event stream. See TheoryOfLoopEvents.
+				ls.emitEvent(Event{
+					Kind:    EventSynthesizedSummary,
+					Round:   ls.round,
+					Summary: handoff.Summary,
+					Handoff: handoff,
+				})
 				// Account the handoff request's own token spend so the
 				// synthesized completion's round statistics and usage
 				// line include it. The window starts at the final
@@ -589,10 +668,16 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}
 
 	// Report the successfully completed round to the interaction
-	// recorder.
+	// recorder and the event stream.
 	if ls.rec != nil && ls.rec.Enabled() {
 		ls.rec.RoundSuccess(roundSummaries)
 	}
+	ls.emitEvent(Event{
+		Kind:      EventRoundSuccess,
+		Round:     ls.round,
+		Summary:   strings.Join(roundSummaries, "\n"),
+		Summaries: roundSummaries,
+	})
 
 	ls.state = phaseState
 
@@ -624,6 +709,11 @@ func (ls *loopState) runRound() (roundResult, error) {
 				ls.recordRoundError(aerr)
 				return roundResult{state: ls.state}, aerr
 			}
+			ls.emitEvent(Event{
+				Kind:   EventComponentsTriggered,
+				Round:  ls.round,
+				Detail: fmt.Sprintf("parse error feedback: %d user part(s) scheduled the next round", len(parseErrorParts)),
+			})
 			return roundResult{
 				state:        ls.state,
 				summaries:    roundSummaries,
@@ -672,6 +762,11 @@ func (ls *loopState) runRound() (roundResult, error) {
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.Event("decision", fmt.Sprintf("components triggered a new generation round: %d user part(s)", len(combinedParts)))
 		}
+		ls.emitEvent(Event{
+			Kind:   EventComponentsTriggered,
+			Round:  ls.round,
+			Detail: fmt.Sprintf("%d user part(s) scheduled the next round", len(combinedParts)),
+		})
 		return roundResult{
 			state:        ls.state,
 			summaries:    roundSummaries,
@@ -691,6 +786,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 			if ls.rec != nil && ls.rec.Enabled() {
 				ls.rec.Event("decision", "idle handler returned user input; starting a new round")
 			}
+			ls.emitEvent(Event{Kind: EventIdle, Round: ls.round})
 			return roundResult{
 				state:        ls.state,
 				summaries:    roundSummaries,
@@ -705,30 +801,27 @@ func (ls *loopState) runRound() (roundResult, error) {
 	}, nil
 }
 
-// recordRoundUsage records the aggregated token usage of one round: to the
-// UsageWriter when one is configured, otherwise as a "usage" log entry.
-// See TheoryOfUsageLogging.
+// recordRoundUsage records the aggregated token usage of one round: to
+// the UsageWriter when one is configured, otherwise as a "usage" log
+// entry, and always to the run's event stream so consumers observe
+// round usage as it occurs. Rounds that record no token usage emit
+// nothing. See TheoryOfUsageLogging and TheoryOfLoopEvents.
 func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
-	var usage generators.Usage
-	i := 0
-	for c := range state.Contents() {
-		if i < roundBaseCount {
-			i++
-			continue
-		}
-		for _, p := range c.Parts {
-			if u, ok := p.(generators.Usage); ok {
-				usage = u
-			}
-		}
-		i++
-	}
+	// The usage is the last Usage part among the contents appended since
+	// the round started, not a sum of streaming snapshots.
+	// See TheoryOfUsageLogging.
+	usage := extractLastUsage(state, roundBaseCount)
 	if usage.Prompt.TokenCount == 0 &&
 		usage.Prompt.TokenCountCached == 0 &&
 		usage.Candidates.TokenCount == 0 &&
 		usage.Thoughts.TokenCount == 0 {
 		return
 	}
+	ls.emitEvent(Event{
+		Kind:  EventUsage,
+		Round: roundNumber,
+		Usage: usage,
+	})
 	if ls.usageWriter != nil {
 		// A configured UsageWriter owns the usage output (the TUI routes
 		// the line to its Summary tab); the logger record is not
@@ -769,16 +862,18 @@ func (ls *loopState) recordRoundError(err error) {
 }
 
 // finishWithError fills the result with the final state and yields the
-// terminal error, ending the run. The caller must return immediately
-// after the call.
+// terminal error event, ending the run. The caller must return
+// immediately after the call.
 func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
 	ls.runErr = err
-	if !ls.yield(ls.runErr) {
-		return
-	}
+	ls.emitTerminal(Event{
+		Kind:  EventRoundError,
+		Round: ls.round,
+		Err:   err,
+	}, err)
 }
 
 // finish fills the result with the final state and ends the run without
@@ -1046,11 +1141,11 @@ func (Module) Run(
 	logger logs.Logger,
 	usageWriter UsageWriter,
 ) Run {
-	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error] {
+	return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
 		if result == nil {
 			result = &Result{}
 		}
-		return func(yield func(error) bool) {
+		return func(yield func(Event, error) bool) {
 			// Determine the active interaction recorder. When the caller does
 			// not pass one explicitly, the provider-injected default is used,
 			// so every loop run records interactions automatically.
@@ -1061,7 +1156,9 @@ func (Module) Run(
 			}
 			opts.InteractionRecorder = rec
 
-			// The loop state carries the mutable state of the run.
+			// The loop state carries the mutable state of the run. Events
+			// are yielded through the guarded emitEvent/emitTerminal
+			// methods. See TheoryOfLoopEvents.
 			ls := &loopState{
 				ctx:         ctx,
 				opts:        opts,
@@ -1127,15 +1224,17 @@ func (Module) Run(
 			// next round starts. prevRoundContentCount tracks the content
 			// count at the start of the current round so the round's
 			// aggregated token usage can be isolated from the contents
-			// appended during the round. See TheoryOfLoops.
+			// appended during the round. The round's occurrences are
+			// yielded as Events by runRound through the guarded yield.
+			// See TheoryOfLoops and TheoryOfLoopEvents.
 			prevRoundContentCount := generators.CountContents(ls.state)
-			for round := 0; opts.MaxRounds == 0 || round < opts.MaxRounds; round++ {
+			for ls.round = 1; opts.MaxRounds == 0 || ls.round <= opts.MaxRounds; ls.round++ {
 				outcome, err := ls.runRound()
 				if err != nil {
 					// Record the failed round's token usage so token
 					// consumption is traceable for every attempt, including
 					// rounds that end with an error. See TheoryOfUsageLogging.
-					ls.recordRoundUsage(outcome.state, prevRoundContentCount, round+1, "error")
+					ls.recordRoundUsage(outcome.state, prevRoundContentCount, ls.round, "error")
 					ls.finishWithError(err, outcome.state)
 					return
 				}
@@ -1144,7 +1243,7 @@ func (Module) Run(
 				// the logger otherwise — so token consumption is visible
 				// per round, not only in the end-of-session statistics
 				// table. See TheoryOfUsageLogging.
-				ls.recordRoundUsage(outcome.state, prevRoundContentCount, round+1, "")
+				ls.recordRoundUsage(outcome.state, prevRoundContentCount, ls.round, "")
 				prevRoundContentCount = generators.CountContents(outcome.state)
 				if outcome.continueNext {
 					continue

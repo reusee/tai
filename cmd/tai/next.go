@@ -233,10 +233,12 @@ var NextCommand = Command{
 		// error message fed back as user content. The interaction
 		// recorder is passed explicitly so the session is captured when
 		// -record is enabled. The result is filled into result as the
-		// run progresses; the iterator yields the terminal error, if
-		// any. See pipeline.TheoryOfLoops.
+		// run progresses; the iterator yields the run's events, and the
+		// terminal error, if any, arrives with the final yield's error
+		// component. See pipeline.TheoryOfLoops and
+		// pipeline.TheoryOfLoopEvents.
 		var result pipeline.Result
-		for e := range loopRun(ctx, pipeline.RunOptions{
+		for _, e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
@@ -251,7 +253,9 @@ var NextCommand = Command{
 			},
 			RetryOnError: true,
 		}, &result) {
-			err = e
+			if e != nil {
+				err = e
+			}
 		}
 		ce(err)
 

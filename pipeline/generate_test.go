@@ -1178,8 +1178,8 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 			}
 		},
 		func() Run {
-			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error] {
-				return func(yield func(error) bool) {}
+			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
+				return func(yield func(Event, error) bool) {}
 			}
 		},
 	).Call(func(
@@ -1225,8 +1225,8 @@ func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
 			}
 		},
 		func() Run {
-			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq[error] {
-				return func(yield func(error) bool) {
+			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
+				return func(yield func(Event, error) bool) {
 					// One successful round with no summaries: the loop
 					// collects a zero-usage RoundStat, enough for
 					// PrintRoundStats to render the table.

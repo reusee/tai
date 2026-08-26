@@ -1884,15 +1884,17 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 func TestWithTUIOutputObserver(t *testing.T) {
 	tui := newTUIForTest()
 	var gotOpts pipeline.RunOptions
-	run := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
+	run := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		gotOpts = opts
-		return func(yield func(error) bool) {}
+		return func(yield func(pipeline.Event, error) bool) {}
 	}
 	wrapped := withTUIOutputObserver(run, tui)
 
 	var result pipeline.Result
-	for e := range wrapped(context.Background(), pipeline.RunOptions{}, &result) {
-		t.Fatal(e)
+	for _, e := range wrapped(context.Background(), pipeline.RunOptions{}, &result) {
+		if e != nil {
+			t.Fatal(e)
+		}
 	}
 	if len(gotOpts.StateDecorators) != 1 {
 		t.Fatalf("expected 1 state decorator, got %d", len(gotOpts.StateDecorators))

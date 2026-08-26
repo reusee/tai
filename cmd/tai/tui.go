@@ -1182,7 +1182,7 @@ var (
 )
 
 func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
-	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
+	return func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		opts.StateDecorators = append(opts.StateDecorators, func(state generators.State) generators.State {
 			// The tuiOutputState layer observes only content appended
 			// after it wraps the state. Initial contents are not parsed

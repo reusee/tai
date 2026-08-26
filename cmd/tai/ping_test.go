@@ -257,10 +257,10 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		{Kind: "zzz", Attributes: map[string]string{"key": `say "hi"`}, Body: "body three"},
 	}
 	var gotOpts pipeline.RunOptions
-	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
-		return func(yield func(error) bool) {}
+		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
 	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
@@ -354,10 +354,10 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		{Kind: "xyz", Attributes: map[string]string{"tag": "qux"}, Body: "body two"},
 	}
 	var gotOpts pipeline.RunOptions
-	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq[error] {
+	fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		gotOpts = opts
 		result.RemainingBlocks = pingResultBlocks(specs)
-		return func(yield func(error) bool) {}
+		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
 	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))

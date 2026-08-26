@@ -341,10 +341,12 @@ var PingCommand = Command{
 		// observer is applied via RunOptions.StateDecorators when -tui
 		// is enabled. Parsed blocks are collected in result.RemainingBlocks
 		// because no component consumes them. The result is filled into
-		// result as the run progresses; the iterator yields the terminal
-		// error, if any. See pipeline.TheoryOfLoops and TheoryOfTUI.
+		// result as the run progresses; the iterator yields the run's
+		// events, and the terminal error, if any, arrives with the final
+		// yield's error component. See pipeline.TheoryOfLoops,
+		// pipeline.TheoryOfLoopEvents and TheoryOfTUI.
 		var result pipeline.Result
-		for e := range loopRun(ctx, pipeline.RunOptions{
+		for _, e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        state,
 			Components:          nil,
@@ -354,7 +356,9 @@ var PingCommand = Command{
 				return buildGenerate(g, nil)(nil)
 			},
 		}, &result) {
-			err = e
+			if e != nil {
+				err = e
+			}
 		}
 		ce(err)
 

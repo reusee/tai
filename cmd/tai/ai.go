@@ -257,10 +257,12 @@ var AICommand = Command{
 		// after each round via OnRoundSuccess. The interaction recorder is
 		// passed explicitly so the session is captured when -record is
 		// enabled. The result is filled into result as the run progresses;
-		// the iterator yields the terminal error, if any.
-		// See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
+		// the iterator yields the run's events, and the terminal error, if
+		// any, arrives with the final yield's error component.
+		// See pipeline.TheoryOfIdleHandler, pipeline.TheoryOfLoops and
+		// pipeline.TheoryOfLoopEvents.
 		var result pipeline.Result
-		for e := range loopRun(ctx, pipeline.RunOptions{
+		for _, e := range loopRun(ctx, pipeline.RunOptions{
 			Generator:           generator,
 			InitialState:        baseState,
 			Components:          comps.ComponentSet,
@@ -285,7 +287,9 @@ var AICommand = Command{
 			OnIdle:     onIdle,
 			HTTPClient: nets.HTTPClient{},
 		}, &result) {
-			err = e
+			if e != nil {
+				err = e
+			}
 		}
 		ce(err)
 

@@ -753,7 +753,11 @@ func (Module) GenerateWithResultWithStats(
 		var fatalErr error
 
 		var result Result
-		for e := range loopRun(runCtx, RunOptions{
+		// The loop yields one Event per notable occurrence; the terminal
+		// error, if any, arrives with the final yield's error component.
+		// Events with a nil error are informational and do not set err.
+		// See TheoryOfLoopEvents.
+		for _, e := range loopRun(runCtx, RunOptions{
 			Generator:    generator,
 			InitialState: state,
 			Components:   comps.ComponentSet,
@@ -852,7 +856,9 @@ func (Module) GenerateWithResultWithStats(
 				return handoff, err
 			},
 		}, &result) {
-			err = e
+			if e != nil {
+				err = e
+			}
 		}
 
 		if fatalErr != nil {

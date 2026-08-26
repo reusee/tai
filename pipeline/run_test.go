@@ -31,14 +31,19 @@ func withRun(t *testing.T, fn func(Run)) {
 }
 
 // runOnce runs the loop to completion and returns the result and the
-// terminal error, if any. It adapts the iterator-based Run to the
-// (Result, error) shape used by the tests.
+// terminal error, if any. It drains the event iterator — events carry
+// the run's notable occurrences (see TheoryOfLoopEvents) and only the
+// final yield may carry the terminal error — and remembers the last
+// non-nil error.
 func runOnce(run Run, opts RunOptions) (Result, error) {
 	var result Result
-	for e := range run(context.Background(), opts, &result) {
-		return result, e
+	var err error
+	for _, e := range run(context.Background(), opts, &result) {
+		if e != nil {
+			err = e
+		}
 	}
-	return result, nil
+	return result, err
 }
 
 // appendPhase creates a phase that appends text content and returns nil
