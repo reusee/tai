@@ -128,17 +128,14 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		fmt.Fprintf(&body, "- line %d", i)
 	}
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: body.String()})
-	if len(tui.events) != 1 || len(tui.events[0]) != lines+1 {
-		t.Fatalf("expected 1 event group of %d lines, got %d groups", lines+1, len(tui.events))
+	if len(tui.events) != 1 || len(tui.events[0]) != lines {
+		t.Fatalf("expected 1 event group of %d lines, got %d groups", lines, len(tui.events))
 	}
 	if tui.events[0][0].Text != "- line 0" {
 		t.Fatalf("expected the very first event line retained, got %q", tui.events[0][0].Text)
 	}
 	if tui.events[0][lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
 		t.Fatalf("expected the last event line retained, got %q", tui.events[0][lines-1].Text)
-	}
-	if tui.events[0][lines].Text != "" {
-		t.Fatalf("expected the trailing blank separator retained, got %q", tui.events[0][lines].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -470,12 +467,11 @@ func TestLogAltBG(t *testing.T) {
 
 // TestTUIEventsAlternateBackgrounds verifies that the Events tab shades
 // consecutive events alternately, like the Logs tab shades log lines:
-// every display line of one event — including its trailing blank
-// separator — carries the event's shade, and focusing the Events tab
-// re-derives both shades from the focused background. Auto-expansion
-// gives the Events tab the focus when it is the first tab to receive
-// content, so the unfocused shades are asserted with the focus cleared
-// explicitly. See TheoryOfTUI and taiui.TheoryOfTabs.
+// every display line of one event carries the event's shade, and focusing
+// the Events tab re-derives both shades from the focused background.
+// Auto-expansion gives the Events tab the focus when it is the first tab
+// to receive content, so the unfocused shades are asserted with the focus
+// cleared explicitly. See TheoryOfTUI and taiui.TheoryOfTabs.
 func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
@@ -487,14 +483,14 @@ func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 	base := panelStyle.BaseBG
 	alt := taiui.AltBG(base)
 
-	// Each event renders one text line plus its blank separator, so the
-	// two events produce four display lines: base, base, alt, alt.
+	// Each event renders one text line, so the two events produce two
+	// display lines: base, alt.
 	tui.tabs.Focus = -1
 	display := wrappedDisplay(tui, 1, box)
-	if len(display) != 4 {
-		t.Fatalf("expected 4 display lines, got %d", len(display))
+	if len(display) != 2 {
+		t.Fatalf("expected 2 display lines, got %d", len(display))
 	}
-	for i, want := range []taiui.Color{base, base, alt, alt} {
+	for i, want := range []taiui.Color{base, alt} {
 		if display[i].BGColor != want {
 			t.Fatalf("line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
 		}
@@ -504,7 +500,7 @@ func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 	base = panelStyle.FocusBG
 	alt = taiui.AltBG(base)
 	display = wrappedDisplay(tui, 1, box)
-	for i, want := range []taiui.Color{base, base, alt, alt} {
+	for i, want := range []taiui.Color{base, alt} {
 		if display[i].BGColor != want {
 			t.Fatalf("focused line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
 		}
@@ -1745,8 +1741,8 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	if len(tui.events) != 1 || len(tui.events[0]) != 2 {
-		t.Fatalf("expected one rendered event group closed by its blank separator, got %v", tui.events)
+	if len(tui.events) != 1 || len(tui.events[0]) != 1 {
+		t.Fatalf("expected one rendered event group, got %v", tui.events)
 	}
 	if tui.events[0][0].Text != "- done" {
 		t.Fatalf("expected the summary line first in the event group, got %q", tui.events[0][0].Text)
@@ -1911,14 +1907,14 @@ func TestWithTUIOutputObserver(t *testing.T) {
 // generating hint, the usage line carries the outcome marker, the thought
 // summary header carries the thought color, round starts and empty-summary
 // round successes render log lines, and an unknown kind renders a generic
-// event line. Each event is stored as one line group closed by a blank
-// separator. See TheoryOfTUI.
+// event line. Each event is stored as one line group; consecutive events
+// are shaded alternately. See TheoryOfTUI.
 func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
-	if len(tui.events) != 1 || len(tui.events[0]) != 2 {
-		t.Fatalf("expected 1 event group of 2 lines, got %v", tui.events)
+	if len(tui.events) != 1 || len(tui.events[0]) != 1 {
+		t.Fatalf("expected 1 event group of 1 line, got %v", tui.events)
 	}
 	if tui.events[0][0].Text != "[Finish: stop]" || tui.events[0][0].Color != outputColorLogLine {
 		t.Fatalf("unexpected finish line: %+v", tui.events[0][0])

@@ -61,8 +61,8 @@ Output tab's "generating..." hint. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
 alternation stays subtle in either state. The Events tab alternates the same
-two shades per event: all display lines of one event, including its trailing
-blank separator, share one shade, and consecutive events alternate. Model output is captured from the
+two shades per event: all display lines of one event share one shade, and
+consecutive events alternate. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -853,9 +853,8 @@ func (t *TUI) handleMouseKey(key string) {
 // the Events tab's only content source: withTUIOutputObserver taps the
 // run's event iterator and forwards every event here, so every
 // Events-tab line originates from a pipeline event. Each visible event is
-// stored as one line group closed by its blank separator, so the Events
-// tab can shade consecutive events alternately. See TheoryOfTUI and
-// pipeline.TheoryOfLoopEvents.
+// stored as one line group, so the Events tab can shade consecutive
+// events alternately. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.
 func (t *TUI) handleEvent(ev pipeline.Event) {
 	lines := eventLines(ev)
 	if len(lines) == 0 {
@@ -871,7 +870,7 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	if t.tabs.AutoExpand(1) {
 		t.scrolls[1].Follow = true
 	}
-	t.events = append(t.events, withBlank(lines))
+	t.events = append(t.events, lines)
 	t.mu.Unlock()
 	t.notify()
 }
@@ -951,12 +950,6 @@ func summaryLines(s string) []taiui.Line {
 		lines = append(lines, taiui.Line{Text: line})
 	}
 	return lines
-}
-
-// withBlank terminates an event's lines with a blank separator so
-// consecutive events stay visually distinct.
-func withBlank(lines []taiui.Line) []taiui.Line {
-	return append(lines, taiui.Line{})
 }
 
 func (t *TUI) scroll(delta int) {
