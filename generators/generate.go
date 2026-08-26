@@ -17,7 +17,18 @@ same exhausted error.
 
 When an error occurs (either non-retryable or after exhausting retries), the
 phase returns the input state so that callers like pipeline.Run can pass a valid
-state to OnPhaseError.
+state to OnPhaseError. When the generator produced partial output before the
+error, the phase returns that state instead, so the caller can detect the
+content increase and trigger a retry with summarization.
+
+Generators must preserve partial state in their return value when AppendContent
+fails during streaming: the state returned with the error must include all
+content appended before the failure, so the content increase is visible to
+BuildGenerate and the pipeline loop can retry with feedback. OpenAI.Generate
+preserves partial state because the streaming loop assigns the AppendContent
+return value to ret before the error check. Gemini.Generate must do the same
+by returning newState (which accumulates streamed content) instead of ret
+(the pre-attempt state) from the Retrier.Do closure's error paths.
 `
 
 // BuildGenerate builds the generate phase for a generator. It lives in the

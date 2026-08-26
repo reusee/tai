@@ -110,8 +110,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		IncludeThoughts: true,
 	}
 	if g.spec.MaxThinkingTokens != nil {
-		// Explicit thinking token budget takes precedence over effort level
-		// and the fallback computation from max output tokens.
 		budget := int32(*g.spec.MaxThinkingTokens)
 		thinkingConfig.ThinkingBudget = &budget
 	} else {
@@ -128,7 +126,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 		if reasoningEffort != "" {
 			thinkingConfig.ThinkingLevel = genai.ThinkingLevel(reasoningEffort)
 		} else {
-			// set budget from max output tokens
 			var maxThinkingTokens *int32
 			if maxOutputTokens != 0 {
 				maxThinking := maxOutputTokens / 4
@@ -143,11 +140,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 	var tools []*genai.Tool
 	var toolConfig *genai.ToolConfig
 	if g.spec.DisableTools == nil || !*g.spec.DisableTools {
-		// Collect all function declarations from state and config into a
-		// single slice, then sort globally by name. Global sorting maximizes
-		// prefix cache reuse: adding a function from any source inserts it
-		// at its natural alphabetical position, shifting only the functions
-		// that follow. See TheoryOfPrefixCaching for rationale.
 		var allFuncs []FuncDecl
 		for fn := range ret.Functions() {
 			allFuncs = append(allFuncs, fn.Decl)
@@ -211,9 +203,6 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 			Role: role,
 		}
 		for _, part := range content.Parts {
-			// Thoughts are only sent to the server when PreservedThinking is
-			// enabled. By default, reasoning content is stripped from outgoing
-			// requests to avoid sending it back to the model.
 			if thought, isThought := part.(Thought); isThought {
 				if g.spec.PreservedThinking != nil && *g.spec.PreservedThinking && len(thought) > 0 {
 					pbContent.Parts = append(pbContent.Parts, &genai.Part{
@@ -378,7 +367,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				return ret, wrap(err)
 			}
 			if err := handleResponse(resp); err != nil {
-				return ret, err
+				// Return newState (not ret) to preserve partial output
+				// appended before the error. See TheoryOfGenerateRetry.
+				return newState, err
 			}
 
 		} else {
@@ -388,10 +379,14 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 						break
 					}
 					g.recordEvent("api_error", fmt.Sprintf("gemini streaming API call failed: %v", err))
-					return ret, wrap(err)
+					// Return newState (not ret) to preserve partial output
+					// appended before the error. See TheoryOfGenerateRetry.
+					return newState, wrap(err)
 				}
 				if err := handleResponse(msg); err != nil {
-					return ret, err
+					// Return newState (not ret) to preserve partial output
+					// appended before the error. See TheoryOfGenerateRetry.
+					return newState, err
 				}
 			}
 		}
@@ -402,7 +397,9 @@ func (g Gemini) Generate(ctx context.Context, state State, options *GenerateOpti
 				Role:  RoleLog,
 				Parts: []Part{*lastUsage},
 			}); err != nil {
-				return ret, err
+				// Return newState (not ret) to preserve partial output
+				// appended before the error. See TheoryOfGenerateRetry.
+				return newState, err
 			}
 			lastUsage = nil
 		}
