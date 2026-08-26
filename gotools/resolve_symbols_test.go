@@ -263,9 +263,6 @@ func (p Pair[A, B]) Swap() Pair[B, A] {
 	if err := os.WriteFile(filepath.Join(dir, "refs.go"), []byte(refsSource), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// CallUsedFunc uses UsedFunc twice: references are deduplicated per
-	// top-level declaration, so two uses in one declaration produce one
-	// report line.
 	userSource := `package refs
 
 func CallUsedFunc() int { return UsedFunc() + UsedFunc() }
@@ -281,9 +278,6 @@ func UseConstVar() int { return UsedConst + len(UsedVar) }
 	if err := os.WriteFile(filepath.Join(dir, "user.go"), []byte(userSource), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// The internal test file makes the package and its test variant both
-	// type-check user.go: a use there must appear exactly once in the
-	// references report (variant deduplication). See TheoryOfGoSrcReferences.
 	internalTestSource := `package refs
 
 import "testing"
@@ -304,7 +298,6 @@ func TestRefsUses(t *testing.T) {
 	).Fork(
 		func() LoadDir { return LoadDir(dir) },
 	).Call(func(resolve ResolveGoSymbols) {
-
 		parts, err := resolve([]string{"UsedFunc", "UnusedFunc"})
 		if err != nil {
 			t.Fatal(err)
@@ -323,20 +316,14 @@ func TestRefsUses(t *testing.T) {
 		if strings.Contains(got, "begin of references example.com/refs.UnusedFunc") {
 			t.Fatalf("expected no references block for UnusedFunc, got:\n%s", got)
 		}
-		// References carry no line numbers: the line is exactly
-		// "package: top-level declaration (file)".
 		wantLine := "example.com/refs: CallUsedFunc (" + filepath.Join(dir, "user.go") + ")\n"
 		if !strings.Contains(got, wantLine) {
 			t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
 		}
-		// References are deduplicated per top-level declaration: the two
-		// UsedFunc uses inside CallUsedFunc collapse to one line, and the
-		// package and test variant re-typechecking user.go collapse too.
 		if n := strings.Count(got, "example.com/refs: CallUsedFunc ("); n != 1 {
 			t.Fatalf("expected exactly 1 CallUsedFunc reference line, got %d", n)
 		}
 
-		// A method's references report lists the callers of the method.
 		parts, err = resolve([]string{"Widget.Nudge"})
 		if err != nil {
 			t.Fatal(err)
@@ -349,12 +336,6 @@ func TestRefsUses(t *testing.T) {
 			t.Fatalf("expected UseWidget reference, got:\n%s", got)
 		}
 
-		// The go tool's synthesized test-binary package (example.com/refs.test)
-		// is excluded from the reference index: it has no real source, only the
-		// generated _testmain.go, and the reference its main function makes to
-		// TestRefsUses would be noise. TestRefsUses is referenced by nothing
-		// else, so excluding the binary leaves it with no references at all.
-		// See TheoryOfGoSrcReferences.
 		parts, err = resolve([]string{"TestRefsUses"})
 		if err != nil {
 			t.Fatal(err)
@@ -371,10 +352,6 @@ func TestRefsUses(t *testing.T) {
 		}
 	})
 
-	// Truncation: 120 additional callers exceed maxGoSrcReferencesPerSymbol.
-	// A fresh scope re-resolves GetFiles and the type-checked load, so the
-	// generated file joins the file set. Wrapper names use two letters so
-	// the generator needs only strings.Builder.
 	var gen strings.Builder
 	gen.WriteString("package refs\n\n")
 	for i := 0; i < 120; i++ {
@@ -397,8 +374,17 @@ func TestRefsUses(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := partsText(t, parts)
-		if !strings.Contains(got, "truncated at 100 references") {
-			t.Fatalf("expected truncated references note, got:\n%s", got)
+		// The report is never truncated: every one of the 120 generated
+		// callers appears, and no truncation note is shown.
+		for i := 0; i < 120; i++ {
+			name := "W" + string(rune('a'+i/26)) + string(rune('a'+i%26))
+			wantLine := "example.com/refs: " + name + " (" + filepath.Join(dir, "gen.go") + ")\n"
+			if !strings.Contains(got, wantLine) {
+				t.Fatalf("expected reference line %q, got:\n%s", wantLine, got)
+			}
+		}
+		if strings.Contains(got, "truncated at") {
+			t.Fatalf("expected no truncation note, got:\n%s", got)
 		}
 	})
 }

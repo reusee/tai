@@ -42,8 +42,9 @@ stable across distinct FileSets — and every variant's object contributes
 references. References are collected from TypesInfo.Uses, normalized
 through Origin so generic instantiations fold onto the declared method or
 function, deduplicated by the referencing top-level declaration within a
-file, sorted by file and declaration name, and capped at
-maxGoSrcReferencesPerSymbol with an explicit truncation note.
+file, sorted by file and declaration name, and never truncated: a complete
+blast-radius list is the point of the report, and a cap would hide a
+caller a change would break.
 Standard-library dependencies, hidden packages, and the go tool's
 synthesized test-binary packages ("<path>.test": binary mains with no
 real source, only the generated _testmain.go, whose references would be
@@ -65,15 +66,10 @@ with a leading * marking a pointer-only method set. Candidates are the
 package-level named types of the indexed packages, collected once per
 index and sorted for determinism; generics are skipped on both sides
 (satisfaction is decidable only for an instantiation) and zero-method
-interfaces are skipped (every type satisfies them). Satisfaction is
+interfaces are skipped (every interface satisfies them). Satisfaction is
 structural — method Ids — so candidates collected from a base package
 variant match objects resolved through any variant.
 `
-
-// maxGoSrcReferencesPerSymbol caps the references reported for one symbol:
-// the report informs blast-radius judgment, and a symbol with more uses than
-// the cap is fully covered by the truncation note. See TheoryOfGoSrcReferences.
-const maxGoSrcReferencesPerSymbol = 100
 
 // GetTypeCheckedPackages returns the packages of the loaded graph with full
 // type information, for go-src reference reporting. It is a separate load
@@ -372,9 +368,9 @@ func offsetRangeOverlaps(tf *token.File, start, end token.Pos, from, to int) boo
 
 // referencesFor collects the deduplicated references to objects — one
 // entry per referencing top-level declaration — sorted by file and
-// declaration name, reporting whether the list was truncated at
-// maxGoSrcReferencesPerSymbol. See TheoryOfGoSrcReferences.
-func (index *typeCheckIndex) referencesFor(objects []types.Object) (refs []symbolReference, truncated bool) {
+// declaration name. Reports are complete and never truncated; see
+// TheoryOfGoSrcReferences.
+func (index *typeCheckIndex) referencesFor(objects []types.Object) (refs []symbolReference) {
 	seen := make(map[useKey]bool)
 	for _, obj := range objects {
 		for _, use := range index.uses[obj] {
@@ -397,10 +393,7 @@ func (index *typeCheckIndex) referencesFor(objects []types.Object) (refs []symbo
 		}
 		return refs[i].topDecl < refs[j].topDecl
 	})
-	if len(refs) > maxGoSrcReferencesPerSymbol {
-		return refs[:maxGoSrcReferencesPerSymbol], true
-	}
-	return refs, false
+	return refs
 }
 
 // selectorPackagesFor collects the imported packages referenced via
@@ -499,16 +492,12 @@ func enclosingTopLevelName(f *ast.File, pos token.Pos) string {
 
 // formatReferencesPart renders the references report that follows a resolved
 // declaration's source part: one line per referencing top-level declaration
-// as "package: top-level declaration (file)", with a truncation note when
-// the report was capped. See TheoryOfGoSrcReferences.
-func formatReferencesPart(qualified string, refs []symbolReference, truncated bool) generators.Part {
+// as "package: top-level declaration (file)". See TheoryOfGoSrcReferences.
+func formatReferencesPart(qualified string, refs []symbolReference) generators.Part {
 	var b strings.Builder
 	fmt.Fprintf(&b, "``` begin of references %s\n", qualified)
 	for _, ref := range refs {
 		fmt.Fprintf(&b, "%s: %s (%s)\n", ref.pkgPath, ref.topDecl, ref.file)
-	}
-	if truncated {
-		fmt.Fprintf(&b, "... truncated at %d references\n", maxGoSrcReferencesPerSymbol)
 	}
 	fmt.Fprintf(&b, "``` end of references %s\n\n", qualified)
 	return generators.Text(b.String())

@@ -84,8 +84,9 @@ func (index *typeCheckIndex) collectInterfaceCandidates() {
 // Generic declarations are skipped on both sides; the candidates are
 // pre-sorted, so the report is deterministic. Satisfaction is structural —
 // method Ids — so candidates collected from a base package variant match
-// objects resolved through any variant. See TheoryOfGoSrcReferences.
-func (index *typeCheckIndex) interfaceRelationsFor(objects []types.Object) (lines []string, truncated bool) {
+// objects resolved through any variant. Reports are complete and never
+// truncated. See TheoryOfGoSrcReferences.
+func (index *typeCheckIndex) interfaceRelationsFor(objects []types.Object) (lines []string) {
 	var tn *types.TypeName
 	for _, obj := range objects {
 		if name, ok := obj.(*types.TypeName); ok && name.Type() != nil {
@@ -94,11 +95,11 @@ func (index *typeCheckIndex) interfaceRelationsFor(objects []types.Object) (line
 		}
 	}
 	if tn == nil {
-		return nil, false
+		return nil
 	}
 	named, ok := tn.Type().(*types.Named)
 	if !ok || named.TypeParams().Len() > 0 {
-		return nil, false
+		return nil
 	}
 	seen := make(map[string]bool)
 	appendLine := func(line string) {
@@ -130,24 +131,17 @@ func (index *typeCheckIndex) interfaceRelationsFor(objects []types.Object) (line
 			}
 		}
 	}
-	if len(lines) > maxGoSrcReferencesPerSymbol {
-		return lines[:maxGoSrcReferencesPerSymbol], true
-	}
-	return lines, false
+	return lines
 }
 
 // formatInterfaceRelationsPart renders the interface relations report that
 // follows a resolved source part: one "satisfies" or "implemented by" line
-// per relation, with a truncation note when the report was capped. See
-// TheoryOfGoSrcReferences.
-func formatInterfaceRelationsPart(qualified string, lines []string, truncated bool) generators.Part {
+// per relation. See TheoryOfGoSrcReferences.
+func formatInterfaceRelationsPart(qualified string, lines []string) generators.Part {
 	var b strings.Builder
 	fmt.Fprintf(&b, "``` begin of interface relations %s\n", qualified)
 	for _, line := range lines {
 		fmt.Fprintf(&b, "%s\n", line)
-	}
-	if truncated {
-		fmt.Fprintf(&b, "... truncated at %d relations\n", maxGoSrcReferencesPerSymbol)
 	}
 	fmt.Fprintf(&b, "``` end of interface relations %s\n\n", qualified)
 	return generators.Text(b.String())

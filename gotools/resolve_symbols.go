@@ -90,29 +90,15 @@ func (Module) ResolveGoSymbols(
 		}
 		files, err := getFiles()
 		if err != nil {
-			// A non-Go project never runs the loader for its context, so
-			// one stray go-src block must not abort the run: degrade to an
-			// informational part the model can act on.
-			// See TheoryOfGoSrcResolution.
 			return []generators.Part{generators.Text(fmt.Sprintf(
 				"[go-src: cannot resolve symbols, Go package loading failed: %v]\n\n", err))}, nil
 		}
 		pkgIndex := indexLoadedPackages(files)
-		// go doc resolves import paths from the load directory; in
-		// workspace mode it runs from the workspace root so the paths of
-		// every workspace module resolve. See TheoryOfGoSrcResolution.
 		docDir := string(loadDir)
 		if workspace != "" {
 			docDir = string(workspace)
 		}
-		// renderedPkgs deduplicates documentation across package symbol
-		// forms: requesting a package by both path and name renders it
-		// once.
 		renderedPkgs := make(map[string]bool)
-		// The reference index is built lazily, once per resolve call: the
-		// type-checked load is expensive and only needed when a symbol
-		// actually resolves. A load failure degrades to source-only output
-		// rather than aborting the resolve. See TheoryOfGoSrcReferences.
 		var refIndex *typeCheckIndex
 		refIndexReady := false
 		ensureRefIndex := func() *typeCheckIndex {
@@ -135,8 +121,6 @@ func (Module) ResolveGoSymbols(
 				continue
 			}
 			seen[symbol] = true
-			// A package reference takes precedence over symbol matching,
-			// mirroring go doc. See TheoryOfGoSrcResolution.
 			var matched bool
 			parts, matched = appendPackageDocParts(parts, symbol, pkgIndex, renderedPkgs, docDir, []string(envs))
 			if matched {
@@ -152,21 +136,17 @@ func (Module) ResolveGoSymbols(
 				parts = append(parts, generators.Text(fmt.Sprintf(
 					"``` begin of source %s %s:%d\n%s\n``` end of source %s\n\n",
 					m.qualifiedName, m.filePath, m.line, m.source, m.qualifiedName)))
-				// Each resolved source part is followed by the references,
-				// selector packages, and interface relations reports for the
-				// same symbol when the reports have content. See
-				// TheoryOfGoSrcReferences.
 				if index := ensureRefIndex(); index != nil {
 					objects := index.objectsFor(m)
-					refs, truncated := index.referencesFor(objects)
-					if len(refs) > 0 || truncated {
-						parts = append(parts, formatReferencesPart(m.qualifiedName, refs, truncated))
+					refs := index.referencesFor(objects)
+					if len(refs) > 0 {
+						parts = append(parts, formatReferencesPart(m.qualifiedName, refs))
 					}
 					if paths := index.selectorPackagesFor(m); len(paths) > 0 {
 						parts = append(parts, formatSelectorPackagesPart(m.qualifiedName, paths))
 					}
-					if lines, truncated := index.interfaceRelationsFor(objects); len(lines) > 0 || truncated {
-						parts = append(parts, formatInterfaceRelationsPart(m.qualifiedName, lines, truncated))
+					if lines := index.interfaceRelationsFor(objects); len(lines) > 0 {
+						parts = append(parts, formatInterfaceRelationsPart(m.qualifiedName, lines))
 					}
 				}
 			}
