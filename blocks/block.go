@@ -46,8 +46,8 @@ Unclosed block detection: an opening marker at line start without a matching clo
 line is a malformed block; the parser reports an error rather than silently skipping
 it.
 
-Delimiter rule centralization: the delimiter rules live only in
-BlockFormatSystemPrompt. Individual kind prompts describe only their kind-specific
+Delimiter rule centralization: the delimiter rules live only in BlockFormatSystemPrompt
+and BlockFormatRestatePrompt. Individual kind prompts describe only their kind-specific
 semantics. The deferred-execution contract is centralized the same way; see
 TheoryOfDeferredExecution.
 `
@@ -73,8 +73,8 @@ in the next round, an emitted block must be assumed unexecuted, and
 content that depends on a block's result must wait for a later round.
 Kind prompts may state kind-specific arrival details (which round the
 output arrives in, stop-and-wait rules) but must not restate the general
-principle; BlockFormatSystemPrompt owns it, mirroring the delimiter rule
-centralization.
+principle; BlockFormatSystemPrompt and BlockFormatRestatePrompt own it,
+mirroring the delimiter rule centralization.
 `
 
 const TheoryOfBoundaryUniqueness = `
@@ -243,6 +243,15 @@ DELIMITER
 - Any content that depends on a block's result — another block, an analysis, a conclusion — MUST be emitted in a later round, after the result has arrived as user content.
 - The flow is always: emit the blocks, end the response, and wait; read the results that arrive as the next user message, then continue.
 `
+
+const BlockFormatRestatePrompt = `- **Block format (CRITICAL)**: Every block opening marker MUST start at the beginning of its own line. Before emitting '<<', check the preceding character: it MUST be a newline (or the start of the response); when anything else precedes it — a word, punctuation, a space, a list bullet, a code fence — emit a newline first, then the marker. NEVER glue the opening marker to the end of a prose line — a mid-line marker is silently ignored and its content will be lost. The closing line is the delimiter alone on its own line.
+- **Header/Footer checklist**: Each block needs TWO markers that form a MATCHED PAIR — never omit or swap either. Opening marker: '<<' followed by a freshly chosen delimiter (an uncommon Chinese two-character word) and the function-call header 'kind(param="value")' ending with ')', or bare 'kind' if no parameters. Closing marker: the EXACT SAME delimiter alone on its own line.
+- **The DELIMITER MUST be an uncommon Chinese two-character word** (e.g., 龃龉, 彳亍, 蹀躞), NEVER the literal text "<DELIMITER>" or a common word.
+- Generate a fresh pair of uncommon Chinese characters for each block. Never reuse a delimiter from any example in this prompt.
+- **Delimiter matching (CRITICAL)**: The closing line MUST use the EXACT same delimiter string as the opening marker. A mismatched closing line is treated as body content, not a closing marker: the block stays unclosed and its content is discarded. Before writing each closing line, verify it matches the opening delimiter of the same block.
+- **Body-disjointness (HARD REQUIREMENT)**: The delimiter MUST NOT appear anywhere in the block body. This is a hard requirement: a body line matching the delimiter prematurely closes the block and truncates all remaining content. Two uncommon Chinese characters satisfy this by construction for code and prose, but MUST verify the chosen pair is absent from the body before emitting the block.
+- **Deferred execution — blocks are not tool calls**: nothing executes or returns while you are still generating. Every block is processed only after the response ends; all results arrive as user content in the NEXT round. Never assume an emitted block has already run, and never fabricate its result in the current response.
+- No blank lines are required before or after a block.`
 
 // Block represents a parsed boundary block.
 type Block struct {

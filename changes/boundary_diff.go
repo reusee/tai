@@ -18,3 +18,10 @@ blocks (e.g., finish summaries) are preserved.
 func ChangeBlockSystemPrompt() string {
 	return blocks.BlockFormatSystemPrompt + "\n" + ChangeBlockPrompt
 }
+
+// ChangeBlockRestatePrompt returns the short critical reminder that reinforces
+// the change block format rules. It is used by the change block component as
+// its RestatePrompt field.
+func ChangeBlockRestatePrompt() string {
+	return ChangeBlockRestatePromptText
+}

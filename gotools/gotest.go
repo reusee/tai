@@ -95,6 +95,16 @@ Use the "go-test" kind to run Go tests and receive the output as part of the nex
 - The go-test block should appear before the summary block in the response.
 `
 
+const GoTestBlockRestatePrompt = `- After making code changes, emit a go-test block whose body contains the go test arguments, one per line.
+- Each non-empty line in the body is passed as a separate argument to go test via exec.Command, bypassing the shell to avoid injection. If empty, all tests (./...) are run.
+- **Use absolute paths** for package arguments (e.g., /home/user/project/pkg/...). The current working directory is not known, so relative paths like ./pkg/... are error-prone. The test output includes the working directory so correct absolute paths can be constructed. If the working directory is not yet known, use an empty body to run all tests (./...).
+- **Target specific tests**: When modifying or adding a test function, name it in the -run argument so the verification is directly tied to the change. Put -run and the test name on separate lines, followed by the package path. Prefer precise -run patterns over running an entire package. Only fall back to package-level or ./... runs when a broad sanity check is needed or which tests are relevant is not yet known.
+- Both stdout and stderr are fed back as user content in the next round, regardless of whether tests pass or fail. Fix any failures and try again.
+- Only use go-test blocks in Go projects.
+- After the go-test block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the results — never stop at the closing line itself.
+- A go-test block does NOT replace the summary block. MUST still emit a summary block in the same round, even when emitting a go-test block. Every round must end with a summary.
+- Never end a response on a go-test block: after the go-test block's closing line, the next block MUST be the summary block.`
+
 const goTestTimeout = 120 * time.Second
 
 // executeGoTest runs `go test` with the given arguments and returns the

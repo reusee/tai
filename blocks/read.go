@@ -100,6 +100,15 @@ Use the "read" kind to request additional context needed to complete the task. W
 - To discover files: emit a read block whose body contains <glob pattern="..." />.
 `
 
+const ReadBlockRestatePrompt = `- If additional context is needed (file contents, network resources, file listings), emit a read block whose body contains the corresponding XML tags: <file path="..." />, <fetch addr="..." user-agent="..." referer="..." cookie="..." />, and <glob pattern="..." />.
+- The user-agent, referer, and cookie attributes on the fetch tag are optional and set the corresponding HTTP headers.
+- The glob tag lists files matching a pattern without reading their contents.
+- After the last read block's closing line, emit the summary block IMMEDIATELY, then end the response and wait for the system to provide the context — never stop at the closing line itself.
+- A read block does NOT replace the summary block. MUST still emit a summary block in the same round, after the read block.
+- Never end a response on a read block: after the read block's closing line, the next block MUST be the summary block.
+- The read block is read-only: never use it for writes or side effects.
+- Do not emit change blocks in the same response as a read block. Request the context first, then emit changes after the context is provided.`
+
 // ReadRequest represents a single context request parsed from the block body.
 type ReadRequest struct {
 	Type      string

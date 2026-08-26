@@ -24,6 +24,19 @@ func TestComponentSetPromptSections(t *testing.T) {
 	}
 }
 
+func TestComponentSetRestatePrompts(t *testing.T) {
+	comps := ComponentSet{
+		{Kind: "a", PromptSection: "prompt-a", RestatePrompt: "restate-a"},
+		{Kind: "b", PromptSection: "prompt-b"},
+		{Kind: "", PromptSection: "prompt-only", RestatePrompt: "restate-only"},
+		{Kind: "c", RestatePrompt: "restate-c"},
+	}
+	got := comps.RestatePrompts()
+	if got != "restate-a\n\nrestate-only\n\nrestate-c\n\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestComponentSetUserPromptParts(t *testing.T) {
 	comps := ComponentSet{
 		{Kind: "a", UserPromptParts: []generators.Part{generators.Text("part-a")}},
@@ -136,6 +149,13 @@ func TestCommonComponents(t *testing.T) {
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
 		}
+		restate := comps.RestatePrompts()
+		if !strings.Contains(restate, "Shell block:") {
+			t.Fatal("RestatePrompts should contain shell block restate prompt")
+		}
+		if !strings.Contains(restate, "Continue block:") {
+			t.Fatal("RestatePrompts should contain continue block restate prompt")
+		}
 	})
 
 	t.Run("without shell", func(t *testing.T) {
@@ -153,6 +173,13 @@ func TestCommonComponents(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "Continue Block Kind") {
 			t.Fatal("PromptSections should contain continue block prompt")
+		}
+		restate := comps.RestatePrompts()
+		if strings.Contains(restate, "Shell block:") {
+			t.Fatal("RestatePrompts should not contain shell block restate prompt when shell is disabled")
+		}
+		if !strings.Contains(restate, "Continue block:") {
+			t.Fatal("RestatePrompts should contain continue block restate prompt")
 		}
 	})
 }

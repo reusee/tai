@@ -480,11 +480,12 @@ func TestValidateChangeBlockNonGoFileTextLevelOpsAllowed(t *testing.T) {
 
 func TestChangeBlockPromptsUseUncommonChineseDelimiter(t *testing.T) {
 	// The delimiter policy lives only in blocks.BlockFormatSystemPrompt.
-	// The change block prompt references the general format and must not
+	// The change block prompts reference the general format and must not
 	// restate the delimiter policy; ChangeBlockSystemPrompt() embeds the
 	// unified format prompt. See TheoryOfBlockFormatGeneral.
 	for name, prompt := range map[string]string{
-		"ChangeBlockPrompt": ChangeBlockPrompt,
+		"ChangeBlockPrompt":        ChangeBlockPrompt,
+		"ChangeBlockRestatePrompt": ChangeBlockRestatePromptText,
 	} {
 		if strings.Contains(prompt, "uncommon Chinese two-character word") {
 			t.Fatalf("%s must not restate the delimiter policy; the unified BlockFormatSystemPrompt covers it", name)
@@ -507,5 +508,9 @@ func TestChangeBlockPromptPrefersPreciseModifications(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "WRITE should only be used when creating a new file") {
 		t.Fatal("ChangeBlockSystemPrompt should explain when WRITE is appropriate")
+	}
+	restate := ChangeBlockRestatePrompt()
+	if !strings.Contains(restate, "Prefer precise modifications over WRITE") {
+		t.Fatal("ChangeBlockRestatePrompt should contain guidance to prefer precise modifications over WRITE")
 	}
 }
