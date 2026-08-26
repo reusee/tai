@@ -1155,6 +1155,22 @@ func (debugOutputMockGenerator) Spec() generators.Spec {
 	return generators.Spec{ContextTokens: 100000}
 }
 
+// chatBracketPartsProvider is a codetypes.PartsProvider returning one fixed
+// context part, so bracketing tests can assert the position of the chat
+// input relative to the provider content. See TheoryOfChatBracketing.
+type chatBracketPartsProvider struct{}
+
+func (chatBracketPartsProvider) Parts(
+	maxTokens int,
+	countTokens func(string) (int, error),
+	patterns []string,
+) (
+	parts []generators.Part,
+	err error,
+) {
+	return []generators.Part{generators.Text("CHAT BRACKET CONTEXT\n\n")}, nil
+}
+
 func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 	// With -debug-codes, the assembled system and user prompts are dumped
 	// to the generation output writer, never to os.Stdout directly: a
@@ -1198,6 +1214,76 @@ func TestGenerateDebugPromptsWrittenToOutput(t *testing.T) {
 			t.Fatalf("expected the user prompt in the debug output, got: %q", output)
 		}
 	})
+}
+
+func TestGenerateChatInputBracketsContext(t *testing.T) {
+	// The chat input must bracket the parts provider content: the initial
+	// user content starts with a copy of the joined -chat arguments
+	// (ending with a blank line) before the provider parts, and the chat
+	// input itself is appended after the restate as the freshest input.
+	// Content.Merge concatenates every adjacent Text part — the initial
+	// content's parts and the appended chat content alike — so the state
+	// carries one user content with one text part whose byte order is the
+	// bracketing order: chat copy, provider context, restate, chat input.
+	// See TheoryOfChatBracketing.
+	var capturedState generators.State
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return chatBracketPartsProvider{} },
+		func() flags.Chats { return flags.Chats{"do the task"} },
+		func() *records.Recorder { return nil },
+		func() generators.GetDefaultGenerator {
+			return func() (generators.Generator, error) {
+				return &debugOutputMockGenerator{}, nil
+			}
+		},
+		func() Run {
+			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
+				capturedState = opts.InitialState
+				return func(yield func(Event, error) bool) {}
+			}
+		},
+	).Call(func(
+		generateWithResultWithStats GenerateWithResultWithStats,
+	) {
+		_, _, err := generateWithResultWithStats(context.Background(), &bytes.Buffer{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var contents []*generators.Content
+	for content := range capturedState.Contents() {
+		contents = append(contents, content)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("expected 1 merged user content, got %d", len(contents))
+	}
+	if len(contents[0].Parts) != 1 {
+		t.Fatalf("expected the merged content to hold one text part, got %d parts", len(contents[0].Parts))
+	}
+	text, ok := contents[0].Parts[0].(generators.Text)
+	if !ok {
+		t.Fatalf("expected a text part, got %T", contents[0].Parts[0])
+	}
+
+	// The chat copy opens the user content so the model reads the task
+	// before the context.
+	if !strings.HasPrefix(string(text), "do the task\n\n") {
+		t.Fatalf("user content must start with the chat copy, got %q", string(text))
+	}
+	// The provider context follows, then the restate, then the chat input
+	// as the freshest content at the very end.
+	contextIdx := strings.Index(string(text), "CHAT BRACKET CONTEXT\n\n")
+	restateIdx := strings.Index(string(text), "[System note:")
+	if contextIdx < 0 || restateIdx < 0 || contextIdx >= restateIdx {
+		t.Fatalf("provider context must precede the restate, got %q", string(text))
+	}
+	if !strings.HasSuffix(string(text), "do the task") {
+		t.Fatalf("user content must end with the chat input, got %q", string(text))
+	}
 }
 
 func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {

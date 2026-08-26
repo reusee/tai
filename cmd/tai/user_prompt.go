@@ -3,6 +3,7 @@ package main
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/reusee/tai/anytexts"
 	"github.com/reusee/tai/components"
@@ -18,6 +19,7 @@ func (Module) UserPrompt(
 	systemPrompt SystemPrompt,
 	maxTokens flags.MaxTokens,
 	flagFiles flags.Files,
+	flagChats flags.Chats,
 ) UserPrompt {
 
 	generator, err := getDefaultGenerator()
@@ -54,12 +56,25 @@ func (Module) UserPrompt(
 	// see TheoryOfPrefixCaching in generators/state_func_map.go.
 	patterns := slices.Collect(maps.Keys(flagFiles))
 	slices.Sort(patterns)
-	parts, err := partsProvider.Parts(
+
+	// The chat input precedes the parts provider content when -chat
+	// arguments are given: the model reads the task before the long file
+	// context, while the restate after the context re-exposes the rules
+	// immediately before generating. The part ends with a blank line so
+	// the context starts a fresh paragraph. See
+	// pipeline.TheoryOfChatBracketing and
+	// generators.TheoryOfContentUnitSeparation.
+	var parts []generators.Part
+	if chats := strings.Join(flagChats, "\n"); chats != "" {
+		parts = append(parts, generators.Text(chats+"\n\n"))
+	}
+	providerParts, err := partsProvider.Parts(
 		maxInputTokens,
 		generator.CountTokens,
 		patterns,
 	)
 	ce(err)
+	parts = append(parts, providerParts...)
 
 	// The system prompt restate is the last user prompt part before the
 	// dynamic user input: the model re-reads the complete instructions

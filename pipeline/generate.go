@@ -532,6 +532,25 @@ func (Module) GenerateWithResult(
 	}
 }
 
+const TheoryOfChatBracketing = `
+Chat bracketing: at user prompt assembly points backed by a parts
+provider, the chat input is placed before the parts provider content as
+well as after it. The pipeline prepends a copy of the joined -chat
+arguments before the provider parts and keeps appending the chat input
+itself after the system prompt restate, so the long file context is
+bracketed by the user request on both sides: the model reads the task
+before the context — knowing what to look for while reading — and reads
+it again as the freshest input before generating. The prepended copy
+ends with a blank line so the context starts a fresh paragraph
+(generators.TheoryOfContentUnitSeparation). The copy is dynamic content
+at the head of the user content, so different chat inputs shift the file
+context in the request and forfeit user-content prefix reuse across
+tasks; comprehension is deliberately traded for cache. The next
+command's UserPrompt prepends the chat input the same way when given;
+its single-shot design has no trailing chat content, so the restate
+remains the last part.
+`
+
 func (Module) GenerateWithResultWithStats(
 	partsProvider codetypes.PartsProvider,
 	comps CodesComponents,
@@ -650,11 +669,22 @@ func (Module) GenerateWithResultWithStats(
 			recorder.Event("decision", fmt.Sprintf("token limits computed: max_input=%d system=%d functions=%d user_capacity=%d", maxInputTokens, systemPromptTokens, funcTokens, maxUserPromptTokens))
 		}
 
-		// user prompt
-		userPromptParts, err := partsProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
+		// The chat input brackets the parts provider content: a copy of
+		// the joined -chat arguments is prepended before the context so
+		// the model knows the task while reading it, and the chat input
+		// itself still follows the context after the restate. The
+		// prepended copy ends with a blank line so the context starts a
+		// fresh paragraph. See TheoryOfChatBracketing and
+		// generators.TheoryOfContentUnitSeparation.
+		var userPromptParts []generators.Part
+		if chats := strings.Join(flagChats, "\n"); chats != "" {
+			userPromptParts = append(userPromptParts, generators.Text(chats+"\n\n"))
+		}
+		providerParts, err := partsProvider.Parts(maxUserPromptTokens, generator.CountTokens, patterns)
 		if err != nil {
 			return Result{}, nil, err
 		}
+		userPromptParts = append(userPromptParts, providerParts...)
 
 		// Component user prompt parts are appended after parts provider parts.
 		userPromptParts = append(userPromptParts, comps.UserPromptParts()...)
