@@ -527,7 +527,7 @@ func computePackageShortDoc(
 // It is produced when allocateVisibility downgrades the focus pin because
 // the pinned focus tokens exceed the generator token budget (see
 // TheoryOfVisibilityAllocation): the short-doc block keeps every symbol
-// name, test name, and file name in context, so go-src and read fetching
+// name, test name, and file name in context, so go-src and ingest fetching
 // still work, at a fraction of the full-doc token cost. Like
 // computeFocusPackageDoc it is emitted even when go doc fails, carrying a
 // failure note plus the test names and file names. The block ends with a
@@ -670,7 +670,7 @@ func focusTestNamesSection(lp *LogicalPackage) string {
 // for change blocks without paying the token cost of the file contents.
 // The list is also the only in-context presence of the package's non-Go
 // files (embed files, other package files, markdown): their contents
-// are never emitted, and the model fetches them on demand with read
+// are never emitted, and the model fetches them on demand with ingest
 // blocks. Names are deduplicated and sorted for deterministic output.
 // See TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
 // module_root.go.
@@ -685,7 +685,7 @@ func focusFileNamesSection(lp *LogicalPackage) string {
 	slices.Sort(names)
 	names = slices.Compact(names)
 	var b strings.Builder
-	b.WriteString("\nFiles in this package (non-Go file contents are not included in the context; fetch them with read blocks when needed):\n")
+	b.WriteString("\nFiles in this package (non-Go file contents are not included in the context; fetch them with ingest blocks when needed):\n")
 	for _, name := range names {
 		b.WriteString("- " + name + "\n")
 	}

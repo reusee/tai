@@ -289,7 +289,7 @@ func (c PartsProvider) Parts(
 	// stable region of the prompt, before request-varying extras. A
 	// module root may carry no Go package, so its markdown files are not
 	// package files; the listing keeps them discoverable by name, and
-	// their contents are fetched on demand with read blocks. See
+	// their contents are fetched on demand with ingest blocks. See
 	// TheoryOfNonGoFiles.
 	listings, err := c.ModuleRootFiles()()
 	if err != nil {
@@ -313,7 +313,7 @@ func (c PartsProvider) Parts(
 		}
 		var b strings.Builder
 		b.WriteString("``` begin of module root files " + listing.Dir + "\n")
-		b.WriteString("Markdown files at this module root (contents are not included in the context; fetch them with read blocks when needed):\n")
+		b.WriteString("Markdown files at this module root (contents are not included in the context; fetch them with ingest blocks when needed):\n")
 		for _, name := range names {
 			b.WriteString("- " + name + "\n")
 		}

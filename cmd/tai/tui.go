@@ -281,10 +281,11 @@ var (
 // the generation state and extracts the parts the TUI displays: text and
 // thoughts stream to the Output tab (thoughts wrapped in the
 // thinking/response markers the terminal Output layer uses), function
-// calls and results render as markers, errors are shown inline, and
-// finish reasons go to the Round tab. It replaces stateFinishReason:
-// finish reasons are captured here, not by a separate decorator. See
-// TheoryOfTUI.
+// calls and results render as markers, and errors are shown inline.
+// Finish reasons are not captured here: they arrive as EventFinish on
+// the event stream that withTUIOutputObserver taps, and the finish event
+// clears the Output tab's "generating..." hint. See TheoryOfTUI and
+// pipeline.TheoryOfLoopEvents.
 type tuiOutputState struct {
 	upstream generators.State
 	tui      *TUI

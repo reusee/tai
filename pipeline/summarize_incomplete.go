@@ -477,7 +477,7 @@ func handoffResponseDetail(attempt int, outputText string, thoughts []string) st
 }
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
-// block with a fresh delimiter, so the TUI's Round tab can display it
+// block with a fresh delimiter, so the TUI's Events tab can display it
 // as the round's completion signal.
 func FormatSummaryBlock(summary string) string {
 	delimiter := freshDelimiter()

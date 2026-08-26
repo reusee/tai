@@ -258,7 +258,7 @@ func TestNextSystemPromptListsDisabledBlocks(t *testing.T) {
 			t.Fatal("next disabled-blocks notice should list continue")
 		}
 		if !strings.Contains(prompt, "additional files and network resources are not fetched") {
-			t.Fatal("next disabled-blocks notice should list read")
+			t.Fatal("next disabled-blocks notice should list ingest")
 		}
 		if strings.Contains(prompt, "change blocks are not processed") {
 			t.Fatal("next disabled-blocks notice must not list change; change blocks are applied by the BlockHandler")

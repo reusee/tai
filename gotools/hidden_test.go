@@ -72,7 +72,7 @@ func TestHiddenPackagesSystemPrompt(t *testing.T) {
 		"example.com/baz",
 		"example.com/qux",
 		"go-src",
-		"read blocks",
+		"ingest blocks",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt must mention %q", want)

@@ -94,7 +94,7 @@ func TestFocusPackageDocumentationContext(t *testing.T) {
 	// included) plus the package's test-function names and file names,
 	// and the model fetches implementation source on demand with go-src
 	// blocks. Non-Go focus files are present by name only, in the file
-	// list; their contents are fetched on demand with read blocks. See
+	// list; their contents are fetched on demand with ingest blocks. See
 	// TheoryOfVisibilityAllocation and TheoryOfNonGoFiles in
 	// module_root.go.
 	root := t.TempDir()

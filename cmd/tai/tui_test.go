@@ -585,8 +585,8 @@ func TestTUICaptureContentSuppressesThoughtsWhenNotShown(t *testing.T) {
 	// The TUI must mirror the non-TUI Output layer's display policy:
 	// when -no-thoughts is set or -summarize-thoughts is enabled
 	// (showThoughts false), raw reasoning thoughts must not appear in
-	// the Output tab; they are replaced by periodic summaries routed
-	// through the thought summary writer. See TheoryOfTUI.
+	// the Output tab; they are replaced by periodic summaries that
+	// render in the Events tab from EventThoughtSummary. See TheoryOfTUI.
 	tui := newTUIForTest()
 	tui.showThoughts = false
 	state := generators.NewPrompts("", nil)
@@ -616,7 +616,7 @@ func TestTUICaptureContentSuppressesThoughtsWhenNotShown(t *testing.T) {
 
 func TestTuiShowThoughtsNotSuppressedBySummarizeThoughts(t *testing.T) {
 	// The TUI's raw-thought display is governed by -no-thoughts alone:
-	// -summarize-thoughts adds periodic summaries in the Summary tab but
+	// -summarize-thoughts adds periodic summaries in the Events tab but
 	// never blanks the Output tab's raw thought stream. The helper takes
 	// only flags.Thoughts, so -st cannot affect it. See TheoryOfTUI.
 	if !tuiShowThoughts(flags.Thoughts{}) {

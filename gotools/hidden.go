@@ -86,7 +86,7 @@ func (Module) HiddenPatterns() HiddenPatterns {
 // no pattern is configured. Hidden packages contribute no code,
 // documentation, or go-src-resolvable symbols, so the section states the
 // exclusion and its replacement behavior — work from the provided context
-// and state any limitation in prose — preventing wasted go-src and read
+// and state any limitation in prose — preventing wasted go-src and ingest
 // rounds on packages that can never be fetched through context assembly.
 // Patterns are trimmed, sorted, and deduplicated so equal configurations
 // produce byte-identical prompts, preserving the LLM prefix cache.
@@ -114,7 +114,7 @@ func HiddenPackagesSystemPrompt(patterns HiddenPatterns) string {
 	}
 	sb.WriteString("\n**Rules:**\n")
 	sb.WriteString("- Do NOT emit go-src blocks for symbols of hidden packages: they cannot be resolved, and the fetch wastes a round.\n")
-	sb.WriteString("- Do NOT emit read blocks for files of hidden packages: their content is excluded by design and must not be read.\n")
+	sb.WriteString("- Do NOT emit ingest blocks for files of hidden packages: their content is excluded by design and must not be read.\n")
 	sb.WriteString("- Do NOT speculate about hidden packages' contents; work from the context provided. When a task seems to require a hidden package, state the limitation in prose instead of attempting to fetch it.\n")
 	return sb.String()
 }

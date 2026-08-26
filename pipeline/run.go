@@ -122,7 +122,7 @@ because the failed attempt's blocks were discarded.
 When the retry budget is exhausted and the final attempt still lacks a summary
 block, the loop synthesizes a summary from the round's output and appends it
 to the state as a summary block, so the round has a completion signal for the round
-statistics and the TUI's Summary tab. The synthesis applies to every exhausted
+statistics and the TUI's Events tab. The synthesis applies to every exhausted
 round, including rounds whose blocks trigger components.
 
 Retry on error: an error after content output retries from the state that includes
@@ -168,7 +168,7 @@ const maxParseErrorRounds = 3
 
 const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Truncation typically occurs when attempting too many changes in a single response, exceeding the output limit. If the planned modifications are extensive, do NOT attempt to emit all changes at once. Instead, partition the work: implement a manageable initial subset of change blocks in this round, and use a continue block to carry over the remaining tasks into subsequent rounds. Re-emit every block you intend to take effect in this round. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work on disk, and no next step to carry forward without implementation. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, decisions, and attempted changes. Use it as reference to partition and guide your work, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
 
-const missingSummaryRetryPrefix = "[System note: Your previous response ended WITHOUT the required summary block. This is retry attempt %d of %d. The summary block is MANDATORY in every response: it is the completion signal the system uses to verify that generation ended normally and followed the rules. No other block — change, shell, go-test, go-src, read, continue — replaces or implies it. The previous attempt was discarded: its structured blocks were NOT processed. Re-emit every block you intend to take effect, then close the response with a summary block (a \"- \" bullet list of what was done; \"No changes were needed.\" when nothing was done). Never end a response on any block other than the summary block.]\n\n"
+const missingSummaryRetryPrefix = "[System note: Your previous response ended WITHOUT the required summary block. This is retry attempt %d of %d. The summary block is MANDATORY in every response: it is the completion signal the system uses to verify that generation ended normally and followed the rules. No other block — change, shell, go-test, go-src, ingest, continue — replaces or implies it. The previous attempt was discarded: its structured blocks were NOT processed. Re-emit every block you intend to take effect, then close the response with a summary block (a \"- \" bullet list of what was done; \"No changes were needed.\" when nothing was done). Never end a response on any block other than the summary block.]\n\n"
 
 // StateDecorator wraps a generation state before the loop starts,
 // returning a new state that observes or modifies the original. The
@@ -491,7 +491,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 		}
 
 		// Check for completion: the summary block is the only
-		// completion signal — no other block kind (read, shell,
+		// completion signal — no other block kind (ingest, shell,
 		// continue, go-test, go-src) completes a round — and an
 		// abnormal finish reason (e.g., "length" from max-token
 		// truncation) overrides the summary signal and triggers
@@ -979,7 +979,7 @@ type RunOptions struct {
 	// found in the collected blocks after a round, or when the finish
 	// reason indicates abnormal termination (e.g., "length" from
 	// max-token truncation). The summary block is the mandatory
-	// completion signal — no other block kind (read, shell, continue,
+	// completion signal — no other block kind (ingest, shell, continue,
 	// go-test, go-src) replaces or implies it — so every round missing
 	// a summary block is retried, including rounds whose blocks trigger
 	// components. See TheoryOfSummaryCompletionRetry in generate.go.
