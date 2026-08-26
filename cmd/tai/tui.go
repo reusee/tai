@@ -32,7 +32,7 @@ The TUI's content lines, tab state machine, and scroll state are provided
 by the taiui library (see taiui.TheoryOfLines, taiui.TheoryOfTabs, and
 taiui.TheoryOfScrollState): colored line buffers, wrapped colored lines,
 alternating log backgrounds, grouped colored text, tab auto-expansion and
-focus order, weighted panel layout, collapsed strips, and follow-tail
+focus order, weighted panel layout, collapsed strips, follow-tail
 scroll offsets, together with the incremental wrap cache (taiui.WrapCache),
 per-tab panel construction (taiui.TabPanel and taiui.PaneHeight), pointer
 tab interaction (taiui.TabMouse), section navigation, quit confirmation
@@ -56,7 +56,9 @@ event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
 Output tab's "generating..." hint. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
-alternation stays subtle in either state. Model output is captured from the
+alternation stays subtle in either state. The Events tab alternates the same
+two shades per event: all display lines of one event, including its trailing
+blank separator, share one shade, and consecutive events alternate. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -397,7 +399,7 @@ type TUI struct {
 	logs    *taiui.StringBuffer
 	tabs    *taiui.Tabs
 	scrolls [3]taiui.ScrollState
-	events  []taiui.Line
+	events  [][]taiui.Line
 
 	outputCache taiui.WrapCache
 	eventsCache taiui.WrapCache
@@ -846,7 +848,9 @@ func (t *TUI) handleMouseKey(key string) {
 // handleEvent renders one pipeline.Run event into the Events tab. It is
 // the Events tab's only content source: withTUIOutputObserver taps the
 // run's event iterator and forwards every event here, so every
-// Events-tab line originates from a pipeline event. See TheoryOfTUI and
+// Events-tab line originates from a pipeline event. Each visible event is
+// stored as one line group closed by its blank separator, so the Events
+// tab can shade consecutive events alternately. See TheoryOfTUI and
 // pipeline.TheoryOfLoopEvents.
 func (t *TUI) handleEvent(ev pipeline.Event) {
 	lines := eventLines(ev)
@@ -863,7 +867,7 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	if t.tabs.AutoExpand(1) {
 		t.scrolls[1].Follow = true
 	}
-	t.events = append(t.events, lines...)
+	t.events = append(t.events, withBlank(lines))
 	t.mu.Unlock()
 	t.notify()
 }
@@ -881,7 +885,7 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		if strings.TrimSpace(ev.Summary) == "" {
 			return nil
 		}
-		return withBlank(summaryLines(ev.Summary))
+		return summaryLines(ev.Summary)
 	case pipeline.EventRoundTruncated:
 		return logLines(fmt.Sprintf("[Round %d truncated (attempt %d/%d): %s]",
 			ev.Round, ev.Attempt, ev.MaxAttempts, ev.Detail))

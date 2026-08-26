@@ -128,17 +128,17 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		fmt.Fprintf(&body, "- line %d", i)
 	}
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: body.String()})
-	if len(tui.events) != lines+1 {
-		t.Fatalf("expected %d event lines, got %d", lines+1, len(tui.events))
+	if len(tui.events) != 1 || len(tui.events[0]) != lines+1 {
+		t.Fatalf("expected 1 event group of %d lines, got %d groups", lines+1, len(tui.events))
 	}
-	if tui.events[0].Text != "- line 0" {
-		t.Fatalf("expected the very first event line retained, got %q", tui.events[0].Text)
+	if tui.events[0][0].Text != "- line 0" {
+		t.Fatalf("expected the very first event line retained, got %q", tui.events[0][0].Text)
 	}
-	if tui.events[lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
-		t.Fatalf("expected the last event line retained, got %q", tui.events[lines-1].Text)
+	if tui.events[0][lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
+		t.Fatalf("expected the last event line retained, got %q", tui.events[0][lines-1].Text)
 	}
-	if tui.events[lines].Text != "" {
-		t.Fatalf("expected the trailing blank separator retained, got %q", tui.events[lines].Text)
+	if tui.events[0][lines].Text != "" {
+		t.Fatalf("expected the trailing blank separator retained, got %q", tui.events[0][lines].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -147,7 +147,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		tui2.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	}
 	if len(tui2.events) != finishes {
-		t.Fatalf("expected %d finish lines, got %d", finishes, len(tui2.events))
+		t.Fatalf("expected %d finish groups, got %d", finishes, len(tui2.events))
 	}
 }
 
@@ -464,6 +464,49 @@ func TestLogAltBG(t *testing.T) {
 		if !(r2 > r1 && g2 > g1 && b2 > b1) {
 			t.Fatalf("expected alternate lighter than base %#x, got %#x %#x %#x -> %#x %#x %#x",
 				base, r1, g1, b1, r2, g2, b2)
+		}
+	}
+}
+
+// TestTUIEventsAlternateBackgrounds verifies that the Events tab shades
+// consecutive events alternately, like the Logs tab shades log lines:
+// every display line of one event — including its trailing blank
+// separator — carries the event's shade, and focusing the Events tab
+// re-derives both shades from the focused background. Auto-expansion
+// gives the Events tab the focus when it is the first tab to receive
+// content, so the unfocused shades are asserted with the focus cleared
+// explicitly. See TheoryOfTUI and taiui.TheoryOfTabs.
+func TestTUIEventsAlternateBackgrounds(t *testing.T) {
+	tui := newTUIForTest()
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
+	usage := generators.Usage{}
+	usage.Prompt.TokenCount = 1
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 1, Usage: usage})
+
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
+	base := panelStyle.BaseBG
+	alt := taiui.AltBG(base)
+
+	// Each event renders one text line plus its blank separator, so the
+	// two events produce four display lines: base, base, alt, alt.
+	tui.tabs.Focus = -1
+	display := wrappedDisplay(tui, 1, box)
+	if len(display) != 4 {
+		t.Fatalf("expected 4 display lines, got %d", len(display))
+	}
+	for i, want := range []taiui.Color{base, base, alt, alt} {
+		if display[i].BGColor != want {
+			t.Fatalf("line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
+		}
+	}
+
+	tui.tabs.Focus = 1
+	base = panelStyle.FocusBG
+	alt = taiui.AltBG(base)
+	display = wrappedDisplay(tui, 1, box)
+	for i, want := range []taiui.Color{base, base, alt, alt} {
+		if display[i].BGColor != want {
+			t.Fatalf("focused line %d: expected shade %#v, got %#v", i, want, display[i].BGColor)
 		}
 	}
 }
@@ -1702,8 +1745,11 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	if len(tui.events) != 2 {
-		t.Fatalf("expected the rendered event lines, got %v", tui.events)
+	if len(tui.events) != 1 || len(tui.events[0]) != 2 {
+		t.Fatalf("expected one rendered event group closed by its blank separator, got %v", tui.events)
+	}
+	if tui.events[0][0].Text != "- done" {
+		t.Fatalf("expected the summary line first in the event group, got %q", tui.events[0][0].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -1842,9 +1888,11 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		t.Fatal("expected the finish event to clear the generating hint")
 	}
 	var events strings.Builder
-	for _, line := range tui.events {
-		events.WriteString(line.Text)
-		events.WriteString("\n")
+	for _, group := range tui.events {
+		for _, line := range group {
+			events.WriteString(line.Text)
+			events.WriteString("\n")
+		}
 	}
 	rendered := events.String()
 	if !strings.Contains(rendered, "[Finish: stop]") {
@@ -1858,16 +1906,17 @@ func TestWithTUIOutputObserver(t *testing.T) {
 // TestTUIHandleEventRendersKinds verifies the per-kind rendering of the
 // Events tab: the finish line carries the log color and clears the
 // generating hint, the usage line carries the outcome marker, and the
-// thought summary header carries the thought color. See TheoryOfTUI.
+// thought summary header carries the thought color. Each event is stored
+// as one line group closed by a blank separator. See TheoryOfTUI.
 func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
-	if len(tui.events) != 1 {
-		t.Fatalf("expected 1 event line, got %v", tui.events)
+	if len(tui.events) != 1 || len(tui.events[0]) != 2 {
+		t.Fatalf("expected 1 event group of 2 lines, got %v", tui.events)
 	}
-	if tui.events[0].Text != "[Finish: stop]" || tui.events[0].Color != outputColorLogLine {
-		t.Fatalf("unexpected finish line: %+v", tui.events[0])
+	if tui.events[0][0].Text != "[Finish: stop]" || tui.events[0][0].Color != outputColorLogLine {
+		t.Fatalf("unexpected finish line: %+v", tui.events[0][0])
 	}
 	if tui.generating {
 		t.Fatal("expected the finish event to clear the generating hint")
@@ -1877,19 +1926,19 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	usage.Prompt.TokenCount = 100
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 2, Detail: "error", Usage: usage})
 	last := tui.events[len(tui.events)-1]
-	if last.Text != "[Usage] round 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
-		t.Fatalf("unexpected usage line: %q", last.Text)
+	if last[0].Text != "[Usage] round 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
+		t.Fatalf("unexpected usage line: %q", last[0].Text)
 	}
-	if last.Color != outputColorLogLine {
-		t.Fatalf("expected log color for the usage line, got %v", last.Color)
+	if last[0].Color != outputColorLogLine {
+		t.Fatalf("expected log color for the usage line, got %v", last[0].Color)
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventThoughtSummary, Summary: "- point"})
-	header := tui.events[len(tui.events)-2]
-	if header.Text != "[Thought Summary]:" || header.Color != outputColorThoughtLine {
-		t.Fatalf("unexpected thought summary header: %+v", header)
+	group := tui.events[len(tui.events)-1]
+	if group[0].Text != "[Thought Summary]:" || group[0].Color != outputColorThoughtLine {
+		t.Fatalf("unexpected thought summary header: %+v", group[0])
 	}
-	if body := tui.events[len(tui.events)-1]; body.Text != "- point" || body.Color != taiui.NoColor {
+	if body := group[1]; body.Text != "- point" || body.Color != taiui.NoColor {
 		t.Fatalf("unexpected thought summary body: %+v", body)
 	}
 }

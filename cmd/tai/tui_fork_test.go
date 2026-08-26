@@ -73,8 +73,10 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var texts []string
-	for _, line := range tui.events {
-		texts = append(texts, line.Text)
+	for _, group := range tui.events {
+		for _, line := range group {
+			texts = append(texts, line.Text)
+		}
 	}
 	joined := strings.Join(texts, "\n")
 	if !strings.Contains(joined, "[Usage] round 1") {

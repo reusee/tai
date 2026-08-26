@@ -133,3 +133,59 @@ func TestWrapCacheLines(t *testing.T) {
 		t.Fatalf("expected 4 display lines after resize, got %d", len(display))
 	}
 }
+
+func TestWrapCacheGroups(t *testing.T) {
+	var c WrapCache
+	base := HexColor(0x0a1428)
+	alt := AltBG(base)
+	fg := RGBColor(1, 2, 3)
+
+	groups := [][]Line{{{Text: "first", Color: fg}}}
+	display := c.Groups(groups, 8, base)
+	if len(display) != 1 || display[0].Text != "first" {
+		t.Fatalf("unexpected display: %v", display)
+	}
+	if display[0].BGColor != base || display[0].Color != fg {
+		t.Fatalf("expected the group shade with the foreground preserved, got %+v", display[0])
+	}
+
+	// The second group flips the shade, and both display lines of the
+	// wrapped group carry the group's shade.
+	groups = append(groups, []Line{{Text: "0123456789", Color: fg}})
+	display = c.Groups(groups, 8, base)
+	if len(display) != 3 {
+		t.Fatalf("expected 3 display lines, got %d", len(display))
+	}
+	for i, want := range []Color{base, alt, alt} {
+		if display[i].BGColor != want {
+			t.Fatalf("line %d: expected shade %#x, got %#x", i, want, display[i].BGColor)
+		}
+	}
+
+	// A width change resets the cache and re-derives every shade.
+	display = c.Groups(groups, 4, base)
+	if len(display) != 5 {
+		t.Fatalf("expected 5 display lines after resize, got %d", len(display))
+	}
+	for i, want := range []Color{base, base, alt, alt, alt} {
+		if display[i].BGColor != want {
+			t.Fatalf("line %d: expected shade %#x after resize, got %#x", i, want, display[i].BGColor)
+		}
+	}
+
+	// A base change resets the cache and re-derives every shade.
+	base2 := HexColor(0x2e2e2e)
+	alt2 := AltBG(base2)
+	display = c.Groups(groups, 4, base2)
+	for i, want := range []Color{base2, base2, alt2, alt2, alt2} {
+		if display[i].BGColor != want {
+			t.Fatalf("line %d: expected shade %#x after the base change, got %#x", i, want, display[i].BGColor)
+		}
+	}
+
+	// The caller's group lines are never mutated: the source keeps no
+	// background, so a reset re-derives shades instead of stacking them.
+	if got := groups[1][0].BGColor; got != NoColor {
+		t.Fatalf("expected the source line untouched, got background %#x", got)
+	}
+}
