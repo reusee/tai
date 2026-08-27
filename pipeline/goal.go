@@ -54,7 +54,7 @@ while no done declaration is pending: a declared goal is still verified even
 with no diffs, and a verification loop that corrects nothing falls through
 to the clean-loop path so the declaration can still be confirmed. Parse
 errors also take precedence: unapplied changes must be re-emitted before the
-run may end. The stop prints a dedicated banner and leaves Achieved false —
+run may end. The stop prints a dedicated message and leaves Achieved false —
 only a confirmed done block marks achievement; the runner never fabricates
 one.
 

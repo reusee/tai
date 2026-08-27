@@ -54,9 +54,9 @@ notes from EventGoal — and the Logs tab collects
 log records. Every event kind renders: each event's first line starts
 with the kind's emoji (eventEmoji) followed by a bracketed label, one
 display style shared by every kind and by the goal verdicts the pipeline
-emits (pipeline.RunGoal), so no display mixes banner equals with brackets.
+emits (pipeline.RunGoal).
 Goal-loop runs attribute the per-attempt events to their loop: attempt
-starts and completions render "[Loop L attempt N ...]" and usage lines
+starts and completions render "[loop L attempt N ...]" and usage lines
 render "[Usage] loop L attempt N: ..."; non-goal runs omit the
 attribution and keep their display bytes unchanged.
 A completed attempt with no summary

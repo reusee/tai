@@ -24,10 +24,10 @@ The system prompt is forked through pipeline.GoalSystemPromptText, which
 composes the base codes prompt, the goal system prompt, and the component
 sections, appending the previous-loop summaries and the loop feedback at the
 end. Generation and review
-stream to os.Stdout; banners, verdicts, and aggregated statistics are
-reported as pipeline events (EventGoal, EventStats) through the goal event
-observer, which the TUI forks to its Events tab; the command-line path
-writes them to the command Output writer. The -repl flag enables a REPL mode
+stream to os.Stdout; verdicts and failure notes are reported as pipeline
+events (EventGoal) through the goal event observer, which the TUI forks to
+its Events tab; the command-line path writes them to the command Output
+writer. The -repl flag enables a REPL mode
 that taps the debugs infrastructure without running generation, useful for
 interactive debugging. This is the Go-oriented counterpart to the "any"
 subcommand for general-purpose text file generation.
