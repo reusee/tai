@@ -3,6 +3,7 @@ package gotools
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -175,4 +176,95 @@ func TestHiddenPackagesExcludeFilesAndDocs(t *testing.T) {
 			t.Fatal("focus package foo documentation must be emitted")
 		}
 	})
+}
+
+// TestUnhidePatternsForWorkingDirectory verifies the working-directory
+// exemption: a pattern whose base package directory contains the process
+// working directory is dropped, while patterns for other directories of
+// the same module and patterns of other modules stay hidden. See
+// TheoryOfHiddenPackages.
+func TestUnhidePatternsForWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hiddentest\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pkgA := filepath.Join(root, "pkgA")
+	pkgB := filepath.Join(root, "pkgB")
+	for _, dir := range []string{pkgA, pkgB} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	patterns := []string{
+		"example.com/hiddentest/pkgA",
+		"example.com/hiddentest/pkgA/...",
+		"example.com/hiddentest/pkgB",
+		"other.com/elsewhere/...",
+	}
+
+	// At the module root nothing is dropped: the root is the parent of
+	// the hidden package directories, not inside them.
+	t.Chdir(root)
+	kept := unhidePatternsForWorkingDirectory(patterns)
+	if !slices.Equal(kept, patterns) {
+		t.Errorf("module root must keep every pattern, got %v", kept)
+	}
+
+	// Inside pkgA both pkgA patterns are dropped; pkgB and the other
+	// module stay hidden even though they share the module.
+	t.Chdir(pkgA)
+	kept = unhidePatternsForWorkingDirectory(patterns)
+	want := []string{
+		"example.com/hiddentest/pkgB",
+		"other.com/elsewhere/...",
+	}
+	if !slices.Equal(kept, want) {
+		t.Errorf("inside pkgA must keep only %v, got %v", want, kept)
+	}
+
+	// Inside pkgB only the pkgB pattern is dropped.
+	t.Chdir(pkgB)
+	kept = unhidePatternsForWorkingDirectory(patterns)
+	want = []string{
+		"example.com/hiddentest/pkgA",
+		"example.com/hiddentest/pkgA/...",
+		"other.com/elsewhere/...",
+	}
+	if !slices.Equal(kept, want) {
+		t.Errorf("inside pkgB must keep only %v, got %v", want, kept)
+	}
+
+	// Without a module above the working directory, nothing is dropped.
+	t.Chdir(t.TempDir())
+	kept = unhidePatternsForWorkingDirectory(patterns)
+	if !slices.Equal(kept, patterns) {
+		t.Errorf("no module must keep every pattern, got %v", kept)
+	}
+}
+
+// TestHiddenPackagesSystemPromptUnhidesWorkingDirectory verifies that the
+// system prompt omits a pattern whose base package directory contains the
+// working directory, while keeping the other patterns. See
+// TheoryOfHiddenPackages.
+func TestHiddenPackagesSystemPromptUnhidesWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/hiddentest\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pkgA := filepath.Join(root, "pkgA")
+	if err := os.MkdirAll(pkgA, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(pkgA)
+	got := HiddenPackagesSystemPrompt(HiddenPatterns{
+		"example.com/hiddentest/pkgA",
+		"example.com/hiddentest/pkgB",
+	})
+	if strings.Contains(got, "example.com/hiddentest/pkgA") {
+		t.Error("prompt must omit the pattern of the working directory's package")
+	}
+	if !strings.Contains(got, "example.com/hiddentest/pkgB") {
+		t.Error("prompt must keep the pattern of another package in the module")
+	}
 }

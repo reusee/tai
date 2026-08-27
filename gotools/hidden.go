@@ -1,6 +1,8 @@
 package gotools
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -32,6 +34,17 @@ and import-graph discovery cannot unhide a package. Explicit -doc
 references (go.doc_patterns) are per-invocation requests for API-level
 reference material and, like all flags, override config values, so they
 are not subject to the hide.
+
+The working directory grants the one unhide exemption: when the process
+working directory lies inside a hidden pattern's base package directory,
+that pattern is not hidden, so the tool can operate on that package's
+code when invoked from within it. The exemption is decided per directory,
+not per module: the base import path maps to a filesystem directory only
+under the module that contains the working directory (the nearest go.mod
+walking up), so a hidden package elsewhere in the same module stays
+hidden, and a pattern that cannot be mapped to a directory — another
+module, no go.mod above the working directory, an unreadable module path —
+also stays hidden.
 
 The hide is announced in the system prompt: pipeline.CodesComponents
 appends a prompt-only component carrying HiddenPackagesSystemPrompt
@@ -83,15 +96,19 @@ func (Module) HiddenPatterns() HiddenPatterns {
 
 // HiddenPackagesSystemPrompt returns a system prompt section listing the
 // import-path patterns of packages hidden from this session, or "" when
-// no pattern is configured. Hidden packages contribute no code,
-// documentation, or go-src-resolvable symbols, so the section states the
-// exclusion and its replacement behavior — work from the provided context
-// and state any limitation in prose — preventing wasted go-src and ingest
-// rounds on packages that can never be fetched through context assembly.
-// Patterns are trimmed, sorted, and deduplicated so equal configurations
-// produce byte-identical prompts, preserving the LLM prefix cache.
+// no pattern is configured. Patterns whose base package directory
+// contains the process working directory are dropped first, so the prompt
+// never announces a package the session can operate on. Hidden packages
+// contribute no code, documentation, or go-src-resolvable symbols, so the
+// section states the exclusion and its replacement behavior — work from
+// the provided context and state any limitation in prose — preventing
+// wasted go-src and ingest rounds on packages that can never be fetched
+// through context assembly. Patterns are trimmed, sorted, and
+// deduplicated so equal configurations produce byte-identical prompts,
+// preserving the LLM prefix cache.
 // See TheoryOfHiddenPackages.
 func HiddenPackagesSystemPrompt(patterns HiddenPatterns) string {
+	patterns = HiddenPatterns(unhidePatternsForWorkingDirectory(patterns))
 	var cleaned []string
 	for _, pattern := range patterns {
 		if pattern = strings.TrimSpace(pattern); pattern != "" {
@@ -120,12 +137,15 @@ func HiddenPackagesSystemPrompt(patterns HiddenPatterns) string {
 }
 
 // newHiddenPackageMatcher compiles hidden patterns into a membership test
-// on package import paths. It returns nil when no usable pattern is
-// configured, so callers skip the check entirely on the default
-// configuration. Test variants are normalized to the base path before
-// matching, so hiding "foo" also hides "foo [foo.test]".
+// on package import paths. Patterns whose base package directory contains
+// the process working directory are dropped first, so the working
+// directory's own packages are never hidden. It returns nil when no
+// usable pattern remains, so callers skip the check entirely on the
+// default configuration. Test variants are normalized to the base path
+// before matching, so hiding "foo" also hides "foo [foo.test]".
 // See TheoryOfHiddenPackages.
 func newHiddenPackageMatcher(patterns []string) func(pkgPath string) bool {
+	patterns = unhidePatternsForWorkingDirectory(patterns)
 	if len(patterns) == 0 {
 		return nil
 	}
@@ -162,4 +182,110 @@ func newHiddenPackageMatcher(patterns []string) func(pkgPath string) bool {
 		}
 		return false
 	}
+}
+
+// unhidePatternsForWorkingDirectory returns the patterns that remain
+// hidden after dropping those whose base package directory contains the
+// process working directory: when the tool is invoked from inside a
+// hidden package's directory, the user is operating on that package's
+// code, so the package must not be hidden. The base import path is
+// mapped to a directory only under the module that contains the working
+// directory; patterns that cannot be mapped stay hidden. See
+// TheoryOfHiddenPackages.
+func unhidePatternsForWorkingDirectory(patterns []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return patterns
+	}
+	moduleRoot, modulePath := findModuleOfDir(workingDir)
+	if moduleRoot == "" || modulePath == "" {
+		return patterns
+	}
+	var kept []string
+	for _, pattern := range patterns {
+		base := strings.TrimSpace(pattern)
+		base, _ = strings.CutSuffix(base, "/...")
+		pkgDir := packageDirOfImportPath(base, modulePath, moduleRoot)
+		if pkgDir != "" && dirContainsDir(pkgDir, workingDir) {
+			continue
+		}
+		kept = append(kept, pattern)
+	}
+	return kept
+}
+
+// findModuleOfDir walks up from dir to the filesystem root looking for
+// the nearest go.mod, and returns its directory together with the module
+// path declared in it. Both results are empty when no go.mod is found or
+// the module path cannot be read: the nearest go.mod marks the module
+// boundary, so an unreadable module path must not fall through to an
+// outer module.
+func findModuleOfDir(dir string) (moduleRoot, modulePath string) {
+	dir = filepath.Clean(dir)
+	for {
+		goModPath := filepath.Join(dir, "go.mod")
+		if info, err := os.Stat(goModPath); err == nil && !info.IsDir() {
+			path := modulePathOfGoMod(goModPath)
+			if path == "" {
+				return "", ""
+			}
+			return dir, path
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", ""
+		}
+		dir = parent
+	}
+}
+
+// modulePathOfGoMod reads the module path declared in the go.mod file at
+// path. It returns "" when the file cannot be read or declares no module
+// path.
+func modulePathOfGoMod(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "module ")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		// A module path holds no spaces, so the first token drops a
+		// trailing comment on the directive line.
+		if index := strings.IndexAny(rest, " \t"); index >= 0 {
+			rest = rest[:index]
+		}
+		return strings.Trim(rest, `"`)
+	}
+	return ""
+}
+
+// packageDirOfImportPath maps an import path to a directory under
+// moduleRoot by replacing the module path prefix with the module root. It
+// returns "" when the import path does not belong to the module.
+func packageDirOfImportPath(importPath, modulePath, moduleRoot string) string {
+	switch {
+	case importPath == modulePath:
+		return moduleRoot
+	case strings.HasPrefix(importPath, modulePath+"/"):
+		return filepath.Join(moduleRoot, filepath.FromSlash(importPath[len(modulePath)+1:]))
+	default:
+		return ""
+	}
+}
+
+// dirContainsDir reports whether target is dir itself or lies beneath it.
+// The separator-joined prefix keeps a sibling whose name merely starts
+// with dir's name from matching.
+func dirContainsDir(dir, target string) bool {
+	dir = filepath.Clean(dir)
+	target = filepath.Clean(target)
+	return target == dir || strings.HasPrefix(target, dir+string(filepath.Separator))
 }
