@@ -46,6 +46,19 @@ channel from the outside: RunGoal reports verdicts and failure notes as
 EventGoal through GoalEventObserver, which a display front-end forks to
 its event consumer (see TheoryOfGoalMode).
 
+Events form a tree: every event carries Seq, its unique sequence number
+within the run, and Parent, the sequence number of its parent. The emit
+layer stamps the loop number, the sequence number, and the parent in one
+place, so no construction site can omit them. A goal run opens its
+branch with an EventLoopStart, the run's first event, and every attempt
+nests under it: the attempt's start event parents its finish, usage,
+truncation, retry, handoff, completion, synthesized-summary, and
+thought-summary events, and the components-triggered and idle events
+that follow the attempt. Non-goal runs emit no loop-start, so their
+attempt-start events are roots and their display bytes are unchanged.
+Children always arrive after their parents; a consumer that receives a
+child first renders it as a temporary root until the parent arrives.
+
 The TUI's Events tab renders this stream directly (cmd/tai taps the
 iterator via withTUIOutputObserver), so every Events-tab line originates
 from a Run event: finish reasons (EventFinish) and thought summaries
@@ -140,6 +153,12 @@ const (
 // GoalEventObserver; see TheoryOfGoalMode.
 const EventGoal EventKind = "goal"
 
+// EventLoopStart opens a goal run's event branch: the run's first
+// event, carrying the loop number, whose sequence number parents every
+// attempt the loop reports. Non-goal runs emit none. See
+// TheoryOfLoopEvents.
+const EventLoopStart EventKind = "loop-start"
+
 // Event is one notable occurrence during a generation loop run. Events
 // are constructed and yielded the moment their facts are known; the
 // terminal error, if any, arrives with the final yield's error
@@ -152,6 +171,16 @@ type Event struct {
 	// Zero for non-goal runs; displays omit the attribution for them.
 	// See TheoryOfLoopEvents.
 	Loop int
+	// Seq is the event's unique sequence number within its run,
+	// assigned by the emit layer in yield order; together with Loop it
+	// identifies the event across a session of goal loops, each of
+	// which numbers its own events from 1. Parent is the sequence
+	// number of the event's parent — the loop-start event for an
+	// attempt-start, the attempt's start event for its lifecycle
+	// events — or zero for a root. The pair builds the Events tab's
+	// tree. See TheoryOfLoopEvents.
+	Seq    int
+	Parent int
 	// Attempt is the session-wide 1-based attempt number: one pass
 	// through the phase chain, numbered monotonically across all
 	// generations of the run — retries, component-triggered
@@ -200,9 +229,10 @@ func (ls *loopState) emitEvent(ev Event) bool {
 	if ls.stopped {
 		return false
 	}
-	// The run's loop number attributes the event to its goal loop; the
-	// events of a non-goal run keep Loop 0. See TheoryOfLoopEvents.
-	ev.Loop = ls.opts.Loop
+	// The emit layer stamps the tree fields — the run's loop number,
+	// the sequence number, and the parent — in one place, so no event
+	// construction site can omit them. See TheoryOfLoopEvents.
+	ls.stamp(&ev)
 	if !ls.yield(ev, nil) {
 		ls.stopped = true
 	}
@@ -217,6 +247,32 @@ func (ls *loopState) emitTerminal(ev Event, err error) {
 		return
 	}
 	ls.stopped = true
-	ev.Loop = ls.opts.Loop
+	ls.stamp(&ev)
 	ls.yield(ev, err)
+}
+
+// stamp assigns the tree fields of one event: the run's loop number, a
+// fresh sequence number, and the parent from the current tree position.
+// The loop-start event roots a goal run's branch; an attempt-start
+// opens the attempt's sub-branch under it; every other event nests
+// under the current attempt's start, or under the branch root before
+// the first attempt. See TheoryOfLoopEvents.
+func (ls *loopState) stamp(ev *Event) {
+	ls.nextSeq++
+	ev.Seq = ls.nextSeq
+	ev.Loop = ls.opts.Loop
+	switch ev.Kind {
+	case EventLoopStart:
+		ev.Parent = 0
+		ls.branchRoot = ev.Seq
+		ls.attemptRoot = 0
+	case EventAttemptStart:
+		ev.Parent = ls.branchRoot
+		ls.attemptRoot = ev.Seq
+	default:
+		ev.Parent = ls.branchRoot
+		if ls.attemptRoot != 0 {
+			ev.Parent = ls.attemptRoot
+		}
+	}
 }

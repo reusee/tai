@@ -252,6 +252,17 @@ type loopState struct {
 	stopped bool
 	state   generators.State
 
+	// nextSeq numbers the run's events: every emitted event takes the
+	// next value, so the run's events carry unique, increasing
+	// sequence numbers. branchRoot records the sequence number of the
+	// goal run's loop-start event — the branch every attempt nests
+	// under — and stays 0 for a non-goal run; attemptRoot records the
+	// sequence number of the current attempt's start event, the parent
+	// of its lifecycle events. See TheoryOfLoopEvents.
+	nextSeq     int
+	branchRoot  int
+	attemptRoot int
+
 	// attempt is the session-wide 1-based attempt number of the attempt
 	// being executed: it increments across every attempt of the run and
 	// never resets, so component-triggered generations and
@@ -1297,6 +1308,14 @@ func (Module) Run(
 			installThoughtSummaryEmitter(ls.state, func(summary string) {
 				ls.emitEvent(Event{Kind: EventThoughtSummary, Attempt: ls.attempt, Summary: summary})
 			})
+
+			// A goal run opens its event branch with the loop-start
+			// event: every attempt the loop reports nests under it, so a
+			// display front-end renders each loop as one branch of the
+			// event tree. Non-goal runs emit none. See TheoryOfLoopEvents.
+			if opts.Loop > 0 {
+				ls.emitEvent(Event{Kind: EventLoopStart})
+			}
 
 			// The main loop: each iteration is one generation. A
 			// generation produces a summary and parts; when parts exist,

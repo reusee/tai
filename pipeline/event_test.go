@@ -309,3 +309,77 @@ func TestRunEventsCarryLoop(t *testing.T) {
 		}
 	})
 }
+
+// TestRunEventsFormTree verifies the event tree contract: a goal run
+// opens with the loop-start event, every attempt nests under it, and
+// the attempt's lifecycle events nest under the attempt-start; the
+// sequence numbers increase monotonically. A non-goal run emits no
+// loop-start, so its attempt-start events are roots. See
+// TheoryOfLoopEvents.
+func TestRunEventsFormTree(t *testing.T) {
+	withRun(t, func(run Run) {
+		var result Result
+		var events []Event
+		opts := RunOptions{
+			Loop:         2,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			},
+		}
+		for ev, err := range run(context.Background(), opts, &result) {
+			if err != nil {
+				t.Fatalf("unexpected terminal error: %v", err)
+			}
+			events = append(events, ev)
+		}
+		if len(events) < 2 || events[0].Kind != EventLoopStart {
+			t.Fatalf("expected the loop-start event first, got %v", events)
+		}
+		root := events[0]
+		if root.Seq != 1 || root.Parent != 0 || root.Loop != 2 {
+			t.Fatalf("unexpected loop-start event: %+v", root)
+		}
+		attemptSeq := 0
+		lastSeq := 0
+		for _, ev := range events[1:] {
+			if ev.Seq <= lastSeq {
+				t.Fatalf("expected increasing sequence numbers, got %d after %d", ev.Seq, lastSeq)
+			}
+			lastSeq = ev.Seq
+			if ev.Kind == EventAttemptStart {
+				if ev.Parent != root.Seq {
+					t.Fatalf("attempt-start must nest under the loop branch, got %+v", ev)
+				}
+				attemptSeq = ev.Seq
+				continue
+			}
+			want := root.Seq
+			if attemptSeq != 0 {
+				want = attemptSeq
+			}
+			if ev.Parent != want {
+				t.Fatalf("event %v must nest under %d, got %+v", ev.Kind, want, ev)
+			}
+		}
+
+		// A non-goal run emits no loop-start: the attempt-start is the
+		// root of its branch.
+		var plain []Event
+		for ev, err := range run(context.Background(), RunOptions{
+			InitialState: generators.NewPrompts("", nil),
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+			},
+		}, &result) {
+			if err != nil {
+				t.Fatalf("unexpected terminal error: %v", err)
+			}
+			plain = append(plain, ev)
+		}
+		if len(plain) == 0 || plain[0].Kind != EventAttemptStart || plain[0].Parent != 0 {
+			t.Fatalf("expected the attempt-start as the root of a non-goal run, got %v", plain)
+		}
+	})
+}

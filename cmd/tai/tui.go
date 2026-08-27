@@ -48,8 +48,9 @@ event stream — attempt starts ("🚀 [Attempt N start]"), attempt summaries,
 truncations, retries, handoff starts and
 synthesized summaries, the finish reasons ("🏁 [Finish: stop]"), the
 per-attempt usage lines ("📊 [Usage] ..."), the thought summaries when
--summarize-thoughts is enabled, the component/idle continuations, and
-the goal-mode verdicts ("🎯 [Goal Achieved after N loop(s)]") and failure
+-summarize-thoughts is enabled, the component/idle continuations, the
+loop-start that roots each goal loop's branch, and the goal-mode
+verdicts ("🎯 [Goal Achieved after N loop(s)]") and failure
 notes from EventGoal — and the Logs tab collects
 log records. Every event kind renders: each event's first line starts
 with the kind's emoji (eventEmoji) followed by a bracketed label, one
@@ -72,9 +73,14 @@ event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
 Output tab's "generating..." hint. The Logs tab renders consecutive
 lines with alternating background shades so entries are visually distinct;
 the two shades derive from the tab's focused or unfocused background, so the
-alternation stays subtle in either state. The Events tab alternates the same
-two shades per event: all display lines of one event share one shade, and
-consecutive events alternate. Model output is captured from the
+alternation stays subtle in either state. The Events tab renders the
+stream as a tree (see TheoryOfEventTree): each goal loop is one branch
+rooted at its loop-start event, an attempt nests under it, and the
+attempt's lifecycle events nest under its start; display order is a
+depth-first walk, so out-of-order arrival renders in tree order, and
+every line carries one Han-character width of indent per depth. The tab
+alternates the same two shades per event: all display lines of one event
+share one shade, and consecutive events alternate. Model output is captured from the
 generation state by the tuiOutputState decorator, passed through
 RunOptions.StateDecorators by runWithTUI: text parts stream to the Output
 tab, thoughts are colored distinctly and separated from non-thought content
@@ -171,10 +177,13 @@ loses the session.
 taiuidemo pattern: render() computes the wrapped display lines of each
 expanded tab (wrappedDisplay), updates the scroll offsets against the
 fresh display lengths, and builds the element tree with plain functions
-(one taiui.TabPanel per tab, plus buildRoot). wrappedDisplay feeds each
-tab's content through a taiui.WrapCache so that when new output streams
-in, only the newly arrived completed lines and the trailing partial line
-are wrapped, avoiding O(N) full re-wrapping of large buffers on every frame.
+(one taiui.TabPanel per tab, plus buildRoot). wrappedDisplay feeds the
+Output and Logs tabs' content through a taiui.WrapCache so that when new
+output streams in, only the newly arrived completed lines and the
+trailing partial line are wrapped, avoiding O(N) full re-wrapping of
+large buffers on every frame; the Events tab caches each event node's
+wrapped lines instead (see TheoryOfEventTree), so a frame re-wraps only
+nodes that are new or repositioned.
 When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
 buffers, tab machine, scroll offsets, events, and session flags.
@@ -458,10 +467,15 @@ type TUI struct {
 	logs    *taiui.StringBuffer
 	tabs    *taiui.Tabs
 	scrolls [3]taiui.ScrollState
-	events  [][]taiui.Line
+
+	// eventRoots holds the top nodes of the Events tab's event forest
+	// in arrival order, and eventBySeq maps a run's (loop, sequence)
+	// pair to its node, so an event files under its parent however the
+	// events arrive. See TheoryOfEventTree.
+	eventRoots []*eventNode
+	eventBySeq map[eventSeqKey]*eventNode
 
 	outputCache taiui.WrapCache
-	eventsCache taiui.WrapCache
 	logsCache   taiui.WrapCache
 
 	// finished reports whether the generation session has ended. It
@@ -959,9 +973,10 @@ func (t *TUI) handleMouseKey(key string) {
 // handleEvent renders one pipeline.Run event into the Events tab. It is
 // the Events tab's only content source: withTUIOutputObserver taps the
 // run's event iterator and forwards every event here, so every
-// Events-tab line originates from a pipeline event. Each visible event is
-// stored as one line group, so the Events tab can shade consecutive
-// events alternately. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.
+// Events-tab line originates from a pipeline event. Each event is filed
+// into the tab's event tree by its sequence and parent numbers, so the
+// tab renders the stream in tree order however the events arrive. See
+// TheoryOfTUI, TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
 func (t *TUI) handleEvent(ev pipeline.Event) {
 	lines := eventLines(ev)
 	if len(lines) == 0 {
@@ -977,7 +992,7 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	if t.tabs.AutoExpand(1) {
 		t.scrolls[1].Follow = true
 	}
-	t.events = append(t.events, lines)
+	t.addEventNode(ev, lines)
 	t.mu.Unlock()
 	t.notify()
 }
@@ -997,6 +1012,7 @@ var eventEmoji = map[pipeline.EventKind]string{
 	pipeline.EventIdle:                "💤",
 	pipeline.EventRunError:            "❌",
 	pipeline.EventGoal:                "🎯",
+	pipeline.EventLoopStart:           "🌳",
 }
 
 // eventLog renders one event's display line in the log color, prefixed
@@ -1035,8 +1051,9 @@ func loopPrefix(loop int, attemptLabel string) string {
 // color; the thought summary header uses the thought color; summary
 // bodies stay plain. The attempt start, completion, and usage lines
 // attribute the attempt to its goal loop via loopPrefix; non-goal runs
-// keep the bare attempt labels. The goal event renders its message lines
-// in the log color, the emoji on the first line.
+// keep the bare attempt labels. The loop-start event renders the line
+// that roots its goal loop's branch. The goal event renders its message
+// lines in the log color, the emoji on the first line.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -1103,6 +1120,8 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
 	case pipeline.EventIdle:
 		return eventLog(ev.Kind, "[Idle input received; starting the next generation]")
+	case pipeline.EventLoopStart:
+		return eventLog(ev.Kind, fmt.Sprintf("[Loop %d start]", ev.Loop))
 	case pipeline.EventGoal:
 		// A goal message may span lines (multi-line verdicts); every
 		// line renders in the log color, the first line carrying the

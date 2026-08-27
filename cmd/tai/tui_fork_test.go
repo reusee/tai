@@ -67,10 +67,19 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var texts []string
-	for _, group := range tui.events {
-		for _, line := range group {
+	// The events file into a tree: walk it depth-first so nested lines
+	// (e.g., the usage event under its attempt-start) are collected too.
+	var walk func(n *eventNode)
+	walk = func(n *eventNode) {
+		for _, line := range n.lines {
 			texts = append(texts, line.Text)
 		}
+		for _, child := range n.children {
+			walk(child)
+		}
+	}
+	for _, root := range tui.eventRoots {
+		walk(root)
 	}
 	joined := strings.Join(texts, "\n")
 	if !strings.Contains(joined, "[Usage] attempt 1") {
@@ -150,8 +159,8 @@ func TestForkTUIDisplayForwardsGoalEventsToTUI(t *testing.T) {
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
 	var texts []string
-	for _, group := range tui.events {
-		for _, line := range group {
+	for _, node := range tui.eventRoots {
+		for _, line := range node.lines {
 			texts = append(texts, line.Text)
 		}
 	}

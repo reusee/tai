@@ -25,8 +25,9 @@ func outputTabLabel(finished bool, generating bool, handoff bool) (label string,
 }
 
 // wrappedDisplay computes the wrapped, colored lines of one expanded tab
-// from its content and box via the tab's taiui.WrapCache (incremental
-// wrapping). See TheoryOfTUI.
+// from its content and box: the Output and Logs tabs wrap incrementally
+// through their taiui.WrapCache, the Events tab walks its event tree.
+// See TheoryOfTUI and TheoryOfEventTree.
 func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	contentWidth := max(box.Width()-1, 1)
 	switch idx {
@@ -37,7 +38,7 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 		if t.tabs.Focus == 1 {
 			base = panelStyle.FocusBG
 		}
-		return t.eventsCache.Groups(t.events, contentWidth, base)
+		return t.eventsDisplay(contentWidth, base)
 	case 2:
 		base := panelStyle.BaseBG
 		if t.tabs.Focus == 2 {
