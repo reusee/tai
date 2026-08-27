@@ -25,12 +25,17 @@ and read the result, while callers that want live signals (a TUI, an
 observer) consume the events as they stream.
 
 The attempt is the loop's bookkeeping unit: one pass through the phase
-chain, numbered 1-based within its generation (the span from one user
-input to the next, including all retries). A generation completes when
-an attempt finishes with a summary block and a normal finish reason;
-its completion event carries the summary. Retries re-execute the phase
-chain as a new attempt with an incremented attempt number, up to the
-retry budget carried by MaxAttempts.
+chain. Event.Attempt numbers attempts monotonically across the whole
+run — retries and the attempts of component-triggered generations and
+idle-handler inputs continue the sequence instead of restarting at 1 —
+so a consumer sees one increasing attempt counter per session;
+Event.AttemptInGeneration carries the attempt's 1-based position within
+its generation's retry budget, pairing with MaxAttempts for the
+truncated, retry, and handoff budget display. A generation completes
+when an attempt finishes with a summary block and a normal finish
+reason; its completion event carries the summary. Retries re-execute
+the phase chain as a new attempt, up to the retry budget carried by
+MaxAttempts.
 
 The TUI's Events tab renders this stream directly (cmd/tai taps the
 iterator via withTUIOutputObserver), so every Events-tab line originates
@@ -60,10 +65,6 @@ run.
 type EventKind string
 
 const (
-	// EventAttemptStart opens a generation attempt: one pass through
-	// the phase chain, numbered 1-based within its generation. Emitted
-	// immediately before the phase chain executes, including before
-	// every retry, so a live consumer sees each request as it begins.
 	EventAttemptStart EventKind = "attempt-start"
 	// EventFinish reports the finish reason of one generation attempt
 	// (Detail carries the reason string). Emitted immediately after the
@@ -131,12 +132,18 @@ const (
 type Event struct {
 	// Kind identifies the event.
 	Kind EventKind
-	// Attempt is the 1-based attempt number within its generation: one
-	// pass through the phase chain, retried as further attempts under
-	// the same generation until completion, budget exhaustion, or
-	// terminal error. Zero when not applicable (component-triggered
-	// and idle events carry the generation's final attempt).
+	// Attempt is the session-wide 1-based attempt number: one pass
+	// through the phase chain, numbered monotonically across all
+	// generations of the run — retries, component-triggered
+	// generations, and idle-handler inputs continue the sequence — so
+	// a consumer sees one increasing attempt counter per session.
+	// Zero when not applicable.
 	Attempt int
+	// AttemptInGeneration is the attempt's 1-based position within its
+	// generation's retry budget, pairing with MaxAttempts for the
+	// truncated, retry, and handoff budget display ("attempt x/y").
+	// Zero when not applicable.
+	AttemptInGeneration int
 	// MaxAttempts is the generation's retry budget, for attempt, retry,
 	// truncation, and handoff events. Zero when retry is disabled.
 	MaxAttempts int

@@ -445,6 +445,59 @@ func TestRunMultiGenerationTriggered(t *testing.T) {
 	})
 }
 
+// TestRunAttemptNumbersContinueAcrossGenerations verifies the
+// session-wide attempt counter: component-triggered generations
+// continue the attempt sequence instead of restarting at 1, and each
+// attempt-start also carries its position within the generation's
+// retry budget. See TheoryOfLoopEvents.
+func TestRunAttemptNumbersContinueAcrossGenerations(t *testing.T) {
+	withRun(t, func(run Run) {
+		comps := components.ComponentSet{
+			{
+				Kind: "shell",
+				Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+					return components.ProcessResult{
+						Parts: []generators.Part{generators.Text("shell output")},
+					}
+				},
+			},
+		}
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
+		}
+		var starts []Event
+		var result Result
+		for ev, err := range run(context.Background(), RunOptions{
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     comps,
+			PhaseBuilder:   phaseBuilder,
+			HTTPClient:     nets.HTTPClient{},
+			MaxGenerations: 2,
+		}, &result) {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ev.Kind == EventAttemptStart {
+				starts = append(starts, ev)
+			}
+		}
+		if len(starts) != 2 {
+			t.Fatalf("expected 2 attempt-start events, got %d", len(starts))
+		}
+		if starts[0].Attempt != 1 {
+			t.Fatalf("first attempt number: got %d, want 1", starts[0].Attempt)
+		}
+		if starts[1].Attempt != 2 {
+			t.Fatalf("second generation's attempt number must continue the session-wide sequence: got %d, want 2", starts[1].Attempt)
+		}
+		if starts[0].AttemptInGeneration != 1 || starts[1].AttemptInGeneration != 1 {
+			t.Fatalf("each generation's first attempt is position 1 in the retry budget: got %d and %d",
+				starts[0].AttemptInGeneration, starts[1].AttemptInGeneration)
+		}
+	})
+}
+
 func TestRunBlockHandlerConsumed(t *testing.T) {
 	withRun(t, func(run Run) {
 		var consumedBlocks []blocks.Block

@@ -252,11 +252,16 @@ type loopState struct {
 	stopped bool
 	state   generators.State
 
-	// attempt is the 1-based attempt number of the attempt being
-	// executed, reset per generation. Retries within a generation
-	// increment it; events carry it alongside the generation's retry
-	// budget. See TheoryOfLoopEvents.
-	attempt int
+	// attempt is the session-wide 1-based attempt number of the attempt
+	// being executed: it increments across every attempt of the run and
+	// never resets, so component-triggered generations and
+	// idle-handler inputs continue the sequence instead of restarting
+	// at 1. attemptInGeneration is the attempt's position within its
+	// generation's retry budget (1-based), pairing with maxRetries for
+	// the truncated, retry, and handoff budget display. See
+	// TheoryOfLoopEvents.
+	attempt             int
+	attemptInGeneration int
 
 	remainingBlocks []blocks.Block
 	maxRetries      int
@@ -302,9 +307,14 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// Inner retry loop: each iteration is one attempt, opened by the
 	// attempt-start event immediately before its work — including
 	// retries, so every attempt's opening is reported the moment it
-	// begins. See TheoryOfLoops.
+	// begins. The attempt number is session-wide: it increments on
+	// every attempt and never resets across generations;
+	// attemptInGeneration records the position within this
+	// generation's retry budget. See TheoryOfLoops and
+	// TheoryOfLoopEvents.
 	for retry := 0; ; retry++ {
-		ls.attempt = retry + 1
+		ls.attempt++
+		ls.attemptInGeneration = retry + 1
 		attemptBase = generators.CountContents(ls.state)
 		collectedBlocks = nil
 		generationParseErrors = nil
@@ -317,7 +327,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		if ls.rec != nil && ls.rec.Enabled() {
 			ls.rec.AttemptStart()
 		}
-		ls.emitEvent(Event{Kind: EventAttemptStart, Attempt: ls.attempt, MaxAttempts: ls.maxRetries})
+		ls.emitEvent(Event{
+			Kind:                EventAttemptStart,
+			Attempt:             ls.attempt,
+			AttemptInGeneration: ls.attemptInGeneration,
+			MaxAttempts:         ls.maxRetries,
+		})
 		if ls.opts.OnAttemptStart != nil && (!ls.skipOnAttemptStart || retry > 0) {
 			ls.opts.OnAttemptStart()
 		}
@@ -417,11 +432,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, generationErr))
 					}
 					ls.emitEvent(Event{
-						Kind:        EventRetry,
-						Attempt:     retry + 1,
-						MaxAttempts: ls.maxRetries,
-						Err:         generationErr,
-						Detail:      "error after partial output",
+						Kind:                EventRetry,
+						Attempt:             ls.attempt,
+						AttemptInGeneration: ls.attemptInGeneration,
+						MaxAttempts:         ls.maxRetries,
+						Err:                 generationErr,
+						Detail:              "error after partial output",
 					})
 
 					var retryParts []generators.Part
@@ -450,9 +466,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 							// immediately, before the request is
 							// sent. See TheoryOfLoopEvents.
 							ls.emitEvent(Event{
-								Kind:        EventHandoffStart,
-								Attempt:     retry + 1,
-								MaxAttempts: ls.maxRetries,
+								Kind:                EventHandoffStart,
+								Attempt:             ls.attempt,
+								AttemptInGeneration: ls.attemptInGeneration,
+								MaxAttempts:         ls.maxRetries,
 							})
 							handoff, handoffErr := ls.opts.Handoff(incompleteText)
 							if handoffErr == nil && handoff != nil {
@@ -461,11 +478,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								// Report the produced handoff to the
 								// event stream. See TheoryOfLoopEvents.
 								ls.emitEvent(Event{
-									Kind:        EventHandoff,
-									Attempt:     retry + 1,
-									MaxAttempts: ls.maxRetries,
-									Summary:     handoff.Summary,
-									Handoff:     handoff,
+									Kind:                EventHandoff,
+									Attempt:             ls.attempt,
+									AttemptInGeneration: ls.attemptInGeneration,
+									MaxAttempts:         ls.maxRetries,
+									Summary:             handoff.Summary,
+									Handoff:             handoff,
 								})
 								// Account the handoff request's own token
 								// spend before the failed attempt is
@@ -566,10 +584,11 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
 		}
 		ls.emitEvent(Event{
-			Kind:        EventTruncated,
-			Attempt:     retry + 1,
-			MaxAttempts: ls.maxRetries,
-			Detail:      truncatedDetail,
+			Kind:                EventTruncated,
+			Attempt:             ls.attempt,
+			AttemptInGeneration: ls.attemptInGeneration,
+			MaxAttempts:         ls.maxRetries,
+			Detail:              truncatedDetail,
 		})
 
 		// Perform handoff summary on incomplete output if threshold met.
@@ -585,9 +604,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				// Report the handoff request's start immediately.
 				// See TheoryOfLoopEvents.
 				ls.emitEvent(Event{
-					Kind:        EventHandoffStart,
-					Attempt:     retry + 1,
-					MaxAttempts: ls.maxRetries,
+					Kind:                EventHandoffStart,
+					Attempt:             ls.attempt,
+					AttemptInGeneration: ls.attemptInGeneration,
+					MaxAttempts:         ls.maxRetries,
 				})
 				handoff, rerr := ls.opts.Handoff(incompleteText)
 				if rerr == nil && handoff != nil {
@@ -596,11 +616,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					// Report the produced handoff to the event
 					// stream. See TheoryOfLoopEvents.
 					ls.emitEvent(Event{
-						Kind:        EventHandoff,
-						Attempt:     retry + 1,
-						MaxAttempts: ls.maxRetries,
-						Summary:     handoff.Summary,
-						Handoff:     handoff,
+						Kind:                EventHandoff,
+						Attempt:             ls.attempt,
+						AttemptInGeneration: ls.attemptInGeneration,
+						MaxAttempts:         ls.maxRetries,
+						Summary:             handoff.Summary,
+						Handoff:             handoff,
 					})
 					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}

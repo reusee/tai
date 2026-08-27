@@ -965,6 +965,13 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 // dropped. Log-style events use the log color; the thought summary
 // header uses the thought color; summary bodies stay plain.
 func eventLines(ev pipeline.Event) []taiui.Line {
+	// The "attempt x/y" budget display uses the in-generation
+	// position, pairing with MaxAttempts; hand-constructed events
+	// may carry only the session-wide number, which then stands in.
+	inGeneration := ev.AttemptInGeneration
+	if inGeneration == 0 {
+		inGeneration = ev.Attempt
+	}
 	switch ev.Kind {
 	case pipeline.EventAttemptStart:
 		return logLines(fmt.Sprintf("[Attempt %d start]", ev.Attempt))
@@ -975,19 +982,19 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return summaryLines(ev.Summary)
 	case pipeline.EventTruncated:
 		return logLines(fmt.Sprintf("[Attempt %d truncated (attempt %d/%d): %s]",
-			ev.Attempt, ev.Attempt, ev.MaxAttempts, ev.Detail))
+			ev.Attempt, inGeneration, ev.MaxAttempts, ev.Detail))
 	case pipeline.EventRetry:
 		return logLines(fmt.Sprintf("[Retry attempt %d/%d] %v",
-			ev.Attempt, ev.MaxAttempts, ev.Err))
+			inGeneration, ev.MaxAttempts, ev.Err))
 	case pipeline.EventRunError:
 		return logLines(fmt.Sprintf("[Run error] %v", ev.Err))
 	case pipeline.EventHandoffStart:
 		if ev.Attempt == 0 {
 			return logLines("[Handoff started]")
 		}
-		return logLines(fmt.Sprintf("[Handoff started (attempt %d/%d)]", ev.Attempt, ev.MaxAttempts))
+		return logLines(fmt.Sprintf("[Handoff started (attempt %d/%d)]", inGeneration, ev.MaxAttempts))
 	case pipeline.EventHandoff:
-		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", ev.Attempt, ev.MaxAttempts)
+		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", inGeneration, ev.MaxAttempts)
 		if ev.Attempt == 0 {
 			header = "[Handoff summary]"
 		}

@@ -1977,6 +1977,15 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 		t.Fatalf("unexpected empty-summary completion line: %+v", group[0])
 	}
 
+	// The truncated display pairs the session-wide attempt number
+	// with the in-generation position over the retry budget.
+	// See TheoryOfLoopEvents.
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventTruncated, Attempt: 4, AttemptInGeneration: 1, MaxAttempts: 3, Detail: "missing completion"})
+	group = tui.events[len(tui.events)-1]
+	if group[0].Text != "[Attempt 4 truncated (attempt 1/3): missing completion]" {
+		t.Fatalf("unexpected truncated line: %+v", group[0])
+	}
+
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventKind("custom-kind"), Detail: "note"})
 	group = tui.events[len(tui.events)-1]
 	if group[0].Text != "[Event custom-kind] note" || group[0].Color != outputColorLogLine {
