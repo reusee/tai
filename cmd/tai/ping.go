@@ -55,7 +55,9 @@ The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
 selection explicit. The command performs a single generation round with no
 chat loop and no file context; its system prompt carries the block-format
-prompt and the user-configured extra system prompts.
+prompt and the user-configured extra system prompts. Reasoning thoughts
+stream to stdout by default; the -no-thoughts flag (flags.Thoughts)
+suppresses them, matching the next command's output behavior.
 `
 
 // PingBlockSpec describes one required block for the ping test: the block
@@ -283,6 +285,7 @@ var PingCommand = Command{
 		extra flags.ExtraSystemPrompt,
 		familyExtra flags.FamilyExtraSystemPrompt,
 		modelFamily generators.ModelFamily,
+		flagThoughts flags.Thoughts,
 	) {
 		ctx := context.Background()
 
@@ -333,7 +336,15 @@ var PingCommand = Command{
 				},
 			},
 		)
-		state = generators.NewOutput(state, os.Stdout, true)
+
+		// The -thoughts flag governs whether reasoning thoughts are
+		// streamed to stdout, defaulting to shown; -no-thoughts hides
+		// them, matching the next command. See TheoryOfPingCommand.
+		showThoughts := true
+		if flagThoughts.Value != nil {
+			showThoughts = *flagThoughts.Value
+		}
+		state = generators.NewOutput(state, os.Stdout, showThoughts)
 
 		// Run the unified generation loop in single-shot mode (no
 		// components). The loop handles ParserState wrapping, phase

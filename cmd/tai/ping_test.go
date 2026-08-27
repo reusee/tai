@@ -263,7 +263,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -292,6 +292,7 @@ func TestPingCommandUsesRunLoop(t *testing.T) {
 		nil,
 		nil,
 		"",
+		flags.Thoughts{},
 	)
 	w.Close()
 	os.Stdout = oldStdout
@@ -360,7 +361,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		return func(yield func(pipeline.Event, error) bool) {}
 	}
 
-	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily))
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
 	if !ok {
 		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
 	}
@@ -387,6 +388,7 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 		flags.ExtraSystemPrompt{"generic extra prompt"},
 		flags.FamilyExtraSystemPrompt{"test-family": {"family extra prompt"}},
 		generators.ModelFamily("test-family"),
+		flags.Thoughts{},
 	)
 	w.Close()
 	os.Stdout = oldStdout
@@ -411,5 +413,90 @@ func TestPingCommandInjectsExtraSystemPrompt(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "ping ok") {
 		t.Fatalf("expected the success verdict on stdout, got %q", string(output))
+	}
+}
+
+func TestPingCommandThoughtsFlag(t *testing.T) {
+	// The -thoughts flag governs whether ping streams reasoning
+	// thoughts: -no-thoughts (Value pointing to false) suppresses them,
+	// and the unset flag (nil Value) shows them. The regression: ping
+	// hard-coded showThoughts to true, so -no-thoughts had no effect.
+	// See TheoryOfPingCommand.
+	specs := []PingBlockSpec{
+		{Kind: "abc", Attributes: map[string]string{"foo": "bar"}, Body: "body one"},
+	}
+	generator := func() (generators.Generator, error) { return aiMockGenerator{}, nil }
+	buildGen := func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+		return func(cont generators.Phase) generators.Phase {
+			return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
+				return nil, state, nil
+			}
+		}
+	}
+	mainFn, ok := PingCommand.Main.(func(Output, *records.Recorder, generators.GetDefaultGenerator, generators.BuildGenerate, pipeline.Run, RandomPingBlocks, flags.ExtraSystemPrompt, flags.FamilyExtraSystemPrompt, generators.ModelFamily, flags.Thoughts))
+	if !ok {
+		t.Fatalf("unexpected Main type: %T", PingCommand.Main)
+	}
+
+	noThoughts := false
+	for _, tc := range []struct {
+		name      string
+		thoughts  flags.Thoughts
+		wantShown bool
+	}{
+		{"no-thoughts suppresses thoughts", flags.Thoughts{Value: &noThoughts}, false},
+		{"unset flag shows thoughts by default", flags.Thoughts{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotOpts pipeline.RunOptions
+			fakeRun := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
+				gotOpts = opts
+				result.RemainingBlocks = pingResultBlocks(specs)
+				return func(yield func(pipeline.Event, error) bool) {}
+			}
+
+			// Capture stdout so the thought visibility is asserted and
+			// does not pollute the test output.
+			oldStdout := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Stdout = w
+			mainFn(
+				Output(os.Stdout),
+				nil,
+				generator,
+				buildGen,
+				fakeRun,
+				func() []PingBlockSpec { return specs },
+				nil,
+				nil,
+				"",
+				tc.thoughts,
+			)
+
+			// Stream a thought through the returned state; its visibility
+			// follows the flag.
+			_, err = gotOpts.InitialState.AppendContent(&generators.Content{
+				Role:  generators.RoleModel,
+				Parts: []generators.Part{generators.Thought("secret reasoning")},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.Close()
+			os.Stdout = oldStdout
+			output, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Close()
+
+			shown := strings.Contains(string(output), "secret reasoning")
+			if shown != tc.wantShown {
+				t.Fatalf("thought shown = %v, want %v; output %q", shown, tc.wantShown, string(output))
+			}
+		})
 	}
 }
