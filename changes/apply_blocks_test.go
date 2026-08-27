@@ -12,14 +12,9 @@ import (
 
 func newTestScope(t *testing.T) dscope.Scope {
 	t.Helper()
-	errorLogDir := t.TempDir()
 	return dscope.New(
 		modes.ForTest(t),
 		new(Module),
-	).Fork(
-		func() ErrorLogDir {
-			return ErrorLogDir(errorLogDir)
-		},
 	)
 }
 

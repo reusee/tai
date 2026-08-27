@@ -17,31 +17,25 @@ import (
 )
 
 const TheoryOfDscopeProvidedApplyFunctions = `
-All apply functions are dscope-provided function types. WriteErrorLog is never
-passed as a parameter; it is captured from the dscope scope at provider
-resolution time. This follows the core dscope principle: static dependencies
-(WriteErrorLog, resolved once from the scope and unchanged during execution)
-are provided via dscope, not passed as parameters. Only dynamic parameters
-(runtime values like the target store/root and change block content) are
-passed as function arguments.
+All apply functions are dscope-provided function types. Static dependencies
+are captured from the dscope scope at provider resolution time. This follows
+the core dscope principle: static dependencies (resolved once from the scope
+and unchanged during execution) are provided via dscope, not passed as
+parameters. Only dynamic parameters (runtime values like the target
+store/root and change block content) are passed as function arguments.
 
 The public types (ApplyChangeBlock, ApplyChangeBlockStore, ApplyChangeBlocks,
 ApplyChangeBlocksStore, ApplyDiffFile, BuildChangeBlockHandler) are
-dscope-provided function types with no WriteErrorLog in their signatures.
+dscope-provided function types.
 
-Internal helpers (CallWriteErrorLog, ParseAndFormat, ApplySpecialTargetModify,
-ApplyFileLevelOp, ApplyTextLevelOp, ApplyGoModification) are exported
-dscope-provided types that decompose the apply logic into focused units. They
-must be exported because dscope uses reflect to discover provider methods. The
-dependency chain flows from WriteErrorLog through CallWriteErrorLog to
-ParseAndFormat, then to ApplySpecialTargetModify and ApplyGoModification, and
+Internal helpers (ParseAndFormat, ApplySpecialTargetModify, ApplyFileLevelOp,
+ApplyTextLevelOp, ApplyGoModification) are exported dscope-provided types that
+decompose the apply logic into focused units. They must be exported because
+dscope uses reflect to discover provider methods. The dependency chain flows
+from ParseAndFormat to ApplySpecialTargetModify and ApplyGoModification, and
 finally to ApplyChangeBlockStore, ApplyChangeBlock, ApplyChangeBlocks,
 ApplyChangeBlocksStore, ApplyDiffFile, and BuildChangeBlockHandler.
 `
-
-// Public dscope-provided function types. These are the types callers inject
-// via dscope and call with only runtime parameters. WriteErrorLog is never
-// in the signature; it is captured at provider resolution time.
 
 // FileWriteTimes provider: the process-wide write-time tracker shared by
 // every root store created through the dscope graph. A scope's providers
@@ -76,14 +70,9 @@ type ApplyDiffFile func(root *os.Root, diffFilePath string) iter.Seq2[ChangeBloc
 // provider methods, and reflect only finds exported methods.
 // See TheoryOfDscopeProvidedApplyFunctions.
 
-// CallWriteErrorLog writes a structured error log entry when a change block
-// application fails. WriteErrorLog is captured from the dscope scope.
-type CallWriteErrorLog func(h ChangeBlock, src []byte, modified []byte, applyErr error)
-
 // ParseAndFormat parses the modified Go source to catch syntax errors before
 // goimports, then runs goimports for formatting and import synchronization.
-// CallWriteErrorLog is captured from the dscope scope.
-type ParseAndFormat func(path string, h ChangeBlock, src []byte, modified []byte, prefixLen int) ([]byte, error)
+type ParseAndFormat func(path string, modified []byte, prefixLen int) ([]byte, error)
 
 // ApplySpecialTargetModify handles MODIFY operations for the special Go-only
 // targets "package" and "import". ParseAndFormat is captured from the dscope
@@ -97,47 +86,22 @@ type ApplySpecialTargetModify func(store FileStore, path string, src []byte, f *
 type ApplyFileLevelOp func(store FileStore, path string, h ChangeBlock) (bool, error)
 
 // ApplyTextLevelOp handles REPLACE, INSERT_BEFORE, INSERT_AFTER for non-Go
-// text files. CallWriteErrorLog is captured from the dscope scope.
+// text files.
 type ApplyTextLevelOp func(store FileStore, path string, src []byte, h ChangeBlock) error
 
 // ApplyGoModification handles structural Go file modifications (MODIFY,
-// ADD_BEFORE, ADD_AFTER, DELETE, special targets). CallWriteErrorLog,
-// ParseAndFormat, and ApplySpecialTargetModify are captured from the dscope
-// scope.
+// ADD_BEFORE, ADD_AFTER, DELETE, special targets). ParseAndFormat and
+// ApplySpecialTargetModify are captured from the dscope scope.
 type ApplyGoModification func(store FileStore, path string, src []byte, h ChangeBlock) error
 
-func (Module) CallWriteErrorLog(
-	writeErrorLog WriteErrorLog,
-) CallWriteErrorLog {
-	return func(h ChangeBlock, src []byte, modified []byte, applyErr error) {
-		if writeErrorLog == nil {
-			return
-		}
-		_ = writeErrorLog(ErrorLogContext{
-			Operation:    h.Op,
-			Target:       h.Target,
-			FilePath:     h.FilePath,
-			Find:         h.Find,
-			ChangeBlock:  h.Body,
-			SourceFile:   string(src),
-			ModifiedFile: string(modified),
-			Error:        applyErr.Error(),
-		})
-	}
-}
-
-// ParseAndFormat provider: captures CallWriteErrorLog from the dscope scope.
-func (Module) ParseAndFormat(
-	callWriteErrorLog CallWriteErrorLog,
-) ParseAndFormat {
-	return func(path string, h ChangeBlock, src []byte, modified []byte, prefixLen int) ([]byte, error) {
+// ParseAndFormat provider.
+func (Module) ParseAndFormat() ParseAndFormat {
+	return func(path string, modified []byte, prefixLen int) ([]byte, error) {
 		if _, parseErr := parser.ParseFile(token.NewFileSet(), path, modified, parser.ParseComments); parseErr != nil {
-			callWriteErrorLog(h, src, modified, parseErr)
 			return nil, fmt.Errorf("parse error after apply: %w", parseErr)
 		}
 		formatted, err := imports.Process(path, modified, nil)
 		if err != nil {
-			callWriteErrorLog(h, src, modified, err)
 			return nil, fmt.Errorf("goimports: %w", err)
 		}
 		if prefixLen > 0 {
@@ -227,7 +191,7 @@ func (Module) ApplySpecialTargetModify(
 			return fmt.Errorf("unknown special target: %q", h.Target)
 		}
 
-		formatted, err := parseAndFormat(path, h, src, newSrc, 0)
+		formatted, err := parseAndFormat(path, newSrc, 0)
 		if err != nil {
 			return err
 		}
@@ -266,7 +230,7 @@ func (Module) ApplyFileLevelOp(
 		if h.Op == "WRITE" {
 			content := []byte(h.Body)
 			if strings.HasSuffix(path, ".go") {
-				formatted, err := parseAndFormat(path, h, nil, content, 0)
+				formatted, err := parseAndFormat(path, content, 0)
 				if err != nil {
 					return true, err
 				}
@@ -290,27 +254,23 @@ func (Module) ApplyFileLevelOp(
 	}
 }
 
-// ApplyTextLevelOp provider: captures CallWriteErrorLog from the dscope scope.
-func (Module) ApplyTextLevelOp(
-	callWriteErrorLog CallWriteErrorLog,
-) ApplyTextLevelOp {
+// ApplyTextLevelOp provider.
+func (Module) ApplyTextLevelOp() ApplyTextLevelOp {
 	return func(store FileStore, path string, src []byte, h ChangeBlock) error {
 		if isGoFile(path) {
 			return fmt.Errorf("Go file %q does not support text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER); use structural operations (MODIFY, ADD_BEFORE, ADD_AFTER, DELETE) instead", path)
 		}
-		newContent, editErr := applyTextEdit(src, h)
-		if editErr != nil {
-			callWriteErrorLog(h, src, nil, editErr)
-			return editErr
+		newContent, err := applyTextEdit(src, h)
+		if err != nil {
+			return err
 		}
 		return store.WriteFile(path, finalizeContent(newContent), 0644)
 	}
 }
 
-// ApplyGoModification provider: captures CallWriteErrorLog, ParseAndFormat,
-// and ApplySpecialTargetModify from the dscope scope.
+// ApplyGoModification provider: captures ParseAndFormat and
+// ApplySpecialTargetModify from the dscope scope.
 func (Module) ApplyGoModification(
-	callWriteErrorLog CallWriteErrorLog,
 	parseAndFormat ParseAndFormat,
 	applySpecialTargetModify ApplySpecialTargetModify,
 ) ApplyGoModification {
@@ -322,7 +282,6 @@ func (Module) ApplyGoModification(
 			var err error
 			f, prefixLen, err = parseGoSource(fset, path, src)
 			if err != nil {
-				callWriteErrorLog(h, src, nil, err)
 				return err
 			}
 		}
@@ -386,7 +345,7 @@ func (Module) ApplyGoModification(
 			outputSrc = append([]byte("package p\n"), newSrc...)
 			outputPrefixLen = len("package p\n")
 		}
-		formatted, err := parseAndFormat(path, h, src, outputSrc, outputPrefixLen)
+		formatted, err := parseAndFormat(path, outputSrc, outputPrefixLen)
 		if err != nil {
 			return err
 		}

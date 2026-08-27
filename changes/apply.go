@@ -45,9 +45,7 @@ trailing newline, matching the convention enforced by go fmt.
 
 After building the modified Go source, parseAndFormat parses it immediately to
 catch syntax errors before goimports, which may report formatting-aware errors
-that obscure the root cause. On parse or goimports failure, an XML error log
-is written to the current directory recording the original source, change
-block, modified content, and error. See TheoryOfErrorLogging.
+that obscure the root cause.
 
 Package detection (hasPackage) skips leading comments, including build
 constraint comments such as //go:build and // +build, to determine whether the
