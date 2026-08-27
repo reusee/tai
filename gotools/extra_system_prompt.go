@@ -9,19 +9,11 @@ import (
 	"github.com/reusee/tai/configs"
 )
 
-// ExtraSystemPrompt configs.Config implementation for the gocodes module.
-// The go.extra_system_prompt config path provides Go-specific additional
-// system prompt sections. Unlike the top-level extra_system_prompt
-// (flags.ExtraSystemPrompt), these are only introduced when the go code
-// generation pipeline is active: the go and goal commands merge them into
-// flags.ExtraSystemPrompt, while other commands (any, ai) ignore them.
-// See flags.TheoryOfConfigFlagParity.
-
-// FamilyExtraSystemPrompt configs.Config implementation for the gocodes
+// FamilyExtraSystemPrompt configs.Config implementation for the gotools
 // module. It maps model family names to Go-specific additional system
 // prompt sections. Values from multiple config files and config paths are
 // aggregated additively per family. See flags.TheoryOfConfigFlagParity and
-// codes.TheoryOfFamilyExtraSystemPrompt.
+// pipeline.TheoryOfFamilyExtraSystemPrompt.
 
 var _ configs.Config = FamilyExtraSystemPrompt(nil)
 
@@ -80,8 +72,8 @@ func (f FamilyExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) 
 // The go.extra_system_prompt config path provides Go-specific additional
 // system prompt sections. pipeline.CodesComponents injects this type and
 // appends each entry as a prompt-only Component, so the prompts are
-// introduced whenever the codes generation pipeline is active (go, any,
-// goal commands). The ai command uses AIComponents and is unaffected.
+// introduced whenever the codes generation pipeline is active (go, any
+// commands). The ai command uses AIComponents and is unaffected.
 // See flags.TheoryOfConfigFlagParity.
 type ExtraSystemPrompt []string
 

@@ -19,7 +19,7 @@ analysis.
   recent session) with the model
 
 Recording itself is enabled by the -record flag; every generation command
-(go, any, ai, next, goal) records through the unified generation loop. The
+(go, any, ai, next) records through the unified generation loop. The
 record subcommand works regardless of whether recording is enabled, because
 the interaction database is opened on every run.
 See records.TheoryOfInteractionRecording.

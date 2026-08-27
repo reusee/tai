@@ -27,10 +27,9 @@ func (c Command) Keys() map[string]string {
 		"next":   "Identify and execute the most valuable next step",
 		"ai":     "Start an interactive AI chat session with memory",
 		"patch":  "Apply a boundary-delimited diff file to the working tree",
-		"go":     "Generate code for Go files (default in Go modules)",
+		"go":     "Generate code for Go files via goal loops (default in Go modules)",
 		"any":    "Generate code for arbitrary text files",
 		"ping":   "Test whether a model is reachable and can emit blocks in the required format",
-		"goal":   "Work toward a goal through multiple independent generation loops",
 		"record": "Record interaction sessions and analyze them for self-improvement",
 	}
 }
@@ -60,10 +59,6 @@ func (c Command) Handle(key string, args []string) (newDef any, remainArgs []str
 
 	case "ping":
 		ret := PingCommand
-		return &ret, args, nil
-
-	case "goal":
-		ret := GoalCommand
 		return &ret, args, nil
 
 	case "record":

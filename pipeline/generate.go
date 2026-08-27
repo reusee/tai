@@ -53,7 +53,7 @@ collected, preserving the no-apply behavior.
 const maxRetriesForMissingSummary = 3
 
 const TheoryOfReviewLoop = `
-The review loop runs after the main generation loop (or after the goal command
+The review loop runs after the main generation loop (or after a goal run
 completes) when the -review flag is enabled. It is skipped when the session
 produced no applied changes — an empty diff set. Without this, enabling -review on
 a session where the model emitted no change blocks (or changes were not applied,
@@ -65,7 +65,7 @@ resets so the diff always reflects the full session delta, not only the last
 attempt.
 
 When diffs exist, the review loop opens a fresh dscope scope so the latest
-filesystem state is loaded as context — the same reset mechanism the goal command
+filesystem state is loaded as context — the same reset mechanism the goal runner
 uses per loop — and runs one generation session per configured review model,
 sequentially. Each review session replaces the original chat input with a review
 instruction ("审核并修正这些改动") followed by the unified diff of all changes made
@@ -80,7 +80,7 @@ type Generate func(ctx context.Context, output io.Writer) error
 // returns the Result together with the attempt statistics collected
 // during the run. The statistics are returned (not only printed) so that
 // callers that run multiple independent generation sessions — such as the
-// goal command — can accumulate them and re-print the entire process
+// goal runner — can accumulate them and re-print the entire process
 // aggregated after all sessions complete. See TheoryOfAttemptStatistics.
 type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error)
 
@@ -216,8 +216,8 @@ output pane.
 // thoughts, cached), running time, and summary for a single generation
 // attempt. The Attempt field is the 1-based attempt number within its
 // generation. The Loop field identifies the goal loop that produced the
-// attempt when the statistics are aggregated across multiple goal loops
-// (goal command); it is zero for single-session runs (go, any). See
+// attempt when the statistics are aggregated across a goal run's loops;
+// it is zero for single-session runs (ai, next, any). See
 // TheoryOfAttemptStatistics.
 type AttemptStat struct {
 	Loop             int
@@ -241,7 +241,7 @@ type AttemptStatsWriter io.Writer
 
 // PrintAttemptStats writes the attempt statistics table to w. The
 // optional title replaces the default "Generation Statistics" header.
-// When any stat has a non-zero Loop field (goal command aggregation), a
+// When any stat has a non-zero Loop field (goal run aggregation), a
 // Loop column is rendered and summary lines are prefixed with the loop
 // number. See TheoryOfAttemptStatistics.
 func PrintAttemptStats(w io.Writer, stats []AttemptStat, title ...string) {
@@ -533,8 +533,8 @@ func (Module) Generate(
 
 // GenerateWithResult wraps GenerateWithResultWithStats, discarding the
 // attempt statistics so existing callers see the same (Result, error)
-// signature. Callers that need the statistics (e.g., goal command) should
-// use GenerateWithResultWithStats directly. See TheoryOfAttemptStatistics.
+// signature. Callers that need the statistics (e.g., the goal runner)
+// should use GenerateWithResultWithStats directly. See TheoryOfAttemptStatistics.
 func (Module) GenerateWithResult(
 	generateWithResultWithStats GenerateWithResultWithStats,
 ) GenerateWithResult {

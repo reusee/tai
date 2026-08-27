@@ -9,8 +9,8 @@ import (
 
 // NoHuman controls whether interactive human input is disabled. When true,
 // chat prompts and REPL sessions are skipped, enabling unattended/autonomous
-// operation. Used by the goal subcommand to ensure fully autonomous
-// multi-loop execution without any human interaction.
+// operation. Used by the go command's goal mode (pipeline.GoalRun) to keep
+// multi-loop execution fully autonomous, without any human interaction.
 type NoHuman bool
 
 func (Module) NoHuman() NoHuman {

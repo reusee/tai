@@ -1108,7 +1108,7 @@ type Result struct {
 	RemainingBlocks []blocks.Block
 	// ParseErrors lists blocks that could not be parsed and were not
 	// corrected within the maxParseErrorCorrections correction budget.
-	// In unattended operation, callers (e.g., the goal command) can
+	// In unattended operation, callers (e.g., the goal runner) can
 	// inspect this to detect silent change loss from persistently
 	// malformed model output. See TheoryOfLoops.
 	ParseErrors []*blocks.BlockParseError

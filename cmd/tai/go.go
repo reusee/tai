@@ -14,18 +14,24 @@ import (
 
 const TheoryOfGoCommand = `
 The "go" subcommand provides code generation for Go files by selecting the "go"
-PartsProvider, which delegates to gotools.PartsProvider. It reuses the full
-generation pipeline — including dynamic context, immediate apply, shell and
-continue blocks, and round statistics — by wiring pipeline.Module into the dscope
-scope. The -repl flag enables a REPL mode that taps the debugs infrastructure
-without running generation, useful for interactive debugging. This is the
-Go-oriented counterpart to the "any" subcommand for general-purpose text file
-generation.
+PartsProvider, which delegates to gotools.PartsProvider. It wires pipeline.Module
+into the dscope scope and always runs goal mode (pipeline.GoalRun): repeated
+fresh generation loops until a done block is confirmed, with each loop's
+outcome carried into the next loop's system prompt as pipeline.GoalFeedback.
+The system prompt is forked through pipeline.GoalSystemPromptText, which
+composes the base codes prompt, the goal system prompt, and the component
+sections, appending the loop feedback at the end. Generation and review
+stream to os.Stdout; banners, verdicts, and aggregated statistics go to the
+command Output writer. The -repl flag enables a REPL mode that taps the
+debugs infrastructure without running generation, useful for interactive
+debugging. This is the Go-oriented counterpart to the "any" subcommand for
+general-purpose text file generation.
 
 When no subcommand is provided and the current directory is inside a Go module
 (a go.mod file is found by walking up the directory tree), the "go" subcommand
 is automatically selected as the default. This makes "tai" convenient to invoke
-in Go projects without explicitly specifying the subcommand each time.
+in Go projects without explicitly specifying the subcommand each time, and
+every such invocation runs the multi-loop goal mechanism.
 `
 
 var GoCommand = Command{
@@ -36,10 +42,16 @@ var GoCommand = Command{
 		) codetypes.PartsProvider {
 			return provider
 		},
+		func(
+			comps pipeline.CodesComponents,
+			feedback pipeline.GoalFeedback,
+		) pipeline.SystemPrompt {
+			return pipeline.GoalSystemPromptText(comps, feedback)
+		},
 	},
 	Main: func(
-		generateWithResult pipeline.GenerateWithResult,
-		runReview pipeline.RunReview,
+		goalRun pipeline.GoalRun,
+		output Output,
 		tap debugs.Tap,
 		repl Repl,
 		noHuman NoHuman,
@@ -48,13 +60,7 @@ var GoCommand = Command{
 			tap(context.Background(), "repl", map[string]any{})
 			return
 		}
-		result, err := generateWithResult(context.Background(), os.Stdout)
-		if err != nil {
-			panic(err)
-		}
-		if err := runReview(context.Background(), os.Stdout, result.Diffs); err != nil {
-			panic(err)
-		}
+		goalRun(context.Background(), output)
 	},
 }
 
