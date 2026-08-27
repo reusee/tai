@@ -1110,22 +1110,65 @@ type fakeHandoffObserver struct {
 	ended   int
 }
 
-func TestCreateHandoffStreamsToWriter(t *testing.T) {
+// decoratorCapture is a test State that records appended contents and
+// forwards them upstream, mirroring a display decorator. See
+// TestCreateHandoffStreamsToDecorator.
+type decoratorCapture struct {
+	generators.State
+	captured *[]*generators.Content
+}
+
+func (s decoratorCapture) AppendContent(content *generators.Content) (generators.State, error) {
+	*s.captured = append(*s.captured, content)
+	newUpstream, err := s.State.AppendContent(content)
+	if err != nil {
+		return nil, err
+	}
+	return decoratorCapture{State: newUpstream, captured: s.captured}, nil
+}
+
+func TestCreateHandoffStreamsToDecorator(t *testing.T) {
 	gen := &summarizeRetryMockGenerator{
-		responses: []string{"<<黿鼍 handoff\nhandoff prompt text\n黿鼍"},
+		thoughts: []string{"handoff thinking"},
+		responses: []string{
+			"<<黿鼍 handoff\nhandoff prompt text\n黿鼍",
+		},
 	}
 	logger := logs.Logger{slog.New(slog.NewTextHandler(io.Discard, nil))}
-	var buf bytes.Buffer
+	// The decorator observes every appended content, so a display
+	// front-end receives the thought and text parts separately with
+	// their roles and thinking state, instead of a byte stream that
+	// loses part boundaries. See TheoryOfHandoff.
+	var captured []*generators.Content
+	decorator := func(state generators.State) generators.State {
+		return decoratorCapture{State: state, captured: &captured}
+	}
 	longInput := strings.Repeat("long incomplete text ", 10)
-	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, &buf, nil)
+	handoff, err := createHandoff(context.Background(), logger, nil, []generators.Generator{gen}, longInput, decorator, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if handoff == nil {
 		t.Fatal("expected handoff")
 	}
-	if !strings.Contains(buf.String(), "handoff prompt text") {
-		t.Fatalf("expected handoff text in writer, got %q", buf.String())
+	if handoff.Summary != "handoff prompt text" {
+		t.Fatalf("expected handoff text in summary, got %q", handoff.Summary)
+	}
+	var sawThought, sawText bool
+	for _, c := range captured {
+		for _, p := range c.Parts {
+			switch p := p.(type) {
+			case generators.Thought:
+				sawThought = true
+			case generators.Text:
+				if strings.Contains(string(p), "handoff prompt text") {
+					sawText = true
+				}
+			}
+		}
+	}
+	if !sawThought || !sawText {
+		t.Fatalf("expected the decorator to observe thought and text parts, got thought=%v text=%v", sawThought, sawText)
 	}
 }
 

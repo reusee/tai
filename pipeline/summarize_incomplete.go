@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"strings"
 
@@ -55,14 +54,16 @@ The loop's event stream reports the handoff lifecycle as it happens:
 EventHandoffStart is emitted immediately before the handoff request is
 sent, and EventHandoff after the summary is produced, so a live consumer
 sees the request in progress rather than waiting for its result. Handoff
-generation also streams to the HandoffWriter provider when one is
-configured: the display writer receives the model's text and reasoning
-thoughts as they are produced, so a TUI can show the handoff request in
-progress. The captured handoff text is read from an inner buffer that
-excludes thoughts, so the returned summary contains only the model's
-final text. The HandoffObserver provider reports the handoff lifecycle —
-HandoffStart before the first attempt and HandoffEnd after the last — so
-a TUI can reflect the handoff state in its output tab title.
+generation also applies the HandoffStateDecorator provider to its state
+when one is configured: the decorator observes every content part as it
+is appended, so a display front-end receives the model's text and
+reasoning thoughts carrying their roles and thinking state, and can
+highlight the handoff request per part and per thought. The captured
+handoff text is read from an inner buffer that excludes thoughts, so the
+returned summary contains only the model's final text. The
+HandoffObserver provider reports the handoff lifecycle — HandoffStart
+before the first attempt and HandoffEnd after the last — so a TUI can
+reflect the handoff state in its output tab title.
 
 The fixed instructional prompt (HandoffSystemPrompt) is placed in the
 system prompt; the user content carries only the dynamic incomplete
@@ -104,14 +105,15 @@ type Handoff struct {
 	Usage generators.Usage
 }
 
-// HandoffWriter receives the streamed output of a handoff generation
-// request. The default provider returns nil, in which case the handoff
-// output is not displayed. A display front-end (e.g., tai's TUI) forks
-// this type to stream the handoff request's text and reasoning thoughts
-// to its display. See TheoryOfHandoff.
-type HandoffWriter io.Writer
+// HandoffStateDecorator wraps the handoff generation's state before
+// generation starts. The default provider is nil, in which case the
+// handoff output is not displayed. A display front-end (e.g., tai's
+// TUI) forks this type to observe the handoff request's contents, so
+// every part reaches the display carrying its role and thinking state
+// and part boundaries are preserved. See TheoryOfHandoff.
+type HandoffStateDecorator func(generators.State) generators.State
 
-func (Module) HandoffWriter() HandoffWriter {
+func (Module) HandoffStateDecorator() HandoffStateDecorator {
 	return nil
 }
 
@@ -211,7 +213,7 @@ func createHandoff(
 	recorder HandoffRecorder,
 	handoffGenerators []generators.Generator,
 	incompleteText string,
-	writer io.Writer,
+	decorator HandoffStateDecorator,
 	observer HandoffObserver,
 ) (*Handoff, error) {
 	if len(strings.TrimSpace(incompleteText)) < minHandoffLength {
@@ -285,7 +287,7 @@ func createHandoff(
 			},
 		})
 
-		outputText, thoughts, attemptUsage, err := runHandoffAttempt(ctx, generator, incompleteText, writer)
+		outputText, thoughts, attemptUsage, err := runHandoffAttempt(ctx, generator, incompleteText, decorator)
 		if err != nil {
 			lastErr = err
 			logger.WarnContext(ctx, "handoff incomplete output: generation failed",
@@ -356,7 +358,7 @@ func runHandoffAttempt(
 	ctx context.Context,
 	generator generators.Generator,
 	incompleteText string,
-	writer io.Writer,
+	decorator HandoffStateDecorator,
 ) (string, []string, generators.Usage, error) {
 	var state generators.State
 	state = generators.NewPrompts(fullHandoffSystemPrompt(), []*generators.Content{
@@ -369,8 +371,12 @@ func runHandoffAttempt(
 	})
 	var buf bytes.Buffer
 	state = generators.NewOutput(state, &buf, false)
-	if writer != nil {
-		state = generators.NewOutput(state, writer, true)
+	// The decorator observes the state chain so a display front-end
+	// receives every appended part with its role and thinking state,
+	// instead of a byte stream that loses part boundaries. See
+	// TheoryOfHandoff.
+	if decorator != nil {
+		state = decorator(state)
 	}
 	newState, err := generator.Generate(ctx, state, &generators.GenerateOptions{})
 	if err != nil {

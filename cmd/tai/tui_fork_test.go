@@ -9,6 +9,7 @@ import (
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/modes"
 	"github.com/reusee/tai/pipeline"
+	"github.com/reusee/tai/taiui"
 )
 
 func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
@@ -77,5 +78,53 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	}
 	if !strings.Contains(joined, "prompt 100") || !strings.Contains(joined, "thoughts 10") {
 		t.Fatalf("expected the usage counters in the Events tab, got %v", texts)
+	}
+}
+
+func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
+	// The handoff decorator from the display scope must observe content
+	// parts, so handoff output is highlighted per part and per thinking
+	// state in the Output tab, the same as regular generation output.
+	// See TheoryOfTUIHandoff.
+	tui := newTUIForTest()
+	scope := forkTUIDisplay(
+		dscope.New(modes.ForTest(t), new(pipeline.Module)),
+		tui,
+	)
+
+	scope.Call(func(decorate pipeline.HandoffStateDecorator) {
+		state := decorate(generators.NewPrompts("", nil))
+		_, err := state.AppendContent(&generators.Content{
+			Role: generators.RoleModel,
+			Parts: []generators.Part{
+				generators.Thought("handoff thinking"),
+				generators.Text("handoff text\n"),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	lines := tui.output.Lines()
+	if len(lines) == 0 {
+		t.Fatal("expected lines in the output buffer")
+	}
+	if lines[0].Text != "handoff thinking" || lines[0].Color != outputColorThoughtLine {
+		t.Fatalf("expected the thought line in the thought color, got %+v", lines[0])
+	}
+	found := false
+	for _, line := range lines {
+		if line.Text == "handoff text" {
+			found = true
+			if line.Color != taiui.NoColor {
+				t.Fatalf("expected the text line in the default color, got %+v", lines)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected the handoff text line in the output buffer, got %v", lines)
 	}
 }

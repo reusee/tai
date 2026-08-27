@@ -172,11 +172,12 @@ const TheoryOfTUIHandoff = `
 The Output tab title reflects the handoff process: while a handoff
 request is being generated (see pipeline.TheoryOfHandoff), the title shows
 "Output (handoff...)" with the active highlight, taking precedence over
-the "generating..." hint. The handoff request's streamed text and
-reasoning thoughts are written to the Output tab through the forked
-pipeline.HandoffWriter, so the user sees the handoff in progress. The
-pipeline.HandoffObserver provider drives the title state: HandoffStart sets
-the handoff flag, HandoffEnd clears it.
+the "generating..." hint. The handoff request's contents reach the Output
+tab through the forked pipeline.HandoffStateDecorator, which observes
+every content part with its role and thinking state, so text and
+reasoning thoughts are highlighted per part and per thought, the same as
+regular generation output. The pipeline.HandoffObserver provider drives
+the title state: HandoffStart sets the handoff flag, HandoffEnd clears it.
 `
 
 // TheoryOfTUIDisplayFork documents why the generation loop is resolved
@@ -1247,11 +1248,21 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// writer. Generation output is captured separately and never
 		// routed here. See TheoryOfCommandOutput.
 		func() Output { return Output(tui.Writer()) },
-		// Handoff generation streams to the Output tab and reports its
-		// lifecycle through the HandoffObserver, so the title shows
-		// "Output (handoff...)" while a handoff request is in flight.
-		// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
-		func() pipeline.HandoffWriter { return pipeline.HandoffWriter(tui.Writer()) },
+		// Handoff generation reaches the Output tab through the
+		// tuiOutputState decorator, so each part is displayed with its
+		// role color and thought coloring — the same path as regular
+		// generation output — and the lifecycle is reported through the
+		// HandoffObserver so the title shows "Output (handoff...)" while
+		// a handoff request is in flight. See pipeline.TheoryOfHandoff
+		// and TheoryOfTUIHandoff.
+		func() pipeline.HandoffStateDecorator {
+			return func(state generators.State) generators.State {
+				return tuiOutputState{
+					upstream: state,
+					tui:      tui,
+				}
+			}
+		},
 		func() pipeline.HandoffObserver { return tui },
 		// The attempt statistics table is routed to the Output tab: the
 		// pipeline prints it via a deferred call at the end of the

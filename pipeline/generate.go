@@ -370,7 +370,7 @@ func (Module) CreateHandoff(
 	logger logs.Logger,
 	recorder *records.Recorder,
 	getHandoffGenerators GetHandoffGenerators,
-	handoffWriter HandoffWriter,
+	handoffDecorator HandoffStateDecorator,
 	handoffObserver HandoffObserver,
 ) CreateHandoff {
 	return func(
@@ -381,7 +381,7 @@ func (Module) CreateHandoff(
 		if err != nil {
 			return nil, err
 		}
-		return createHandoff(ctx, logger, recorder, generators, incompleteText, handoffWriter, handoffObserver)
+		return createHandoff(ctx, logger, recorder, generators, incompleteText, handoffDecorator, handoffObserver)
 	}
 }
 
