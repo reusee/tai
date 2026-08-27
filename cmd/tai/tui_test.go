@@ -66,6 +66,31 @@ func TestTuiFlagHandle(t *testing.T) {
 	}
 }
 
+func TestTuiCliFlagHandle(t *testing.T) {
+	f := Tui(true)
+	newDef, remainArgs, err := f.Handle("-cli", []string{"chat", "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remainArgs) != 2 || remainArgs[0] != "chat" || remainArgs[1] != "hello" {
+		t.Fatalf("unexpected remain: %v", remainArgs)
+	}
+	ret, ok := newDef.(*Tui)
+	if !ok {
+		t.Fatalf("expected *Tui, got %T", newDef)
+	}
+	if bool(*ret) {
+		t.Fatal("expected Tui(false)")
+	}
+}
+
+func TestTuiDefaultEnabled(t *testing.T) {
+	var m Module
+	if !bool(m.Tui()) {
+		t.Fatal("expected TUI mode by default")
+	}
+}
+
 func TestTuiStateWriteLines(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write([]byte("hello\nworld\n"))

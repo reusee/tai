@@ -252,20 +252,41 @@ TUI's pointer interaction. Each toggle records the new state as a log
 line in the Logs tab.
 `
 
-// Tui enables the terminal UI mode.
+// Tui controls the terminal UI mode, which is the default for every
+// command. The -tui flag states the choice explicitly, and the -cli
+// flag disables the TUI for plain command-line output. See
+// TheoryOfDisplayMode.
 type Tui bool
 
-func (Module) Tui() Tui { return false }
+const TheoryOfDisplayMode = `
+Display mode policy: every command runs in the TUI by default. The -cli
+flag opts out to plain command-line output, where generation output
+writes to the real stdout instead of the TUI's redirected null device;
+the -tui flag states the TUI choice explicitly. The default lives in
+Module.Tui, and main routes the command through runWithTUI when the
+resolved Tui value is true. A newTUI failure (no usable terminal) falls
+back to the plain command-line path, so pipes and non-interactive
+environments degrade gracefully without the flag.
+`
+
+// Tui provides the display-mode default: the TUI is enabled unless
+// -cli disables it. See TheoryOfDisplayMode.
+func (Module) Tui() Tui { return true }
 
 var _ generators.State = tuiOutputState{}
 
 func (t Tui) Handle(key string, args []string) (newDef any, remainArgs []string, err error) {
-	ret := Tui(true)
+	// -tui selects the TUI (the default); -cli selects plain
+	// command-line output.
+	ret := Tui(key != "-cli")
 	return &ret, args, nil
 }
 
 func (t Tui) Keys() map[string]string {
-	return map[string]string{"-tui": "Use the TUI interface"}
+	return map[string]string{
+		"-tui": "Use the TUI interface (the default)",
+		"-cli": "Use the plain command-line interface, disabling the TUI",
+	}
 }
 
 // panelStyle styles the three tab panels: dark blue for unfocused tabs,
