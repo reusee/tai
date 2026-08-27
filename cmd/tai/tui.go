@@ -45,17 +45,21 @@ and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Events tab renders the generation loop's
-event stream — attempt starts ("[Attempt N start]"), attempt summaries,
+event stream — attempt starts ("🚀 [Attempt N start]"), attempt summaries,
 truncations, retries, handoff starts and
-synthesized summaries, the finish reasons ("[Finish: ...]"), the
-per-attempt usage lines ("[Usage] ..."), the thought summaries when
+synthesized summaries, the finish reasons ("🏁 [Finish: stop]"), the
+per-attempt usage lines ("📊 [Usage] ..."), the thought summaries when
 -summarize-thoughts is enabled, the component/idle continuations, the
-session's attempt statistics ("[Statistics: ...]" from EventStats), and
-the goal-mode progress — loop banners and verdicts ("=== Goal ... ===")
+session's attempt statistics ("📈 [Statistics: ...]" from EventStats), and
+the goal-mode progress — loop banners and verdicts ("🎯 [Goal Loop N/M]")
 from EventGoal — and the Logs tab collects
-log records. Every event kind renders: a completed attempt with no summary
-shows a completion line ("[Attempt N complete]"), and an unknown kind shows
-a generic "[Event <kind>]" line, so no pipeline event type is silently
+log records. Every event kind renders: each event's first line starts
+with the kind's emoji (eventEmoji) followed by a bracketed label, one
+display style shared by every kind and by the goal banners the pipeline
+emits (pipeline.RunGoal), so no display mixes banner equals with brackets.
+A completed attempt with no summary
+shows a completion line ("✅ [Attempt N complete]"), and an unknown kind shows
+a generic "❓ [Event <kind>]" line, so no pipeline event type is silently
 dropped. Events are constructed and yielded the moment their facts are
 known: an attempt-start precedes its work, a handoff-start precedes the
 handoff request, and a truncation fires before the handoff summary is
@@ -966,16 +970,52 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	t.notify()
 }
 
-// eventLines renders one pipeline event as Events-tab lines. Every event
-// kind renders at least one line: an attempt start opens its attempt, a
-// completed attempt with no summary (single-shot commands like ai
-// produce empty summaries) shows a completion line, and an unknown kind
-// shows a generic event line, so no pipeline event type is silently
-// dropped. Log-style events use the log color; the thought summary
-// header uses the thought color; summary bodies stay plain. The
-// statistics event renders one log-colored line per attempt plus the
-// attempt's summary lines; the goal event renders its message lines in
-// the log color.
+// eventEmoji maps each pipeline event kind to the emoji that starts the
+// event's first display line in the Events tab, so event types are
+// recognized at a glance. Unknown kinds fall back to the question mark
+// in eventLog. See eventLines and TheoryOfTUI.
+var eventEmoji = map[pipeline.EventKind]string{
+	pipeline.EventAttemptStart:        "🚀",
+	pipeline.EventAttemptCompleted:    "✅",
+	pipeline.EventTruncated:           "✂️",
+	pipeline.EventRetry:               "🔁",
+	pipeline.EventHandoffStart:        "🤝",
+	pipeline.EventHandoff:             "📝",
+	pipeline.EventSynthesizedSummary:  "🧩",
+	pipeline.EventUsage:               "📊",
+	pipeline.EventFinish:              "🏁",
+	pipeline.EventThoughtSummary:      "💭",
+	pipeline.EventComponentsTriggered: "⚙️",
+	pipeline.EventIdle:                "💤",
+	pipeline.EventRunError:            "❌",
+	pipeline.EventStats:               "📈",
+	pipeline.EventGoal:                "🎯",
+}
+
+// eventLog renders one event's display line in the log color, prefixed
+// by the kind's emoji; a kind missing from eventEmoji gets the question
+// mark. See eventLines and TheoryOfTUI.
+func eventLog(kind pipeline.EventKind, text string) []taiui.Line {
+	emoji, ok := eventEmoji[kind]
+	if !ok {
+		emoji = "❓"
+	}
+	return logLines(emoji + " " + text)
+}
+
+// eventLines renders one pipeline event as Events-tab lines. The first
+// line of every event starts with the kind's emoji (eventEmoji) followed
+// by a bracketed label — one display style shared by all kinds, so event
+// types are recognized at a glance and no style mixes brackets with
+// banner equals. A completed attempt with no summary (single-shot
+// commands like ai produce empty summaries) shows a completion line; a
+// completed attempt with a summary shows the same header followed by the
+// summary body. An unknown kind shows a generic event line, so no
+// pipeline event type is silently dropped. Log-style events use the log
+// color; the thought summary header uses the thought color; summary
+// bodies stay plain. The statistics event renders one log-colored line
+// per attempt plus the attempt's summary lines; the goal event renders
+// its message lines in the log color, the emoji on the first line.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -986,33 +1026,34 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 	}
 	switch ev.Kind {
 	case pipeline.EventAttemptStart:
-		return logLines(fmt.Sprintf("[Attempt %d start]", ev.Attempt))
+		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d start]", ev.Attempt))
 	case pipeline.EventAttemptCompleted:
+		header := eventLog(ev.Kind, fmt.Sprintf("[Attempt %d complete]", ev.Attempt))
 		if strings.TrimSpace(ev.Summary) == "" {
-			return logLines(fmt.Sprintf("[Attempt %d complete]", ev.Attempt))
+			return header
 		}
-		return summaryLines(ev.Summary)
+		return append(header, summaryLines(ev.Summary)...)
 	case pipeline.EventTruncated:
-		return logLines(fmt.Sprintf("[Attempt %d truncated (attempt %d/%d): %s]",
+		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d truncated (attempt %d/%d): %s]",
 			ev.Attempt, inGeneration, ev.MaxAttempts, ev.Detail))
 	case pipeline.EventRetry:
-		return logLines(fmt.Sprintf("[Retry attempt %d/%d] %v",
+		return eventLog(ev.Kind, fmt.Sprintf("[Retry attempt %d/%d] %v",
 			inGeneration, ev.MaxAttempts, ev.Err))
 	case pipeline.EventRunError:
-		return logLines(fmt.Sprintf("[Run error] %v", ev.Err))
+		return eventLog(ev.Kind, fmt.Sprintf("[Run error] %v", ev.Err))
 	case pipeline.EventHandoffStart:
 		if ev.Attempt == 0 {
-			return logLines("[Handoff started]")
+			return eventLog(ev.Kind, "[Handoff started]")
 		}
-		return logLines(fmt.Sprintf("[Handoff started (attempt %d/%d)]", inGeneration, ev.MaxAttempts))
+		return eventLog(ev.Kind, fmt.Sprintf("[Handoff started (attempt %d/%d)]", inGeneration, ev.MaxAttempts))
 	case pipeline.EventHandoff:
 		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", inGeneration, ev.MaxAttempts)
 		if ev.Attempt == 0 {
 			header = "[Handoff summary]"
 		}
-		return append(logLines(header), summaryLines(ev.Summary)...)
+		return append(eventLog(ev.Kind, header), summaryLines(ev.Summary)...)
 	case pipeline.EventSynthesizedSummary:
-		return append(logLines("[Synthesized completion summary]"), summaryLines(ev.Summary)...)
+		return append(eventLog(ev.Kind, "[Synthesized completion summary]"), summaryLines(ev.Summary)...)
 	case pipeline.EventUsage:
 		outcome := ""
 		if ev.Detail != "" {
@@ -1021,30 +1062,30 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		// SpeedSuffix carries the streaming ttft and average generation
 		// speed when measured, staying empty for unmeasured usages.
 		// See TheoryOfUsageTiming.
-		return logLines(fmt.Sprintf("[Usage] attempt %d%s: prompt %d, cached %d, completion %d, thoughts %d",
+		return eventLog(ev.Kind, fmt.Sprintf("[Usage] attempt %d%s: prompt %d, cached %d, completion %d, thoughts %d",
 			ev.Attempt, outcome,
 			ev.Usage.Prompt.TokenCount,
 			ev.Usage.Prompt.TokenCountCached,
 			ev.Usage.Candidates.TokenCount,
 			ev.Usage.Thoughts.TokenCount,
-		) + ev.Usage.SpeedSuffix())
+		)+ev.Usage.SpeedSuffix())
 	case pipeline.EventFinish:
-		return logLines("[Finish: " + ev.Detail + "]")
+		return eventLog(ev.Kind, "[Finish: "+ev.Detail+"]")
 	case pipeline.EventThoughtSummary:
 		return append(
-			[]taiui.Line{{Text: "[Thought Summary]:", Color: outputColorThoughtLine}},
+			[]taiui.Line{{Text: eventEmoji[ev.Kind] + " [Thought Summary]", Color: outputColorThoughtLine}},
 			summaryLines(ev.Summary)...,
 		)
 	case pipeline.EventComponentsTriggered:
-		return logLines(fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
+		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
 	case pipeline.EventIdle:
-		return logLines("[Idle input received; starting the next generation]")
+		return eventLog(ev.Kind, "[Idle input received; starting the next generation]")
 	case pipeline.EventStats:
 		// One line per attempt carries the token counters and the
 		// duration; a goal-run aggregation prefixes the loop number.
 		// The attempt's summary, when present, follows as plain lines.
 		// See pipeline.TheoryOfAttemptStatistics.
-		lines := logLines(fmt.Sprintf("[Statistics: %s]", ev.Detail))
+		lines := eventLog(ev.Kind, fmt.Sprintf("[Statistics: %s]", ev.Detail))
 		for _, s := range ev.Stats {
 			label := fmt.Sprintf("attempt %d", s.Attempt)
 			if s.Loop != 0 {
@@ -1062,18 +1103,21 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return lines
 	case pipeline.EventGoal:
 		// A goal message may span lines (multi-line verdicts); every
-		// line renders in the log color. See
-		// pipeline.TheoryOfGoalMode.
+		// line renders in the log color, the first line carrying the
+		// kind's emoji. See pipeline.TheoryOfGoalMode.
 		var lines []taiui.Line
-		for _, line := range strings.Split(ev.Detail, "\n") {
+		for i, line := range strings.Split(ev.Detail, "\n") {
+			if i == 0 {
+				line = eventEmoji[ev.Kind] + " " + line
+			}
 			lines = append(lines, taiui.Line{Text: line, Color: outputColorLogLine})
 		}
 		return lines
 	default:
 		if ev.Detail == "" {
-			return logLines(fmt.Sprintf("[Event %s]", ev.Kind))
+			return eventLog(ev.Kind, fmt.Sprintf("[Event %s]", ev.Kind))
 		}
-		return logLines(fmt.Sprintf("[Event %s] %s", ev.Kind, ev.Detail))
+		return eventLog(ev.Kind, fmt.Sprintf("[Event %s] %s", ev.Kind, ev.Detail))
 	}
 }
 

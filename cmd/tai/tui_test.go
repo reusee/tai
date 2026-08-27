@@ -153,14 +153,19 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		fmt.Fprintf(&body, "- line %d", i)
 	}
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 1, Summary: body.String()})
-	if len(tui.events) != 1 || len(tui.events[0]) != lines {
-		t.Fatalf("expected 1 event group of %d lines, got %d groups", lines, len(tui.events))
+	// The event group carries the emoji header line plus one line per
+	// summary line.
+	if len(tui.events) != 1 || len(tui.events[0]) != lines+1 {
+		t.Fatalf("expected 1 event group of %d lines plus the header, got %d groups", lines, len(tui.events))
 	}
-	if tui.events[0][0].Text != "- line 0" {
-		t.Fatalf("expected the very first event line retained, got %q", tui.events[0][0].Text)
+	if tui.events[0][0].Text != "✅ [Attempt 1 complete]" {
+		t.Fatalf("expected the event header first, got %q", tui.events[0][0].Text)
 	}
-	if tui.events[0][lines-1].Text != fmt.Sprintf("- line %d", lines-1) {
-		t.Fatalf("expected the last event line retained, got %q", tui.events[0][lines-1].Text)
+	if tui.events[0][1].Text != "- line 0" {
+		t.Fatalf("expected the very first event line retained, got %q", tui.events[0][1].Text)
+	}
+	if tui.events[0][lines].Text != fmt.Sprintf("- line %d", lines-1) {
+		t.Fatalf("expected the last event line retained, got %q", tui.events[0][lines].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -1759,11 +1764,14 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	if tui.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
-	if len(tui.events) != 1 || len(tui.events[0]) != 1 {
-		t.Fatalf("expected one rendered event group, got %v", tui.events)
+	if len(tui.events) != 1 || len(tui.events[0]) != 2 {
+		t.Fatalf("expected one event group with header and summary lines, got %v", tui.events)
 	}
-	if tui.events[0][0].Text != "- done" {
-		t.Fatalf("expected the summary line first in the event group, got %q", tui.events[0][0].Text)
+	if tui.events[0][0].Text != "✅ [Attempt 1 complete]" {
+		t.Fatalf("expected the emoji header first in the event group, got %q", tui.events[0][0].Text)
+	}
+	if tui.events[0][1].Text != "- done" {
+		t.Fatalf("expected the summary line after the header, got %q", tui.events[0][1].Text)
 	}
 
 	tui2 := newTUIForTest()
@@ -1927,7 +1935,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	if len(tui.events) != 1 || len(tui.events[0]) != 1 {
 		t.Fatalf("expected 1 event group of 1 line, got %v", tui.events)
 	}
-	if tui.events[0][0].Text != "[Finish: stop]" || tui.events[0][0].Color != outputColorLogLine {
+	if tui.events[0][0].Text != "🏁 [Finish: stop]" || tui.events[0][0].Color != outputColorLogLine {
 		t.Fatalf("unexpected finish line: %+v", tui.events[0][0])
 	}
 	if tui.generating {
@@ -1938,7 +1946,7 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	usage.Prompt.TokenCount = 100
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 2, Detail: "error", Usage: usage})
 	last := tui.events[len(tui.events)-1]
-	if last[0].Text != "[Usage] attempt 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
+	if last[0].Text != "📊 [Usage] attempt 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
 		t.Fatalf("unexpected usage line: %q", last[0].Text)
 	}
 	if last[0].Color != outputColorLogLine {
@@ -1951,14 +1959,14 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	measuredUsage.GenerateDuration = 200 * time.Millisecond // 20 tokens / 0.2s -> 100.0 tok/s
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 5, Usage: measuredUsage})
 	measuredLines := tui.events[len(tui.events)-1]
-	wantMeasured := "[Usage] attempt 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
+	wantMeasured := "📊 [Usage] attempt 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
 	if measuredLines[0].Text != wantMeasured {
 		t.Fatalf("unexpected measured usage line: %q", measuredLines[0].Text)
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventThoughtSummary, Summary: "- point"})
 	group := tui.events[len(tui.events)-1]
-	if group[0].Text != "[Thought Summary]:" || group[0].Color != outputColorThoughtLine {
+	if group[0].Text != "💭 [Thought Summary]" || group[0].Color != outputColorThoughtLine {
 		t.Fatalf("unexpected thought summary header: %+v", group[0])
 	}
 	if body := group[1]; body.Text != "- point" || body.Color != taiui.NoColor {
@@ -1967,13 +1975,13 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 3})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Attempt 3 start]" || group[0].Color != outputColorLogLine {
+	if group[0].Text != "🚀 [Attempt 3 start]" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected attempt start line: %+v", group[0])
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 3})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Attempt 3 complete]" || group[0].Color != outputColorLogLine {
+	if group[0].Text != "✅ [Attempt 3 complete]" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected empty-summary completion line: %+v", group[0])
 	}
 
@@ -1982,13 +1990,13 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	// See TheoryOfLoopEvents.
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventTruncated, Attempt: 4, AttemptInGeneration: 1, MaxAttempts: 3, Detail: "missing completion"})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Attempt 4 truncated (attempt 1/3): missing completion]" {
+	if group[0].Text != "✂️ [Attempt 4 truncated (attempt 1/3): missing completion]" {
 		t.Fatalf("unexpected truncated line: %+v", group[0])
 	}
 
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventKind("custom-kind"), Detail: "note"})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Event custom-kind] note" || group[0].Color != outputColorLogLine {
+	if group[0].Text != "❓ [Event custom-kind] note" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected generic event line: %+v", group[0])
 	}
 }
@@ -1997,7 +2005,9 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 // rendering of the statistics and goal-progress events: the statistics
 // event renders one log-colored line per attempt plus its summary
 // lines, a goal-run aggregation prefixes the loop number, and the goal
-// event renders its message lines in the log color. See TheoryOfTUI.
+// event renders its message lines in the log color, the emoji on the
+// first line. The goal banner text mirrors the bracketed style the
+// pipeline emits (see pipeline.RunGoal). See TheoryOfTUI.
 func TestTUIHandleEventRendersStatsAndGoal(t *testing.T) {
 	tui := newTUIForTest()
 	tui.handleEvent(pipeline.Event{
@@ -2017,7 +2027,7 @@ func TestTUIHandleEventRendersStatsAndGoal(t *testing.T) {
 	if len(group) != 3 {
 		t.Fatalf("expected 3 lines for the stats event, got %v", group)
 	}
-	if group[0].Text != "[Statistics: Generation Statistics]" || group[0].Color != outputColorLogLine {
+	if group[0].Text != "📈 [Statistics: Generation Statistics]" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected statistics header: %+v", group[0])
 	}
 	if group[1].Text != "attempt 1: prompt 10, completion 5, thoughts 0, cached 0, 1.5s" ||
@@ -2042,9 +2052,9 @@ func TestTUIHandleEventRendersStatsAndGoal(t *testing.T) {
 		t.Fatalf("unexpected aggregated statistics line: %+v", group[1])
 	}
 
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventGoal, Detail: "=== Goal Loop 1/20 ==="})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventGoal, Detail: "[Goal Loop 1/20]"})
 	group = tui.events[len(tui.events)-1]
-	if len(group) != 1 || group[0].Text != "=== Goal Loop 1/20 ===" || group[0].Color != outputColorLogLine {
+	if len(group) != 1 || group[0].Text != "🎯 [Goal Loop 1/20]" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected goal event line: %+v", group)
 	}
 }

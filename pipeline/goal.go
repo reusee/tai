@@ -349,7 +349,7 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 	}
 	if s.consecutiveErrors >= maxConsecutiveGoalErrors {
 		reporter.failure(fmt.Sprintf(
-			"\n=== Goal Stopped: the same error occurred %d consecutive times ===\n%s\n",
+			"\n[Goal Stopped: the same error occurred %d consecutive times]\n%s\n",
 			maxConsecutiveGoalErrors, errMsg))
 		s.stopRequested = true
 		return true
@@ -395,7 +395,7 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 
 	if foundDone {
 		if s.pendingDoneVerification {
-			reporter.message(fmt.Sprintf("\n=== Goal Achieved after %d loop(s) ===\n", loopsRun))
+			reporter.message(fmt.Sprintf("\n[Goal Achieved after %d loop(s)]\n", loopsRun))
 			s.achieved = true
 			return true
 		}
@@ -414,7 +414,7 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	// declaration can still be confirmed. See TheoryOfGoalMode.
 	if !s.pendingDoneVerification && len(result.Diffs) == 0 {
 		reporter.message(fmt.Sprintf(
-			"\n=== Goal Run Complete: loop %d applied no change blocks ===\n", loopsRun))
+			"\n[Goal Run Complete: loop %d applied no change blocks]\n", loopsRun))
 		s.stopRequested = true
 		return true
 	}
@@ -506,7 +506,9 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	for loopsRun < maxGoalIterations {
 		loopsRun++
-		reporter.message(fmt.Sprintf("\n=== Goal Loop %d/%d ===\n\n", loopsRun, maxGoalIterations))
+		// Bracketed banner style, shared with the TUI's Events tab, so
+		// no event display mixes banner equals with brackets.
+		reporter.message(fmt.Sprintf("\n[Goal Loop %d/%d]\n\n", loopsRun, maxGoalIterations))
 		if runOneLoop() {
 			break
 		}
@@ -518,12 +520,12 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	// budget.
 	if state.pendingDoneVerification && !state.achieved && !state.stopRequested {
 		loopsRun++
-		reporter.message(fmt.Sprintf("\n=== Goal Verification Loop %d (beyond budget) ===\n\n", loopsRun))
+		reporter.message(fmt.Sprintf("\n[Goal Verification Loop %d (beyond budget)]\n\n", loopsRun))
 		runOneLoop()
 	}
 
 	if !state.achieved && !state.stopRequested {
-		reporter.message(fmt.Sprintf("\n=== Goal Not Achieved after %d loops ===\n", loopsRun))
+		reporter.message(fmt.Sprintf("\n[Goal Not Achieved after %d loops]\n", loopsRun))
 	}
 
 	if err := opts.Review(ctx, os.Stdout, allDiffs); err != nil {
