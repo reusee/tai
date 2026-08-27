@@ -12,12 +12,12 @@ shell (conditional on the shell flag) and continue. These are generic,
 side-effect-free components that any generation pipeline may use regardless of
 whether it performs code modification or dynamic context fetching. Commands
 that need additional components (e.g., change for code generation, ingest for
-dynamic context, summary for round statistics, read-only files for prompt-only
-rules) prepend or append their specific components to this common set. The
-common components are constructed once and reused by both the ai command (via
-AIComponents) and the pipeline (via CodesComponents), ensuring that shell
-and continue components are consistently configured across all generation
-pipelines.
+dynamic context, summary for attempt statistics, read-only files for
+prompt-only rules) prepend or append their specific components to this common
+set. The common components are constructed once and reused by both the ai
+command (via AIComponents) and the pipeline (via CodesComponents), ensuring
+that shell and continue components are consistently configured across all
+generation pipelines.
 
 The common set itself carries no disabled-blocks notices: a caller that
 disables a common kind (shell without the flag) or excludes one (the ai
@@ -30,14 +30,14 @@ role is filled by the verbatim system prompt restate
 (components.SystemPromptRestate), which every generation command appends at
 the end of the user prompt. See TheoryOfComponents.
 
-Components carry no per-kind round bounds: a session may chain any number of
-shell, continue, go-test, go-src, or ingest rounds, so a model can run as long
-as the task requires. Run-duration control belongs to the caller, not the
-component layer — pipeline.RunOptions.MaxRounds caps the total rounds of a whole
-run (0 means unlimited) — and an unattended operator terminates the process
-when they choose. The accepted trade-off is that a runaway model consumes
-tokens until the caller stops it; legitimate long workflows are never
-aborted mid-task by an internal bound.
+Components carry no per-kind generation bounds: a session may chain any
+number of shell, continue, go-test, go-src, or ingest generations, so a
+model can run as long as the task requires. Run-duration control belongs to
+the caller, not the component layer — pipeline.RunOptions.MaxGenerations
+caps the total generations of a whole run (0 means unlimited) — and an
+unattended operator terminates the process when they choose. The accepted
+trade-off is that a runaway model consumes tokens until the caller stops it;
+legitimate long workflows are never aborted mid-task by an internal bound.
 `
 
 func CommonComponents(shell bool) ComponentSet {

@@ -44,7 +44,7 @@ the ai command (cmd/tai/ai.go) and the codes module (codes/generate.go) call
 ProcessComponents with a []Block slice (collected by the BlockHandler during
 generation) and the current state. The function returns remaining blocks (not
 matched by any component), the updated state, combined parts, and whether any
-component triggered a new round.
+component triggered a new generation.
 
 The mechanism makes the coupling between prompt and processing explicit and
 machine-checkable. The system prompt assembly, user prompt assembly, and output
@@ -75,9 +75,10 @@ type ProcessContext struct {
 type ProcessResult struct {
 	// State is the updated generators state. When non-nil, the component
 	// modified the state (e.g., request-context appends fetched resources),
-	// and a new generation round is triggered.
+	// and a new generation is triggered.
 	State generators.State
-	// Parts are user parts to append to the state, triggering a new round.
+	// Parts are user parts to append to the state, triggering a new
+	// generation.
 	Parts []generators.Part
 	// Err is the error encountered during processing, if any.
 	Err error
@@ -107,7 +108,7 @@ type Component struct {
 	// in the main generation loop. If nil, the block kind is either
 	// prompt-only (Kind == "") or handled by specialized logic outside the
 	// component loop (e.g., change blocks applied via BlockHandler during
-	// streaming, summary blocks processed in runPhaseWithRetry, memory
+	// streaming, summary blocks processed in runGeneration, memory
 	// blocks processed post-loop).
 	Process ComponentProcessFunc
 }
@@ -181,10 +182,11 @@ func (c ComponentSet) Processable() []Component {
 // function with the matching blocks. It returns the remaining blocks (not
 // matched by any component), the updated State (if any component modified it),
 // combined Parts from all components, whether any component triggered a new
-// round (produced Parts or modified State), and an error if any component
-// failed. There are no per-component round limits: a component may trigger
-// rounds for as long as the model keeps emitting its blocks, and run-duration
-// control belongs to the caller via pipeline.RunOptions.MaxRounds.
+// generation (produced Parts or modified State), and an error if any component
+// failed. There are no per-component generation limits: a component may
+// trigger generations for as long as the model keeps emitting its blocks,
+// and run-duration control belongs to the caller via
+// pipeline.RunOptions.MaxGenerations.
 //
 // Both the ai command and the pipeline call this function, so the
 // component processing loop is identical across all generation commands —

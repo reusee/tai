@@ -37,22 +37,22 @@ components.TheoryOfDisabledBlocks.
 
 The go-test component runs Go tests after change blocks are applied. Test
 output (stdout and stderr) is always fed back to the model as Parts,
-triggering a new round regardless of whether tests pass or fail: the model
-needs the results to decide whether to continue, and withholding output on
-pass causes the system to exit prematurely when the model intended to
-proceed. The go-test component is placed after change so tests run
+triggering a new generation regardless of whether tests pass or fail: the
+model needs the results to decide whether to continue, and withholding
+output on pass causes the system to exit prematurely when the model intended
+to proceed. The go-test component is placed after change so tests run
 against the updated source, and before summary so test output is available
-for the next round.
+for the next generation.
 
 The go-src component resolves go-src block symbols — Go symbol names, one
 per line — through gotools.ResolveGoSymbols, appended as user content for
-the next round. Like ingest it is read-only context fetching, but unconditional:
-symbol resolution reuses the packages the loader already fetched, so it is
-always available in the codes pipeline. The codes session presents both
-kinds, and the go-src prompt teaches their division of labor: Go source is
-fetched by symbol — gaining the defining file, line, and the references
-report — while ingest serves non-Go files, whole-file views, glob discovery,
-and network resources. See gotools.TheoryOfGoSrcBlocks.
+the next generation. Like ingest it is read-only context fetching, but
+unconditional: symbol resolution reuses the packages the loader already
+fetched, so it is always available in the codes pipeline. The codes session
+presents both kinds, and the go-src prompt teaches their division of labor:
+Go source is fetched by symbol — gaining the defining file, line, and the
+references report — while ingest serves non-Go files, whole-file views, glob
+discovery, and network resources. See gotools.TheoryOfGoSrcBlocks.
 
 The ingest component carries the session's language-server handler. blocks
 parses the lsp tag language-neutrally and defines the LSPHandler contract;
@@ -81,14 +81,14 @@ pipeline appends as the last user prompt part before the dynamic chat input.
 See TheoryOfComponents in the components package.
 
 The generation loop checks for the summary block to distinguish a normally
-ended round from truncated or non-conforming output: no other block kind
-completes a round, so a round carrying component-triggering blocks (ingest,
-shell, continue, go-test, go-src) without a summary block is retried with
-feedback naming the missing summary (see TheoryOfLoops). Every kind prompt
-that stops and waits states the summary requirement with the same wording
-and adds the sequence rule — the block after the kind's closing line must
-be the summary block — so no stop instruction licenses omitting the
-summary block.
+ended attempt from truncated or non-conforming output: no other block kind
+completes an attempt, so an attempt carrying component-triggering blocks
+(ingest, shell, continue, go-test, go-src) without a summary block is
+retried with feedback naming the missing summary (see TheoryOfLoops). Every
+kind prompt that stops and waits states the summary requirement with the
+same wording and adds the sequence rule — the block after the kind's
+closing line must be the summary block — so no stop instruction licenses
+omitting the summary block.
 `
 
 const TheoryOfFamilyExtraSystemPrompt = `
@@ -163,11 +163,12 @@ func (Module) CodesComponents(
 
 	// Go-test component: run Go tests after change blocks are applied.
 	// Test output is always fed back to the model as Parts, triggering a
-	// new round regardless of whether tests pass or fail: the model needs
-	// the results to decide whether to continue, and withholding output on
-	// pass causes the system to exit prematurely when the model intended
-	// to proceed. Placed after change so tests run against updated source,
-	// and before summary so test output is available for the next round.
+	// new generation regardless of whether tests pass or fail: the model
+	// needs the results to decide whether to continue, and withholding
+	// output on pass causes the system to exit prematurely when the model
+	// intended to proceed. Placed after change so tests run against
+	// updated source, and before summary so test output is available for
+	// the next generation.
 	// See TheoryOfCodesComponents and gotools.TheoryOfGoTestBlocks.
 	comps = append(comps, components.Component{
 		Kind:          "go-test",
@@ -185,7 +186,7 @@ func (Module) CodesComponents(
 	// source. Read-only and unconditional: symbol resolution reuses the
 	// packages the loader already fetched, so it is always available in
 	// the codes pipeline. Placed with ingest before shell and continue
-	// so fetched context is available for the next generation round.
+	// so fetched context is available for the next generation.
 	// See gotools.TheoryOfGoSrcBlocks and gotools.TheoryOfGoSrcResolution.
 	comps = append(comps, components.Component{
 		Kind:          "go-src",
@@ -195,9 +196,9 @@ func (Module) CodesComponents(
 			if len(symbols) == 0 {
 				// An empty go-src block is a format error the model can
 				// correct: feed back a usage hint instead of a silent
-				// no-op, so the next round can list the symbols properly.
-				// The feedback ends with a blank line so consecutive
-				// parts stay paragraph-separated; see
+				// no-op, so the next generation can list the symbols
+				// properly. The feedback ends with a blank line so
+				// consecutive parts stay paragraph-separated; see
 				// generators.TheoryOfContentUnitSeparation.
 				return components.ProcessResult{
 					Parts: []generators.Part{
@@ -210,7 +211,7 @@ func (Module) CodesComponents(
 				return components.ProcessResult{Err: err}
 			}
 			// A brief header tells the model why the source appeared in
-			// the next round's user content.
+			// the next generation's user content.
 			parts = append([]generators.Part{generators.Text(
 				"[Requested source of the go-src symbols]\n\n")}, parts...)
 			return components.ProcessResult{Parts: parts}
@@ -221,7 +222,7 @@ func (Module) CodesComponents(
 	// model may request additional files and network resources
 	// mid-generation in every codes session. Processed before
 	// shell/continue so fetched context is available for the next
-	// generation round. The session's language-server handler is attached
+	// generation. The session's language-server handler is attached
 	// when one resolves; its Go-specific lsp tag documentation is appended
 	// to the ingest prompt only then. A nil handler keeps the section out of
 	// the prompt; an emitted lsp tag then returns an explicit
@@ -244,7 +245,7 @@ func (Module) CodesComponents(
 			}
 			// Only set State when ingest blocks were found and fetched
 			// content was appended, so that result.State != nil reliably
-			// signals a state modification that triggers a new round.
+			// signals a state modification that triggers a new generation.
 			if hasIngest {
 				result.State = state
 			}
@@ -269,8 +270,8 @@ func (Module) CodesComponents(
 		comps = append(comps, components.DisabledBlocksComponent("shell"))
 	}
 
-	// Summary component: processed in runPhaseWithRetry for completion detection
-	// and round statistics, not in the main component loop.
+	// Summary component: processed in runGeneration for completion
+	// detection and attempt statistics, not in the main component loop.
 	// See TheoryOfCodesComponents.
 	comps = append(comps, components.Component{
 		Kind:          "summary",
@@ -285,9 +286,9 @@ func (Module) CodesComponents(
 	// Hidden packages: prompt-only component listing the go.hidden
 	// import-path patterns. Visible code may still reference a hidden
 	// package's import path, so without the notice the model could
-	// discover the package and burn rounds on go-src and ingest blocks
-	// that the hide renders futile. The notice appears only when at
-	// least one pattern is configured. See gotools.TheoryOfHiddenPackages.
+	// discover the package and burn generations on go-src and ingest
+	// blocks that the hide renders futile. The notice appears only when
+	// at least one pattern is configured. See gotools.TheoryOfHiddenPackages.
 	if section := gotools.HiddenPackagesSystemPrompt(hiddenPatterns); section != "" {
 		comps = append(comps, components.Component{
 			PromptSection: section,

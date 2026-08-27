@@ -1416,13 +1416,13 @@ func decideParseErrorFeedback(
 
 // appendUncorrectedParseErrors appends parse errors to the accumulated
 // uncorrected list, skipping errors already recorded from previous
-// rounds. A model that fails to correct tends to repeat the same
+// generations. A model that fails to correct tends to repeat the same
 // malformed block; deduplication keeps Result.ParseErrors concise.
 func appendUncorrectedParseErrors(
 	accumulated []*blocks.BlockParseError,
-	roundErrors []*blocks.BlockParseError,
+	generationErrors []*blocks.BlockParseError,
 ) []*blocks.BlockParseError {
-	for _, parseErr := range roundErrors {
+	for _, parseErr := range generationErrors {
 		duplicate := false
 		for _, existing := range accumulated {
 			if existing.Boundary == parseErr.Boundary &&

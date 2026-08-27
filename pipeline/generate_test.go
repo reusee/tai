@@ -1336,7 +1336,7 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	}
 }
 
-func TestGenerateRoundStatsWrittenToAttemptStatsWriter(t *testing.T) {
+func TestGenerateAttemptStatsWrittenToAttemptStatsWriter(t *testing.T) {
 	// The attempt statistics table is written to the AttemptStatsWriter
 	// provider when one is configured, never to the generation output
 	// writer: in TUI mode the output writer is the redirected null

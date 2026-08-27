@@ -182,8 +182,8 @@ func fullHandoffSystemPrompt() string {
 // or unclosed, or the body is empty — the function returns false, and
 // the caller treats the response as empty, triggering a retry. This
 // prevents using incorrect or incomplete handoff content as if it were
-// valid, which would feed wrong instructions to the next generation
-// round. See TheoryOfHandoff.
+// valid, which would feed wrong instructions to the next generation.
+// See TheoryOfHandoff.
 func parseHandoffBlock(text string) (string, bool) {
 	parsedBlocks, err := blocks.ParseBlocks([]byte(text))
 	if err != nil {
@@ -203,8 +203,8 @@ func parseHandoffBlock(text string) (string, bool) {
 // createHandoff is the unexported package-level implementation behind the
 // CreateHandoff dscope function type: it summarizes truncated or failed
 // generation output into a self-contained handoff carried into the next
-// round. The implementation stays a plain function so tests can call it
-// directly. See TheoryOfHandoff and TheoryOfDscopeBoundFunctions.
+// generation. The implementation stays a plain function so tests can call
+// it directly. See TheoryOfHandoff and TheoryOfDscopeBoundFunctions.
 func createHandoff(
 	ctx context.Context,
 	logger logs.Logger,
@@ -432,12 +432,12 @@ func extractLastUsage(state generators.State, sinceContentCount int) generators.
 	return usage
 }
 
-// appendHandoffUsage appends one RoleLog content carrying the round's
+// appendHandoffUsage appends one RoleLog content carrying the attempt's
 // token usage including the handoff request's spend: the last usage
 // already recorded since sinceContentCount (the generating attempt's
 // final usage) plus handoffUsage, accumulated across the handoff's
 // attempts. The statistics collectors take the last Usage part of the
-// scanned window, so the sum becomes the round's accounted usage;
+// scanned window, so the sum becomes the attempt's accounted usage;
 // RoleLog content is filtered out of API message assembly, so the
 // injection is invisible to the model. States are immutable and the
 // retry base predates the injection, so the following attempt's scan
@@ -485,7 +485,7 @@ func handoffResponseDetail(attempt int, outputText string, thoughts []string) st
 
 // FormatSummaryBlock wraps a summary in a boundary-delimited summary
 // block with a fresh delimiter, so the TUI's Events tab can display it
-// as the round's completion signal.
+// as the attempt's completion signal.
 func FormatSummaryBlock(summary string) string {
 	delimiter := freshDelimiter()
 	return "<<" + delimiter + " summary\n" + summary + "\n" + delimiter

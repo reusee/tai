@@ -142,7 +142,7 @@ func buildReviewPrompt(diffs []changes.FileDiff) string {
 
 // GenerateWithResult runs the full codes generation pipeline and returns the
 // Result, which includes the final state and any remaining (unconsumed)
-// blocks. It wraps GenerateWithResultWithStats, discarding the round
+// blocks. It wraps GenerateWithResultWithStats, discarding the attempt
 // statistics. Used by commands that do not need the statistics (go, any).
 type GenerateWithResult func(ctx context.Context, output io.Writer) (Result, error)
 
@@ -358,9 +358,9 @@ func collectAttemptStats(
 }
 
 // CreateHandoff summarizes truncated or failed generation output before
-// retry, producing a self-contained handoff carried into the next round.
-// The summarize generator, logger, and interaction recorder are bound from
-// the dscope scope. See TheoryOfHandoff.
+// retry, producing a self-contained handoff carried into the next
+// generation. The summarize generator, logger, and interaction recorder
+// are bound from the dscope scope. See TheoryOfHandoff.
 type CreateHandoff func(
 	ctx context.Context,
 	incompleteText string,
@@ -408,7 +408,7 @@ func handoffRetryState(
 			return fallbackState, fallbackCount, fallbackSummary, handoffErr
 		} else if handoff != nil {
 			// Account the handoff request's own token spend: inject the
-			// summed usage into the state the caller scans for round
+			// summed usage into the state the caller scans for attempt
 			// statistics, before the retry feedback is built on top of
 			// it. See TheoryOfHandoffUsageAccounting.
 			errState = appendHandoffUsage(errState, prevContentCount, handoff.Usage)
@@ -454,45 +454,49 @@ func fallbackRetryState(
 }
 
 const TheoryOfSummaryCompletionRetry = `
-The summary block is the mandatory completion signal for each generation round. A
-round is complete only when a summary block is present AND the finish reason is
-not abnormal. A round missing the summary block has one of three causes: the
-generation limit truncated the model mid-stream before its closing summary
-block; the model emitted a summary and continued generating until it was cut
-off; or the model violated the every-response rule and simply ended its output
-without one. All three are retried from the original pre-generation State.
-State immutability (see TheoryOfStateImmutability in generators/state.go) is
-the foundation for this retry: the pre-generation State is unaffected by the
-failed attempt, so retrying starts from a clean snapshot rather than corrupted
-partial state. The retry count is bounded to prevent infinite loops when a
-model consistently truncates or omits the summary. Change blocks from a failed
-attempt are NOT applied: the retry discards the partial output entirely and
-regenerates from the pre-round state, avoiding incomplete or malformed change
-blocks. This is distinct from the generator-level retry (see TheoryOfRetry in
-generators/gemini.go and TheoryOfGenerateRetry in generators/generate.go),
-which handles transient API errors; this retry handles successful-but-incomplete
-or non-conforming output.
+The summary block is the mandatory completion signal for each generation
+attempt. An attempt is complete only when a summary block is present AND
+the finish reason is not abnormal. An attempt missing the summary block
+has one of three causes: the generation limit truncated the model
+mid-stream before its closing summary block; the model emitted a summary
+and continued generating until it was cut off; or the model violated the
+every-response rule and simply ended its output without one. All three
+are retried from the original pre-generation State. State immutability
+(see TheoryOfStateImmutability in generators/state.go) is the foundation
+for this retry: the pre-generation State is unaffected by the failed
+attempt, so retrying starts from a clean snapshot rather than corrupted
+partial state. The retry count is bounded to prevent infinite loops when
+a model consistently truncates or omits the summary. Change blocks from
+a failed attempt are NOT applied: the retry discards the partial output
+entirely and regenerates from the pre-attempt state, avoiding incomplete
+or malformed change blocks. This is distinct from the generator-level
+retry (see TheoryOfRetry in generators/gemini.go and
+TheoryOfGenerateRetry in generators/generate.go), which handles transient
+API errors; this retry handles successful-but-incomplete or
+non-conforming output.
 
-Completion is detected by checking the externally collected blocks for summary
-kind and the finish reason in the state for abnormal termination. No block kind
-other than summary completes a round: a component-triggering block (ingest,
-shell, continue, go-test, go-src) without a summary block is a rule violation,
-not a completed round, so such rounds are retried with the missing-summary
-feedback (missingSummaryRetryPrefix); an abnormal finish reason instead frames
-the retry as truncation (incompleteOutputHandoffPrefix). Because blocks are
-collected by the BlockHandler during AppendContent (not stored in ParserState),
-the check is a simple scan of the collected slice. The finish reason is
-extracted from RoleLog content appended by the generator. On retry, the
-collected blocks are reset alongside the MemoryStore in the onPhaseStart
-callback, ensuring both external states are consistent with the rolled-back
-State (see TheoryOfParserState in blocks/parser_state.go); re-emitting the
-blocks in the retry round is what makes them take effect.
+Completion is detected by checking the externally collected blocks for
+summary kind and the finish reason in the state for abnormal termination.
+No block kind other than summary completes an attempt: a
+component-triggering block (ingest, shell, continue, go-test, go-src)
+without a summary block is a rule violation, not a completed attempt, so
+such attempts are retried with the missing-summary feedback
+(missingSummaryRetryPrefix); an abnormal finish reason instead frames the
+retry as truncation (incompleteOutputHandoffPrefix). Because blocks are
+collected by the BlockHandler during AppendContent (not stored in
+ParserState), the check is a simple scan of the collected slice. The
+finish reason is extracted from RoleLog content appended by the
+generator. On retry, the collected blocks are reset alongside the
+MemoryStore in the OnAttemptStart callback, ensuring both external states
+are consistent with the rolled-back State (see TheoryOfParserState in
+blocks/parser_state.go); re-emitting the blocks in the retry attempt is
+what makes them take effect.
 
 This retry uses handoff (TheoryOfHandoff) to carry forward established
-conclusions, attempted changes, and partitioning guidance into the next round,
-directing the model to complete an initial subset of changes first and use
-continue blocks for remaining work, without retaining unstructured
-conversation history.
+conclusions, attempted changes, and partitioning guidance into the retry
+attempt, directing the model to complete an initial subset of changes
+first and use continue blocks for remaining work, without retaining
+unstructured conversation history.
 `
 
 const TheoryOfSummaryRetryOnError = `
@@ -506,7 +510,7 @@ with handoff, ensuring consistent retry behavior regardless of the error type.
 
 The handoff extracts the valuable content of the partial output — the
 discoveries, decisions, facts, and attempted changes the model had already
-established — and presents them to the retry round with guidance on task
+established — and presents them to the retry attempt with guidance on task
 partitioning. The retry therefore continues from the model's conclusions and
 completes a manageable subset of changes first, using continue blocks for
 remaining work to prevent exceeding output limits again. See TheoryOfHandoff.
@@ -527,10 +531,10 @@ func (Module) Generate(
 	}
 }
 
-// GenerateWithResult wraps GenerateWithResultWithStats, discarding the round
-// statistics so existing callers see the same (Result, error) signature.
-// Callers that need the statistics (e.g., goal command) should use
-// GenerateWithResultWithStats directly. See TheoryOfRoundStatistics.
+// GenerateWithResult wraps GenerateWithResultWithStats, discarding the
+// attempt statistics so existing callers see the same (Result, error)
+// signature. Callers that need the statistics (e.g., goal command) should
+// use GenerateWithResultWithStats directly. See TheoryOfAttemptStatistics.
 func (Module) GenerateWithResult(
 	generateWithResultWithStats GenerateWithResultWithStats,
 ) GenerateWithResult {
