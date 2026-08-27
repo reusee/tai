@@ -37,16 +37,14 @@ reason; its completion event carries the summary. Retries re-execute
 the phase chain as a new attempt, up to the retry budget carried by
 MaxAttempts.
 
-The run's end carries caller-contributed events: RunOptions.FinalEvents
-is called once when the run finishes — normally or with an error — and
-its events are yielded before the terminal yield, so a session's summary
-data reaches the same event channel as the live occurrences. The codes
-pipeline publishes its attempt statistics this way as one EventStats
-(see TheoryOfAttemptStatistics). Goal progress joins the same channel
-from the outside: RunGoal reports loop banners and verdicts as EventGoal
-and the aggregated statistics as EventStats through GoalEventObserver,
-which a display front-end forks to its event consumer (see
-TheoryOfGoalMode).
+Event.Loop attributes every event to its goal run: RunOptions.Loop
+carries the 1-based goal loop number, and the loop's emit layer stamps
+it onto every event it yields, so a consumer sees which goal loop
+produced each attempt and usage. Non-goal runs carry Loop 0, and
+displays omit the attribution for them. Goal progress joins the same
+channel from the outside: RunGoal reports verdicts and failure notes as
+EventGoal through GoalEventObserver, which a display front-end forks to
+its event consumer (see TheoryOfGoalMode).
 
 The TUI's Events tab renders this stream directly (cmd/tai taps the
 iterator via withTUIOutputObserver), so every Events-tab line originates
@@ -136,26 +134,11 @@ const (
 	EventIdle EventKind = "idle"
 )
 
-// Summary-data and goal-progress event kinds: they carry session
-// statistics and goal-run progress into the same event stream as the
-// per-occurrence events, so a display front-end renders them in its
-// event display instead of on a separate output surface.
-const (
-	// EventStats reports a set of attempt statistics: Stats carries
-	// the AttemptStat entries and Detail the table title ("Generation
-	// Statistics" for one session, "Goal Loop Statistics" for a goal
-	// run's aggregation). The codes pipeline publishes each session's
-	// statistics at run end through RunOptions.FinalEvents, and the
-	// goal runner reports the aggregated statistics through
-	// GoalEventObserver. See TheoryOfAttemptStatistics.
-	EventStats EventKind = "stats"
-	// EventGoal reports one goal-run progress message: a loop banner,
-	// a verdict (achieved, not achieved, stopped, no-change
-	// completion), or a failure note. Detail carries the message
-	// text. Reported by the goal runner through GoalEventObserver;
-	// see TheoryOfGoalMode.
-	EventGoal EventKind = "goal"
-)
+// EventGoal reports one goal-run progress message: a verdict (achieved,
+// not achieved, stopped, no-change completion) or a failure note.
+// Detail carries the message text. Reported by the goal runner through
+// GoalEventObserver; see TheoryOfGoalMode.
+const EventGoal EventKind = "goal"
 
 // Event is one notable occurrence during a generation loop run. Events
 // are constructed and yielded the moment their facts are known; the
@@ -164,6 +147,11 @@ const (
 type Event struct {
 	// Kind identifies the event.
 	Kind EventKind
+	// Loop is the 1-based goal loop number of the run that produced
+	// the event, stamped by the loop's emit layer from RunOptions.Loop.
+	// Zero for non-goal runs; displays omit the attribution for them.
+	// See TheoryOfLoopEvents.
+	Loop int
 	// Attempt is the session-wide 1-based attempt number: one pass
 	// through the phase chain, numbered monotonically across all
 	// generations of the run — retries, component-triggered
@@ -187,11 +175,6 @@ type Event struct {
 	// Summaries carries the attempt's summary block bodies for
 	// EventAttemptCompleted.
 	Summaries []string
-	// Stats carries a set of attempt statistics for EventStats: one
-	// session's table (published through RunOptions.FinalEvents) or a
-	// goal run's aggregated table (reported through
-	// GoalEventObserver). See TheoryOfAttemptStatistics.
-	Stats []AttemptStat
 	// Usage carries the attempt's aggregated token usage for
 	// EventUsage.
 	Usage generators.Usage
@@ -204,8 +187,7 @@ type Event struct {
 	// Detail carries a human-readable description for less structured
 	// events: the reason for EventRetry and EventTruncated, the finish
 	// reason for EventFinish, the outcome marker ("error") for
-	// EventUsage, the table title for EventStats, and the message
-	// text for EventGoal.
+	// EventUsage, and the message text for EventGoal.
 	Detail string
 }
 
@@ -218,6 +200,9 @@ func (ls *loopState) emitEvent(ev Event) bool {
 	if ls.stopped {
 		return false
 	}
+	// The run's loop number attributes the event to its goal loop; the
+	// events of a non-goal run keep Loop 0. See TheoryOfLoopEvents.
+	ev.Loop = ls.opts.Loop
 	if !ls.yield(ev, nil) {
 		ls.stopped = true
 	}
@@ -232,5 +217,6 @@ func (ls *loopState) emitTerminal(ev Event, err error) {
 		return
 	}
 	ls.stopped = true
+	ev.Loop = ls.opts.Loop
 	ls.yield(ev, err)
 }

@@ -34,7 +34,7 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	var feedbacks []GoalFeedback
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			return doneResult(), nil, nil
@@ -69,7 +69,7 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 1 {
@@ -92,7 +92,7 @@ func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 	var summaries []GoalLoopSummaries
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, s GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, s GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			summaries = append(summaries, s)
 			if calls == 1 {
@@ -128,7 +128,7 @@ func TestRunGoalStopsAfterConsecutiveSameErrors(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, errors.New("persistent failure")
 		},
@@ -150,7 +150,7 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 2 {
@@ -183,7 +183,7 @@ func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, nil
 		},
@@ -209,7 +209,7 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
 				return Result{
@@ -236,7 +236,7 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
 				return doneResult(), nil, nil
@@ -255,10 +255,9 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 }
 
 func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
-	output := &bytes.Buffer{}
 	result := RunGoal(context.Background(), GoalOptions{
-		Output: output,
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			stats := []AttemptStat{{Attempt: 1, PromptTokens: 10}}
 			return doneResult(), stats, nil
 		},
@@ -273,22 +272,18 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	if result.Stats[0].Loop != 1 || result.Stats[1].Loop != 2 {
 		t.Fatalf("Loop fields = %d, %d; want 1, 2", result.Stats[0].Loop, result.Stats[1].Loop)
 	}
-	if !strings.Contains(output.String(), "Goal Loop Statistics") {
-		t.Fatal("output must contain the aggregated statistics table")
-	}
 }
 
 // TestRunGoalReportsEventsThroughObserver verifies that a goal event
-// observer receives the run's progress as events — the loop banners and
-// the achieved verdict as EventGoal, the aggregated loop-tagged
-// statistics as EventStats — while the output writer stays empty. See
-// TheoryOfGoalMode and TheoryOfLoopEvents.
+// observer receives the run's verdict as the only goal event while the
+// output writer stays empty: no loop banners and no statistics events
+// are reported. See TheoryOfGoalMode and TheoryOfLoopEvents.
 func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	output := &bytes.Buffer{}
 	var events []Event
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
 			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
 		},
 		Review: noopReview,
@@ -299,21 +294,18 @@ func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	if !result.Achieved {
 		t.Fatal("goal must be achieved")
 	}
-	// Loop 1 declares done, loop 2 confirms: two loop banners, the
-	// achieved verdict, and the aggregated statistics.
+	// Loop 1 declares done, loop 2 confirms: the achieved verdict is
+	// the only goal event.
 	var kinds []EventKind
 	for _, ev := range events {
 		kinds = append(kinds, ev.Kind)
 	}
-	wantKinds := []EventKind{EventGoal, EventGoal, EventGoal, EventStats}
+	wantKinds := []EventKind{EventGoal}
 	if !slices.Equal(kinds, wantKinds) {
 		t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
 	}
-	if !strings.Contains(events[2].Detail, "Goal Achieved") {
-		t.Fatalf("expected the achieved verdict as an event, got %q", events[2].Detail)
-	}
-	if len(events[3].Stats) != 2 || events[3].Stats[1].Loop != 2 {
-		t.Fatalf("expected the aggregated loop-tagged stats on the stats event, got %+v", events[3].Stats)
+	if !strings.Contains(events[0].Detail, "Goal Achieved") {
+		t.Fatalf("expected the achieved verdict as an event, got %q", events[0].Detail)
 	}
 	if output.Len() != 0 {
 		t.Fatalf("expected the output writer to stay empty when the observer is set, got %q", output.String())

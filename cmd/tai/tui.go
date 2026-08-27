@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -49,14 +48,17 @@ event stream — attempt starts ("🚀 [Attempt N start]"), attempt summaries,
 truncations, retries, handoff starts and
 synthesized summaries, the finish reasons ("🏁 [Finish: stop]"), the
 per-attempt usage lines ("📊 [Usage] ..."), the thought summaries when
--summarize-thoughts is enabled, the component/idle continuations, the
-session's attempt statistics ("📈 [Statistics: ...]" from EventStats), and
-the goal-mode progress — loop banners and verdicts ("🎯 [Goal Loop N/M]")
-from EventGoal — and the Logs tab collects
+-summarize-thoughts is enabled, the component/idle continuations, and
+the goal-mode verdicts ("🎯 [Goal Achieved after N loop(s)]") and failure
+notes from EventGoal — and the Logs tab collects
 log records. Every event kind renders: each event's first line starts
 with the kind's emoji (eventEmoji) followed by a bracketed label, one
-display style shared by every kind and by the goal banners the pipeline
+display style shared by every kind and by the goal verdicts the pipeline
 emits (pipeline.RunGoal), so no display mixes banner equals with brackets.
+Goal-loop runs attribute the per-attempt events to their loop: attempt
+starts and completions render "[Loop L attempt N ...]" and usage lines
+render "[Usage] loop L attempt N: ..."; non-goal runs omit the
+attribution and keep their display bytes unchanged.
 A completed attempt with no summary
 shows a completion line ("✅ [Attempt N complete]"), and an unknown kind shows
 a generic "❓ [Event <kind>]" line, so no pipeline event type is silently
@@ -104,9 +106,9 @@ EventSynthesizedSummary, so the TUI never parses streamed text for
 blocks, never scans rendered text for "[Finish: ...]" markers, and never
 captures model output through a
 stdout pipe; retry feedback cannot duplicate summary content because the
-loop's events are the single authority. The session's attempt statistics
-and the goal-mode banners and verdicts are pipeline events too (EventStats,
-EventGoal), so they render in the Events tab and never reach the Output
+loop's events are the single authority. The goal-mode verdicts and
+failure notes are pipeline events too (EventGoal), so they render in
+the Events tab and never reach the Output
 tab. stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
@@ -190,8 +192,6 @@ regular generation output. The pipeline.HandoffObserver provider drives
 the title state: HandoffStart sets the handoff flag, HandoffEnd clears it.
 `
 
-// TheoryOfTUIDisplayFork documents why the generation loop is resolved
-// after the TUI display writer forks. See forkTUIDisplay.
 const TheoryOfTUIDisplayFork = `
 The TUI display writers (the Logs pane and the Output tab) are forked
 into the scope before the generation loop is resolved from it.
@@ -203,8 +203,8 @@ next repaint erases it. The Events tab needs no writer fork:
 withTUIOutputObserver, layered in the second fork's Run wrapper, taps
 the run's event iterator and forwards every event to the TUI (see
 pipeline.TheoryOfLoopEvents), and the goal event observer is forked to
-the same handler, so the goal runner's EventGoal and EventStats reports
-reach the Events tab through the tap path. The state-decorator and
+the same handler, so the goal runner's EventGoal verdicts reach the
+Events tab through the tap path. The state-decorator and
 event-tap Run wrapper is layered in a second fork so its pipeline.Run
 def does not resolve itself recursively.
 `
@@ -970,10 +970,6 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 	t.notify()
 }
 
-// eventEmoji maps each pipeline event kind to the emoji that starts the
-// event's first display line in the Events tab, so event types are
-// recognized at a glance. Unknown kinds fall back to the question mark
-// in eventLog. See eventLines and TheoryOfTUI.
 var eventEmoji = map[pipeline.EventKind]string{
 	pipeline.EventAttemptStart:        "🚀",
 	pipeline.EventAttemptCompleted:    "✅",
@@ -988,7 +984,6 @@ var eventEmoji = map[pipeline.EventKind]string{
 	pipeline.EventComponentsTriggered: "⚙️",
 	pipeline.EventIdle:                "💤",
 	pipeline.EventRunError:            "❌",
-	pipeline.EventStats:               "📈",
 	pipeline.EventGoal:                "🎯",
 }
 
@@ -1003,6 +998,19 @@ func eventLog(kind pipeline.EventKind, text string) []taiui.Line {
 	return logLines(emoji + " " + text)
 }
 
+// loopPrefix renders the attribution of a per-attempt event: "loop N
+// attempt M" when the event carries a goal loop number; the given
+// attempt label unchanged otherwise, so non-goal runs keep their
+// display bytes unchanged — start and completion lines use the
+// capitalized "Attempt M" label and usage lines the lowercase one,
+// exactly as before. See TheoryOfTUI and pipeline.TheoryOfLoopEvents.
+func loopPrefix(loop int, attemptLabel string) string {
+	if loop != 0 {
+		return fmt.Sprintf("loop %d %s", loop, strings.ToLower(attemptLabel))
+	}
+	return attemptLabel
+}
+
 // eventLines renders one pipeline event as Events-tab lines. The first
 // line of every event starts with the kind's emoji (eventEmoji) followed
 // by a bracketed label — one display style shared by all kinds, so event
@@ -1013,9 +1021,10 @@ func eventLog(kind pipeline.EventKind, text string) []taiui.Line {
 // summary body. An unknown kind shows a generic event line, so no
 // pipeline event type is silently dropped. Log-style events use the log
 // color; the thought summary header uses the thought color; summary
-// bodies stay plain. The statistics event renders one log-colored line
-// per attempt plus the attempt's summary lines; the goal event renders
-// its message lines in the log color, the emoji on the first line.
+// bodies stay plain. The attempt start, completion, and usage lines
+// attribute the attempt to its goal loop via loopPrefix; non-goal runs
+// keep the bare attempt labels. The goal event renders its message lines
+// in the log color, the emoji on the first line.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -1026,9 +1035,11 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 	}
 	switch ev.Kind {
 	case pipeline.EventAttemptStart:
-		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d start]", ev.Attempt))
+		return eventLog(ev.Kind, fmt.Sprintf("[%s start]",
+			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
 	case pipeline.EventAttemptCompleted:
-		header := eventLog(ev.Kind, fmt.Sprintf("[Attempt %d complete]", ev.Attempt))
+		header := eventLog(ev.Kind, fmt.Sprintf("[%s complete]",
+			loopPrefix(ev.Loop, fmt.Sprintf("Attempt %d", ev.Attempt))))
 		if strings.TrimSpace(ev.Summary) == "" {
 			return header
 		}
@@ -1062,8 +1073,8 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		// SpeedSuffix carries the streaming ttft and average generation
 		// speed when measured, staying empty for unmeasured usages.
 		// See TheoryOfUsageTiming.
-		return eventLog(ev.Kind, fmt.Sprintf("[Usage] attempt %d%s: prompt %d, cached %d, completion %d, thoughts %d",
-			ev.Attempt, outcome,
+		return eventLog(ev.Kind, fmt.Sprintf("[Usage] %s%s: prompt %d, cached %d, completion %d, thoughts %d",
+			loopPrefix(ev.Loop, fmt.Sprintf("attempt %d", ev.Attempt)), outcome,
 			ev.Usage.Prompt.TokenCount,
 			ev.Usage.Prompt.TokenCountCached,
 			ev.Usage.Candidates.TokenCount,
@@ -1080,27 +1091,6 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return eventLog(ev.Kind, fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
 	case pipeline.EventIdle:
 		return eventLog(ev.Kind, "[Idle input received; starting the next generation]")
-	case pipeline.EventStats:
-		// One line per attempt carries the token counters and the
-		// duration; a goal-run aggregation prefixes the loop number.
-		// The attempt's summary, when present, follows as plain lines.
-		// See pipeline.TheoryOfAttemptStatistics.
-		lines := eventLog(ev.Kind, fmt.Sprintf("[Statistics: %s]", ev.Detail))
-		for _, s := range ev.Stats {
-			label := fmt.Sprintf("attempt %d", s.Attempt)
-			if s.Loop != 0 {
-				label = fmt.Sprintf("loop %d attempt %d", s.Loop, s.Attempt)
-			}
-			lines = append(lines, logLines(fmt.Sprintf(
-				"%s: prompt %d, completion %d, thoughts %d, cached %d, %s",
-				label, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens,
-				s.CachedTokens, s.Duration.Round(time.Millisecond).String(),
-			))...)
-			if s.Summary != "" {
-				lines = append(lines, summaryLines("  "+s.Summary)...)
-			}
-		}
-		return lines
 	case pipeline.EventGoal:
 		// A goal message may span lines (multi-line verdicts); every
 		// line renders in the log color, the first line carrying the
@@ -1313,29 +1303,15 @@ func tuiShowThoughts(thoughts flags.Thoughts) bool {
 	return true
 }
 
-// forkTUIDisplay layers the TUI display writers onto scope and returns
-// the scope the command runs in. The Logs-pane and Output-tab writers
-// are forked before the generation loop is resolved from the scope,
-// because Module.Run binds logs.Logger at provider-resolution time: a
-// loop resolved before the forks would keep the pre-fork Logger built
-// on the real stderr, painting the raw terminal. The Events tab needs
-// no writer fork — withTUIOutputObserver, layered in the second fork's
-// Run wrapper, taps the run's event iterator and forwards every event
-// to the TUI (see pipeline.TheoryOfLoopEvents), and the goal event
-// observer below forwards the goal runner's progress events the same
-// way. The state-decorator Run wrapper is layered in a second fork so
-// its pipeline.Run def does not resolve itself recursively. See
-// TheoryOfTUIDisplayFork and TheoryOfTUI.
 func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
 		// Command-level output (ping verdicts, applied notices) goes
 		// to the Output tab via the dscope-resolved Output writer.
 		// Generation output is captured separately and never routed
-		// here; goal-mode banners, verdicts, and statistics are
-		// pipeline events rendered in the Events tab through the goal
-		// event observer below. See TheoryOfCommandOutput and
-		// TheoryOfTUI.
+		// here; goal-mode verdicts are pipeline events rendered in the
+		// Events tab through the goal event observer below. See
+		// TheoryOfCommandOutput and TheoryOfTUI.
 		func() Output { return Output(tui.Writer()) },
 		// Handoff generation reaches the Output tab through the
 		// tuiOutputState decorator, so each part is displayed with its
@@ -1353,10 +1329,9 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 			}
 		},
 		func() pipeline.HandoffObserver { return tui },
-		// The goal runner's progress reports — EventGoal banners and
-		// verdicts, EventStats statistics — forward to the Events tab
-		// through the same handleEvent path as the run's events. See
-		// pipeline.TheoryOfGoalMode.
+		// The goal runner's verdicts and failure notes — EventGoal —
+		// forward to the Events tab through the same handleEvent path
+		// as the run's events. See pipeline.TheoryOfGoalMode.
 		func() pipeline.GoalEventObserver { return tui.handleEvent },
 	)
 	// Resolve the loop from the display scope so Module.Run binds the

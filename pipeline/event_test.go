@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -119,77 +118,14 @@ func TestRunEventStream(t *testing.T) {
 			!strings.Contains(completedEv.Summary, "Done.") {
 			t.Fatalf("unexpected completed event: %+v", completedEv)
 		}
-	})
-}
 
-// TestRunFinalEvents verifies that the caller-contributed events from
-// RunOptions.FinalEvents are yielded at run end, on both the success
-// and the error path, so a session's summary data (the attempt
-// statistics published as EventStats) reaches the same event stream as
-// the live occurrences. See TheoryOfLoopEvents.
-func TestRunFinalEvents(t *testing.T) {
-	statsEvent := func() Event {
-		return Event{
-			Kind:   EventStats,
-			Detail: "Generation Statistics",
-			Stats:  []AttemptStat{{Attempt: 1, PromptTokens: 10}},
+		// A non-goal run carries no loop attribution: every event keeps
+		// Loop 0. See TheoryOfLoopEvents.
+		for _, ev := range events {
+			if ev.Loop != 0 {
+				t.Fatalf("expected Loop 0 on a non-goal run, got %+v", ev)
+			}
 		}
-	}
-
-	t.Run("success path", func(t *testing.T) {
-		withRun(t, func(run Run) {
-			opts := RunOptions{
-				InitialState: generators.NewPrompts("", nil),
-				Components:   nil,
-				PhaseBuilder: func(g generators.Generator) generators.Phase {
-					return appendPhase("<<齉爩 summary\n- done\n齉爩\n")
-				},
-				FinalEvents: func() []Event { return []Event{statsEvent()} },
-			}
-			var result Result
-			var events []Event
-			for ev, err := range run(context.Background(), opts, &result) {
-				if err != nil {
-					t.Fatalf("unexpected terminal error: %v", err)
-				}
-				events = append(events, ev)
-			}
-			last := events[len(events)-1]
-			if last.Kind != EventStats || len(last.Stats) != 1 || last.Stats[0].PromptTokens != 10 {
-				t.Fatalf("expected the stats event as the final event, got %+v", last)
-			}
-		})
-	})
-
-	t.Run("error path", func(t *testing.T) {
-		withRun(t, func(run Run) {
-			opts := RunOptions{
-				InitialState: generators.NewPrompts("", nil),
-				Components:   nil,
-				PhaseBuilder: func(g generators.Generator) generators.Phase {
-					return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
-						return nil, state, errors.New("boom")
-					}
-				},
-				FinalEvents: func() []Event { return []Event{statsEvent()} },
-			}
-			var result Result
-			var kinds []EventKind
-			var terminalErr error
-			for ev, err := range run(context.Background(), opts, &result) {
-				if err != nil {
-					terminalErr = err
-				}
-				kinds = append(kinds, ev.Kind)
-			}
-			if terminalErr == nil {
-				t.Fatal("expected a terminal error")
-			}
-			wantKinds := []EventKind{EventAttemptStart, EventStats, EventRunError}
-			if !slices.Equal(kinds, wantKinds) {
-				t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
-			}
-		})
 	})
 }
 
@@ -337,6 +273,39 @@ func TestRunThoughtSummaryEvent(t *testing.T) {
 		}
 		if summary != "- condensed" {
 			t.Fatalf("unexpected thought summary: %q", summary)
+		}
+	})
+}
+
+// TestRunEventsCarryLoop verifies that RunOptions.Loop is stamped onto
+// every event the loop emits: a goal run's per-attempt events carry the
+// goal loop number, so a consumer can attribute each attempt and usage
+// to its loop. See TheoryOfLoopEvents.
+func TestRunEventsCarryLoop(t *testing.T) {
+	withRun(t, func(run Run) {
+		opts := RunOptions{
+			Loop:         7,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: func(g generators.Generator) generators.Phase {
+				return appendPhase("<<齉爩 summary\n- done\n齉爩\n")
+			},
+		}
+		var result Result
+		var events []Event
+		for ev, err := range run(context.Background(), opts, &result) {
+			if err != nil {
+				t.Fatalf("unexpected terminal error: %v", err)
+			}
+			events = append(events, ev)
+		}
+		if len(events) == 0 {
+			t.Fatal("expected events")
+		}
+		for _, ev := range events {
+			if ev.Loop != 7 {
+				t.Fatalf("expected Loop 7 on every event, got %+v", ev)
+			}
 		}
 	})
 }

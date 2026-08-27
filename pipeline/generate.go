@@ -77,12 +77,11 @@ improving accuracy.
 type Generate func(ctx context.Context, output io.Writer) error
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and
-// returns the Result together with the attempt statistics collected
-// during the run. The statistics are returned and published into the
-// run's event stream as one EventStats (via RunOptions.FinalEvents), so
-// that callers that run multiple independent generation sessions — such
-// as the goal runner — can accumulate them and report the entire process
-// aggregated after all sessions complete. See TheoryOfAttemptStatistics.
+// returns the Result together with the attempt statistics collected during the
+// run. The statistics are returned so that callers that run multiple
+// independent generation sessions — such as the goal runner — can accumulate
+// them and attribute each attempt to its goal loop. See
+// TheoryOfAttemptStatistics.
 type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error)
 
 // RunReview provider. It is separate from GenerateWithResultWithStats so
@@ -205,11 +204,12 @@ duplicate entries. Truncated attempts (no summary block) that are
 retried are recorded via OnAttemptTruncated with the summary synthesized
 by the retry process, so they appear as separate entries; the completing
 attempt itself is recorded by OnAttemptSuccess. At run end the collected
-statistics are published into the run's event stream as one EventStats
-through RunOptions.FinalEvents — the display source for a live consumer
-such as the TUI's Events tab — and printed to the generation output
-writer via a deferred call, so the table is still shown in command-line
-mode even when the session ends early due to an error.
+statistics are printed to the generation output writer via a deferred
+call, so the table is still shown in command-line mode even when the
+session ends early due to an error; a live consumer reads the per-attempt
+usage from the run's EventUsage events instead (see
+TheoryOfUsageLogging). When the goal runner aggregates the statistics
+of every loop, it tags each entry with AttemptStat.Loop.
 `
 
 // AttemptStat records per-attempt token usage (prompt, completion,
@@ -577,6 +577,7 @@ func (Module) GenerateWithResultWithStats(
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
 	createHandoff CreateHandoff,
+	goalLoop GoalLoop,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
 
@@ -750,10 +751,12 @@ func (Module) GenerateWithResultWithStats(
 
 		var attemptStats []AttemptStat
 		defer func() {
-			// The table goes to the generation output writer. In TUI
-			// mode that writer is the redirected null device, and the
-			// EventStats published through FinalEvents below is the
-			// display source instead. See TheoryOfAttemptStatistics.
+			// The table goes to the generation output writer, so the
+			// statistics stay visible in command-line mode even when the
+			// session ends early. In TUI mode that writer is the
+			// redirected null device and the TUI reads the usage from
+			// the run's per-attempt EventUsage events instead. See
+			// TheoryOfAttemptStatistics and TheoryOfUsageLogging.
 			PrintAttemptStats(output, attemptStats)
 		}()
 
@@ -806,6 +809,7 @@ func (Module) GenerateWithResultWithStats(
 			HTTPClient:          httpClient,
 			Command:             "codes",
 			InteractionRecorder: recorder,
+			Loop:                int(goalLoop),
 
 			OnAttemptStart: func() {
 				memStore.Reset()
@@ -891,21 +895,6 @@ func (Module) GenerateWithResultWithStats(
 					cancel()
 				}
 				return handoff, err
-			},
-
-			// Publish the session's attempt statistics into the run's
-			// event stream at run end, so a display front-end renders
-			// them in its event display. See
-			// TheoryOfAttemptStatistics.
-			FinalEvents: func() []Event {
-				if len(attemptStats) == 0 {
-					return nil
-				}
-				return []Event{{
-					Kind:   EventStats,
-					Detail: "Generation Statistics",
-					Stats:  attemptStats,
-				}}
 			},
 		}, &result) {
 			if e != nil {

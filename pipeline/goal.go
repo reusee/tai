@@ -87,24 +87,23 @@ provider-scoped cache is rebuilt and each loop reads the current filesystem
 state. The pipeline holds no process-level caches: all caches, such as loaded
 packages and parsed ASTs, live inside scope provider functions.
 
-Each loop's attempt statistics are published by the codes pipeline into
-that loop's event stream as one EventStats (see
-TheoryOfAttemptStatistics). The runner accumulates the statistics of every
-loop — with AttemptStat.Loop set to the loop number — and reports them
-once more, aggregated, after the goal completes. The aggregated report
-lets the user review the entire process in a single view: token usage,
-durations, and attempt summaries across all loops, with the Loop column
-identifying which goal loop produced each attempt.
+Each loop's number is forked into the loop's scope as GoalLoop and passed
+to RunOptions.Loop, so the generation loop stamps every event it emits
+with the loop number (see TheoryOfLoopEvents). The runner accumulates the
+attempt statistics of every loop — with AttemptStat.Loop set to the loop
+number — into GoalResult.Stats, so a caller can review the entire
+process in a single view: token usage, durations, and attempt summaries
+across all loops, with the Loop field identifying which goal loop
+produced each attempt.
 
 RunGoal is the plain implementation so tests exercise the loop logic with
 fake per-loop generators; Module.GoalRun is the dscope provider that injects
 the scope-backed per-loop generator and the review pass. Generation and
 review stream to os.Stdout so a TUI's state decorators capture the output
-without duplication. Banners, verdicts, failure notes, and the aggregated
-statistics are routed through goalReporter: as EventGoal and EventStats
-events through GoalEventObserver when one is set (a display front-end's
-Events tab), or written to the output writer (failure notes to stderr)
-otherwise.
+without duplication. Verdicts and failure notes are routed through
+goalReporter: as EventGoal events through GoalEventObserver when one is
+set (a display front-end's Events tab), or written to the output writer
+(failure notes to stderr) otherwise.
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop
@@ -211,50 +210,62 @@ func (Module) GoalLoopSummaries() GoalLoopSummaries {
 }
 
 // GoalEventObserver provides the default: no observer. The goal runner
-// then writes banners and verdicts to the output writer. A display
-// front-end (e.g., tai's TUI) forks this provider with its event
-// handler, so the goal progress renders in its Events tab. See
-// TheoryOfGoalMode.
+// then writes verdicts to the output writer. A display front-end (e.g.,
+// tai's TUI) forks this provider with its event handler, so the goal
+// verdicts render in its Events tab. See TheoryOfGoalMode.
 func (Module) GoalEventObserver() GoalEventObserver {
 	return nil
 }
+
+// GoalLoop provides the default: zero, a non-goal run. The goal runner
+// forks each loop's number into the loop's scope. See TheoryOfGoalMode.
+func (Module) GoalLoop() GoalLoop { return 0 }
 
 // GoalOptions carries the runtime configuration of one goal run. Generate
 // and Review are injected: Module.GoalRun binds the scope-backed
 // implementations; tests inject fakes.
 type GoalOptions struct {
-	// Output receives loop banners, verdicts, and the aggregated
-	// statistics when no GoalEvents observer is set. Generation and
-	// review output do not go here: they stream to os.Stdout so a
-	// TUI's state decorators capture them without duplication.
+	// Output receives verdicts and failure notes when no GoalEvents
+	// observer is set. Generation and review output do not go here:
+	// they stream to os.Stdout so a TUI's state decorators capture
+	// them without duplication.
 	Output io.Writer
 	// GoalEvents, when non-nil, receives the goal run's progress as
-	// events: each loop banner and verdict as an EventGoal, the
-	// aggregated attempt statistics as an EventStats. When nil (the
-	// default), banners and verdicts go to Output and failure notes to
+	// events: each verdict and failure note as an EventGoal. When nil
+	// (the default), verdicts go to Output and failure notes to
 	// stderr. See GoalEventObserver and TheoryOfGoalMode.
 	GoalEvents GoalEventObserver
 	// Generate runs one goal loop: a fresh generation session that
-	// re-reads the current filesystem state, with the given feedback and
-	// the previous loops' summaries in its system prompt.
+	// re-reads the current filesystem state, with the given loop
+	// number, feedback, and the previous loops' summaries.
 	Generate GoalLoopGenerator
 	// Review reviews the accumulated session diffs after the run.
 	Review RunReview
 }
 
-// GoalEventObserver receives the goal runner's progress events: loop
-// banners and verdicts as EventGoal, aggregated attempt statistics as
-// EventStats. A display front-end (e.g., tai's TUI) forks this provider
-// to forward the events into its Events tab; when nil (the default),
-// the runner writes banners and verdicts to the output writer and
-// failure notes to stderr. See TheoryOfGoalMode and TheoryOfLoopEvents.
+// GoalEventObserver receives the goal runner's progress events:
+// verdicts and failure notes as EventGoal. A display front-end (e.g.,
+// tai's TUI) forks this provider to forward the events into its Events
+// tab; when nil (the default), the runner writes verdicts to the output
+// writer and failure notes to stderr. See TheoryOfGoalMode and
+// TheoryOfLoopEvents.
 type GoalEventObserver func(Event)
 
-// GoalLoopGenerator runs one goal loop. The feedback and the summaries of
-// previous loops reach the loop's system prompt through the goal
-// SystemPrompt provider forked by the go command. See TheoryOfGoalMode.
+// GoalLoop is the 1-based number of the goal loop that a generation
+// session serves. The zero value marks a non-goal run (ai, next, ping,
+// any): the loop's events then carry no loop attribution. The goal
+// runner forks each loop's number into the loop's scope, and
+// GenerateWithResultWithStats passes it into RunOptions.Loop so the
+// loop stamps every event with it. See TheoryOfGoalMode and
+// TheoryOfLoopEvents.
+type GoalLoop int
+
+// GoalLoopGenerator runs one goal loop. The loop number, the feedback,
+// and the summaries of previous loops reach the loop's scope through
+// the forks of the goal runner. See TheoryOfGoalMode.
 type GoalLoopGenerator func(
 	ctx context.Context,
+	loop int,
 	feedback GoalFeedback,
 	summaries GoalLoopSummaries,
 ) (
@@ -279,9 +290,8 @@ type GoalResult struct {
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
 // until a done block is confirmed, the iteration budget is exhausted, a
 // successful loop applies no change blocks, or the same error repeats,
-// followed by a review of the accumulated diffs.
-// Banners, verdicts, and aggregated statistics go to output. See
-// TheoryOfGoalMode.
+// followed by a review of the accumulated diffs. Verdicts and failure
+// notes go to output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the base
@@ -425,10 +435,10 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 }
 
 // goalReporter routes one goal-run progress message to its destination:
-// an EventGoal (or EventStats) through the goal event observer when one
-// is set — a display front-end's Events tab — or the output writer
-// (failure notes to stderr) otherwise, preserving the command-line
-// formatting. See TheoryOfGoalMode.
+// an EventGoal through the goal event observer when one is set — a
+// display front-end's Events tab — or the output writer (failure notes
+// to stderr) otherwise, preserving the command-line formatting. See
+// TheoryOfGoalMode.
 type goalReporter struct {
 	output   io.Writer
 	observer GoalEventObserver
@@ -455,21 +465,6 @@ func (r goalReporter) failure(text string) {
 	fmt.Fprint(os.Stderr, text)
 }
 
-// stats publishes one statistics report: an EventStats through the
-// observer, or the printed table to the output writer. The title names
-// the table, so a consumer can distinguish one session's statistics
-// from a goal run's aggregation. See TheoryOfAttemptStatistics.
-func (r goalReporter) stats(stats []AttemptStat, title string) {
-	if len(stats) == 0 {
-		return
-	}
-	if r.observer != nil {
-		r.observer(Event{Kind: EventStats, Detail: title, Stats: stats})
-		return
-	}
-	PrintAttemptStats(r.output, stats, title)
-}
-
 func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if opts.Output == nil {
 		opts.Output = os.Stdout
@@ -494,7 +489,7 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	// loop.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
-		result, stats, err := opts.Generate(ctx, state.feedback, state.summaries)
+		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries)
 		allStats = append(allStats, stats...)
 		for i := loopStart; i < len(allStats); i++ {
 			allStats[i].Loop = loopsRun
@@ -506,9 +501,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	for loopsRun < maxGoalIterations {
 		loopsRun++
-		// Bracketed banner style, shared with the TUI's Events tab, so
-		// no event display mixes banner equals with brackets.
-		reporter.message(fmt.Sprintf("\n[Goal Loop %d/%d]\n\n", loopsRun, maxGoalIterations))
 		if runOneLoop() {
 			break
 		}
@@ -520,7 +512,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	// budget.
 	if state.pendingDoneVerification && !state.achieved && !state.stopRequested {
 		loopsRun++
-		reporter.message(fmt.Sprintf("\n[Goal Verification Loop %d (beyond budget)]\n\n", loopsRun))
 		runOneLoop()
 	}
 
@@ -531,11 +522,6 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if err := opts.Review(ctx, os.Stdout, allDiffs); err != nil {
 		reporter.failure(fmt.Sprintf("Review failed: %v\n", err))
 	}
-
-	// The aggregated statistics of the whole goal run reach the display
-	// as one EventStats through the observer, or the printed table to
-	// the output writer otherwise. See TheoryOfAttemptStatistics.
-	reporter.stats(allStats, "Goal Loop Statistics")
 
 	return GoalResult{
 		Achieved: state.achieved,
@@ -559,17 +545,19 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 }
 
 // makeGoalLoopGenerator builds the per-loop generation function: each call
-// opens a fresh scope via reset, forks the loop's feedback and the
-// previous loops' summaries into it, and resolves
+// opens a fresh scope via reset, forks the loop's number, the loop's
+// feedback, and the previous loops' summaries into it, and resolves
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
-// latest filesystem state and sees the previous loops' feedback and
-// summaries in its system prompt. Generation streams to os.Stdout: in TUI
+// latest filesystem state, sees the previous loops' feedback and
+// summaries in its system prompt, and stamps its events with its loop
+// number. Generation streams to os.Stdout: in TUI
 // mode the terminal's stdout is the null device and the display captures
 // output through state decorators, so a per-loop writer would duplicate
 // output. See TheoryOfGoalMode.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
-	return func(ctx context.Context, feedback GoalFeedback, summaries GoalLoopSummaries) (Result, []AttemptStat, error) {
+	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries) (Result, []AttemptStat, error) {
 		scope := reset()
+		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })
 		if feedback != "" {
 			scope = scope.Fork(func() GoalFeedback { return feedback })
 		}
@@ -591,7 +579,7 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // reset to the resolving scope, so the command's forks (parts provider,
 // goal system prompt) apply to every loop. The goal event observer is
 // resolved from the scope, so a display front-end's fork receives the
-// goal progress as events. See TheoryOfGoalMode.
+// goal verdicts as events. See TheoryOfGoalMode.
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
