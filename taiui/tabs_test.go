@@ -181,6 +181,52 @@ func TestTabsBoxesCollapsedInPlace(t *testing.T) {
 	}
 }
 
+func TestTabsBoxesMaxSizes(t *testing.T) {
+	// Stacked layout: the capped, unfocused tab clamps to its cap and
+	// frees rows to the uncapped expanded tabs by weight (3 for the
+	// focused tab, 1 for the other).
+	tabs := NewTabs(3)
+	tabs.MaxSizes = []int{0, 0, 3}
+	tabs.Expanded = []bool{true, true, true}
+	tabs.Focus = 0
+	boxes := tabs.Boxes(80, 40)
+	// Base split 24/8/8; the cap clamps tab 2 to 3 rows and frees 5,
+	// split 3:1 between tabs 0 and 1.
+	if boxes[0].Top != 0 || boxes[0].Bottom != 27 {
+		t.Fatalf("unexpected first panel box: %+v", boxes[0])
+	}
+	if boxes[1].Top != 27 || boxes[1].Bottom != 37 {
+		t.Fatalf("unexpected second panel box: %+v", boxes[1])
+	}
+	if boxes[2].Top != 37 || boxes[2].Bottom != 40 {
+		t.Fatalf("capped tab must keep 3 rows, got %+v", boxes[2])
+	}
+
+	// Vertical split: the same numbers apply along the width axis.
+	tabs.SplitVertical = true
+	boxes = tabs.Boxes(90, 40)
+	if boxes[2].Left != 87 || boxes[2].Right != 90 {
+		t.Fatalf("capped tab must keep 3 columns, got %+v", boxes[2])
+	}
+
+	// The focused tab ignores its cap: the usual 1:1:3 ratio holds.
+	tabs.SplitVertical = false
+	tabs.Focus = 2
+	boxes = tabs.Boxes(80, 40)
+	if boxes[2].Top != 16 || boxes[2].Bottom != 40 {
+		t.Fatalf("focused tab must ignore its cap, got %+v", boxes[2])
+	}
+
+	// Without MaxSizes the weighted layout is unchanged.
+	plain := NewTabs(3)
+	plain.Expanded = []bool{true, true, true}
+	plain.Focus = 0
+	boxes = plain.Boxes(80, 40)
+	if boxes[2].Top != 32 || boxes[2].Bottom != 40 {
+		t.Fatalf("uncapped layout must keep the weighted split, got %+v", boxes[2])
+	}
+}
+
 func testPanelStyle() PanelStyle {
 	return PanelStyle{
 		BaseBG:        HexColor(0x0a1428),

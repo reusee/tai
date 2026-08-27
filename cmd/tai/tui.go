@@ -138,7 +138,7 @@ of each non-focused tab: the expanded tabs share the available space
 proportionally to their weights (3 for the focused tab, 1 for every
 other, total expanded+2), with the last tab absorbing the rounding
 remainder; collapsed tabs take one column (vertical split) or one row
-(horizontal split) each. The s key switches between vertical splitting (tabs
+(horizontal split) each. The Logs tab caps its box at logsMaxBoxHeight rows while expanded but not focused — logs are internal diagnostics, so an unfocused pane shows only the latest lines — and the freed rows go to the other expanded tabs by weight; focusing Logs restores the usual ratio. The s key switches between vertical splitting (tabs
 side by side, a vertical split line) and horizontal splitting (tabs
 stacked, one above the other). Tab cycles the focus among
 the expanded tabs, skipping collapsed ones; the [ and ] keys jump
@@ -179,6 +179,14 @@ When the display width or tab background changes, the cache is reset
 and recomputed. The TUI holds nothing but the raw state values — line
 buffers, tab machine, scroll offsets, events, and session flags.
 `
+
+// logsMaxBoxHeight bounds the Logs tab's box height while it is expanded
+// but not focused: one label-strip row plus two log-content rows. Logs
+// collect internal diagnostics, so an unfocused pane shows only the
+// latest lines; the freed rows go to the other expanded tabs by weight,
+// and focusing Logs lifts the cap and restores the usual ratio. See
+// TheoryOfTUI and taiui.TheoryOfTabs.
+const logsMaxBoxHeight = 3
 
 const TheoryOfTUIHandoff = `
 The Output tab title reflects the handoff process: while a handoff
@@ -550,6 +558,10 @@ func newTUI() (*TUI, error) {
 	if ws, err := t.WindowSize(); err == nil && ws.Width > 0 && ws.Height > 0 {
 		width, height = ws.Width, ws.Height
 	}
+	tabs := taiui.NewTabs(3)
+	// The Logs tab caps its box height while expanded but not focused;
+	// see logsMaxBoxHeight.
+	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
 		// streamed line, the Logs tab each log record, and the Events
@@ -558,7 +570,7 @@ func newTUI() (*TUI, error) {
 		// incomplete. See TheoryOfTUINoTruncation.
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
-		tabs:   taiui.NewTabs(3),
+		tabs:   tabs,
 		// All tabs are collapsed by default; a tab expands automatically
 		// the first time content for it arrives, without changing the
 		// focus. The scroll offsets start at the tail sentinel so the

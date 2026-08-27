@@ -30,6 +30,13 @@ taiui tabs theory:
   The last expanded tab absorbs the rounding remainder. Tabs are laid
   out in index order, so a collapsed tab stays in its original position
   rather than being pushed to the edge.
+- MaxSizes caps the split-axis extent of expanded, unfocused tabs:
+  MaxSizes[i] bounds tab i's share of the split axis (rows in the
+  stacked layout, columns in vertical split); zero, negative, or a
+  missing entry leaves the tab uncapped, and the focused tab always
+  ignores its cap. The extent a capped tab gives up is redistributed
+  among the uncapped expanded tabs by weight, so the boxes still tile
+  the screen exactly.
 - Panel renders an expanded tab: a one-row label strip pinned to the
   top and a scroll view spanning the remaining rows. Panel is a first-class
   Element (_Panel) that renders only the visible lines in O(window) time,
@@ -48,7 +55,13 @@ type Tabs struct {
 	LastFocus     []int
 	Focus         int
 	SplitVertical bool
-	focusOrder    int
+	// MaxSizes caps the split-axis extent of each expanded, unfocused
+	// tab: MaxSizes[i] bounds tab i's share of the split axis (rows in
+	// the stacked layout, columns in vertical split). Zero, negative,
+	// or a missing entry leaves the tab uncapped, and the focused tab
+	// always ignores its cap. See TheoryOfTabs.
+	MaxSizes   []int
+	focusOrder int
 }
 
 // NewTabs creates a Tabs with all tabs collapsed and no focus.
@@ -166,11 +179,7 @@ func (t *Tabs) Boxes(width, height int) []Box {
 	for i := 0; i < t.Count; i++ {
 		if t.Expanded[i] {
 			expandedIndices = append(expandedIndices, i)
-			weight := 1
-			if i == t.Focus {
-				weight = 3
-			}
-			totalWeight += weight
+			totalWeight += t.weightOf(i)
 		}
 	}
 	collapsedCount := t.Count - len(expandedIndices)
@@ -183,25 +192,14 @@ func (t *Tabs) Boxes(width, height int) []Box {
 		if expandedWidth < 0 {
 			expandedWidth = 0
 		}
+		sizes := t.expandedSizes(expandedWidth, expandedIndices, totalWeight)
 		edge := 0
-		expandedEdge := 0
-		expandedPos := 0
+		pos := 0
 		for i := 0; i < t.Count; i++ {
 			if t.Expanded[i] {
-				weight := 1
-				if i == t.Focus {
-					weight = 3
-				}
-				var size int
-				if expandedPos == len(expandedIndices)-1 {
-					size = expandedWidth - expandedEdge
-				} else {
-					size = expandedWidth * weight / totalWeight
-				}
-				boxes[i] = Box{Top: 0, Left: edge, Bottom: height, Right: edge + size}
-				edge += size
-				expandedEdge += size
-				expandedPos++
+				boxes[i] = Box{Top: 0, Left: edge, Bottom: height, Right: edge + sizes[pos]}
+				edge += sizes[pos]
+				pos++
 			} else {
 				boxes[i] = Box{Top: 0, Left: edge, Bottom: height, Right: edge + 1}
 				edge++
@@ -214,31 +212,89 @@ func (t *Tabs) Boxes(width, height int) []Box {
 	if expandedHeight < 0 {
 		expandedHeight = 0
 	}
+	sizes := t.expandedSizes(expandedHeight, expandedIndices, totalWeight)
 	edge := 0
-	expandedEdge := 0
-	expandedPos := 0
+	pos := 0
 	for i := 0; i < t.Count; i++ {
 		if t.Expanded[i] {
-			weight := 1
-			if i == t.Focus {
-				weight = 3
-			}
-			var size int
-			if expandedPos == len(expandedIndices)-1 {
-				size = expandedHeight - expandedEdge
-			} else {
-				size = expandedHeight * weight / totalWeight
-			}
-			boxes[i] = Box{Top: edge, Left: 0, Bottom: edge + size, Right: width}
-			edge += size
-			expandedEdge += size
-			expandedPos++
+			boxes[i] = Box{Top: edge, Left: 0, Bottom: edge + sizes[pos], Right: width}
+			edge += sizes[pos]
+			pos++
 		} else {
 			boxes[i] = Box{Top: edge, Left: 0, Bottom: edge + 1, Right: width}
 			edge++
 		}
 	}
 	return boxes
+}
+
+// weightOf returns the flex weight of tab idx: the focused tab weighs 3,
+// every other expanded tab 1. See TheoryOfTabs.
+func (t *Tabs) weightOf(idx int) int {
+	if idx == t.Focus {
+		return 3
+	}
+	return 1
+}
+
+// maxSizeOf returns the split-axis cap of tab idx: zero when the tab is
+// uncapped — no MaxSizes entry, a non-positive value, or the focused
+// tab, which always ignores its cap. See TheoryOfTabs.
+func (t *Tabs) maxSizeOf(idx int) int {
+	if idx == t.Focus || len(t.MaxSizes) != t.Count {
+		return 0
+	}
+	return max(t.MaxSizes[idx], 0)
+}
+
+// expandedSizes computes the split-axis extent of each expanded tab, in
+// expandedIndices order: weights split the extent, capped tabs are
+// clamped, and the extent they free is redistributed among the uncapped
+// expanded tabs by weight, with the last uncapped tab absorbing the
+// rounding remainder. When every expanded tab is capped, the freed
+// extent stays unused and the boxes underfill the screen.
+func (t *Tabs) expandedSizes(extent int, expandedIndices []int, totalWeight int) []int {
+	sizes := make([]int, len(expandedIndices))
+	used := 0
+	for pos, idx := range expandedIndices {
+		if pos == len(expandedIndices)-1 {
+			sizes[pos] = extent - used
+		} else {
+			sizes[pos] = extent * t.weightOf(idx) / totalWeight
+		}
+		used += sizes[pos]
+	}
+	freed := 0
+	uncappedWeight := 0
+	for pos, idx := range expandedIndices {
+		if sizeCap := t.maxSizeOf(idx); sizeCap > 0 && sizes[pos] > sizeCap {
+			freed += sizes[pos] - sizeCap
+			sizes[pos] = sizeCap
+		}
+		if t.maxSizeOf(idx) == 0 {
+			uncappedWeight += t.weightOf(idx)
+		}
+	}
+	if freed == 0 || uncappedWeight == 0 {
+		return sizes
+	}
+	lastUncapped := -1
+	for pos, idx := range expandedIndices {
+		if t.maxSizeOf(idx) == 0 {
+			lastUncapped = pos
+		}
+	}
+	redistributed := 0
+	for pos, idx := range expandedIndices {
+		if pos == lastUncapped || t.maxSizeOf(idx) > 0 {
+			continue
+		}
+		add := freed * t.weightOf(idx) / uncappedWeight
+		sizes[pos] += add
+		redistributed += add
+	}
+	sizes[lastUncapped] += freed - redistributed
+	return sizes
 }
 
 // PanelStyle styles the tab panels. BaseBG is the background of every

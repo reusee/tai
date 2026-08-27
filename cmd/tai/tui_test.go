@@ -17,15 +17,42 @@ import (
 )
 
 func newTUIForTest() *TUI {
+	tabs := taiui.NewTabs(3)
+	// Tests exercise the production layout, including the Logs tab's
+	// unfocused height cap. See logsMaxBoxHeight.
+	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
 	return &TUI{
 		output:  taiui.NewLineBuffer(0),
 		logs:    taiui.NewStringBuffer(0),
-		tabs:    taiui.NewTabs(3),
+		tabs:    tabs,
 		scrolls: [3]taiui.ScrollState{},
 		// The default display policy shows raw thoughts, matching the
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
 		showThoughts: true,
+	}
+}
+
+func TestTUILogsBoxCappedWhenUnfocused(t *testing.T) {
+	tui := newTUIForTest()
+	// All tabs expanded, Output focused: Logs is capped to
+	// logsMaxBoxHeight rows and the freed rows go to the other tabs by
+	// weight.
+	tui.tabs.Expanded = []bool{true, true, true}
+	tui.tabs.Focus = 0
+	boxes := tui.tabs.Boxes(80, 40)
+	if boxes[2].Height() != logsMaxBoxHeight {
+		t.Fatalf("unfocused Logs box must be capped to %d rows, got %+v", logsMaxBoxHeight, boxes[2])
+	}
+	if boxes[0].Height()+boxes[1].Height() != 40-logsMaxBoxHeight {
+		t.Fatalf("freed rows must go to the other tabs: %+v", boxes)
+	}
+
+	// Focusing Logs lifts the cap and restores the usual 1:1:3 ratio.
+	tui.tabs.Focus = 2
+	boxes = tui.tabs.Boxes(80, 40)
+	if boxes[2].Height() != 24 {
+		t.Fatalf("focused Logs must keep the usual ratio, got %+v", boxes[2])
 	}
 }
 
@@ -1485,18 +1512,19 @@ func TestTUIMouseWheel(t *testing.T) {
 		tui.tabs.Focus = 0
 		tui.scrolls[2].MaxOffset = 100
 		tui.scrolls[2].Offset = 50
-		// Horizontal split: the output tab occupies rows 0..32, the
-		// collapsed summary tab row 33, the logs tab rows 34..44. A
-		// wheel event over the logs tab scrolls its view without
-		// changing the focus.
-		tui.handleMouseKey("mouse-wheel-down@5,40")
+		// Horizontal split: the unfocused Logs tab is capped to
+		// logsMaxBoxHeight rows, so the output tab occupies rows 0..40,
+		// the collapsed summary tab row 41, and the logs tab rows
+		// 42..44. A wheel event over the logs tab scrolls its view
+		// without changing the focus.
+		tui.handleMouseKey("mouse-wheel-down@5,43")
 		if tui.scrolls[2].Offset != 51 {
 			t.Fatalf("expected offset 51, got %d", tui.scrolls[2].Offset)
 		}
 		if tui.tabs.Focus != 0 {
 			t.Fatalf("wheel must not change the focus, got %d", tui.tabs.Focus)
 		}
-		tui.handleMouseKey("mouse-wheel-up@5,40")
+		tui.handleMouseKey("mouse-wheel-up@5,43")
 		if tui.scrolls[2].Offset != 50 {
 			t.Fatalf("expected offset 50, got %d", tui.scrolls[2].Offset)
 		}
@@ -1510,8 +1538,8 @@ func TestTUIMouseWheel(t *testing.T) {
 		tui.tabs.Focus = 0
 		tui.scrolls[1].MaxOffset = 100
 		tui.scrolls[1].Offset = 10
-		// A wheel event over the collapsed summary row (33) is a no-op.
-		tui.handleMouseKey("mouse-wheel-down@5,33")
+		// A wheel event over the collapsed summary row (41) is a no-op.
+		tui.handleMouseKey("mouse-wheel-down@5,41")
 		if tui.scrolls[2].Offset != 0 {
 			t.Fatal("wheel must not affect another tab")
 		}
