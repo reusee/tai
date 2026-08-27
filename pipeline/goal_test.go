@@ -55,6 +55,9 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	if !strings.Contains(string(feedbacks[1]), "done block") {
 		t.Fatalf("verification loop feedback must carry the done verification prompt, got %q", feedbacks[1])
 	}
+	if !strings.Contains(string(feedbacks[1]), "Verification is the primary work") {
+		t.Fatalf("verification loop feedback must state that verification is the primary work, got %q", feedbacks[1])
+	}
 	if !strings.Contains(output.String(), "Goal Achieved") {
 		t.Fatal("output must report the achieved goal")
 	}

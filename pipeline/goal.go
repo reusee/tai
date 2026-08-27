@@ -32,7 +32,10 @@ because the filesystem may change while a loop runs: a loop that loaded
 todo.md containing task A cannot see task B added by the user during
 execution, so its done declaration may rest on stale context. The
 verification loop sees the latest files, so the goal-achieved verdict always
-reflects the current state. Because the done block is not consumed by any
+reflects the current state. The verification loop's primary work is
+verification and correction: it checks the declaration against the current
+state, fixes errors the check uncovers, and starts no unrelated new work.
+Because the done block is not consumed by any
 component, it remains in Result.RemainingBlocks; the runner checks there.
 When the declaration lands on the final budget loop, the runner executes one
 extra verification loop beyond the budget. A loop that fails or produces
@@ -112,13 +115,14 @@ When you determine the goal is fully achieved, emit a done block (kind "done") w
 // completion declaration, not a verdict: the filesystem may have changed
 // since the declaring loop loaded its context (e.g., todo.md may have
 // gained new tasks), so the declaration must be verified in a fresh loop
-// that re-reads the current filesystem state. Only a second consecutive
-// done block confirms the goal. See TheoryOfGoalMode.
+// that re-reads the current filesystem state. Verification is the loop's
+// primary work: it re-reads and re-checks, applies corrections only for
+// errors the check uncovers, and starts no new work beyond them. Only a
+// second consecutive done block confirms the goal. See TheoryOfGoalMode.
 const goalDoneVerificationPrompt = `
-[System note: The previous goal loop emitted a done block declaring the goal achieved. The filesystem may have changed since that loop loaded its context — for example, todo.md may have been updated with new tasks. Verify the declaration against the CURRENT filesystem state: re-read the relevant files (including todo.md) and confirm whether every task is genuinely complete.
+[System note: The previous goal loop emitted a done block declaring the goal achieved. The filesystem may have changed since that loop loaded its context — for example, todo.md may have been updated with new tasks. Verification is the primary work of this loop: re-read the relevant files (including todo.md) against the CURRENT filesystem state and check whether every task is genuinely complete.
 
-If the goal is genuinely achieved, emit a done block again to confirm.
-If there is remaining work (e.g., new tasks were added while the previous loop ran), do NOT emit a done block; instead, continue working on the remaining work in this loop.]`
+If the check uncovers errors (incorrect or missing changes), fix them; corrections are part of verification. If there is remaining work (e.g., new tasks were added while the previous loop ran), continue working on it in this loop. If the goal is genuinely achieved and nothing needs correction, emit a done block again to confirm. Do not start unrelated new work beyond the check and its corrections.]`
 
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20
