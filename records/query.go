@@ -47,10 +47,10 @@ LIMIT ?`, limit)
 }
 
 // Transcript renders a session as readable text: the session header,
-// followed by each event in chronological order. Events recorded before the
-// first round (round 0: system prompt and initial contents) are rendered as
-// session context. Used for display and as the input to the analysis pass.
-// See TheoryOfInteractionRecording.
+// followed by each event in chronological order. Events recorded before
+// the first attempt (attempt 0: system prompt and initial contents) are
+// rendered as session context. Used for display and as the input to the
+// analysis pass. See TheoryOfInteractionRecording.
 func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	if recorder == nil || recorder.db == nil {
 		return "", fmt.Errorf("interaction database not available")
@@ -84,13 +84,13 @@ func Transcript(recorder *Recorder, sessionID int64) (string, error) {
 	}
 
 	for rows.Next() {
-		var round int
+		var attempt int
 		var t, typ, detail string
-		if err := rows.Scan(&round, &t, &typ, &detail); err != nil {
+		if err := rows.Scan(&attempt, &t, &typ, &detail); err != nil {
 			return "", err
 		}
-		if round > 0 {
-			fmt.Fprintf(&b, "\n--- round %d [%s] %s ---\n", round, typ, t)
+		if attempt > 0 {
+			fmt.Fprintf(&b, "\n--- attempt %d [%s] %s ---\n", attempt, typ, t)
 		} else {
 			fmt.Fprintf(&b, "\n--- context [%s] %s ---\n", typ, t)
 		}

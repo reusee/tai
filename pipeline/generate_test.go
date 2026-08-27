@@ -22,24 +22,24 @@ import (
 	"github.com/reusee/tai/records"
 )
 
-func TestPrintRoundStats(t *testing.T) {
+func TestPrintAttemptStats(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		var buf bytes.Buffer
-		PrintRoundStats(&buf, nil)
+		PrintAttemptStats(&buf, nil)
 		if buf.Len() != 0 {
 			t.Fatalf("expected no output for empty stats, got: %s", buf.String())
 		}
 	})
 
-	t.Run("SingleRound", func(t *testing.T) {
+	t.Run("SingleAttempt", func(t *testing.T) {
 		var buf bytes.Buffer
-		stats := []RoundStat{
-			{Round: 1, PromptTokens: 1000, CompletionTokens: 500, ThoughtTokens: 200, CachedTokens: 100},
+		stats := []AttemptStat{
+			{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, ThoughtTokens: 200, CachedTokens: 100},
 		}
-		PrintRoundStats(&buf, stats)
+		PrintAttemptStats(&buf, stats)
 		output := buf.String()
-		if !strings.Contains(output, "Total rounds: 1") {
-			t.Fatalf("expected total rounds 1, got: %s", output)
+		if !strings.Contains(output, "Total generations: 1") {
+			t.Fatalf("expected total generations 1, got: %s", output)
 		}
 		if !strings.Contains(output, "1000") {
 			t.Fatalf("expected prompt tokens 1000, got: %s", output)
@@ -49,17 +49,17 @@ func TestPrintRoundStats(t *testing.T) {
 		}
 	})
 
-	t.Run("MultipleRoundsWithTotals", func(t *testing.T) {
+	t.Run("MultipleGenerationsWithTotals", func(t *testing.T) {
 		var buf bytes.Buffer
-		stats := []RoundStat{
-			{Round: 1, PromptTokens: 111, CompletionTokens: 51, ThoughtTokens: 21, CachedTokens: 11},
-			{Round: 2, PromptTokens: 222, CompletionTokens: 82, ThoughtTokens: 32, CachedTokens: 22},
-			{Round: 3, PromptTokens: 333, CompletionTokens: 123, ThoughtTokens: 53, CachedTokens: 33},
+		stats := []AttemptStat{
+			{Attempt: 1, PromptTokens: 111, CompletionTokens: 51, ThoughtTokens: 21, CachedTokens: 11},
+			{Attempt: 2, PromptTokens: 222, CompletionTokens: 82, ThoughtTokens: 32, CachedTokens: 22},
+			{Attempt: 3, PromptTokens: 333, CompletionTokens: 123, ThoughtTokens: 53, CachedTokens: 33},
 		}
-		PrintRoundStats(&buf, stats)
+		PrintAttemptStats(&buf, stats)
 		output := buf.String()
-		if !strings.Contains(output, "Total rounds: 3") {
-			t.Fatalf("expected total rounds 3, got: %s", output)
+		if !strings.Contains(output, "Total generations: 3") {
+			t.Fatalf("expected total generations 3, got: %s", output)
 		}
 		// Totals: 111+222+333=666, 51+82+123=256, 21+32+53=106, 11+22+33=66
 		if !strings.Contains(output, "666") {
@@ -74,10 +74,10 @@ func TestPrintRoundStats(t *testing.T) {
 		if !strings.Contains(output, "66") {
 			t.Fatalf("expected total cached 66, got: %s", output)
 		}
-		// Verify each round number appears
+		// Verify each attempt number appears
 		for _, r := range []string{"1", "2", "3"} {
 			if !strings.Contains(output, r) {
-				t.Fatalf("expected round %s in output, got: %s", r, output)
+				t.Fatalf("expected attempt %s in output, got: %s", r, output)
 			}
 		}
 	})
@@ -302,44 +302,44 @@ func TestHandoffSystemPromptRequiresHandoffBlock(t *testing.T) {
 	}
 }
 
-func TestPrintRoundStatsWithSummaries(t *testing.T) {
+func TestPrintAttemptStatsWithSummaries(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []RoundStat{
-		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
-		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
+	stats := []AttemptStat{
+		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Summary: "Analyzed the code."},
+		{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Summary: "Fixed the bug."},
 	}
-	PrintRoundStats(&buf, stats)
+	PrintAttemptStats(&buf, stats)
 	output := buf.String()
-	if !strings.Contains(output, "=== Round Summaries ===") {
+	if !strings.Contains(output, "=== Attempt Summaries ===") {
 		t.Fatalf("expected summaries section, got: %s", output)
 	}
-	if !strings.Contains(output, "Round 1: Analyzed the code.") {
-		t.Fatalf("expected round 1 summary, got: %s", output)
+	if !strings.Contains(output, "Attempt 1: Analyzed the code.") {
+		t.Fatalf("expected attempt 1 summary, got: %s", output)
 	}
-	if !strings.Contains(output, "Round 2: Fixed the bug.") {
-		t.Fatalf("expected round 2 summary, got: %s", output)
+	if !strings.Contains(output, "Attempt 2: Fixed the bug.") {
+		t.Fatalf("expected attempt 2 summary, got: %s", output)
 	}
 }
 
-func TestPrintRoundStatsNoSummaries(t *testing.T) {
+func TestPrintAttemptStatsNoSummaries(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []RoundStat{
-		{Round: 1, PromptTokens: 1000, CompletionTokens: 500},
+	stats := []AttemptStat{
+		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500},
 	}
-	PrintRoundStats(&buf, stats)
+	PrintAttemptStats(&buf, stats)
 	output := buf.String()
-	if strings.Contains(output, "=== Round Summaries ===") {
+	if strings.Contains(output, "=== Attempt Summaries ===") {
 		t.Fatalf("should not print summaries section when no summaries exist, got: %s", output)
 	}
 }
 
-func TestPrintRoundStatsWithDuration(t *testing.T) {
+func TestPrintAttemptStatsWithDuration(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []RoundStat{
-		{Round: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
-		{Round: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
+	stats := []AttemptStat{
+		{Attempt: 1, PromptTokens: 1000, CompletionTokens: 500, Duration: 3 * time.Second},
+		{Attempt: 2, PromptTokens: 2000, CompletionTokens: 800, Duration: 1500 * time.Millisecond},
 	}
-	PrintRoundStats(&buf, stats)
+	PrintAttemptStats(&buf, stats)
 	output := buf.String()
 	if !strings.Contains(output, "Duration") {
 		t.Fatalf("expected Duration column header, got: %s", output)
@@ -356,13 +356,13 @@ func TestPrintRoundStatsWithDuration(t *testing.T) {
 	}
 }
 
-func TestPrintRoundStatsWithLoopColumn(t *testing.T) {
+func TestPrintAttemptStatsWithLoopColumn(t *testing.T) {
 	var buf bytes.Buffer
-	stats := []RoundStat{
-		{Loop: 1, Round: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
-		{Loop: 1, Round: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
+	stats := []AttemptStat{
+		{Loop: 1, Attempt: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
+		{Loop: 1, Attempt: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
 	}
-	PrintRoundStats(&buf, stats, "Goal Loop Statistics")
+	PrintAttemptStats(&buf, stats, "Goal Loop Statistics")
 	output := buf.String()
 	if !strings.Contains(output, "=== Goal Loop Statistics ===") {
 		t.Fatalf("expected custom title, got: %s", output)
@@ -370,11 +370,11 @@ func TestPrintRoundStatsWithLoopColumn(t *testing.T) {
 	if !strings.Contains(output, "Loop") {
 		t.Fatalf("expected Loop column in output, got: %s", output)
 	}
-	if !strings.Contains(output, "Loop 1 Round 1: first round") {
-		t.Fatalf("expected loop-aware summary for round 1, got: %s", output)
+	if !strings.Contains(output, "Loop 1 Attempt 1: first round") {
+		t.Fatalf("expected loop-aware summary for attempt 1, got: %s", output)
 	}
-	if !strings.Contains(output, "Loop 1 Round 2: second round") {
-		t.Fatalf("expected loop-aware summary for round 2, got: %s", output)
+	if !strings.Contains(output, "Loop 1 Attempt 2: second round") {
+		t.Fatalf("expected loop-aware summary for attempt 2, got: %s", output)
 	}
 	// Total prompt tokens across all loops: 111 + 222 = 333
 	if !strings.Contains(output, "333") {
@@ -466,7 +466,7 @@ func TestRunReviewRunsWhenDiffsExist(t *testing.T) {
 	fakeReset := dscope.Reset(func() dscope.Scope {
 		return dscope.New(
 			func() GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (Result, []RoundStat, error) {
+				return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
 					generationInitiated = true
 					return Result{}, nil, nil
 				}
@@ -514,7 +514,7 @@ func TestRunReviewUsesModelFlagValue(t *testing.T) {
 			// over this placeholder.
 			func() flags.ModelName { return "" },
 			func(modelName flags.ModelName) GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (Result, []RoundStat, error) {
+				return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
 					reviewModel = string(modelName)
 					return Result{}, nil, nil
 				}
@@ -1181,13 +1181,13 @@ func (f *fakeRecorderForSummarize) EndSession(error) {}
 
 func (f *fakeRecorderForSummarize) SystemPrompt(string) {}
 
-func (f *fakeRecorderForSummarize) RoundStart() {}
+func (f *fakeRecorderForSummarize) AttemptStart() {}
 
-func (f *fakeRecorderForSummarize) RoundSuccess([]string) {}
+func (f *fakeRecorderForSummarize) AttemptCompleted([]string) {}
 
-func (f *fakeRecorderForSummarize) RoundTruncated() {}
+func (f *fakeRecorderForSummarize) AttemptTruncated() {}
 
-func (f *fakeRecorderForSummarize) RoundError(error) {}
+func (f *fakeRecorderForSummarize) AttemptError(error) {}
 
 func (f *fakeRecorderForSummarize) Content(content *generators.Content) {
 	f.contents = append(f.contents, content)
@@ -1336,16 +1336,16 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	}
 }
 
-func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
-	// The round statistics table is written to the RoundStatsWriter
+func TestGenerateRoundStatsWrittenToAttemptStatsWriter(t *testing.T) {
+	// The attempt statistics table is written to the AttemptStatsWriter
 	// provider when one is configured, never to the generation output
 	// writer: in TUI mode the output writer is the redirected null
 	// device (see runWithTUI in cmd/tai/tui.go), so the deferred
-	// PrintRoundStats in the codes pipeline needs the forked provider
-	// to stay visible. The test forks the provider, runs one fake round
-	// that collects a stat through OnRoundSuccess, and asserts the table
-	// lands in the forked writer while the output writer stays without
-	// it. See TheoryOfRoundStatistics.
+	// PrintAttemptStats in the codes pipeline needs the forked provider
+	// to stay visible. The test forks the provider, runs one fake
+	// attempt that collects a stat through OnAttemptSuccess, and asserts
+	// the table lands in the forked writer while the output writer stays
+	// without it. See TheoryOfAttemptStatistics.
 	var statsBuf bytes.Buffer
 	var outputBuf bytes.Buffer
 	dscope.New(
@@ -1363,16 +1363,16 @@ func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
 		func() Run {
 			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
 				return func(yield func(Event, error) bool) {
-					// One successful round with no summaries: the loop
-					// collects a zero-usage RoundStat, enough for
-					// PrintRoundStats to render the table.
-					if err := opts.OnRoundSuccess(opts.InitialState, nil); err != nil {
-						t.Errorf("OnRoundSuccess: %v", err)
+					// One successful attempt with no summaries: the loop
+					// collects a zero-usage AttemptStat, enough for
+					// PrintAttemptStats to render the table.
+					if err := opts.OnAttemptSuccess(opts.InitialState, nil); err != nil {
+						t.Errorf("OnAttemptSuccess: %v", err)
 					}
 				}
 			}
 		},
-		func() RoundStatsWriter { return RoundStatsWriter(&statsBuf) },
+		func() AttemptStatsWriter { return AttemptStatsWriter(&statsBuf) },
 	).Call(func(
 		generateWithResultWithStats GenerateWithResultWithStats,
 	) {
@@ -1380,7 +1380,7 @@ func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(statsBuf.String(), "Generation Statistics") {
-			t.Fatalf("expected the round statistics table in the stats writer, got: %q", statsBuf.String())
+			t.Fatalf("expected the attempt statistics table in the stats writer, got: %q", statsBuf.String())
 		}
 		if strings.Contains(outputBuf.String(), "Generation Statistics") {
 			t.Fatalf("expected the output writer to stay without the statistics table, got: %q", outputBuf.String())
@@ -1388,10 +1388,10 @@ func TestGenerateRoundStatsWrittenToRoundStatsWriter(t *testing.T) {
 	})
 }
 
-func TestCollectRoundStats(t *testing.T) {
-	t.Run("MultipleUsagePartsSingleRound", func(t *testing.T) {
-		// Simulating Gemini streaming which emits multiple Usage parts in one round.
-		// collectRoundStats must produce exactly 1 RoundStat entry with the last usage values.
+func TestCollectAttemptStats(t *testing.T) {
+	t.Run("MultipleUsagePartsSingleAttempt", func(t *testing.T) {
+		// Simulating Gemini streaming which emits multiple Usage parts in one attempt.
+		// collectAttemptStats must produce exactly 1 AttemptStat entry with the last usage values.
 		var state generators.State = generators.NewPrompts("", []*generators.Content{
 			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("hi")}},
 			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
@@ -1413,19 +1413,19 @@ func TestCollectRoundStats(t *testing.T) {
 			}}},
 		})
 
-		stats, nextCount := collectRoundStats(nil, state, 1, 500*time.Millisecond, "round 1 summary")
+		stats, nextCount := collectAttemptStats(nil, state, 1, 500*time.Millisecond, "attempt 1 summary")
 		if len(stats) != 1 {
-			t.Fatalf("expected exactly 1 RoundStat, got %d", len(stats))
+			t.Fatalf("expected exactly 1 AttemptStat, got %d", len(stats))
 		}
-		if stats[0].Round != 1 {
-			t.Fatalf("expected Round 1, got %d", stats[0].Round)
+		if stats[0].Attempt != 1 {
+			t.Fatalf("expected Attempt 1, got %d", stats[0].Attempt)
 		}
 		if stats[0].PromptTokens != 100 || stats[0].CachedTokens != 10 || stats[0].CompletionTokens != 50 || stats[0].ThoughtTokens != 20 {
 			t.Fatalf("expected final usage tokens (100, 10, 50, 20), got (%d, %d, %d, %d)",
 				stats[0].PromptTokens, stats[0].CachedTokens, stats[0].CompletionTokens, stats[0].ThoughtTokens)
 		}
-		if stats[0].Summary != "round 1 summary" {
-			t.Fatalf("expected summary 'round 1 summary', got %q", stats[0].Summary)
+		if stats[0].Summary != "attempt 1 summary" {
+			t.Fatalf("expected summary 'attempt 1 summary', got %q", stats[0].Summary)
 		}
 		if stats[0].Duration != 500*time.Millisecond {
 			t.Fatalf("expected duration 500ms, got %v", stats[0].Duration)
@@ -1435,7 +1435,7 @@ func TestCollectRoundStats(t *testing.T) {
 		}
 	})
 
-	t.Run("MultipleRoundsSequential", func(t *testing.T) {
+	t.Run("MultipleGenerationsSequential", func(t *testing.T) {
 		var state generators.State = generators.NewPrompts("", []*generators.Content{
 			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("r1")}},
 			{Role: generators.RoleLog, Parts: []generators.Part{generators.Usage{
@@ -1443,7 +1443,7 @@ func TestCollectRoundStats(t *testing.T) {
 				Candidates: struct{ TokenCount int }{TokenCount: 30},
 			}}},
 		})
-		stats, count1 := collectRoundStats(nil, state, 0, time.Second, "r1 summary")
+		stats, count1 := collectAttemptStats(nil, state, 0, time.Second, "r1 summary")
 
 		state, _ = state.AppendContent(&generators.Content{
 			Role:  generators.RoleUser,
@@ -1456,13 +1456,13 @@ func TestCollectRoundStats(t *testing.T) {
 				Candidates: struct{ TokenCount int }{TokenCount: 60},
 			}},
 		})
-		stats, count2 := collectRoundStats(stats, state, count1, 2*time.Second, "r2 summary")
+		stats, count2 := collectAttemptStats(stats, state, count1, 2*time.Second, "r2 summary")
 
 		if len(stats) != 2 {
-			t.Fatalf("expected 2 RoundStats, got %d", len(stats))
+			t.Fatalf("expected 2 AttemptStats, got %d", len(stats))
 		}
-		if stats[0].Round != 1 || stats[1].Round != 2 {
-			t.Fatalf("expected Rounds 1 and 2, got %d and %d", stats[0].Round, stats[1].Round)
+		if stats[0].Attempt != 1 || stats[1].Attempt != 2 {
+			t.Fatalf("expected Attempts 1 and 2, got %d and %d", stats[0].Attempt, stats[1].Attempt)
 		}
 		if stats[0].Summary != "r1 summary" || stats[1].Summary != "r2 summary" {
 			t.Fatalf("unexpected summaries: %q, %q", stats[0].Summary, stats[1].Summary)
@@ -1472,17 +1472,17 @@ func TestCollectRoundStats(t *testing.T) {
 		}
 	})
 
-	t.Run("RoundWithoutUsage", func(t *testing.T) {
+	t.Run("AttemptWithoutUsage", func(t *testing.T) {
 		var state generators.State = generators.NewPrompts("", []*generators.Content{
 			{Role: generators.RoleUser, Parts: []generators.Part{generators.Text("no usage")}},
 			{Role: generators.RoleAssistant, Parts: []generators.Part{generators.Text("reply")}},
 		})
-		stats, _ := collectRoundStats(nil, state, 0, time.Second, "no usage summary")
+		stats, _ := collectAttemptStats(nil, state, 0, time.Second, "no usage summary")
 		if len(stats) != 1 {
-			t.Fatalf("expected 1 RoundStat, got %d", len(stats))
+			t.Fatalf("expected 1 AttemptStat, got %d", len(stats))
 		}
-		if stats[0].Round != 1 {
-			t.Fatalf("expected Round 1, got %d", stats[0].Round)
+		if stats[0].Attempt != 1 {
+			t.Fatalf("expected Attempt 1, got %d", stats[0].Attempt)
 		}
 		if stats[0].PromptTokens != 0 || stats[0].CompletionTokens != 0 {
 			t.Fatalf("expected zero token counts, got prompt=%d completion=%d", stats[0].PromptTokens, stats[0].CompletionTokens)

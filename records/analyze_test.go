@@ -77,8 +77,8 @@ func TestRunAnalysis(t *testing.T) {
 		},
 	).Call(func(recorder *Recorder, runAnalysis RunAnalysis) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
-		recorder.RoundSuccess(nil)
+		recorder.AttemptStart()
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var id int64
@@ -102,7 +102,9 @@ func TestAnalysisSystemPromptContent(t *testing.T) {
 		"问题清单",
 		"根因分析",
 		"改进建议",
-		"轮次",
+		"尝试",
+		"attempt_start",
+		"attempt_end",
 	} {
 		if !strings.Contains(analysisSystemPrompt, want) {
 			t.Fatalf("analysisSystemPrompt missing %q", want)

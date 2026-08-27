@@ -62,7 +62,7 @@ func TestRecorderSessionAndTranscript(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test-command")
 		recorder.SystemPrompt("the system prompt")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Content(&generators.Content{
 			Role: generators.RoleUser,
 			Parts: []generators.Part{
@@ -76,10 +76,10 @@ func TestRecorderSessionAndTranscript(t *testing.T) {
 				generators.Text("model answer"),
 			},
 		})
-		recorder.RoundSuccess([]string{"- done"})
+		recorder.AttemptCompleted([]string{"- done"})
 		recorder.EndSession(nil)
 
-		// The recorder must implement the loops.InteractionRecorder
+		// The recorder must implement the pipeline.InteractionRecorder
 		// contract used by the generation loop.
 		var id int64
 		if err := recorder.db.QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&id); err != nil {
@@ -93,10 +93,10 @@ func TestRecorderSessionAndTranscript(t *testing.T) {
 		for _, want := range []string{
 			"=== Session", "test-command", "status: success",
 			"context [system_prompt]", "the system prompt",
-			"round 1 [round_start]",
-			"round 1 [content_user]", "user question",
-			"round 1 [content_assistant]", "thinking", "model answer",
-			"round 1 [round_end]", "success", "- done",
+			"attempt 1 [attempt_start]",
+			"attempt 1 [content_user]", "user question",
+			"attempt 1 [content_assistant]", "thinking", "model answer",
+			"attempt 1 [attempt_end]", "success", "- done",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)
@@ -108,7 +108,7 @@ func TestRecorderSessionAndTranscript(t *testing.T) {
 func TestRecorderBlockAndParseErrorEvents(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Block(blocks.Block{
 			Kind:       "change",
 			Boundary:   "abcdef",
@@ -124,7 +124,7 @@ func TestRecorderBlockAndParseErrorEvents(t *testing.T) {
 			Boundary:  "bad",
 			Reason:    "has an invalid or incomplete XML opening tag",
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var rows int
@@ -142,7 +142,7 @@ func TestRecorderBlockAndParseErrorEvents(t *testing.T) {
 func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		largeBody := strings.Repeat("x", 200*1024)
 		content := "<<徕珑龘 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\n" + largeBody
 		recorder.ParseError(&blocks.BlockParseError{
@@ -153,7 +153,7 @@ func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
 			Content:   content,
 			Hints:     []string{"line 3: \"徕珑龘 extra\""},
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var id int64
@@ -179,7 +179,7 @@ func TestRecorderParseErrorRecordsFullContent(t *testing.T) {
 func TestRecorderRecordsFullDetailWithoutTruncation(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		// Larger than the previous 100KB cap: the content must be
 		// recorded in full without truncation.
 		largeText := strings.Repeat("a", 200*1024)
@@ -187,7 +187,7 @@ func TestRecorderRecordsFullDetailWithoutTruncation(t *testing.T) {
 			Role:  generators.RoleUser,
 			Parts: []generators.Part{generators.Text(largeText)},
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var id int64
@@ -213,12 +213,12 @@ func TestRecorderDisabledWritesNothing(t *testing.T) {
 			t.Fatal("recorder should be disabled")
 		}
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Content(&generators.Content{
 			Role:  generators.RoleUser,
 			Parts: []generators.Part{generators.Text("hello")},
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var count int
@@ -234,7 +234,7 @@ func TestRecorderDisabledWritesNothing(t *testing.T) {
 func TestRecorderRecordsFileContent(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		content := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
 		recorder.Content(&generators.Content{
 			Role: generators.RoleUser,
@@ -242,7 +242,7 @@ func TestRecorderRecordsFileContent(t *testing.T) {
 				generators.FileContent{Content: content, MimeType: "image/png"},
 			},
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var id int64
@@ -304,12 +304,12 @@ func TestRecordSessionPanicRecordsError(t *testing.T) {
 func TestListSessions(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("first")
-		recorder.RoundStart()
-		recorder.RoundSuccess(nil)
+		recorder.AttemptStart()
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 		recorder.StartSession("second")
-		recorder.RoundStart()
-		recorder.RoundSuccess(nil)
+		recorder.AttemptStart()
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var buf bytes.Buffer
@@ -361,11 +361,11 @@ func TestSessionNotFound(t *testing.T) {
 func TestRecorderEvent(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Event("api_call", "openai-compatible chat completion: model=test-model")
 		recorder.Event("api_error", "openai http status 503: upstream unavailable")
 		recorder.Event("decision", "missing completion (no summary block) triggered retry: attempt 1/3")
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		var id int64
@@ -377,9 +377,9 @@ func TestRecorderEvent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{
-			"round 1 [api_call]", "model=test-model",
-			"round 1 [api_error]", "openai http status 503",
-			"round 1 [decision]", "retry: attempt 1/3",
+			"attempt 1 [api_call]", "model=test-model",
+			"attempt 1 [api_error]", "openai http status 503",
+			"attempt 1 [decision]", "retry: attempt 1/3",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("transcript missing %q:\n%s", want, text)
@@ -392,7 +392,7 @@ func TestRecorderMergesStreamedModelContents(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
 		recorder.SystemPrompt("prompt")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Content(&generators.Content{
 			Role:  generators.RoleUser,
 			Parts: []generators.Part{generators.Text("user question")},
@@ -414,7 +414,7 @@ func TestRecorderMergesStreamedModelContents(t *testing.T) {
 			Role:  generators.RoleAssistant,
 			Parts: []generators.Part{generators.Text("tail")},
 		})
-		recorder.RoundSuccess([]string{"- done"})
+		recorder.AttemptCompleted([]string{"- done"})
 		recorder.EndSession(nil)
 
 		var count int
@@ -447,21 +447,21 @@ func TestRecorderMergesStreamedModelContents(t *testing.T) {
 	})
 }
 
-func TestRecorderModelMergeBreaksAtRoundBoundary(t *testing.T) {
+func TestRecorderModelMergeBreaksAtAttemptBoundary(t *testing.T) {
 	withRecorder(t, true, func(recorder *Recorder) {
 		recorder.StartSession("test")
-		recorder.RoundStart()
+		recorder.AttemptStart()
 		recorder.Content(&generators.Content{
 			Role:  generators.RoleModel,
-			Parts: []generators.Part{generators.Text("round 1 output")},
+			Parts: []generators.Part{generators.Text("attempt 1 output")},
 		})
-		recorder.RoundSuccess(nil)
-		recorder.RoundStart()
+		recorder.AttemptCompleted(nil)
+		recorder.AttemptStart()
 		recorder.Content(&generators.Content{
 			Role:  generators.RoleModel,
-			Parts: []generators.Part{generators.Text("round 2 output")},
+			Parts: []generators.Part{generators.Text("attempt 2 output")},
 		})
-		recorder.RoundSuccess(nil)
+		recorder.AttemptCompleted(nil)
 		recorder.EndSession(nil)
 
 		rows, err := recorder.db.Query(
@@ -473,20 +473,20 @@ func TestRecorderModelMergeBreaksAtRoundBoundary(t *testing.T) {
 		defer rows.Close()
 		var got []int
 		for rows.Next() {
-			var round int
-			if err := rows.Scan(&round); err != nil {
+			var attempt int
+			if err := rows.Scan(&attempt); err != nil {
 				t.Fatal(err)
 			}
-			got = append(got, round)
+			got = append(got, attempt)
 		}
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
 		if len(got) != 2 {
-			t.Fatalf("expected 2 content_model events (one per round), got %d", len(got))
+			t.Fatalf("expected 2 content_model events (one per attempt), got %d", len(got))
 		}
 		if got[0] != 1 || got[1] != 2 {
-			t.Fatalf("expected rounds 1 and 2, got %v", got)
+			t.Fatalf("expected attempts 1 and 2, got %v", got)
 		}
 	})
 }

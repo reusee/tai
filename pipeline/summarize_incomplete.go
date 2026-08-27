@@ -14,7 +14,7 @@ import (
 )
 
 const TheoryOfHandoff = `
-When a generation round is truncated (no summary block) or errors after
+When a generation attempt is truncated (no summary block) or errors after
 producing partial output, a handoff summary is constructed before retrying.
 Truncation often occurs because the model attempted too many changes at
 once, exceeding output length limits. The handoff condenses the valuable
@@ -22,25 +22,25 @@ thinking from the interrupted output — discoveries, insights, analysis,
 decisions about the problem, and specific attempted code modifications —
 into a single self-contained text.
 
-All changes are atomic: a truncated or failed round applies nothing to disk,
-so there is no completed work on disk and claims that changes took effect are
-hallucinations. However, summarizing what changes were being attempted and
-evaluating whether they are sound is crucial: it informs the next round so
-it can complete a manageable initial subset of those changes first, using a
-continue block to partition the remaining work across subsequent rounds
-instead of repeatedly attempting an oversized emission that triggers
-truncation again.
+All changes are atomic: a truncated or failed attempt applies nothing to
+disk, so there is no completed work on disk and claims that changes took
+effect are hallucinations. However, summarizing what changes were being
+attempted and evaluating whether they are sound is crucial: it informs the
+next generation so it can complete a manageable initial subset of those
+changes first, using a continue block to partition the remaining work
+across subsequent generations instead of repeatedly attempting an
+oversized emission that triggers truncation again.
 
 The handoff's value is in the reasoning and structural plan it preserves:
-it guides the direction of the next generation round, prevents repeating
+it guides the direction of the next generation, prevents repeating
 preliminary analysis, and directs task partitioning. The handoff is
-reference material, not a substitute for thinking: the next round must
-still reason about the problem and decide how to partition its work.
+reference material, not a substitute for thinking: the next generation
+must still reason about the problem and decide how to partition its work.
 
-The handoff model is a single model specified by HandoffModels. When empty,
+The handoff model is a single model specified by HandoffModel. When empty,
 the fast model (FastModelName) is used if configured; otherwise the default
-model (ModelName) is used. See TheoryOfHandoffModel. The handoff
-prompt instructs the model to wrap the concise handoff summary in a
+model (ModelName) is used. See TheoryOfHandoffModel. The handoff prompt
+instructs the model to wrap the concise handoff summary in a
 boundary-delimited block with kind "handoff". The system parses the block
 body as the handoff content; if the model does not emit a valid handoff
 block (missing, malformed, or unclosed), the response is treated as empty
@@ -51,7 +51,11 @@ is produced or the context is cancelled. Cancellation is logged and the
 caller retries with empty handoff content, so the run continues rather than
 aborting; a caller that wants a bound must supply a cancellable context.
 
-Handoff generation streams to the HandoffWriter provider when one is
+The loop's event stream reports the handoff lifecycle as it happens:
+EventHandoffStart is emitted immediately before the handoff request is
+sent, and EventHandoff after the summary is produced, so a live consumer
+sees the request in progress rather than waiting for its result. Handoff
+generation also streams to the HandoffWriter provider when one is
 configured: the display writer receives the model's text and reasoning
 thoughts as they are produced, so a TUI can show the handoff request in
 progress. The captured handoff text is read from an inner buffer that
@@ -66,33 +70,36 @@ output. The same split applies to thought summarization.
 `
 
 // TheoryOfHandoffUsageAccounting explains how the handoff request's own
-// token usage reaches round statistics; the constant body carries the
-// mechanism and its boundaries. See also TheoryOfRoundStatistics and
+// token usage reaches attempt statistics; the constant body carries the
+// mechanism and its boundaries. See also TheoryOfAttemptStatistics and
 // TheoryOfUsageLogging.
 const TheoryOfHandoffUsageAccounting = `Handoff usage accounting: the handoff summarizer runs on throwaway
 per-attempt states, so its Usage parts never reach the collectors,
 which scan only the main generation state. The spend travels with the
 delivered Handoff value, accumulated across all generating attempts,
-and callers inject one RoleLog usage content before the round is
-recorded, carrying the failed attempt's own last usage plus the handoff
-usage. The injection window starts at the attempt's pre-generation
-base, so a prior attempt's usage — retained in the state on error
-retries — is never re-attributed, and the retry base predates the
-injection, so the next attempt never rescans it; last-Usage collection
-and RoleLog invisibility to the model keep the accounting exact. Only a
-produced Handoff accounts usage: a handoff failing on every attempt
-leaves its spend outside the statistics.`
+and the loop injects one RoleLog usage content before the attempt's
+statistics are recorded, carrying the failed attempt's own last usage
+plus the handoff usage. The injection window starts at the attempt's
+pre-generation base (attemptBase), so a prior attempt's usage —
+retained in the state on error retries — is never re-attributed, and
+the retry base predates the injection, so the next attempt never
+rescans it; last-Usage collection and RoleLog invisibility to the model
+keep the accounting exact. Only a produced Handoff accounts usage: a
+handoff failing on every attempt leaves its spend outside the
+statistics.`
 
 // Handoff holds the outcome of summarizing interrupted or truncated output
-// for a self-contained handoff to the next round. See TheoryOfHandoff.
+// for a self-contained handoff to the next generation. See TheoryOfHandoff.
 type Handoff struct {
-	// Summary is the summary of the truncated output, recorded in round statistics.
+	// Summary is the summary of the truncated output, recorded in
+	// attempt statistics.
 	Summary string
-	// Prompt is the self-contained summary fed to the retry round as user input.
+	// Prompt is the self-contained summary fed to the retry attempt as
+	// user input.
 	Prompt string
 	// Usage is the token usage of the handoff generation itself, summed
 	// across all of its attempts. Callers inject it into the generation
-	// state so round statistics include the handoff's spend.
+	// state so attempt statistics include the handoff's spend.
 	// See TheoryOfHandoffUsageAccounting.
 	Usage generators.Usage
 }

@@ -127,7 +127,7 @@ func TestTuiSignalsHasNoLimit(t *testing.T) {
 		}
 		fmt.Fprintf(&body, "- line %d", i)
 	}
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: body.String()})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 1, Summary: body.String()})
 	if len(tui.events) != 1 || len(tui.events[0]) != lines {
 		t.Fatalf("expected 1 event group of %d lines, got %d groups", lines, len(tui.events))
 	}
@@ -465,19 +465,12 @@ func TestLogAltBG(t *testing.T) {
 	}
 }
 
-// TestTUIEventsAlternateBackgrounds verifies that the Events tab shades
-// consecutive events alternately, like the Logs tab shades log lines:
-// every display line of one event carries the event's shade, and focusing
-// the Events tab re-derives both shades from the focused background.
-// Auto-expansion gives the Events tab the focus when it is the first tab
-// to receive content, so the unfocused shades are asserted with the focus
-// cleared explicitly. See TheoryOfTUI and taiui.TheoryOfTabs.
 func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
 	usage := generators.Usage{}
 	usage.Prompt.TokenCount = 1
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 1, Usage: usage})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 1, Usage: usage})
 
 	box := taiui.Box{Top: 0, Left: 0, Bottom: 10, Right: 80}
 	base := panelStyle.BaseBG
@@ -1734,7 +1727,7 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui.tabs.Focus)
 	}
 
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: "- done"})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 1, Summary: "- done"})
 	if !tui.tabs.Expanded[1] {
 		t.Fatal("events tab should auto-expand on a rendered event")
 	}
@@ -1752,9 +1745,9 @@ func TestTuiStateAutoExpandTabs(t *testing.T) {
 	tui2.tabs.Expanded = []bool{true, false, false}
 	tui2.tabs.HasContent = []bool{true, false, false}
 	tui2.tabs.Focus = 0
-	tui2.handleEvent(pipeline.Event{Kind: pipeline.EventRoundStart, Round: 1})
+	tui2.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 1})
 	if !tui2.tabs.Expanded[1] {
-		t.Fatal("events tab should auto-expand on the round start event")
+		t.Fatal("events tab should auto-expand on the attempt start event")
 	}
 	if tui2.tabs.Focus != 0 {
 		t.Fatalf("auto-expand must not change an established focus, got %d", tui2.tabs.Focus)
@@ -1818,12 +1811,12 @@ func TestWithTUIOutputObserver(t *testing.T) {
 	run := func(ctx context.Context, opts pipeline.RunOptions, result *pipeline.Result) iter.Seq2[pipeline.Event, error] {
 		gotOpts = opts
 		return func(yield func(pipeline.Event, error) bool) {
-			// The run yields the finish reason and the round summary as
+			// The run yields the finish reason and the attempt summary as
 			// events; the wrapper's tap must forward both to the TUI.
 			if !yield(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"}, nil) {
 				return
 			}
-			yield(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 1, Summary: "- done"}, nil)
+			yield(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 1, Summary: "- done"}, nil)
 		}
 	}
 	wrapped := withTUIOutputObserver(run, tui)
@@ -1898,19 +1891,10 @@ func TestWithTUIOutputObserver(t *testing.T) {
 		t.Fatalf("expected the finish line in the events tab, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "- done") {
-		t.Fatalf("expected the round summary in the events tab, got %q", rendered)
+		t.Fatalf("expected the attempt summary in the events tab, got %q", rendered)
 	}
 }
 
-// TestTUIHandleEventRendersKinds verifies the per-kind rendering of the
-// Events tab: the finish line carries the log color and clears the
-// generating hint, the usage line carries the outcome marker, a
-// streaming-measured usage line ends with the ttft and speed fragment,
-// the thought summary header carries the thought color, round starts and
-// empty-summary round successes render log lines, and an unknown kind
-// renders a generic event line. Each event is stored as one line group;
-// consecutive events are shaded alternately. See TheoryOfTUI and
-// TheoryOfUsageTiming.
 func TestTUIHandleEventRendersKinds(t *testing.T) {
 	tui := newTUIForTest()
 	tui.generating = true
@@ -1927,9 +1911,9 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 
 	usage := generators.Usage{}
 	usage.Prompt.TokenCount = 100
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 2, Detail: "error", Usage: usage})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 2, Detail: "error", Usage: usage})
 	last := tui.events[len(tui.events)-1]
-	if last[0].Text != "[Usage] round 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
+	if last[0].Text != "[Usage] attempt 2 (error): prompt 100, cached 0, completion 0, thoughts 0" {
 		t.Fatalf("unexpected usage line: %q", last[0].Text)
 	}
 	if last[0].Color != outputColorLogLine {
@@ -1940,9 +1924,9 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	measuredUsage.Candidates.TokenCount = 20
 	measuredUsage.TimeToFirstToken = 300 * time.Millisecond // ttft 0.3s
 	measuredUsage.GenerateDuration = 200 * time.Millisecond // 20 tokens / 0.2s -> 100.0 tok/s
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Round: 5, Usage: measuredUsage})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventUsage, Attempt: 5, Usage: measuredUsage})
 	measuredLines := tui.events[len(tui.events)-1]
-	wantMeasured := "[Usage] round 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
+	wantMeasured := "[Usage] attempt 5: prompt 0, cached 0, completion 20, thoughts 0, ttft 0.3s, 100.0 tok/s"
 	if measuredLines[0].Text != wantMeasured {
 		t.Fatalf("unexpected measured usage line: %q", measuredLines[0].Text)
 	}
@@ -1956,15 +1940,15 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 		t.Fatalf("unexpected thought summary body: %+v", body)
 	}
 
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundStart, Round: 3})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 3})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Round 3 start]" || group[0].Color != outputColorLogLine {
-		t.Fatalf("unexpected round start line: %+v", group[0])
+	if group[0].Text != "[Attempt 3 start]" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected attempt start line: %+v", group[0])
 	}
 
-	tui.handleEvent(pipeline.Event{Kind: pipeline.EventRoundSuccess, Round: 3})
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptCompleted, Attempt: 3})
 	group = tui.events[len(tui.events)-1]
-	if group[0].Text != "[Round 3 complete]" || group[0].Color != outputColorLogLine {
+	if group[0].Text != "[Attempt 3 complete]" || group[0].Color != outputColorLogLine {
 		t.Fatalf("unexpected empty-summary completion line: %+v", group[0])
 	}
 

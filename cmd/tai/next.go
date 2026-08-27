@@ -23,7 +23,7 @@ advance the user's goal. It uses the prompts.NextStep system prompt as its
 base, augmented with the change block prompt when Go files are detected in the
 input, plus optional extra, focus, and ignore directives. Unlike the "ai"
 subcommand which supports multi-turn conversation with memory, shell, and
-continue blocks, "next" performs a single generation round: it builds the
+continue blocks, "next" performs a single generation: it builds the
 system prompt and user prompt from file context, runs one generate-chat phase
 chain, and writes the result to stdout. This makes it the simplest entry point
 for autonomous, single-shot task execution.
@@ -40,7 +40,7 @@ inside the stable prefix region. See components.TheoryOfDisabledBlocks.
 
 Change blocks emitted by the model are applied to the working tree via a
 ParserState block handler that writes to an in-memory MemoryStore during
-streaming, then flushes to disk after the generation round succeeds. This
+streaming, then flushes to disk after the generation succeeds. This
 reuses the same in-memory apply mechanism as the pipeline (see
 changes.TheoryOfInMemoryApply), ensuring early error detection — a malformed
 change block triggers a retry via changes.ApplyError, resetting the
@@ -234,7 +234,7 @@ var NextCommand = Command{
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(buildChat(g, nil)(nil))
 			},
-			OnRoundStart: func() {
+			OnAttemptStart: func() {
 				memStore.Reset()
 			},
 			RetryOnError: true,

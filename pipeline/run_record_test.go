@@ -27,17 +27,17 @@ func (f *fakeInteractionRecorder) EndSession(err error) {
 func (f *fakeInteractionRecorder) SystemPrompt(prompt string) {
 	f.events = append(f.events, "system_prompt")
 }
-func (f *fakeInteractionRecorder) RoundStart() {
-	f.events = append(f.events, "round_start")
+func (f *fakeInteractionRecorder) AttemptStart() {
+	f.events = append(f.events, "attempt_start")
 }
-func (f *fakeInteractionRecorder) RoundSuccess(summaries []string) {
-	f.events = append(f.events, "round_success")
+func (f *fakeInteractionRecorder) AttemptCompleted(summaries []string) {
+	f.events = append(f.events, "attempt_completed")
 }
-func (f *fakeInteractionRecorder) RoundTruncated() {
-	f.events = append(f.events, "round_truncated")
+func (f *fakeInteractionRecorder) AttemptTruncated() {
+	f.events = append(f.events, "attempt_truncated")
 }
-func (f *fakeInteractionRecorder) RoundError(err error) {
-	f.events = append(f.events, "round_error:"+err.Error())
+func (f *fakeInteractionRecorder) AttemptError(err error) {
+	f.events = append(f.events, "attempt_error:"+err.Error())
 }
 func (f *fakeInteractionRecorder) Content(content *generators.Content) {
 	f.events = append(f.events, "content_"+string(content.Role))
@@ -53,7 +53,7 @@ func (f *fakeInteractionRecorder) Event(typ string, detail string) {
 	f.events = append(f.events, "event_"+typ)
 }
 
-func TestRunRecordsRound(t *testing.T) {
+func TestRunRecordsAttempt(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
 		_, err := runOnce(run, RunOptions{
@@ -73,10 +73,10 @@ func TestRunRecordsRound(t *testing.T) {
 		for _, want := range []string{
 			"session_start:test-command",
 			"system_prompt",
-			"round_start",
+			"attempt_start",
 			"content_assistant",
 			"block_summary",
-			"round_success",
+			"attempt_completed",
 			"session_end",
 		} {
 			if !strings.Contains(joined, want) {
@@ -107,7 +107,7 @@ func TestRunRecordsDisabled(t *testing.T) {
 	})
 }
 
-func TestRunRecordsRoundError(t *testing.T) {
+func TestRunRecordsAttemptError(t *testing.T) {
 	withRun(t, func(run Run) {
 		rec := &fakeInteractionRecorder{enabled: true}
 		_, err := runOnce(run, RunOptions{
@@ -123,8 +123,8 @@ func TestRunRecordsRoundError(t *testing.T) {
 			t.Fatal("expected error")
 		}
 		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "round_error:boom") {
-			t.Fatalf("expected round_error:boom, got %s", joined)
+		if !strings.Contains(joined, "attempt_error:boom") {
+			t.Fatalf("expected attempt_error:boom, got %s", joined)
 		}
 	})
 }
@@ -157,11 +157,11 @@ func TestRunRecordsTruncationRetry(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		joined := strings.Join(rec.events, ",")
-		if !strings.Contains(joined, "round_truncated") {
-			t.Fatalf("expected round_truncated, got %s", joined)
+		if !strings.Contains(joined, "attempt_truncated") {
+			t.Fatalf("expected attempt_truncated, got %s", joined)
 		}
-		if !strings.Contains(joined, "round_success") {
-			t.Fatalf("expected round_success, got %s", joined)
+		if !strings.Contains(joined, "attempt_completed") {
+			t.Fatalf("expected attempt_completed, got %s", joined)
 		}
 	})
 }
@@ -224,8 +224,8 @@ func TestRunRecordsDecisionEvents(t *testing.T) {
 		if !strings.Contains(joined, "event_decision") {
 			t.Fatalf("expected decision events, got: %s", joined)
 		}
-		if !strings.Contains(joined, "round_truncated") {
-			t.Fatalf("expected round_truncated event, got: %s", joined)
+		if !strings.Contains(joined, "attempt_truncated") {
+			t.Fatalf("expected attempt_truncated event, got: %s", joined)
 		}
 	})
 }

@@ -53,7 +53,7 @@ to the command Output writer after the streamed output.
 
 The command requires a model to be specified via -model; without it, resolving
 the default generator fails, making the dependency on an explicit model
-selection explicit. The command performs a single generation round with no
+selection explicit. The command performs a single generation with no
 chat loop and no file context; its system prompt carries the block-format
 prompt and the user-configured extra system prompts. Reasoning thoughts
 stream to stdout by default; the -no-thoughts flag (flags.Thoughts)

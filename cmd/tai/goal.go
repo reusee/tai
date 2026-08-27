@@ -64,14 +64,14 @@ goal loop resolves a fresh GenerateWithResultWithStats from a reset scope,
 dscope.Reset rebuilds every provider-scoped cache, giving each loop an
 accurate view of the current filesystem state.
 
-Each goal loop prints its round statistics at the loop's end (see
-pipeline.TheoryOfRoundStatistics). In addition, the goal command accumulates the
+Each goal loop prints its attempt statistics at the loop's end (see
+pipeline.TheoryOfAttemptStatistics). In addition, the goal command accumulates the
 statistics of every loop — via the statistics-returning
-pipeline.GenerateWithResultWithStats, with pipeline.RoundStat.Loop set to the loop
+pipeline.GenerateWithResultWithStats, with pipeline.AttemptStat.Loop set to the loop
 number — and prints them once more, aggregated, after the goal completes. The
 aggregated report lets the user review the entire process in a single table:
-token usage, durations, and round summaries across all loops, with the Loop
-column identifying which goal loop produced each round.
+token usage, durations, and attempt summaries across all loops, with the Loop
+column identifying which goal loop produced each attempt.
 `
 
 const maxGoalIterations = 20
@@ -190,13 +190,13 @@ var GoalCommand = Command{
 		var lastErrMsg string
 		consecutiveErrors := 0
 
-		// allStats accumulates the round statistics of every goal loop so
-		// they can be printed once more, aggregated, after the goal
-		// completes — in addition to the per-loop print at each loop's end.
-		// The Loop field is set to the loop number when each loop's stats
-		// are appended, so the aggregated table shows the entire process at
-		// a glance. See pipeline.TheoryOfRoundStatistics.
-		var allStats []pipeline.RoundStat
+		// allStats accumulates the attempt statistics of every goal loop
+		// so they can be printed once more, aggregated, after the goal
+		// completes — in addition to the per-loop print at each loop's
+		// end. The Loop field is set to the loop number when each loop's
+		// stats are appended, so the aggregated table shows the entire
+		// process at a glance. See pipeline.TheoryOfAttemptStatistics.
+		var allStats []pipeline.AttemptStat
 
 		// allDiffs accumulates the session diffs of every goal loop so the
 		// review loop can review all changes made during the goal.
@@ -236,15 +236,17 @@ var GoalCommand = Command{
 				// codebase, organizes context from scratch, and runs
 				// the full generation pipeline (change blocks, go-test,
 				// shell, continue, etc.). It returns the loop result
-				// together with the round statistics collected during the
-				// loop, which are retained for the aggregated final report.
-				// See TheoryOfGoalCommand and pipeline.TheoryOfRoundStatistics.
+				// together with the attempt statistics collected during
+				// the loop, which are retained for the aggregated final
+				// report. See TheoryOfGoalCommand and
+				// pipeline.TheoryOfAttemptStatistics.
 				loopStart := len(allStats)
 				result, stats, err := generateWithResultWithStats(ctx, os.Stdout)
 				// Retain this loop's statistics for the aggregated final
 				// report. The Loop field identifies the goal loop that
-				// produced each round, so the final table shows the entire
-				// process at a glance. See pipeline.TheoryOfRoundStatistics.
+				// produced each attempt, so the final table shows the
+				// entire process at a glance. See
+				// pipeline.TheoryOfAttemptStatistics.
 				allStats = append(allStats, stats...)
 				for i := loopStart; i < len(allStats); i++ {
 					allStats[i].Loop = loopsRun
@@ -288,8 +290,8 @@ var GoalCommand = Command{
 					// Carry the failure into the next loop's system prompt
 					// so the model can correct the cause and continue from
 					// the current filesystem state. Changes from successful
-					// rounds of the failed loop are already applied; only
-					// the failed round's changes were discarded.
+					// attempts of the failed loop are already applied; only
+					// the failed attempt's changes were discarded.
 					// See TheoryOfGoalCommand.
 					feedback = GoalFeedback(fmt.Sprintf(
 						"[System note: The previous goal loop failed: %v\nCorrect the cause of this error in this loop and continue from the current filesystem state.]",
@@ -403,10 +405,10 @@ var GoalCommand = Command{
 		// Print all loop statistics once more, aggregated, after the goal
 		// completes so the user can review the entire process in a single
 		// table. The per-loop print at each loop's end remains. The Loop
-		// column identifies which goal loop produced each round.
-		// See pipeline.TheoryOfRoundStatistics.
+		// column identifies which goal loop produced each attempt.
+		// See pipeline.TheoryOfAttemptStatistics.
 		if len(allStats) > 0 {
-			pipeline.PrintRoundStats(output, allStats, "Goal Loop Statistics")
+			pipeline.PrintAttemptStats(output, allStats, "Goal Loop Statistics")
 		}
 	},
 }

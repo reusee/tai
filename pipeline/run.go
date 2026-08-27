@@ -67,85 +67,86 @@ commands (go, any, ai, next). The core pattern:
 2. Execute the phase chain until done
 3. Unwrap ParserState to get the final state and collected blocks
 4. Process collected blocks through components (if any)
-5. Repeat until no components trigger or MaxRounds is reached
+5. Repeat until no components trigger or MaxGenerations is reached
 
 Run is exposed as an event iterator: func(ctx, opts, result *Result)
 iter.Seq2[Event, error]. The result is filled incrementally as the run
-progresses; every notable occurrence — round lifecycle (start, success,
-truncation, error), retry decisions and handoffs, synthesized completion
-summaries, per-round token usage, component-triggered and idle
-continuations — is yielded as an Event as it occurs (see
-TheoryOfLoopEvents). The terminal error, if any, arrives with the final
-yield's error component when the run stops. Callers may suspend and resume
-the run via iter.Pull2, inspecting the result between pulls.
+progresses; every notable occurrence — attempt lifecycle (start,
+completion, truncation), retry decisions and handoffs, synthesized
+completion summaries, per-attempt token usage, component-triggered and
+idle continuations — is yielded as an Event the moment its facts are
+known (see TheoryOfLoopEvents). The terminal error, if any, arrives with
+the final yield's error component when the run stops. Callers may suspend
+and resume the run via iter.Pull2, inspecting the result between pulls.
 
-A round is one pass through the phase chain, producing a summary and parts.
-The round's outcome is captured by roundResult: the updated state, the
-round's summary, and the parts that determine whether the next round
-starts. The parts are the round's return value: when any exist, they are
-appended to the state as user content and the next round begins. The
-summary and the parts are both determined before the round ends: the
-summary by the model's summary blocks (or synthesis on truncation), and the
-parts by ProcessComponents. The round logic lives in loopState.runRound;
-the main loop in Run simply executes rounds and continues while
-roundResult.continueNext is true. A retry is a re-execution of the phase
-chain within the same round, triggered by a missing completion (no summary
-block) or an error after content output. Retries count as loops in round
+A generation is one pass through the user-driven loop: the model
+generates, the summary and parts are collected, and component output (or
+an idle handler) may schedule the next generation. A retry is a
+re-execution of the phase chain within the same generation, triggered by
+a missing completion (no summary block) or an error after content
+output; each re-execution is a new attempt, numbered 1-based within the
+generation, up to the retry budget. Retries count as attempts in attempt
 statistics.
 
-Retry on missing completion and handoff: a round without a summary block —
-whether the generation limit truncated the model mid-stream before its
-closing summary block, the model emitted a summary and continued until cut
-off, or the model ended its response without one — or with an abnormal
-finish reason (e.g., "length" from max-token truncation), is retried from
-the original pre-generation State. Truncation often happens because the
-model attempted too many changes in a single turn. When output meets the
-minimum threshold, the handoff process creates a
-self-contained summary carrying forward established conclusions, attempted
-changes, and task-partitioning guidance. The retry user prompt explicitly
-instructs the model to partition extensive modifications: implement an initial
-manageable subset of changes in the current round, end with a summary block, and
-use a continue block to carry over the remaining work into subsequent rounds,
-preventing repeated truncation loops. Short or empty outputs are retried directly.
+Retry on missing completion and handoff: an attempt without a summary
+block — whether the generation limit truncated the model mid-stream
+before its closing summary block, the model emitted a summary and
+continued until cut off, or the model ended its response without one —
+or with an abnormal finish reason (e.g., "length" from max-token
+truncation), is retried from the original pre-generation State.
+Truncation often happens because the model attempted too many changes in
+a single turn. When output meets the minimum threshold, the handoff
+process creates a self-contained summary carrying forward established
+conclusions, attempted changes, and task-partitioning guidance. The
+retry user prompt explicitly instructs the model to partition extensive
+modifications: implement an initial manageable subset of changes in the
+current response, end with a summary block, and use a continue block to
+carry over the remaining work into subsequent generations, preventing
+repeated truncation loops. Short or empty outputs are retried directly.
 See TheoryOfHandoff.
 
-The summary block is non-negotiable: every round that ends without a summary
-block is retried when RetryOnMissingCompletion is enabled, including rounds
-whose blocks trigger components (ingest, shell, continue, go-test, go-src). No
-block kind replaces or implies the summary. The retry feedback names the
-violation — missingSummaryRetryPrefix when the response simply ended without
-the summary block, incompleteOutputHandoffPrefix when the finish reason shows
-truncation — states the attempt number, and instructs the model to re-emit
-every block it intends to take effect together with the summary block,
-because the failed attempt's blocks were discarded.
+The summary block is non-negotiable: every attempt that ends without a
+summary block is retried when RetryOnMissingCompletion is enabled,
+including attempts whose blocks trigger components (ingest, shell,
+continue, go-test, go-src). No block kind replaces or implies the
+summary. The retry feedback names the violation —
+missingSummaryRetryPrefix when the response simply ended without the
+summary block, incompleteOutputHandoffPrefix when the finish reason
+shows truncation — states the attempt number, and instructs the model to
+re-emit every block it intends to take effect together with the summary
+block, because the failed attempt's blocks were discarded.
 
-When the retry budget is exhausted and the final attempt still lacks a summary
-block, the loop synthesizes a summary from the round's output and appends it
-to the state as a summary block, so the round has a completion signal for the round
-statistics and the TUI's Events tab. The synthesis applies to every exhausted
-round, including rounds whose blocks trigger components.
+When the retry budget is exhausted and the final attempt still lacks a
+summary block, the loop synthesizes a summary from the generation's
+output and appends it to the state as a summary block, so the generation
+has a completion signal for the attempt statistics and the TUI's Events
+tab. The synthesis applies to every exhausted generation, including
+generations whose blocks trigger components.
 
-Retry on error: an error after content output retries from the state that includes
-the partial output, appending the error context and the handoff summary as user content.
-Errors before any content output do not retry.
+Retry on error: an error after content output retries from the state
+that includes the partial output, appending the error context and the
+handoff summary as user content. Errors before any content output do not
+retry.
 
-Retry feedback states the current attempt number (e.g., "retry attempt 1 of 3") so
-the model knows how much budget remains and can prioritize correcting the error.
+Retry feedback states the current attempt number (e.g., "retry attempt
+1 of 3") so the model knows how much budget remains and can prioritize
+correcting the error.
 `
 
 const TheoryOfUsageLogging = `
-The token usage of each generation round is recorded by the Run loop itself,
-not by individual commands. After each round, the usage record carries the
-1-based round number and the prompt, cached, completion, and thought token
-counts from the round's final usage. The record flows to the run's event
-stream as an EventUsage — the single display source for a live consumer;
-the TUI renders its "[Usage]" line from the event — and to a "usage" log
-entry, so every generation command — go, any, ai, next, ping — shows token
-consumption in its logs and in the TUI's Logs pane. A round that ends with
-an error carries an outcome marker ("error" in the log entry, in the
-event's Detail, and in the rendered line's "(error)" suffix), so token
-consumption is traceable for every attempt, including retries. Rounds that
-record no token usage emit nothing.
+The token usage of each generation attempt is recorded by the Run loop
+itself, not by individual commands. After each attempt, the usage record
+carries the 1-based attempt number and the prompt, cached, completion,
+and thought token counts from the attempt's final usage. The record
+flows to the run's event stream as an EventUsage — the single display
+source for a live consumer; the TUI renders its "[Usage]" line from the
+event — and to a "usage" log entry, so every generation command — go,
+any, ai, next, ping — shows token consumption in its logs and in the
+TUI's Logs pane. An attempt that ends with an error carries an outcome
+marker ("error" in the log entry, in the event's Detail, and in the
+rendered line's "(error)" suffix), so token consumption is traceable for
+every attempt, including retries. Attempts that record no token usage
+emit nothing.
 
 Streaming requests measure speed onto the final usage (see
 generators.TheoryOfUsageTiming): the loop appends the one-decimal keys
@@ -156,24 +157,25 @@ the keys and the fragment are omitted rather than printed as zeros. The
 statistics table keeps count-only columns and takes its duration from
 the loop's own clock, not from these per-request measurements.
 
-The usage is extracted by scanning the state's contents appended since the
-start of the round and taking the final Usage part, rather than summing
-intermediate usage snapshots that may be emitted by streaming providers
-(e.g., Gemini's streaming UsageMetadata).
+The usage is extracted by scanning the state's contents appended since
+the start of the attempt and taking the final Usage part, rather than
+summing intermediate usage snapshots that may be emitted by streaming
+providers (e.g., Gemini's streaming UsageMetadata).
 `
 
 const errorRetryPrefix = "[System note: An error occurred: %s. This is retry attempt %d of %d. The failed attempt's output was discarded — its structured blocks were NOT applied. If the intended modifications are extensive, partition the work across multiple rounds using continue blocks rather than emitting all changes at once. Re-emit every block you intend to take effect, then correct the issue and continue.]\n\n"
 
 const defaultMaxRetries = 3
 
-// maxParseErrorRounds bounds the number of rounds that feed parse errors
-// back to the model for self-correction. The bound is cumulative per run:
-// it resets only when a round produces no parse errors, so a model that
-// persistently emits malformed blocks cannot restart the correction cycle
-// indefinitely when other components keep triggering rounds. When the
-// bound is reached, feedback stops and the uncorrected parse errors are
-// recorded in Result.ParseErrors. See TheoryOfLoops.
-const maxParseErrorRounds = 3
+// maxParseErrorCorrections bounds the number of corrections that feed
+// parse errors back to the model for self-correction. The bound is
+// cumulative per run: it resets only when a generation produces no
+// parse errors, so a model that persistently emits malformed blocks
+// cannot restart the correction cycle indefinitely when other
+// components keep triggering generations. When the bound is reached,
+// feedback stops and the uncorrected parse errors are recorded in
+// Result.ParseErrors. See TheoryOfLoops.
+const maxParseErrorCorrections = 3
 
 const incompleteOutputHandoffPrefix = "[System note: The previous generation was truncated before completion. This is retry attempt %d of %d. The truncated output was discarded and will not appear in history — its structured blocks were NOT applied. Truncation typically occurs when attempting too many changes in a single response, exceeding the output limit. If the planned modifications are extensive, do NOT attempt to emit all changes at once. Instead, partition the work: implement a manageable initial subset of change blocks in this round, and use a continue block to carry over the remaining tasks into subsequent rounds. Re-emit every block you intend to take effect in this round. Nothing in the interrupted attempt was completed: changes are atomic, so there is no completed work on disk, and no next step to carry forward without implementation. Below is the self-contained handoff summary from the previous attempt, preserving its valuable thinking: discoveries, insights, analysis, decisions, and attempted changes. Use it as reference to partition and guide your work, but continue to think for yourself: the handoff does not replace your own reasoning, and you must still analyze the problem and decide how to proceed.]\n\n"
 
@@ -202,42 +204,45 @@ func (Module) InteractionRecorder() InteractionRecorder {
 // import would create a cycle. See records.TheoryOfInteractionRecording.
 var _ InteractionRecorder = (*records.Recorder)(nil)
 
-// Run executes generation rounds in a loop. Each round wraps the state
-// with ParserState, executes the phase chain, processes blocks via
-// components, and continues if a component triggers a new round.
-// When Components is empty, the loop runs a single round (single-shot
-// mode). The result is filled into result as the run progresses, and
-// the returned iterator yields one Event per notable occurrence —
-// round lifecycle (start, success, truncation, error), retries and
-// handoffs, synthesized completion summaries, attempt finish reasons,
-// per-round token usage, periodic thought summaries, and
-// component-triggered or idle continuations — with the terminal
+// Run executes generation generations in a loop. Each generation wraps
+// the state with ParserState, executes the phase chain (retrying
+// incomplete attempts as further attempts within the generation),
+// processes blocks via components, and continues if a component
+// triggers a new generation. When Components is empty, the loop runs a
+// single generation (single-shot mode). The result is filled into
+// result as the run progresses, and the returned iterator yields one
+// Event per notable occurrence — attempt lifecycle (start, completion,
+// truncation), retries and handoffs, synthesized completion summaries,
+// attempt finish reasons, per-attempt token usage, periodic thought
+// summaries, and component-triggered or idle continuations — constructed
+// and yielded the moment their facts are known, with the terminal
 // error, if any, arriving with the final yield's error component.
-// Callers may suspend and resume the run via iter.Pull2, inspecting
-// the result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
+// Callers may suspend and resume the run via iter.Pull2, inspecting the
+// result between pulls. See TheoryOfLoops and TheoryOfLoopEvents.
 type Run func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error]
 
-// roundResult is the outcome of one generation round: the updated state,
-// the round's summary, and the parts that determine whether the next
-// round starts. The parts are the round's return value: when
-// continueNext is true, they are appended to the state as user content
-// and the next round begins. See TheoryOfLoops.
-type roundResult struct {
+// generationResult is the outcome of one generation: the updated
+// state, the generation's summary, and the parts that determine whether
+// the next generation starts. The parts are the generation's return
+// value: when continueNext is true, they are appended to the state as
+// user content and the next generation begins. See TheoryOfLoops.
+type generationResult struct {
 	state        generators.State
 	summaries    []string
 	parts        []generators.Part
 	continueNext bool
-	// finalBlocks is set when the round is the whole run (single-shot
-	// mode): the loop ends with these blocks as the result.
+	// finalBlocks is set when the generation is the whole run
+	// (single-shot mode): the loop ends with these blocks as the
+	// result.
 	finalBlocks []blocks.Block
 }
 
-// loopState holds the mutable state of a generation loop run. The main loop
-// in Run executes rounds via runRound; the state here is updated by each round
-// and carried into the next. Events are yielded through the guarded
-// emitEvent/emitTerminal methods: after the consumer stops, further events
-// are dropped so the loop's bookkeeping can still complete. See
-// TheoryOfLoops and TheoryOfLoopEvents.
+// loopState holds the mutable state of a generation loop run. The main
+// loop in Run executes generations via runGeneration; the state here is
+// updated by each generation and carried into the next. Events are
+// yielded through the guarded emitEvent/emitTerminal methods: after the
+// consumer stops, further events are dropped so the loop's bookkeeping
+// can still complete. See TheoryOfLoops and TheoryOfLoopEvents.
 type loopState struct {
 	ctx     context.Context
 	opts    RunOptions
@@ -247,21 +252,22 @@ type loopState struct {
 	stopped bool
 	state   generators.State
 
-	// round is the 1-based round number of the round being executed.
-	// Retries within a round share the round number; their events carry
-	// the attempt number separately. See TheoryOfLoopEvents.
-	round int
+	// attempt is the 1-based attempt number of the attempt being
+	// executed, reset per generation. Retries within a generation
+	// increment it; events carry it alongside the generation's retry
+	// budget. See TheoryOfLoopEvents.
+	attempt int
 
 	remainingBlocks []blocks.Block
 	maxRetries      int
 
-	parseErrorCorrectionRounds int
-	uncorrectedParseErrors     []*blocks.BlockParseError
-	skipOnRoundStart           bool
+	parseErrorCorrections  int
+	uncorrectedParseErrors []*blocks.BlockParseError
+	skipOnAttemptStart     bool
 
 	runErr error
 
-	// logger records the aggregated token usage of each round as a
+	// logger records the aggregated token usage of each attempt as a
 	// "usage" log entry; the event stream (EventUsage) is the display
 	// source for a live consumer such as the TUI's Events tab. The
 	// logger is dscope provided, captured by the Run provider. See
@@ -269,28 +275,52 @@ type loopState struct {
 	logger logs.Logger
 }
 
-func (ls *loopState) runRound() (roundResult, error) {
-	// Round start: report to the interaction recorder, reset per-round
-	// state (e.g., MemoryStore.Reset), and open the round in the event
-	// stream. See TheoryOfLoopEvents.
-	if ls.rec != nil && ls.rec.Enabled() {
-		ls.rec.RoundStart()
-	}
-	ls.emitEvent(Event{Kind: EventRoundStart, Round: ls.round})
-	if ls.opts.OnRoundStart != nil && !ls.skipOnRoundStart {
-		ls.opts.OnRoundStart()
-	}
-
+// runGeneration executes one generation: the attempt loop (initial
+// attempt plus retries for missing completion or post-output errors)
+// followed by the success tail (summary synthesis, OnAttemptSuccess,
+// usage recording, completion reporting, parse-error feedback, component
+// processing, and idle handling). Each attempt is one pass through the
+// phase chain; its lifecycle events — attempt start, finish, truncation,
+// handoff, usage, completion — are constructed and yielded the moment
+// their facts are known. See TheoryOfLoops and TheoryOfLoopEvents.
+func (ls *loopState) runGeneration() (generationResult, error) {
 	var collectedBlocks []blocks.Block
-	var roundSummaries []string
-	var roundParseErrors []*blocks.BlockParseError
+	var generationSummaries []string
+	var generationParseErrors []*blocks.BlockParseError
 	phaseState := ls.state
-	var roundErr error
+	var generationErr error
 
-	// Inner retry loop for missing completion and errors with content output.
+	// attemptBase is the content count at the start of the current
+	// attempt: the window for the finish-reason extraction, the
+	// incomplete-output extraction, and the handoff usage injection.
+	// It is reassigned at the top of every attempt and read by the
+	// post-loop tails (synthesis, usage recording) scoped to the
+	// final attempt. See TheoryOfLoops and
+	// TheoryOfHandoffUsageAccounting.
+	attemptBase := generators.CountContents(ls.state)
+
+	// Inner retry loop: each iteration is one attempt, opened by the
+	// attempt-start event immediately before its work — including
+	// retries, so every attempt's opening is reported the moment it
+	// begins. See TheoryOfLoops.
 	for retry := 0; ; retry++ {
+		ls.attempt = retry + 1
+		attemptBase = generators.CountContents(ls.state)
 		collectedBlocks = nil
-		roundParseErrors = nil
+		generationParseErrors = nil
+
+		// Attempt open: report to the interaction recorder, emit the
+		// attempt-start event, and reset per-attempt state (e.g.,
+		// MemoryStore.Reset). Only the generation's first attempt
+		// honors the parse-error correction path's skip; retries
+		// reset unconditionally. See TheoryOfLoopEvents.
+		if ls.rec != nil && ls.rec.Enabled() {
+			ls.rec.AttemptStart()
+		}
+		ls.emitEvent(Event{Kind: EventAttemptStart, Attempt: ls.attempt, MaxAttempts: ls.maxRetries})
+		if ls.opts.OnAttemptStart != nil && (!ls.skipOnAttemptStart || retry > 0) {
+			ls.opts.OnAttemptStart()
+		}
 
 		// Create parser handler that collects blocks and
 		// optionally invokes the caller's BlockHandler.
@@ -324,7 +354,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 			var err error
 			phase, wrappedState, err = phase(ls.ctx, wrappedState)
 			if err != nil {
-				roundErr = err
+				generationErr = err
 				break
 			}
 		}
@@ -340,10 +370,10 @@ func (ls *loopState) runRound() (roundResult, error) {
 			// Collect parse errors from the stream so they can be
 			// fed back to the model for self-correction.
 			// See TheoryOfParseErrorCollection.
-			roundParseErrors = ps.ParseErrors()
+			generationParseErrors = ps.ParseErrors()
 			// Report malformed blocks to the interaction recorder.
 			if ls.rec != nil && ls.rec.Enabled() {
-				for _, parseErr := range roundParseErrors {
+				for _, parseErr := range generationParseErrors {
 					ls.rec.ParseError(parseErr)
 				}
 			}
@@ -353,22 +383,20 @@ func (ls *loopState) runRound() (roundResult, error) {
 
 		// The attempt's finish reason feeds both the event stream —
 		// every attempt's completion signal, including attempts that
-		// later fail — and the completion check below. The extraction
-		// window is exactly this attempt's contents: ls.state still
-		// holds the pre-attempt base on both the error-retry and
-		// truncation-retry paths. See TheoryOfLoopEvents.
-		finishReason := extractFinishReason(phaseState, generators.CountContents(ls.state))
+		// later fail — and the completion check below. Emitted
+		// immediately when known. See TheoryOfLoopEvents.
+		finishReason := extractFinishReason(phaseState, attemptBase)
 		if finishReason != "" {
-			ls.emitEvent(Event{Kind: EventFinish, Round: ls.round, Detail: finishReason})
+			ls.emitEvent(Event{Kind: EventFinish, Attempt: ls.attempt, Detail: finishReason})
 		}
 
-		if roundErr != nil {
+		if generationErr != nil {
 			// Retry on any error when content was output during
-			// the round. The loop summarizes the incomplete
+			// the attempt. The loop summarizes the incomplete
 			// output, appends both the error context and the
 			// summary as user content so the model can correct
-			// its output, resets per-round state via
-			// OnRoundStart (which resets the MemoryStore,
+			// its output, resets per-attempt state via
+			// OnAttemptStart (which resets the MemoryStore,
 			// discarding failed changes), and retries from the
 			// updated state. Errors that occur before any
 			// content is output do not trigger retry. The
@@ -376,41 +404,39 @@ func (ls *loopState) runRound() (roundResult, error) {
 			// the model knows how much retry budget remains.
 			// See TheoryOfLoops.
 			if ls.opts.RetryOnError && retry < ls.maxRetries {
-				prevCount := generators.CountContents(ls.state)
+				prevCount := attemptBase
 				if generators.CountContents(phaseState) > prevCount {
 					ls.state = phaseState
 
 					// Report the failed attempt to the
-					// interaction recorder.
-					if ls.rec != nil && ls.rec.Enabled() {
-						ls.rec.RoundError(roundErr)
-						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, roundErr))
-					}
-
-					// Report the retry decision to the event stream.
+					// interaction recorder and the retry
+					// decision to the event stream, immediately.
 					// See TheoryOfLoopEvents.
+					if ls.rec != nil && ls.rec.Enabled() {
+						ls.rec.AttemptError(generationErr)
+						ls.rec.Event("decision", fmt.Sprintf("error after partial output triggered retry: attempt %d/%d: %v", retry+1, ls.maxRetries, generationErr))
+					}
 					ls.emitEvent(Event{
 						Kind:        EventRetry,
-						Round:       ls.round,
 						Attempt:     retry + 1,
 						MaxAttempts: ls.maxRetries,
-						Err:         roundErr,
+						Err:         generationErr,
 						Detail:      "error after partial output",
 					})
 
 					var retryParts []generators.Part
 					retryParts = append(retryParts, generators.Text(
-						fmt.Sprintf(errorRetryPrefix, roundErr.Error(), retry+1, ls.maxRetries)))
+						fmt.Sprintf(errorRetryPrefix, generationErr.Error(), retry+1, ls.maxRetries)))
 
 					// For change block apply errors, add specific
 					// guidance: the retry discards ALL change
-					// blocks from the failed attempt (OnRoundStart
+					// blocks from the failed attempt (OnAttemptStart
 					// resets the in-memory store below), so the
 					// model must re-emit every intended change
 					// block, correcting the one that failed.
 					// See TheoryOfLoops.
 					var applyErr *changes.ApplyError
-					if errors.As(roundErr, &applyErr) {
+					if errors.As(generationErr, &applyErr) {
 						retryParts = append(retryParts, generators.Text(
 							"\nThe change block that caused the error was NOT applied, and this retry discards ALL change blocks from the failed attempt. Re-emit every intended change block, correcting the one that caused the error.\n"))
 					}
@@ -420,6 +446,14 @@ func (ls *loopState) runRound() (roundResult, error) {
 					if ls.opts.Handoff != nil {
 						incompleteText := ExtractIncompleteOutput(phaseState, prevCount)
 						if incompleteText != "" {
+							// Report the handoff request's start
+							// immediately, before the request is
+							// sent. See TheoryOfLoopEvents.
+							ls.emitEvent(Event{
+								Kind:        EventHandoffStart,
+								Attempt:     retry + 1,
+								MaxAttempts: ls.maxRetries,
+							})
 							handoff, handoffErr := ls.opts.Handoff(incompleteText)
 							if handoffErr == nil && handoff != nil {
 								summary = handoff.Summary
@@ -428,29 +462,33 @@ func (ls *loopState) runRound() (roundResult, error) {
 								// event stream. See TheoryOfLoopEvents.
 								ls.emitEvent(Event{
 									Kind:        EventHandoff,
-									Round:       ls.round,
 									Attempt:     retry + 1,
 									MaxAttempts: ls.maxRetries,
 									Summary:     handoff.Summary,
 									Handoff:     handoff,
 								})
 								// Account the handoff request's own token
-								// spend before the failed round is recorded.
-								// The window starts at the failed attempt's
-								// base, so usage retained from earlier error
-								// retries is never re-attributed to this
-								// attempt. See TheoryOfHandoffUsageAccounting.
+								// spend before the failed attempt is
+								// recorded. The window starts at the
+								// failed attempt's base, so usage
+								// retained from earlier error retries is
+								// never re-attributed to this attempt.
+								// See TheoryOfHandoffUsageAccounting.
 								phaseState = appendHandoffUsage(phaseState, prevCount, handoff.Usage)
 							}
 						}
 					}
 
-					// Record the failed round in round statistics
-					// so it appears as a separate loop.
-					// See TheoryOfRoundStatistics.
-					if ls.opts.OnRoundTruncated != nil {
-						if rerr := ls.opts.OnRoundTruncated(phaseState, ls.state, summary); rerr != nil {
-							roundErr = rerr
+					// Record the attempt's token usage, including the
+					// injected handoff spend. See TheoryOfUsageLogging.
+					ls.recordAttemptUsage(phaseState, attemptBase, "")
+
+					// Record the failed attempt in attempt statistics
+					// so it appears as a separate entry.
+					// See TheoryOfAttemptStatistics.
+					if ls.opts.OnAttemptTruncated != nil {
+						if rerr := ls.opts.OnAttemptTruncated(phaseState, ls.state, summary); rerr != nil {
+							generationErr = rerr
 							break
 						}
 					}
@@ -469,10 +507,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 					if appendErr != nil {
 						break
 					}
-					roundErr = nil
-					if ls.opts.OnRoundStart != nil {
-						ls.opts.OnRoundStart()
-					}
+					generationErr = nil
 					continue
 				}
 			}
@@ -481,31 +516,31 @@ func (ls *loopState) runRound() (roundResult, error) {
 
 		// Always extract and remove summary blocks from
 		// collectedBlocks. Summaries must be available to
-		// OnRoundSuccess regardless of whether retry is
+		// OnAttemptSuccess regardless of whether retry is
 		// enabled. See TheoryOfLoops.
-		roundSummaries = nil
+		generationSummaries = nil
 		var remaining []blocks.Block
 		for _, block := range collectedBlocks {
 			if block.Kind == "summary" {
-				roundSummaries = append(roundSummaries, block.Body)
+				generationSummaries = append(generationSummaries, block.Body)
 			} else {
 				remaining = append(remaining, block)
 			}
 		}
 		collectedBlocks = remaining
 
-		// If retry is disabled, we're done with this round.
+		// If retry is disabled, we're done with this generation.
 		if !ls.opts.RetryOnMissingCompletion {
 			break
 		}
 
 		// Check for completion: the summary block is the only
 		// completion signal — no other block kind (ingest, shell,
-		// continue, go-test, go-src) completes a round — and an
+		// continue, go-test, go-src) completes an attempt — and an
 		// abnormal finish reason (e.g., "length" from max-token
 		// truncation) overrides the summary signal and triggers
-		// retry. See TheoryOfSummaryCompletionRetry in generate.go.
-		hasCompletion := len(roundSummaries) > 0
+		// retry. See TheoryOfSummaryCompletionRetry in summarize_incomplete.go.
+		hasCompletion := len(generationSummaries) > 0
 		isAbnormalFinish := isAbnormalFinishReason(finishReason)
 
 		if hasCompletion && !isAbnormalFinish {
@@ -515,16 +550,27 @@ func (ls *loopState) runRound() (roundResult, error) {
 			break
 		}
 
-		// Report the truncated attempt to the interaction
-		// recorder.
+		// Report the truncated attempt to the interaction recorder
+		// and the event stream, immediately, before the handoff
+		// request. See TheoryOfLoopEvents.
 		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.RoundTruncated()
+			ls.rec.AttemptTruncated()
 			if isAbnormalFinish {
 				ls.rec.Event("decision", fmt.Sprintf("abnormal finish reason %q triggered retry: attempt %d/%d", finishReason, retry+1, ls.maxRetries))
 			} else {
 				ls.rec.Event("decision", fmt.Sprintf("missing completion (no summary block) triggered retry: attempt %d/%d", retry+1, ls.maxRetries))
 			}
 		}
+		truncatedDetail := "missing completion (no summary block)"
+		if isAbnormalFinish {
+			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
+		}
+		ls.emitEvent(Event{
+			Kind:        EventTruncated,
+			Attempt:     retry + 1,
+			MaxAttempts: ls.maxRetries,
+			Detail:      truncatedDetail,
+		})
 
 		// Perform handoff summary on incomplete output if threshold met.
 		// attemptBase is both the incomplete-output window and the
@@ -533,10 +579,16 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// attempt's. See TheoryOfHandoffUsageAccounting.
 		summary := ""
 		retryPrompt := ""
-		attemptBase := generators.CountContents(ls.state)
 		if ls.opts.Handoff != nil {
 			incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 			if incompleteText != "" {
+				// Report the handoff request's start immediately.
+				// See TheoryOfLoopEvents.
+				ls.emitEvent(Event{
+					Kind:        EventHandoffStart,
+					Attempt:     retry + 1,
+					MaxAttempts: ls.maxRetries,
+				})
 				handoff, rerr := ls.opts.Handoff(incompleteText)
 				if rerr == nil && handoff != nil {
 					summary = handoff.Summary
@@ -545,7 +597,6 @@ func (ls *loopState) runRound() (roundResult, error) {
 					// stream. See TheoryOfLoopEvents.
 					ls.emitEvent(Event{
 						Kind:        EventHandoff,
-						Round:       ls.round,
 						Attempt:     retry + 1,
 						MaxAttempts: ls.maxRetries,
 						Summary:     handoff.Summary,
@@ -556,25 +607,15 @@ func (ls *loopState) runRound() (roundResult, error) {
 			}
 		}
 
-		// Report the truncated attempt to the event stream. See
-		// TheoryOfLoopEvents. The handoff summary is not repeated
-		// here: EventHandoff already carried it.
-		truncatedDetail := "missing completion (no summary block)"
-		if isAbnormalFinish {
-			truncatedDetail = fmt.Sprintf("abnormal finish reason %q", finishReason)
-		}
-		ls.emitEvent(Event{
-			Kind:        EventRoundTruncated,
-			Round:       ls.round,
-			Attempt:     retry + 1,
-			MaxAttempts: ls.maxRetries,
-			Detail:      truncatedDetail,
-		})
+		// Record the attempt's token usage, including the injected
+		// handoff spend. See TheoryOfUsageLogging.
+		ls.recordAttemptUsage(phaseState, attemptBase, "")
 
-		// Record the truncated round in round statistics.
-		if ls.opts.OnRoundTruncated != nil {
-			if rerr := ls.opts.OnRoundTruncated(phaseState, ls.state, summary); rerr != nil {
-				roundErr = rerr
+		// Record the truncated attempt in attempt statistics.
+		// See TheoryOfAttemptStatistics.
+		if ls.opts.OnAttemptTruncated != nil {
+			if rerr := ls.opts.OnAttemptTruncated(phaseState, ls.state, summary); rerr != nil {
+				generationErr = rerr
 				break
 			}
 		}
@@ -582,7 +623,7 @@ func (ls *loopState) runRound() (roundResult, error) {
 		// Append the retry feedback. The feedback always names the
 		// reason and the attempt number: an abnormal finish reason
 		// frames the retry as truncation; any other missing-summary
-		// round is a rule violation — the model ended its response
+		// attempt is a rule violation — the model ended its response
 		// without the mandatory summary block — so the feedback says
 		// so explicitly. Blocks from the failed attempt were
 		// discarded, so the model must re-emit every block it intends
@@ -608,42 +649,50 @@ func (ls *loopState) runRound() (roundResult, error) {
 			break
 		}
 
-		// Reset for retry.
-		if ls.opts.OnRoundStart != nil {
-			ls.opts.OnRoundStart()
-		}
+		// The retry attempt opens on the next loop iteration: its
+		// attempt-start event and OnAttemptStart hook fire there,
+		// keeping every attempt's opening bookkeeping in one place.
+		// See TheoryOfLoopEvents.
 	}
 
-	if roundErr != nil {
-		ls.recordRoundError(roundErr)
+	if generationErr != nil {
+		ls.recordAttemptError(generationErr)
 		if ls.opts.OnPhaseError != nil {
-			phaseState = ls.opts.OnPhaseError(phaseState, roundErr)
+			phaseState = ls.opts.OnPhaseError(phaseState, generationErr)
 		}
-		return roundResult{state: phaseState}, roundErr
+		ls.recordAttemptUsage(phaseState, attemptBase, "error")
+		return generationResult{state: phaseState}, generationErr
 	}
 
 	// When the retry budget is exhausted and the final attempt still
-	// produced no summary block, synthesize a summary from the round's
-	// output and append it to the state as a summary block. The
-	// synthesis applies to every exhausted round — including rounds
-	// whose blocks trigger components — because the summary block is
-	// mandatory in every response: the round statistics and the TUI's
-	// Events tab need the completion signal. See TheoryOfLoops.
-	if len(roundSummaries) == 0 && ls.opts.Handoff != nil {
-		attemptBase := generators.CountContents(ls.state)
+	// produced no summary block, synthesize a summary from the
+	// generation's output and append it to the state as a summary
+	// block. The synthesis applies to every exhausted generation —
+	// including generations whose blocks trigger components — because
+	// the summary block is mandatory in every response: the attempt
+	// statistics and the TUI's Events tab need the completion signal.
+	// See TheoryOfLoops.
+	if len(generationSummaries) == 0 && ls.opts.Handoff != nil {
 		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
 		if incompleteText != "" {
+			// Report the handoff request's start immediately.
+			// See TheoryOfLoopEvents.
+			ls.emitEvent(Event{
+				Kind:        EventHandoffStart,
+				Attempt:     ls.attempt,
+				MaxAttempts: ls.maxRetries,
+			})
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
 				// Report the synthesized completion summary to the
 				// event stream. See TheoryOfLoopEvents.
 				ls.emitEvent(Event{
 					Kind:    EventSynthesizedSummary,
-					Round:   ls.round,
+					Attempt: ls.attempt,
 					Summary: handoff.Summary,
 					Handoff: handoff,
 				})
 				// Account the handoff request's own token spend so the
-				// synthesized completion's round statistics and usage
+				// synthesized completion's attempt statistics and usage
 				// line include it. The window starts at the final
 				// attempt's base. See TheoryOfHandoffUsageAccounting.
 				phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
@@ -655,52 +704,56 @@ func (ls *loopState) runRound() (roundResult, error) {
 					},
 				})
 				if appendErr != nil {
-					ls.recordRoundError(appendErr)
+					ls.recordAttemptError(appendErr)
 					if ls.opts.OnPhaseError != nil {
 						phaseState = ls.opts.OnPhaseError(phaseState, appendErr)
 					}
-					return roundResult{state: phaseState}, appendErr
+					ls.recordAttemptUsage(phaseState, attemptBase, "error")
+					return generationResult{state: phaseState}, appendErr
 				}
-				roundSummaries = append(roundSummaries, handoff.Summary)
+				generationSummaries = append(generationSummaries, handoff.Summary)
 			}
 		}
 	}
 
-	// OnRoundSuccess hook.
-	if ls.opts.OnRoundSuccess != nil {
-		if serr := ls.opts.OnRoundSuccess(phaseState, roundSummaries); serr != nil {
-			ls.recordRoundError(serr)
-			return roundResult{state: phaseState}, serr
+	// OnAttemptSuccess hook.
+	if ls.opts.OnAttemptSuccess != nil {
+		if serr := ls.opts.OnAttemptSuccess(phaseState, generationSummaries); serr != nil {
+			ls.recordAttemptError(serr)
+			ls.recordAttemptUsage(phaseState, attemptBase, "error")
+			return generationResult{state: phaseState}, serr
 		}
 	}
 
-	// Report the successfully completed round to the interaction
-	// recorder and the event stream.
+	// Record the attempt's token usage and report the successfully
+	// completed attempt to the interaction recorder and the event
+	// stream. See TheoryOfUsageLogging and TheoryOfLoopEvents.
+	ls.recordAttemptUsage(phaseState, attemptBase, "")
 	if ls.rec != nil && ls.rec.Enabled() {
-		ls.rec.RoundSuccess(roundSummaries)
+		ls.rec.AttemptCompleted(generationSummaries)
 	}
 	ls.emitEvent(Event{
-		Kind:      EventRoundSuccess,
-		Round:     ls.round,
-		Summary:   strings.Join(roundSummaries, "\n"),
-		Summaries: roundSummaries,
+		Kind:      EventAttemptCompleted,
+		Attempt:   ls.attempt,
+		Summary:   strings.Join(generationSummaries, "\n"),
+		Summaries: generationSummaries,
 	})
 
 	ls.state = phaseState
 
 	// Parse error handling.
 	var parseErrorParts []generators.Part
-	var roundUncorrected []*blocks.BlockParseError
-	parseErrorParts, ls.parseErrorCorrectionRounds, ls.skipOnRoundStart, roundUncorrected =
-		decideParseErrorFeedback(roundParseErrors, ls.parseErrorCorrectionRounds)
-	if len(roundUncorrected) > 0 {
-		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, roundUncorrected)
+	var generationUncorrected []*blocks.BlockParseError
+	parseErrorParts, ls.parseErrorCorrections, ls.skipOnAttemptStart, generationUncorrected =
+		decideParseErrorFeedback(generationParseErrors, ls.parseErrorCorrections)
+	if len(generationUncorrected) > 0 {
+		ls.uncorrectedParseErrors = appendUncorrectedParseErrors(ls.uncorrectedParseErrors, generationUncorrected)
 	}
 	if ls.rec != nil && ls.rec.Enabled() {
 		if len(parseErrorParts) > 0 {
-			ls.rec.Event("decision", fmt.Sprintf("parse error correction attempt %d/%d: %d malformed block(s) fed back to the model", ls.parseErrorCorrectionRounds, maxParseErrorRounds, len(roundParseErrors)))
-		} else if len(roundUncorrected) > 0 {
-			ls.rec.Event("decision", fmt.Sprintf("parse error correction budget exhausted: %d malformed block(s) recorded as uncorrected", len(roundUncorrected)))
+			ls.rec.Event("decision", fmt.Sprintf("parse error correction attempt %d/%d: %d malformed block(s) fed back to the model", ls.parseErrorCorrections, maxParseErrorCorrections, len(generationParseErrors)))
+		} else if len(generationUncorrected) > 0 {
+			ls.rec.Event("decision", fmt.Sprintf("parse error correction budget exhausted: %d malformed block(s) recorded as uncorrected", len(generationUncorrected)))
 		}
 	}
 
@@ -713,41 +766,41 @@ func (ls *loopState) runRound() (roundResult, error) {
 				Parts: parseErrorParts,
 			})
 			if aerr != nil {
-				ls.recordRoundError(aerr)
-				return roundResult{state: ls.state}, aerr
+				ls.recordAttemptError(aerr)
+				return generationResult{state: ls.state}, aerr
 			}
 			ls.emitEvent(Event{
-				Kind:   EventComponentsTriggered,
-				Round:  ls.round,
-				Detail: fmt.Sprintf("parse error feedback: %d user part(s) scheduled the next round", len(parseErrorParts)),
+				Kind:    EventComponentsTriggered,
+				Attempt: ls.attempt,
+				Detail:  fmt.Sprintf("parse error feedback: %d user part(s) scheduled the next generation", len(parseErrorParts)),
 			})
-			return roundResult{
+			return generationResult{
 				state:        ls.state,
-				summaries:    roundSummaries,
+				summaries:    generationSummaries,
 				continueNext: true,
 			}, nil
 		}
-		return roundResult{
+		return generationResult{
 			state:       ls.state,
-			summaries:   roundSummaries,
+			summaries:   generationSummaries,
 			finalBlocks: collectedBlocks,
 		}, nil
 	}
 
 	// Process components.
-	var roundRemaining []blocks.Block
+	var generationRemaining []blocks.Block
 	var combinedParts []generators.Part
 	var triggered bool
 	var cerr error
-	roundRemaining, ls.state, combinedParts, triggered, cerr = components.ProcessComponents(
+	generationRemaining, ls.state, combinedParts, triggered, cerr = components.ProcessComponents(
 		ls.ctx, ls.opts.Components, collectedBlocks, ls.state,
 		ls.opts.Root, ls.opts.HTTPClient,
 	)
 	if cerr != nil {
-		ls.recordRoundError(cerr)
-		return roundResult{state: ls.state}, cerr
+		ls.recordAttemptError(cerr)
+		return generationResult{state: ls.state}, cerr
 	}
-	ls.remainingBlocks = append(ls.remainingBlocks, roundRemaining...)
+	ls.remainingBlocks = append(ls.remainingBlocks, generationRemaining...)
 
 	if len(parseErrorParts) > 0 {
 		combinedParts = append(parseErrorParts, combinedParts...)
@@ -762,21 +815,21 @@ func (ls *loopState) runRound() (roundResult, error) {
 				Parts: combinedParts,
 			})
 			if aerr != nil {
-				ls.recordRoundError(aerr)
-				return roundResult{state: ls.state}, aerr
+				ls.recordAttemptError(aerr)
+				return generationResult{state: ls.state}, aerr
 			}
 		}
 		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.Event("decision", fmt.Sprintf("components triggered a new generation round: %d user part(s)", len(combinedParts)))
+			ls.rec.Event("decision", fmt.Sprintf("components triggered a new generation: %d user part(s)", len(combinedParts)))
 		}
 		ls.emitEvent(Event{
-			Kind:   EventComponentsTriggered,
-			Round:  ls.round,
-			Detail: fmt.Sprintf("%d user part(s) scheduled the next round", len(combinedParts)),
+			Kind:    EventComponentsTriggered,
+			Attempt: ls.attempt,
+			Detail:  fmt.Sprintf("%d user part(s) scheduled the next generation", len(combinedParts)),
 		})
-		return roundResult{
+		return generationResult{
 			state:        ls.state,
-			summaries:    roundSummaries,
+			summaries:    generationSummaries,
 			parts:        combinedParts,
 			continueNext: true,
 		}, nil
@@ -786,39 +839,40 @@ func (ls *loopState) runRound() (roundResult, error) {
 		var idleContinue bool
 		ls.state, idleContinue, cerr = ls.opts.OnIdle(ls.ctx, ls.state)
 		if cerr != nil {
-			ls.recordRoundError(cerr)
-			return roundResult{state: ls.state}, cerr
+			ls.recordAttemptError(cerr)
+			return generationResult{state: ls.state}, cerr
 		}
 		if idleContinue {
 			if ls.rec != nil && ls.rec.Enabled() {
-				ls.rec.Event("decision", "idle handler returned user input; starting a new round")
+				ls.rec.Event("decision", "idle handler returned user input; starting a new generation")
 			}
-			ls.emitEvent(Event{Kind: EventIdle, Round: ls.round})
-			return roundResult{
+			ls.emitEvent(Event{Kind: EventIdle, Attempt: ls.attempt})
+			return generationResult{
 				state:        ls.state,
-				summaries:    roundSummaries,
+				summaries:    generationSummaries,
 				continueNext: true,
 			}, nil
 		}
 	}
 
-	return roundResult{
+	return generationResult{
 		state:     ls.state,
-		summaries: roundSummaries,
+		summaries: generationSummaries,
 	}, nil
 }
 
-// recordRoundUsage records the aggregated token usage of one round: to
-// the run's event stream as an EventUsage (the display source for a live
-// consumer) and as a "usage" log entry. Rounds that record no token
-// usage emit nothing. Streaming rounds additionally append the measured
-// timing keys ttft_seconds and tokens_per_second; unmeasured usages
-// leave them out. See TheoryOfUsageLogging and TheoryOfLoopEvents.
-func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int, roundNumber int, outcome string) {
+// recordAttemptUsage records the aggregated token usage of one attempt:
+// to the run's event stream as an EventUsage (the display source for a
+// live consumer) and as a "usage" log entry. Attempts that record no
+// token usage emit nothing. Streaming attempts additionally append the
+// measured timing keys ttft_seconds and tokens_per_second; unmeasured
+// usages leave them out. See TheoryOfUsageLogging and
+// TheoryOfLoopEvents.
+func (ls *loopState) recordAttemptUsage(state generators.State, attemptBaseCount int, outcome string) {
 	// The usage is the last Usage part among the contents appended since
-	// the round started, not a sum of streaming snapshots.
+	// the attempt started, not a sum of streaming snapshots.
 	// See TheoryOfUsageLogging.
-	usage := extractLastUsage(state, roundBaseCount)
+	usage := extractLastUsage(state, attemptBaseCount)
 	if usage.Prompt.TokenCount == 0 &&
 		usage.Prompt.TokenCountCached == 0 &&
 		usage.Candidates.TokenCount == 0 &&
@@ -826,13 +880,13 @@ func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int
 		return
 	}
 	ls.emitEvent(Event{
-		Kind:   EventUsage,
-		Round:  roundNumber,
-		Usage:  usage,
-		Detail: outcome,
+		Kind:    EventUsage,
+		Attempt: ls.attempt,
+		Usage:   usage,
+		Detail:  outcome,
 	})
 	args := []any{
-		"round", roundNumber,
+		"attempt", ls.attempt,
 		"prompt", usage.Prompt.TokenCount,
 		"cached", usage.Prompt.TokenCountCached,
 		"completion", usage.Candidates.TokenCount,
@@ -854,11 +908,11 @@ func (ls *loopState) recordRoundUsage(state generators.State, roundBaseCount int
 	ls.logger.InfoContext(ls.ctx, "usage", args...)
 }
 
-// recordRoundError reports a failed round to the interaction recorder
-// when recording is active.
-func (ls *loopState) recordRoundError(err error) {
+// recordAttemptError reports a failed attempt to the interaction
+// recorder when recording is active.
+func (ls *loopState) recordAttemptError(err error) {
 	if ls.rec != nil && ls.rec.Enabled() {
-		ls.rec.RoundError(err)
+		ls.rec.AttemptError(err)
 	}
 }
 
@@ -871,9 +925,9 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
 	ls.runErr = err
 	ls.emitTerminal(Event{
-		Kind:  EventRoundError,
-		Round: ls.round,
-		Err:   err,
+		Kind:    EventRunError,
+		Attempt: ls.attempt,
+		Err:     err,
 	}, err)
 }
 
@@ -904,29 +958,32 @@ type InteractionRecorder interface {
 	// SystemPrompt records the session's system prompt. Called once when
 	// the loop starts.
 	SystemPrompt(prompt string)
-	// RoundStart marks the beginning of a generation round.
-	RoundStart()
-	// RoundSuccess marks a round that completed normally, carrying the
-	// summary block bodies.
-	RoundSuccess(summaries []string)
-	// RoundTruncated marks a round that ended without a completion signal
-	// (no summary block or abnormal finish reason) and was retried.
-	RoundTruncated()
-	// RoundError marks a round that failed with an error.
-	RoundError(err error)
+	// AttemptStart marks the beginning of a generation attempt: one
+	// pass through the phase chain, numbered within its generation.
+	AttemptStart()
+	// AttemptCompleted marks an attempt that completed normally,
+	// carrying the summary block bodies.
+	AttemptCompleted(summaries []string)
+	// AttemptTruncated marks an attempt that ended without a completion
+	// signal (no summary block or abnormal finish reason) and was
+	// retried.
+	AttemptTruncated()
+	// AttemptError marks an attempt that failed with an error.
+	AttemptError(err error)
 	// Content records a content appended to the generation state.
 	Content(content *generators.Content)
 	// Block records a structured block parsed from the model output.
 	Block(block blocks.Block)
 	// ParseError records a malformed block that could not be parsed.
 	ParseError(parseErr *blocks.BlockParseError)
-	// Event records an arbitrary session event with the current round
-	// number, carrying a type and a free-form detail. The generation loop
-	// uses it for flow decisions (retries, parse-error corrections,
-	// component-triggered rounds, session metadata), and generator
-	// implementations use it through generators.EventRecorderFromContext
-	// for API-level events (api_call, api_error). The transcript renders
-	// each event by its type. See records.TheoryOfEventRecording.
+	// Event records an arbitrary session event with the current attempt
+	// number, carrying a type and a free-form detail. The generation
+	// loop uses it for flow decisions (retries, parse-error
+	// corrections, component-triggered generations, session metadata),
+	// and generator implementations use it through the dscope-injected
+	// EventRecorder for API-level events (api_call, api_error). The
+	// transcript renders each event by its type.
+	// See records.TheoryOfEventRecording.
 	Event(typ string, detail string)
 }
 
@@ -942,23 +999,25 @@ type RunOptions struct {
 	// TUI observing output content) pass their own implementations.
 	// See StateDecorator.
 	StateDecorators []StateDecorator
-	// Components is the component set for block processing between rounds.
-	// When empty, the loop runs a single round (single-shot mode).
+	// Components is the component set for block processing between
+	// generations. When empty, the loop runs a single generation
+	// (single-shot mode).
 	Components components.ComponentSet
 	// BlockHandler processes blocks during streaming. May be nil.
 	// If consumed is true, the block is not passed to ProcessComponents.
 	BlockHandler BlockHandler
-	// PhaseBuilder builds the phase chain for each round.
+	// PhaseBuilder builds the phase chain for each generation.
 	PhaseBuilder func(generators.Generator) generators.Phase
 	// Root is the filesystem root for ProcessComponents. Optional.
 	Root *os.Root
 	// HTTPClient is the HTTP client for ProcessComponents. Optional.
 	HTTPClient nets.HTTPClient
-	// MaxRounds limits the number of rounds. 0 means unlimited.
-	MaxRounds int
+	// MaxGenerations limits the number of generations. 0 means
+	// unlimited.
+	MaxGenerations int
 
 	// InteractionRecorder receives generation events (contents, blocks,
-	// round lifecycle) for interaction recording and self-improvement
+	// attempt lifecycle) for interaction recording and self-improvement
 	// analysis. When nil, the Recorder provider default is used (see the
 	// InteractionRecorder provider in this package).
 	// See records.TheoryOfInteractionRecording.
@@ -970,26 +1029,26 @@ type RunOptions struct {
 	// See records.TheoryOfInteractionRecording.
 	Command string
 
-	// OnRoundStart is called before each round (including retries).
-	// Used to reset per-round state (e.g., MemoryStore.Reset).
-	OnRoundStart func()
+	// OnAttemptStart is called before each attempt (including retries).
+	// Used to reset per-attempt state (e.g., MemoryStore.Reset).
+	OnAttemptStart func()
 
-	// OnRoundSuccess is called after a successful round, before
+	// OnAttemptSuccess is called after a successful attempt, before
 	// component processing. If it returns an error, the loop stops.
-	// Used to flush per-round state (e.g., MemoryStore.Flush) and
-	// collect round-level metadata (e.g., token statistics).
-	// summaries contains summary block bodies extracted from the round.
-	OnRoundSuccess func(state generators.State, summaries []string) error
+	// Used to flush per-attempt state (e.g., MemoryStore.Flush) and
+	// collect attempt-level metadata (e.g., token statistics).
+	// summaries contains summary block bodies extracted from the attempt.
+	OnAttemptSuccess func(state generators.State, summaries []string) error
 
-	// OnRoundTruncated is called when a round is truncated (no summary
-	// block or abnormal finish reason) and will be retried. It receives
-	// the state with the truncated output, the state that will be the
-	// base for the retry round, and the synthesized summary of the
-	// truncated output. The callback records the truncated round in
-	// round statistics. Unlike OnRoundSuccess, it must not flush
-	// per-round state (e.g., MemoryStore) because the truncated round's
-	// changes are discarded. See TheoryOfLoops.
-	OnRoundTruncated func(truncatedState generators.State, retryBaseState generators.State, summary string) error
+	// OnAttemptTruncated is called when an attempt is truncated (no
+	// summary block or abnormal finish reason) and will be retried. It
+	// receives the state with the truncated output, the state that will
+	// be the base for the retry attempt, and the synthesized summary of
+	// the truncated output. The callback records the truncated attempt
+	// in attempt statistics. Unlike OnAttemptSuccess, it must not flush
+	// per-attempt state (e.g., MemoryStore) because the truncated
+	// attempt's changes are discarded. See TheoryOfLoops.
+	OnAttemptTruncated func(truncatedState generators.State, retryBaseState generators.State, summary string) error
 
 	// OnPhaseError is called when a phase returns an error, before
 	// the loop stops. The returned state is included in the Result.
@@ -997,38 +1056,39 @@ type RunOptions struct {
 	OnPhaseError func(state generators.State, err error) generators.State
 
 	// RetryOnMissingCompletion enables retry when no summary block is
-	// found in the collected blocks after a round, or when the finish
+	// found in the collected blocks after an attempt, or when the finish
 	// reason indicates abnormal termination (e.g., "length" from
 	// max-token truncation). The summary block is the mandatory
 	// completion signal — no other block kind (ingest, shell, continue,
-	// go-test, go-src) replaces or implies it — so every round missing
-	// a summary block is retried, including rounds whose blocks trigger
-	// components. See TheoryOfSummaryCompletionRetry in generate.go.
+	// go-test, go-src) replaces or implies it — so every attempt missing
+	// a summary block is retried, including attempts whose blocks
+	// trigger components. See TheoryOfSummaryCompletionRetry in
+	// summarize_incomplete.go.
 	RetryOnMissingCompletion bool
 	// RetryOnError enables retry when any error occurs after the model
-	// has output content during a round. The loop summarizes the
+	// has output content during an attempt. The loop summarizes the
 	// incomplete output (using Handoff if available),
 	// appends both the error context and the summary as user content,
-	// resets per-round state via OnRoundStart (which resets the
+	// resets per-attempt state via OnAttemptStart (which resets the
 	// MemoryStore), and retries from the updated state. Errors that
 	// occur before any content is output do not trigger retry. See
 	// TheoryOfLoops.
 	RetryOnError bool
-	// MaxRetries limits retries per round when RetryOnMissingCompletion
-	// or RetryOnError is true. Defaults to 3 when either is true
-	// and MaxRetries is 0.
+	// MaxRetries limits retries per generation when
+	// RetryOnMissingCompletion or RetryOnError is true. Defaults to 3
+	// when either is true and MaxRetries is 0.
 	MaxRetries int
 	// Handoff summarizes incomplete output into a self-contained handoff
 	// before retrying. If output is below the threshold or handoff is nil,
 	// retry proceeds directly.
 	Handoff func(incompleteText string) (*Handoff, error)
 
-	// OnIdle is called when no component triggers after a round. It allows
-	// the caller to provide interactive input (e.g., chat prompt) and
-	// decide whether to continue with another round. If OnIdle returns
-	// continue=true, a new round starts. If false or OnIdle is nil,
-	// the loop ends. OnIdle is only invoked in multi-round mode (when
-	// Components is non-empty). See TheoryOfIdleHandler.
+	// OnIdle is called when no component triggers after a generation. It
+	// allows the caller to provide interactive input (e.g., chat prompt)
+	// and decide whether to continue with another generation. If OnIdle
+	// returns continue=true, a new generation starts. If false or OnIdle
+	// is nil, the loop ends. OnIdle is only invoked in multi-generation
+	// mode (when Components is non-empty). See TheoryOfIdleHandler.
 	OnIdle IdleHandler
 }
 
@@ -1041,15 +1101,16 @@ func formatHandoffPrompt(retryPrompt string, attempt, maxAttempts int) string {
 
 // Result holds the outcome of a generation loop.
 type Result struct {
-	// FinalState is the state after the last round (without ParserState).
+	// FinalState is the state after the last generation (without
+	// ParserState).
 	FinalState generators.State
 	// RemainingBlocks are blocks not matched by any component.
 	RemainingBlocks []blocks.Block
 	// ParseErrors lists blocks that could not be parsed and were not
-	// corrected within the maxParseErrorRounds correction budget. In
-	// unattended operation, callers (e.g., the goal command) can inspect
-	// this to detect silent change loss from persistently malformed
-	// model output. See TheoryOfLoops.
+	// corrected within the maxParseErrorCorrections correction budget.
+	// In unattended operation, callers (e.g., the goal command) can
+	// inspect this to detect silent change loss from persistently
+	// malformed model output. See TheoryOfLoops.
 	ParseErrors []*blocks.BlockParseError
 	// Diffs are the session diffs of all changes applied through the
 	// in-memory file store during this run. They are used by the review
@@ -1209,35 +1270,21 @@ func (Module) Run(
 			// goroutine, so the reentrant yield is safe. See
 			// TheoryOfLoopEvents and TheoryOfThoughtsSummarize.
 			installThoughtSummaryEmitter(ls.state, func(summary string) {
-				ls.emitEvent(Event{Kind: EventThoughtSummary, Round: ls.round, Summary: summary})
+				ls.emitEvent(Event{Kind: EventThoughtSummary, Attempt: ls.attempt, Summary: summary})
 			})
 
-			// The main loop: each iteration is one generation round. A
-			// round produces a summary and parts; when parts exist, the
-			// next round starts. prevRoundContentCount tracks the content
-			// count at the start of the current round so the round's
-			// aggregated token usage can be isolated from the contents
-			// appended during the round. The round's occurrences are
-			// yielded as Events by runRound through the guarded yield.
-			// See TheoryOfLoops and TheoryOfLoopEvents.
-			prevRoundContentCount := generators.CountContents(ls.state)
-			for ls.round = 1; opts.MaxRounds == 0 || ls.round <= opts.MaxRounds; ls.round++ {
-				outcome, err := ls.runRound()
+			// The main loop: each iteration is one generation. A
+			// generation produces a summary and parts; when parts exist,
+			// the next generation starts. The generation's occurrences are
+			// yielded as Events by runGeneration through the guarded
+			// yield; usage recording lives inside runGeneration, scoped to
+			// each attempt. See TheoryOfLoops and TheoryOfLoopEvents.
+			for generation := 1; opts.MaxGenerations == 0 || generation <= opts.MaxGenerations; generation++ {
+				outcome, err := ls.runGeneration()
 				if err != nil {
-					// Record the failed round's token usage so token
-					// consumption is traceable for every attempt, including
-					// rounds that end with an error. See TheoryOfUsageLogging.
-					ls.recordRoundUsage(outcome.state, prevRoundContentCount, ls.round, "error")
 					ls.finishWithError(err, outcome.state)
 					return
 				}
-				// Record the round's aggregated token usage — to the event
-				// stream (the display source for a live consumer) and to the
-				// logger — so token consumption is visible per round, not
-				// only in the end-of-session statistics table. See
-				// TheoryOfUsageLogging.
-				ls.recordRoundUsage(outcome.state, prevRoundContentCount, ls.round, "")
-				prevRoundContentCount = generators.CountContents(outcome.state)
 				if outcome.continueNext {
 					continue
 				}
@@ -1339,31 +1386,32 @@ func formatParseErrors(errors []*blocks.BlockParseError, attempt, maxAttempts in
 
 // decideParseErrorFeedback decides whether to feed parse errors back to
 // the model for self-correction. The correction budget is cumulative per
-// run: it resets only when a round produces no parse errors (returning a
-// reset counter), so a model that persistently emits malformed blocks
-// cannot restart the correction cycle indefinitely when other components
-// keep triggering rounds. When the budget is exhausted, no feedback is
-// produced and the round's parse errors are returned as uncorrected so
-// the caller can record them in Result.ParseErrors. See TheoryOfLoops.
+// run: it resets only when a generation produces no parse errors
+// (returning a reset counter), so a model that persistently emits
+// malformed blocks cannot restart the correction cycle indefinitely when
+// other components keep triggering generations. When the budget is
+// exhausted, no feedback is produced and the generation's parse errors
+// are returned as uncorrected so the caller can record them in
+// Result.ParseErrors. See TheoryOfLoops.
 func decideParseErrorFeedback(
-	roundParseErrors []*blocks.BlockParseError,
-	correctionRounds int,
+	generationParseErrors []*blocks.BlockParseError,
+	correctionCount int,
 ) (
 	feedback []generators.Part,
-	correctionRoundsOut int,
-	skipOnRoundStart bool,
+	correctionCountOut int,
+	skipOnAttemptStart bool,
 	uncorrected []*blocks.BlockParseError,
 ) {
-	if len(roundParseErrors) == 0 {
+	if len(generationParseErrors) == 0 {
 		return nil, 0, false, nil
 	}
-	if correctionRounds < maxParseErrorRounds {
-		correctionRounds++
+	if correctionCount < maxParseErrorCorrections {
+		correctionCount++
 		return []generators.Part{
-			generators.Text(formatParseErrors(roundParseErrors, correctionRounds, maxParseErrorRounds)),
-		}, correctionRounds, true, nil
+			generators.Text(formatParseErrors(generationParseErrors, correctionCount, maxParseErrorCorrections)),
+		}, correctionCount, true, nil
 	}
-	return nil, correctionRounds, false, roundParseErrors
+	return nil, correctionCount, false, generationParseErrors
 }
 
 // appendUncorrectedParseErrors appends parse errors to the accumulated

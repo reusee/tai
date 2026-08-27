@@ -24,9 +24,9 @@ import (
 const TheoryOfStreamingApply = `
 Change blocks are applied to an in-memory MemoryStore as they are parsed from
 streamed model output, rather than directly to disk. The in-memory semantics —
-early error detection, reset on retry, single-batch flush on round success, and
-in-memory content as the base for subsequent same-file edits — are documented in
-changes.TheoryOfInMemoryApply.
+early error detection, reset on retry, single-batch flush on generation
+success, and in-memory content as the base for subsequent same-file edits —
+are documented in changes.TheoryOfInMemoryApply.
 
 The streaming-specific mechanism is a BlockHandler callback on ParserState: when a
 complete change block is parsed during AppendContent, the handler applies it via
@@ -37,7 +37,7 @@ so the retry loop provides change-block-specific guidance — the retry discards
 change blocks from the failed attempt, so the model must re-emit every intended
 change block — and routes the error through OnPhaseError like any other phase error,
 which summarizes partial model output before the retry (see
-TheoryOfSummaryRetryOnError). The MemoryStore is reset by the OnRoundStart callback
+TheoryOfSummaryRetryOnError). The MemoryStore is reset by the OnAttemptStart callback
 on each retry, discarding failed changes; when retries are exhausted, generation
 stops.
 
@@ -60,8 +60,9 @@ a session where the model emitted no change blocks (or changes were not applied,
 e.g., with -no-apply) would still initiate a wasteful review generation over an
 empty diff. The diff set is derived from the in-memory store's session originals,
 so it is empty exactly when no change blocks were applied to the working tree (see
-changes.TheoryOfInMemoryApply). Session originals are retained across round resets
-so the diff always reflects the full session delta, not only the last round.
+changes.TheoryOfInMemoryApply). Session originals are retained across attempt
+resets so the diff always reflects the full session delta, not only the last
+attempt.
 
 When diffs exist, the review loop opens a fresh dscope scope so the latest
 filesystem state is loaded as context — the same reset mechanism the goal command
@@ -76,12 +77,12 @@ improving accuracy.
 type Generate func(ctx context.Context, output io.Writer) error
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and
-// returns the Result together with the round statistics collected
+// returns the Result together with the attempt statistics collected
 // during the run. The statistics are returned (not only printed) so that
 // callers that run multiple independent generation sessions — such as the
 // goal command — can accumulate them and re-print the entire process
-// aggregated after all sessions complete. See TheoryOfRoundStatistics.
-type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []RoundStat, error)
+// aggregated after all sessions complete. See TheoryOfAttemptStatistics.
+type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error)
 
 // RunReview provider. It is separate from GenerateWithResultWithStats so
 // review is opt-in and does not recursively trigger itself. Each review
@@ -190,34 +191,37 @@ func buildUserPromptText(parts []generators.Part) string {
 	return b.String()
 }
 
-const TheoryOfRoundStatistics = `
-Round statistics are collected per round to provide visibility into token usage
-and duration. Each round produces a single RoundStat entry with the 1-based round
-number; prompt, completion, thought, and cached token counts from the round's
-final usage; the duration (from OnRoundStart to OnRoundSuccess); and the summary
-from the round's summary blocks. Round management is decoupled from usage parts:
-intermediate usage snapshots emitted during streaming (e.g., Gemini's streaming
-UsageMetadata) do not create duplicate round entries. Truncated rounds (no
-summary block) that are retried are recorded via OnRoundTruncated with the
-summary synthesized by the retry process, so they appear as separate loops in the
-statistics; the retry round itself is recorded by OnRoundSuccess when it
-completes successfully. The statistics are printed at the end of the session
-via a deferred call, so they are shown even when the session ends early due to
-an error. The table is written to the RoundStatsWriter provider when one is
-configured, and to the generation output writer otherwise: in TUI mode the
-output writer is the redirected null device, so the TUI forks RoundStatsWriter
-to its output pane.
+const TheoryOfAttemptStatistics = `
+Attempt statistics are collected per attempt to provide visibility into
+token usage and duration. Each attempt produces a single AttemptStat
+entry with the 1-based attempt number within its generation; prompt,
+completion, thought, and cached token counts from the attempt's final
+usage; the duration (from OnAttemptStart to OnAttemptSuccess); and the
+summary from the attempt's summary blocks. Attempt management is
+decoupled from usage parts: intermediate usage snapshots emitted during
+streaming (e.g., Gemini's streaming UsageMetadata) do not create
+duplicate entries. Truncated attempts (no summary block) that are
+retried are recorded via OnAttemptTruncated with the summary synthesized
+by the retry process, so they appear as separate entries; the completing
+attempt itself is recorded by OnAttemptSuccess. The statistics are
+printed at the end of the session via a deferred call, so they are shown
+even when the session ends early due to an error. The table is written
+to the AttemptStatsWriter provider when one is configured, and to the
+generation output writer otherwise: in TUI mode the output writer is the
+redirected null device, so the TUI forks AttemptStatsWriter to its
+output pane.
 `
 
-// RoundStat records per-round token usage (prompt, completion, thoughts,
-// cached), running time, and summary for a single generation round. The
-// Loop field identifies the goal loop that produced the round when the
-// statistics are aggregated across multiple goal loops (goal command);
-// it is zero for single-session runs (go, any). See
-// TheoryOfRoundStatistics.
-type RoundStat struct {
+// AttemptStat records per-attempt token usage (prompt, completion,
+// thoughts, cached), running time, and summary for a single generation
+// attempt. The Attempt field is the 1-based attempt number within its
+// generation. The Loop field identifies the goal loop that produced the
+// attempt when the statistics are aggregated across multiple goal loops
+// (goal command); it is zero for single-session runs (go, any). See
+// TheoryOfAttemptStatistics.
+type AttemptStat struct {
 	Loop             int
-	Round            int
+	Attempt          int
 	PromptTokens     int
 	CompletionTokens int
 	ThoughtTokens    int
@@ -226,21 +230,21 @@ type RoundStat struct {
 	Summary          string
 }
 
-// RoundStatsWriter receives the round statistics table printed at the end of
-// a generation session. The default provider returns nil, in which case the
-// table is written to the generation output writer passed by the command. A
-// display front-end (e.g., tai's TUI) forks this type to route the table into
-// its interface: in TUI mode the generation output writer is the redirected
-// null device, so the table would be invisible without the fork. See
-// TheoryOfRoundStatistics.
-type RoundStatsWriter io.Writer
+// AttemptStatsWriter receives the attempt statistics table printed at
+// the end of a generation session. The default provider returns nil, in
+// which case the table is written to the generation output writer
+// passed by the command. A display front-end (e.g., tai's TUI) forks
+// this type to route the table into its interface: in TUI mode the
+// generation output writer is the redirected null device, so the table
+// would be invisible without the fork. See TheoryOfAttemptStatistics.
+type AttemptStatsWriter io.Writer
 
-// PrintRoundStats writes the round statistics table to w. The optional
-// title replaces the default "Generation Statistics" header. When any
-// stat has a non-zero Loop field (goal command aggregation), a Loop
-// column is rendered and summary lines are prefixed with the loop
-// number. See TheoryOfRoundStatistics.
-func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
+// PrintAttemptStats writes the attempt statistics table to w. The
+// optional title replaces the default "Generation Statistics" header.
+// When any stat has a non-zero Loop field (goal command aggregation), a
+// Loop column is rendered and summary lines are prefixed with the loop
+// number. See TheoryOfAttemptStatistics.
+func PrintAttemptStats(w io.Writer, stats []AttemptStat, title ...string) {
 	if len(stats) == 0 {
 		return
 	}
@@ -257,24 +261,24 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 	}
 
 	fmt.Fprintf(w, "\n=== %s ===\n", header)
-	fmt.Fprintf(w, "Total rounds: %d\n\n", len(stats))
+	fmt.Fprintf(w, "Total generations: %d\n\n", len(stats))
 	if hasLoop {
-		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "Loop", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
-		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "-----", "-----", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-6s %-8s %12s %12s %12s %12s %12s\n", "Loop", "Attempt", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
+		fmt.Fprintf(w, "%-6s %-8s %12s %12s %12s %12s %12s\n", "-----", "-------", "------", "----------", "--------", "-------", "--------")
 	} else {
-		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "Round", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
-		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-8s %12s %12s %12s %12s %12s\n", "Attempt", "Prompt", "Completion", "Thoughts", "Cached", "Duration")
+		fmt.Fprintf(w, "%-8s %12s %12s %12s %12s %12s\n", "-------", "------", "----------", "--------", "-------", "--------")
 	}
 	var totalPrompt, totalCompletion, totalThoughts, totalCached int
 	var totalDuration time.Duration
 	for _, s := range stats {
 		if hasLoop {
-			fmt.Fprintf(w, "%-6d %-6d %12d %12d %12d %12d %12s\n",
-				s.Loop, s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
+			fmt.Fprintf(w, "%-6d %-8d %12d %12d %12d %12d %12s\n",
+				s.Loop, s.Attempt, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
 				s.Duration.Round(time.Millisecond).String())
 		} else {
-			fmt.Fprintf(w, "%-6d %12d %12d %12d %12d %12s\n",
-				s.Round, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
+			fmt.Fprintf(w, "%-8d %12d %12d %12d %12d %12s\n",
+				s.Attempt, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens, s.CachedTokens,
 				s.Duration.Round(time.Millisecond).String())
 		}
 		totalPrompt += s.PromptTokens
@@ -284,17 +288,17 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 		totalDuration += s.Duration
 	}
 	if hasLoop {
-		fmt.Fprintf(w, "%-6s %-6s %12s %12s %12s %12s %12s\n", "-----", "-----", "------", "----------", "--------", "-------", "--------")
-		fmt.Fprintf(w, "%-6s %-6s %12d %12d %12d %12d %12s\n", "", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
+		fmt.Fprintf(w, "%-6s %-8s %12s %12s %12s %12s %12s\n", "-----", "-------", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-6s %-8s %12d %12d %12d %12d %12s\n", "", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
 			totalDuration.Round(time.Millisecond).String())
 	} else {
-		fmt.Fprintf(w, "%-6s %12s %12s %12s %12s %12s\n", "-----", "------", "----------", "--------", "-------", "--------")
-		fmt.Fprintf(w, "%-6s %12d %12d %12d %12d %12s\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
+		fmt.Fprintf(w, "%-8s %12s %12s %12s %12s %12s\n", "-------", "------", "----------", "--------", "-------", "--------")
+		fmt.Fprintf(w, "%-8s %12d %12d %12d %12d %12s\n", "Total", totalPrompt, totalCompletion, totalThoughts, totalCached,
 			totalDuration.Round(time.Millisecond).String())
 	}
 	fmt.Fprintf(w, "==============================\n")
 
-	// Print round summaries if any exist. See TheoryOfSummaryBlocks.
+	// Print attempt summaries if any exist. See TheoryOfSummaryBlocks.
 	hasSummaries := false
 	for _, s := range stats {
 		if s.Summary != "" {
@@ -303,13 +307,13 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 		}
 	}
 	if hasSummaries {
-		fmt.Fprintf(w, "\n=== Round Summaries ===\n")
+		fmt.Fprintf(w, "\n=== Attempt Summaries ===\n")
 		for _, s := range stats {
 			if s.Summary != "" {
 				if hasLoop {
-					fmt.Fprintf(w, "Loop %d Round %d: %s\n", s.Loop, s.Round, s.Summary)
+					fmt.Fprintf(w, "Loop %d Attempt %d: %s\n", s.Loop, s.Attempt, s.Summary)
 				} else {
-					fmt.Fprintf(w, "Round %d: %s\n", s.Round, s.Summary)
+					fmt.Fprintf(w, "Attempt %d: %s\n", s.Attempt, s.Summary)
 				}
 			}
 		}
@@ -317,13 +321,17 @@ func PrintRoundStats(w io.Writer, stats []RoundStat, title ...string) {
 	}
 }
 
-func collectRoundStats(
-	roundStats []RoundStat,
+// collectAttemptStats extracts the last Usage part from the contents
+// appended since prevContentCount and appends one AttemptStat entry
+// carrying the 1-based attempt number, the usage counts, the elapsed
+// duration, and the summary.
+func collectAttemptStats(
+	attemptStats []AttemptStat,
 	state generators.State,
 	prevContentCount int,
 	elapsed time.Duration,
 	summary string,
-) ([]RoundStat, int) {
+) ([]AttemptStat, int) {
 	var lastUsage generators.Usage
 	contentIndex := 0
 	for c := range state.Contents() {
@@ -337,8 +345,8 @@ func collectRoundStats(
 		contentIndex++
 	}
 
-	roundStats = append(roundStats, RoundStat{
-		Round:            len(roundStats) + 1,
+	attemptStats = append(attemptStats, AttemptStat{
+		Attempt:          len(attemptStats) + 1,
 		PromptTokens:     lastUsage.Prompt.TokenCount,
 		CompletionTokens: lastUsage.Candidates.TokenCount,
 		ThoughtTokens:    lastUsage.Thoughts.TokenCount,
@@ -346,7 +354,7 @@ func collectRoundStats(
 		Duration:         elapsed,
 		Summary:          summary,
 	})
-	return roundStats, contentIndex
+	return attemptStats, contentIndex
 }
 
 // CreateHandoff summarizes truncated or failed generation output before
@@ -573,10 +581,10 @@ func (Module) GenerateWithResultWithStats(
 	loopRun Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
-	roundStatsWriter RoundStatsWriter,
+	attemptStatsWriter AttemptStatsWriter,
 	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
-	return func(ctx context.Context, output io.Writer) (Result, []RoundStat, error) {
+	return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
 
 		// Open a root on the current directory to restrict all file I/O
 		// to the project tree. See blocks.TheoryOfIngestBlocks.
@@ -587,7 +595,7 @@ func (Module) GenerateWithResultWithStats(
 		defer root.Close()
 
 		// MemoryStore buffers change block modifications in memory during
-		// streaming, deferring disk writes until the round succeeds.
+		// streaming, deferring disk writes until the generation succeeds.
 		// The underlying root store enables write conflict detection: a
 		// file modified externally since the last write is rejected at
 		// flush time. See TheoryOfStreamingApply,
@@ -746,19 +754,20 @@ func (Module) GenerateWithResultWithStats(
 			state = generators.NewOutput(state, output, showThoughts)
 		}
 
-		var roundStats []RoundStat
+		var attemptStats []AttemptStat
 		defer func() {
-			// The table goes to the RoundStatsWriter provider when one is
+			// The table goes to the AttemptStatsWriter provider when one is
 			// configured (TUI mode forks it to its output pane), and to the
-			// generation output writer otherwise. See TheoryOfRoundStatistics.
-			statsOutput := io.Writer(roundStatsWriter)
+			// generation output writer otherwise. See
+			// TheoryOfAttemptStatistics.
+			statsOutput := io.Writer(attemptStatsWriter)
 			if statsOutput == nil {
 				statsOutput = output
 			}
-			PrintRoundStats(statsOutput, roundStats)
+			PrintAttemptStats(statsOutput, attemptStats)
 		}()
 
-		var roundStartTime time.Time
+		var attemptStartTime time.Time
 
 		var hasChats bool
 		if chats := strings.Join(flagChats, "\n"); chats != "" {
@@ -808,22 +817,22 @@ func (Module) GenerateWithResultWithStats(
 			Command:             "codes",
 			InteractionRecorder: recorder,
 
-			OnRoundStart: func() {
+			OnAttemptStart: func() {
 				memStore.Reset()
-				roundStartTime = time.Now()
+				attemptStartTime = time.Now()
 			},
 
-			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
+			OnAttemptSuccess: func(attemptState generators.State, summaries []string) error {
 				if err := memStore.Flush(); err != nil {
 					return err
 				}
 				if recorder != nil && recorder.Enabled() {
-					recorder.Event("decision", "round succeeded: in-memory changes flushed to disk")
+					recorder.Event("decision", "attempt succeeded: in-memory changes flushed to disk")
 				}
 
-				elapsed := time.Since(roundStartTime)
+				elapsed := time.Since(attemptStartTime)
 
-				// The loop guarantees a summary for every round: the
+				// The loop guarantees a summary for every attempt: the
 				// model's summary blocks, or the synthesized summary
 				// appended when the retry budget is exhausted (see
 				// TheoryOfLoops). No handoff fallback runs here: a
@@ -831,18 +840,18 @@ func (Module) GenerateWithResultWithStats(
 				// recovery, never a substitute for the model's own
 				// summary block.
 				summaryText := strings.Join(summaries, "\n")
-				roundStats, prevContentCount = collectRoundStats(
-					roundStats, roundState, prevContentCount, elapsed, summaryText,
+				attemptStats, prevContentCount = collectAttemptStats(
+					attemptStats, attemptState, prevContentCount, elapsed, summaryText,
 				)
 
-				roundStartTime = time.Now()
+				attemptStartTime = time.Now()
 				return nil
 			},
 
-			OnRoundTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
-				elapsed := time.Since(roundStartTime)
-				roundStats, _ = collectRoundStats(
-					roundStats, truncatedState, prevContentCount, elapsed, summary,
+			OnAttemptTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
+				elapsed := time.Since(attemptStartTime)
+				attemptStats, _ = collectAttemptStats(
+					attemptStats, truncatedState, prevContentCount, elapsed, summary,
 				)
 				prevContentCount = generators.CountContents(retryBaseState)
 				return nil
@@ -853,7 +862,7 @@ func (Module) GenerateWithResultWithStats(
 					return errState
 				}
 
-				elapsed := time.Since(roundStartTime)
+				elapsed := time.Since(attemptStartTime)
 				newState, newContentCount, summary, handoffErr := handoffRetryState(
 					errState,
 					phaseErr,
@@ -868,7 +877,7 @@ func (Module) GenerateWithResultWithStats(
 				// TheoryOfHandoffUsageAccounting), and the fallback path
 				// differs only by usage-free appended content, so
 				// scanning either yields the same last usage there.
-				roundStats, _ = collectRoundStats(roundStats, newState, prevContentCount, elapsed, summary)
+				attemptStats, _ = collectAttemptStats(attemptStats, newState, prevContentCount, elapsed, summary)
 				prevContentCount = newContentCount
 
 				if handoffErr != nil {
@@ -914,10 +923,10 @@ func (Module) GenerateWithResultWithStats(
 		}
 		result.Diffs = memStore.Diffs()
 
-		return result, roundStats, err
+		return result, attemptStats, err
 	}
 }
 
-func (Module) RoundStatsWriter() RoundStatsWriter {
-	return RoundStatsWriter(nil)
+func (Module) AttemptStatsWriter() AttemptStatsWriter {
+	return AttemptStatsWriter(nil)
 }

@@ -35,8 +35,10 @@ and initial contents, wraps the state so every content append is captured
 (user input, model output, reasoning thoughts, tool calls, retry feedback),
 reports every structured block parsed from the model output (change, shell,
 go-test, continue, summary, done), and reports malformed blocks via
-ParseError. Round lifecycle events — RoundStart, RoundSuccess, RoundTruncated,
-RoundError — delimit one generation pass through the phase chain.
+ParseError. Attempt lifecycle events — AttemptStart, AttemptCompleted,
+AttemptTruncated, AttemptError — delimit one pass through the phase chain:
+an attempt opens with AttemptStart and closes with AttemptCompleted,
+AttemptTruncated, or AttemptError; a generation spans all of its attempts.
 
 Model-produced streaming contents are merged at record time: consecutive
 contents with the model or assistant role are buffered and coalesced into a
@@ -44,8 +46,8 @@ single event, with adjacent Text parts (and adjacent Thought parts)
 concatenated verbatim — the same semantics as generators.Content.Merge. A
 streamed response therefore produces one readable content event per
 contiguous run instead of one event per streaming chunk. The buffer flushes
-before every other event write and before the round counter advances, so a
-merged content never crosses a round boundary, a non-model content, or any
+before every other event write and before the attempt counter advances, so a
+merged content never crosses an attempt boundary, a non-model content, or any
 other event in the transcript.
 
 Recording is enabled by the -record flag (or the "record" config path) and
@@ -56,9 +58,11 @@ Storage layout: a single sqlite file (tai-interactions.db) in the user config
 directory, using WAL journal mode and a busy timeout so multiple tai
 processes can append concurrently. Two tables: sessions (one row per tai
 invocation) and events (the chronological event stream). Each event row
-carries a type tag, the round number, a timestamp, and a text detail. A
-session is reconstructed as a readable transcript by ordering its events.
-The default database path is overridable via the DBPath provider (tests use
+carries a type tag, the attempt sequence number (stored in the round
+column, whose name is kept because CREATE TABLE IF NOT EXISTS cannot
+migrate existing databases), a timestamp, and a text detail. A session is
+reconstructed as a readable transcript by ordering its events. The
+default database path is overridable via the DBPath provider (tests use
 a temporary directory).
 
 The analysis pass (records.RunAnalysis) renders a session transcript and
@@ -79,9 +83,9 @@ const TheoryOfEventRecording = `
 The event stream is open-ended: Recorder.Event captures arbitrary typed
 events (type + detail) alongside the structured lifecycle events. The
 generation loop records flow decisions — retries with attempt counts,
-parse-error corrections, component-triggered rounds, generator selection,
-and the command line — and generator implementations record API-level
-events (api_call, api_error) through the dscope-injected
+parse-error corrections, component-triggered generations, generator
+selection, and the command line — and generator implementations record
+API-level events (api_call, api_error) through the dscope-injected
 generators.EventRecorder (see generators.TheoryOfEventRecorder). Together
 these capture errors returned by model APIs and important pipeline
 decisions that would otherwise be visible only in logs, giving the
@@ -147,21 +151,16 @@ func (e Enabled) HandleConfig(path string, values []*cue.Value) (any, error) {
 	return &ret, nil
 }
 
-// Recorder writes interaction events of the tai command into a sqlite
-// database. It is created by the Recorder provider, which opens the database
-// even when recording is disabled so the record subcommand can query
-// sessions. All methods are safe for concurrent use. Enabled reports whether
-// events are actually written. See TheoryOfInteractionRecording.
 type Recorder struct {
 	db *sql.DB
 
 	mu        sync.Mutex
 	enabled   bool
 	sessionID int64
-	round     int
+	attempt   int
 
 	// pendingModel buffers model-produced streaming contents (model or
-	// assistant role) until the next event write or round boundary, so
+	// assistant role) until the next event write or attempt boundary, so
 	// consecutive streaming chunks are recorded as one merged event
 	// instead of one event per chunk. Guarded by mu.
 	// See TheoryOfInteractionRecording.
@@ -227,15 +226,13 @@ func (r *Recorder) Enabled() bool {
 	return r != nil && r.enabled
 }
 
-// StartSession begins a new recording session for the given command. If the
-// recorder is disabled, StartSession is a no-op and no session is created.
 func (r *Recorder) StartSession(command string) {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.round = 0
+	r.attempt = 0
 	r.pendingModel = nil
 	res, err := r.db.Exec(
 		`INSERT INTO sessions (command, start_time) VALUES (?, ?)`,
@@ -280,23 +277,24 @@ func (r *Recorder) SystemPrompt(prompt string) {
 	r.insertEventLocked(0, "system_prompt", prompt)
 }
 
-// RoundStart marks the beginning of a generation round. Buffered model
-// contents are flushed into the previous round before the counter advances,
-// so a merged content never crosses a round boundary.
-func (r *Recorder) RoundStart() {
+// AttemptStart marks the beginning of a generation attempt. Buffered
+// model contents are flushed into the previous attempt before the
+// counter advances, so a merged content never crosses an attempt
+// boundary.
+func (r *Recorder) AttemptStart() {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.flushPendingModelLocked()
-	r.round++
-	r.insertEventLocked(r.round, "round_start", "")
+	r.attempt++
+	r.insertEventLocked(r.attempt, "attempt_start", "")
 }
 
-// RoundSuccess marks a round that completed normally, carrying the summary
-// block bodies as detail.
-func (r *Recorder) RoundSuccess(summaries []string) {
+// AttemptCompleted marks an attempt that completed normally, carrying
+// the summary block bodies as detail.
+func (r *Recorder) AttemptCompleted(summaries []string) {
 	if !r.Enabled() {
 		return
 	}
@@ -307,23 +305,23 @@ func (r *Recorder) RoundSuccess(summaries []string) {
 	if len(summaries) > 0 {
 		detail += "\n" + strings.Join(summaries, "\n")
 	}
-	r.insertEventLocked(r.round, "round_end", detail)
+	r.insertEventLocked(r.attempt, "attempt_end", detail)
 }
 
-// RoundTruncated marks a round that ended without a completion signal (no
-// summary block or abnormal finish reason) and was retried.
-func (r *Recorder) RoundTruncated() {
+// AttemptTruncated marks an attempt that ended without a completion
+// signal (no summary block or abnormal finish reason) and was retried.
+func (r *Recorder) AttemptTruncated() {
 	if !r.Enabled() {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.flushPendingModelLocked()
-	r.insertEventLocked(r.round, "round_end", "truncated")
+	r.insertEventLocked(r.attempt, "attempt_end", "truncated")
 }
 
-// RoundError marks a round that failed with an error.
-func (r *Recorder) RoundError(err error) {
+// AttemptError marks an attempt that failed with an error.
+func (r *Recorder) AttemptError(err error) {
 	if !r.Enabled() {
 		return
 	}
@@ -334,15 +332,9 @@ func (r *Recorder) RoundError(err error) {
 	if err != nil {
 		detail += "\n" + err.Error()
 	}
-	r.insertEventLocked(r.round, "round_end", detail)
+	r.insertEventLocked(r.attempt, "attempt_end", detail)
 }
 
-// Content records a content appended to the generation state. The role is
-// carried in the event type (content_user, content_model, content_tool,
-// content_log); the detail renders the parts as readable text.
-// Model-produced contents (model or assistant role) arrive as many small
-// streaming chunks; consecutive ones are buffered and merged into a single
-// event so the transcript stays readable. See TheoryOfInteractionRecording.
 func (r *Recorder) Content(content *generators.Content) {
 	if !r.Enabled() {
 		return
@@ -372,7 +364,7 @@ func (r *Recorder) Content(content *generators.Content) {
 	if detail == "" {
 		return
 	}
-	r.insertEventLocked(r.round, "content_"+string(content.Role), detail)
+	r.insertEventLocked(r.attempt, "content_"+string(content.Role), detail)
 }
 
 // isModelRole reports whether the role carries model-produced streaming
@@ -383,8 +375,6 @@ func isModelRole(role generators.Role) bool {
 	return role == generators.RoleModel || role == generators.RoleAssistant
 }
 
-// Block records a structured block parsed from the model output. Kindless
-// blocks (opening marker without an XML tag) are recorded as block_unknown.
 func (r *Recorder) Block(block blocks.Block) {
 	if !r.Enabled() {
 		return
@@ -396,14 +386,9 @@ func (r *Recorder) Block(block blocks.Block) {
 	if kind == "" {
 		kind = "unknown"
 	}
-	r.insertEventLocked(r.round, "block_"+kind, blockDetail(block))
+	r.insertEventLocked(r.attempt, "block_"+kind, blockDetail(block))
 }
 
-// ParseError records a malformed block that could not be parsed. All fields
-// of the parse error — kind, boundary, line, reason, collision hints, and the
-// full block content — are recorded without omission or truncation, so the
-// transcript faithfully reflects what the model emitted even when the block
-// was malformed. See TheoryOfInteractionRecording.
 func (r *Recorder) ParseError(parseErr *blocks.BlockParseError) {
 	if !r.Enabled() {
 		return
@@ -425,16 +410,17 @@ func (r *Recorder) ParseError(parseErr *blocks.BlockParseError) {
 	if parseErr.Content != "" {
 		b.WriteString("\ncontent:\n" + parseErr.Content)
 	}
-	r.insertEventLocked(r.round, "parse_error", b.String())
+	r.insertEventLocked(r.attempt, "parse_error", b.String())
 }
 
-// Event records an arbitrary session event with the current round number.
-// The generation loop uses it for flow decisions (retries, parse-error
-// corrections, component-triggered rounds, session metadata), and generator
-// implementations use it through generators.EventRecorderFromContext for
-// API-level events (api_call, api_error). The event carries a type and a
-// free-form detail; the transcript renders each event by its type. An
-// empty detail is skipped. See TheoryOfEventRecording.
+// Event records an arbitrary session event with the current attempt
+// number. The generation loop uses it for flow decisions (retries,
+// parse-error corrections, component-triggered generations, session
+// metadata), and generator implementations use it through the
+// dscope-injected EventRecorder for API-level events (api_call,
+// api_error). The event carries a type and a free-form detail; the
+// transcript renders each event by its type. An empty detail is skipped.
+// See TheoryOfEventRecording.
 func (r *Recorder) Event(typ string, detail string) {
 	if !r.Enabled() {
 		return
@@ -442,14 +428,14 @@ func (r *Recorder) Event(typ string, detail string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.flushPendingModelLocked()
-	r.insertEventLocked(r.round, typ, detail)
+	r.insertEventLocked(r.attempt, typ, detail)
 }
 
 // flushPendingModelLocked writes the buffered model-produced contents as a
-// single merged event and clears the buffer. It is called before every other
-// event write and — in RoundStart — before the round counter advances, so a
-// merged content never crosses a round boundary or another event in the
-// transcript. See TheoryOfInteractionRecording.
+// single merged event and clears the buffer. It is called before every
+// other event write and — in AttemptStart — before the attempt counter
+// advances, so a merged content never crosses an attempt boundary or
+// another event in the transcript. See TheoryOfInteractionRecording.
 func (r *Recorder) flushPendingModelLocked() {
 	pending := r.pendingModel
 	r.pendingModel = nil
@@ -460,19 +446,23 @@ func (r *Recorder) flushPendingModelLocked() {
 	if detail == "" {
 		return
 	}
-	r.insertEventLocked(r.round, "content_"+string(pending.Role), detail)
+	r.insertEventLocked(r.attempt, "content_"+string(pending.Role), detail)
 }
 
-func (r *Recorder) insertEventLocked(round int, typ, detail string) {
+// insertEventLocked writes one event row. The column is named round for
+// schema compatibility (CREATE TABLE IF NOT EXISTS cannot migrate
+// existing databases); it stores the session-wide monotonic attempt
+// sequence. See TheoryOfInteractionRecording.
+func (r *Recorder) insertEventLocked(attempt int, typ, detail string) {
 	if r.db == nil || r.sessionID == 0 {
 		return
 	}
-	if detail == "" && typ != "round_start" {
+	if detail == "" && typ != "attempt_start" {
 		return
 	}
 	_, _ = r.db.Exec(
 		`INSERT INTO events (session_id, round, time, type, detail) VALUES (?, ?, ?, ?, ?)`,
-		r.sessionID, round, time.Now().Format(time.RFC3339Nano), typ, detail,
+		r.sessionID, attempt, time.Now().Format(time.RFC3339Nano), typ, detail,
 	)
 }
 

@@ -15,10 +15,11 @@ import (
 // of the yields. The run's first attempt misses the summary block
 // (truncation retry with a handoff) and its second attempt completes
 // with a summary and a usage part; the test asserts the event sequence,
-// the round attribution (the retry happens within round 1, so no second
-// round-start appears), and the fields carried by each event. The
-// truncated event does not repeat the handoff summary — EventHandoff
-// already carried it. See TheoryOfLoopEvents.
+// the attempt attribution (the retry happens within the same
+// generation, so the second attempt-start carries attempt 2), and the
+// fields carried by each event. The truncated event is emitted before
+// the handoff request and does not repeat the handoff summary —
+// EventHandoff already carries it. See TheoryOfLoopEvents.
 func TestRunEventStream(t *testing.T) {
 	withRun(t, func(run Run) {
 		usage := generators.Usage{}
@@ -65,31 +66,26 @@ func TestRunEventStream(t *testing.T) {
 			kinds = append(kinds, ev.Kind)
 		}
 		wantKinds := []EventKind{
-			EventRoundStart,
+			EventAttemptStart,
+			EventTruncated,
+			EventHandoffStart,
 			EventHandoff,
-			EventRoundTruncated,
-			EventRoundSuccess,
+			EventAttemptStart,
 			EventUsage,
+			EventAttemptCompleted,
 		}
 		if !slices.Equal(kinds, wantKinds) {
 			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
 		}
 
-		// The retry is a re-execution of the phase chain within the same
-		// round: every event belongs to round 1 and the retry events
-		// carry the attempt number and budget.
-		for _, ev := range events {
-			if ev.Round != 1 {
-				t.Fatalf("expected round 1 on every event, got %d on %s", ev.Round, ev.Kind)
-			}
+		// The retry is a re-execution of the phase chain within the
+		// same generation: the first attempt-start carries attempt 1
+		// and the retry budget, the second carries attempt 2.
+		startEv := events[0]
+		if startEv.Attempt != 1 || startEv.MaxAttempts != 3 {
+			t.Fatalf("unexpected first attempt-start event: %+v", startEv)
 		}
-		handoffEv := events[1]
-		if handoffEv.Summary != "truncated summary" ||
-			handoffEv.Attempt != 1 || handoffEv.MaxAttempts != 3 ||
-			handoffEv.Handoff == nil || handoffEv.Handoff.Prompt != "retry prompt" {
-			t.Fatalf("unexpected handoff event: %+v", handoffEv)
-		}
-		truncatedEv := events[2]
+		truncatedEv := events[1]
 		if truncatedEv.Attempt != 1 || truncatedEv.MaxAttempts != 3 ||
 			!strings.Contains(truncatedEv.Detail, "missing completion") {
 			t.Fatalf("unexpected truncated event: %+v", truncatedEv)
@@ -97,15 +93,30 @@ func TestRunEventStream(t *testing.T) {
 		if truncatedEv.Summary != "" {
 			t.Fatalf("truncated event must not repeat the handoff summary (EventHandoff carries it), got %q", truncatedEv.Summary)
 		}
-		successEv := events[3]
-		if len(successEv.Summaries) != 1 ||
-			!strings.Contains(successEv.Summaries[0], "Done.") ||
-			!strings.Contains(successEv.Summary, "Done.") {
-			t.Fatalf("unexpected success event: %+v", successEv)
+		handoffStartEv := events[2]
+		if handoffStartEv.Attempt != 1 || handoffStartEv.MaxAttempts != 3 {
+			t.Fatalf("unexpected handoff-start event: %+v", handoffStartEv)
 		}
-		usageEv := events[4]
-		if usageEv.Usage.Prompt.TokenCount != 42 || usageEv.Usage.Candidates.TokenCount != 7 {
+		handoffEv := events[3]
+		if handoffEv.Summary != "truncated summary" ||
+			handoffEv.Attempt != 1 || handoffEv.MaxAttempts != 3 ||
+			handoffEv.Handoff == nil || handoffEv.Handoff.Prompt != "retry prompt" {
+			t.Fatalf("unexpected handoff event: %+v", handoffEv)
+		}
+		restartEv := events[4]
+		if restartEv.Attempt != 2 || restartEv.MaxAttempts != 3 {
+			t.Fatalf("unexpected second attempt-start event: %+v", restartEv)
+		}
+		usageEv := events[5]
+		if usageEv.Attempt != 2 ||
+			usageEv.Usage.Prompt.TokenCount != 42 || usageEv.Usage.Candidates.TokenCount != 7 {
 			t.Fatalf("unexpected usage event: %+v", usageEv)
+		}
+		completedEv := events[6]
+		if len(completedEv.Summaries) != 1 ||
+			!strings.Contains(completedEv.Summaries[0], "Done.") ||
+			!strings.Contains(completedEv.Summary, "Done.") {
+			t.Fatalf("unexpected completed event: %+v", completedEv)
 		}
 	})
 }
@@ -134,8 +145,8 @@ func (eventSummaryGenerator) Generate(ctx context.Context, state generators.Stat
 
 // TestRunEmitsFinishEvent verifies that each generation attempt's finish
 // reason flows to the event stream as an EventFinish (Detail carrying
-// the reason), emitted before the round completes. See
-// TheoryOfLoopEvents.
+// the reason), emitted immediately after the attempt's finish reason is
+// known, before the attempt completes. See TheoryOfLoopEvents.
 func TestRunEmitsFinishEvent(t *testing.T) {
 	withRun(t, func(run Run) {
 		opts := RunOptions{
@@ -176,15 +187,15 @@ func TestRunEmitsFinishEvent(t *testing.T) {
 			kinds = append(kinds, ev.Kind)
 		}
 		wantKinds := []EventKind{
-			EventRoundStart,
+			EventAttemptStart,
 			EventFinish,
-			EventRoundSuccess,
+			EventAttemptCompleted,
 		}
 		if !slices.Equal(kinds, wantKinds) {
 			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
 		}
 		finishEv := events[1]
-		if finishEv.Detail != "stop" || finishEv.Round != 1 {
+		if finishEv.Detail != "stop" || finishEv.Attempt != 1 {
 			t.Fatalf("unexpected finish event: %+v", finishEv)
 		}
 	})
@@ -245,9 +256,9 @@ func TestRunThoughtSummaryEvent(t *testing.T) {
 		}
 
 		wantKinds := []EventKind{
-			EventRoundStart,
+			EventAttemptStart,
 			EventThoughtSummary,
-			EventRoundSuccess,
+			EventAttemptCompleted,
 		}
 		if !slices.Equal(kinds, wantKinds) {
 			t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)

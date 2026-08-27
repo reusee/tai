@@ -44,16 +44,19 @@ and the request lifecycle is tracked by isGeneratingLog and outputTabLabel.
 
 The TUI interface replaces stdout with a three-tab terminal UI: the Output
 tab streams the model output, the Events tab renders the generation loop's
-event stream — round starts ("[Round N start]"), round summaries,
-truncations, retries, handoff and
-synthesized summaries, the finish reasons ("[Finish: ...]"), the per-round
-usage lines ("[Usage] ..."), the thought summaries when
+event stream — attempt starts ("[Attempt N start]"), attempt summaries,
+truncations, retries, handoff starts and
+synthesized summaries, the finish reasons ("[Finish: ...]"), the
+per-attempt usage lines ("[Usage] ..."), the thought summaries when
 -summarize-thoughts is enabled, and the component/idle continuations — and
 the Logs tab collects
-log records. Every event kind renders: a round success with no summary
-shows a completion line ("[Round N complete]"), and an unknown kind shows
+log records. Every event kind renders: a completed attempt with no summary
+shows a completion line ("[Attempt N complete]"), and an unknown kind shows
 a generic "[Event <kind>]" line, so no pipeline event type is silently
-dropped. The Events tab's only content source is pipeline.Run:
+dropped. Events are constructed and yielded the moment their facts are
+known: an attempt-start precedes its work, a handoff-start precedes the
+handoff request, and a truncation fires before the handoff summary is
+requested. The Events tab's only content source is pipeline.Run:
 withTUIOutputObserver taps the run's event iterator and forwards every
 event to handleEvent, so every Events-tab line originates from a pipeline
 event (see pipeline.TheoryOfLoopEvents), and EventFinish clears the
@@ -72,7 +75,7 @@ from the Output tab only when -no-thoughts is set; when
 -summarize-thoughts is enabled, the raw stream keeps flowing to
 the Output tab while the periodic summaries render in the Events tab from
 EventThoughtSummary (see pipeline.TheoryOfThoughtsSummarize), and the
-per-round usage lines render from EventUsage (see
+per-attempt usage lines render from EventUsage (see
 pipeline.TheoryOfUsageLogging). Suppressing the raw stream under
 -summarize-thoughts would blank the focused Output tab during long
 thinking phases — leaving no live feedback and making the session look
@@ -81,15 +84,15 @@ terminates a partial last line of the Output tab: streamed model output
 often ends without a trailing newline, and without termination a later
 write to the Output tab — e.g., command output written via the Output
 writer after generation completes — would be merged into the model's final
-line. Because Flush is the completion signal of each generation round, the
-termination also separates the output of consecutive rounds. Only content appended
+line. Because Flush is the completion signal of each generation, the
+termination also separates the output of consecutive generations. Only content appended
 after the decorator wraps the state is displayed; initial contents are not
 re-parsed or re-displayed, because unstructured text must not be
 imperfectly parsed. The one exception is the user's chat input: runWithTUI
 writes the flags.Chats content to the Output tab in the user role color
 before the command starts, so the user sees what the model was asked even
-though the chat lives in the initial state. Round summaries are rendered
-from EventRoundSuccess, EventRoundTruncated, and
+though the chat lives in the initial state. Attempt summaries are rendered
+from EventAttemptCompleted, EventTruncated, and
 EventSynthesizedSummary, so the TUI never parses streamed text for
 blocks, never scans rendered text for "[Finish: ...]" markers, and never
 captures model output through a
@@ -125,10 +128,7 @@ other, total expanded+2), with the last tab absorbing the rounding
 remainder; collapsed tabs take one column (vertical split) or one row
 (horizontal split) each. The s key switches between vertical splitting (tabs
 side by side, a vertical split line) and horizontal splitting (tabs
-stacked, a horizontal split line). The m key toggles mouse reporting at
-runtime: while reporting is off, the terminal performs its own text
-selection and copy (see TheoryOfMouseSupport). The default is horizontal splitting: the
-tabs are stacked vertically, one above the other. Tab cycles the focus among
+stacked, one above the other). Tab cycles the focus among
 the expanded tabs, skipping collapsed ones; the [ and ] keys jump
 the Output tab's view through the section transitions — a role change or a
 thought/non-thought change — so the user can quickly browse the whole output:
@@ -336,8 +336,8 @@ func (s tuiOutputState) Flush() (generators.State, error) {
 	// write to the Output tab — e.g., command output via the Output
 	// writer (fmt.Fprintf) after generation completes — starts on a new
 	// line instead of being merged into the model's final line. Flush is
-	// the completion signal of one generation round, so the output of
-	// consecutive rounds is separated as well. See TheoryOfTUI.
+	// the completion signal of one generation, so the output of
+	// consecutive generations is separated as well. See TheoryOfTUI.
 	s.tui.ensureOutputNewline()
 	return tuiOutputState{upstream: newUpstream, tui: s.tui}, nil
 }
@@ -937,29 +937,34 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 }
 
 // eventLines renders one pipeline event as Events-tab lines. Every event
-// kind renders at least one line: a round start opens its round, a round
-// success with no summary (single-shot commands like ai produce empty
-// summaries) shows a completion line, and an unknown kind shows a generic
-// event line, so no pipeline event type is silently dropped. Log-style
-// events use the log color; the thought summary header uses the thought
-// color; summary bodies stay plain.
+// kind renders at least one line: an attempt start opens its attempt, a
+// completed attempt with no summary (single-shot commands like ai
+// produce empty summaries) shows a completion line, and an unknown kind
+// shows a generic event line, so no pipeline event type is silently
+// dropped. Log-style events use the log color; the thought summary
+// header uses the thought color; summary bodies stay plain.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	switch ev.Kind {
-	case pipeline.EventRoundStart:
-		return logLines(fmt.Sprintf("[Round %d start]", ev.Round))
-	case pipeline.EventRoundSuccess:
+	case pipeline.EventAttemptStart:
+		return logLines(fmt.Sprintf("[Attempt %d start]", ev.Attempt))
+	case pipeline.EventAttemptCompleted:
 		if strings.TrimSpace(ev.Summary) == "" {
-			return logLines(fmt.Sprintf("[Round %d complete]", ev.Round))
+			return logLines(fmt.Sprintf("[Attempt %d complete]", ev.Attempt))
 		}
 		return summaryLines(ev.Summary)
-	case pipeline.EventRoundTruncated:
-		return logLines(fmt.Sprintf("[Round %d truncated (attempt %d/%d): %s]",
-			ev.Round, ev.Attempt, ev.MaxAttempts, ev.Detail))
+	case pipeline.EventTruncated:
+		return logLines(fmt.Sprintf("[Attempt %d truncated (attempt %d/%d): %s]",
+			ev.Attempt, ev.Attempt, ev.MaxAttempts, ev.Detail))
 	case pipeline.EventRetry:
 		return logLines(fmt.Sprintf("[Retry attempt %d/%d] %v",
 			ev.Attempt, ev.MaxAttempts, ev.Err))
-	case pipeline.EventRoundError:
-		return logLines(fmt.Sprintf("[Round %d error] %v", ev.Round, ev.Err))
+	case pipeline.EventRunError:
+		return logLines(fmt.Sprintf("[Run error] %v", ev.Err))
+	case pipeline.EventHandoffStart:
+		if ev.Attempt == 0 {
+			return logLines("[Handoff started]")
+		}
+		return logLines(fmt.Sprintf("[Handoff started (attempt %d/%d)]", ev.Attempt, ev.MaxAttempts))
 	case pipeline.EventHandoff:
 		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", ev.Attempt, ev.MaxAttempts)
 		if ev.Attempt == 0 {
@@ -976,8 +981,8 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		// SpeedSuffix carries the streaming ttft and average generation
 		// speed when measured, staying empty for unmeasured usages.
 		// See TheoryOfUsageTiming.
-		return logLines(fmt.Sprintf("[Usage] round %d%s: prompt %d, cached %d, completion %d, thoughts %d",
-			ev.Round, outcome,
+		return logLines(fmt.Sprintf("[Usage] attempt %d%s: prompt %d, cached %d, completion %d, thoughts %d",
+			ev.Attempt, outcome,
 			ev.Usage.Prompt.TokenCount,
 			ev.Usage.Prompt.TokenCountCached,
 			ev.Usage.Candidates.TokenCount,
@@ -991,9 +996,9 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 			summaryLines(ev.Summary)...,
 		)
 	case pipeline.EventComponentsTriggered:
-		return logLines(fmt.Sprintf("[Round %d continues] %s", ev.Round, ev.Detail))
+		return logLines(fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
 	case pipeline.EventIdle:
-		return logLines("[Idle input received; starting the next round]")
+		return logLines("[Idle input received; starting the next generation]")
 	default:
 		if ev.Detail == "" {
 			return logLines(fmt.Sprintf("[Event %s]", ev.Kind))
@@ -1173,7 +1178,7 @@ func withTUIOutputObserver(run pipeline.Run, tui *TUI) pipeline.Run {
 		inner := run(ctx, opts, result)
 		return func(yield func(pipeline.Event, error) bool) {
 			inner(func(ev pipeline.Event, err error) bool {
-				// Tap unconditionally: the terminal EventRoundError
+				// Tap unconditionally: the terminal EventRunError
 				// arrives with a non-nil error and must render too.
 				tui.handleEvent(ev)
 				return yield(ev, err)
@@ -1220,12 +1225,12 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// See pipeline.TheoryOfHandoff and TheoryOfTUIHandoff.
 		func() pipeline.HandoffWriter { return pipeline.HandoffWriter(tui.Writer()) },
 		func() pipeline.HandoffObserver { return tui },
-		// The round statistics table is routed to the Output tab: the
+		// The attempt statistics table is routed to the Output tab: the
 		// pipeline prints it via a deferred call at the end of the
 		// session, and the generation output writer it receives is the
 		// redirected null device in TUI mode. See
-		// pipeline.TheoryOfRoundStatistics.
-		func() pipeline.RoundStatsWriter { return pipeline.RoundStatsWriter(tui.Writer()) },
+		// pipeline.TheoryOfAttemptStatistics.
+		func() pipeline.AttemptStatsWriter { return pipeline.AttemptStatsWriter(tui.Writer()) },
 	)
 	// Resolve the loop from the display scope so Module.Run binds the
 	// Logs-pane Logger at provider-resolution time. See

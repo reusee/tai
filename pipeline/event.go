@@ -8,17 +8,29 @@ import (
 // loop. See the constant body for the design.
 const TheoryOfLoopEvents = `
 Run is the loop's single event iterator: every notable occurrence during a
-generation run — round lifecycle (start, success, truncation, error),
-retry decisions and handoffs, synthesized completion summaries, attempt
-finish reasons, per-round token usage, periodic thought summaries,
+generation run — attempt lifecycle (start, completion, truncation, error),
+retry decisions, handoffs, synthesized completion summaries, attempt finish
+reasons, per-attempt token usage, periodic thought summaries,
 component-triggered continuations, and idle-handler input — flows to the
 consumer as one Event stream (iter.Seq2[Event, error]), unifying the
-loop's architecture on the iterator pattern. Events are yielded as they
-occur; the terminal error, if any, arrives with the final yield's error
-component and ends the sequence. The *Result is still filled
+loop's architecture on the iterator pattern. Events are constructed and
+yielded the moment their facts are known — an attempt's start event
+precedes its work, a handoff-start event precedes the handoff request,
+and a truncation event fires when truncation is detected, before the
+handoff summary is requested — so a live consumer sees what is happening
+as it happens; the terminal error, if any, arrives with the final yield's
+error component and ends the sequence. The *Result is still filled
 incrementally, so callers that only need the outcome drain the iterator
 and read the result, while callers that want live signals (a TUI, an
 observer) consume the events as they stream.
+
+The attempt is the loop's bookkeeping unit: one pass through the phase
+chain, numbered 1-based within its generation (the span from one user
+input to the next, including all retries). A generation completes when
+an attempt finishes with a summary block and a normal finish reason;
+its completion event carries the summary. Retries re-execute the phase
+chain as a new attempt with an incremented attempt number, up to the
+retry budget carried by MaxAttempts.
 
 The TUI's Events tab renders this stream directly (cmd/tai taps the
 iterator via withTUIOutputObserver), so every Events-tab line originates
@@ -28,14 +40,14 @@ from a Run event: finish reasons (EventFinish) and thought summaries
 loopState owns the guarded yield: after the consumer stops, the iterator
 contract forbids calling yield again, but the loop's bookkeeping — result
 filling, recorder calls, EndSession — must still complete, so further
-events are dropped instead of yielded. runRound executes inside Run's
+events are dropped instead of yielded. runGeneration executes inside Run's
 iterator body and emits through the same guarded yield, so there is
 exactly one event channel: the run's own iterator. Thought summaries are
 produced synchronously inside phase execution on the loop's goroutine
 (the ThoughtsSummarize state layer forwards through an emitter installed
 by Module.Run), so their reentrant yield is safe. Functions that produce
 values rather than occurrences — ProcessComponents, the Handoff option,
-the round callbacks — keep their signatures: they are steps of the loop,
+the attempt callbacks — keep their signatures: they are steps of the loop,
 not streams, and the loop reports their outcomes as Events.
 
 Events complement the InteractionRecorder rather than replacing it: the
@@ -48,91 +60,107 @@ run.
 type EventKind string
 
 const (
-	// EventRoundStart opens a generation round.
-	EventRoundStart EventKind = "round-start"
-	// EventRoundSuccess closes a round that completed normally;
-	// Summaries carries the round's summary block bodies and Summary
-	// their joined text.
-	EventRoundSuccess EventKind = "round-success"
-	// EventRoundTruncated reports an attempt that ended without a
-	// completion signal (no summary block or an abnormal finish
-	// reason) and is retried; Detail carries the reason. The truncated
-	// attempt's handoff summary is not repeated here — EventHandoff
-	// already carries it.
-	EventRoundTruncated EventKind = "round-truncated"
+	// EventAttemptStart opens a generation attempt: one pass through
+	// the phase chain, numbered 1-based within its generation. Emitted
+	// immediately before the phase chain executes, including before
+	// every retry, so a live consumer sees each request as it begins.
+	EventAttemptStart EventKind = "attempt-start"
+	// EventFinish reports the finish reason of one generation attempt
+	// (Detail carries the reason string). Emitted immediately after the
+	// attempt's finish reason is extracted, including attempts that
+	// later fail or are truncated, so a live consumer observes every
+	// request's completion signal as soon as it is known.
+	EventFinish EventKind = "finish"
+	// EventUsage reports an attempt's aggregated token usage; Detail
+	// carries the outcome marker ("error") for attempts that end with
+	// an error. Emitted once the attempt's usage is known, which on
+	// retry paths is after the handoff's spend is injected, so the
+	// recorded figure covers the whole attempt.
+	EventUsage EventKind = "usage"
+	// EventTruncated reports an attempt that ended without a completion
+	// signal (no summary block or an abnormal finish reason) and will
+	// be retried; Detail carries the reason. Emitted immediately when
+	// truncation is detected, BEFORE the handoff request, so a live
+	// consumer learns of the truncation without waiting for the handoff
+	// generation. The truncated attempt's handoff summary is not
+	// repeated here — EventHandoff already carries it.
+	EventTruncated EventKind = "truncated"
 	// EventRetry reports an attempt that failed with an error after
 	// producing output and is retried; Err carries the error being
-	// retried.
+	// retried. Emitted immediately when the retry is decided.
 	EventRetry EventKind = "retry"
-	// EventRoundError closes a round with a terminal error: the run
-	// stops and the event's error is also the iterator's terminal
-	// error component.
-	EventRoundError EventKind = "round-error"
+	// EventHandoffStart reports that a handoff summary request is about
+	// to be sent. Emitted immediately before every Handoff() call — on
+	// both retry paths and the exhausted-budget synthesis path — so a
+	// live consumer sees the handoff request in progress rather than
+	// waiting for its result.
+	EventHandoffStart EventKind = "handoff-start"
 	// EventHandoff reports a handoff summary produced for a retry;
-	// Handoff carries it and Summary its text.
+	// Handoff carries it and Summary its text. Emitted after the
+	// handoff request returns, preceded by EventHandoffStart.
 	EventHandoff EventKind = "handoff"
+	// EventAttemptCompleted closes an attempt that completed normally;
+	// Summaries carries the attempt's summary block bodies and Summary
+	// their joined text.
+	EventAttemptCompleted EventKind = "completed"
 	// EventSynthesizedSummary reports that the retry budget was
 	// exhausted and a completion summary was synthesized from the
-	// round's output; Summary carries it.
+	// attempt's output; Summary carries it.
 	EventSynthesizedSummary EventKind = "synthesized-summary"
-	// EventUsage reports a round's aggregated token usage; Detail
-	// carries the outcome marker ("error") for rounds that end with an
-	// error.
-	EventUsage EventKind = "usage"
-	// EventFinish reports the finish reason of one generation attempt
-	// (Detail carries the reason string). Emitted once per attempt,
-	// including attempts that later fail, so a live consumer observes
-	// every request's completion signal.
-	EventFinish EventKind = "finish"
+	// EventRunError closes the run with a terminal error: the run
+	// stops and the event's error is also the iterator's terminal
+	// error component.
+	EventRunError EventKind = "run-error"
 	// EventThoughtSummary reports a periodic thought summary produced
 	// by the ThoughtsSummarize state layer during generation; Summary
 	// carries the condensed text.
 	EventThoughtSummary EventKind = "thought-summary"
 	// EventComponentsTriggered reports that component output (or
-	// parse-error feedback) scheduled the next round; Detail
+	// parse-error feedback) scheduled the next generation; Detail
 	// describes the trigger.
 	EventComponentsTriggered EventKind = "components-triggered"
 	// EventIdle reports that the idle handler provided user input for
-	// the next round.
+	// the next generation.
 	EventIdle EventKind = "idle"
 )
 
 // Event is one notable occurrence during a generation loop run. Events
-// are yielded by Run as they occur; the terminal error, if any, arrives
-// with the final yield's error component. See TheoryOfLoopEvents.
+// are constructed and yielded the moment their facts are known; the
+// terminal error, if any, arrives with the final yield's error
+// component. See TheoryOfLoopEvents.
 type Event struct {
 	// Kind identifies the event.
 	Kind EventKind
-	// Round is the 1-based round number the event belongs to. Retries
-	// within a round share the round number.
-	Round int
-	// Attempt is the 1-based attempt (retry) number within the round,
-	// for retry, truncation, and handoff events. Zero when not
-	// applicable.
+	// Attempt is the 1-based attempt number within its generation: one
+	// pass through the phase chain, retried as further attempts under
+	// the same generation until completion, budget exhaustion, or
+	// terminal error. Zero when not applicable (component-triggered
+	// and idle events carry the generation's final attempt).
 	Attempt int
-	// MaxAttempts is the round's retry budget, for retry, truncation,
-	// and handoff events. Zero when not applicable.
+	// MaxAttempts is the generation's retry budget, for attempt, retry,
+	// truncation, and handoff events. Zero when retry is disabled.
 	MaxAttempts int
 	// Summary carries a summary text: the joined summary block bodies
-	// for EventRoundSuccess, the handoff summary for EventHandoff and
-	// EventSynthesizedSummary, and the condensed thought summary for
-	// EventThoughtSummary.
+	// for EventAttemptCompleted, the handoff summary for EventHandoff
+	// and EventSynthesizedSummary, and the condensed thought summary
+	// for EventThoughtSummary.
 	Summary string
-	// Summaries carries the round's summary block bodies for
-	// EventRoundSuccess.
+	// Summaries carries the attempt's summary block bodies for
+	// EventAttemptCompleted.
 	Summaries []string
-	// Usage carries the round's aggregated token usage for EventUsage.
+	// Usage carries the attempt's aggregated token usage for
+	// EventUsage.
 	Usage generators.Usage
 	// Handoff carries the handoff produced for a retry, for
 	// EventHandoff and EventSynthesizedSummary.
 	Handoff *Handoff
 	// Err carries the error for EventRetry (the error being retried)
-	// and EventRoundError (the terminal error).
+	// and EventRunError (the terminal error).
 	Err error
 	// Detail carries a human-readable description for less structured
-	// events: the reason for EventRetry, EventRoundTruncated, and
-	// EventComponentsTriggered, the finish reason for EventFinish, and
-	// the outcome marker ("error") for EventUsage.
+	// events: the reason for EventRetry and EventTruncated, the finish
+	// reason for EventFinish, and the outcome marker ("error") for
+	// EventUsage.
 	Detail string
 }
 

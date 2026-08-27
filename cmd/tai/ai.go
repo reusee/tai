@@ -30,8 +30,8 @@ profiling policy — lives in the memories package (see memories.TheoryOfMemory)
 This command wires memories into the dscope graph, feeds the current profile
 into the memory Component's prompt section (assembled into the system prompt
 via comps.PromptSections), and invokes memories.UpdateMemoryFromBlock after
-each generation round to apply memory additions and deletions: deletions
-remove items by exact string match and win over a same-round addition. The
+each attempt to apply memory additions and deletions: deletions
+remove items by exact string match and win over a same-attempt addition. The
 memory prompts teach both the memory-item and memory-delete elements.
 
 The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
@@ -44,13 +44,13 @@ paragraph below).
 
 Shell Blocks and Interactive Input:
 Shell blocks allow the model to execute shell commands and receive the output
-as part of the next generation round, enabling autonomous testing, build
+as part of the next generation, enabling autonomous testing, build
 verification, and codebase exploration. Shell block execution is disabled by
 default for safety; the -shell flag enables it.
 
 The continue block is deliberately not part of the ai command. In an
 interactive chat the user's next input arrives through OnIdle
-(pipeline.BuildChatIdle) after the round ends; a continue component would feed
+(pipeline.BuildChatIdle) after the attempt ends; a continue component would feed
 the model's own body back as user content, bypassing the prompt and allowing
 the model to emit meaningless self-prompts such as "Please provide the next
 task or user input." See TheoryOfAIComponents.
@@ -61,8 +61,8 @@ processing function. The component list is shared between AISystemPrompt (prompt
 assembly) and this generation loop (output processing), ensuring that any block
 kind introduced in the prompt always has a matching processor. Shell blocks
 are processed in the loop via components.ProcessComponents, which
-accumulates Parts into a single user message for the next round; memory blocks
-are processed after each generation round via the OnRoundSuccess hook, which calls
+accumulates Parts into a single user message for the next generation; memory blocks
+are processed after each attempt via the OnAttemptSuccess hook, which calls
 memories.UpdateMemoryFromBlock before the user is prompted for the next input.
 
 Block Collection:
@@ -80,7 +80,7 @@ The generation loop processes automated actions (shell blocks) and persists
 memory updates before prompting the user for interactive input. The PhaseBuilder includes only
 the generate phase (not chat); the chat prompt is handled by OnIdle, which is
 invoked by the loop as a fallback when no component triggers. This ensures the
-model can chain multiple rounds of autonomous shell execution without user
+model can chain multiple generations of autonomous shell execution without user
 intervention, and the user is only prompted when the model has no pending
 automated actions. See pipeline.TheoryOfIdleHandler and pipeline.TheoryOfLoops.
 
@@ -225,11 +225,12 @@ var AICommand = Command{
 		// OnIdle, which is invoked by the loop when no component triggers.
 		// This ensures automated actions (continue, shell) are processed
 		// before prompting the user for input, and memory is persisted
-		// after each round via OnRoundSuccess. The interaction recorder is
-		// passed explicitly so the session is captured when -record is
-		// enabled. The result is filled into result as the run progresses;
-		// the iterator yields the run's events, and the terminal error, if
-		// any, arrives with the final yield's error component.
+		// after each attempt via OnAttemptSuccess. The interaction
+		// recorder is passed explicitly so the session is captured when
+		// -record is enabled. The result is filled into result as the run
+		// progresses; the iterator yields the run's events, and the
+		// terminal error, if any, arrives with the final yield's error
+		// component.
 		// See pipeline.TheoryOfIdleHandler, pipeline.TheoryOfLoops and
 		// pipeline.TheoryOfLoopEvents.
 		var result pipeline.Result
@@ -242,7 +243,7 @@ var AICommand = Command{
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return buildGenerate(g, nil)(nil)
 			},
-			OnRoundSuccess: func(roundState generators.State, summaries []string) error {
+			OnAttemptSuccess: func(roundState generators.State, summaries []string) error {
 				if !noMemory {
 					newText := buf.String()[prevBufLen:]
 					prevBufLen = buf.Len()

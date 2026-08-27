@@ -89,7 +89,7 @@ func appendPhaseWithFinish(text string, finishReason string) generators.Phase {
 
 // appendPhaseWithUsage creates a phase that appends text content and a
 // token usage part, then returns nil (end of phase chain). Used to test
-// the round usage log record. See TheoryOfUsageLogging.
+// the attempt usage log record. See TheoryOfUsageLogging.
 func appendPhaseWithUsage(text string, usage generators.Usage) generators.Phase {
 	return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 		newState, err := state.AppendContent(&generators.Content{
@@ -200,8 +200,8 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			callCount++
 			// Persistently emit an unclosed block — a parse error every
-			// round. The correction loop must stop after
-			// maxParseErrorRounds.
+			// generation. The correction loop must stop after
+			// maxParseErrorCorrections.
 			return appendPhaseWithFlush("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n")
 		}
 
@@ -214,9 +214,10 @@ func TestRunParseErrorCorrectionBound(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Initial round + maxParseErrorRounds correction rounds.
-		if callCount != 1+maxParseErrorRounds {
-			t.Fatalf("expected %d rounds, got %d", 1+maxParseErrorRounds, callCount)
+		// Initial generation + maxParseErrorCorrections correction
+		// generations.
+		if callCount != 1+maxParseErrorCorrections {
+			t.Fatalf("expected %d generations, got %d", 1+maxParseErrorCorrections, callCount)
 		}
 	})
 }
@@ -283,13 +284,14 @@ func TestRunParseErrorCorrectionWithComponents(t *testing.T) {
 }
 
 func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
-	// When components keep triggering rounds, a model that persistently
-	// emits malformed blocks must not restart the parse-error correction
-	// cycle after the budget is exhausted. The correction budget is
-	// cumulative per run: feedback is given only for the first
-	// maxParseErrorRounds rounds with parse errors, then stops until a
-	// clean round resets the budget. Uncorrected parse errors are
-	// surfaced in Result.ParseErrors. See TheoryOfLoops.
+	// When components keep triggering generations, a model that
+	// persistently emits malformed blocks must not restart the
+	// parse-error correction cycle after the budget is exhausted. The
+	// correction budget is cumulative per run: feedback is given only
+	// for the first maxParseErrorCorrections generations with parse
+	// errors, then stops until a clean generation resets the budget.
+	// Uncorrected parse errors are surfaced in Result.ParseErrors. See
+	// TheoryOfLoops.
 	withRun(t, func(run Run) {
 		comps := components.ComponentSet{
 			{
@@ -302,8 +304,8 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 			},
 		}
 
-		// Every round emits a complete shell block (triggers a new round)
-		// plus an unclosed change block (parse error).
+		// Every generation emits a complete shell block (triggers a new
+		// generation) plus an unclosed change block (parse error).
 		phaseBuilder := func(g generators.Generator) generators.Phase {
 			return appendPhaseWithFlush(
 				"<<齉爩 shell\necho hi\n齉爩\n" +
@@ -311,19 +313,20 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 		}
 
 		result, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   comps,
-			PhaseBuilder: phaseBuilder,
-			HTTPClient:   nets.HTTPClient{},
-			MaxRounds:    8,
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     comps,
+			PhaseBuilder:   phaseBuilder,
+			HTTPClient:     nets.HTTPClient{},
+			MaxGenerations: 8,
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Parse error feedback appears only in the first maxParseErrorRounds
-		// rounds. Rounds 4+ receive only shell output.
+		// Parse error feedback appears only in the first
+		// maxParseErrorCorrections generations. Generations 4+ receive
+		// only shell output.
 		feedbackCount := 0
 		for c := range result.FinalState.Contents() {
 			if c.Role != generators.RoleUser {
@@ -337,8 +340,8 @@ func TestRunParseErrorCorrectionCumulativeBound(t *testing.T) {
 				}
 			}
 		}
-		if feedbackCount != maxParseErrorRounds {
-			t.Fatalf("expected %d parse-error feedbacks (cumulative bound), got %d", maxParseErrorRounds, feedbackCount)
+		if feedbackCount != maxParseErrorCorrections {
+			t.Fatalf("expected %d parse-error feedbacks (cumulative bound), got %d", maxParseErrorCorrections, feedbackCount)
 		}
 
 		// The uncorrected parse errors must be surfaced in the result.
@@ -383,7 +386,7 @@ func TestRunSingleRound(t *testing.T) {
 	})
 }
 
-func TestRunMultiRoundTriggered(t *testing.T) {
+func TestRunMultiGenerationTriggered(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		phaseBuilder := func(g generators.Generator) generators.Phase {
@@ -416,7 +419,7 @@ func TestRunMultiRoundTriggered(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if callCount != 2 {
-			t.Fatalf("expected 2 rounds, got %d", callCount)
+			t.Fatalf("expected 2 generations, got %d", callCount)
 		}
 
 		var hasShellOutput bool
@@ -645,7 +648,7 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               1,
-			OnRoundSuccess: func(state generators.State, summaries []string) error {
+			OnAttemptSuccess: func(state generators.State, summaries []string) error {
 				successSummaries = append(successSummaries, summaries)
 				return nil
 			},
@@ -661,11 +664,11 @@ func TestRunRetryExhaustedAppendsSummaryBlock(t *testing.T) {
 		}
 		if len(successSummaries) != 1 || len(successSummaries[0]) != 1 ||
 			successSummaries[0][0] != "synthesized summary" {
-			t.Fatalf("expected the synthesized summary in OnRoundSuccess, got %v", successSummaries)
+			t.Fatalf("expected the synthesized summary in OnAttemptSuccess, got %v", successSummaries)
 		}
 
-		// The exhausted round must have a synthesized summary block
-		// appended to the state so the TUI's Round tab can display it.
+		// The exhausted generation must have a synthesized summary block
+		// appended to the state so the TUI's Events tab can display it.
 		foundSummary := false
 		for c := range result.FinalState.Contents() {
 			for _, p := range c.Parts {
@@ -775,10 +778,10 @@ func TestRunRetryMaxRetries(t *testing.T) {
 	})
 }
 
-func TestRunOnRoundStartCalled(t *testing.T) {
+func TestRunOnAttemptStartCalled(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
-		onRoundStart := func() {
+		onAttemptStart := func() {
 			callCount++
 		}
 
@@ -793,15 +796,15 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			},
 		}
 
-		round := 0
+		generation := 0
 		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   comps,
-			OnRoundStart: onRoundStart,
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     comps,
+			OnAttemptStart: onAttemptStart,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
-				round++
-				if round == 1 {
+				generation++
+				if generation == 1 {
 					return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
 				}
 				return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
@@ -812,27 +815,27 @@ func TestRunOnRoundStartCalled(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if callCount < 2 {
-			t.Fatalf("expected OnRoundStart called at least 2 times, got %d", callCount)
+			t.Fatalf("expected OnAttemptStart called at least 2 times, got %d", callCount)
 		}
 	})
 }
 
-func TestRunOnRoundSuccessCalled(t *testing.T) {
+func TestRunOnAttemptSuccessCalled(t *testing.T) {
 	withRun(t, func(run Run) {
 		var successStates []generators.State
 		var successSummaries [][]string
 
-		onRoundSuccess := func(state generators.State, summaries []string) error {
+		onAttemptSuccess := func(state generators.State, summaries []string) error {
 			successStates = append(successStates, state)
 			successSummaries = append(successSummaries, summaries)
 			return nil
 		}
 
 		_, err := runOnce(run, RunOptions{
-			Generator:      nil,
-			InitialState:   generators.NewPrompts("", nil),
-			Components:     nil,
-			OnRoundSuccess: onRoundSuccess,
+			Generator:        nil,
+			InitialState:     generators.NewPrompts("", nil),
+			Components:       nil,
+			OnAttemptSuccess: onAttemptSuccess,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("<<龘靐 summary\nRound 1 done.\n龘靐\n")
 			},
@@ -841,7 +844,7 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(successStates) != 1 {
-			t.Fatalf("expected 1 OnRoundSuccess call, got %d", len(successStates))
+			t.Fatalf("expected 1 OnAttemptSuccess call, got %d", len(successStates))
 		}
 		if len(successSummaries) != 1 || len(successSummaries[0]) != 1 {
 			t.Fatalf("expected 1 summary, got %v", successSummaries)
@@ -852,13 +855,13 @@ func TestRunOnRoundSuccessCalled(t *testing.T) {
 	})
 }
 
-func TestRunLogsRoundUsage(t *testing.T) {
-	// The Run loop must record the aggregated token usage of each round
-	// to the logger, so token consumption is visible in log output and in
-	// the TUI's Logs pane, not only in the end-of-session statistics
-	// table. Streaming timings ride along as one-decimal string keys so
-	// the fractional digit survives the text handler.
-	// See TheoryOfUsageLogging and TheoryOfUsageTiming.
+func TestRunLogsAttemptUsage(t *testing.T) {
+	// The Run loop must record the aggregated token usage of each
+	// attempt to the logger, so token consumption is visible in log
+	// output and in the TUI's Logs pane, not only in the
+	// end-of-session statistics table. Streaming timings ride along as
+	// one-decimal string keys so the fractional digit survives the text
+	// handler. See TheoryOfUsageLogging and TheoryOfUsageTiming.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
 	dscope.New(
@@ -890,7 +893,7 @@ func TestRunLogsRoundUsage(t *testing.T) {
 		output := buf.String()
 		for _, want := range []string{
 			"msg=usage",
-			"round=1",
+			"attempt=1",
 			"prompt=100",
 			"cached=20",
 			"completion=50",
@@ -905,12 +908,14 @@ func TestRunLogsRoundUsage(t *testing.T) {
 	})
 }
 
-func TestRunHandoffUsageReachesRoundUsageLog(t *testing.T) {
-	// The handoff request's own token spend must reach the per-round
-	// usage line: both attempts miss the summary, so the round ends via
-	// the exhausted-synthesis path whose injected usage lands in the
-	// round's final state — the logged usage (107/20/53/11) is the main
-	// attempt's usage plus the handoff usage. See
+func TestRunHandoffUsageReachesAttemptUsageLog(t *testing.T) {
+	// The handoff request's own token spend must reach the per-attempt
+	// usage line: both attempts miss the summary, so the generation
+	// ends via the exhausted-synthesis path whose injected usage lands
+	// in attempt 2's final state — the logged usage (107/20/53/11) is
+	// the main attempt's usage plus the handoff usage. Attempt 1's
+	// truncation injection now also records its own usage entry; the
+	// assertions below target attempt 2's entry. See
 	// TheoryOfHandoffUsageAccounting and TheoryOfUsageLogging.
 	var buf bytes.Buffer
 	logger := logs.Logger{slog.New(slog.NewTextHandler(&buf, nil))}
@@ -955,7 +960,7 @@ func TestRunHandoffUsageReachesRoundUsageLog(t *testing.T) {
 		output := buf.String()
 		for _, want := range []string{
 			"msg=usage",
-			"round=1",
+			"attempt=2",
 			"prompt=107",
 			"cached=20",
 			"completion=53",
@@ -1026,7 +1031,7 @@ func TestRunHandoffUsageRetryWindowIsPerAttempt(t *testing.T) {
 			Handoff: func(text string) (*Handoff, error) {
 				return &Handoff{Summary: "handoff summary", Prompt: "retry prompt", Usage: handoffUsage}, nil
 			},
-			OnRoundTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
+			OnAttemptTruncated: func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
 				truncatedStates = append(truncatedStates, truncatedState)
 				return nil
 			},
@@ -1121,24 +1126,24 @@ func TestRunLogsRoundUsageMultipleUsageParts(t *testing.T) {
 	})
 }
 
-func TestRunOnRoundSuccessError(t *testing.T) {
+func TestRunOnAttemptSuccessError(t *testing.T) {
 	withRun(t, func(run Run) {
 		expectedErr := errors.New("flush failed")
-		onRoundSuccess := func(state generators.State, summaries []string) error {
+		onAttemptSuccess := func(state generators.State, summaries []string) error {
 			return expectedErr
 		}
 
 		_, err := runOnce(run, RunOptions{
-			Generator:      nil,
-			InitialState:   generators.NewPrompts("", nil),
-			Components:     nil,
-			OnRoundSuccess: onRoundSuccess,
+			Generator:        nil,
+			InitialState:     generators.NewPrompts("", nil),
+			Components:       nil,
+			OnAttemptSuccess: onAttemptSuccess,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				return appendPhase("hello")
 			},
 		})
 		if err == nil {
-			t.Fatal("expected error from OnRoundSuccess")
+			t.Fatal("expected error from OnAttemptSuccess")
 		}
 		if !errors.Is(err, expectedErr) {
 			t.Fatalf("expected %v, got %v", expectedErr, err)
@@ -1171,7 +1176,7 @@ func TestRunEmptyComponentsSingleShot(t *testing.T) {
 	})
 }
 
-func TestRunMaxRounds(t *testing.T) {
+func TestRunMaxGenerations(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
 		comps := components.ComponentSet{
@@ -1186,10 +1191,10 @@ func TestRunMaxRounds(t *testing.T) {
 		}
 
 		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   comps,
-			MaxRounds:    3,
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     comps,
+			MaxGenerations: 3,
 			PhaseBuilder: func(g generators.Generator) generators.Phase {
 				callCount++
 				return appendPhase("<<龘靐 shell\necho hi\n龘靐\n")
@@ -1200,7 +1205,7 @@ func TestRunMaxRounds(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if callCount != 3 {
-			t.Fatalf("expected 3 rounds (MaxRounds), got %d", callCount)
+			t.Fatalf("expected 3 generations (MaxGenerations), got %d", callCount)
 		}
 	})
 }
@@ -1345,13 +1350,13 @@ func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 		}
 
 		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   nil,
-			PhaseBuilder: phaseBuilder,
-			OnRoundStart: func() {},
-			RetryOnError: true,
-			MaxRetries:   2,
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     nil,
+			PhaseBuilder:   phaseBuilder,
+			OnAttemptStart: func() {},
+			RetryOnError:   true,
+			MaxRetries:     2,
 		})
 		if err == nil {
 			t.Fatal("expected error after max retries exhausted")
@@ -1550,10 +1555,10 @@ func TestRunRetryFeedbackInstructsReEmittingBlocks(t *testing.T) {
 	})
 }
 
-func TestRunOnRoundTruncatedCalled(t *testing.T) {
+func TestRunOnAttemptTruncatedCalled(t *testing.T) {
 	withRun(t, func(run Run) {
 		var truncatedSummaries []string
-		onRoundTruncated := func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
+		onAttemptTruncated := func(truncatedState generators.State, retryBaseState generators.State, summary string) error {
 			truncatedSummaries = append(truncatedSummaries, summary)
 			return nil
 		}
@@ -1574,7 +1579,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 			PhaseBuilder:             phaseBuilder,
 			RetryOnMissingCompletion: true,
 			MaxRetries:               3,
-			OnRoundTruncated:         onRoundTruncated,
+			OnAttemptTruncated:       onAttemptTruncated,
 			Handoff: func(text string) (*Handoff, error) {
 				return &Handoff{Summary: "truncated summary", Prompt: "retry prompt"}, nil
 			},
@@ -1586,7 +1591,7 @@ func TestRunOnRoundTruncatedCalled(t *testing.T) {
 			t.Fatalf("expected 2 calls, got %d", callCount)
 		}
 		if len(truncatedSummaries) != 1 {
-			t.Fatalf("expected 1 OnRoundTruncated call, got %d", len(truncatedSummaries))
+			t.Fatalf("expected 1 OnAttemptTruncated call, got %d", len(truncatedSummaries))
 		}
 		if truncatedSummaries[0] != "truncated summary" {
 			t.Fatalf("expected 'truncated summary', got %q", truncatedSummaries[0])
@@ -1798,12 +1803,12 @@ func TestRunOnIdleNotCalledWhenComponentTriggers(t *testing.T) {
 		})
 
 		_, err := runOnce(run, RunOptions{
-			Generator:    nil,
-			InitialState: generators.NewPrompts("", nil),
-			Components:   comps,
-			PhaseBuilder: phaseBuilder,
-			OnIdle:       onIdle,
-			MaxRounds:    3,
+			Generator:      nil,
+			InitialState:   generators.NewPrompts("", nil),
+			Components:     comps,
+			PhaseBuilder:   phaseBuilder,
+			OnIdle:         onIdle,
+			MaxGenerations: 3,
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

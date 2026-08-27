@@ -87,7 +87,7 @@ func TestGoalCommandStopsAfterDoneBlock(t *testing.T) {
 	calls := 0
 	fakeScope := dscope.New(
 		func() pipeline.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 				calls++
 				return pipeline.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
@@ -137,7 +137,7 @@ func TestGoalCommandReportsParseErrors(t *testing.T) {
 	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
 		func() pipeline.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 				return pipeline.Result{
 					ParseErrors: []*blocks.BlockParseError{
 						{BlockKind: "change", Boundary: "龘靐"},
@@ -200,7 +200,7 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 		calls := 0
 		fakeScope := dscope.New(
 			func() pipeline.GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 					calls++
 					return pipeline.Result{}, nil, errors.New("persistent failure")
 				}
@@ -265,7 +265,7 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 			func(
 				systemPrompt pipeline.SystemPrompt,
 			) pipeline.GenerateWithResultWithStats {
-				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+				return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 					calls++
 					seenPrompts = append(seenPrompts, string(systemPrompt))
 					if calls == 1 {
@@ -338,23 +338,24 @@ func TestGoalCommandUnattendedErrorRecovery(t *testing.T) {
 }
 
 func TestGoalCommandAggregatesStatistics(t *testing.T) {
-	// The goal command must retain each loop's round statistics and print
-	// them once more, aggregated, after the goal completes — in addition to
-	// the per-loop print at each loop's end — so the user can review the
-	// entire process in a single table. The Loop column identifies which
-	// goal loop produced each round. See pipeline.TheoryOfRoundStatistics.
+	// The goal command must retain each loop's attempt statistics and
+	// print them once more, aggregated, after the goal completes — in
+	// addition to the per-loop print at each loop's end — so the user
+	// can review the entire process in a single table. The Loop column
+	// identifies which goal loop produced each attempt. See
+	// pipeline.TheoryOfAttemptStatistics.
 	//
 	// With done-block verification, the command runs two loops (declaration
 	// and verification), so the aggregated totals cover both loops.
 	// See TheoryOfGoalCommand.
 	fakeScope := dscope.New(
 		func() pipeline.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 				return pipeline.Result{
 					RemainingBlocks: []blocks.Block{{Kind: "done"}},
-				}, []pipeline.RoundStat{
-					{Round: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
-					{Round: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
+				}, []pipeline.AttemptStat{
+					{Attempt: 1, PromptTokens: 111, CompletionTokens: 51, Duration: time.Second, Summary: "first round"},
+					{Attempt: 2, PromptTokens: 222, CompletionTokens: 82, Duration: time.Second, Summary: "second round"},
 				}, nil
 			}
 		},
@@ -389,17 +390,17 @@ func TestGoalCommandAggregatesStatistics(t *testing.T) {
 	if !strings.Contains(outputStr, "Goal Loop Statistics") {
 		t.Fatal("expected aggregated goal loop statistics after goal completes")
 	}
-	if !strings.Contains(outputStr, "Loop 1 Round 1: first round") {
-		t.Fatal("expected loop-aware summary line for round 1 in aggregated statistics")
+	if !strings.Contains(outputStr, "Loop 1 Attempt 1: first round") {
+		t.Fatal("expected loop-aware summary line for attempt 1 in aggregated statistics")
 	}
-	if !strings.Contains(outputStr, "Loop 1 Round 2: second round") {
-		t.Fatal("expected loop-aware summary line for round 2 in aggregated statistics")
+	if !strings.Contains(outputStr, "Loop 1 Attempt 2: second round") {
+		t.Fatal("expected loop-aware summary line for attempt 2 in aggregated statistics")
 	}
-	if !strings.Contains(outputStr, "Loop 2 Round 1: first round") {
-		t.Fatal("expected loop-aware summary line for round 1 of the verification loop in aggregated statistics")
+	if !strings.Contains(outputStr, "Loop 2 Attempt 1: first round") {
+		t.Fatal("expected loop-aware summary line for attempt 1 of the verification loop in aggregated statistics")
 	}
-	if !strings.Contains(outputStr, "Loop 2 Round 2: second round") {
-		t.Fatal("expected loop-aware summary line for round 2 of the verification loop in aggregated statistics")
+	if !strings.Contains(outputStr, "Loop 2 Attempt 2: second round") {
+		t.Fatal("expected loop-aware summary line for attempt 2 of the verification loop in aggregated statistics")
 	}
 	if !strings.Contains(outputStr, "666") {
 		t.Fatal("expected aggregated totals across all loops")
@@ -417,7 +418,7 @@ func TestGoalCommandVerifiesDoneBlockInFreshLoop(t *testing.T) {
 	calls := 0
 	fakeScope := dscope.New(
 		func() pipeline.GenerateWithResultWithStats {
-			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.RoundStat, error) {
+			return func(ctx context.Context, output io.Writer) (pipeline.Result, []pipeline.AttemptStat, error) {
 				calls++
 				if calls == 1 {
 					// First loop: declares the goal achieved.

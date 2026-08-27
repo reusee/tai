@@ -11,13 +11,6 @@ import (
 	"github.com/reusee/tai/pipeline"
 )
 
-// TestForkTUIDisplayForwardsEventsToTUI verifies that the loop resolved
-// from the forked scope carries the TUI's event tap: withTUIOutputObserver
-// wraps pipeline.Run, so every EventUsage (like every other event) is
-// forwarded to the TUI's Events tab before the command's own consumer
-// sees it. There is no usage-writer fork — the event stream is the TUI's
-// single display source. See TheoryOfTUIDisplayFork,
-// pipeline.TheoryOfUsageLogging, and pipeline.TheoryOfLoopEvents.
 func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 	tui := newTUIForTest()
 	scope := forkTUIDisplay(
@@ -63,10 +56,10 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 			t.Fatalf("expected 1 EventUsage in the event stream, got %d", len(usageEvents))
 		}
 		if got := usageEvents[0].Usage.Prompt.TokenCount; got != 100 {
-			t.Fatalf("expected the round usage on EventUsage, got prompt tokens %d", got)
+			t.Fatalf("expected the attempt usage on EventUsage, got prompt tokens %d", got)
 		}
-		if got := usageEvents[0].Round; got != 1 {
-			t.Fatalf("expected round 1 on EventUsage, got %d", got)
+		if got := usageEvents[0].Attempt; got != 1 {
+			t.Fatalf("expected attempt 1 on EventUsage, got %d", got)
 		}
 	})
 
@@ -79,7 +72,7 @@ func TestForkTUIDisplayForwardsEventsToTUI(t *testing.T) {
 		}
 	}
 	joined := strings.Join(texts, "\n")
-	if !strings.Contains(joined, "[Usage] round 1") {
+	if !strings.Contains(joined, "[Usage] attempt 1") {
 		t.Fatalf("expected the usage line in the Events tab, got %v", texts)
 	}
 	if !strings.Contains(joined, "prompt 100") || !strings.Contains(joined, "thoughts 10") {
