@@ -42,6 +42,21 @@ extra verification loop beyond the budget. A loop that fails or produces
 uncorrected malformed blocks overturns a pending declaration: the goal state
 is unknown or changes are missing, so the goal is not achieved.
 
+A successful loop that applied no change blocks ends the run without a
+further loop. Within one goal loop the model can chain as many generations
+as it needs (continue, shell, go-test blocks), so a loop that ends with an
+empty diff set had every opportunity to make changes and concluded without
+any; the next loop would read the same filesystem state and repeat the same
+analysis. This serves analytical tasks that need no code changes and
+complete in one loop. The check runs after done-block handling and only
+while no done declaration is pending: a declared goal is still verified even
+with no diffs, and a verification loop that corrects nothing falls through
+to the clean-loop path so the declaration can still be confirmed. Parse
+errors also take precedence: unapplied changes must be re-emitted before the
+run may end. The stop prints a dedicated banner and leaves Achieved false —
+only a confirmed done block marks achievement; the runner never fabricates
+one.
+
 Malformed blocks that cannot be corrected within the parse-error correction
 budget are reported per loop via Result.ParseErrors. Reporting makes silent
 change loss — malformed change blocks that are never applied — visible in
@@ -99,6 +114,7 @@ You are working toward a goal that may require multiple independent loops to ach
 - Work toward the goal described in the user input. Make concrete changes (code modifications, tests, documentation) to advance the goal.
 - After making changes, assess whether the goal has been fully achieved. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
 - If the goal is NOT yet achieved, end your turn with a summary block. The system will start another loop with fresh context, allowing you to continue from the current filesystem state.
+- A loop that ends without applying any change block ends the run: the next loop would see the same filesystem state with nothing new to act on. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
 - If the goal IS achieved, emit a done block, then end with a summary block.
 
 **Goal Completion Signal:**
@@ -233,8 +249,9 @@ type GoalResult struct {
 }
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
-// until a done block is confirmed, the iteration budget is exhausted, or
-// the same error repeats, followed by a review of the accumulated diffs.
+// until a done block is confirmed, the iteration budget is exhausted, a
+// successful loop applies no change blocks, or the same error repeats,
+// followed by a review of the accumulated diffs.
 // Banners, verdicts, and aggregated statistics go to output. See
 // TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
@@ -321,7 +338,8 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error) bool {
 // applyLoopSuccess folds a successful loop into the runner state:
 // uncorrected malformed blocks carry re-emit feedback and overturn a
 // pending done declaration; a done block is a declaration that the next
-// loop verifies; a clean loop clears the feedback. See TheoryOfGoalMode.
+// loop verifies; a loop that applied no change blocks ends the run; a
+// clean loop with changes clears the feedback. See TheoryOfGoalMode.
 func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, output io.Writer) bool {
 	s.consecutiveErrors = 0
 	s.lastErrMsg = ""
@@ -358,14 +376,30 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, output io.
 		return false
 	}
 
+	// A loop that applied no change blocks ends the run: within one loop
+	// the model can chain as many generations as it needs, so an empty
+	// diff set means it concluded without changes, and the next loop
+	// would read the same filesystem state and repeat the same analysis.
+	// The check is skipped while a done declaration is pending: that
+	// loop verifies the declaration, and a verification without
+	// corrections falls through to the clean-loop path below so the
+	// declaration can still be confirmed. See TheoryOfGoalMode.
+	if !s.pendingDoneVerification && len(result.Diffs) == 0 {
+		fmt.Fprintf(output,
+			"\n=== Goal Run Complete: loop %d applied no change blocks ===\n", loopsRun)
+		s.stopRequested = true
+		return true
+	}
+
 	s.pendingDoneVerification = false
 	s.feedback = ""
 	return false
 }
 
 // RunGoal runs the goal loop mechanism: repeated fresh generation loops
-// until a done block is confirmed, the iteration budget is exhausted, or
-// the same error repeats, followed by a review of the accumulated diffs.
+// until a done block is confirmed, the iteration budget is exhausted, a
+// successful loop applies no change blocks, or the same error repeats,
+// followed by a review of the accumulated diffs.
 // See TheoryOfGoalMode.
 func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	if opts.Output == nil {

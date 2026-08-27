@@ -16,7 +16,8 @@ const TheoryOfGoCommand = `
 The "go" subcommand provides code generation for Go files by selecting the "go"
 PartsProvider, which delegates to gotools.PartsProvider. It wires pipeline.Module
 into the dscope scope and always runs goal mode (pipeline.GoalRun): repeated
-fresh generation loops until a done block is confirmed, with each loop's
+fresh generation loops until a done block is confirmed or a loop applies
+no change blocks, with each loop's
 outcome carried into the next loop's system prompt as pipeline.GoalFeedback,
 alongside the summaries of all previous loops (pipeline.GoalLoopSummaries).
 The system prompt is forked through pipeline.GoalSystemPromptText, which

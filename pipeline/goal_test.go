@@ -173,6 +173,86 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	}
 }
 
+// TestRunGoalStopsWhenLoopAppliesNoChanges verifies the no-change
+// termination rule: a successful loop whose diff set is empty ends the
+// run after that loop, serving analytical tasks that need no code
+// changes. See TheoryOfGoalMode.
+func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
+	output := &bytes.Buffer{}
+	calls := 0
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: output,
+		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+			calls++
+			return Result{}, nil, nil
+		},
+		Review: noopReview,
+	})
+	if calls != 1 {
+		t.Fatalf("ran %d loops, want 1", calls)
+	}
+	if result.LoopsRun != 1 {
+		t.Fatalf("LoopsRun = %d, want 1", result.LoopsRun)
+	}
+	if result.Achieved {
+		t.Fatal("the runner must not report achievement without a confirmed done block")
+	}
+	if !strings.Contains(output.String(), "applied no change blocks") {
+		t.Fatal("output must report the no-change completion")
+	}
+}
+
+// TestRunGoalContinuesWhenLoopAppliesChanges verifies that a loop with
+// a non-empty diff set still continues to the next loop.
+func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
+	calls := 0
+	RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+			calls++
+			if calls == 1 {
+				return Result{
+					Diffs: []changes.FileDiff{{Path: "a.go"}},
+				}, nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	// Loop 1 applies changes and continues; loop 2 declares done; loop
+	// 3 confirms.
+	if calls != 3 {
+		t.Fatalf("ran %d loops, want 3", calls)
+	}
+}
+
+// TestRunGoalDoneDeclarationSkipsNoChangeStop verifies that a pending
+// done declaration exempts the following verification loop from the
+// no-change stop: a verification that corrects nothing and omits the
+// done block falls through to the clean-loop path, and the run
+// continues until a later no-change loop ends it.
+func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
+	calls := 0
+	RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+			calls++
+			if calls == 1 {
+				return doneResult(), nil, nil
+			}
+			return Result{}, nil, nil
+		},
+		Review: noopReview,
+	})
+	// Loop 1 declares done; loop 2 verifies, corrects nothing, and
+	// omits the done block, so it falls through instead of stopping;
+	// loop 3 has no diffs and no declaration, and the no-change stop
+	// ends the run.
+	if calls != 3 {
+		t.Fatalf("ran %d loops, want 3", calls)
+	}
+}
+
 func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	output := &bytes.Buffer{}
 	result := RunGoal(context.Background(), GoalOptions{
@@ -203,6 +283,9 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	}
 	if !strings.Contains(GoalSystemPrompt, `kind "done"`) {
 		t.Fatal("GoalSystemPrompt must describe the done block kind")
+	}
+	if !strings.Contains(GoalSystemPrompt, "without applying any change block") {
+		t.Fatal("GoalSystemPrompt must state the no-change loop termination rule")
 	}
 	if strings.Contains(GoalSystemPrompt, ".GOAL_COMPLETE") {
 		t.Fatal("GoalSystemPrompt must not reference a marker file")
