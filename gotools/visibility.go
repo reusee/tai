@@ -45,12 +45,13 @@ prefetchPackageDocs with bounded concurrency, hiding the per-subprocess
 latency that a serial probe loop would incur; the allocation's own
 computeDoc calls then short-circuit via the docComputed guard. Short doc
 has no category minimum, so the water-fill probes it lazily; the focus
-overflow downgrade is the exception — it computes every focus package's
-short doc unconditionally — so when its condition already holds (the
-pinned focus tokens, computed by the earlier phases, exceed the generator
-budget), prefetchFocusShortDocs launches those probes concurrently before
-the allocation and the downgrade loop short-circuits via the
-shortDocComputed guard.
+overflow downgrade is the exception for the documentation pin (under
+-all-src the downgrade is disabled and nothing is prefetched) — it
+computes every focus package's short doc unconditionally — so when its
+condition already holds (the pinned focus tokens, computed by the earlier
+phases, exceed the generator budget), prefetchFocusShortDocs launches
+those probes concurrently before the allocation and the downgrade loop
+short-circuits via the shortDocComputed guard.
 
 The water-fill phase gates both documentation upgrades (invisible→short
 doc and short doc→full doc) on the immediate predecessor: a package whose
@@ -203,11 +204,14 @@ focus block becomes the package overview and top-level symbol index
 (unexported symbols included, matching the focus -u convention) plus the
 test-function and file names, so every symbol and file name stays
 discoverable for go-src and ingest fetching at a fraction of the full-doc
-cost. The downgrade is a single step — full documentation or -all-src
-source down to short doc — applies only when the budget is positive,
-and if the short-doc surface still exceeds it the request proceeds
-oversized rather than dropping focus packages entirely; files explicitly
-requested via -file keep their full content regardless.
+cost. The downgrade is a single step — full documentation down to short
+doc — applies only when the budget is positive, and if the short-doc
+surface still exceeds it the request proceeds oversized rather than
+dropping focus packages entirely; files explicitly requested via -file
+keep their full content regardless. Under -all-src the downgrade is
+disabled: the user explicitly opted into the full-source focus context,
+so the pin is never replaced by a documentation block and the oversized
+focus surface proceeds as is.
 `
 
 const TheoryOfLazyVisibilityCosts = `
@@ -953,14 +957,15 @@ func prefetchPackageDocs(
 // parallel when the focus overflow downgrade is certain, so the downgrade
 // loop in allocateVisibility short-circuits via the shortDocComputed guard
 // instead of running one serial go doc subprocess per focus package. The
-// downgrade is certain exactly when the focus tokens at the pinned level —
-// documentation by default, full source under -all-src — exceed the
+// downgrade applies only to the documentation pin: under -all-src the pin
+// is full source and is never downgraded, so this function returns
+// without prefetching. For the documentation pin, the downgrade is
+// certain exactly when the focus tokens at the pinned level exceed the
 // generator budget; the pinned costs are already computed by
-// prefetchPackageDocs (documentation) or precomputeTokenCounts (full
-// source), and the sum mirrors the focusTokens total allocateVisibility
-// evaluates after its pin loop. A large project under the default ./...
-// focus pattern has hundreds of focus packages, so the serial downgrade
-// dominated the wait between "get files done" and
+// prefetchPackageDocs, and the sum mirrors the focusTokens total
+// allocateVisibility evaluates after its pin loop. A large project under
+// the default ./... focus pattern has hundreds of focus packages, so the
+// serial downgrade dominated the wait between "get files done" and
 // "context token composition"; the parallel path mirrors
 // prefetchPackageDocs. When the downgrade will not trigger — or the
 // pinned costs are not yet known, which the production wiring never
@@ -983,14 +988,13 @@ func prefetchFocusShortDocs(
 		if lp.Category != CategoryFocus {
 			continue
 		}
-		// The pin level mirrors allocateVisibility's focus pin:
-		// VisibilityAll when -all-src raised the minimum, otherwise full
-		// documentation.
-		pinLevel := VisibilityDoc
+		// Under -all-src the focus pin is full source and is never
+		// downgraded (allocateVisibility skips the downgrade), so no
+		// focus short doc would ever be shown: skip the prefetch.
 		if lp.MinVisibility == VisibilityAll {
-			pinLevel = VisibilityAll
+			return
 		}
-		pinnedTokens += lp.TokensByLevel[pinLevel]
+		pinnedTokens += lp.TokensByLevel[VisibilityDoc]
 		jobs = append(jobs, lp)
 	}
 	if len(jobs) == 0 || pinnedTokens <= maxTokens {
@@ -1053,13 +1057,16 @@ func allocateVisibility(
 	// by SimplifyFiles), focus packages are instead pinned at full source
 	// including tests; the full-level costs are computed here because the
 	// budget derives from them. When the pinned tokens exceed the
-	// generator budget, the pin is downgraded to short doc below.
+	// generator budget, the documentation pin is downgraded to short doc
+	// below; the -all-src pin is never downgraded.
 	// See TheoryOfVisibilityAllocation.
+	allSrcPin := false
 	for _, lp := range logicalPkgs {
 		if lp.Category != CategoryFocus {
 			continue
 		}
 		if lp.MinVisibility == VisibilityAll {
+			allSrcPin = true
 			if err := ensureCosts(lp); err != nil {
 				return err
 			}
@@ -1096,8 +1103,11 @@ func allocateVisibility(
 	// re-derived from the downgraded tokens, so the context allocation
 	// below runs against the smaller budget. The downgrade is a single
 	// step and applies only when maxTokens > 0; a maxTokens of 0 disables
-	// the check. See TheoryOfVisibilityAllocation.
-	if maxTokens > 0 && focusTokens > maxTokens {
+	// the check. Under -all-src the downgrade is disabled: the user
+	// explicitly opted into the full-source focus context, so the pin is
+	// never replaced by a documentation block.
+	// See TheoryOfVisibilityAllocation.
+	if maxTokens > 0 && !allSrcPin && focusTokens > maxTokens {
 		for _, lp := range logicalPkgs {
 			if lp.Category != CategoryFocus {
 				continue

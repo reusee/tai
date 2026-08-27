@@ -738,8 +738,11 @@ func TestPrefetchFocusShortDocs(t *testing.T) {
 	// prefetchFocusShortDocs precomputes the short docs concurrently so
 	// the downgrade loop in allocateVisibility short-circuits via the
 	// shortDocComputed guard; when the condition does not hold, short
-	// doc stays fully lazy. See TheoryOfLazyPackageDoc and
-	// TheoryOfVisibilityAllocation in visibility.go.
+	// doc stays fully lazy. Under -all-src the downgrade is disabled and
+	// the prefetch skips entirely; that case is covered by
+	// TestPrefetchFocusShortDocsSkipsAllSrcPin. See
+	// TheoryOfLazyPackageDoc and TheoryOfVisibilityAllocation in
+	// visibility.go.
 	countTokens := func(s string) (int, error) { return len(s), nil }
 
 	newPkgs := func() []*LogicalPackage {
@@ -757,14 +760,6 @@ func TestPrefetchFocusShortDocs(t *testing.T) {
 				TokensByLevel: [5]int{0, 0, 300, 0, 0},
 			},
 			{
-				// The -all-src pin: the pinned level is full source, so
-				// the overflow sum reads TokensByLevel[VisibilityAll].
-				PkgPath:       "focusall",
-				Category:      CategoryFocus,
-				MinVisibility: VisibilityAll,
-				TokensByLevel: [5]int{0, 0, 0, 0, 400},
-			},
-			{
 				PkgPath:       "other",
 				Category:      CategoryOtherModule,
 				MinVisibility: VisibilityInvisible,
@@ -772,24 +767,24 @@ func TestPrefetchFocusShortDocs(t *testing.T) {
 		}
 	}
 
-	// Pinned focus tokens (1000) exactly match the budget: the downgrade
+	// Pinned focus tokens (600) exactly match the budget: the downgrade
 	// condition is strict inequality, so no short-doc probe is launched
 	// and every package stays un-computed.
 	pkgs := newPkgs()
-	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 1000)
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 600)
 	for _, lp := range pkgs {
 		if lp.shortDocComputed {
 			t.Fatalf("expected %s short doc to stay lazy", lp.PkgPath)
 		}
 	}
 
-	// Pinned focus tokens (1000) exceed the budget (999): the downgrade
+	// Pinned focus tokens (600) exceed the budget (599): the downgrade
 	// is certain, so every focus package's short doc is computed — in the
 	// module-less temp dir the subprocess fails, which still records
 	// shortDocComputed and non-empty short-doc content — while the
 	// non-focus package stays untouched.
 	pkgs = newPkgs()
-	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 999)
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, countTokens, 599)
 	for _, lp := range pkgs {
 		if lp.Category != CategoryFocus {
 			if lp.shortDocComputed {
@@ -813,6 +808,27 @@ func TestPrefetchFocusShortDocs(t *testing.T) {
 		if lp.shortDocComputed {
 			t.Fatalf("expected %s short doc to stay lazy with maxTokens 0", lp.PkgPath)
 		}
+	}
+}
+
+func TestPrefetchFocusShortDocsSkipsAllSrcPin(t *testing.T) {
+	// Under -all-src the focus pin is VisibilityAll and the downgrade is
+	// disabled, so prefetchFocusShortDocs must not compute any focus
+	// short doc: the computed blocks would never be shown. The skip is
+	// observable through shortDocComputed, which computePackageShortDoc
+	// sets whenever it runs. See TheoryOfVisibilityAllocation.
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:       "focus",
+			Category:      CategoryFocus,
+			MinVisibility: VisibilityAll,
+		},
+	}
+	prefetchFocusShortDocs(pkgs, t.TempDir(), nil, func(string) (int, error) {
+		return 1, nil
+	}, 1<<10)
+	if pkgs[0].shortDocComputed {
+		t.Fatal("no focus short doc may be computed under the -all-src pin")
 	}
 }
 
@@ -943,6 +959,67 @@ func TestAllocateVisibilityDowngradesFocusToShortDoc(t *testing.T) {
 			t.Fatalf("samemodule should be at full doc under the full-doc-derived budget, got %d", pkgs[1].Visibility)
 		}
 	})
+}
+
+func TestAllocateVisibilityAllSrcSkipsFocusDowngrade(t *testing.T) {
+	// Under -all-src the focus pin is VisibilityAll and the overflow
+	// downgrade is disabled: even when the full-source focus tokens
+	// exceed the generator budget, focus stays at full source and no
+	// short doc is computed. The context budget still derives from the
+	// full-source tokens, so a same-module package affordable only under
+	// that budget (65536 from 200<<10) is allocated at full doc; under a
+	// downgraded short-doc-derived floor (32768) it would not fit. See
+	// TheoryOfVisibilityAllocation.
+	var shortDocCalls []string
+	computeShortDoc := func(lp *LogicalPackage) {
+		shortDocCalls = append(shortDocCalls, lp.PkgPath)
+		lp.ShortDocContent = "short doc"
+		lp.ShortDocTokens = 1 << 10
+		lp.BudgetTokensByLevel[VisibilityShortDoc] = 1 << 10
+		lp.TokensByLevel[VisibilityShortDoc] = 1 << 10
+	}
+	computeDoc := func(lp *LogicalPackage) {
+		if lp.PkgPath != "samemodule" {
+			t.Fatalf("unexpected doc computation for %s", lp.PkgPath)
+		}
+		lp.DocContent = "doc"
+		lp.DocTokens = 40000
+		lp.BudgetTokensByLevel[VisibilityDoc] = 40000
+		lp.TokensByLevel[VisibilityDoc] = 40000
+	}
+	pkgs := []*LogicalPackage{
+		{
+			PkgPath:             "focus",
+			Category:            CategoryFocus,
+			MinVisibility:       VisibilityAll,
+			Visibility:          VisibilityInvisible,
+			TokensByLevel:       [5]int{0, 0, 0, 0, 200 << 10},
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 1 << 30, 1 << 30, 200 << 10},
+		},
+		{
+			PkgPath:             "samemodule",
+			Category:            CategorySameModule,
+			MinVisibility:       VisibilityDoc,
+			Visibility:          VisibilityInvisible,
+			BudgetTokensByLevel: [5]int{0, 1 << 30, 40000, 1 << 30, 1 << 30},
+		},
+	}
+
+	// The full-source focus tokens (200<<10) exceed the generator budget
+	// (150<<10): without the all-src skip the pin would be downgraded.
+	if err := allocateVisibility(pkgs, logs.Logger{}, false, 150<<10, computeShortDoc, computeDoc, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if pkgs[0].Visibility != VisibilityAll {
+		t.Fatalf("focus must stay at full source under -all-src, got %d", pkgs[0].Visibility)
+	}
+	if len(shortDocCalls) != 0 {
+		t.Fatalf("no short doc may be computed when the downgrade is skipped, got %v", shortDocCalls)
+	}
+	if pkgs[1].Visibility != VisibilityDoc {
+		t.Fatalf("samemodule should be at full doc under the full-source-derived budget, got %d", pkgs[1].Visibility)
+	}
 }
 
 func TestMatchPattern(t *testing.T) {

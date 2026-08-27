@@ -18,7 +18,10 @@ var (
 // every focus file is emitted at full content, the synthetic focus
 // documentation block is not produced, and go-src blocks are unnecessary
 // for focus declarations. The context budget still derives from the focus
-// tokens at their pinned level. See TheoryOfVisibilityAllocation.
+// tokens at their pinned level. The overflow downgrade does not apply:
+// the full-source pin is never downgraded to a documentation level, so an
+// oversized focus surface proceeds oversized. See
+// TheoryOfVisibilityAllocation.
 type AllSrc bool
 
 func (a AllSrc) ConfigPaths() []string {

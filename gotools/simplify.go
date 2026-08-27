@@ -39,7 +39,9 @@ the focus pin downgrades to short doc and the budget re-derives from the
 downgraded tokens (see TheoryOfVisibilityAllocation in visibility.go).
 The -all-src flag pins focus at full source instead
 (VisibilityAll): every focus file including tests is emitted at full
-content and no focus documentation block is produced. Focus files
+content, no focus documentation block is produced, and the overflow
+downgrade does not apply — the full-source pin is never downgraded to a
+documentation level. Focus files
 explicitly requested via -file are still emitted at full content; every
 other focus file — Go source and non-Go files alike — is present by name
 only, in the focus documentation block's file list (see
