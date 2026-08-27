@@ -11,8 +11,6 @@ import (
 	"github.com/reusee/tai/changes"
 )
 
-// TheoryOfGoalMode states the design of the goal loop mechanism. See the
-// constant body for the model and its rationale.
 const TheoryOfGoalMode = `
 Goal mode autonomously runs the generation pipeline for a set number of
 iterations (maxGoalIterations) until a done block is confirmed. Each loop is
@@ -55,6 +53,14 @@ prefix byte-identical across loops for LLM prefix caching. When the same
 error message occurs maxConsecutiveGoalErrors times in a row, the runner
 stops early with a diagnostic message instead of burning the remaining
 iterations on a persistent failure.
+
+Summaries flow forward alongside feedback: after each loop the runner
+appends the loop's non-empty attempt summaries to GoalLoopSummaries and
+forks the accumulated list into the next loop's scope, so the model can
+reference what earlier loops established without their full transcripts.
+GoalSystemPromptText renders the summaries as an append-only section before
+the feedback, so the section's growth preserves the byte prefix across
+loops for LLM prefix caching.
 
 Each loop opens a fresh dscope scope: GoalLoopGenerator resolves
 GenerateWithResultWithStats from a scope rebuilt by dscope.Reset, so every
@@ -134,10 +140,49 @@ const maxConsecutiveGoalErrors = 3
 // TheoryOfGoalMode.
 type GoalFeedback string
 
+// GoalLoopSummary is one previous goal loop's attempt summary: the goal
+// loop number and the summary text of one attempt within it. See
+// TheoryOfGoalMode.
+type GoalLoopSummary struct {
+	Loop int
+	Text string
+}
+
+// GoalLoopSummaries carries the attempt summaries of previous goal loops
+// into the next loop's system prompt, so the model can reference what
+// earlier loops established. The goal runner appends each completed loop's
+// non-empty attempt summaries and forks the accumulated list into the next
+// loop's scope. See TheoryOfGoalMode.
+type GoalLoopSummaries []GoalLoopSummary
+
+// SystemPromptSection renders the summaries as a system prompt section: a
+// note stating the section's purpose and one bullet per summary, tagged
+// with its goal loop number. An empty list renders the empty string. The
+// rendering is append-only across loops: new entries join at the end, so
+// an earlier section is a byte prefix of a later one and the LLM prefix
+// cache survives loop boundaries. See TheoryOfGoalMode.
+func (s GoalLoopSummaries) SystemPromptSection() string {
+	if len(s) == 0 {
+		return ""
+	}
+	section := "[System note: The bullets below are the attempt summaries of the previous goal loops, tagged with the loop number. Use them to avoid repeating finished work and to build on established conclusions; the current loop continues from where they left off.]"
+	for _, summary := range s {
+		section += fmt.Sprintf("\n\n- Loop %d: %s", summary.Loop, summary.Text)
+	}
+	return section
+}
+
 // GoalFeedback provides the default: no feedback. The goal runner forks
 // the previous loop's outcome into each loop's scope. See TheoryOfGoalMode.
 func (Module) GoalFeedback() GoalFeedback {
 	return ""
+}
+
+// GoalLoopSummaries provides the default: no previous-loop summaries. The
+// goal runner forks the accumulated list into each loop's scope. See
+// TheoryOfGoalMode.
+func (Module) GoalLoopSummaries() GoalLoopSummaries {
+	return nil
 }
 
 // GoalOptions carries the runtime configuration of one goal run. Generate
@@ -150,19 +195,20 @@ type GoalOptions struct {
 	// without duplication.
 	Output io.Writer
 	// Generate runs one goal loop: a fresh generation session that
-	// re-reads the current filesystem state, with the given feedback
-	// from the previous loop in its system prompt.
+	// re-reads the current filesystem state, with the given feedback and
+	// the previous loops' summaries in its system prompt.
 	Generate GoalLoopGenerator
 	// Review reviews the accumulated session diffs after the run.
 	Review RunReview
 }
 
-// GoalLoopGenerator runs one goal loop. The feedback from the previous
-// loop reaches the loop's system prompt through the goal SystemPrompt
-// provider forked by the go command. See TheoryOfGoalMode.
+// GoalLoopGenerator runs one goal loop. The feedback and the summaries of
+// previous loops reach the loop's system prompt through the goal
+// SystemPrompt provider forked by the go command. See TheoryOfGoalMode.
 type GoalLoopGenerator func(
 	ctx context.Context,
 	feedback GoalFeedback,
+	summaries GoalLoopSummaries,
 ) (
 	result Result,
 	stats []AttemptStat,
@@ -191,14 +237,18 @@ type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the base
 // codes prompt, the goal system prompt, and the component sections.
-// Feedback from the previous loop is appended at the end so the stable
+// Previous-loop summaries render as an append-only section, and the
+// feedback from the previous loop is appended after them, so the stable
 // prefix remains byte-identical across loops for LLM prefix caching. The
 // go command forks this as its SystemPrompt provider; see
 // cmd/tai.TheoryOfGoCommand.
-func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback) SystemPrompt {
+func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback, summaries GoalLoopSummaries) SystemPrompt {
 	prompt := prompts.Codes + "\n" +
 		GoalSystemPrompt + "\n" +
 		comps.PromptSections()
+	if section := summaries.SystemPromptSection(); section != "" {
+		prompt += "\n\n" + section
+	}
 	if feedback != "" {
 		prompt += "\n\n" + string(feedback)
 	}
@@ -206,11 +256,12 @@ func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback) SystemPr
 }
 
 // goalLoopState carries the mutable state of a goal run across loops: the
-// feedback for the next loop's system prompt, the pending done-block
-// declaration, repeated-error tracking, and the terminal flags. See
-// TheoryOfGoalMode.
+// feedback for the next loop's system prompt, the attempt summaries of
+// previous loops, the pending done-block declaration, repeated-error
+// tracking, and the terminal flags. See TheoryOfGoalMode.
 type goalLoopState struct {
 	feedback                GoalFeedback
+	summaries               GoalLoopSummaries
 	pendingDoneVerification bool
 	lastErrMsg              string
 	consecutiveErrors       int
@@ -327,11 +378,12 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	// loop.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
-		result, stats, err := opts.Generate(ctx, state.feedback)
+		result, stats, err := opts.Generate(ctx, state.feedback, state.summaries)
 		allStats = append(allStats, stats...)
 		for i := loopStart; i < len(allStats); i++ {
 			allStats[i].Loop = loopsRun
 		}
+		state.summaries = appendLoopSummaries(state.summaries, loopsRun, allStats[loopStart:])
 		allDiffs = append(allDiffs, result.Diffs...)
 		return state.applyLoopResult(loopsRun, result, err, opts.Output)
 	}
@@ -373,19 +425,37 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 	}
 }
 
+// appendLoopSummaries appends the non-empty attempt summaries of one goal
+// loop to the accumulated list, tagging each entry with the goal loop
+// number. Attempts without a summary (e.g., failed or truncated attempts)
+// contribute nothing. See TheoryOfGoalMode.
+func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptStat) GoalLoopSummaries {
+	for _, stat := range stats {
+		if stat.Summary == "" {
+			continue
+		}
+		summaries = append(summaries, GoalLoopSummary{Loop: loop, Text: stat.Summary})
+	}
+	return summaries
+}
+
 // makeGoalLoopGenerator builds the per-loop generation function: each call
-// opens a fresh scope via reset, forks the loop's feedback into it, and
-// resolves GenerateWithResultWithStats from the forked scope, so the loop
-// reads the latest filesystem state and sees the previous loop's feedback
-// in its system prompt. Generation streams to os.Stdout: in TUI mode the
-// terminal's stdout is the null device and the display captures output
-// through state decorators, so a per-loop writer would duplicate output.
-// See TheoryOfGoalMode.
+// opens a fresh scope via reset, forks the loop's feedback and the
+// previous loops' summaries into it, and resolves
+// GenerateWithResultWithStats from the forked scope, so the loop reads the
+// latest filesystem state and sees the previous loops' feedback and
+// summaries in its system prompt. Generation streams to os.Stdout: in TUI
+// mode the terminal's stdout is the null device and the display captures
+// output through state decorators, so a per-loop writer would duplicate
+// output. See TheoryOfGoalMode.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
-	return func(ctx context.Context, feedback GoalFeedback) (Result, []AttemptStat, error) {
+	return func(ctx context.Context, feedback GoalFeedback, summaries GoalLoopSummaries) (Result, []AttemptStat, error) {
 		scope := reset()
 		if feedback != "" {
 			scope = scope.Fork(func() GoalFeedback { return feedback })
+		}
+		if len(summaries) > 0 {
+			scope = scope.Fork(func() GoalLoopSummaries { return summaries })
 		}
 		var result Result
 		var stats []AttemptStat

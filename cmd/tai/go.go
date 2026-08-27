@@ -17,10 +17,12 @@ The "go" subcommand provides code generation for Go files by selecting the "go"
 PartsProvider, which delegates to gotools.PartsProvider. It wires pipeline.Module
 into the dscope scope and always runs goal mode (pipeline.GoalRun): repeated
 fresh generation loops until a done block is confirmed, with each loop's
-outcome carried into the next loop's system prompt as pipeline.GoalFeedback.
+outcome carried into the next loop's system prompt as pipeline.GoalFeedback,
+alongside the summaries of all previous loops (pipeline.GoalLoopSummaries).
 The system prompt is forked through pipeline.GoalSystemPromptText, which
 composes the base codes prompt, the goal system prompt, and the component
-sections, appending the loop feedback at the end. Generation and review
+sections, appending the previous-loop summaries and the loop feedback at the
+end. Generation and review
 stream to os.Stdout; banners, verdicts, and aggregated statistics go to the
 command Output writer. The -repl flag enables a REPL mode that taps the
 debugs infrastructure without running generation, useful for interactive
@@ -45,8 +47,9 @@ var GoCommand = Command{
 		func(
 			comps pipeline.CodesComponents,
 			feedback pipeline.GoalFeedback,
+			summaries pipeline.GoalLoopSummaries,
 		) pipeline.SystemPrompt {
-			return pipeline.GoalSystemPromptText(comps, feedback)
+			return pipeline.GoalSystemPromptText(comps, feedback, summaries)
 		},
 	},
 	Main: func(
