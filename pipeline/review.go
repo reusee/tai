@@ -15,7 +15,7 @@ var _ configs.Config = Review(false)
 var _ flags.Flag = Review(true)
 
 // Review controls whether a review loop runs after the main generation
-// loop (or after the goal command completes). When enabled, the changes
+// loop (or after a goal run completes). When enabled, the changes
 // made during generation are reviewed and corrected by one or more
 // independent models. See TheoryOfReviewLoop.
 type Review bool

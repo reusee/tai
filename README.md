@@ -20,7 +20,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 `tai` is a general-purpose AI tool. It sends context — files, user input, or arbitrary text — to an AI model and applies the model's output to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
 
-While Go code generation is the default command inside Go modules, the tool also handles arbitrary text file editing (`any`), interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), autonomous goal-directed workflows (`goal`), and boundary-delimited diff application (`patch`). Not all of these involve code.
+While Go code generation is the default command inside Go modules, the tool also handles arbitrary text file editing (`any`), interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), and boundary-delimited diff application (`patch`). Not all of these involve code.
 
 ## Installation
 
@@ -32,11 +32,10 @@ go install github.com/reusee/tai/cmd/tai@latest
 
 | Command | Description |
 |---------|-------------|
-| `tai` (default in Go modules) | Generate code for Go files |
+| `tai` (default in Go modules) | Generate code for Go files via goal loops |
 | `tai any` | Generate code for arbitrary text files |
 | `tai ai` | Start an interactive AI chat session with memory |
 | `tai next` | Execute a single-shot task |
-| `tai goal <description>` | Work toward a goal through multiple independent loops |
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |
 | `tai ping` | Test whether a model is reachable |
 | `tai record` | List, show, and analyze recorded interaction sessions |
@@ -66,12 +65,6 @@ Interactive AI session with memory and shell blocks:
 
 ```
 tai ai -model gemini-pro -shell
-```
-
-Goal-directed autonomous execution:
-
-```
-tai goal -model gemini-pro chat "refactor the database layer to use connection pooling"
 ```
 
 Single-shot task execution:
