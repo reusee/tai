@@ -1379,58 +1379,6 @@ func TestGenerateChatInputBracketsContext(t *testing.T) {
 	}
 }
 
-func TestGenerateAttemptStatsWrittenToAttemptStatsWriter(t *testing.T) {
-	// The attempt statistics table is written to the AttemptStatsWriter
-	// provider when one is configured, never to the generation output
-	// writer: in TUI mode the output writer is the redirected null
-	// device (see runWithTUI in cmd/tai/tui.go), so the deferred
-	// PrintAttemptStats in the codes pipeline needs the forked provider
-	// to stay visible. The test forks the provider, runs one fake
-	// attempt that collects a stat through OnAttemptSuccess, and asserts
-	// the table lands in the forked writer while the output writer stays
-	// without it. See TheoryOfAttemptStatistics.
-	var statsBuf bytes.Buffer
-	var outputBuf bytes.Buffer
-	dscope.New(
-		modes.ForTest(t),
-		new(Module),
-	).Fork(
-		func() codetypes.PartsProvider { return mockPartsProvider{} },
-		func() flags.Chats { return flags.Chats{"hello"} },
-		func() *records.Recorder { return nil },
-		func() generators.GetDefaultGenerator {
-			return func() (generators.Generator, error) {
-				return &debugOutputMockGenerator{}, nil
-			}
-		},
-		func() Run {
-			return func(ctx context.Context, opts RunOptions, result *Result) iter.Seq2[Event, error] {
-				return func(yield func(Event, error) bool) {
-					// One successful attempt with no summaries: the loop
-					// collects a zero-usage AttemptStat, enough for
-					// PrintAttemptStats to render the table.
-					if err := opts.OnAttemptSuccess(opts.InitialState, nil); err != nil {
-						t.Errorf("OnAttemptSuccess: %v", err)
-					}
-				}
-			}
-		},
-		func() AttemptStatsWriter { return AttemptStatsWriter(&statsBuf) },
-	).Call(func(
-		generateWithResultWithStats GenerateWithResultWithStats,
-	) {
-		if _, _, err := generateWithResultWithStats(context.Background(), &outputBuf); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(statsBuf.String(), "Generation Statistics") {
-			t.Fatalf("expected the attempt statistics table in the stats writer, got: %q", statsBuf.String())
-		}
-		if strings.Contains(outputBuf.String(), "Generation Statistics") {
-			t.Fatalf("expected the output writer to stay without the statistics table, got: %q", outputBuf.String())
-		}
-	})
-}
-
 func TestCollectAttemptStats(t *testing.T) {
 	t.Run("MultipleUsagePartsSingleAttempt", func(t *testing.T) {
 		// Simulating Gemini streaming which emits multiple Usage parts in one attempt.

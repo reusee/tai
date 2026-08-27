@@ -128,3 +128,44 @@ func TestForkTUIDisplayDecoratesHandoffState(t *testing.T) {
 		t.Fatalf("expected the handoff text line in the output buffer, got %v", lines)
 	}
 }
+
+// TestForkTUIDisplayForwardsGoalEventsToTUI verifies that the goal
+// event observer forked by forkTUIDisplay forwards the goal runner's
+// progress events to the TUI, so the Events tab renders the goal
+// banners, verdicts, and statistics without a writer fork. See
+// TheoryOfTUIDisplayFork.
+func TestForkTUIDisplayForwardsGoalEventsToTUI(t *testing.T) {
+	tui := newTUIForTest()
+	scope := forkTUIDisplay(
+		dscope.New(modes.ForTest(t), new(pipeline.Module)),
+		tui,
+	)
+
+	scope.Call(func(observe pipeline.GoalEventObserver) {
+		if observe == nil {
+			t.Fatal("expected the TUI fork to provide a goal event observer")
+		}
+		observe(pipeline.Event{Kind: pipeline.EventGoal, Detail: "=== Goal Achieved after 2 loop(s) ==="})
+		observe(pipeline.Event{
+			Kind:   pipeline.EventStats,
+			Detail: "Goal Loop Statistics",
+			Stats:  []pipeline.AttemptStat{{Loop: 1, Attempt: 1, PromptTokens: 10}},
+		})
+	})
+
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	var texts []string
+	for _, group := range tui.events {
+		for _, line := range group {
+			texts = append(texts, line.Text)
+		}
+	}
+	joined := strings.Join(texts, "\n")
+	if !strings.Contains(joined, "=== Goal Achieved after 2 loop(s) ===") {
+		t.Fatalf("expected the goal banner in the Events tab, got %v", texts)
+	}
+	if !strings.Contains(joined, "[Statistics: Goal Loop Statistics]") {
+		t.Fatalf("expected the statistics header in the Events tab, got %v", texts)
+	}
+}

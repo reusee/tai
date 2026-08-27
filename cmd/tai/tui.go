@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -48,8 +49,10 @@ event stream — attempt starts ("[Attempt N start]"), attempt summaries,
 truncations, retries, handoff starts and
 synthesized summaries, the finish reasons ("[Finish: ...]"), the
 per-attempt usage lines ("[Usage] ..."), the thought summaries when
--summarize-thoughts is enabled, and the component/idle continuations — and
-the Logs tab collects
+-summarize-thoughts is enabled, the component/idle continuations, the
+session's attempt statistics ("[Statistics: ...]" from EventStats), and
+the goal-mode progress — loop banners and verdicts ("=== Goal ... ===")
+from EventGoal — and the Logs tab collects
 log records. Every event kind renders: a completed attempt with no summary
 shows a completion line ("[Attempt N complete]"), and an unknown kind shows
 a generic "[Event <kind>]" line, so no pipeline event type is silently
@@ -97,7 +100,10 @@ EventSynthesizedSummary, so the TUI never parses streamed text for
 blocks, never scans rendered text for "[Finish: ...]" markers, and never
 captures model output through a
 stdout pipe; retry feedback cannot duplicate summary content because the
-loop's events are the single authority. stdout is discarded in TUI mode, while stderr stays visible
+loop's events are the single authority. The session's attempt statistics
+and the goal-mode banners and verdicts are pipeline events too (EventStats,
+EventGoal), so they render in the Events tab and never reach the Output
+tab. stdout is discarded in TUI mode, while stderr stays visible
 in the Output tab. Content is colored by role, matching the non-TUI output
 colors (see generators/colors.go): user input is blue, tool calls and
 results yellow, system messages cyan, log records red, and thoughts bright
@@ -192,9 +198,11 @@ during startup on the real stderr, painting the raw terminal where the
 next repaint erases it. The Events tab needs no writer fork:
 withTUIOutputObserver, layered in the second fork's Run wrapper, taps
 the run's event iterator and forwards every event to the TUI (see
-pipeline.TheoryOfLoopEvents). The state-decorator and event-tap Run
-wrapper is layered in a second fork so its pipeline.Run def does not
-resolve itself recursively.
+pipeline.TheoryOfLoopEvents), and the goal event observer is forked to
+the same handler, so the goal runner's EventGoal and EventStats reports
+reach the Events tab through the tap path. The state-decorator and
+event-tap Run wrapper is layered in a second fork so its pipeline.Run
+def does not resolve itself recursively.
 `
 
 const TheoryOfTUINoTruncation = `
@@ -964,7 +972,10 @@ func (t *TUI) handleEvent(ev pipeline.Event) {
 // produce empty summaries) shows a completion line, and an unknown kind
 // shows a generic event line, so no pipeline event type is silently
 // dropped. Log-style events use the log color; the thought summary
-// header uses the thought color; summary bodies stay plain.
+// header uses the thought color; summary bodies stay plain. The
+// statistics event renders one log-colored line per attempt plus the
+// attempt's summary lines; the goal event renders its message lines in
+// the log color.
 func eventLines(ev pipeline.Event) []taiui.Line {
 	// The "attempt x/y" budget display uses the in-generation
 	// position, pairing with MaxAttempts; hand-constructed events
@@ -1028,6 +1039,36 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 		return logLines(fmt.Sprintf("[Attempt %d continues] %s", ev.Attempt, ev.Detail))
 	case pipeline.EventIdle:
 		return logLines("[Idle input received; starting the next generation]")
+	case pipeline.EventStats:
+		// One line per attempt carries the token counters and the
+		// duration; a goal-run aggregation prefixes the loop number.
+		// The attempt's summary, when present, follows as plain lines.
+		// See pipeline.TheoryOfAttemptStatistics.
+		lines := logLines(fmt.Sprintf("[Statistics: %s]", ev.Detail))
+		for _, s := range ev.Stats {
+			label := fmt.Sprintf("attempt %d", s.Attempt)
+			if s.Loop != 0 {
+				label = fmt.Sprintf("loop %d attempt %d", s.Loop, s.Attempt)
+			}
+			lines = append(lines, logLines(fmt.Sprintf(
+				"%s: prompt %d, completion %d, thoughts %d, cached %d, %s",
+				label, s.PromptTokens, s.CompletionTokens, s.ThoughtTokens,
+				s.CachedTokens, s.Duration.Round(time.Millisecond).String(),
+			))...)
+			if s.Summary != "" {
+				lines = append(lines, summaryLines("  "+s.Summary)...)
+			}
+		}
+		return lines
+	case pipeline.EventGoal:
+		// A goal message may span lines (multi-line verdicts); every
+		// line renders in the log color. See
+		// pipeline.TheoryOfGoalMode.
+		var lines []taiui.Line
+		for _, line := range strings.Split(ev.Detail, "\n") {
+			lines = append(lines, taiui.Line{Text: line, Color: outputColorLogLine})
+		}
+		return lines
 	default:
 		if ev.Detail == "" {
 			return logLines(fmt.Sprintf("[Event %s]", ev.Kind))
@@ -1236,17 +1277,21 @@ func tuiShowThoughts(thoughts flags.Thoughts) bool {
 // on the real stderr, painting the raw terminal. The Events tab needs
 // no writer fork — withTUIOutputObserver, layered in the second fork's
 // Run wrapper, taps the run's event iterator and forwards every event
-// to the TUI (see pipeline.TheoryOfLoopEvents). The state-decorator Run
-// wrapper is layered in a second fork so its pipeline.Run def does not
-// resolve itself recursively. See TheoryOfTUIDisplayFork and
-// TheoryOfTUI.
+// to the TUI (see pipeline.TheoryOfLoopEvents), and the goal event
+// observer below forwards the goal runner's progress events the same
+// way. The state-decorator Run wrapper is layered in a second fork so
+// its pipeline.Run def does not resolve itself recursively. See
+// TheoryOfTUIDisplayFork and TheoryOfTUI.
 func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 	scope = scope.Fork(
 		func() logs.Writer { return logs.Writer(tui.LogsWriter()) },
-		// Command-level output (ping verdicts, goal banners, applied
-		// notices) goes to the Output tab via the dscope-resolved Output
-		// writer. Generation output is captured separately and never
-		// routed here. See TheoryOfCommandOutput.
+		// Command-level output (ping verdicts, applied notices) goes
+		// to the Output tab via the dscope-resolved Output writer.
+		// Generation output is captured separately and never routed
+		// here; goal-mode banners, verdicts, and statistics are
+		// pipeline events rendered in the Events tab through the goal
+		// event observer below. See TheoryOfCommandOutput and
+		// TheoryOfTUI.
 		func() Output { return Output(tui.Writer()) },
 		// Handoff generation reaches the Output tab through the
 		// tuiOutputState decorator, so each part is displayed with its
@@ -1264,12 +1309,11 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 			}
 		},
 		func() pipeline.HandoffObserver { return tui },
-		// The attempt statistics table is routed to the Output tab: the
-		// pipeline prints it via a deferred call at the end of the
-		// session, and the generation output writer it receives is the
-		// redirected null device in TUI mode. See
-		// pipeline.TheoryOfAttemptStatistics.
-		func() pipeline.AttemptStatsWriter { return pipeline.AttemptStatsWriter(tui.Writer()) },
+		// The goal runner's progress reports — EventGoal banners and
+		// verdicts, EventStats statistics — forward to the Events tab
+		// through the same handleEvent path as the run's events. See
+		// pipeline.TheoryOfGoalMode.
+		func() pipeline.GoalEventObserver { return tui.handleEvent },
 	)
 	// Resolve the loop from the display scope so Module.Run binds the
 	// Logs-pane Logger at provider-resolution time. See

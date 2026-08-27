@@ -944,6 +944,10 @@ func (ls *loopState) finishWithError(err error, finalState generators.State) {
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = ls.remainingBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
+	// The caller-contributed final events are yielded before the
+	// terminal yield, so the run's summary data reaches the consumer
+	// ahead of the error. See TheoryOfLoopEvents.
+	ls.emitFinalEvents()
 	ls.runErr = err
 	ls.emitTerminal(Event{
 		Kind:    EventRunError,
@@ -958,6 +962,21 @@ func (ls *loopState) finish(finalState generators.State, finalBlocks []blocks.Bl
 	ls.result.FinalState = finalState
 	ls.result.RemainingBlocks = finalBlocks
 	ls.result.ParseErrors = ls.uncorrectedParseErrors
+	ls.emitFinalEvents()
+}
+
+// emitFinalEvents yields the caller-contributed events supplied by
+// RunOptions.FinalEvents: called once at run end, on both the success
+// and the error path, so the session's summary data (e.g., the attempt
+// statistics the codes pipeline publishes as an EventStats) joins the
+// run's single event stream. See TheoryOfLoopEvents.
+func (ls *loopState) emitFinalEvents() {
+	if ls.opts.FinalEvents == nil {
+		return
+	}
+	for _, ev := range ls.opts.FinalEvents() {
+		ls.emitEvent(ev)
+	}
 }
 
 // BlockHandler processes a block during streaming. If consumed is true,
@@ -1103,6 +1122,15 @@ type RunOptions struct {
 	// before retrying. If output is below the threshold or handoff is nil,
 	// retry proceeds directly.
 	Handoff func(incompleteText string) (*Handoff, error)
+
+	// FinalEvents supplies events to yield when the run ends, after the
+	// last attempt and before the terminal yield. Called once at run
+	// end — normally or with an error — so a session's summary data
+	// (e.g., the attempt statistics the codes pipeline publishes as an
+	// EventStats) reaches the same event stream as the live
+	// occurrences. May be nil. See TheoryOfLoopEvents and
+	// TheoryOfAttemptStatistics.
+	FinalEvents func() []Event
 
 	// OnIdle is called when no component triggers after a generation. It
 	// allows the caller to provide interactive input (e.g., chat prompt)

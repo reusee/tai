@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -274,6 +275,48 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Goal Loop Statistics") {
 		t.Fatal("output must contain the aggregated statistics table")
+	}
+}
+
+// TestRunGoalReportsEventsThroughObserver verifies that a goal event
+// observer receives the run's progress as events — the loop banners and
+// the achieved verdict as EventGoal, the aggregated loop-tagged
+// statistics as EventStats — while the output writer stays empty. See
+// TheoryOfGoalMode and TheoryOfLoopEvents.
+func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
+	output := &bytes.Buffer{}
+	var events []Event
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: output,
+		Generate: func(ctx context.Context, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
+		},
+		Review: noopReview,
+		GoalEvents: func(ev Event) {
+			events = append(events, ev)
+		},
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved")
+	}
+	// Loop 1 declares done, loop 2 confirms: two loop banners, the
+	// achieved verdict, and the aggregated statistics.
+	var kinds []EventKind
+	for _, ev := range events {
+		kinds = append(kinds, ev.Kind)
+	}
+	wantKinds := []EventKind{EventGoal, EventGoal, EventGoal, EventStats}
+	if !slices.Equal(kinds, wantKinds) {
+		t.Fatalf("expected event kinds %v, got %v", wantKinds, kinds)
+	}
+	if !strings.Contains(events[2].Detail, "Goal Achieved") {
+		t.Fatalf("expected the achieved verdict as an event, got %q", events[2].Detail)
+	}
+	if len(events[3].Stats) != 2 || events[3].Stats[1].Loop != 2 {
+		t.Fatalf("expected the aggregated loop-tagged stats on the stats event, got %+v", events[3].Stats)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("expected the output writer to stay empty when the observer is set, got %q", output.String())
 	}
 }
 

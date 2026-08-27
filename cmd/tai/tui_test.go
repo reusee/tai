@@ -1993,6 +1993,62 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	}
 }
 
+// TestTUIHandleEventRendersStatsAndGoal verifies the Events-tab
+// rendering of the statistics and goal-progress events: the statistics
+// event renders one log-colored line per attempt plus its summary
+// lines, a goal-run aggregation prefixes the loop number, and the goal
+// event renders its message lines in the log color. See TheoryOfTUI.
+func TestTUIHandleEventRendersStatsAndGoal(t *testing.T) {
+	tui := newTUIForTest()
+	tui.handleEvent(pipeline.Event{
+		Kind:   pipeline.EventStats,
+		Detail: "Generation Statistics",
+		Stats: []pipeline.AttemptStat{
+			{
+				Attempt:          1,
+				PromptTokens:     10,
+				CompletionTokens: 5,
+				Duration:         1500 * time.Millisecond,
+				Summary:          "did the work",
+			},
+		},
+	})
+	group := tui.events[len(tui.events)-1]
+	if len(group) != 3 {
+		t.Fatalf("expected 3 lines for the stats event, got %v", group)
+	}
+	if group[0].Text != "[Statistics: Generation Statistics]" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected statistics header: %+v", group[0])
+	}
+	if group[1].Text != "attempt 1: prompt 10, completion 5, thoughts 0, cached 0, 1.5s" ||
+		group[1].Color != outputColorLogLine {
+		t.Fatalf("unexpected statistics line: %+v", group[1])
+	}
+	if group[2].Text != "  did the work" {
+		t.Fatalf("unexpected summary line: %+v", group[2])
+	}
+
+	// A goal-run aggregation prefixes the loop number on the attempt
+	// line.
+	tui.handleEvent(pipeline.Event{
+		Kind:   pipeline.EventStats,
+		Detail: "Goal Loop Statistics",
+		Stats: []pipeline.AttemptStat{
+			{Loop: 2, Attempt: 1, PromptTokens: 7},
+		},
+	})
+	group = tui.events[len(tui.events)-1]
+	if group[1].Text != "loop 2 attempt 1: prompt 7, completion 0, thoughts 0, cached 0, 0s" {
+		t.Fatalf("unexpected aggregated statistics line: %+v", group[1])
+	}
+
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventGoal, Detail: "=== Goal Loop 1/20 ==="})
+	group = tui.events[len(tui.events)-1]
+	if len(group) != 1 || group[0].Text != "=== Goal Loop 1/20 ===" || group[0].Color != outputColorLogLine {
+		t.Fatalf("unexpected goal event line: %+v", group)
+	}
+}
+
 func TestTUICaptureContentNotifies(t *testing.T) {
 	tui := newTUIForTest()
 	tui.updateCh = make(chan struct{}, 1)

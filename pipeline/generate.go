@@ -78,9 +78,10 @@ type Generate func(ctx context.Context, output io.Writer) error
 
 // GenerateWithResultWithStats runs the full codes generation pipeline and
 // returns the Result together with the attempt statistics collected
-// during the run. The statistics are returned (not only printed) so that
-// callers that run multiple independent generation sessions — such as the
-// goal runner — can accumulate them and re-print the entire process
+// during the run. The statistics are returned and published into the
+// run's event stream as one EventStats (via RunOptions.FinalEvents), so
+// that callers that run multiple independent generation sessions — such
+// as the goal runner — can accumulate them and report the entire process
 // aggregated after all sessions complete. See TheoryOfAttemptStatistics.
 type GenerateWithResultWithStats func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error)
 
@@ -203,13 +204,12 @@ streaming (e.g., Gemini's streaming UsageMetadata) do not create
 duplicate entries. Truncated attempts (no summary block) that are
 retried are recorded via OnAttemptTruncated with the summary synthesized
 by the retry process, so they appear as separate entries; the completing
-attempt itself is recorded by OnAttemptSuccess. The statistics are
-printed at the end of the session via a deferred call, so they are shown
-even when the session ends early due to an error. The table is written
-to the AttemptStatsWriter provider when one is configured, and to the
-generation output writer otherwise: in TUI mode the output writer is the
-redirected null device, so the TUI forks AttemptStatsWriter to its
-output pane.
+attempt itself is recorded by OnAttemptSuccess. At run end the collected
+statistics are published into the run's event stream as one EventStats
+through RunOptions.FinalEvents — the display source for a live consumer
+such as the TUI's Events tab — and printed to the generation output
+writer via a deferred call, so the table is still shown in command-line
+mode even when the session ends early due to an error.
 `
 
 // AttemptStat records per-attempt token usage (prompt, completion,
@@ -229,15 +229,6 @@ type AttemptStat struct {
 	Duration         time.Duration
 	Summary          string
 }
-
-// AttemptStatsWriter receives the attempt statistics table printed at
-// the end of a generation session. The default provider returns nil, in
-// which case the table is written to the generation output writer
-// passed by the command. A display front-end (e.g., tai's TUI) forks
-// this type to route the table into its interface: in TUI mode the
-// generation output writer is the redirected null device, so the table
-// would be invisible without the fork. See TheoryOfAttemptStatistics.
-type AttemptStatsWriter io.Writer
 
 // PrintAttemptStats writes the attempt statistics table to w. The
 // optional title replaces the default "Generation Statistics" header.
@@ -585,7 +576,6 @@ func (Module) GenerateWithResultWithStats(
 	loopRun Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
-	attemptStatsWriter AttemptStatsWriter,
 	createHandoff CreateHandoff,
 ) GenerateWithResultWithStats {
 	return func(ctx context.Context, output io.Writer) (Result, []AttemptStat, error) {
@@ -760,15 +750,11 @@ func (Module) GenerateWithResultWithStats(
 
 		var attemptStats []AttemptStat
 		defer func() {
-			// The table goes to the AttemptStatsWriter provider when one is
-			// configured (TUI mode forks it to its output pane), and to the
-			// generation output writer otherwise. See
-			// TheoryOfAttemptStatistics.
-			statsOutput := io.Writer(attemptStatsWriter)
-			if statsOutput == nil {
-				statsOutput = output
-			}
-			PrintAttemptStats(statsOutput, attemptStats)
+			// The table goes to the generation output writer. In TUI
+			// mode that writer is the redirected null device, and the
+			// EventStats published through FinalEvents below is the
+			// display source instead. See TheoryOfAttemptStatistics.
+			PrintAttemptStats(output, attemptStats)
 		}()
 
 		var attemptStartTime time.Time
@@ -906,6 +892,21 @@ func (Module) GenerateWithResultWithStats(
 				}
 				return handoff, err
 			},
+
+			// Publish the session's attempt statistics into the run's
+			// event stream at run end, so a display front-end renders
+			// them in its event display. See
+			// TheoryOfAttemptStatistics.
+			FinalEvents: func() []Event {
+				if len(attemptStats) == 0 {
+					return nil
+				}
+				return []Event{{
+					Kind:   EventStats,
+					Detail: "Generation Statistics",
+					Stats:  attemptStats,
+				}}
+			},
 		}, &result) {
 			if e != nil {
 				err = e
@@ -929,8 +930,4 @@ func (Module) GenerateWithResultWithStats(
 
 		return result, attemptStats, err
 	}
-}
-
-func (Module) AttemptStatsWriter() AttemptStatsWriter {
-	return AttemptStatsWriter(nil)
 }
