@@ -133,56 +133,6 @@ func (Module) Memory(
 		return nil
 	}
 
-	acquireLock := func(lockFilePath string) (func(), error) {
-		var locked bool
-		const maxRetries = 20
-		const baseDelay = 100 * time.Millisecond
-		const maxDelay = 2 * time.Second
-
-		for attempt := range maxRetries {
-			if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
-				// Write PID to lock file
-				fmt.Fprintf(f, "%d", os.Getpid())
-				f.Close()
-				locked = true
-				break
-			} else if !os.IsExist(err) {
-				return nil, fmt.Errorf("failed to create lock file: %w", err)
-			}
-
-			// Check if lock is stale: read PID and verify process
-			if data, err := os.ReadFile(lockFilePath); err == nil {
-				pidStr := strings.TrimSpace(string(data))
-				if pid, err := strconv.Atoi(pidStr); err == nil {
-					process, err := os.FindProcess(pid)
-					if err != nil {
-						os.Remove(lockFilePath)
-						continue
-					}
-					if err := process.Signal(os.Signal(nil)); err != nil {
-						// Process not found or no permission; assume stale
-						os.Remove(lockFilePath)
-						continue
-					}
-				}
-			}
-
-			if attempt < maxRetries-1 {
-				delay := min(baseDelay*time.Duration(1<<uint(attempt)), maxDelay)
-				time.Sleep(delay)
-			}
-		}
-
-		if !locked {
-			return nil, fmt.Errorf("failed to acquire lock for %s after %d attempts", fileName, maxRetries)
-		}
-
-		unlock := func() {
-			os.Remove(lockFilePath)
-		}
-		return unlock, nil
-	}
-
 	currentMemory := func() (*MemoryEntry, error) {
 		generator, err := getDefaultGenerator()
 		if err != nil {
@@ -215,7 +165,13 @@ func (Module) Memory(
 		}
 		lockFilePath := filePath + ".lock"
 
-		unlock, err := acquireLock(lockFilePath)
+		// Lock acquisition is delegated to acquireMemoryLock so the
+		// stale-detection policy is unit-testable; the retry policy
+		// matches the original inline constants. See TheoryOfMemory.
+		const maxRetries = 20
+		const baseDelay = 100 * time.Millisecond
+		const maxDelay = 2 * time.Second
+		unlock, err := acquireMemoryLock(lockFilePath, maxRetries, baseDelay, maxDelay)
 		if err != nil {
 			return err
 		}
@@ -233,6 +189,46 @@ func (Module) Memory(
 	}
 
 	return currentMemory, appendMemory
+}
+
+// acquireMemoryLock acquires the advisory lock file at lockFilePath and
+// returns the unlock function. A lock file whose recorded PID is no
+// longer alive is stale and removed; a lock held by a live process is
+// respected, retrying with exponential backoff up to maxRetries attempts
+// before failing. The stale check must never dispossess a live holder:
+// removing a live process's lock would let two processes interleave their
+// read-modify-write of the profile and lose updates. A lock file whose
+// content is not a parseable PID (e.g., still empty between creation and
+// the PID write) is treated as held. See TheoryOfMemory.
+func acquireMemoryLock(lockFilePath string, maxRetries int, baseDelay, maxDelay time.Duration) (func(), error) {
+	for attempt := range maxRetries {
+		if f, err := os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
+			fmt.Fprintf(f, "%d", os.Getpid())
+			f.Close()
+			unlock := func() {
+				os.Remove(lockFilePath)
+			}
+			return unlock, nil
+		} else if !os.IsExist(err) {
+			return nil, fmt.Errorf("failed to create lock file: %w", err)
+		}
+
+		if data, err := os.ReadFile(lockFilePath); err == nil {
+			pidStr := strings.TrimSpace(string(data))
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				if !signalZero(pid) {
+					os.Remove(lockFilePath)
+					continue
+				}
+			}
+		}
+
+		if attempt < maxRetries-1 {
+			delay := min(baseDelay*time.Duration(1<<uint(attempt)), maxDelay)
+			time.Sleep(delay)
+		}
+	}
+	return nil, fmt.Errorf("failed to acquire lock for %s after %d attempts", filepath.Base(lockFilePath), maxRetries)
 }
 
 type memoryRoot struct {

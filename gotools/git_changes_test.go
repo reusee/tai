@@ -37,6 +37,13 @@ func initGitRepo(t *testing.T, dir string) func(args ...string) {
 	}
 	git("config", "user.name", "test")
 	git("config", "user.email", "test@example.com")
+	// Disable git's background auto-maintenance: a detached gc spawned by
+	// a git command can still be writing into .git/objects after the
+	// command returns, racing the TempDir RemoveAll cleanup with
+	// ENOTEMPTY failures. gc.auto=0 keeps the gc task from ever being
+	// due, and maintenance.auto=false disables the auto dispatch itself.
+	git("config", "gc.auto", "0")
+	git("config", "maintenance.auto", "false")
 	return git
 }
 
