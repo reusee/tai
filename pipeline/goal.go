@@ -27,18 +27,22 @@ cmd/tai.TheoryOfGoModuleDefault), so every Go-project invocation runs the
 multi-loop mechanism.
 
 A done block is a completion declaration, not a verdict. The model emits a
-done block when it believes the goal is achieved; the runner then carries
-goalDoneVerificationPrompt into the next loop, which re-reads the current
-filesystem state and re-assesses the goal. Only a second consecutive done
-block confirms the goal and stops the run. This verification step is required
-because the filesystem may change while a loop runs: a loop that loaded
-todo.md containing task A cannot see task B added by the user during
-execution, so its done declaration may rest on stale context. The
-verification loop sees the latest files, so the goal-achieved verdict always
-reflects the current state. The verification loop's primary work is
-verification and correction: it checks the declaration against the current
-state, fixes errors the check uncovers, and starts no unrelated new work.
-Because the done block is not consumed by any
+done block when it believes the goal is achieved. When the declaring loop
+applied change blocks, the runner carries goalDoneVerificationPrompt into
+the next loop, which re-reads the current filesystem state and re-assesses
+the goal; only a second consecutive done block confirms the goal and stops
+the run. This verification step is required because the filesystem may
+change while a loop runs: a loop that loaded todo.md containing task A
+cannot see task B added by the user during execution, so its done
+declaration may rest on stale context. The verification loop sees the
+latest files, so the goal-achieved verdict always reflects the current
+state. Its primary work is verification and correction: it checks the
+declaration against the current state, fixes errors the check uncovers, and
+starts no unrelated new work. A done block emitted by a loop that applied
+no change blocks skips verification and achieves the goal directly: that
+loop just read the current filesystem state through a fresh scope and
+concluded without changes, so a verification loop would read the same state
+and repeat the same analysis. Because the done block is not consumed by any
 component, it remains in Result.RemainingBlocks; the runner checks there.
 When the declaration lands on the final budget loop, the runner executes one
 extra verification loop beyond the budget. A loop that fails or produces
@@ -51,14 +55,16 @@ as it needs (continue, shell, go-test blocks), so a loop that ends with an
 empty diff set had every opportunity to make changes and concluded without
 any; the next loop would read the same filesystem state and repeat the same
 analysis. This serves analytical tasks that need no code changes and
-complete in one loop. The check runs after done-block handling and only
-while no done declaration is pending: a declared goal is still verified even
-with no diffs, and a verification loop that corrects nothing falls through
-to the clean-loop path so the declaration can still be confirmed. Parse
-errors also take precedence: unapplied changes must be re-emitted before the
-run may end. The stop prints a dedicated message and leaves Achieved false —
-only a confirmed done block marks achievement; the runner never fabricates
-one.
+complete in one loop. A done block emitted by such a loop is accepted as
+achievement rather than answered with the no-change stop; the no-change
+check runs after done-block handling and only while no done declaration is
+pending: a verification loop that emits no done block and corrects nothing
+falls through to the clean-loop path, so a later loop can still confirm the
+declaration. Parse errors also take precedence: unapplied changes must be
+re-emitted before the run may end. The stop prints a dedicated message and
+leaves Achieved false — achievement requires an accepted done block: one
+confirmed by a verification loop, or one emitted by a loop that applied no
+change blocks; the runner never fabricates one.
 
 Malformed blocks that cannot be corrected within the parse-error correction
 budget are reported per loop via Result.ParseErrors. Reporting makes silent
@@ -437,10 +443,12 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 
 // applyLoopSuccess folds a successful loop into the runner state:
 // uncorrected malformed blocks carry re-emit feedback and overturn a
-// pending done declaration; a done block is a declaration that the next
-// loop verifies on the review model; a loop that applied no change
-// blocks ends the run; a clean loop with changes clears the feedback.
-// See TheoryOfGoalMode and TheoryOfGoalReviewModel.
+// pending done declaration; a done block confirms a pending declaration,
+// and a done block from a loop that applied no change blocks achieves
+// the goal directly without a verification loop; a loop that applied no
+// change blocks without a done block ends the run; a clean loop with
+// changes clears the feedback. See TheoryOfGoalMode and
+// TheoryOfGoalReviewModel.
 func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter goalReporter) bool {
 	s.consecutiveErrors = 0
 	s.lastErrMsg = ""
@@ -467,7 +475,16 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	}
 
 	if foundDone {
-		if s.pendingDoneVerification {
+		// A pending declaration is confirmed by this done block. A done
+		// block from a loop that applied no change blocks achieves the
+		// goal directly: that loop just read the current filesystem
+		// state through a fresh scope and concluded without changes, so
+		// a verification loop would read the same state and repeat the
+		// same analysis. A done block from a loop with applied changes
+		// still enters verification below, because the changes are what
+		// the verification loop independently re-checks. See
+		// TheoryOfGoalMode.
+		if s.pendingDoneVerification || len(result.Diffs) == 0 {
 			reporter.message(fmt.Sprintf("\n[Goal Achieved after %d loop(s)]\n", loopsRun))
 			s.achieved = true
 			return true
@@ -486,9 +503,10 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 	// diff set means it concluded without changes, and the next loop
 	// would read the same filesystem state and repeat the same analysis.
 	// The check is skipped while a done declaration is pending: that
-	// loop verifies the declaration, and a verification without
-	// corrections falls through to the clean-loop path below so the
-	// declaration can still be confirmed. See TheoryOfGoalMode.
+	// loop verifies the declaration, and a verification loop that emits
+	// no done block and corrects nothing falls through to the
+	// clean-loop path below so a later loop can still confirm the
+	// declaration. See TheoryOfGoalMode.
 	if !s.pendingDoneVerification && len(result.Diffs) == 0 {
 		reporter.message(fmt.Sprintf(
 			"\n[Goal Run Complete: loop %d applied no change blocks]\n", loopsRun))

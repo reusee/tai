@@ -23,6 +23,16 @@ func doneResult() Result {
 	}
 }
 
+// doneWithChangesResult builds a Result that declares done while carrying
+// applied changes, so the declaring loop does not end the run under the
+// done-without-changes rule and instead enters verification. See
+// TheoryOfGoalMode.
+func doneWithChangesResult() Result {
+	ret := doneResult()
+	ret.Diffs = []changes.FileDiff{{Path: "a.go"}}
+	return ret
+}
+
 // noopReview is a review stub for goal tests.
 func noopReview(ctx context.Context, output io.Writer, diffs []changes.FileDiff) error {
 	return nil
@@ -40,6 +50,12 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			reviewModels = append(reviewModels, reviewModel)
+			if calls == 1 {
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
+			}
 			return doneResult(), nil, nil
 		},
 		Review: noopReview,
@@ -108,6 +124,12 @@ func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 					{Attempt: 3, Summary: "fixed the boundary bug"},
 				}, errors.New("api down")
 			}
+			if calls == 2 {
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
+			}
 			return doneResult(), nil, nil
 		},
 		Review: noopReview,
@@ -167,6 +189,11 @@ func TestRunGoalDiskChangeHandoffFeedsNextLoop(t *testing.T) {
 				}
 			case 3:
 				return Result{}, nil, errors.New("boom")
+			case 4:
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
 			}
 			return doneResult(), nil, nil
 		},
@@ -204,7 +231,10 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 					},
 				}, nil, nil
 			}
-			return doneResult(), nil, nil
+			// The declaring loops carry applied changes; a done block
+			// without changes would end the run directly. See
+			// TheoryOfGoalMode.
+			return doneWithChangesResult(), nil, nil
 		},
 		Review: noopReview,
 	})
@@ -243,6 +273,37 @@ func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
 	}
 }
 
+// TestRunGoalDoneWithoutChangesEndsRun verifies the done-without-changes
+// rule: a done block emitted by a loop that applied no change blocks ends
+// the run in that loop. The declaring loop just read the current
+// filesystem state through a fresh scope and concluded without changes,
+// so a verification loop would only repeat the same analysis. See
+// TheoryOfGoalMode.
+func TestRunGoalDoneWithoutChangesEndsRun(t *testing.T) {
+	output := &bytes.Buffer{}
+	calls := 0
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: output,
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if calls != 1 {
+		t.Fatalf("ran %d loops, want 1: a done block without applied changes must not trigger a verification loop", calls)
+	}
+	if result.LoopsRun != 1 {
+		t.Fatalf("LoopsRun = %d, want 1", result.LoopsRun)
+	}
+	if !result.Achieved {
+		t.Fatal("the done block must mark the goal achieved")
+	}
+	if !strings.Contains(output.String(), "Goal Achieved") {
+		t.Fatal("output must report the achieved goal")
+	}
+}
+
 func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
@@ -253,6 +314,12 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 				return Result{
 					Diffs: []changes.FileDiff{{Path: "a.go"}},
 				}, nil, nil
+			}
+			if calls == 2 {
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
 			}
 			return doneResult(), nil, nil
 		},
@@ -272,7 +339,10 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
-				return doneResult(), nil, nil
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
 			}
 			return Result{}, nil, nil
 		},
@@ -288,10 +358,18 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 }
 
 func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
+	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
 			stats := []AttemptStat{{Attempt: 1, PromptTokens: 10}}
+			if calls == 1 {
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), stats, nil
+			}
 			return doneResult(), stats, nil
 		},
 		Review: noopReview,
@@ -323,8 +401,9 @@ func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	if !result.Achieved {
 		t.Fatal("goal must be achieved")
 	}
-	// Loop 1 declares done, loop 2 confirms: the achieved verdict is
-	// the only goal event.
+	// A done block emitted by a loop that applied no change blocks
+	// achieves the goal directly: the achieved verdict is the only goal
+	// event.
 	var kinds []EventKind
 	for _, ev := range events {
 		kinds = append(kinds, ev.Kind)
@@ -362,7 +441,10 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 					},
 				}, nil, nil
 			}
-			return doneResult(), nil, nil
+			// The declaring loops carry applied changes; a done block
+			// without changes would end the run directly. See
+			// TheoryOfGoalMode.
+			return doneWithChangesResult(), nil, nil
 		},
 		Review: noopReview,
 	})
@@ -385,11 +467,19 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 // that post-done loops keep the default model when no review model is
 // configured. See TheoryOfGoalReviewModel.
 func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
+	calls := 0
 	var reviewModels []string
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
 		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 			reviewModels = append(reviewModels, reviewModel)
+			calls++
+			if calls == 1 {
+				// The declaring loop carries applied changes; a done
+				// block without changes would end the run directly. See
+				// TheoryOfGoalMode.
+				return doneWithChangesResult(), nil, nil
+			}
 			return doneResult(), nil, nil
 		},
 		Review: noopReview,
