@@ -44,8 +44,8 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	var feedbacks []GoalFeedback
 	var reviewModels []string
 	result := RunGoal(context.Background(), GoalOptions{
-		Output:      output,
-		ReviewModel: "review-model",
+		Output:       output,
+		ReviewModels: []string{"review-model"},
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
@@ -524,8 +524,8 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 	calls := 0
 	var reviewModels []string
 	RunGoal(context.Background(), GoalOptions{
-		Output:      &bytes.Buffer{},
-		ReviewModel: "review-model",
+		Output:       &bytes.Buffer{},
+		ReviewModels: []string{"review-model"},
 		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 			calls++
 			reviewModels = append(reviewModels, reviewModel)
@@ -560,6 +560,53 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 		if model != "review-model" {
 			t.Fatalf("loop %d review model = %q, want \"review-model\" (the switch is sticky)", i+2, model)
 		}
+	}
+}
+
+// TestRunGoalRotatesReviewModelsOnEachDoneBlock verifies the
+// review-model rotation across the post-done loops: each done block
+// emitted by a loop advances the selection by one, the last configured
+// model is fixed once reached, and a loop without a done block does
+// not advance it. See TheoryOfGoalReviewModel.
+func TestRunGoalRotatesReviewModelsOnEachDoneBlock(t *testing.T) {
+	calls := 0
+	var reviewModels []string
+	result := RunGoal(context.Background(), GoalOptions{
+		Output:       &bytes.Buffer{},
+		ReviewModels: []string{"review-a", "review-b"},
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+			calls++
+			reviewModels = append(reviewModels, reviewModel)
+			switch calls {
+			case 1:
+				// First declaration: the next loop runs on review-a.
+				return doneWithChangesResult(), nil, nil
+			case 2:
+				// Corrections without a done block: the selection
+				// does not advance, so the next loop stays on
+				// review-a.
+				return Result{Diffs: []changes.FileDiff{{Path: "a.go"}}}, nil, nil
+			case 3:
+				// Second declaration: the next loop runs on review-b.
+				return doneWithChangesResult(), nil, nil
+			case 4:
+				// Third declaration: the last model is fixed, so the
+				// next loop stays on review-b.
+				return doneWithChangesResult(), nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved by the final change-free done loop")
+	}
+	if calls != 5 {
+		t.Fatalf("ran %d loops, want 5", calls)
+	}
+	want := []string{"", "review-a", "review-a", "review-b", "review-b"}
+	if !slices.Equal(reviewModels, want) {
+		t.Fatalf("review models = %v, want %v", reviewModels, want)
 	}
 }
 
