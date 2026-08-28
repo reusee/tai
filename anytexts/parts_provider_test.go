@@ -795,3 +795,126 @@ func TestMatchFlagFiltersFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestPartsProviderDirectMatchKeepsFullContent(t *testing.T) {
+	// A directly matched -file target is a work target the user named, so
+	// it keeps full content even with SkeletonFiles enabled. See
+	// TheoryOfContextSkeleton.
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	pyContent := "class Widget:\n    def render(self):\n        secret_body_value = 1\n        return secret_body_value\n"
+	if err := os.WriteFile("widget.py", []byte(pyContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Fork(
+		func() SkeletonFiles {
+			return true
+		},
+	).Call(func(
+		provider PartsProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"widget.py"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundFull := false
+		for _, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if strings.Contains(s, "secret_body_value") {
+				foundFull = true
+			}
+			if strings.Contains(s, textSkeletonHint) {
+				t.Fatalf("directly matched file must not carry the skeleton hint, got:\n%s", s)
+			}
+		}
+		if !foundFull {
+			t.Fatal("directly matched file must keep full content")
+		}
+	})
+}
+
+func TestPartsProviderSkeletonForTraversalFiles(t *testing.T) {
+	// With SkeletonFiles enabled, files discovered by traversal render as
+	// parsed skeletons: supported formats carry the summary hint and the
+	// structural outline without bodies; unsupported formats fall back to
+	// full content. See TheoryOfContextSkeleton.
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	pyContent := "class Widget:\n    def render(self):\n        secret_body_value = 1\n        return secret_body_value\n"
+	if err := os.WriteFile("widget.py", []byte(pyContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("notes.txt", []byte("plain notes content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		new(Module),
+		modes.ForTest(t),
+	).Fork(
+		func() SkeletonFiles {
+			return true
+		},
+	).Call(func(
+		provider PartsProvider,
+		countTokens generators.BPETokenCounter,
+	) {
+		parts, err := provider.Parts(math.MaxInt, countTokens, []string{"."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundSkeleton := false
+		foundFallback := false
+		for _, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if strings.Contains(s, "begin of file widget.py") {
+				foundSkeleton = true
+				if !strings.Contains(s, textSkeletonHint) {
+					t.Fatalf("skeleton block must carry the summary hint, got:\n%s", s)
+				}
+				if !strings.Contains(s, "Widget") {
+					t.Fatalf("skeleton must list the class, got:\n%s", s)
+				}
+				if strings.Contains(s, "secret_body_value") {
+					t.Fatalf("skeleton must omit function bodies, got:\n%s", s)
+				}
+			}
+			if strings.Contains(s, "plain notes content") {
+				foundFallback = true
+			}
+		}
+		if !foundSkeleton {
+			t.Fatal("widget.py skeleton block not found")
+		}
+		if !foundFallback {
+			t.Fatal("unsupported format must fall back to full content")
+		}
+	})
+}

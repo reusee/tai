@@ -13,6 +13,9 @@ import (
 const TheoryOfAnyCommand = `
 The "any" subcommand provides code generation for arbitrary text files by
 selecting the "any" PartsProvider, which delegates to anytexts.PartsProvider.
+It forks SkeletonFiles(true) so the initial context carries parsed skeletons
+instead of full content for every supported file format; skeletons truncate
+by syntax-tree depth, and directly matched -file targets keep full content.
 It reuses the full generation pipeline — including dynamic context,
 immediate apply, shell and continue blocks, and round statistics — by wiring
 pipeline.Module into the dscope scope. This makes "tai any" the general-purpose
@@ -22,6 +25,9 @@ entry point for non-Go code generation, complementing the Go-oriented default.
 var AnyCommand = Command{
 	Defs: []any{
 		modes.ForProduction(),
+		func() anytexts.SkeletonFiles {
+			return true
+		},
 		func(
 			provider anytexts.PartsProvider,
 		) codetypes.PartsProvider {

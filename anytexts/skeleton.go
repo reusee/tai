@@ -34,9 +34,22 @@ Go focus files, so their full content is provided as before.
 
 Extraction is best-effort: an unregistered path, a parse failure,
 or a file with no extractable structure yields no skeleton, and the
-caller falls back to the name-only listing. The skeleton is an
-enhancement over the name list, never a requirement.
+caller applies its own fallback — gotools' module-root listing keeps the
+name-only entry, and anytexts' PartsProvider keeps the full content. The
+skeleton is an enhancement, never a requirement.
+
+Enablement is caller-selected: gotools' module-root listing always uses
+skeletons, and the any command forks SkeletonFiles(true) so its initial
+context carries skeletons for every supported file format; other
+PartsProvider consumers (e.g., the ai command's -file attachments)
+keep full text.
 `
+
+// textSkeletonHint precedes a skeleton body inside a file block: it states
+// that the content is a summary and that modifying or fully understanding
+// the file requires fetching the original with an ingest block first.
+// See TheoryOfContextSkeleton.
+const textSkeletonHint = "The content below is a structural skeleton (summary), not the full file. To modify or fully understand the file, fetch the original with an ingest block first.\n"
 
 // skeletonMaxHeadingDepth is the heading depth limit of a markdown
 // skeleton: headings deeper than this level are omitted so a deep
@@ -188,4 +201,29 @@ func markdownSkeleton(content []byte) (string, bool) {
 		return "", false
 	}
 	return strings.Join(lines, "\n"), true
+}
+
+// buildTextFilePart renders one text file as a model-facing context unit.
+// When skeletonEnabled and the file was discovered during directory
+// traversal, a parsed skeleton replaces the full content, carrying the
+// summary hint; extraction failure or an unsupported format falls back
+// to full text. Directly matched files (-file patterns) are work targets
+// the user named and always render full text. See TheoryOfContextSkeleton.
+func buildTextFilePart(info FileInfo, skeletonEnabled bool) string {
+	readOnlyNote := ""
+	if info.ReadOnly {
+		readOnlyNote = " (read-only)"
+	}
+	body := string(info.Content)
+	if skeletonEnabled && !info.DirectMatch {
+		if skeleton, ok := Skeleton(info.Path, info.Content); ok {
+			body = textSkeletonHint + skeleton
+		}
+	}
+	// The part ends with a blank line so consecutive units stay
+	// paragraph-separated after verbatim part concatenation. See
+	// generators.TheoryOfContentUnitSeparation.
+	return "``` begin of file " + info.Path + readOnlyNote + "\n" +
+		body + "\n" +
+		"``` end of file " + info.Path + "\n\n"
 }

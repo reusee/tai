@@ -36,6 +36,7 @@ func TestPartsProviderRecordsFileHashes(t *testing.T) {
 		Debug:            func() Debug { return false },
 		IncludeMimeTypes: func() IncludeMimeTypes { return nil },
 		FileHashes:       func() *changes.FileHashes { return hashes },
+		SkeletonFiles:    func() SkeletonFiles { return false },
 	}
 
 	parts, err := provider.Parts(1<<20, func(string) (int, error) { return 1, nil }, nil)

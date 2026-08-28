@@ -131,17 +131,25 @@ type PartsProvider struct {
 	Debug            dscope.Inject[Debug]
 	IncludeMimeTypes dscope.Inject[IncludeMimeTypes]
 	FileHashes       dscope.Inject[*changes.FileHashes]
+	SkeletonFiles    dscope.Inject[SkeletonFiles]
 }
 
 var _ codetypes.PartsProvider = PartsProvider{}
 
+// SkeletonFiles controls whether PartsProvider renders structural text
+// files as parsed skeletons instead of full content. The any command
+// forks it to true; other consumers (e.g., the ai command's -file
+// attachments) keep full text. See TheoryOfContextSkeleton.
+type SkeletonFiles bool
+
 type FileInfo struct {
-	Path     string
-	Content  []byte
-	IsText   bool
-	MimeType string
-	ModTime  time.Time
-	ReadOnly bool
+	Path        string
+	Content     []byte
+	IsText      bool
+	MimeType    string
+	ModTime     time.Time
+	ReadOnly    bool
+	DirectMatch bool
 }
 
 func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
@@ -153,9 +161,10 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 
 		// Collect candidate files with modification times
 		type candidate struct {
-			path     string
-			modTime  time.Time
-			readOnly bool
+			path        string
+			modTime     time.Time
+			readOnly    bool
+			directMatch bool
 		}
 		var candidates []candidate
 
@@ -310,9 +319,10 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 
 			candidates = append(candidates, candidate{
-				path:     path,
-				modTime:  info.ModTime(),
-				readOnly: readOnly,
+				path:        path,
+				modTime:     info.ModTime(),
+				readOnly:    readOnly,
+				directMatch: item.directMatch,
 			})
 		}
 
@@ -362,12 +372,13 @@ func (c PartsProvider) IterFiles(patterns []string) iter.Seq2[FileInfo, error] {
 			}
 
 			if !yield(FileInfo{
-				Path:     cand.path,
-				Content:  content,
-				IsText:   isText,
-				MimeType: mtype.String(),
-				ModTime:  cand.modTime,
-				ReadOnly: cand.readOnly,
+				Path:        cand.path,
+				Content:     content,
+				IsText:      isText,
+				MimeType:    mtype.String(),
+				ModTime:     cand.modTime,
+				ReadOnly:    cand.readOnly,
+				DirectMatch: cand.directMatch,
 			}, nil) {
 				return
 			}
@@ -534,16 +545,10 @@ func (c PartsProvider) Parts(
 
 		if info.IsText {
 
-			readOnlyNote := ""
-			if info.ReadOnly {
-				readOnlyNote = " (read-only)"
-			}
-			// The part ends with a blank line so consecutive units stay
-			// paragraph-separated after verbatim part concatenation. See
-			// generators.TheoryOfContentUnitSeparation.
-			text := "``` begin of file " + info.Path + readOnlyNote + "\n" +
-				string(info.Content) + "\n" +
-				"``` end of file " + info.Path + "\n\n"
+			// The text may be a parsed skeleton instead of the full
+			// content, depending on SkeletonFiles and how the file was
+			// matched. See TheoryOfContextSkeleton.
+			text := buildTextFilePart(info, bool(c.SkeletonFiles()))
 
 			numTokens, err := countTokens(text)
 			if err != nil {
@@ -563,8 +568,10 @@ func (c PartsProvider) Parts(
 			parts = append(parts, generators.Text(text))
 
 			// Record the file's content hash so the apply layer detects
-			// external disk changes against this snapshot. See
-			// changes.TheoryOfDiskChangeDetection.
+			// external disk changes against this snapshot. The hash covers
+			// the full content even when only the skeleton is shown, so
+			// the baseline always reflects the collection-time disk state.
+			// See changes.TheoryOfDiskChangeDetection.
 			c.FileHashes().Set(info.Path, info.Content)
 
 			if c.Debug() {
@@ -573,6 +580,7 @@ func (c PartsProvider) Parts(
 					"tokens", numTokens,
 					"mime type", info.MimeType,
 					"read only", info.ReadOnly,
+					"skeleton", bool(c.SkeletonFiles()) && !info.DirectMatch,
 				)
 			}
 
@@ -648,6 +656,13 @@ func (c PartsProvider) Parts(
 	)
 
 	return
+}
+
+// SkeletonFiles provider: the default disables skeleton rendering, so
+// PartsProvider consumers keep full text unless a command forks the
+// value. See TheoryOfContextSkeleton.
+func (Module) SkeletonFiles() SkeletonFiles {
+	return false
 }
 
 // FileHashes provider: the per-session baseline of file content hashes,
