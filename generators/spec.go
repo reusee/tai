@@ -19,7 +19,8 @@ over RandomRedirect when both are set. Like Redirect, RandomRedirect is not merg
 PreservedThinking controls whether reasoning thoughts from previous model responses are sent back to the
 server in subsequent requests. When not set or false, thoughts are stripped from outgoing requests to avoid
 sending reasoning content back to the model. When true, thoughts are included in the request so the model
-can build on prior reasoning context.
+can build on prior reasoning context, and the OpenAI generator additionally forwards the flag to the server
+as chat_template_kwargs: {"preserve_thinking": true} in the request body.
 ZeroDataRetention marks a generator whose provider retains no input or output data. It is consumed by
 confidential mode (see TheoryOfConfidentialMode), which rejects any generator that does not set the field
 when enabled. Like the other optional booleans, it is not merged from parent to child unless explicitly set.

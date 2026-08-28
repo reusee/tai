@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -501,6 +502,59 @@ func TestOpenAINonStreamingArrayContent(t *testing.T) {
 		}
 		if !found {
 			t.Fatal("expected array-form content to be captured as text")
+		}
+	})
+}
+
+func TestOpenAIPreservedThinkingRequestKwargs(t *testing.T) {
+	// PreservedThinking must be forwarded to the server as
+	// chat_template_kwargs: {"preserve_thinking": true} in the request
+	// body, in addition to keeping thoughts in the message history.
+	// See TheoryOfSpec.
+	requestBody := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requestBody <- body
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() nets.HTTPClient {
+			return nets.HTTPClient{server.Client()}
+		},
+	).Call(func(
+		newOpenAI NewOpenAI,
+	) {
+		preservedThinking := true
+		openai := newOpenAI(Spec{
+			BaseURL:           server.URL,
+			Model:             "test-model",
+			PreservedThinking: &preservedThinking,
+		}, "test-key")
+
+		state := NewPrompts("", []*Content{
+			{Role: RoleUser, Parts: []Part{Text("hi")}},
+		})
+
+		if _, err := openai.Generate(context.Background(), state, &GenerateOptions{
+			NonStreaming: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		var request ChatCompletionRequest
+		if err := json.Unmarshal(<-requestBody, &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.ChatTemplateKwargs == nil {
+			t.Fatal("expected chat_template_kwargs in request")
+		}
+		if v, ok := request.ChatTemplateKwargs["preserve_thinking"].(bool); !ok || !v {
+			t.Fatalf("expected preserve_thinking=true, got %v", request.ChatTemplateKwargs)
 		}
 	})
 }

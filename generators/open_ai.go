@@ -163,6 +163,11 @@ func (o *OpenAI) Generate(ctx context.Context, state State, options *GenerateOpt
 	if o.spec.Provider != nil {
 		req.Provider = o.spec.Provider
 	}
+	if preservedThinking {
+		// Forward the preserved-thinking flag to the chat template so the
+		// server keeps reasoning content across turns. See TheoryOfSpec.
+		req.ChatTemplateKwargs = map[string]any{"preserve_thinking": true}
+	}
 	reasoningEffort := o.spec.ReasoningEffort
 	if flagEffort := string(o.Effort()); flagEffort != "" {
 		if flagEffort != reasoningEffort {
@@ -735,6 +740,10 @@ type ChatCompletionRequest struct {
 	Tools               []Tool                  `json:"tools,omitempty"`
 	Provider            *Provider               `json:"provider,omitempty"`
 	ResponseFormat      *ResponseFormat         `json:"response_format,omitempty"`
+	// ChatTemplateKwargs carries provider-specific chat template
+	// variables, such as preserve_thinking. It is omitted when unset.
+	// See TheoryOfSpec.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 type ResponseFormat struct {
