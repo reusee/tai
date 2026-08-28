@@ -13,12 +13,11 @@ import (
 	"github.com/reusee/tai/records"
 )
 
-// Module unifies the former codes, loops, and states modules into one
-// pipeline module: the generation loop, the generation pipeline built on
-// it, and the state layers (handoff, thought summarization) resolve in a
-// single dscope scope. The chat phases (interactive chat prompt and idle
-// handler) moved here from the former phases package, alongside the loop
-// that invokes them.
+// Module holds the generation loop, the generation pipeline built on it,
+// and the state layers (handoff, thought summarization); they resolve in
+// a single dscope scope. The chat phases (interactive chat prompt and
+// idle handler) also live in this package, alongside the loop that
+// invokes them.
 type Module struct {
 	dscope.Module
 	Generators generators.Module

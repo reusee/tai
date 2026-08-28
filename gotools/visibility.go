@@ -17,11 +17,10 @@ import (
 
 const TheoryOfLazyPackageDoc = `
 Package documentation (go doc output) is computed lazily, only for packages
-that actually reach a documentation level. The eager approach ran go doc -all
--cmd for every non-focus package in the dependency graph during
-precomputeTokenCounts, spawning one Go toolchain subprocess per package —
-hundreds of processes for a typical project — even though most packages end
-up invisible or at the code/full levels, where the doc output is never used.
+that actually reach a documentation level: most packages in a dependency
+graph end up invisible or at the code/full levels, where the doc output is
+never used, so eager computation would spawn one go doc subprocess per
+package — hundreds of processes for a typical project — for nothing.
 There are two documentation levels — short doc (go doc without -all) and
 full doc (go doc -all -cmd) — and each is produced by its own subprocess
 invocation, cached independently on the package (shortDocComputed,
@@ -89,7 +88,7 @@ lets the model find it via semantic search: cheap in tokens, but prone
 to missing details and to never grasping the architecture as a whole —
 what the model does not search for never surfaces.
 
-The project evolved from full source to a middle path that keeps the
+The project's context strategy is a middle path that keeps the
 strengths of both poles. The initial context is documentation: focus
 packages enter as go doc output carrying the complete declaration
 surface — every symbol, every test function name — at a fraction of
@@ -115,11 +114,10 @@ whose focus packages total 128K documentation tokens gets a 32K context
 budget; a 200K documentation surface gets a 64K budget. This scaling
 prevents a large focus package from starving its dependencies and
 supporting packages, which would degrade the model's ability to reason
-about cross-package interactions. Small projects stay at the 32K floor,
-matching the original fixed-budget behavior. The computation is
-deterministic: identical focus packages always produce an identical
-budget, so context files are simplified to the same level across
-requests with the same focus, preserving the LLM prefix cache.
+about cross-package interactions. Small projects stay at the 32K floor.
+The computation is deterministic: identical focus packages always produce
+an identical budget, so context files are simplified to the same level
+across requests with the same focus, preserving the LLM prefix cache.
 
 The visibility allocation uses a water-filling algorithm that upgrades
 packages from their minimum visibility to higher levels as the budget
@@ -964,11 +962,10 @@ func prefetchPackageDocs(
 // generator budget; the pinned costs are already computed by
 // prefetchPackageDocs, and the sum mirrors the focusTokens total
 // allocateVisibility evaluates after its pin loop. A large project under
-// the default ./... focus pattern has hundreds of focus packages, so the
-// serial downgrade dominated the wait between "get files done" and
-// "context token composition"; the parallel path mirrors
-// prefetchPackageDocs. When the downgrade will not trigger — or the
-// pinned costs are not yet known, which the production wiring never
+// the default ./... focus pattern has hundreds of focus packages, and
+// each probe is a go doc subprocess, so the probes run in parallel,
+// mirroring prefetchPackageDocs. When the downgrade will not trigger —
+// or the pinned costs are not yet known, which the production wiring never
 // produces — nothing is prefetched and the downgrade loop runs the probes
 // itself, unchanged. See TheoryOfLazyPackageDoc and
 // TheoryOfVisibilityAllocation.

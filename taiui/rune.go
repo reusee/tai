@@ -16,8 +16,8 @@ taiui display width theory:
   columns. Text rendering segments lines into clusters and measures each
   cluster once.
 - The RUNEWIDTH_EASTASIAN environment variable toggles the width of
-  ambiguous East Asian runes. This preserves the historical tcell
-  convention for CJK terminals.
+  ambiguous East Asian runes. This follows the tcell convention for CJK
+  terminals.
 - The width options are derived from the environment once per render
   pass and threaded through the element tree, so the environment is
   scanned once per pass rather than once per element. Screens that

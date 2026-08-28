@@ -11,7 +11,7 @@ taiui theory: UI = pure Element value derived from state.
   Frame and presents the frame to each screen. A state change is a
   rebuilt Element; the next render reflects the change. There is no
   imperative element-update protocol and no dependency-injection
-  framework: per-component caching was not worth its complexity —
+  framework: per-component caching is not worth its complexity —
   building a Frame is cheap and screens diff whole frames anyway.
   Render context (boxes, styles, draw callbacks) is never stored;
   screens are passed per call.

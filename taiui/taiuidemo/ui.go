@@ -18,16 +18,11 @@ taiuidemo architecture theory:
 - The demo state lives in one State struct; BuildRoot is a plain function
   that turns the current state into a Root element tree, and the event
   loop mutates the State and calls Render only when something changed.
-- The demo used to be built on dscope providers: every provider was a
-  method on App, each piece of state was its own provider type, each
-  panel its own provider, and forking a scope preserved the cached
-  results of the unchanged providers so a state change recomputed exactly
-  the components that depended on it. The machinery was not worth it: the
-  demo rebuilds a full Frame per render and the screens diff whole
-  frames, so per-component caching saved nothing while adding a provider
-  layer to read and reason about. The simplification removes the scope
-  entirely: state is a struct, UI is a function.
-- The state split remains in the struct: the key-handled state (scroll,
+- The demo builds no dscope provider layer: state is a struct, UI is a
+  plain function. The demo rebuilds a full Frame per render and the
+  screens diff whole frames, so per-component caching would save nothing
+  while adding a provider layer to read and reason about.
+- The state split lives in the struct: the key-handled state (scroll,
   toggle, w1 weight, modal, rotation) is mutated by HandleKey; the
   dynamic state (terminal size, frame counter, clock) is updated by the
   event loop. HandleKey reports whether the state changed, so a key

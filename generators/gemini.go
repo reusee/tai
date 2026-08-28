@@ -459,11 +459,9 @@ initial backoff duration is parameterized so tests can run without real-time
 delays while production callers use a meaningful delay.
 
 Retrier carries this logic as a Go 1.27 generic method: Do is generic over
-the result type, so one dscope-provided value serves every caller. Before
-generic methods, the same shape required a package-level generic function
-plus a non-generic function type that fixed the type parameter to State;
-the method subsumes both, and callers pass only the runtime values
-(context, the function, and the optional backoff).
+the result type, so one dscope-provided value serves every caller, and
+callers pass only the runtime values (context, the function, and the
+optional backoff).
 `
 
 // Retrier carries the retry dependencies — the logger and the interaction

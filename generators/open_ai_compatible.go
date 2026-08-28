@@ -5,8 +5,7 @@ import (
 )
 
 // firstNonZero returns the first non-empty string argument, or the empty
-// string if both are empty. It replaces the former vars.FirstNonZero for
-// the string-only use cases in this package.
+// string if both are empty.
 func firstNonZero(a, b string) string {
 	if a != "" {
 		return a

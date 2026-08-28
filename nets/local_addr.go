@@ -49,8 +49,7 @@ func newLocalAddrCache(lookupIP func(string) ([]net.IP, error)) *localAddrCache 
 // (loopback or private network). Successful lookups are cached per host;
 // failed lookups are not cached, so a transient DNS failure is retried on
 // the next call instead of remaining sticky. A host whose lookup fails is
-// reported as not local so the proxy is used for unknown hosts, matching
-// the original behavior.
+// reported as not local so the proxy is used for unknown hosts.
 func (c *localAddrCache) isLocalAddr(addr string) (bool, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

@@ -36,9 +36,9 @@ packages in the same module are ordered the same way, so volatile context
 content settles at the end of the context block instead of sitting in the
 stable prefix region.
 
-The commit-count window replaces an earlier time-based window (three
-days): a fixed time window can be empty when no commits happen within it,
-producing all-zero counts and losing the ordering signal. The most recent
+The window is a commit count rather than a fixed time range: a fixed time
+window can be empty when no commits happen within it, producing all-zero
+counts and losing the ordering signal. The most recent
 recentChangeCommitCount commits always form a meaningful evaluation range
 as long as the repository has any commits.
 
@@ -55,11 +55,10 @@ are all zero and root-module files keep the deterministic package ordering.
 // git change counts are accumulated for root-module package ordering.
 // Commits beyond this count do not influence the ordering: the heuristic
 // assumes that packages touched by the most recent commits are more likely
-// to change again in the near future. A commit count is used instead of a
-// time window (previously three days) so the evaluation range is always
-// meaningful: a fixed time window can contain no commits, yielding
-// all-zero counts and losing the ordering signal. See
-// TheoryOfGitChangeOrdering.
+// to change again in the near future. A commit-count window is used rather
+// than a fixed time window so the evaluation range is always meaningful:
+// a fixed time window can contain no commits, yielding all-zero counts
+// and losing the ordering signal. See TheoryOfGitChangeOrdering.
 const recentChangeCommitCount = 50
 
 // GetGitChangeCounts returns a map from absolute file path to the number
