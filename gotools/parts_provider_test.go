@@ -571,3 +571,65 @@ func TestPartsTokenCompositionLog(t *testing.T) {
 		}
 	}
 }
+
+func TestModuleRootListingSummaryHint(t *testing.T) {
+	// The module-root listing must announce that its content is summary
+	// form: to modify or fully understand a listed file, the original
+	// must be fetched with an ingest block. The listing carries each
+	// listed file's parsed skeleton. See TheoryOfNonGoFiles in
+	// module_root.go and anytexts.TheoryOfContextSkeleton.
+	root := t.TempDir()
+	t.Setenv("GOWORK", "")
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.py"), []byte("def handler(request):\n    return request\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "pkg.go"), []byte("package pkg\n\nfunc Foo() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() LoadDir { return LoadDir(root) },
+	).Call(func(
+		provider PartsProvider,
+	) {
+		parts, err := provider.Parts(1<<20, generators.DeepseekTokenCounterFn, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundListing := false
+		for _, part := range parts {
+			text, ok := part.(generators.Text)
+			if !ok {
+				continue
+			}
+			s := string(text)
+			if !strings.Contains(s, "begin of module root files") {
+				continue
+			}
+			foundListing = true
+			if !strings.Contains(s, "app.py") {
+				t.Errorf("listing must contain app.py, got:\n%s", s)
+			}
+			if !strings.Contains(s, "handler") {
+				t.Errorf("listing must carry the skeleton of app.py, got:\n%s", s)
+			}
+			if !strings.Contains(s, "ingest block") {
+				t.Errorf("listing must state that the content is summary form requiring ingest fetches, got:\n%s", s)
+			}
+		}
+		if !foundListing {
+			t.Fatal("expected a module root listing part")
+		}
+	})
+}

@@ -302,13 +302,13 @@ func (c PartsProvider) Parts(
 		}
 	}
 
-	// Module-root markdown listings follow the project files: the listing
-	// derives from the same project structure, so it belongs to the
-	// stable region of the prompt, before request-varying extras. A
-	// module root may carry no Go package, so its markdown files are not
-	// package files; the listing keeps them discoverable by name, and
-	// their contents are fetched on demand with ingest blocks. See
-	// TheoryOfNonGoFiles.
+	// Module-root structural text listings follow the project files: the
+	// listing derives from the same project structure, so it belongs to
+	// the stable region of the prompt, before request-varying extras. A
+	// module root may carry no Go package, so its structural text files
+	// are not package files; the listing keeps them discoverable, each
+	// with its parsed skeleton as a summary, and their contents are
+	// fetched on demand with ingest blocks. See TheoryOfNonGoFiles.
 	listings, err := c.ModuleRootFiles()()
 	if err != nil {
 		return nil, err
@@ -331,9 +331,14 @@ func (c PartsProvider) Parts(
 		}
 		var b strings.Builder
 		b.WriteString("``` begin of module root files " + listing.Dir + "\n")
-		b.WriteString("Markdown files at this module root (contents are not included in the context; fetch them with ingest blocks when needed):\n")
+		b.WriteString("Structural text files at this module root (the listing is summary form; to modify or fully understand a file, fetch the original with an ingest block first):\n")
 		for _, name := range names {
 			b.WriteString("- " + name + "\n")
+			if skeleton, ok := listing.Skeletons[name]; ok {
+				for _, line := range strings.Split(skeleton, "\n") {
+					b.WriteString("    " + line + "\n")
+				}
+			}
 		}
 		// The listing ends with a blank line so consecutive units stay
 		// paragraph-separated. See
