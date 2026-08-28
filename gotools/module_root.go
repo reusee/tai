@@ -34,7 +34,11 @@ automatically. Each listed file carries a parsed skeleton when one is
 extractable (anytexts.Skeleton), so the model sees the document's
 structure before deciding to fetch it. A skeleton is a summary:
 modifying or fully understanding the file still requires
-fetching the original with an ingest block.
+fetching the original with an ingest block. The listing's header
+states the summary form once; per-file consumption rules — treat the
+skeleton as an index, fetch the original before modifying — live in the
+system prompt (pipeline.SkeletonFilesSystemPrompt), and the listing body
+carries no repeated hint text.
 
 The -match filter and "!" exclusion patterns apply to listed names
 exactly as to collected files, so a listed name is always one the

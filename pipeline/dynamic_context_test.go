@@ -76,6 +76,27 @@ func TestSystemPromptReadOnlyFiles(t *testing.T) {
 	})
 }
 
+func TestSystemPromptSkeletonFiles(t *testing.T) {
+	dscope.New(
+		modes.ForTest(t),
+		new(Module),
+	).Fork(
+		func() codetypes.PartsProvider { return mockPartsProvider{} },
+	).Call(func(
+		prompt SystemPrompt,
+	) {
+		if !strings.Contains(string(prompt), "Skeleton Files") {
+			t.Fatal("system prompt must include the skeleton files section")
+		}
+		if !strings.Contains(string(prompt), "begin of skeleton of file") {
+			t.Fatal("system prompt must reference the skeleton marker")
+		}
+		if !strings.Contains(string(prompt), "ingest block") {
+			t.Fatal("system prompt must instruct fetching originals with ingest blocks")
+		}
+	})
+}
+
 func TestSystemPromptGoExtraSystemPrompt(t *testing.T) {
 	dscope.New(
 		modes.ForTest(t),

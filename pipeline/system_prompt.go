@@ -29,6 +29,21 @@ via symbolic links to external locations.
   explain the rationale, but do not emit a change block for it.
 `
 
+const SkeletonFilesSystemPrompt = `**Skeleton Files:**
+
+Files whose markers read "begin of skeleton of file <path>" carry a parsed
+structural summary of the file, not the file's actual content. The summary
+lists top-level structure (headings or definitions) and omits details.
+
+**Rules:**
+- Treat skeleton content as an index of the file's structure, not as source
+  text.
+- Do not emit change blocks based on skeleton content alone.
+- To modify a file shown as a skeleton, or to read any detail the skeleton
+  omits, fetch the original file with an ingest block first:
+  <file path="..." />.
+`
+
 const TheoryOfMandatoryPlanning = `
 Mandatory planning requires every task to begin with an overall plan and task
 decomposition, emitted as a plan-only first round, followed by execution

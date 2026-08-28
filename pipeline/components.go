@@ -19,8 +19,9 @@ the ai command's AIComponents).
 The pipeline reuses components.CommonComponents for the shell and continue
 component kinds, prepending its codes-specific components (change, go-test,
 go-src, ingest) and appending summary, read-only files (prompt-only),
-hidden packages (prompt-only, conditional), mandatory planning (prompt-only,
-conditional), and extra system prompt (prompt-only).
+skeleton files (prompt-only), hidden packages (prompt-only, conditional),
+mandatory planning (prompt-only, conditional), and extra system prompt
+(prompt-only).
 
 The unified block format prompt (blocks.BlockFormatSystemPrompt) is included
 as the first prompt-only component: every block-using component set must carry
@@ -66,9 +67,15 @@ emitted in such a session returns an explicit unavailability error part
 rather than being silently ignored, matching the disabled-blocks
 philosophy (see components.TheoryOfDisabledBlocks).
 
-Read-only files, hidden packages, and mandatory planning are prompt-only
-Components: they contribute system prompt sections without defining a block
-kind or processing blocks. The hidden-packages notice
+Read-only files, skeleton files, hidden packages, and mandatory planning
+are prompt-only Components: they contribute system prompt sections without
+defining a block kind or processing blocks. The skeleton-files section
+teaches the "begin of skeleton of file" marker contract — treat the
+skeleton as an index and fetch the original with an ingest block before
+modifying the file — and is included unconditionally: the gotools
+module-root listing always renders skeletons, so the rule must be present
+in every codes session even when per-file skeletons are disabled (see
+anytexts.TheoryOfContextSkeleton). The hidden-packages notice
 (gotools.HiddenPackagesSystemPrompt, from the go.hidden configuration)
 appears only when at least one pattern is configured; it lists the hidden
 import-path patterns so the model neither fetches their symbols nor reads
@@ -279,6 +286,15 @@ func (Module) CodesComponents(
 	// Read-only files: prompt-only component, no block kind.
 	comps = append(comps, components.Component{
 		PromptSection: ReadOnlyFilesSystemPrompt,
+	})
+
+	// Skeleton files: prompt-only component, no block kind. Included
+	// unconditionally: the gotools module-root listing always renders
+	// skeletons, so the marker rule must be present in every codes
+	// session even when per-file skeletons are disabled. See
+	// TheoryOfCodesComponents and anytexts.TheoryOfContextSkeleton.
+	comps = append(comps, components.Component{
+		PromptSection: SkeletonFilesSystemPrompt,
 	})
 
 	// Hidden packages: prompt-only component listing the go.hidden

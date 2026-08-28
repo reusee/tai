@@ -839,8 +839,8 @@ func TestPartsProviderDirectMatchKeepsFullContent(t *testing.T) {
 			if strings.Contains(s, "secret_body_value") {
 				foundFull = true
 			}
-			if strings.Contains(s, textSkeletonHint) {
-				t.Fatalf("directly matched file must not carry the skeleton hint, got:\n%s", s)
+			if strings.Contains(s, "begin of skeleton of file") {
+				t.Fatalf("directly matched file must not render as a skeleton, got:\n%s", s)
 			}
 		}
 		if !foundFull {
@@ -851,9 +851,10 @@ func TestPartsProviderDirectMatchKeepsFullContent(t *testing.T) {
 
 func TestPartsProviderSkeletonForTraversalFiles(t *testing.T) {
 	// With SkeletonFiles enabled, files discovered by traversal render as
-	// parsed skeletons: supported formats carry the summary hint and the
-	// structural outline without bodies; unsupported formats fall back to
-	// full content. See TheoryOfContextSkeleton.
+	// parsed skeletons: supported formats carry the "skeleton of file"
+	// markers and the structural outline without bodies; unsupported
+	// formats fall back to full content under the plain file marker. See
+	// TheoryOfContextSkeleton.
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -894,10 +895,13 @@ func TestPartsProviderSkeletonForTraversalFiles(t *testing.T) {
 				continue
 			}
 			s := string(text)
-			if strings.Contains(s, "begin of file widget.py") {
+			if strings.Contains(s, "begin of skeleton of file widget.py") {
 				foundSkeleton = true
-				if !strings.Contains(s, textSkeletonHint) {
-					t.Fatalf("skeleton block must carry the summary hint, got:\n%s", s)
+				if !strings.Contains(s, "end of skeleton of file widget.py") {
+					t.Fatalf("skeleton end marker must mirror the begin marker, got:\n%s", s)
+				}
+				if strings.Contains(s, "The content below is a structural skeleton") {
+					t.Fatalf("skeleton body must not carry a hint that can be mistaken for file content, got:\n%s", s)
 				}
 				if !strings.Contains(s, "Widget") {
 					t.Fatalf("skeleton must list the class, got:\n%s", s)
