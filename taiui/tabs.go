@@ -12,39 +12,36 @@ taiui tabs theory:
   which it last gained focus. All tabs are collapsed by default; a
   collapsed tab expands automatically the FIRST time content for it
   arrives, without changing an existing focus. Only when no tab is
-  focused does the first auto-expanded tab become the focus, so keyboard
-  navigation remains usable. Subsequent content arrivals do not
-  re-expand a tab the user collapsed; AutoExpand reports whether the tab
-  was newly expanded so the caller can resume following the tail.
-- Toggle implements the number-key semantics: pressing a focused tab's
-  key collapses it to a thin strip and moves the focus to the expanded
-  tab that was last focused; pressing a non-focused or collapsed tab's
-  key expands it (if collapsed) and takes the focus. Re-expanding a
-  collapsed tab resumes following the live tail; switching to an
-  already-expanded tab keeps its current view.
-- Boxes lays out the tabs: in vertical split (side by side), collapsed
-  tabs take one column each and expanded tabs share the remaining width
-  proportionally to their weights (the focused tab has weight 3, every
-  other expanded tab weight 1); in horizontal split (stacked), collapsed
-  tabs take one row each and expanded tabs share the remaining height.
-  The last expanded tab absorbs the rounding remainder. Tabs are laid
-  out in index order, so a collapsed tab stays in its original position
-  rather than being pushed to the edge.
-- MaxSizes caps the split-axis extent of expanded, unfocused tabs:
-  MaxSizes[i] bounds tab i's share of the split axis (rows in the
-  stacked layout, columns in vertical split); zero, negative, or a
-  missing entry leaves the tab uncapped, and the focused tab always
-  ignores its cap. The extent a capped tab gives up is redistributed
-  among the uncapped expanded tabs by weight, so the boxes still tile
-  the screen exactly.
-- Panel renders an expanded tab: a one-row label strip pinned to the
-  top and a scroll view spanning the remaining rows. Panel is a first-class
-  Element (_Panel) that renders only the visible lines in O(window) time,
-  avoiding virtual-column overhead when content is large. The scrollbar is
-  hidden while the pane follows the tail, because at the latest position
-  there is nothing left to scroll toward. CollapsedPanel renders the
-  thin strip: the label is written vertically in a narrow column and
-  horizontally in a short row.
+  focused does the first auto-expanded tab become the focus, so
+  keyboard navigation remains usable. Subsequent content arrivals do
+  not re-expand a tab the user collapsed; the caller is told whether
+  the tab was newly expanded, so it can resume following the tail.
+- Number-key semantics: pressing a focused tab's key collapses it to a
+  thin strip and moves the focus to the expanded tab that was last
+  focused; pressing a non-focused or collapsed tab's key expands it (if
+  collapsed) and takes the focus. Re-expanding a collapsed tab resumes
+  following the live tail; switching to an already-expanded tab keeps
+  its current view.
+- Layout: in vertical split (side by side), collapsed tabs take one
+  column each and expanded tabs share the remaining width
+  proportionally to their weights, the focused tab receiving a
+  proportionally larger share; in horizontal split (stacked), the same
+  applies to rows and height. The last expanded tab absorbs the
+  rounding remainder. Tabs are laid out in index order, so a collapsed
+  tab stays in its original position rather than being pushed to the
+  edge.
+- An optional per-tab cap bounds the split-axis extent of expanded,
+  unfocused tabs: a zero, negative, or missing entry leaves the tab
+  uncapped, and the focused tab always ignores its cap. The extent a
+  capped tab gives up is redistributed among the uncapped expanded tabs
+  by weight, so the boxes still tile the screen exactly.
+- An expanded tab renders a one-row label strip pinned to the top and a
+  scroll view spanning the remaining rows, showing only the visible
+  lines in O(window) time, avoiding virtual-column overhead when
+  content is large. The scrollbar is hidden while the pane follows the
+  tail, because at the latest position there is nothing left to scroll
+  toward. A collapsed tab renders the thin strip: the label is written
+  vertically in a narrow column and horizontally in a short row.
 `
 
 // Tabs is the tab state machine of a terminal UI. See TheoryOfTabs.

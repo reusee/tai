@@ -15,56 +15,51 @@ import (
 
 const TheoryOfTerminalScreen = `
 taiui terminal screen theory:
-- TerminalScreen renders a Frame to a terminal by repainting whole dirty
-  rows, never individual cells: a wide grapheme cluster leaves its trailing
-  columns as unset cells, so a run-level repaint could leave a stale
-  half-glyph when a wide cluster moves away.
-- An entirely unset row is cleared with the erase-line sequence (EL) in a
-  single write instead of one space per cell, and runs of unset cells
-  within a row are batched into one write. A run reaching the row end is
-  erased to the line end so the cursor never wraps at the last column.
-  The reset parameter precedes the erase so the line clears to the
-  default background. The first set cell is located in a single scan;
-  the unset run before it is batched in one write, so a row with content
-  is scanned once, not twice.
-- Frames with no dirty rows and an unchanged cursor are skipped entirely,
-  and the first frame repaints the whole screen. The cursor position is
-  written only when it changed, so a repaint with a stationary cursor
-  does not rewrite the position.
-- The screen reuses a dirty-rows buffer across presents, so a frame
-  comparison allocates nothing.
+- The terminal screen renders a Frame to a terminal by repainting whole
+  dirty rows, never individual cells: a wide grapheme cluster leaves
+  its trailing columns as unset cells, so a finer-grained repaint could
+  leave a stale half-glyph when a wide cluster moves away.
+- Blank regions are written efficiently: an entirely unset row is
+  cleared in a single operation, runs of unset cells are batched, and a
+  run reaching the row end is erased to the line end so the cursor
+  never wraps at the last column. The reset precedes the erase so the
+  line clears to the default background.
+- Frames with no dirty rows and an unchanged cursor are skipped
+  entirely, and the first frame repaints the whole screen. The cursor
+  position is written only when it changed.
 - The screen retains a copy of the last presented frame for damage
-  comparison. It implements FrameReleaser: Present copies the presented
-  frame's cells into a retained buffer, and ReleaseFrame returns the
-  frame's cells to the pool, so the renderer reuses the pooled cells
-  and the per-pass frame allocation is eliminated.
+  comparison and reuses its comparison buffer across presents, so a
+  frame comparison allocates nothing. It implements FrameReleaser: it
+  copies the presented frame's cells into a retained buffer and returns
+  the presented cells to the pool, so the renderer reuses them and the
+  per-pass frame allocation is eliminated.
 - The screen derives the display-width options per present and measures
-  clusters with ClusterWidth, so the terminal cursor advances by the
-  same columns the renderer allocated even if the environment changes
-  between renders.
+  clusters with the shared exported measurement, so the terminal cursor
+  advances by the same columns the renderer allocated even if the
+  environment changes between renders.
 - The screen positions the terminal cursor at the Frame's recorded
   cursor position when the frame carries one, so a text input's cursor
   tracks the rendered text.
-- Every SGR sequence starts with the reset parameter: a style is the
+- Every style sequence starts with the reset parameter: a style is the
   complete terminal state, so an attribute absent from it is cleared.
-  Without the reset, a plain cell after an underlined or overlined run
-  would keep the attribute and bleed the line into any following cell
-  that shares the same background.
-- SGR sequences are memoized by the style's SGR-relevant fields (the
-  attribute bits and the three colors): a screen's style set is small
-  and bounded, so the cache stays small, and the screen is
+  Without the reset, a plain cell after an underlined run would keep
+  the attribute and bleed the line into any following cell that shares
+  the same background.
+- Style sequences are memoized by the style's SGR-relevant fields: a
+  screen's style set is small and bounded, and the screen is
   single-threaded, so a plain map needs no locking.
 `
 
 const TheoryOfTerminalScreenRetention = `
 taiui terminal screen retention theory:
 - The retained frame copy is updated only for the dirty rows: rows not
-  in dirtyRows are already identical to the retained frame, so a partial
-  repaint copies O(dirty) cells instead of the whole screen.
-- The per-row style comparison checks pointer identity before the Equal
-  method: a render pass shares style values, so most style changes are
-  detected by pointer comparison, and Equal is called only for distinct
-  style values.
+  in the dirty set are already identical to the retained frame, so a
+  partial repaint copies cells proportional to the damage instead of
+  the whole screen.
+- The per-row style comparison checks pointer identity before the
+  equality method: a render pass shares style values, so most style
+  changes are detected by pointer comparison, and the equality method
+  is called only for distinct style values.
 `
 
 // TerminalScreen renders Frames to a terminal via ANSI escape sequences.

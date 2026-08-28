@@ -11,65 +11,43 @@ import (
 
 const TheoryOfKeyInput = `
 taiui key input theory:
-- ReadKeys decodes raw terminal input into logical key names. The reader
-  is in non-blocking raw mode: a zero-byte read is polled with a short
-  sleep. A zero-byte read is not completion: an incomplete escape
+- Raw terminal input is decoded in non-blocking raw mode into logical
+  key names. A zero-byte read is not completion: an incomplete escape
   sequence split across reads is held until it completes or a grace
-  period expires. A lone ESC that never grows is emitted as "esc". ESC
-  followed by a printable character is "alt-<char>"; ESC followed by a
-  control byte (0x00-0x1f, 0x7f) is "alt-<key>", matching the
-  Alt+printable rule: Alt+Enter is "alt-enter", Alt+Backspace is
-  "alt-backspace", Alt+Tab is "alt-tab", and Alt+Ctrl+A is "alt-ctrl-a".
-  ESC followed by ESC drops the first ESC.
-- Multi-byte UTF-8 input is decoded into its rune and emitted as the
-  character: non-ASCII text (accented characters, CJK, emoji) reaches the
-  application as the decoded character. ESC followed by a multi-byte
-  UTF-8 character is "alt-<character>", matching the single-byte
-  Alt+key rule. An incomplete multi-byte sequence that never completes
-  within the grace period is dropped.
-- CSI sequences (ESC [ ...), SS3 sequences (ESC O ...), and tilde
-  sequences (ESC [ n ~) decode arrows, home/end, page-up/down,
-  insert/delete, F1-F36, shift-tab, begin, focus events, and
-  bracketed-paste markers. CSI P/Q/R/S decode F1-F4, matching the SS3
-  encoding; modified P, Q, and S apply the modifier prefix (CSI 1;2P
-  is Shift+F1), but modified R is not decoded to avoid ambiguity with
-  cursor position reports. Modifier-enriched CSI and SS3 keys use
-  xterm's bit assignment: bit 3=Meta, 4=Super, 5=Hyper; mod 1 means no
-  modifiers. Unknown CSI sequences are discarded whole. Linux console
-  function keys (ESC [ [ A-E for F1-F5, ESC [ [ a-e for Shift+F1-F5)
-  use a non-standard second [ recognized as a specific pattern before
-  the generic CSI scan.
-- Control string sequences (OSC, DCS, SOS, PM, APC) start with ESC
-  followed by ], P, X, ^, or _, and end with BEL or ST (ESC \). They
-  carry terminal metadata (window titles, clipboard, color queries)
-  that ReadKeys cannot convey as key names, so they are consumed and
-  discarded. The trade-off is that Alt+], Alt+P, Alt+X, Alt+^, and Alt+_
-  are not reported as key events; applications needing those combinations
-  should use the Kitty keyboard protocol, which disambiguates them.
-- The Kitty keyboard protocol (CSI code;mod[;event] u) maps key codes
-  to the same logical names; release events (event 0) are ignored.
-  The Kitty modifier encoding differs from xterm's for bits 3-5: Kitty
-  bit 3=Super, 4=Hyper, 5=Meta; xterm bit 3=Meta, 4=Super, 5=Hyper.
-  Caps Lock (bit 6) and Num Lock (bit 7) are lock states, not transient
-  modifiers, so they are not included in the key prefix.
-  Mode-setting and query-response sequences (CSI > flags u, CSI < flags
-  u, CSI ? flags u) are consumed silently: emitKittyKey checks for these
-  prefixes before parsing, and a CSI < ... u that is not an SGR mouse
-  sequence is distinguished from one so it does not block. Kitty key codes
-  cover F1-F24, navigation keys, arrows, the special keys print-screen,
-  scroll-lock, pause, and menu, the keypad keys (kp-enter, kp-f1..kp-f4,
-  kp-home, kp-end, kp-pageup, kp-pagedown, kp-left, kp-right, kp-up,
-  kp-down, kp-begin), and modifier-only key events (left-shift through
-  right-hyper, iso-level3-shift, iso-level5-shift, caps-lock, num-lock).
-- SS3 sequences also decode keypad keys in application keypad mode:
-  digits (kp-0..kp-9), operators (kp-add, kp-subtract, kp-multiply,
-  kp-divide, kp-decimal, kp-comma, kp-equal), and kp-enter.
-- Single bytes cover control and printable ranges: backspace, enter,
-  space, tab, Ctrl+Space (0x00 as "ctrl-space"), Ctrl+A-Z and Ctrl+\\,
-  Ctrl+], Ctrl+^, Ctrl+_, and all printable ASCII. Key names are
-  generic, not application-specific: Ctrl+C is "ctrl-c", 'q' is "q".
-  The application maps key names to actions, so the library stays
-  reusable across projects.
+  period expires. A lone escape that never grows is emitted as "esc".
+- An escape followed by a printable character is "alt-<char>"; an
+  escape followed by a control byte is "alt-<key>", so Alt+Enter is
+  "alt-enter" and Alt+Ctrl+A is "alt-ctrl-a". An escape followed by an
+  escape drops the first escape. Multi-byte UTF-8 input decodes to its
+  rune and is emitted as the character, so accented characters, CJK,
+  and emoji reach the application as decoded characters; an escape
+  followed by a multi-byte character is the alt form of that character.
+  An incomplete multi-byte sequence that never completes within the
+  grace period is dropped.
+- CSI, SS3, and tilde sequences decode arrows, home/end, page-up/down,
+  insert/delete, function keys, shift-tab, focus events, and
+  bracketed-paste markers. A modified cursor-position report is
+  deliberately not decoded as a key, to avoid ambiguity with position
+  reports. Unknown sequences are discarded whole. The Linux console's
+  non-standard function-key encoding is recognized as a specific
+  pattern before the generic sequence scan.
+- Control string sequences (OSC, DCS, SOS, PM, APC) carry terminal
+  metadata that cannot be conveyed as key names, so they are consumed
+  and discarded. The trade-off is that alt-prefixed combinations using
+  their introducers are not reported as key events; applications
+  needing those combinations should use the Kitty keyboard protocol,
+  which disambiguates them.
+- The Kitty keyboard protocol maps its key codes to the same logical
+  names, with release events ignored. Caps-lock and num-lock are lock
+  states, not transient modifiers, so they are not part of the key
+  prefix. Kitty's modifier bit assignment differs from xterm's and is
+  translated. Mode-setting and query-response sequences are consumed
+  silently.
+- Keypad keys decode under both the Kitty and the SS3 application
+  keypad encodings.
+- Single bytes cover the control and printable ranges. Key names are
+  generic, not application-specific, so the library stays reusable
+  across projects; the application maps key names to actions.
 `
 
 const TheoryOfMouseInput = `

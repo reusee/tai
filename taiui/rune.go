@@ -16,19 +16,14 @@ taiui display width theory:
   columns. Text rendering segments lines into clusters and measures each
   cluster once.
 - The RUNEWIDTH_EASTASIAN environment variable toggles the width of
-  ambiguous East Asian runes: 1 when unset, 2 when set to 1, true, or
-  yes. This preserves the historical tcell convention for CJK terminals.
-- DisplayWidthOptions derives the options from the environment. Render
-  calls it once per pass and threads the options through the element
-  tree, so the environment is scanned once per pass rather than once per
-  element. Screens that measure clusters independently (such as the demo
-  presenter) call it per present to stay in sync with the renderer. There
-  are no caches: an environment change takes effect on the next call,
-  and a measurement is a table walk.
-- ClusterWidth measures a grapheme cluster (a base rune with its combining
-  runes) under the given options. It is exported for Screen implementations
-  that measure clusters independently (such as the demo presenter) to stay
-  in sync with the renderer.
+  ambiguous East Asian runes. This preserves the historical tcell
+  convention for CJK terminals.
+- The width options are derived from the environment once per render
+  pass and threaded through the element tree, so the environment is
+  scanned once per pass rather than once per element. Screens that
+  measure clusters independently call the same exported measurement per
+  present to stay in sync with the renderer. There are no caches: an
+  environment change takes effect on the next call.
 `
 
 // DisplayWidthOptions returns the display-width options derived from the

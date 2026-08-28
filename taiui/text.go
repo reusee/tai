@@ -14,36 +14,19 @@ import (
 const TheoryOfTextRendering = `
 taiui text rendering theory:
 - Text rendering optimizes the common case: plain left-aligned,
-  top-aligned, non-wrapped text, with an optional fill, end cursor, or
-  cursor-at-offset, is the hottest path in the library, so it renders
-  directly, avoiding the general pipeline's line-slice pool and
-  per-line alignment overhead.
+  top-aligned, non-wrapped text is the hottest path in the library, so
+  it renders directly without the general pipeline's per-line
+  alignment machinery.
 - The fast path is a strict subset of the general path: it applies only
-  when the general path would produce identical output, so the two paths
-  never diverge.
-- Non-wrapped text renders the text's lines directly as a sub-slice,
-  so no line slice is built and the pool is untouched; only wrapped
-  text builds a line slice.
-- Grapheme iterators are pooled: the text pipeline resets a pooled
-  uax29 iterator per line instead of allocating a fresh iterator per
-  call, so a per-line iteration allocates nothing. The wrap and cursor
-  helpers accept a caller-provided iterator, so a render pass shares one
-  pooled iterator across the line loop, wrapping, and cursor placement.
-- Wrap working slices are pooled: the wrap helper's word and line
-  slices are pooled across calls, so a wrapped render pass allocates
-  only the joined line strings. The helper appends to a caller-provided
-  line slice, so the fast path appends the line directly without an
-  intermediate slice.
-- A cluster is split and measured in one step: splitClusterWidth
-  decodes the base rune once and measures the cluster, so the common
-  single-rune cluster pays one decode instead of two. A single-rune
-  cluster is measured with options.Rune; a multi-rune cluster
-  (combining sequences, ZWJ emoji) is measured with options.String,
-  which allocates only for the rare multi-rune clusters.
-- Wrapping is bounded by the visible line count: the render path passes
-  the remaining rows to wrapLineLimited, so a long line in a small box
-  never wraps beyond the rows the box can show, and pathological inputs
-  cannot accumulate unbounded wrapped lines.
+  when the general path would produce identical output, so the two
+  paths never diverge.
+- Grapheme iteration and wrap working storage are reused across calls,
+  so a wrapped render pass allocates only the joined line strings.
+- A cluster is split and measured in one pass, so the common
+  single-rune cluster pays one decode instead of two.
+- Wrapping is bounded by the visible line count: a long line in a
+  small box never wraps beyond the rows the box can show, so
+  pathological inputs cannot accumulate unbounded wrapped lines.
 - Word wrapping preserves the source line's whitespace: a line that
   fits the box is returned unchanged, so indentation and runs of
   consecutive spaces survive, and only the whitespace at a wrap

@@ -9,26 +9,22 @@ import (
 
 const TheoryOfList = `
 taiui list theory:
-- List renders a vertical list of single-line items. The selected
-  item is highlighted with the ListStyle spec. The view scrolls to
-  keep the selected item visible, clamped to the content extent.
-- List renders only the visible items: the view window is computed
-  from the selected index and the box height, and items outside it
-  are never processed. This is O(window) per render, unlike a
-  VerticalScroll of a Column of Text, which renders the whole
-  content into a virtual column.
-- Each visible item is rendered directly as a single line: list
-  items are always single-line, left-aligned texts, so the general
-  text pipeline's alignment, padding, wrap, and line-slice machinery
-  is unnecessary overhead. The visible items share one pooled
-  grapheme iterator, so a list render allocates nothing per item.
-- The selected item is styled with the ListStyle applied to the
-  element's style chain. The ListStyle spec is a StyleFunc, so it
-  composes with the chain.
-- Fill paints the unoccupied cells: the rows below the last item
-  when the content is shorter than the box. Each item row is fully
-  painted by the item's own fill, so the selected row shows the
-  selected style's background across the whole row.
+- The list renders a vertical list of single-line items. The selected
+  item is highlighted; the view scrolls to keep the selected item
+  visible, clamped to the content extent.
+- Rendering is O(window), not O(content): the view window is computed
+  from the selected index and the box height, and items outside it are
+  never processed, unlike a scroll viewport over a column of text,
+  which renders the whole content into a virtual column.
+- List items are always single-line, left-aligned texts, so the general
+  text pipeline's alignment, padding, wrap, and line-slice machinery is
+  unnecessary overhead and is bypassed.
+- The selected item's highlight composes with the element's style
+  chain.
+- Fill paints the unoccupied cells: the rows below the last item when
+  the content is shorter than the box. Each item row is fully painted
+  by the item's own fill, so the selected row shows the selected
+  style's background across the whole row.
 `
 
 var _ Element = _List{}

@@ -2,22 +2,17 @@ package taiui
 
 const TheoryOfScrollState = `
 taiui scroll state theory:
-- ScrollState encapsulates the view state of a scrollable pane: the
-  offset, whether the view follows the tail, and the maximum offset
+- The scroll state encapsulates the view state of a scrollable pane:
+  the offset, whether the view follows the tail, and the maximum offset
   computed from the wrapped display-line count and the pane height.
-- Update recomputes the maximum offset (displayLines - paneHeight, never
-  negative), sticks the offset to the latest row while following,
-  clamps the offset, and resumes following when the view reaches the
-  latest row.
-- ClampOffset bounds an offset against the wrapped display-line count: at
-  the maximum offset the last display line lands on the pane's last row.
-  A large sentinel offset (e.g., 1<<30) therefore sticks the view to the
-  tail.
-- Scroll and PageScroll move the offset by a delta or a page and update
-  the follow state: reaching the latest row resumes following, scrolling
-  away stops it. ScrollTo jumps to an absolute offset, clamped to the
-  content extent like Scroll; only a jump to the latest row resumes
-  following.
+- Updating recomputes the maximum offset (never negative), sticks the
+  offset to the latest row while following, clamps the offset, and
+  resumes following when the view reaches the latest row.
+- A large sentinel offset sticks the view to the tail.
+- Relative, page, and absolute moves clamp against the content extent
+  and update the follow state the same way: reaching the latest row
+  resumes following, scrolling away stops it; only a jump to the latest
+  row resumes following.
 `
 
 // ScrollState is the view state of a scrollable pane. See

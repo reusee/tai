@@ -8,31 +8,29 @@ import (
 
 const TheoryOfLines = `
 taiui TUI content lines theory:
-- Line carries display text with optional foreground and background colors.
-  The zero color value (NoColor) means the default foreground or no
+- Line carries display text with optional foreground and background
+  colors. The zero color value means the default foreground or no
   background, so a Line with no colors is plain text.
-- LineBuffer accumulates streamed output chunks into complete lines,
-  retaining the incomplete trailing line and the color of the chunk that
-  started it. Newlines split lines; a partial line keeps its color until
-  the next newline arrives. Lines are bounded by a maximum count, so a
-  runaway stream cannot grow the buffer without limit. CompletedLines and
-  Partial provide zero-copy access for incremental processing.
-- StringBuffer accumulates plain text (log output) the same way, exposing
-  newly completed lines to the caller for line-oriented inspection.
-- WrapLinesColored wraps each source line at the given width and carries
-  the line's foreground and background colors onto every wrapped display
-  line, so a wrapped line keeps its role color. WrapLinesColoredInto
-  appends wrapped lines to an existing slice, reusing a single grapheme
-  iterator across lines to minimize allocations.
-- PlainLines converts plain text lines into Lines with alternating
-  background shades so consecutive log entries are visually distinct. The
-  alternate shade shifts each channel of the base background toward the
-  mid-gray, so the alternation stays visible on both light and dark tab
-  backgrounds. WrapPlainLinesInto wraps plain lines with alternating
-  backgrounds directly into an output slice.
-- LinesElement renders Lines as a single element: consecutive lines with
-  identical colors are grouped into one Text with the group's foreground
-  and background, so a wrapped log line keeps one background across its
+- The line buffer accumulates streamed output chunks into complete
+  lines, retaining the incomplete trailing line and the color of the
+  chunk that started it. Newlines split lines; a partial line keeps its
+  color until the next newline arrives. Lines are bounded by a maximum
+  count, so a runaway stream cannot grow the buffer without limit.
+  Completed lines and the partial line are exposed without copying for
+  incremental processing. A plain-text variant offers the same
+  accumulation for line-oriented inspection.
+- Wrapping carries each source line's foreground and background colors
+  onto every wrapped display line, so a wrapped line keeps its role
+  color; a variant appends the wrapped lines to an existing slice
+  instead of allocating a fresh one.
+- Plain text lines can be converted into lines with alternating
+  background shades so consecutive log entries are visually distinct.
+  The alternate shade shifts each channel of the base background toward
+  the mid-gray, so the alternation stays visible on both light and dark
+  tab backgrounds.
+- Rendering turns a set of lines into a single element: consecutive
+  lines with identical colors are grouped into one text carrying the
+  group's colors, so a wrapped log line keeps one background across its
   display rows and consecutive groups are visually distinct.
 `
 

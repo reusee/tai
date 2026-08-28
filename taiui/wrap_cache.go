@@ -2,26 +2,25 @@ package taiui
 
 const TheoryOfWrapCache = `
 taiui wrap cache theory:
-- A WrapCache holds the wrapped display lines of one append-only content
-  source (a LineBuffer, a growing []Line, a growing [][]Line of event
-  groups, or a StringBuffer) at one content width. Wrapping the whole
-  content on every frame is O(total) per frame — quadratic over a
-  streaming session — so the cache wraps each newly completed source
-  line exactly once and appends the result to the cached display lines.
-- The cache is keyed by content width, and for plain buffers and event
-  groups by the base background as well: a change resets the cache and
-  re-wraps from scratch. Width and background changes are the supported
-  invalidations; sources must be append-only, never rewritten in place.
+- A WrapCache holds the wrapped display lines of one append-only
+  content source at one content width. Wrapping the whole content on
+  every frame is quadratic over a streaming session, so the cache wraps
+  each newly completed source line exactly once and appends the result
+  to the cached display lines.
+- The cache is keyed by content width, and for plain and grouped
+  sources by the base background as well: a change resets the cache
+  and re-wraps from scratch. Width and background changes are the
+  supported invalidations; sources must be append-only, never
+  rewritten in place.
 - Event groups shade as a unit: every display line of one group carries
-  the group's shade (base for even group indices, AltBG(base) for odd),
-  and the caller's lines are copied before shading, so a reset
-  re-derives shades from the source, never from shaded output.
+  the group's shade, and the caller's lines are copied before shading,
+  so a reset re-derives shades from the source, never from shaded
+  output.
 - The trailing partial line of a buffer is wrapped fresh on every call
-  into a scratch slice and never cached, so completing it cannot pollute
-  the cache. The scratch slice is reused across calls.
-- One cache per pane and per source: the Colored, Lines, Groups, and
-  Plain methods must not be mixed on a single cache value, because each
-  method keys and advances the same counters.
+  and never cached, so completing it cannot pollute the cache.
+- One cache per pane and per source: the cache's entry points must not
+  be mixed on a single cache value, because they share the same cached
+  state.
 `
 
 // WrapCache caches the wrapped display lines of one append-only content
