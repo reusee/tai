@@ -61,7 +61,7 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 		Review: noopReview,
 	})
 	if !result.Achieved {
-		t.Fatal("goal must be achieved after two consecutive done loops")
+		t.Fatal("goal must be achieved when the verification loop emits a change-free done block")
 	}
 	if result.LoopsRun != 2 {
 		t.Fatalf("ran %d loops, want 2", result.LoopsRun)
@@ -231,6 +231,10 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 					},
 				}, nil, nil
 			}
+			if calls == 4 {
+				// The change-free done block ends the run.
+				return doneResult(), nil, nil
+			}
 			// The declaring loops carry applied changes; a done block
 			// without changes would end the run directly. See
 			// TheoryOfGoalMode.
@@ -241,8 +245,10 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	if !strings.Contains(string(feedbacks[2]), "malformed block(s)") {
 		t.Fatalf("feedback after parse errors must carry the re-emit note, got %q", feedbacks[2])
 	}
-	// Loop 1 declares done, loop 2's parse errors overturn the
-	// declaration, loop 3 declares again, loop 4 confirms.
+	// Loop 1 declares done with changes, loop 2's parse errors force a
+	// re-emit before any completion, loop 3 declares again with
+	// changes, loop 4 emits the change-free done block that ends the
+	// run.
 	if calls != 4 {
 		t.Fatalf("ran %d loops, want 4", calls)
 	}
@@ -270,6 +276,47 @@ func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "applied no change blocks") {
 		t.Fatal("output must report the no-change completion")
+	}
+}
+
+// TestRunGoalVerifiesCorrectionsUntilChangeFreeDone verifies the full
+// verify-and-correct cycle: a done declaration with changes sends the
+// next loop into verification; the verification loop's corrections are
+// ordinary change blocks, so the loop after them continues normally
+// with cleared feedback; the run ends when a loop verifies the current
+// state, finds nothing to correct, and emits a change-free done block.
+// See TheoryOfGoalMode.
+func TestRunGoalVerifiesCorrectionsUntilChangeFreeDone(t *testing.T) {
+	calls := 0
+	var feedbacks []GoalFeedback
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
+			feedbacks = append(feedbacks, feedback)
+			switch calls {
+			case 1:
+				return doneWithChangesResult(), nil, nil
+			case 2:
+				// The verification loop corrects an error without
+				// declaring done.
+				return Result{Diffs: []changes.FileDiff{{Path: "a.go"}}}, nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved after the corrections are verified")
+	}
+	if result.LoopsRun != 3 {
+		t.Fatalf("ran %d loops, want 3", result.LoopsRun)
+	}
+	if !strings.Contains(string(feedbacks[1]), "Verification is the primary work") {
+		t.Fatalf("the loop after a done-with-changes loop must carry the verification prompt, got %q", feedbacks[1])
+	}
+	if feedbacks[2] != "" {
+		t.Fatalf("the loop after a corrections-only loop must carry no feedback, got %q", feedbacks[2])
 	}
 }
 
@@ -304,6 +351,42 @@ func TestRunGoalDoneWithoutChangesEndsRun(t *testing.T) {
 	}
 }
 
+// TestRunGoalDoneWithChangesDoesNotEndRun verifies the core completion
+// rule of the done mechanism: a done block emitted together with change
+// blocks never ends the run — there is no confirmation-by-repetition.
+// Each change-applying loop, done or not, is followed by a loop that
+// reads the resulting filesystem state; the run ends only when a loop
+// emits a done block and applies no change blocks. See TheoryOfGoalMode.
+func TestRunGoalDoneWithChangesDoesNotEndRun(t *testing.T) {
+	calls := 0
+	var feedbacks []GoalFeedback
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
+			feedbacks = append(feedbacks, feedback)
+			if calls < 3 {
+				// Every loop applies changes and declares done; none of
+				// them may end the run.
+				return doneWithChangesResult(), nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved by the final change-free done loop")
+	}
+	if result.LoopsRun != 3 {
+		t.Fatalf("ran %d loops, want 3: a done block with changes never ends the run", result.LoopsRun)
+	}
+	for i := 1; i < len(feedbacks); i++ {
+		if !strings.Contains(string(feedbacks[i]), "Verification is the primary work") {
+			t.Fatalf("loop %d feedback must carry the verification prompt, got %q", i+1, feedbacks[i])
+		}
+	}
+}
+
 func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
@@ -332,10 +415,17 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	}
 }
 
-func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
+// TestRunGoalChangeFreeLoopWithoutDoneEndsRun verifies the uniform
+// termination rule: the run ends on any loop that applied no change
+// blocks, and the done block decides the outcome. A loop that applied
+// no change blocks without a done block — including a verification loop
+// that corrects nothing but forgets the done block — ends the run
+// unachieved. See TheoryOfGoalMode.
+func TestRunGoalChangeFreeLoopWithoutDoneEndsRun(t *testing.T) {
+	output := &bytes.Buffer{}
 	calls := 0
-	RunGoal(context.Background(), GoalOptions{
-		Output: &bytes.Buffer{},
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: output,
 		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
@@ -348,12 +438,17 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 		},
 		Review: noopReview,
 	})
-	// Loop 1 declares done; loop 2 verifies, corrects nothing, and
-	// omits the done block, so it falls through instead of stopping;
-	// loop 3 has no diffs and no declaration, and the no-change stop
-	// ends the run.
-	if calls != 3 {
-		t.Fatalf("ran %d loops, want 3", calls)
+	// Loop 1 declares done with changes; loop 2 verifies, corrects
+	// nothing, and omits the done block, so the change-free stop ends
+	// the run unachieved.
+	if calls != 2 {
+		t.Fatalf("ran %d loops, want 2", calls)
+	}
+	if result.Achieved {
+		t.Fatal("the runner must not report achievement without a done block on the change-free loop")
+	}
+	if !strings.Contains(output.String(), "applied no change blocks") {
+		t.Fatal("output must report the no-change completion")
 	}
 }
 
@@ -422,8 +517,8 @@ func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 
 // TestRunGoalReviewModelStickyAfterOverturnedDeclaration verifies that
 // the review-model switch is sticky: after the first done block, the
-// loops that carry later corrections — including those following a
-// declaration overturned by parse errors — keep running on the review
+// loops that carry later corrections — including those following a loop
+// whose parse errors forced a re-emit — keep running on the review
 // model. See TheoryOfGoalReviewModel.
 func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 	calls := 0
@@ -441,6 +536,10 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 					},
 				}, nil, nil
 			}
+			if calls == 4 {
+				// The change-free done block ends the run.
+				return doneResult(), nil, nil
+			}
 			// The declaring loops carry applied changes; a done block
 			// without changes would end the run directly. See
 			// TheoryOfGoalMode.
@@ -448,8 +547,9 @@ func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
 		},
 		Review: noopReview,
 	})
-	// Loop 1 declares done, loop 2's parse errors overturn the
-	// declaration, loop 3 declares again, loop 4 confirms.
+	// Loop 1 declares done with changes, loop 2's parse errors force a
+	// re-emit, loop 3 declares again with changes, loop 4 emits the
+	// change-free done block that ends the run.
 	if calls != 4 {
 		t.Fatalf("ran %d loops, want 4", calls)
 	}
@@ -485,7 +585,7 @@ func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
 		Review: noopReview,
 	})
 	if !result.Achieved {
-		t.Fatal("goal must be achieved after two consecutive done loops")
+		t.Fatal("goal must be achieved when the verification loop emits a change-free done block")
 	}
 	if result.LoopsRun != 2 {
 		t.Fatalf("ran %d loops, want 2", result.LoopsRun)
@@ -506,6 +606,12 @@ func TestGoalSystemPromptContent(t *testing.T) {
 	}
 	if !strings.Contains(GoalSystemPrompt, "without applying any change block") {
 		t.Fatal("GoalSystemPrompt must state the no-change loop termination rule")
+	}
+	if !strings.Contains(GoalSystemPrompt, "applies no change blocks") {
+		t.Fatal("GoalSystemPrompt must state the change-free done termination rule")
+	}
+	if strings.Contains(GoalSystemPrompt, "second consecutive loop") {
+		t.Fatal("GoalSystemPrompt must not describe the removed two-done confirmation")
 	}
 	if strings.Contains(GoalSystemPrompt, ".GOAL_COMPLETE") {
 		t.Fatal("GoalSystemPrompt must not reference a marker file")

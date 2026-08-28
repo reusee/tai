@@ -15,56 +15,58 @@ import (
 
 const TheoryOfGoalMode = `
 Goal mode autonomously runs the generation pipeline for a set number of
-iterations (maxGoalIterations) until a done block is confirmed. Each loop is
-a fresh, independent generation session: the loop re-reads the codebase,
-organizes context from scratch, and runs the full generation pipeline (change
-blocks, go-test, shell, continue, etc.). This is crucial for unattended
-operation because each loop starts from the current filesystem state, so the
-model's changes from the previous loop are visible in the next one. Goal mode
-is a capability of this package, not a separate command: the auto-detected
+iterations (maxGoalIterations) until a loop emits a done block while
+applying no change blocks. Each loop is a fresh, independent generation
+session: the loop re-reads the codebase, organizes context from scratch,
+and runs the full generation pipeline (change blocks, go-test, shell,
+continue, etc.). This is crucial for unattended operation because each
+loop starts from the current filesystem state, so the model's changes
+from the previous loop are visible in the next one. Goal mode is a
+capability of this package, not a separate command: the auto-detected
 default command inside a Go module always enables it (see
 cmd/tai.TheoryOfGoModuleDefault), so every Go-project invocation runs the
 multi-loop mechanism.
 
-A done block is a completion declaration, not a verdict. The model emits a
-done block when it believes the goal is achieved. When the declaring loop
-applied change blocks, the runner carries goalDoneVerificationPrompt into
-the next loop, which re-reads the current filesystem state and re-assesses
-the goal; only a second consecutive done block confirms the goal and stops
-the run. This verification step is required because the filesystem may
-change while a loop runs: a loop that loaded todo.md containing task A
-cannot see task B added by the user during execution, so its done
-declaration may rest on stale context. The verification loop sees the
-latest files, so the goal-achieved verdict always reflects the current
-state. Its primary work is verification and correction: it checks the
-declaration against the current state, fixes errors the check uncovers, and
-starts no unrelated new work. A done block emitted by a loop that applied
-no change blocks skips verification and achieves the goal directly: that
-loop just read the current filesystem state through a fresh scope and
-concluded without changes, so a verification loop would read the same state
-and repeat the same analysis. Because the done block is not consumed by any
-component, it remains in Result.RemainingBlocks; the runner checks there.
-When the declaration lands on the final budget loop, the runner executes one
-extra verification loop beyond the budget. A loop that fails or produces
-uncorrected malformed blocks overturns a pending declaration: the goal state
-is unknown or changes are missing, so the goal is not achieved.
+The run ends only on a loop that applied no change blocks; the done
+block decides the outcome. A loop that applied change blocks never ends
+the run — even when it also emits a done block — because its changes
+must be checked by a loop that reads the resulting filesystem state: a
+done block emitted together with change blocks is not a completion
+signal but a declaration the next loop must verify. The runner carries
+goalDoneVerificationPrompt into that next loop, whose primary work is
+verification and correction: it re-reads the current filesystem state,
+checks the declaration and the changes, fixes the errors the check
+uncovers, and starts no unrelated new work. The verification is required
+because the filesystem may change while a loop runs: a loop that loaded
+todo.md containing task A cannot see task B added by the user during
+execution, so its done declaration may rest on stale context. A
+verification loop's own corrections are new changes that the following
+loop verifies in turn, so the cycle repeats until a loop examines the
+current state and finds nothing to correct: that loop emits a done block
+and applies no change blocks, and the run ends achieved. Because the
+done block is not consumed by any component, it remains in
+Result.RemainingBlocks; the runner checks there. When a declaration with
+changes lands on the final budget loop, the runner executes one extra
+verification loop beyond the budget. A loop that fails or produces
+uncorrected malformed blocks carries corrective feedback into the next
+loop: the goal state is unknown or changes are missing, so the goal is
+not achieved.
 
 A successful loop that applied no change blocks ends the run without a
-further loop. Within one goal loop the model can chain as many generations
-as it needs (continue, shell, go-test blocks), so a loop that ends with an
-empty diff set had every opportunity to make changes and concluded without
-any; the next loop would read the same filesystem state and repeat the same
-analysis. This serves analytical tasks that need no code changes and
-complete in one loop. A done block emitted by such a loop is accepted as
-achievement rather than answered with the no-change stop; the no-change
-check runs after done-block handling and only while no done declaration is
-pending: a verification loop that emits no done block and corrects nothing
-falls through to the clean-loop path, so a later loop can still confirm the
-declaration. Parse errors also take precedence: unapplied changes must be
-re-emitted before the run may end. The stop prints a dedicated message and
-leaves Achieved false — achievement requires an accepted done block: one
-confirmed by a verification loop, or one emitted by a loop that applied no
-change blocks; the runner never fabricates one.
+further loop. Within one goal loop the model can chain as many
+generations as it needs (continue, shell, go-test blocks), so a loop
+that ends with an empty diff set had every opportunity to make changes
+and concluded without any; the next loop would read the same filesystem
+state and repeat the same analysis. This serves analytical tasks that
+need no code changes and complete in one loop. The stop's outcome
+follows the done block: a change-free loop that emitted one achieved
+the goal, while a change-free loop without one ends the run unachieved
+— a loop that verifies the previous changes and finds nothing to
+correct is required to emit the done block, so forgetting it forfeits
+the achievement. Parse errors take precedence: unapplied changes must
+be re-emitted before the run may end. The unachieved stop prints a
+dedicated message and leaves Achieved false; the runner never
+fabricates a done block.
 
 Malformed blocks that cannot be corrected within the parse-error correction
 budget are reported per loop via Result.ParseErrors. Reporting makes silent
@@ -117,20 +119,22 @@ set (a display front-end's Events tab), or written to the output writer
 // TheoryOfGoalReviewModel documents the model used by the goal loops
 // after a done block has been emitted. See TheoryOfGoalMode.
 const TheoryOfGoalReviewModel = `
-The loops after the first done block run on the review model: the goal
-runner passes the first configured review model (ReviewModels) into each
-post-done loop's scope as flags.ModelName — the same fork Module.RunReview
-uses for its review sessions — so the model that verifies and corrects the
-declared goal is independent of the model that made the changes. The first
-done block itself is emitted by the default model; the switch is sticky,
-so a post-done loop whose corrections are overturned by errors or
-malformed blocks keeps the review model on its follow-up loops too. When
-no review model is configured, post-done loops keep the default model.
+The loops after the first done block emitted together with change
+blocks run on the review model: the goal runner passes the first
+configured review model (ReviewModels) into each post-done loop's scope
+as flags.ModelName — the same fork Module.RunReview uses for its review
+sessions — so the model that verifies and corrects the declared goal is
+independent of the model that made the changes. The first done block
+itself is emitted by the default model; the switch is sticky, so a
+post-done loop whose corrections are overturned by errors or malformed
+blocks keeps the review model on its follow-up loops too. When no
+review model is configured, post-done loops keep the default model.
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop
-// protocol: work toward the goal across fresh loops and emit a done
-// block only when the goal is genuinely achieved. See TheoryOfGoalMode.
+// protocol: work toward the goal across fresh loops and end the run by
+// emitting a done block from a loop that applies no change blocks. See
+// TheoryOfGoalMode.
 const GoalSystemPrompt = `
 **Goal-Directed Multi-Loop Execution:**
 
@@ -140,31 +144,31 @@ You are working toward a goal that may require multiple independent loops to ach
 - Work toward the goal described in the user input. Make concrete changes (code modifications, tests, documentation) to advance the goal.
 - After making changes, assess whether the goal has been fully achieved. Consider: Are all requested changes complete? Do tests pass? Is the code correct and well-structured?
 - If the goal is NOT yet achieved, end your turn with a summary block. The system will start another loop with fresh context, allowing you to continue from the current filesystem state.
-- A loop that ends without applying any change block ends the run: the next loop would see the same filesystem state with nothing new to act on. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
-- If the goal IS achieved, emit a done block, then end with a summary block.
+- A loop that ends without applying any change block and without a done block ends the run without achieving the goal: the next loop would see the same filesystem state with nothing new to act on. Complete the goal's changes within the loop — chain generations with continue blocks as needed — before ending the turn.
+- If the goal IS achieved and this loop found nothing to correct, emit a done block, then end with a summary block.
 
 **Goal Completion Signal:**
 When you determine the goal is fully achieved, emit a done block (kind "done") whose body states the goal achievement.
 
-- A done block is a completion declaration, not a verdict. The next loop starts fresh, re-reads the current filesystem state — which may have changed while this loop ran (e.g., todo.md may have gained new tasks) — and verifies the declaration. Only when a second consecutive loop also emits a done block is the goal confirmed.
-- Only emit a done block when the goal is genuinely achieved. If unsure, do NOT emit it; continue working in the next loop.
+- The run ends only when a loop emits a done block AND applies no change blocks in that same loop. A loop that applies change blocks never ends the run — even when it also emits a done block: its changes must be verified by the next loop, which re-reads the current filesystem state, checks the changes, and corrects any errors it finds.
+- A done block emitted together with change blocks is therefore not a completion signal: it asks the next loop to verify those changes, and the corrections made by a verification loop are verified in turn by the following loop. The cycle repeats until a loop examines the current state and finds nothing to correct — that loop emits a done block and applies no change blocks, ending the run.
+- Only emit a done block when the goal is genuinely achieved and this loop corrected nothing. If unsure, do NOT emit it; continue working in the next loop.
 - Each loop is independent: you start fresh with the current filesystem state. Re-read files to verify previous changes before building on them.
 - Be thorough: verify your changes with tests (go-test blocks) before declaring the goal achieved.
 `
 
 // goalDoneVerificationPrompt is the feedback carried into the loop
-// immediately after a loop that emitted a done block. A done block is a
-// completion declaration, not a verdict: the filesystem may have changed
-// since the declaring loop loaded its context (e.g., todo.md may have
-// gained new tasks), so the declaration must be verified in a fresh loop
-// that re-reads the current filesystem state. Verification is the loop's
-// primary work: it re-reads and re-checks, applies corrections only for
-// errors the check uncovers, and starts no new work beyond them. Only a
-// second consecutive done block confirms the goal. See TheoryOfGoalMode.
+// immediately after a loop that emitted a done block while applying
+// change blocks. The declaration is not final: a loop that applied
+// change blocks never ends the run, so the next loop verifies the
+// declaration and the changes against the current filesystem state,
+// corrects the errors the check uncovers, and starts no unrelated new
+// work. Only a loop that emits a done block and applies no change
+// blocks ends the run. See TheoryOfGoalMode.
 const goalDoneVerificationPrompt = `
-[System note: The previous goal loop emitted a done block declaring the goal achieved. The filesystem may have changed since that loop loaded its context — for example, todo.md may have been updated with new tasks. Verification is the primary work of this loop: re-read the relevant files (including todo.md) against the CURRENT filesystem state and check whether every task is genuinely complete.
+[System note: The previous goal loop applied change blocks and declared the goal achieved with a done block. The declaration is not final: a loop that applies change blocks never ends the run. Verification is the primary work of this loop: re-read the relevant files (including todo.md) against the CURRENT filesystem state and check whether every task is genuinely complete and every applied change is correct.
 
-If the check uncovers errors (incorrect or missing changes), fix them; corrections are part of verification. If there is remaining work (e.g., new tasks were added while the previous loop ran), continue working on it in this loop. If the goal is genuinely achieved and nothing needs correction, emit a done block again to confirm. Do not start unrelated new work beyond the check and its corrections.]`
+If the check uncovers errors (incorrect or missing changes), fix them; corrections are part of verification, and the next loop will verify them in turn. If there is remaining work (e.g., new tasks were added while the previous loop ran), continue working on it in this loop. If the goal is genuinely achieved and nothing needs correction, emit a done block and apply no change blocks — only such a loop ends the run. Do not start unrelated new work beyond the check and its corrections.]`
 
 // maxGoalIterations bounds the number of goal loops.
 const maxGoalIterations = 20
@@ -306,8 +310,8 @@ type GoalLoopGenerator func(
 
 // GoalResult reports the outcome of a goal run. See TheoryOfGoalMode.
 type GoalResult struct {
-	// Achieved reports whether a done block was confirmed by a
-	// verification loop.
+	// Achieved reports whether the run ended on a loop that emitted a
+	// done block while applying no change blocks.
 	Achieved bool
 	// LoopsRun is the number of loops executed, including any extra
 	// verification loop beyond the iteration budget.
@@ -318,10 +322,10 @@ type GoalResult struct {
 }
 
 // GoalRun runs the goal loop mechanism: repeated fresh generation loops
-// until a done block is confirmed, the iteration budget is exhausted, a
-// successful loop applies no change blocks, or the same error repeats,
-// followed by a review of the accumulated diffs. Verdicts and failure
-// notes go to output. See TheoryOfGoalMode.
+// until a loop applies no change blocks — the goal is achieved when
+// that loop emits a done block — the iteration budget is exhausted, or
+// the same error repeats, followed by a review of the accumulated
+// diffs. Verdicts and failure notes go to output. See TheoryOfGoalMode.
 type GoalRun func(ctx context.Context, output io.Writer) GoalResult
 
 // GoalSystemPromptText assembles the goal-mode system prompt: the base
@@ -442,13 +446,15 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 }
 
 // applyLoopSuccess folds a successful loop into the runner state:
-// uncorrected malformed blocks carry re-emit feedback and overturn a
-// pending done declaration; a done block confirms a pending declaration,
-// and a done block from a loop that applied no change blocks achieves
-// the goal directly without a verification loop; a loop that applied no
-// change blocks without a done block ends the run; a clean loop with
-// changes clears the feedback. See TheoryOfGoalMode and
-// TheoryOfGoalReviewModel.
+// uncorrected malformed blocks carry re-emit feedback into the next
+// loop; a done block from a loop that applied no change blocks achieves
+// the goal; a loop that applied change blocks never ends the run — even
+// when it also emits a done block, because the changes must be checked
+// by the next loop — and a done declaration with changes carries the
+// verification prompt into the next loop; a loop that applied no change
+// blocks without a done block ends the run unachieved; a clean loop
+// with changes and no done block clears the feedback. See
+// TheoryOfGoalMode and TheoryOfGoalReviewModel.
 func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter goalReporter) bool {
 	s.consecutiveErrors = 0
 	s.lastErrMsg = ""
@@ -474,44 +480,36 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 		}
 	}
 
-	if foundDone {
-		// A pending declaration is confirmed by this done block. A done
-		// block from a loop that applied no change blocks achieves the
-		// goal directly: that loop just read the current filesystem
-		// state through a fresh scope and concluded without changes, so
-		// a verification loop would read the same state and repeat the
-		// same analysis. A done block from a loop with applied changes
-		// still enters verification below, because the changes are what
-		// the verification loop independently re-checks. See
-		// TheoryOfGoalMode.
-		if s.pendingDoneVerification || len(result.Diffs) == 0 {
+	// The run ends only on a loop that applied no change blocks: within
+	// one loop the model can chain as many generations as it needs, so
+	// an empty diff set means it examined the current state and
+	// concluded without corrections. The done block decides the
+	// outcome — a change-free loop that emitted one achieved the goal;
+	// one that did not ends the run unachieved. See TheoryOfGoalMode.
+	if len(result.Diffs) == 0 {
+		if foundDone {
 			reporter.message(fmt.Sprintf("\n[Goal Achieved after %d loop(s)]\n", loopsRun))
 			s.achieved = true
 			return true
 		}
+		reporter.message(fmt.Sprintf(
+			"\n[Goal Run Complete: loop %d applied no change blocks without a done block]\n", loopsRun))
+		s.stopRequested = true
+		return true
+	}
+
+	// A loop that applied change blocks never ends the run, even when
+	// it also emits a done block: the changes must be verified by the
+	// next loop, which re-reads the current filesystem state. The done
+	// block emitted here is a declaration the next loop challenges; the
+	// declaration switches every following loop to the review model,
+	// and the flag is sticky, so the loops that carry later corrections
+	// stay on it too. See TheoryOfGoalMode and TheoryOfGoalReviewModel.
+	if foundDone {
 		s.pendingDoneVerification = true
-		// The declaration switches every following loop to the review
-		// model; the flag is sticky, so the loops that carry later
-		// corrections stay on it too.
 		s.doneDeclared = true
 		s.feedback = GoalFeedback(goalDoneVerificationPrompt)
 		return false
-	}
-
-	// A loop that applied no change blocks ends the run: within one loop
-	// the model can chain as many generations as it needs, so an empty
-	// diff set means it concluded without changes, and the next loop
-	// would read the same filesystem state and repeat the same analysis.
-	// The check is skipped while a done declaration is pending: that
-	// loop verifies the declaration, and a verification loop that emits
-	// no done block and corrects nothing falls through to the
-	// clean-loop path below so a later loop can still confirm the
-	// declaration. See TheoryOfGoalMode.
-	if !s.pendingDoneVerification && len(result.Diffs) == 0 {
-		reporter.message(fmt.Sprintf(
-			"\n[Goal Run Complete: loop %d applied no change blocks]\n", loopsRun))
-		s.stopRequested = true
-		return true
 	}
 
 	s.pendingDoneVerification = false
