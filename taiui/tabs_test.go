@@ -36,6 +36,48 @@ func TestTabsAutoExpand(t *testing.T) {
 	}
 }
 
+func TestTabsUnseen(t *testing.T) {
+	tabs := NewTabs(3)
+	tabs.AutoExpand(0)
+	// Collapsing the tab must not mark it unseen; only a later content
+	// arrival while collapsed does.
+	tabs.Toggle(0)
+	if tabs.Unseen[0] {
+		t.Fatal("collapsing a tab must not mark it unseen")
+	}
+	if !tabs.AutoExpand(0) && !tabs.Unseen[0] {
+		t.Fatal("content arriving on a collapsed tab must mark it unseen")
+	}
+	// Content arriving on an expanded tab never marks it unseen.
+	tabs.Expanded[1] = true
+	tabs.HasContent[1] = true
+	if tabs.AutoExpand(1) || tabs.Unseen[1] {
+		t.Fatal("an expanded tab must not be marked unseen")
+	}
+	// Expanding the tab clears the mark.
+	tabs.Toggle(0)
+	if tabs.Unseen[0] {
+		t.Fatal("expanding a tab must clear its unseen mark")
+	}
+}
+
+func TestTabsFocusTab(t *testing.T) {
+	tabs := NewTabs(3)
+	tabs.FocusTab(0)
+	if !tabs.Expanded[0] || tabs.Focus != 0 {
+		t.Fatalf("expected the tab expanded and focused, got %+v", tabs)
+	}
+	if tabs.LastFocus[0] != 0 {
+		t.Fatalf("expected the focus order recorded, got %+v", tabs.LastFocus)
+	}
+	// The focused tab toggles like any other: collapsing moves the
+	// focus to the last-focused expanded tab.
+	tabs.Toggle(0)
+	if tabs.Expanded[0] || tabs.Focus != -1 {
+		t.Fatalf("expected the tab collapsed with no focus left, got %+v", tabs)
+	}
+}
+
 func TestTabsToggle(t *testing.T) {
 	tabs := NewTabs(3)
 	tabs.Expanded = []bool{true, true, false}
@@ -90,6 +132,56 @@ func TestTabsToggle(t *testing.T) {
 	if tabs.Focus != -1 {
 		t.Fatalf("focus should be -1 when no tab is expanded, got %d", tabs.Focus)
 	}
+}
+
+func TestCollapsedPanelUnseenDot(t *testing.T) {
+	style := testPanelStyle()
+
+	t.Run("Horizontal", func(t *testing.T) {
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "2 Summary", false, true, style)
+		screen := newFakeScreen(20, 1)
+		Render(element, screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		// The label "  2 Summary" ends at column 10; the red-circle
+		// emoji sits right after it, occupying columns 11 and 12.
+		cell := frame.Cells[11]
+		if cell.Rune != '🔴' {
+			t.Fatalf("expected the red-circle emoji at (11,0), got %v", cell.Rune)
+		}
+	})
+
+	t.Run("Vertical", func(t *testing.T) {
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 12, Right: 1}, "2 Summary", false, true, style)
+		screen := newFakeScreen(1, 12)
+		Render(element, screen)
+		if len(screen.frames) == 0 {
+			t.Fatal("expected a rendered frame")
+		}
+		frame := screen.frames[len(screen.frames)-1]
+		// The one-column strip cannot hold the two-column emoji, so the
+		// mark falls back to a red background cell right below the
+		// label, which occupies rows 0..8.
+		cell := frame.Cells[9*frame.Width]
+		wantR, wantG, wantB := style.UnseenDotBG.RGB()
+		if r, g, b := cell.Style.Bg().RGB(); r != wantR || g != wantG || b != wantB {
+			t.Fatalf("expected the unseen dot background at (0,9), got %#x %#x %#x", r, g, b)
+		}
+	})
+
+	t.Run("NoDotWithoutUnseen", func(t *testing.T) {
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 20}, "2 Summary", false, false, style)
+		screen := newFakeScreen(20, 1)
+		Render(element, screen)
+		frame := screen.frames[len(screen.frames)-1]
+		for _, cell := range frame.Cells {
+			if cell.Rune == '🔴' {
+				t.Fatal("expected no unseen emoji without the unseen flag")
+			}
+		}
+	})
 }
 
 func TestTabsCycleFocusSkipsCollapsedTabs(t *testing.T) {
@@ -234,6 +326,7 @@ func testPanelStyle() PanelStyle {
 		LabelFG:       color.PaletteColor(8),
 		FocusLabelFG:  color.PaletteColor(15),
 		ActiveLabelFG: color.PaletteColor(10),
+		UnseenDotBG:   color.Red,
 	}
 }
 
@@ -270,7 +363,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	style := testPanelStyle()
 
 	t.Run("Horizontal", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, false, style)
 		screen := newFakeScreen(12, 1)
 		Render(element, screen)
 		if len(screen.frames) == 0 {
@@ -286,7 +379,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, style)
+		element := CollapsedPanel(Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, false, style)
 		screen := newFakeScreen(1, 8)
 		Render(element, screen)
 		if len(screen.frames) == 0 {

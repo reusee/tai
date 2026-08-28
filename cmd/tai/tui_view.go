@@ -75,7 +75,7 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		}
 		panel := taiui.TabPanel(
 			boxes[i], i+1, tabNames[i], label, highlight,
-			t.tabs.Expanded[i], t.tabs.Focus == i,
+			t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
 			displays[i], t.scrolls[i], panelStyle,
 		)
 		if panel != nil {

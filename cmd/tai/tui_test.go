@@ -21,11 +21,14 @@ func newTUIForTest() *TUI {
 	// Tests exercise the production layout, including the Logs tab's
 	// unfocused height cap. See logsMaxBoxHeight.
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
+	// The Output tab starts expanded and focused, matching the
+	// production default. See TheoryOfTUI.
+	tabs.FocusTab(0)
 	return &TUI{
 		output:  taiui.NewLineBuffer(0),
 		logs:    taiui.NewStringBuffer(0),
 		tabs:    tabs,
-		scrolls: [3]taiui.ScrollState{},
+		scrolls: [3]taiui.ScrollState{{Follow: true}},
 		// The Events tab's elapsed timer counts from the test's start;
 		// timer assertions anchor on an explicitly set startTime. See
 		// TheoryOfEventTree.
@@ -243,8 +246,10 @@ func TestDisplayChatInputEmpty(t *testing.T) {
 	if len(tui.output.Lines()) != 0 {
 		t.Fatalf("expected no lines for empty chats, got %v", tui.output.Lines())
 	}
-	if tui.tabs.Expanded[0] {
-		t.Fatal("output tab must not expand for empty chats")
+	// Empty chats change nothing: the Output tab keeps its initial
+	// expanded focus.
+	if !tui.tabs.Expanded[0] || tui.tabs.Focus != 0 {
+		t.Fatalf("expected the output tab's initial state, got %+v", tui.tabs)
 	}
 }
 
@@ -1844,7 +1849,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	style := panelStyle
 
 	t.Run("Horizontal", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, style)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 1, Right: 12}, "1 Output", false, false, style)
 		screen := &panelTestScreen{width: 12, height: 1}
 		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
@@ -1860,7 +1865,7 @@ func TestCollapsedPanelRendering(t *testing.T) {
 	})
 
 	t.Run("Vertical", func(t *testing.T) {
-		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, style)
+		element := taiui.CollapsedPanel(taiui.Box{Top: 0, Left: 0, Bottom: 8, Right: 1}, "1 Output", false, false, style)
 		screen := &panelTestScreen{width: 1, height: 8}
 		taiui.Render(element, screen)
 		if len(screen.frames) == 0 {
@@ -1983,13 +1988,34 @@ func TestTuiStateEmptyWriteDoesNotExpandTabs(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write(nil)
 	tui.writeLogs(nil)
-	for i := 0; i < 3; i++ {
+	// The Output tab keeps its initial expanded focus; empty writes
+	// must not expand the other tabs or move the focus.
+	if !tui.tabs.Expanded[0] || tui.tabs.Focus != 0 {
+		t.Fatalf("output tab must keep its initial expanded focus, got %+v", tui.tabs)
+	}
+	for i := 1; i < 3; i++ {
 		if tui.tabs.Expanded[i] {
 			t.Fatalf("tab %d must not expand on empty writes", i)
 		}
 	}
-	if tui.tabs.Focus != -1 {
-		t.Fatalf("expected no focus change on empty writes, got %d", tui.tabs.Focus)
+}
+
+// TestTUINewDefaultsOutputExpanded verifies the production default: the
+// Output tab starts expanded, focused, and following the tail, while
+// the other tabs stay collapsed until their first content arrives. See
+// TheoryOfTUI.
+func TestTUINewDefaultsOutputExpanded(t *testing.T) {
+	tui := newTUIForTest()
+	if !tui.tabs.Expanded[0] || tui.tabs.Focus != 0 {
+		t.Fatalf("the output tab must start expanded and focused, got %+v", tui.tabs)
+	}
+	if !tui.scrolls[0].Follow {
+		t.Fatal("the output tab must start following the tail")
+	}
+	for i := 1; i < 3; i++ {
+		if tui.tabs.Expanded[i] {
+			t.Fatalf("tab %d must start collapsed", i)
+		}
 	}
 }
 
@@ -1997,7 +2023,7 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 	tui := newTUIForTest()
 	tui.write([]byte("first output\n"))
 	if !tui.tabs.Expanded[0] {
-		t.Fatal("output tab should auto-expand on first content")
+		t.Fatal("output tab should be expanded on first content")
 	}
 	tui.toggleTab(0)
 	if tui.tabs.Expanded[0] {
@@ -2006,6 +2032,15 @@ func TestTuiStateAutoExpandOnlyFirstContent(t *testing.T) {
 	tui.write([]byte("more output\n"))
 	if tui.tabs.Expanded[0] {
 		t.Fatal("output tab must not re-expand on subsequent content")
+	}
+	// The collapsed tab carries the unseen dot for the missed content,
+	// and re-expanding clears it.
+	if !tui.tabs.Unseen[0] {
+		t.Fatal("collapsed output tab must carry the unseen dot after new output")
+	}
+	tui.toggleTab(0)
+	if tui.tabs.Unseen[0] {
+		t.Fatal("re-expanding must clear the unseen dot")
 	}
 }
 

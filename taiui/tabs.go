@@ -16,6 +16,13 @@ taiui tabs theory:
   keyboard navigation remains usable. Subsequent content arrivals do
   not re-expand a tab the user collapsed; the caller is told whether
   the tab was newly expanded, so it can resume following the tail.
+- Unseen content: a collapsed tab that receives content carries the
+  unseen flag, and its collapsed strip renders a red-circle emoji
+  right after the label until the tab is expanded or focused, which
+  clears the flag. An expanded tab never carries the flag, because its
+  content is visible as it arrives. FocusTab gives one tab the
+  expanded, focused start state; user-facing expansion goes through
+  Toggle.
 - Number-key semantics: pressing a focused tab's key collapses it to a
   thin strip and moves the focus to the expanded tab that was last
   focused; pressing a non-focused or collapsed tab's key expands it (if
@@ -46,9 +53,14 @@ taiui tabs theory:
 
 // Tabs is the tab state machine of a terminal UI. See TheoryOfTabs.
 type Tabs struct {
-	Count         int
-	Expanded      []bool
-	HasContent    []bool
+	Count      int
+	Expanded   []bool
+	HasContent []bool
+	// Unseen marks a collapsed tab whose content arrived while it was
+	// collapsed: its collapsed strip renders the red-circle unseen
+	// emoji after the label until the tab is expanded or focused
+	// again. See TheoryOfTabs.
+	Unseen        []bool
 	LastFocus     []int
 	Focus         int
 	SplitVertical bool
@@ -67,6 +79,7 @@ func NewTabs(count int) *Tabs {
 		Count:      count,
 		Expanded:   make([]bool, count),
 		HasContent: make([]bool, count),
+		Unseen:     make([]bool, count),
 		LastFocus:  make([]int, count),
 		Focus:      -1,
 	}
@@ -76,34 +89,59 @@ func NewTabs(count int) *Tabs {
 // arrives. It never changes an existing focus: a tab popping open cannot
 // steal attention from the pane the user is reading. Only when no tab is
 // focused does the first auto-expanded tab become the focus. Subsequent
-// content arrivals do not re-expand a tab the user collapsed. It reports
+// content arrivals do not re-expand a tab the user collapsed; such an
+// arrival marks the tab unseen, so its collapsed strip carries the
+// red-circle emoji after the label until the user expands it. It reports
 // whether the tab was newly expanded, so the caller can resume following
 // the tail.
 func (t *Tabs) AutoExpand(idx int) bool {
 	if idx < 0 || idx >= t.Count {
 		return false
 	}
-	if t.HasContent[idx] {
-		return false
+	if !t.HasContent[idx] {
+		t.HasContent[idx] = true
+		if t.Expanded[idx] {
+			return false
+		}
+		t.Expanded[idx] = true
+		if t.Focus == -1 {
+			t.Focus = idx
+			t.LastFocus[idx] = t.focusOrder
+			t.focusOrder++
+		}
+		return true
 	}
-	t.HasContent[idx] = true
-	if t.Expanded[idx] {
-		return false
+	// A later arrival on a collapsed tab cannot be shown: mark the
+	// strip's unseen emoji until the user expands the tab.
+	if !t.Expanded[idx] && idx < len(t.Unseen) {
+		t.Unseen[idx] = true
+	}
+	return false
+}
+
+// FocusTab expands idx and takes the focus, recording the focus order.
+// It is the constructor-side operation that gives a tab its default
+// expanded, focused start state; user-facing expansion goes through
+// Toggle. See TheoryOfTabs.
+func (t *Tabs) FocusTab(idx int) {
+	if idx < 0 || idx >= t.Count {
+		return
 	}
 	t.Expanded[idx] = true
-	if t.Focus == -1 {
-		t.Focus = idx
-		t.LastFocus[idx] = t.focusOrder
-		t.focusOrder++
+	if idx < len(t.Unseen) {
+		t.Unseen[idx] = false
 	}
-	return true
+	t.Focus = idx
+	t.LastFocus[idx] = t.focusOrder
+	t.focusOrder++
 }
 
 // Toggle implements the number-key semantics: a focused tab collapses
 // and the focus moves to the expanded tab that was last focused; a
 // non-focused or collapsed tab expands (if collapsed) and becomes the
-// focus. It reports whether the tab was newly expanded, so the caller
-// can resume following the tail.
+// focus, clearing its unseen emoji because the user is now looking at
+// the pane. It reports whether the tab was newly expanded, so the
+// caller can resume following the tail.
 func (t *Tabs) Toggle(idx int) (newlyExpanded bool) {
 	if idx < 0 || idx >= t.Count {
 		return false
@@ -116,6 +154,9 @@ func (t *Tabs) Toggle(idx int) (newlyExpanded bool) {
 	if !t.Expanded[idx] {
 		t.Expanded[idx] = true
 		newlyExpanded = true
+	}
+	if idx < len(t.Unseen) {
+		t.Unseen[idx] = false
 	}
 	t.Focus = idx
 	t.LastFocus[idx] = t.focusOrder
@@ -298,13 +339,16 @@ func (t *Tabs) expandedSizes(extent int, expandedIndices []int, totalWeight int)
 // unfocused tab, FocusBG of the focused tab. LabelFG is the label color
 // of an unfocused tab, FocusLabelFG of the focused tab, and ActiveLabelFG
 // highlights a label whose tab carries an active state (e.g., an
-// in-flight generation request).
+// in-flight generation request). UnseenDotBG paints the fallback red
+// dot on a one-column strip, where the red-circle unseen emoji cannot
+// fit.
 type PanelStyle struct {
 	BaseBG        Color
 	FocusBG       Color
 	LabelFG       Color
 	FocusLabelFG  Color
 	ActiveLabelFG Color
+	UnseenDotBG   Color
 }
 
 var _ Element = _Panel{}
@@ -442,8 +486,12 @@ func renderPanel(p _Panel, box Box, style Style, draw drawFunc, cursor cursorFun
 
 // CollapsedPanel renders a collapsed tab as a thin strip showing the
 // tab's key and title. In a narrow column the label is written
-// vertically; in a short row it is written horizontally.
-func CollapsedPanel(box Box, label string, focus bool, style PanelStyle) Element {
+// vertically; in a short row it is written horizontally. An unseen tab
+// carries a red-circle emoji right after the label. The one-column
+// vertical strip cannot hold the two-column emoji — it would be
+// clipped entirely — so the mark falls back to a red background cell
+// there.
+func CollapsedPanel(box Box, label string, focus, unseen bool, style PanelStyle) Element {
 	base := style.BaseBG
 	if focus {
 		base = style.FocusBG
@@ -457,7 +505,7 @@ func CollapsedPanel(box Box, label string, focus bool, style PanelStyle) Element
 		for _, r := range label {
 			lines = append(lines, string(r))
 		}
-		return Rect(
+		var panel Element = Rect(
 			Box(box),
 			Fill(true),
 			BGColor(base),
@@ -467,13 +515,32 @@ func CollapsedPanel(box Box, label string, focus bool, style PanelStyle) Element
 				FGColor(labelFg),
 			),
 		)
+		if !unseen {
+			return panel
+		}
+		// The fallback dot sits right below the vertical label,
+		// clamped to the strip's last row when the label fills the
+		// strip.
+		dotRow := min(box.Top+len(label), box.Bottom-1)
+		return Overlay(panel, Rect(
+			Box{Top: dotRow, Left: box.Left, Bottom: dotRow + 1, Right: box.Left + 1},
+			Fill(true),
+			BGColor(style.UnseenDotBG),
+		))
+	}
+	labelText := "  " + label + "  "
+	if unseen {
+		// The unseen mark is the red-circle emoji: a colored glyph
+		// replacing the label's trailing padding, adjacent to the
+		// label, where the former background dot sat.
+		labelText = "  " + label + "🔴"
 	}
 	return Rect(
 		Box(box),
 		Fill(true),
 		BGColor(base),
 		Text(
-			"  "+label+"  ",
+			labelText,
 			Bold(focus),
 			FGColor(labelFg),
 		),

@@ -10,6 +10,10 @@ taiui tab panel theory:
   label, highlight, content lines, and scroll view. The key/title pair
   decouples the persistent strip label from the dynamic panel label,
   which may carry status suffixes such as "(generating...)".
+- An unseen collapsed tab renders a red-circle emoji right after its
+  label, marking content that arrived while the tab was collapsed; the
+  one-column vertical strip falls back to a red background cell,
+  because the two-column emoji cannot fit.
 - PaneHeight derives the scroll view height from the panel box: the
   one-row label strip pinned to the top leaves box height minus one row
   for content, never less than one.
@@ -18,9 +22,10 @@ taiui tab panel theory:
 // TabPanel builds the element of one tab: a collapsed strip or an
 // expanded panel, laid out by Tabs.Boxes. key and title form the
 // collapsed strip's label ("1 Output"); label is the expanded panel's
-// title. It returns nil for a degenerate box, which layouts skip. See
+// title. unseen paints the red-circle unseen emoji on the collapsed
+// strip. It returns nil for a degenerate box, which layouts skip. See
 // TheoryOfTabPanel.
-func TabPanel(box Box, key int, title, label string, highlight, expanded, focus bool, lines []Line, scroll ScrollState, style PanelStyle) Element {
+func TabPanel(box Box, key int, title, label string, highlight, expanded, focus, unseen bool, lines []Line, scroll ScrollState, style PanelStyle) Element {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return nil
 	}
@@ -29,6 +34,7 @@ func TabPanel(box Box, key int, title, label string, highlight, expanded, focus 
 			box,
 			fmt.Sprintf("%d %s", key, title),
 			focus,
+			unseen,
 			style,
 		)
 	}

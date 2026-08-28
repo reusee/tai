@@ -6,7 +6,7 @@ import (
 )
 
 func TestTabPanel(t *testing.T) {
-	if TabPanel(Box{Top: 0, Left: 0, Bottom: 0, Right: 20}, 1, "Output", "Output", false, true, false, nil, ScrollState{}, PanelStyle{}) != nil {
+	if TabPanel(Box{Top: 0, Left: 0, Bottom: 0, Right: 20}, 1, "Output", "Output", false, true, false, false, nil, ScrollState{}, PanelStyle{}) != nil {
 		t.Fatal("a degenerate box must render no element")
 	}
 
@@ -14,7 +14,7 @@ func TestTabPanel(t *testing.T) {
 	collapsed := TabPanel(
 		Box{Top: 0, Left: 0, Bottom: 1, Right: 20},
 		2, "Summary", "Summary",
-		false, false, true,
+		false, false, true, false,
 		nil, ScrollState{}, PanelStyle{},
 	)
 	Render(collapsed, NewTerminalScreen(&sb, 20, 1))
@@ -26,7 +26,7 @@ func TestTabPanel(t *testing.T) {
 	expanded := TabPanel(
 		Box{Top: 0, Left: 0, Bottom: 4, Right: 40},
 		1, "Output", "Output (generating...)",
-		true, true, false,
+		true, true, false, false,
 		[]Line{{Text: "body"}}, ScrollState{}, PanelStyle{},
 	)
 	Render(expanded, NewTerminalScreen(&sb, 40, 4))

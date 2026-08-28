@@ -130,13 +130,16 @@ key and title, and moves the focus to the expanded tab that was last focused
 (see the focus-order paragraph below); pressing a non-focused or collapsed
 tab's key expands it (if collapsed) and takes the focus. Switching to an
 already-expanded tab keeps its current view; re-expanding a collapsed tab
-resumes following the live tail. All tabs are collapsed by default; a
-collapsed tab expands automatically the FIRST time content for it arrives —
-the Output tab on any streamed output, the Events tab on its first rendered
-event line, the Logs tab
-on any log record — so the interface surfaces panes only when they have something
-to show. Subsequent content
-arrivals do not re-expand a tab the user collapsed. Auto-expansion never
+resumes following the live tail. The Output tab starts expanded and
+focused, following the live tail — the model's stream is the pane the
+user watches, so it is open from the first frame — while the Events and
+Logs tabs stay collapsed and expand automatically the FIRST time content
+for them arrives — the Events tab on its first rendered event line, the
+Logs tab on any log record — so the interface surfaces panes only when
+they have something to show. Subsequent content arrivals do not re-expand
+a tab the user collapsed; instead its collapsed strip carries a
+red-circle unseen emoji from that arrival until the tab is expanded
+again, which clears the mark. Auto-expansion never
 changes an existing focus: a tab popping open cannot steal attention from the
 pane the user is reading, and it resumes following the tail; only when
 no tab is focused does the first auto-expanded tab become the focus, so
@@ -321,15 +324,18 @@ func (t Tui) Keys() map[string]string {
 }
 
 // panelStyle styles the three tab panels: dark blue for unfocused tabs,
-// dark gray for the focused tab, and a highlight color for the active
-// request label. It is the single style definition shared by the panel
-// rendering and the tests.
+// dark gray for the focused tab, a highlight color for the active
+// request label, and red for the fallback unseen-content background on
+// a one-column strip, where the red-circle unseen emoji cannot fit. It
+// is the single style definition shared by the panel rendering and the
+// tests.
 var panelStyle = taiui.PanelStyle{
 	BaseBG:        taiui.HexColor(tabUnfocusBG),
 	FocusBG:       taiui.HexColor(tabFocusBG),
 	LabelFG:       color.PaletteColor(8),
 	FocusLabelFG:  color.PaletteColor(15),
 	ActiveLabelFG: color.PaletteColor(int(tabActiveLabelFg)),
+	UnseenDotBG:   taiui.HexColor(0xd23b3b),
 }
 
 var (
@@ -587,6 +593,10 @@ func newTUI() (*TUI, error) {
 	// The Logs tab caps its box height while expanded but not focused;
 	// see logsMaxBoxHeight.
 	tabs.MaxSizes = []int{0, 0, logsMaxBoxHeight}
+	// The Output tab starts expanded and focused: the model's stream is
+	// the pane the user watches, so it is open from the first frame.
+	// See TheoryOfTUI.
+	tabs.FocusTab(0)
 	return &TUI{
 		// Every display buffer is unbounded: the Output tab retains each
 		// streamed line, the Logs tab each log record, and the Events
@@ -596,12 +606,13 @@ func newTUI() (*TUI, error) {
 		output: taiui.NewLineBuffer(0),
 		logs:   taiui.NewStringBuffer(0),
 		tabs:   tabs,
-		// All tabs are collapsed by default; a tab expands automatically
-		// the first time content for it arrives, without changing the
-		// focus. The scroll offsets start at the tail sentinel so the
-		// first render sticks to the latest content. See TheoryOfTUI.
+		// The Output tab starts expanded, focused, and following the
+		// tail; the other tabs stay collapsed and expand automatically
+		// the first time content for them arrives. The scroll offsets
+		// start at the tail sentinel so the first render sticks to the
+		// latest content. See TheoryOfTUI.
 		scrolls: [3]taiui.ScrollState{
-			{Offset: 1 << 30},
+			{Offset: 1 << 30, Follow: true},
 			{Offset: 1 << 30},
 			{Offset: 1 << 30},
 		},
