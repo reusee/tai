@@ -110,6 +110,30 @@ func TestSessionLifecycleAndQuit(t *testing.T) {
 	}
 }
 
+func TestSessionHandleKeyBatchDrainsReadyKeys(t *testing.T) {
+	keyCh := make(chan string, 3)
+	for _, key := range []string{"second", "third", "fourth"} {
+		keyCh <- key
+	}
+	var handled []string
+	sess := &Session{
+		Key: func(key string) bool {
+			handled = append(handled, key)
+			return false
+		},
+	}
+	if sess.handleKeyBatch(keyCh, "first") {
+		t.Fatal("expected the batch to continue after non-quit keys")
+	}
+	want := []string{"first", "second", "third", "fourth"}
+	if strings.Join(handled, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected key order: got %v, want %v", handled, want)
+	}
+	if len(keyCh) != 0 {
+		t.Fatalf("expected the ready keys drained, %d remain", len(keyCh))
+	}
+}
+
 func TestSessionSetMouse(t *testing.T) {
 	ttyDev := &sessionTty{in: make(chan string, 4)}
 	sess := &Session{Tty: ttyDev}

@@ -24,7 +24,10 @@ taiui session theory:
   before Run and never mutated during it: Render draws the current
   state, Key handles one key (returning true quits), OnResize observes
   size changes, and Gen runs the session's work on its own goroutine.
-  Every event — key, update, resize — triggers a render.
+  Every wake — key, update, resize — triggers a render. A key wake
+  drains the keys already queued in order and applies them before that
+  render, so wheel and auto-repeat bursts do not produce one frame per
+  queued key.
 - A panic in Gen is recovered into the session error and reported
   through GenEnd (which is also called with nil on normal return), so
   the display stays up and the user can read the failure; the error is
@@ -143,7 +146,7 @@ func (s *Session) Run() error {
 		}
 		select {
 		case key := <-keyCh:
-			if s.Key != nil && s.Key(key) {
+			if s.handleKeyBatch(keyCh, key) {
 				return s.Err()
 			}
 		case <-s.Update:
@@ -154,6 +157,28 @@ func (s *Session) Run() error {
 				}
 				s.Screen.Resize(ws.Width, ws.Height)
 			}
+		}
+	}
+}
+
+// handleKeyBatch handles first and then the keys already queued on keyCh,
+// preserving order. It stops at a quit key and reports whether the session
+// should exit, so a burst of wheel or auto-repeat events is applied once
+// per render wake instead of once per frame.
+func (s *Session) handleKeyBatch(keyCh <-chan string, first string) bool {
+	key := first
+	for {
+		if s.Key != nil && s.Key(key) {
+			return true
+		}
+		select {
+		case next, ok := <-keyCh:
+			if !ok {
+				return false
+			}
+			key = next
+		default:
+			return false
 		}
 	}
 }

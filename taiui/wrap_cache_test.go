@@ -23,6 +23,12 @@ func TestWrapCacheColored(t *testing.T) {
 	if c.count != 1 {
 		t.Fatalf("the partial line must not be cached, got count %d", c.count)
 	}
+	if c.stable != 1 {
+		t.Fatalf("expected one stable display line, got %d", c.stable)
+	}
+	if c.buf != nil {
+		t.Fatal("the partial line must not copy the stable lines into scratch")
+	}
 
 	buf.Append(NoColor, "\nworld\n")
 	display = c.Colored(buf, 40)
@@ -31,6 +37,9 @@ func TestWrapCacheColored(t *testing.T) {
 	}
 	if c.count != 3 {
 		t.Fatalf("expected cached count 3, got %d", c.count)
+	}
+	if c.stable != 3 {
+		t.Fatalf("expected three stable display lines after completion, got %d", c.stable)
 	}
 }
 
@@ -89,6 +98,12 @@ func TestWrapCachePlain(t *testing.T) {
 	display = c.Plain(buf, 40, base)
 	if len(display) != 5 || display[4].Text != "partial" || display[4].BGColor != base {
 		t.Fatalf("expected the partial line to carry its future shade, got %v", display)
+	}
+	if c.stable != 4 {
+		t.Fatalf("expected four stable display lines, got %d", c.stable)
+	}
+	if c.buf != nil {
+		t.Fatal("the partial line must not copy the stable lines into scratch")
 	}
 
 	// A base change resets the cache and re-derives every shade.
