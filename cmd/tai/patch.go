@@ -11,7 +11,8 @@ const TheoryOfPatchCommand = `
 The "patch" subcommand applies a boundary-delimited diff file (default .AI) to
 the working tree without invoking any model. It uses changes.ApplyDiffFile
 directly, reusing the same change-block-streaming apply logic embedded in
-codes.Generate without wiring the full generation pipeline.
+the generation pipeline (see pipeline.TheoryOfStreamingApply) without wiring
+the full generation pipeline.
 `
 
 var PatchCommand = Command{

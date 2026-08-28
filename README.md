@@ -12,7 +12,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 **Software as theory.** The codebase carries its design rationale in `Theory` constants — global string variables with descriptive names like `TheoryOfContextPhilosophy`, `TheoryOfInMemoryApply`, `TheoryOfPrefixCaching`. These constants document why decisions were made, not just what the code does. They evolve incrementally alongside the code. The theory is the project's primary competitive advantage: a deep, documented mental model that guides every change.
 
-**In-memory apply with filesystem consistency.** Change blocks are applied to an in-memory store during streaming, not directly to disk. If a change block fails — invalid target, malformed code — generation stops immediately and the in-memory store is discarded. Only after a round succeeds are changes flushed to disk in a single batch. The disk is never left in a partially modified state by an interrupted round.
+**In-memory apply with filesystem consistency.** Change blocks are applied to an in-memory store during streaming, not directly to disk. If a change block fails — invalid target, malformed code — generation stops immediately and the in-memory store is discarded. Only after a generation succeeds are changes flushed to disk in a single batch. The disk is never left in a partially modified state by an interrupted round.
 
 **Security by isolation.** On Linux, the tool re-executes itself in a user namespace with read-only-everything filesystem hardening. Only the current working directory, Go toolchain directories, the user config directory, `/tmp`, and `/dev/shm` are writable. Shell block execution is governed by an AST-level command allowlist. Focus files outside writable directories are marked read-only at collection time.
 
@@ -73,6 +73,9 @@ Single-shot task execution:
 tai next -file main.go chat "fix the nil pointer dereference in the init function"
 ```
 
+### Terminal UI
+
+Every command runs in a terminal UI by default: an Output tab for model output, an Events tab for the generation event stream, and a Logs tab for log records. The `-cli` flag switches to plain command-line output.
 ## Configuration
 
 Configuration is loaded from CUE files (`tai.cue` or `.tai.cue`) in the working directory, at the root of the Go module (when the working directory is inside a Go module), in the user config directory, and in `/etc`. Command-line flags override config file values.
@@ -119,6 +122,11 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |
 | `-summarize-thoughts` | Enable periodic summarization of thoughts |
 | `-confidential` | Restrict model selection to zero-data-retention models |
+| `-pkg` / `-load` | Add a Go package loading pattern (focus packages) |
+| `-ctx` / `-dep` | Add a context package pattern for dependency analysis |
+| `-match` | Match files by regex pattern for inclusion |
+| `-tui` | Use the terminal UI (the default) |
+| `-cli` | Use the plain command-line interface, disabling the TUI |
 
 ## Architecture
 
@@ -128,7 +136,7 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 |---------|----------------|
 | `cmd/tai` | Command definitions and entry point |
 | `generators` | AI model abstraction (Gemini, OpenAI-compatible) |
-| `pipeline` | Generation loop, codes generation pipeline, and state layers |
+| `pipeline` | Generation loop, generation pipeline, and state layers |
 | `gotools` | Go-specific parts provider, simplification, and the Go block kinds (go-test, go-src) |
 | `anytexts` | General-purpose text file parts provider |
 | `changes` | Change block parsing and application |
@@ -146,30 +154,30 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 
 ### Block Format
 
-The model emits structured output as heredoc-delimited blocks. Each block has a kind (XML element name), attributes, and a body:
+The model emits structured output as heredoc-delimited blocks. Each block has a kind (a function name), parameters, and a body:
 
 ```
-<<徕珑龘 change(op="MODIFY", target="Foo", file-path="/path/to/file.go")
+<<貞觀 change(op="MODIFY", target="Foo", file-path="/path/to/file.go")
 func Foo() {
     // modified code
 }
-徕珑龘
+貞觀
 ```
 
-Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `read`, `memory`.
+Block kinds: `change`, `shell`, `go-test`, `go-src`, `continue`, `summary`, `ingest`, `memory`, `done`.
 
 ### Context Pipeline
 
 1. Go packages are loaded via `go/packages` with lightweight modes (no type checking)
 2. Files are sorted by module → package → distance → path for cache stability
-3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names and source file names; implementation source is fetched on demand via go-src blocks. Non-Go focus files (embed, markdown) are listed by name in the package's file list and fetched on demand via `read` blocks; markdown files at the module root are listed in a separate part. Files explicitly requested via `-file` are appended at full content last. With `-all-src`, focus packages are included as full source code, including tests, instead of documentation
+3. Focus packages are included as `go doc -all -cmd -u` documentation with their test-function names and source file names; implementation source is fetched on demand via go-src blocks. Non-Go focus files (embed, markdown) are listed by name in the package's file list and fetched on demand via `ingest` blocks; markdown files at the module root are listed in a separate part. Files explicitly requested via `-file` are appended at full content last. With `-all-src`, focus packages are included as full source code, including tests, instead of documentation
 4. Context packages are assigned a package-level visibility (invisible, short documentation, package documentation, code without tests, or full content) to fit a dynamic token budget derived from the focus documentation size: focusTokens / 4, rounded to the nearest 32K multiple, floored at 32K
 5. Extra files from `-file` patterns are appended after focus files
 
 ### Generation Loop
 
-Each round wraps the state with a `ParserState` that collects blocks during streaming. After the round, components process collected blocks. If a component produces parts or modifies state, a new round starts. When no component triggers, the loop ends (or prompts for input in interactive mode).
-Block kinds that are not available in a session are announced as disabled in the system prompt (for example shell blocks without `-shell`, or the codes-pipeline kinds in `tai ai`), so the model does not emit blocks that would be silently ignored.
+Each generation wraps the state with a `ParserState` that collects blocks during streaming. After the generation, components process collected blocks. If a component produces parts or modifies state, a new generation starts. When no component triggers, the loop ends (or prompts for input in interactive mode).
+Block kinds that are not available in a session are announced as disabled in the system prompt (for example shell blocks without `-shell`, or the pipeline block kinds in `tai ai`), so the model does not emit blocks that would be silently ignored.
 
 ### State Immutability
 

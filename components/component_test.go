@@ -292,8 +292,8 @@ func TestProcessComponents(t *testing.T) {
 }
 
 func TestProcessComponentsStateModificationTriggers(t *testing.T) {
-	// A component that modifies State (like request-context) must trigger
-	// a new round, just like a component that produces Parts. The modified
+	// A component that modifies State (like ingest) must trigger
+	// a new generation, just like a component that produces Parts. The modified
 	// state is returned as newState, and triggered is true. combinedParts
 	// is empty because the state was modified directly, not via Parts.
 	// See TheoryOfComponents.

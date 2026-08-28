@@ -188,7 +188,7 @@ func TestExtractKindName(t *testing.T) {
 	}{
 		{`change(op="MODIFY"`, "change"},
 		{`go-test`, "go-test"},
-		{`  request-context(param="v"`, "request-context"},
+		{`  ingest(param="v"`, "ingest"},
 		{``, ""},
 		{`(invalid)`, ""},
 	}

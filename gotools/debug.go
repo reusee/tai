@@ -7,7 +7,7 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
-// Debug configs.Config implementation for the gocodes module.
+// Debug configs.Config implementation for the gotools module.
 // See flags.TheoryOfConfigFlagParity.
 
 var _ configs.Config = Debug(false)

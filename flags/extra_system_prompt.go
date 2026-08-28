@@ -19,7 +19,7 @@ import (
 // family names to additional system prompt sections. Values from multiple
 // config files and config paths are aggregated additively per family.
 // See flags.TheoryOfConfigFlagParity and
-// codes.TheoryOfFamilyExtraSystemPrompt.
+// pipeline.TheoryOfFamilyExtraSystemPrompt.
 
 var _ configs.Config = FamilyExtraSystemPrompt(nil)
 

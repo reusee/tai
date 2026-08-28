@@ -40,7 +40,7 @@ full instructions.
 ProcessComponents is the shared function that iterates over Processable
 components in registration order, filtering blocks by each component's Kind
 and calling the component's Process function with the matching blocks. Both
-the ai command (cmd/tai/ai.go) and the codes module (codes/generate.go) call
+the ai command (cmd/tai/ai.go) and the generation pipeline (pipeline/generate.go) call
 ProcessComponents with a []Block slice (collected by the BlockHandler during
 generation) and the current state. The function returns remaining blocks (not
 matched by any component), the updated state, combined parts, and whether any
@@ -74,7 +74,7 @@ type ProcessContext struct {
 // ProcessResult holds the outcome of processing blocks of a single kind.
 type ProcessResult struct {
 	// State is the updated generators state. When non-nil, the component
-	// modified the state (e.g., request-context appends fetched resources),
+	// modified the state (e.g., ingest appends fetched resources),
 	// and a new generation is triggered.
 	State generators.State
 	// Parts are user parts to append to the state, triggering a new
