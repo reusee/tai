@@ -68,6 +68,25 @@ func TestSkeletonDataFormatWithoutDefinitions(t *testing.T) {
 	}
 }
 
+// TestSkeletonMarkdownNoLineTruncation verifies that a long markdown
+// outline is not truncated by line count: every heading within the depth
+// limit is kept, so the skeleton preserves its global view. See
+// TheoryOfContextSkeleton.
+func TestSkeletonMarkdownNoLineTruncation(t *testing.T) {
+	const sectionCount = 300
+	var builder strings.Builder
+	for i := 0; i < sectionCount; i++ {
+		builder.WriteString("## Section\n\ntext\n\n")
+	}
+	skeleton, ok := Skeleton("README.md", []byte(builder.String()))
+	if !ok {
+		t.Fatal("expected skeleton for markdown with many headings")
+	}
+	if got := strings.Count(skeleton, "Section"); got < sectionCount {
+		t.Errorf("skeleton must keep every heading within the depth limit, got %d of %d:\n%s", got, sectionCount, skeleton)
+	}
+}
+
 // TestSkeletonPythonDefinitions verifies that a code language registered
 // in gotreesitter is outlined generically: its functions and classes are
 // captured through the grammar's tags query, nested one level per lexical
@@ -82,6 +101,26 @@ func TestSkeletonPythonDefinitions(t *testing.T) {
 		if !strings.Contains(skeleton, want) {
 			t.Errorf("skeleton must contain %q, got:\n%s", want, skeleton)
 		}
+	}
+}
+
+// TestSkeletonDepthTruncation verifies that a generic outline is truncated
+// by nesting depth, not by line count: definitions within the depth limit
+// stay visible and deeper ones are omitted, so the outline keeps its
+// global shape. See TheoryOfContextSkeleton.
+func TestSkeletonDepthTruncation(t *testing.T) {
+	content := []byte("class Widget:\n    def render(self):\n        def inner():\n            def deepest():\n                pass\n            return deepest\n        return inner\n")
+	skeleton, ok := Skeleton("app.py", content)
+	if !ok {
+		t.Fatal("expected skeleton for python with nested definitions")
+	}
+	for _, want := range []string{"Widget", "render", "inner"} {
+		if !strings.Contains(skeleton, want) {
+			t.Errorf("skeleton must contain %q within the depth limit, got:\n%s", want, skeleton)
+		}
+	}
+	if strings.Contains(skeleton, "deepest") {
+		t.Errorf("skeleton must omit definitions deeper than the depth limit, got:\n%s", skeleton)
 	}
 }
 

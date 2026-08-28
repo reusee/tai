@@ -19,6 +19,11 @@ and any grammar added to it later — is outlined without per-format code.
 Code-fence content is inside fence nodes, not heading nodes, so a "#"
 inside a fenced block never enters a markdown outline.
 
+Truncation is by nesting depth, never by line count: the depth limit bounds
+the outline while every top-level branch stays visible, so the summary keeps
+its global shape even when deep detail is dropped; a line limit would cut
+the outline mid-structure and lose that view.
+
 Skeletons are summaries by construction: the model must treat them as
 an index, not the source. Every listing carries a hint that the
 content is a summary and that modifying or fully understanding the
@@ -38,10 +43,11 @@ enhancement over the name list, never a requirement.
 // outline cannot crowd the context budget.
 const skeletonMaxHeadingDepth = 3
 
-// skeletonMaxLines is the line limit of a skeleton: the outline is
-// truncated beyond this many lines so a pathologically long outline
-// stays bounded.
-const skeletonMaxLines = 200
+// skeletonMaxDefinitionDepth is the nesting-depth limit of a generic
+// skeleton: definitions nested deeper than this level are omitted, so a
+// deeply nested outline cannot crowd the context budget while every
+// top-level branch stays visible. See TheoryOfContextSkeleton.
+const skeletonMaxDefinitionDepth = 2
 
 // Skeleton returns a compact structural summary of the file content, and
 // whether a skeleton was extracted. Markdown files yield the heading
@@ -120,13 +126,13 @@ func genericSkeleton(path string, content []byte) (string, bool) {
 }
 
 // renderOutlineSymbols renders one line per definition, nested definitions
-// indented one level deeper, until the line budget is exhausted. See
-// TheoryOfContextSkeleton.
+// indented one level deeper, omitting definitions deeper than the depth
+// limit so every top-level branch stays visible. See TheoryOfContextSkeleton.
 func renderOutlineSymbols(symbols []gotreesitter.OutlineSymbol, depth int, lines *[]string) {
+	if depth > skeletonMaxDefinitionDepth {
+		return
+	}
 	for _, symbol := range symbols {
-		if len(*lines) >= skeletonMaxLines {
-			return
-		}
 		*lines = append(*lines, strings.Repeat("  ", depth)+symbol.Kind+" "+symbol.Name)
 		renderOutlineSymbols(symbol.Children, depth+1, lines)
 	}
@@ -176,9 +182,6 @@ func markdownSkeleton(content []byte) (string, bool) {
 			return gotreesitter.WalkContinue
 		}
 		lines = append(lines, strings.Repeat("  ", level-1)+title)
-		if len(lines) >= skeletonMaxLines {
-			return gotreesitter.WalkStop
-		}
 		return gotreesitter.WalkContinue
 	})
 	if len(lines) == 0 {
