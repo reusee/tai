@@ -72,9 +72,9 @@ func (f FamilyExtraSystemPrompt) HandleConfig(path string, values []*cue.Value) 
 // The go.extra_system_prompt config path provides Go-specific additional
 // system prompt sections. pipeline.CodesComponents injects this type and
 // appends each entry as a prompt-only Component, so the prompts are
-// introduced whenever the codes generation pipeline is active (go, any
-// commands). The ai command uses AIComponents and is unaffected.
-// See flags.TheoryOfConfigFlagParity.
+// introduced whenever the codes generation pipeline is active (the
+// auto-detected default commands). The ai command uses AIComponents and is
+// unaffected. See flags.TheoryOfConfigFlagParity.
 type ExtraSystemPrompt []string
 
 func (Module) ExtraSystemPrompt() ExtraSystemPrompt {

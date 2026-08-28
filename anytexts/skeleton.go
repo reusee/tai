@@ -43,8 +43,9 @@ name-only entry, and anytexts' PartsProvider keeps the full content. The
 skeleton is an enhancement, never a requirement.
 
 Enablement is caller-selected: gotools' module-root listing always uses
-skeletons, and the any command forks SkeletonFiles(true) so its initial
-context carries skeletons for every supported file format; other
+skeletons, and the auto-detected default command outside a Go module
+(AnyTextCommand) forks SkeletonFiles(true) so its initial context
+carries skeletons for every supported file format; other
 PartsProvider consumers (e.g., the ai command's -file attachments)
 keep full text.
 `

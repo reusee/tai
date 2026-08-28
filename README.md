@@ -20,7 +20,7 @@ This is the opposite of the mainstream agentic pattern where context grows throu
 
 `tai` is a general-purpose AI tool. It sends context — files, user input, or arbitrary text — to an AI model and applies the model's output to your working tree. It supports multiple AI providers and runs in a sandboxed environment.
 
-While Go code generation is the default command inside Go modules, the tool also handles arbitrary text file editing (`any`), interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), and boundary-delimited diff application (`patch`). Not all of these involve code.
+The default command is auto-detected: inside a Go module it generates Go code via goal loops with the Go parts provider; outside one it generates changes for arbitrary text files. Subcommands cover interactive AI chat with persistent user profiles (`ai`), single-shot tasks on any input (`next`), and boundary-delimited diff application (`patch`). Not all of these involve code.
 
 ## Installation
 
@@ -32,8 +32,7 @@ go install github.com/reusee/tai/cmd/tai@latest
 
 | Command | Description |
 |---------|-------------|
-| `tai` (default in Go modules) | Generate code for Go files via goal loops |
-| `tai any` | Generate code for arbitrary text files |
+| `tai` (default) | Auto-detected: Go code generation via goal loops inside a Go module, arbitrary text file generation otherwise |
 | `tai ai` | Start an interactive AI chat session with memory |
 | `tai next` | Execute a single-shot task |
 | `tai patch` | Apply a boundary-delimited diff file to the working tree |

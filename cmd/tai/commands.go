@@ -6,18 +6,30 @@ import (
 	"github.com/reusee/tai/flags"
 )
 
+const TheoryOfCommandAutoDetection = `
+When no subcommand is given, the default command is auto-detected:
+Module.InGoModule walks up the directory tree from the working directory
+looking for a go.mod file. Inside a Go module the default is
+GoModuleCommand — the Go parts provider (gotools.PartsProvider) running
+goal mode; outside one it is AnyTextCommand — the anytexts.PartsProvider
+(with skeletons) running a single generation session with review.
+`
+
 type Command struct {
 	Defs []any
 	Main any
 }
 
+// Command provides the default command when no subcommand is given,
+// auto-detected from the environment: GoModuleCommand inside a Go module,
+// AnyTextCommand outside one. See TheoryOfCommandAutoDetection.
 func (Module) Command(
 	inGoModule InGoModule,
 ) (ret Command) {
 	if inGoModule {
-		return GoCommand
+		return GoModuleCommand
 	}
-	return
+	return AnyTextCommand
 }
 
 var _ flags.Flag = Command{}
@@ -27,8 +39,6 @@ func (c Command) Keys() map[string]string {
 		"next":   "Identify and execute the most valuable next step",
 		"ai":     "Start an interactive AI chat session with memory",
 		"patch":  "Apply a boundary-delimited diff file to the working tree",
-		"go":     "Generate code for Go files via goal loops (default in Go modules)",
-		"any":    "Generate code for arbitrary text files",
 		"ping":   "Test whether a model is reachable and can emit blocks in the required format",
 		"record": "Record interaction sessions and analyze them for self-improvement",
 	}
@@ -47,14 +57,6 @@ func (c Command) Handle(key string, args []string) (newDef any, remainArgs []str
 
 	case "patch":
 		ret := PatchCommand
-		return &ret, args, nil
-
-	case "go":
-		ret := GoCommand
-		return &ret, args, nil
-
-	case "any":
-		ret := AnyCommand
 		return &ret, args, nil
 
 	case "ping":

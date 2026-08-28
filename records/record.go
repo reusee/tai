@@ -28,7 +28,7 @@ a single sqlite database file, and recorded sessions can be fed back to the
 model for analysis and improvement.
 
 Recording is centralized in the unified generation loop (pipeline.Run), which is
-used by every generation command (ai, next, go, any), so one
+used by every generation command (ai, next, and the auto-detected default), so one
 instrumentation point covers them all. The loop implements the
 pipeline.InteractionRecorder contract: it reports the session's system prompt
 and initial contents, wraps the state so every content append is captured

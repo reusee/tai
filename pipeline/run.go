@@ -62,7 +62,7 @@ this philosophy and are out of scope.
 
 const TheoryOfLoops = `
 The pipeline unifies the generation loop pattern across all generation
-commands (go, any, ai, next). The core pattern:
+commands (the auto-detected default, ai, next). The core pattern:
 1. Wrap state with ParserState to collect blocks during streaming
 2. Execute the phase chain until done
 3. Unwrap ParserState to get the final state and collected blocks
@@ -140,8 +140,8 @@ carries the 1-based attempt number and the prompt, cached, completion,
 and thought token counts from the attempt's final usage. The record
 flows to the run's event stream as an EventUsage — the single display
 source for a live consumer; the TUI renders its "[Usage]" line from the
-event — and to a "usage" log entry, so every generation command — go,
-any, ai, next, ping — shows token consumption in its logs and in the
+event — and to a "usage" log entry, so every generation command — the
+auto-detected default, ai, next, ping — shows token consumption in its logs and in the
 TUI's Logs pane. An attempt that ends with an error carries an outcome
 marker ("error" in the log entry, in the event's Detail, and in the
 rendered line's "(error)" suffix), so token consumption is traceable for

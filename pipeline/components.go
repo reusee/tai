@@ -101,7 +101,8 @@ Family-specific extra system prompts extend the generic extra_system_prompt
 mechanism with prompts keyed by the model family. The top-level
 family_extra_system_prompt applies to every generation command (codes, ai,
 next); the go.family_extra_system_prompt applies only when the codes
-generation pipeline is active (go, any), mirroring the split between
+generation pipeline is active (the auto-detected default commands),
+mirroring the split between
 extra_system_prompt and go.extra_system_prompt. Prompts are selected by the
 family of the resolved default generator (generators.Spec.Family) and are
 appended as prompt-only components after the generic extra prompts, so a

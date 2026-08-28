@@ -21,9 +21,10 @@ organizes context from scratch, and runs the full generation pipeline (change
 blocks, go-test, shell, continue, etc.). This is crucial for unattended
 operation because each loop starts from the current filesystem state, so the
 model's changes from the previous loop are visible in the next one. Goal mode
-is a capability of this package, not a separate command: the go subcommand
-always enables it (see cmd/tai.TheoryOfGoCommand), so every Go-project
-invocation runs the multi-loop mechanism.
+is a capability of this package, not a separate command: the auto-detected
+default command inside a Go module always enables it (see
+cmd/tai.TheoryOfGoModuleDefault), so every Go-project invocation runs the
+multi-loop mechanism.
 
 A done block is a completion declaration, not a verdict. The model emits a
 done block when it believes the goal is achieved; the runner then carries
@@ -272,9 +273,9 @@ type GoalOptions struct {
 type GoalEventObserver func(Event)
 
 // GoalLoop is the 1-based number of the goal loop that a generation
-// session serves. The zero value marks a non-goal run (ai, next, ping,
-// any): the loop's events then carry no loop attribution. The goal
-// runner forks each loop's number into the loop's scope, and
+// session serves. The zero value marks a non-goal run (AnyTextCommand,
+// ai, next, ping): the loop's events then carry no loop attribution. The
+// goal runner forks each loop's number into the loop's scope, and
 // GenerateWithResultWithStats passes it into RunOptions.Loop so the
 // loop stamps every event with it. See TheoryOfGoalMode and
 // TheoryOfLoopEvents.

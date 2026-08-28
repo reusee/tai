@@ -143,7 +143,8 @@ func buildReviewPrompt(diffs []changes.FileDiff) string {
 // GenerateWithResult runs the full codes generation pipeline and returns the
 // Result, which includes the final state and any remaining (unconsumed)
 // blocks. It wraps GenerateWithResultWithStats, discarding the attempt
-// statistics. Used by commands that do not need the statistics (go, any).
+// statistics. Used by commands that do not need the statistics
+// (e.g., AnyTextCommand).
 type GenerateWithResult func(ctx context.Context, output io.Writer) (Result, error)
 
 // RunReview runs one or more review generation sessions after the main
@@ -216,8 +217,8 @@ of every loop, it tags each entry with AttemptStat.Loop.
 // attempt. The Attempt field is the 1-based attempt number within its
 // generation. The Loop field identifies the goal loop that produced the
 // attempt when the statistics are aggregated across a goal run's loops;
-// it is zero for single-session runs (ai, next, any). See
-// TheoryOfAttemptStatistics.
+// it is zero for single-session runs (the auto-detected default, ai,
+// next). See TheoryOfAttemptStatistics.
 type AttemptStat struct {
 	Loop             int
 	Attempt          int
@@ -496,8 +497,8 @@ into one retry request and does not persist as compressed history. The system do
 not compress conversation. See TheoryOfContextPhilosophy.
 `
 
-// Generate wraps GenerateWithResult, discarding the Result so existing
-// callers (go, any) see the same func(ctx, output) error signature.
+// Generate wraps GenerateWithResult, discarding the Result and returning
+// only the error, so callers see the func(ctx, output) error signature.
 func (Module) Generate(
 	generateWithResult GenerateWithResult,
 ) Generate {
