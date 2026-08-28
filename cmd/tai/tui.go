@@ -474,6 +474,11 @@ type TUI struct {
 	// events arrive. See TheoryOfEventTree.
 	eventRoots []*eventNode
 	eventBySeq map[eventSeqKey]*eventNode
+	// handoffRows records the display row ranges of the expandable
+	// handoff nodes in the last-rendered Events display, so a mouse
+	// press can find the node under the cursor. eventsDisplay rebuilds
+	// it on every call; guarded by mu. See TheoryOfEventTree.
+	handoffRows []handoffRowRange
 
 	outputCache taiui.WrapCache
 	logsCache   taiui.WrapCache
@@ -822,6 +827,8 @@ func (t *TUI) handleKey(key string) bool {
 		t.scrollTo(0)
 	case key == "end":
 		t.scrollTo(1 << 30)
+	case key == "enter":
+		t.toggleLastHandoff()
 	case key == "help":
 		t.toggleHelp()
 	case key == "quit":
@@ -963,10 +970,67 @@ func (t *TUI) handleMouseKey(key string) {
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
+		// A press on a handoff node's display rows toggles its
+		// expansion. See TheoryOfEventTree.
+		t.toggleHandoffAtClick(x, y)
 	case "release":
 		t.mouse.Release()
 	case "leftdrag":
 		t.mouse.Drag(t.tabs, t.scrolls[:], y)
+	}
+}
+
+// toggleLastHandoff expands or collapses the handoff node displayed
+// last in the Events tab, so Enter works on the most recent handoff
+// summary without a cursor. See TheoryOfEventTree.
+func (t *TUI) toggleLastHandoff() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var target *eventNode
+	var walk func(n *eventNode)
+	walk = func(n *eventNode) {
+		if n.expandable {
+			target = n
+		}
+		for _, child := range n.children {
+			walk(child)
+		}
+	}
+	for _, root := range t.eventRoots {
+		walk(root)
+	}
+	if target == nil {
+		return
+	}
+	target.expanded = !target.expanded
+	target.wrapped = nil
+}
+
+// toggleHandoffAtClick toggles a handoff node when a left press lands
+// on its display rows in the Events tab: any row of a collapsed node
+// expands it, and the header row of an expanded node collapses it, so
+// clicking inside a long expanded summary never collapses it by
+// accident. Presses outside the events pane's content area are no-ops.
+// See TheoryOfEventTree.
+func (t *TUI) toggleHandoffAtClick(x, y int) {
+	if !t.tabs.Expanded[1] || len(t.handoffRows) == 0 {
+		return
+	}
+	box := t.tabs.Boxes(t.width, t.height)[1]
+	if x < box.Left || x >= box.Right || y <= box.Top || y >= box.Bottom {
+		return
+	}
+	row := t.scrolls[1].Offset + (y - box.Top - 1)
+	for _, r := range t.handoffRows {
+		if row < r.startRow || row >= r.endRow {
+			continue
+		}
+		n := r.node
+		if !n.expanded || row == r.startRow {
+			n.expanded = !n.expanded
+			n.wrapped = nil
+		}
+		return
 	}
 }
 

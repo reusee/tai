@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -29,10 +30,23 @@ Events tab tree theory:
   order; every display line of one event shares one shade. Each node's
   wrapped lines are cached by width, depth, and shade, so a frame
   re-wraps only nodes that are new or repositioned.
-- Follow-tail tracking is the pane's ScrollState: following sticks the
-  view to the latest row, scrolling away stops it, and scrolling back
-  to the latest row resumes it.
+- Handoff summary events (pipeline.EventHandoff) collapse by default
+  to their header plus an expand hint, so a long recovery note does
+  not flood the tail view. Enter toggles the most recent handoff node,
+  and a mouse press on a collapsed node's rows expands it; a press on
+  an expanded node's header row collapses it, so clicking inside a
+  long expanded summary never collapses it by accident.
 `
+
+// handoffRowRange maps one expandable handoff node onto its display row
+// range in the Events tab's last-rendered display, so a mouse press can
+// find the node under the cursor. endRow is exclusive. See
+// TheoryOfEventTree.
+type handoffRowRange struct {
+	node     *eventNode
+	startRow int
+	endRow   int
+}
 
 // eventSeqKey identifies one event across a session of goal loops: each
 // loop run numbers its own events from 1, so the run's loop number and
@@ -46,7 +60,8 @@ type eventSeqKey struct {
 
 // eventNode is one node of the Events tab's event tree: a pipeline
 // event's rendered lines, its tree position, and its cached wrapped
-// display lines. See TheoryOfEventTree.
+// display lines. A handoff summary node is expandable and collapses to
+// its header until the user expands it. See TheoryOfEventTree.
 type eventNode struct {
 	loop      int
 	seq       int
@@ -54,22 +69,44 @@ type eventNode struct {
 	lines     []taiui.Line
 	children  []*eventNode
 
+	// expandable marks a handoff summary whose body hides until the
+	// user expands it; expanded records the toggle state, collapsed
+	// by default. See TheoryOfEventTree.
+	expandable bool
+	expanded   bool
+
 	cachedWidth int
 	cachedDepth int
 	cachedShade taiui.Color
 	wrapped     []taiui.Line
 }
 
+// displayLines returns the node's display lines: a collapsed handoff
+// node shows only its header plus an expand hint; every other node,
+// and an expanded handoff, shows all lines. See TheoryOfEventTree.
+func (n *eventNode) displayLines() []taiui.Line {
+	if !n.expandable || n.expanded {
+		return n.lines
+	}
+	hint := taiui.Line{
+		Text:  fmt.Sprintf("⤷ press Enter or click to expand (%d lines hidden)", len(n.lines)-1),
+		Color: outputColorLogLine,
+	}
+	return []taiui.Line{n.lines[0], hint}
+}
+
 // addEventNode files one rendered event into the tab's forest: under
 // its parent when the parent has arrived, otherwise as a temporary root
 // that the parent claims on arrival. Events without a sequence number
-// are always roots. See TheoryOfEventTree.
+// are always roots. A handoff summary with a body is expandable and
+// collapses by default. See TheoryOfEventTree.
 func (t *TUI) addEventNode(ev pipeline.Event, lines []taiui.Line) {
 	node := &eventNode{
-		loop:      ev.Loop,
-		seq:       ev.Seq,
-		parentSeq: ev.Parent,
-		lines:     lines,
+		loop:       ev.Loop,
+		seq:        ev.Seq,
+		parentSeq:  ev.Parent,
+		lines:      lines,
+		expandable: ev.Kind == pipeline.EventHandoff && len(lines) > 1,
 	}
 	if parent := t.eventBySeq[eventSeqKey{ev.Loop, ev.Parent}]; ev.Parent != 0 && parent != nil {
 		parent.children = append(parent.children, node)
@@ -109,10 +146,13 @@ func sortChildren(n *eventNode) {
 // display lines: each node's lines wrapped within the width left by its
 // indent, shaded alternately by display order. Each node's wrapped
 // lines are cached by width, depth, and shade, so a frame re-wraps only
-// nodes that are new or repositioned. See TheoryOfEventTree.
+// nodes that are new or repositioned. The display row ranges of the
+// expandable handoff nodes are recorded for mouse hit-testing. See
+// TheoryOfEventTree.
 func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	alt := taiui.AltBG(base)
 	var out []taiui.Line
+	t.handoffRows = t.handoffRows[:0]
 	index := 0
 	var walk func(n *eventNode, depth int)
 	walk = func(n *eventNode, depth int) {
@@ -127,7 +167,11 @@ func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 			n.cachedDepth = depth
 			n.cachedShade = shade
 		}
+		start := len(out)
 		out = append(out, n.wrapped...)
+		if n.expandable {
+			t.handoffRows = append(t.handoffRows, handoffRowRange{node: n, startRow: start, endRow: len(out)})
+		}
 		for _, child := range n.children {
 			walk(child, depth+1)
 		}
@@ -141,12 +185,14 @@ func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 // wrapEventNode wraps one node's lines for display: each line is wrapped
 // at the width left by the depth indent first, then the indent prefixes
 // every wrapped display line, so wrapped continuation lines keep the
-// indent. See TheoryOfEventTree.
+// indent. A collapsed handoff node contributes only its header and the
+// expand hint. See TheoryOfEventTree.
 func wrapEventNode(n *eventNode, contentWidth, depth int, shade taiui.Color) []taiui.Line {
 	indent := strings.Repeat("\u3000", depth)
 	wrapWidth := max(contentWidth-2*depth, 1)
-	out := make([]taiui.Line, 0, len(n.lines))
-	for _, line := range n.lines {
+	display := n.displayLines()
+	out := make([]taiui.Line, 0, len(display))
+	for _, line := range display {
 		wrapped := taiui.WrapLinesColored([]taiui.Line{{Text: line.Text, Color: line.Color}}, wrapWidth)
 		for i := range wrapped {
 			wrapped[i].Text = indent + wrapped[i].Text

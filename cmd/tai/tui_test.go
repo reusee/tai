@@ -2107,6 +2107,62 @@ func TestTUIHandleEventRendersKinds(t *testing.T) {
 	}
 }
 
+// TestTUIHandoffCollapse verifies the Events tab's handoff collapse: a
+// handoff node collapses to its header plus an expand hint by default,
+// Enter toggles the most recent handoff node, and a mouse press on a
+// collapsed node's rows expands it while a press on an expanded node's
+// header row collapses it. See TheoryOfEventTree.
+func TestTUIHandoffCollapse(t *testing.T) {
+	tui := newTUIForTest()
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventHandoff, Summary: "line1\nline2\nline3"})
+	node := tui.eventRoots[0]
+	if !node.expandable || node.expanded {
+		t.Fatalf("expected one collapsed handoff node, got expandable=%v expanded=%v", node.expandable, node.expanded)
+	}
+	collapsed := tui.eventsDisplay(70, panelStyle.BaseBG)
+	if len(collapsed) != 2 || !strings.Contains(collapsed[0].Text, "[Handoff summary]") || !strings.Contains(collapsed[1].Text, "expand") {
+		t.Fatalf("expected the collapsed header and hint, got %+v", collapsed)
+	}
+
+	// Enter toggles the most recent handoff node.
+	tui.toggleLastHandoff()
+	if !node.expanded {
+		t.Fatal("expected the handoff node expanded after Enter")
+	}
+	expanded := tui.eventsDisplay(70, panelStyle.BaseBG)
+	if len(expanded) != 4 || !strings.Contains(expanded[1].Text, "line1") {
+		t.Fatalf("expected the full summary after expanding, got %+v", expanded)
+	}
+	tui.toggleLastHandoff()
+	if node.expanded {
+		t.Fatal("expected the handoff node collapsed after the second Enter")
+	}
+
+	// A mouse press on a collapsed node's rows expands it; a press on
+	// an expanded node's header row collapses it.
+	tui.width, tui.height = 80, 45
+	tui.tabs.Expanded = []bool{true, true, false}
+	tui.tabs.HasContent = []bool{true, true, false}
+	tui.tabs.Focus = 1
+	box := tui.tabs.Boxes(80, 45)[1]
+	tui.eventsDisplay(max(box.Width()-1, 1), panelStyle.BaseBG)
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Left, box.Top+1))
+	if !node.expanded {
+		t.Fatal("expected the press on the collapsed node to expand it")
+	}
+	tui.eventsDisplay(max(box.Width()-1, 1), panelStyle.BaseBG)
+	tui.handleMouseKey(fmt.Sprintf("mouse-left@%d,%d", box.Left, box.Top+1))
+	if node.expanded {
+		t.Fatal("expected the press on the expanded header to collapse it")
+	}
+
+	// Non-handoff events are never expandable.
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 1})
+	if tui.eventRoots[len(tui.eventRoots)-1].expandable {
+		t.Fatal("expected the attempt-start node to be non-expandable")
+	}
+}
+
 // TestTUIEventLinesRenderGoalLoopPrefix verifies the loop attribution of
 // the per-attempt events: a goal run's start, completion, and usage
 // lines carry the "loop L attempt N" prefix, while a non-goal event

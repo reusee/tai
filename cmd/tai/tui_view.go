@@ -57,6 +57,7 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
+	"enter\texpand / collapse the latest handoff summary",
 	"click\tselect / toggle tab under cursor",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
