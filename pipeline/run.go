@@ -291,6 +291,24 @@ type loopState struct {
 	logger logs.Logger
 }
 
+// buildContinueReason describes why the generation loop continues to
+// the next generation: the kinds of blocks processed by components,
+// the parse-error feedback, or a component's state modification. See
+// TheoryOfLoops.
+func buildContinueReason(triggeredKinds []string, parseErrorFeedback bool) string {
+	var reasons []string
+	if len(triggeredKinds) > 0 {
+		reasons = append(reasons, strings.Join(triggeredKinds, ", ")+" blocks")
+	}
+	if parseErrorFeedback {
+		reasons = append(reasons, "parse error feedback")
+	}
+	if len(reasons) == 0 {
+		return "component modified the generation state"
+	}
+	return strings.Join(reasons, " and ") + " scheduled the next generation"
+}
+
 // runGeneration executes one generation: the attempt loop (initial
 // attempt plus retries for missing completion or post-output errors)
 // followed by the success tail (summary synthesis, OnAttemptSuccess,
@@ -822,7 +840,7 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			ls.emitEvent(Event{
 				Kind:    EventComponentsTriggered,
 				Attempt: ls.attempt,
-				Detail:  fmt.Sprintf("parse error feedback: %d user part(s) scheduled the next generation", len(parseErrorParts)),
+				Detail:  buildContinueReason(nil, true),
 			})
 			return generationResult{
 				state:        ls.state,
@@ -858,6 +876,28 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	}
 
 	if triggered {
+		// The continue reason states why the next generation starts:
+		// the kinds of blocks processed by components, the parse-error
+		// feedback, or a component's state modification. A user-part
+		// count is misleading here: a component that triggers through
+		// a state modification alone (e.g., ingest appending fetched
+		// content to the state) appends no parts, so the count reads
+		// as 0. See TheoryOfLoops.
+		matchedKinds := make(map[string]bool)
+		for _, block := range collectedBlocks {
+			matchedKinds[block.Kind] = true
+		}
+		for _, block := range generationRemaining {
+			delete(matchedKinds, block.Kind)
+		}
+		var triggeredKinds []string
+		for _, comp := range ls.opts.Components {
+			if comp.Process != nil && matchedKinds[comp.Kind] {
+				matchedKinds[comp.Kind] = false
+				triggeredKinds = append(triggeredKinds, comp.Kind)
+			}
+		}
+		continueReason := buildContinueReason(triggeredKinds, len(parseErrorParts) > 0)
 		if len(combinedParts) > 0 {
 			var aerr error
 			ls.state, aerr = ls.state.AppendContent(&generators.Content{
@@ -870,12 +910,12 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			}
 		}
 		if ls.rec != nil && ls.rec.Enabled() {
-			ls.rec.Event("decision", fmt.Sprintf("components triggered a new generation: %d user part(s)", len(combinedParts)))
+			ls.rec.Event("decision", continueReason)
 		}
 		ls.emitEvent(Event{
 			Kind:    EventComponentsTriggered,
 			Attempt: ls.attempt,
-			Detail:  fmt.Sprintf("%d user part(s) scheduled the next generation", len(combinedParts)),
+			Detail:  continueReason,
 		})
 		return generationResult{
 			state:        ls.state,

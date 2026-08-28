@@ -2222,6 +2222,103 @@ func TestRunStateModificationTriggersRound(t *testing.T) {
 	})
 }
 
+// TestRunContinueReasonDescribesTrigger verifies that the
+// components-triggered event states the reason for the next generation
+// — the processed block kinds — instead of a user-part count, which
+// reads as 0 when a component triggers through a state modification
+// alone. See TheoryOfLoops.
+func TestRunContinueReasonDescribesTrigger(t *testing.T) {
+	withRun(t, func(run Run) {
+		t.Run("parts", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhase("<<龘靐 shell\necho hello\n龘靐\n")
+				}
+				return appendPhase("done")
+			}
+			comps := components.ComponentSet{
+				{
+					Kind: "shell",
+					Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+						return components.ProcessResult{
+							Parts: []generators.Part{generators.Text("shell output")},
+						}
+					},
+				},
+			}
+			var detail string
+			var result Result
+			for ev, err := range run(context.Background(), RunOptions{
+				Generator:    nil,
+				InitialState: generators.NewPrompts("", nil),
+				Components:   comps,
+				PhaseBuilder: phaseBuilder,
+				HTTPClient:   nets.HTTPClient{},
+			}, &result) {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if ev.Kind == EventComponentsTriggered {
+					detail = ev.Detail
+				}
+			}
+			if detail != "shell blocks scheduled the next generation" {
+				t.Fatalf("expected reason detail, got %q", detail)
+			}
+		})
+		t.Run("state modification", func(t *testing.T) {
+			callCount := 0
+			phaseBuilder := func(g generators.Generator) generators.Phase {
+				callCount++
+				if callCount == 1 {
+					return appendPhase("<<建安 state-modifier\nrequest\n建安\n<<贞观 summary\nRound 1 done.\n贞观\n")
+				}
+				return appendPhase("<<贞观 summary\nDone.\n贞观\n")
+			}
+			comps := components.ComponentSet{
+				{
+					Kind: "state-modifier",
+					Process: func(ctx context.Context, pctx *components.ProcessContext) components.ProcessResult {
+						newState, err := pctx.State.AppendContent(&generators.Content{
+							Role:  generators.RoleUser,
+							Parts: []generators.Part{generators.Text("fetched context")},
+						})
+						if err != nil {
+							return components.ProcessResult{Err: err}
+						}
+						return components.ProcessResult{State: newState}
+					},
+				},
+			}
+			var detail string
+			var result Result
+			for ev, err := range run(context.Background(), RunOptions{
+				Generator:                nil,
+				InitialState:             generators.NewPrompts("", nil),
+				Components:               comps,
+				PhaseBuilder:             phaseBuilder,
+				RetryOnMissingCompletion: true,
+				MaxRetries:               3,
+			}, &result) {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if ev.Kind == EventComponentsTriggered {
+					detail = ev.Detail
+				}
+			}
+			if detail != "state-modifier blocks scheduled the next generation" {
+				t.Fatalf("expected reason detail, got %q", detail)
+			}
+			if strings.Contains(detail, "user part") {
+				t.Fatalf("detail must not carry a user-part count: %q", detail)
+			}
+		})
+	})
+}
+
 // testObservingState is a State wrapper that records content appends,
 // for testing state decorators.
 type testObservingState struct {
