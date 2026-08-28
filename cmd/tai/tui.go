@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -480,6 +481,11 @@ type TUI struct {
 	// it on every call; guarded by mu. See TheoryOfEventTree.
 	handoffRows []handoffRowRange
 
+	// startTime anchors the Events tab's elapsed-time timer: every
+	// event records the duration from startTime to its arrival, shown
+	// at the right edge of its first display line. See TheoryOfEventTree.
+	startTime time.Time
+
 	outputCache taiui.WrapCache
 	logsCache   taiui.WrapCache
 
@@ -599,11 +605,14 @@ func newTUI() (*TUI, error) {
 			{Offset: 1 << 30},
 			{Offset: 1 << 30},
 		},
-		tty:      t,
-		screen:   taiui.NewTerminalScreen(t, width, height),
-		updateCh: make(chan struct{}, 1),
-		width:    width,
-		height:   height,
+		// The Events tab's elapsed-time timer counts from the session's
+		// start. See TheoryOfEventTree.
+		startTime: time.Now(),
+		tty:       t,
+		screen:    taiui.NewTerminalScreen(t, width, height),
+		updateCh:  make(chan struct{}, 1),
+		width:     width,
+		height:    height,
 	}, nil
 }
 

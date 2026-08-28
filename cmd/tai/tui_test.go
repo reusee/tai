@@ -26,6 +26,10 @@ func newTUIForTest() *TUI {
 		logs:    taiui.NewStringBuffer(0),
 		tabs:    tabs,
 		scrolls: [3]taiui.ScrollState{},
+		// The Events tab's elapsed timer counts from the test's start;
+		// timer assertions anchor on an explicitly set startTime. See
+		// TheoryOfEventTree.
+		startTime: time.Now(),
 		// The default display policy shows raw thoughts, matching the
 		// non-TUI default; tests that exercise thought suppression set
 		// showThoughts to false explicitly. See TheoryOfTUI.
@@ -561,11 +565,15 @@ func TestTUIEventsAlternateBackgrounds(t *testing.T) {
 // lifecycle event that arrives before its parent heals under it, the
 // depth-first display order is independent of arrival order, every
 // display line carries one Han-character width of indent per depth, and
-// consecutive events alternate the two background shades. See
-// TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
+// consecutive events alternate the two background shades. Every event's
+// first display line right-aligns its elapsed-time timer at the pane's
+// right edge. See TheoryOfEventTree and pipeline.TheoryOfLoopEvents.
 func TestTUIEventsTreeRendering(t *testing.T) {
 	tui := newTUIForTest()
-	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 80}
+	// The box is wide enough that every rendered event line fits its
+	// depth-adjusted wrap width even with the timer zone reserved, so
+	// each event renders exactly one display line.
+	box := taiui.Box{Top: 0, Left: 0, Bottom: 20, Right: 100}
 
 	// Arrival order: the finish event (seq 4) precedes its attempt-start
 	// (seq 2), which precedes the loop-start (seq 1); the usage event
@@ -604,9 +612,19 @@ func TestTUIEventsTreeRendering(t *testing.T) {
 	}
 	base := panelStyle.BaseBG
 	alt := taiui.AltBG(base)
+	options := taiui.DisplayWidthOptions()
 	for i, want := range wantOrder {
-		if display[i].Text != want {
-			t.Fatalf("line %d: expected %q, got %q", i, want, display[i].Text)
+		if !strings.HasPrefix(display[i].Text, want) {
+			t.Fatalf("line %d: expected prefix %q, got %q", i, want, display[i].Text)
+		}
+		// All events arrived within the test's first second, so every
+		// timer reads +0:00 and right-aligns at the pane's right edge.
+		// See TheoryOfEventTree.
+		if !strings.HasSuffix(display[i].Text, "+0:00") {
+			t.Fatalf("line %d: expected the +0:00 timer suffix, got %q", i, display[i].Text)
+		}
+		if width := options.String(display[i].Text); width != contentWidth {
+			t.Fatalf("line %d: expected the timer right-aligned at width %d, got %d", i, contentWidth, width)
 		}
 		indent := strings.Repeat("\u3000", depths[i])
 		if !strings.HasPrefix(display[i].Text, indent) || strings.HasPrefix(display[i].Text, indent+"\u3000") {
@@ -632,6 +650,53 @@ func TestTUIEventsTreeRendering(t *testing.T) {
 		if !strings.HasPrefix(line.Text, "\u3000\u3000") {
 			t.Fatalf("expected the depth-2 indent on %q", line.Text)
 		}
+	}
+}
+
+// TestTUIEventsElapsedTimer verifies the Events tab's elapsed-time
+// timer: each event records the duration from the session's start to
+// its arrival and right-aligns it at the pane's right edge of its first
+// display line, and a pane too narrow for the timer omits it. See
+// TheoryOfEventTree.
+func TestTUIEventsElapsedTimer(t *testing.T) {
+	tui := newTUIForTest()
+	// Anchor the start a whole number of minutes in the past, so the
+	// recorded elapsed floors to a deterministic stopwatch fragment.
+	tui.startTime = time.Now().Add(-time.Minute)
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventFinish, Detail: "stop"})
+
+	contentWidth := 79
+	display := tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
+	if len(display) != 1 {
+		t.Fatalf("expected 1 display line, got %d", len(display))
+	}
+	if !strings.HasSuffix(display[0].Text, "+1:00") {
+		t.Fatalf("expected the +1:00 timer suffix, got %q", display[0].Text)
+	}
+	if width := taiui.DisplayWidthOptions().String(display[0].Text); width != contentWidth {
+		t.Fatalf("expected the timer right-aligned at width %d, got %d", contentWidth, width)
+	}
+
+	// A later event records a larger elapsed time, so the timer orders
+	// events by their arrival.
+	tui.startTime = time.Now().Add(-2 * time.Minute)
+	tui.handleEvent(pipeline.Event{Kind: pipeline.EventAttemptStart, Attempt: 1})
+	display = tui.eventsDisplay(contentWidth, panelStyle.BaseBG)
+	if !strings.HasSuffix(display[len(display)-1].Text, "+2:00") {
+		t.Fatalf("expected the +2:00 timer suffix on the later event, got %q", display[len(display)-1].Text)
+	}
+
+	// A pane too narrow for the timer zone omits the timer instead of
+	// colliding with the text.
+	for _, line := range tui.eventsDisplay(6, panelStyle.BaseBG) {
+		if strings.HasSuffix(line.Text, "+2:00") {
+			t.Fatalf("expected no timer on a narrow pane, got %q", line.Text)
+		}
+	}
+
+	// The stopwatch format carries hours beyond one.
+	if got := formatElapsed(3723 * time.Second); got != "+1:02:03" {
+		t.Fatalf("expected +1:02:03, got %q", got)
 	}
 }
 

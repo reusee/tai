@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/reusee/tai/pipeline"
 	"github.com/reusee/tai/taiui"
 )
@@ -26,6 +28,14 @@ Events tab tree theory:
   wrapped within the width left by the indent first, then the indent
   prefixes every wrapped line, so continuation lines keep the indent
   and no line overflows the pane.
+- Every event carries an elapsed-time timer: the node records the
+  duration from the TUI session's start (TUI.startTime) to the event's
+  arrival, and the node's first display line right-aligns the stopwatch
+  fragment ("+0:07", "+1:02:03") at the pane's right edge. The first
+  source line wraps one timer-zone narrower, so a wrapped header never
+  collides with the timer, and a pane too narrow for the timer omits
+  it. The value is static per event — it marks when the event happened,
+  not a live countdown — so the wrapped-line cache stays valid.
 - Consecutive events alternate the two log background shades by display
   order; every display line of one event shares one shade. Each node's
   wrapped lines are cached by width, depth, and shade, so a frame
@@ -75,6 +85,11 @@ type eventNode struct {
 	expandable bool
 	expanded   bool
 
+	// elapsed is the duration from the TUI session's start to the
+	// event's arrival, rendered as the right-aligned timer of the
+	// node's first display line. See TheoryOfEventTree.
+	elapsed time.Duration
+
 	cachedWidth int
 	cachedDepth int
 	cachedShade taiui.Color
@@ -99,7 +114,9 @@ func (n *eventNode) displayLines() []taiui.Line {
 // its parent when the parent has arrived, otherwise as a temporary root
 // that the parent claims on arrival. Events without a sequence number
 // are always roots. A handoff summary with a body is expandable and
-// collapses by default. See TheoryOfEventTree.
+// collapses by default. Each node records the duration from the
+// session's start to the event's arrival for the elapsed-time timer.
+// See TheoryOfEventTree.
 func (t *TUI) addEventNode(ev pipeline.Event, lines []taiui.Line) {
 	node := &eventNode{
 		loop:       ev.Loop,
@@ -107,6 +124,7 @@ func (t *TUI) addEventNode(ev pipeline.Event, lines []taiui.Line) {
 		parentSeq:  ev.Parent,
 		lines:      lines,
 		expandable: ev.Kind == pipeline.EventHandoff && len(lines) > 1,
+		elapsed:    time.Since(t.startTime),
 	}
 	if parent := t.eventBySeq[eventSeqKey{ev.Loop, ev.Parent}]; ev.Parent != 0 && parent != nil {
 		parent.children = append(parent.children, node)
@@ -146,11 +164,14 @@ func sortChildren(n *eventNode) {
 // display lines: each node's lines wrapped within the width left by its
 // indent, shaded alternately by display order. Each node's wrapped
 // lines are cached by width, depth, and shade, so a frame re-wraps only
-// nodes that are new or repositioned. The display row ranges of the
-// expandable handoff nodes are recorded for mouse hit-testing. See
+// nodes that are new or repositioned. The display-width options derive
+// once per pass and thread into the node wrapping, so the environment
+// is scanned once per frame. The display row ranges of the expandable
+// handoff nodes are recorded for mouse hit-testing. See
 // TheoryOfEventTree.
 func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	alt := taiui.AltBG(base)
+	options := taiui.DisplayWidthOptions()
 	var out []taiui.Line
 	t.handoffRows = t.handoffRows[:0]
 	index := 0
@@ -162,7 +183,7 @@ func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 		}
 		index++
 		if n.cachedWidth != contentWidth || n.cachedDepth != depth || n.cachedShade != shade || n.wrapped == nil {
-			n.wrapped = wrapEventNode(n, contentWidth, depth, shade)
+			n.wrapped = wrapEventNode(n, contentWidth, depth, shade, options)
 			n.cachedWidth = contentWidth
 			n.cachedDepth = depth
 			n.cachedShade = shade
@@ -182,21 +203,57 @@ func (t *TUI) eventsDisplay(contentWidth int, base taiui.Color) []taiui.Line {
 	return out
 }
 
+// formatElapsed renders an elapsed duration as a stopwatch fragment:
+// "+0:07" under an hour, "+1:02:03" beyond it. It is the right-aligned
+// timer suffix of every Events-tab display line. See TheoryOfEventTree.
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	seconds := int64(d / time.Second)
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+	if hours > 0 {
+		return fmt.Sprintf("+%d:%02d:%02d", hours, minutes, secs)
+	}
+	return fmt.Sprintf("+%d:%02d", minutes, secs)
+}
+
 // wrapEventNode wraps one node's lines for display: each line is wrapped
 // at the width left by the depth indent first, then the indent prefixes
 // every wrapped display line, so wrapped continuation lines keep the
-// indent. A collapsed handoff node contributes only its header and the
-// expand hint. See TheoryOfEventTree.
-func wrapEventNode(n *eventNode, contentWidth, depth int, shade taiui.Color) []taiui.Line {
+// indent. The node's elapsed time right-aligns at the pane's right edge
+// of the first display line: the first source line wraps one timer-zone
+// narrower and the residual columns are padded with spaces, so a
+// wrapped header never collides with the timer. A collapsed handoff
+// node contributes only its header and the expand hint. See
+// TheoryOfEventTree.
+func wrapEventNode(n *eventNode, contentWidth, depth int, shade taiui.Color, options displaywidth.Options) []taiui.Line {
 	indent := strings.Repeat("\u3000", depth)
 	wrapWidth := max(contentWidth-2*depth, 1)
+	timerText := formatElapsed(n.elapsed)
+	timerWidth := options.String(timerText)
+	timerZone := timerWidth + 1
 	display := n.displayLines()
 	out := make([]taiui.Line, 0, len(display))
-	for _, line := range display {
-		wrapped := taiui.WrapLinesColored([]taiui.Line{{Text: line.Text, Color: line.Color}}, wrapWidth)
-		for i := range wrapped {
-			wrapped[i].Text = indent + wrapped[i].Text
-			wrapped[i].BGColor = shade
+	for i, line := range display {
+		wrapAt := wrapWidth
+		withTimer := i == 0 && wrapWidth > timerZone
+		if withTimer {
+			wrapAt = wrapWidth - timerZone
+		}
+		wrapped := taiui.WrapLinesColored([]taiui.Line{{Text: line.Text, Color: line.Color}}, wrapAt)
+		if withTimer && len(wrapped) > 0 {
+			pad := wrapWidth - timerWidth - options.String(wrapped[0].Text)
+			if pad < 1 {
+				pad = 1
+			}
+			wrapped[0].Text += strings.Repeat(" ", pad) + timerText
+		}
+		for j := range wrapped {
+			wrapped[j].Text = indent + wrapped[j].Text
+			wrapped[j].BGColor = shade
 		}
 		out = append(out, wrapped...)
 	}
