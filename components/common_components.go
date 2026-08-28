@@ -25,10 +25,8 @@ command excludes continue) announces it through its own
 DisabledBlocksComponent, so each prompt carries one complete notice. See
 TheoryOfDisabledBlocks.
 
-The common components carry no reminder text of their own: the late reminder
-role is filled by the verbatim system prompt restate
-(components.SystemPromptRestate), which every generation command appends at
-the end of the user prompt. See TheoryOfComponents.
+The common components carry no reminder text of their own; the late reminder
+role belongs to the verbatim system prompt restate (see TheoryOfComponents).
 
 Components carry no per-kind generation bounds: a session may chain any
 number of shell, continue, go-test, go-src, or ingest generations, so a

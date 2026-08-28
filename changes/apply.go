@@ -35,10 +35,8 @@ non-Go files. If the file does not exist, the operation is a no-op, consistent
 with the DELETE declaration behavior that returns nil when the target is not
 found.
 
-Text-level operations (REPLACE, INSERT_BEFORE, INSERT_AFTER) are rejected for
-Go files at the application layer because the model cannot reliably reproduce
-whitespace in find strings; structural operations must be used instead. See
-TheoryOfTextLevelOperations.
+Text-level operations are rejected for Go files; the restriction and its
+rationale live in TheoryOfTextLevelOperations.
 
 Final output normalization ensures every written file ends with exactly one
 trailing newline, matching the convention enforced by go fmt.

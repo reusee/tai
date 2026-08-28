@@ -62,11 +62,9 @@ AIComponents is a distinct named type embedding components.ComponentSet so that
 dscope resolves it independently from the pipeline module's CodesComponents
 provider.
 
-The components carry no reminder text of their own: the late reminder role is
-filled by the verbatim system prompt restate
-(components.SystemPromptRestate), which the ai command appends as the last
-user prompt part before the dynamic user input. See
-components.TheoryOfComponents.
+The components carry no reminder text of their own; the late reminder role
+belongs to the verbatim system prompt restate (see
+components.TheoryOfComponents).
 `
 
 // baseAISystemPrompt is the base AI assistant prompt text, a prompt-only

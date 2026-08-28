@@ -36,28 +36,23 @@ Directly-specified focus files that resolve outside writable directories are
 marked read-only at collection time; see TheoryOfFocusFileDirectoryCheck.
 The read-only annotation applies to both directly-specified focus files
 and files discovered during directory traversal, ensuring the model is
-consistently informed that these files cannot be modified.
-
-The check resolves symlinks in the path via isOutsideWritableDirs, which
-delegates to pathutil.IsOutsideWritableDirs, to correctly handle symlinks
-that point outside writable directories. A symlink within a writable
-directory whose target is outside is marked read-only, because writing to
-it would write outside the writable directories.
+consistently informed that these files cannot be modified. The
+writable-directory check resolves symlinks in the path; its mechanism lives
+in TheoryOfFocusFileDirectoryCheck.
 `
 
 const TheoryOfFocusFileDirectoryCheck = `
 Focus files (files directly specified via patterns) that resolve to a
 location outside all writable directories are marked as read-only at
 collection time rather than rejected. The writable directories are
-determined by the security package's container filesystem policy: the
-current working directory, Go toolchain directories (GOCACHE, GOMODCACHE,
-GOPATH/pkg), the user config directory, /tmp, and /dev/shm. This ensures
-the check is consistent with the security package's container isolation —
-no more and no less restrictive. A focus file outside writable directories
-can still provide useful reference context even though it cannot be
-modified; marking it as read-only informs the model that change blocks
-must not target it, while still allowing its content to inform changes
-to writable project files.
+determined by the security package's container filesystem policy (see
+security.TheoryOfWritableDirs for the directory set), so the check is
+consistent with the security package's container isolation — no more and
+no less restrictive. A focus file outside writable directories can still
+provide useful reference context even though it cannot be modified;
+marking it as read-only informs the model that change blocks must not
+target it, while still allowing its content to inform changes to
+writable project files.
 
 This check applies to directly-matched patterns (directMatch=true), not to
 files discovered during directory traversal. Files discovered via symlinks

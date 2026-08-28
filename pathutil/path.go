@@ -19,9 +19,8 @@ semantics regardless of the path source.
 IsOutsideWritableDirs extends path safety to resolved file paths: it
 delegates to security.IsWritablePath, which reports whether a path (after
 symlink resolution) is inside one of the writable directories defined by
-the security package's container filesystem policy: the current working
-directory, Go toolchain directories (GOCACHE, GOMODCACHE, GOPATH/pkg), the
-user config directory, /tmp, and /dev/shm. Canonicalization via
+the security package's container filesystem policy (see
+security.TheoryOfWritableDirs for the directory set). Canonicalization via
 filepath.EvalSymlinks handles platforms where the working directory contains
 symlink components and resolves symlinks in the path argument.
 `

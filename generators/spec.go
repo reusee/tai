@@ -25,10 +25,8 @@ confidential mode (see TheoryOfConfidentialMode), which rejects any generator th
 when enabled. Like the other optional booleans, it is not merged from parent to child unless explicitly set.
 
 Provider holds routing preferences forwarded to OpenRouter in the request
-body. It mirrors the OpenRouter "provider" parameter (see
-TheoryOfProviderRouting). It is merged field-wise from parent to child:
-a child's provider fields override the parent's, and unset child fields
-preserve the parent's values.
+body; see TheoryOfProviderRouting for the routing model and the field-wise
+parent-to-child merge.
 `
 
 type Spec struct {

@@ -13,10 +13,8 @@ Therefore, change block operations that require structural identification
 (MODIFY, ADD_BEFORE, ADD_AFTER, and DELETE with a specific declaration target)
 are only valid for Go files. For non-Go files, file-level operations (WRITE,
 RENAME, DELETE with target=*) and text-level operations (REPLACE,
-INSERT_BEFORE, INSERT_AFTER) are permitted. Text-level operations use a find
-attribute to locate a unique string anchor in the file and apply the edit
-relative to that anchor. The find string must be unique in the file; if it
-cannot be made unique, WRITE must be used. See TheoryOfTextLevelOperations.
+INSERT_BEFORE, INSERT_AFTER) are permitted; the find-anchor mechanics of the
+text-level operations live in TheoryOfTextLevelOperations.
 `
 
 const TheoryOfTextLevelOperations = `

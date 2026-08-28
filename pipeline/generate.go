@@ -198,9 +198,8 @@ entry with the 1-based attempt number within its generation; prompt,
 completion, thought, and cached token counts from the attempt's final
 usage; the duration (from OnAttemptStart to OnAttemptSuccess); and the
 summary from the attempt's summary blocks. Attempt management is
-decoupled from usage parts: intermediate usage snapshots emitted during
-streaming (e.g., Gemini's streaming UsageMetadata) do not create
-duplicate entries. Truncated attempts (no summary block) that are
+decoupled from usage parts; the extraction rule lives in
+TheoryOfUsageLogging. Truncated attempts (no summary block) that are
 retried are recorded via OnAttemptTruncated with the summary synthesized
 by the retry process, so they appear as separate entries; the completing
 attempt itself is recorded by OnAttemptSuccess. At run end the collected
@@ -447,47 +446,33 @@ func fallbackRetryState(
 const TheoryOfSummaryCompletionRetry = `
 The summary block is the mandatory completion signal for each generation
 attempt. An attempt is complete only when a summary block is present AND
-the finish reason is not abnormal. An attempt missing the summary block
-has one of three causes: the generation limit truncated the model
-mid-stream before its closing summary block; the model emitted a summary
-and continued generating until it was cut off; or the model violated the
-every-response rule and simply ended its output without one. All three
-are retried from the original pre-generation State. State immutability
-(see TheoryOfStateImmutability in generators/state.go) is the foundation
-for this retry: the pre-generation State is unaffected by the failed
-attempt, so retrying starts from a clean snapshot rather than corrupted
-partial state. The retry count is bounded to prevent infinite loops when
-a model consistently truncates or omits the summary. Change blocks from
-a failed attempt are NOT applied: the retry discards the partial output
-entirely and regenerates from the pre-attempt state, avoiding incomplete
-or malformed change blocks. This is distinct from the generator-level
-retry (see TheoryOfRetry in generators/gemini.go and
-TheoryOfGenerateRetry in generators/generate.go), which handles transient
-API errors; this retry handles successful-but-incomplete or
-non-conforming output.
+the finish reason is not abnormal. The missing-summary causes, the
+component-triggering-block rule, and the retry feedback wording live in
+TheoryOfLoops; every violating attempt is retried from the original
+pre-generation State. State immutability (see TheoryOfStateImmutability
+in generators/state.go) is the foundation for this retry: the
+pre-generation State is unaffected by the failed attempt, so retrying
+starts from a clean snapshot rather than corrupted partial state. The
+retry count is bounded to prevent infinite loops when a model
+consistently truncates or omits the summary. Change blocks from a failed
+attempt are NOT applied: the retry discards the partial output entirely
+and regenerates from the pre-attempt state, avoiding incomplete or
+malformed change blocks. This is distinct from the generator-level retry
+(see TheoryOfRetry in generators/gemini.go and TheoryOfGenerateRetry in
+generators/generate.go), which handles transient API errors; this retry
+handles successful-but-incomplete or non-conforming output.
 
 Completion is detected by checking the externally collected blocks for
 summary kind and the finish reason in the state for abnormal termination.
-No block kind other than summary completes an attempt: a
-component-triggering block (ingest, shell, continue, go-test, go-src)
-without a summary block is a rule violation, not a completed attempt, so
-such attempts are retried with the missing-summary feedback
-(missingSummaryRetryPrefix); an abnormal finish reason instead frames the
-retry as truncation (incompleteOutputHandoffPrefix). Because blocks are
-collected by the BlockHandler during AppendContent (not stored in
-ParserState), the check is a simple scan of the collected slice. The
-finish reason is extracted from RoleLog content appended by the
-generator. On retry, the collected blocks are reset alongside the
+Because blocks are collected by the BlockHandler during AppendContent
+(not stored in ParserState), the check is a simple scan of the collected
+slice. The finish reason is extracted from RoleLog content appended by
+the generator. On retry, the collected blocks are reset alongside the
 MemoryStore in the OnAttemptStart callback, ensuring both external states
 are consistent with the rolled-back State (see TheoryOfParserState in
 blocks/parser_state.go); re-emitting the blocks in the retry attempt is
-what makes them take effect.
-
-This retry uses handoff (TheoryOfHandoff) to carry forward established
-conclusions, attempted changes, and partitioning guidance into the retry
-attempt, directing the model to complete an initial subset of changes
-first and use continue blocks for remaining work, without retaining
-unstructured conversation history.
+what makes them take effect. The retry carries a handoff summary into the
+next attempt (see TheoryOfHandoff).
 `
 
 const TheoryOfSummaryRetryOnError = `

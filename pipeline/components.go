@@ -75,10 +75,8 @@ import-path patterns so the model neither fetches their symbols nor reads
 their files. See gotools.TheoryOfHiddenPackages.
 
 ExtraSystemPrompt is also a prompt-only Component. The components carry no
-reminder text of their own: the late reminder role is filled by the verbatim
-system prompt restate (components.SystemPromptRestate), which the generation
-pipeline appends as the last user prompt part before the dynamic chat input.
-See TheoryOfComponents in the components package.
+reminder text of their own; the late reminder role belongs to the system
+prompt restate (see TheoryOfComponents in the components package).
 
 The generation loop checks for the summary block to distinguish a normally
 ended attempt from truncated or non-conforming output: no other block kind

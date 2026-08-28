@@ -30,9 +30,9 @@ profiling policy — lives in the memories package (see memories.TheoryOfMemory)
 This command wires memories into the dscope graph, feeds the current profile
 into the memory Component's prompt section (assembled into the system prompt
 via comps.PromptSections), and invokes memories.UpdateMemoryFromBlock after
-each attempt to apply memory additions and deletions: deletions
-remove items by exact string match and win over a same-attempt addition. The
-memory prompts teach both the memory-item and memory-delete elements.
+each attempt to apply memory additions and deletions; the update semantics,
+including deletion precedence, live in memories.TheoryOfMemory. The memory
+prompts teach both the memory-item and memory-delete elements.
 
 The buf Output layer uses showThoughts=false so model reasoning (Thought parts)
 is excluded from the buffer used for memory block parsing. Thoughts may contain
@@ -48,12 +48,8 @@ as part of the next generation, enabling autonomous testing, build
 verification, and codebase exploration. Shell block execution is disabled by
 default for safety; the -shell flag enables it.
 
-The continue block is deliberately not part of the ai command. In an
-interactive chat the user's next input arrives through OnIdle
-(pipeline.BuildChatIdle) after the attempt ends; a continue component would feed
-the model's own body back as user content, bypassing the prompt and allowing
-the model to emit meaningless self-prompts such as "Please provide the next
-task or user input." See TheoryOfAIComponents.
+The continue block is deliberately not part of the ai command; see
+TheoryOfAIComponents for the rationale.
 
 Shell and memory blocks are wired through the Component mechanism (see
 TheoryOfAIComponents), which couples each block kind's system prompt with its
