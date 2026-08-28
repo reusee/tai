@@ -93,13 +93,19 @@ func TestRunEventStream(t *testing.T) {
 		if truncatedEv.Summary != "" {
 			t.Fatalf("truncated event must not repeat the handoff summary (EventHandoff carries it), got %q", truncatedEv.Summary)
 		}
+		// Handoff events carry the attempt attribution but no budget
+		// figures: handoff generation itself retries without an
+		// attempt limit, so a budget display would misrepresent it.
+		// See TheoryOfHandoff and TheoryOfLoopEvents.
 		handoffStartEv := events[2]
-		if handoffStartEv.Attempt != 1 || handoffStartEv.MaxAttempts != 3 {
+		if handoffStartEv.Attempt != 1 ||
+			handoffStartEv.AttemptInGeneration != 0 || handoffStartEv.MaxAttempts != 0 {
 			t.Fatalf("unexpected handoff-start event: %+v", handoffStartEv)
 		}
 		handoffEv := events[3]
 		if handoffEv.Summary != "truncated summary" ||
-			handoffEv.Attempt != 1 || handoffEv.MaxAttempts != 3 ||
+			handoffEv.Attempt != 1 ||
+			handoffEv.AttemptInGeneration != 0 || handoffEv.MaxAttempts != 0 ||
 			handoffEv.Handoff == nil || handoffEv.Handoff.Prompt != "retry prompt" {
 			t.Fatalf("unexpected handoff event: %+v", handoffEv)
 		}

@@ -4,8 +4,6 @@ import (
 	"github.com/reusee/tai/generators"
 )
 
-// TheoryOfLoopEvents states the event-stream contract of the generation
-// loop. See the constant body for the design.
 const TheoryOfLoopEvents = `
 Run is the loop's single event iterator: every notable occurrence during a
 generation run — attempt lifecycle (start, completion, truncation, error),
@@ -31,11 +29,13 @@ idle-handler inputs continue the sequence instead of restarting at 1 —
 so a consumer sees one increasing attempt counter per session;
 Event.AttemptInGeneration carries the attempt's 1-based position within
 its generation's retry budget, pairing with MaxAttempts for the
-truncated, retry, and handoff budget display. A generation completes
-when an attempt finishes with a summary block and a normal finish
-reason; its completion event carries the summary. Retries re-execute
-the phase chain as a new attempt, up to the retry budget carried by
-MaxAttempts.
+truncated and retry budget display. Handoff events carry the attempt
+attribution but no budget figures, because handoff generation itself
+retries without an attempt limit (see TheoryOfHandoff). A generation
+completes when an attempt finishes with a summary block and a normal
+finish reason; its completion event carries the summary. Retries
+re-execute the phase chain as a new attempt, up to the retry budget
+carried by MaxAttempts.
 
 Event.Loop attributes every event to its goal run: RunOptions.Loop
 carries the 1-based goal loop number, and the loop's emit layer stamps
@@ -190,11 +190,11 @@ type Event struct {
 	Attempt int
 	// AttemptInGeneration is the attempt's 1-based position within its
 	// generation's retry budget, pairing with MaxAttempts for the
-	// truncated, retry, and handoff budget display ("attempt x/y").
-	// Zero when not applicable.
+	// truncated and retry budget display ("attempt x/y"). Zero when
+	// not applicable.
 	AttemptInGeneration int
 	// MaxAttempts is the generation's retry budget, for attempt, retry,
-	// truncation, and handoff events. Zero when retry is disabled.
+	// and truncation events. Zero when retry is disabled.
 	MaxAttempts int
 	// Summary carries a summary text: the joined summary block bodies
 	// for EventAttemptCompleted, the handoff summary for EventHandoff

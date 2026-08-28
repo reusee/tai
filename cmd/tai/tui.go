@@ -1155,16 +1155,12 @@ func eventLines(ev pipeline.Event) []taiui.Line {
 	case pipeline.EventRunError:
 		return eventLog(ev.Kind, fmt.Sprintf("[Run error] %v", ev.Err))
 	case pipeline.EventHandoffStart:
-		if ev.Attempt == 0 {
-			return eventLog(ev.Kind, "[Handoff started]")
-		}
-		return eventLog(ev.Kind, fmt.Sprintf("[Handoff started (attempt %d/%d)]", inGeneration, ev.MaxAttempts))
+		// Handoff events carry no budget figures: handoff generation
+		// itself retries without an attempt limit, so the header
+		// shows no "attempt x/y" suffix. See pipeline.TheoryOfHandoff.
+		return eventLog(ev.Kind, "[Handoff started]")
 	case pipeline.EventHandoff:
-		header := fmt.Sprintf("[Handoff summary (attempt %d/%d)]", inGeneration, ev.MaxAttempts)
-		if ev.Attempt == 0 {
-			header = "[Handoff summary]"
-		}
-		return append(eventLog(ev.Kind, header), summaryLines(ev.Summary)...)
+		return append(eventLog(ev.Kind, "[Handoff summary]"), summaryLines(ev.Summary)...)
 	case pipeline.EventSynthesizedSummary:
 		return append(eventLog(ev.Kind, "[Synthesized completion summary]"), summaryLines(ev.Summary)...)
 	case pipeline.EventUsage:

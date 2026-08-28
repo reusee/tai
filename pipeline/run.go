@@ -504,12 +504,17 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 						if incompleteText != "" {
 							// Report the handoff request's start
 							// immediately, before the request is
-							// sent. See TheoryOfLoopEvents.
+							// sent. Handoff events carry the
+							// attempt attribution but no budget
+							// figures: handoff generation itself
+							// retries without an attempt limit, so
+							// an "attempt x/y" display would
+							// misrepresent it. See
+							// TheoryOfLoopEvents and
+							// TheoryOfHandoff.
 							ls.emitEvent(Event{
-								Kind:                EventHandoffStart,
-								Attempt:             ls.attempt,
-								AttemptInGeneration: ls.attemptInGeneration,
-								MaxAttempts:         ls.maxRetries,
+								Kind:    EventHandoffStart,
+								Attempt: ls.attempt,
 							})
 							handoff, handoffErr := ls.opts.Handoff(incompleteText)
 							if handoffErr == nil && handoff != nil {
@@ -518,12 +523,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 								// Report the produced handoff to the
 								// event stream. See TheoryOfLoopEvents.
 								ls.emitEvent(Event{
-									Kind:                EventHandoff,
-									Attempt:             ls.attempt,
-									AttemptInGeneration: ls.attemptInGeneration,
-									MaxAttempts:         ls.maxRetries,
-									Summary:             handoff.Summary,
-									Handoff:             handoff,
+									Kind:    EventHandoff,
+									Attempt: ls.attempt,
+									Summary: handoff.Summary,
+									Handoff: handoff,
 								})
 								// Account the handoff request's own token
 								// spend before the failed attempt is
@@ -644,10 +647,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 				// Report the handoff request's start immediately.
 				// See TheoryOfLoopEvents.
 				ls.emitEvent(Event{
-					Kind:                EventHandoffStart,
-					Attempt:             ls.attempt,
-					AttemptInGeneration: ls.attemptInGeneration,
-					MaxAttempts:         ls.maxRetries,
+					Kind:    EventHandoffStart,
+					Attempt: ls.attempt,
 				})
 				handoff, rerr := ls.opts.Handoff(incompleteText)
 				if rerr == nil && handoff != nil {
@@ -656,12 +657,10 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 					// Report the produced handoff to the event
 					// stream. See TheoryOfLoopEvents.
 					ls.emitEvent(Event{
-						Kind:                EventHandoff,
-						Attempt:             ls.attempt,
-						AttemptInGeneration: ls.attemptInGeneration,
-						MaxAttempts:         ls.maxRetries,
-						Summary:             handoff.Summary,
-						Handoff:             handoff,
+						Kind:    EventHandoff,
+						Attempt: ls.attempt,
+						Summary: handoff.Summary,
+						Handoff: handoff,
 					})
 					phaseState = appendHandoffUsage(phaseState, attemptBase, handoff.Usage)
 				}
@@ -739,9 +738,8 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 			// Report the handoff request's start immediately.
 			// See TheoryOfLoopEvents.
 			ls.emitEvent(Event{
-				Kind:        EventHandoffStart,
-				Attempt:     ls.attempt,
-				MaxAttempts: ls.maxRetries,
+				Kind:    EventHandoffStart,
+				Attempt: ls.attempt,
 			})
 			if handoff, serr := ls.opts.Handoff(incompleteText); serr == nil && handoff != nil {
 				// Report the synthesized completion summary to the

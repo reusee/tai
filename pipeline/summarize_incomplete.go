@@ -53,7 +53,10 @@ aborting; a caller that wants a bound must supply a cancellable context.
 The loop's event stream reports the handoff lifecycle as it happens:
 EventHandoffStart is emitted immediately before the handoff request is
 sent, and EventHandoff after the summary is produced, so a live consumer
-sees the request in progress rather than waiting for its result. Handoff
+sees the request in progress rather than waiting for its result. The
+events carry the attempt attribution but no retry-budget figures:
+handoff generation itself retries without an attempt limit, so a budget
+display such as "attempt x/y" would misrepresent it. Handoff
 generation also applies the HandoffStateDecorator provider to its state
 when one is configured: the decorator observes every content part as it
 is appended, so a display front-end receives the model's text and

@@ -2228,6 +2228,38 @@ func TestTUIHandoffCollapse(t *testing.T) {
 	}
 }
 
+// TestTUIHandoffEventsRenderNoBudget verifies that handoff events render
+// without the "attempt x/y" budget suffix even when the event carries
+// budget fields: handoff generation retries without an attempt limit, so
+// a budget display would misrepresent it. See pipeline.TheoryOfHandoff.
+func TestTUIHandoffEventsRenderNoBudget(t *testing.T) {
+	tui := newTUIForTest()
+	tui.handleEvent(pipeline.Event{
+		Kind:                pipeline.EventHandoffStart,
+		Attempt:             1,
+		AttemptInGeneration: 1,
+		MaxAttempts:         3,
+	})
+	start := tui.eventRoots[len(tui.eventRoots)-1].lines
+	if start[0].Text != "🤝 [Handoff started]" {
+		t.Fatalf("unexpected handoff-start line: %q", start[0].Text)
+	}
+	tui.handleEvent(pipeline.Event{
+		Kind:                pipeline.EventHandoff,
+		Attempt:             1,
+		AttemptInGeneration: 1,
+		MaxAttempts:         3,
+		Summary:             "handoff body",
+	})
+	handoff := tui.eventRoots[len(tui.eventRoots)-1].lines
+	if handoff[0].Text != "📝 [Handoff summary]" {
+		t.Fatalf("unexpected handoff line: %q", handoff[0].Text)
+	}
+	if len(handoff) < 2 || handoff[1].Text != "handoff body" {
+		t.Fatalf("unexpected handoff summary body: %+v", handoff)
+	}
+}
+
 // TestTUIEventLinesRenderGoalLoopPrefix verifies the loop attribution of
 // the per-attempt events: a goal run's start, completion, and usage
 // lines carry the "loop L attempt N" prefix, while a non-goal event
