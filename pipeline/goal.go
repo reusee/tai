@@ -363,10 +363,45 @@ func (s *goalLoopState) applyLoopResult(
 	err error,
 	reporter goalReporter,
 ) bool {
+	// A disk-change handoff ends the loop and hands its content to the
+	// next loop, which reloads the filesystem and restarts the work.
+	// See TheoryOfDiskChangeHandoff.
+	if handoff, ok := asDiskChangeHandoff(err); ok {
+		return s.applyDiskChangeHandoff(loopsRun, handoff, reporter)
+	}
 	if err != nil {
 		return s.applyLoopError(loopsRun, err, reporter)
 	}
 	return s.applyLoopSuccess(loopsRun, result, reporter)
+}
+
+// applyDiskChangeHandoff folds a loop that ended on a disk-change handoff
+// into the runner state: the handoff content — the interrupted work's
+// summary plus the disk-change notice — becomes the next loop's feedback,
+// and the next loop reloads the filesystem and restarts the work. A disk
+// change is an external event, not a model failure, so the
+// consecutive-error counter resets and a pending done declaration is
+// overturned. See TheoryOfGoalMode and TheoryOfDiskChangeHandoff.
+func (s *goalLoopState) applyDiskChangeHandoff(
+	loopsRun int,
+	err *DiskChangeHandoffError,
+	reporter goalReporter,
+) bool {
+	reporter.message(fmt.Sprintf(
+		"\n[Goal Loop %d Ended Early: %v. The next loop reloads the filesystem and retries from scratch.]\n",
+		loopsRun, err.Err))
+
+	s.pendingDoneVerification = false
+	s.consecutiveErrors = 0
+	s.lastErrMsg = ""
+
+	feedback := "[System note: The previous goal loop ended early: " + err.Err.Error() + ". The loop's in-memory file snapshot no longer matched the disk, so no attempt retry could repair it. This loop reloads the current filesystem state and restarts the work from scratch: re-read the affected files and re-apply the intended changes against the fresh snapshot."
+	if err.Handoff != nil && strings.TrimSpace(err.Handoff.Prompt) != "" {
+		feedback += "\n\nHandoff summary of the interrupted work:\n" + err.Handoff.Prompt
+	}
+	feedback += "]"
+	s.feedback = GoalFeedback(feedback)
+	return false
 }
 
 // applyLoopError folds a failed loop into the runner state: a failure

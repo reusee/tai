@@ -1,6 +1,7 @@
 package changes
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -926,6 +927,142 @@ func TestRootStoreWriteConflictTrackingRenameRemove(t *testing.T) {
 	// succeeds.
 	if err := store.WriteFile("sub/new.txt", []byte("v2"), 0644); err != nil {
 		t.Fatalf("write after removal must succeed: %v", err)
+	}
+}
+
+func TestRootStoreDiskChangeDetection(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	hashes := NewFileHashes()
+	store := NewRootStoreWithSnapshot(root, NewFileWriteTimes(), hashes)
+
+	original := "v1"
+	if err := root.WriteFile("a.txt", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(dir, "a.txt")
+	hashes.Set(key, []byte(original))
+
+	// A read matching the baseline passes.
+	got, err := store.ReadFile("a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("expected %q, got %q", original, string(got))
+	}
+
+	// A file without a baseline is not verified.
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadFile("b.txt"); err != nil {
+		t.Fatalf("a file without a baseline must not be verified: %v", err)
+	}
+
+	// An external modification is detected on read.
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("external"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ReadFile("a.txt")
+	var diskChanged *DiskChangedError
+	if err == nil || !errors.As(err, &diskChanged) {
+		t.Fatalf("expected DiskChangedError for externally modified file, got: %v", err)
+	}
+
+	// A write over the external modification is rejected too.
+	err = store.WriteFile("a.txt", []byte("v2"), 0644)
+	if err == nil || !errors.As(err, &diskChanged) {
+		t.Fatalf("expected DiskChangedError for write over external modification, got: %v", err)
+	}
+
+	// Restoring the baselined content lets the write through, and the
+	// store's own write refreshes the baseline.
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteFile("a.txt", []byte("v2"), 0644); err != nil {
+		t.Fatalf("write over matching baseline must succeed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("v3"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadFile("a.txt"); !errors.As(err, &diskChanged) {
+		t.Fatalf("expected DiskChangedError after external modification following own write, got: %v", err)
+	}
+
+	// An external deletion of a baselined file is detected on read.
+	if err := os.Remove(filepath.Join(dir, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadFile("a.txt"); !errors.As(err, &diskChanged) {
+		t.Fatalf("expected DiskChangedError for externally deleted file, got: %v", err)
+	}
+}
+
+func TestMemoryStoreDiskChangePropagates(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	hashes := NewFileHashes()
+	store := NewMemoryStore(NewRootStoreWithSnapshot(root, NewFileWriteTimes(), hashes))
+
+	original := "package x\n"
+	if err := root.WriteFile("a.go", []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hashes.Set(filepath.Join(dir, "a.go"), []byte(original))
+
+	// External modification, then a write through the MemoryStore: the
+	// baseline mismatch must propagate out of captureOriginal instead of
+	// being recorded as a false original. See TheoryOfDiskChangeDetection.
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("external"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = store.WriteFile("a.go", []byte("package y\n"), 0644)
+	var diskChanged *DiskChangedError
+	if err == nil || !errors.As(err, &diskChanged) {
+		t.Fatalf("expected DiskChangedError from MemoryStore.WriteFile, got: %v", err)
+	}
+	if diffs := store.Diffs(); len(diffs) != 0 {
+		t.Fatalf("the failed write must not record an original, got %d diffs", len(diffs))
+	}
+}
+
+func TestFileHashesNormalizesPaths(t *testing.T) {
+	dir := t.TempDir()
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(original) })
+
+	hashes := NewFileHashes()
+	hashes.Set("a.txt", []byte("v1"))
+
+	// The apply layer derives the absolute path the same way, so both
+	// sides of the detection resolve to one entry.
+	key := filepath.Join(dir, "a.txt")
+	if !hashes.Has(key) {
+		t.Fatalf("expected the absolute key %s to be baselined", key)
+	}
+	if err := hashes.Verify(key, []byte("v1")); err != nil {
+		t.Fatalf("verify with the absolute key must pass: %v", err)
+	}
+	if err := hashes.Verify(key, []byte("v2")); err == nil {
+		t.Fatal("verify with different content must fail")
 	}
 }
 

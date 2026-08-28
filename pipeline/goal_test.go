@@ -151,6 +151,44 @@ func TestRunGoalStopsAfterConsecutiveSameErrors(t *testing.T) {
 	}
 }
 
+func TestRunGoalDiskChangeHandoffFeedsNextLoop(t *testing.T) {
+	calls := 0
+	var feedbacks []GoalFeedback
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
+			calls++
+			feedbacks = append(feedbacks, feedback)
+			switch calls {
+			case 1, 2:
+				return Result{}, nil, &DiskChangeHandoffError{
+					Err:     &changes.DiskChangedError{Path: "a.go"},
+					Handoff: &Handoff{Prompt: "handoff notes from the interrupted loop"},
+				}
+			case 3:
+				return Result{}, nil, errors.New("boom")
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal should be achieved")
+	}
+	// The disk-change handoff must not count toward the consecutive-error
+	// bound: two handoffs plus one ordinary error leave room for the run
+	// to continue and confirm the goal.
+	if calls != 5 {
+		t.Fatalf("expected 5 loops (2 handoffs, 1 error, done + verification), got %d", calls)
+	}
+	if !strings.Contains(string(feedbacks[1]), "a.go") || !strings.Contains(string(feedbacks[1]), "handoff notes") {
+		t.Fatalf("the handoff feedback must carry the disk change and the handoff notes, got %q", feedbacks[1])
+	}
+	if !strings.Contains(string(feedbacks[3]), "boom") {
+		t.Fatalf("the ordinary error must still feed back, got %q", feedbacks[3])
+	}
+}
+
 func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	calls := 0
 	var feedbacks []GoalFeedback

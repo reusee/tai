@@ -8,6 +8,7 @@ import (
 
 	"github.com/reusee/dscope"
 	"github.com/reusee/tai/anytexts"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/pathutil"
@@ -26,6 +27,7 @@ type PartsProvider struct {
 	Workspace       dscope.Inject[Workspace]
 	DocPatterns     dscope.Inject[DocPatterns]
 	ModuleRootFiles dscope.Inject[GetModuleRootFiles]
+	FileHashes      dscope.Inject[*changes.FileHashes]
 }
 
 var _ codetypes.PartsProvider = PartsProvider{}
@@ -217,6 +219,10 @@ func (c PartsProvider) Parts(
 					tokens: numTokens,
 					path:   info.Path,
 				})
+				// Baseline the extra file's content so the apply layer
+				// detects external disk changes against this snapshot.
+				// See changes.TheoryOfDiskChangeDetection.
+				c.FileHashes().Set(info.Path, info.Content)
 
 			} else {
 				// Binary extra files are wrapped with begin/end markers matching
@@ -255,6 +261,10 @@ func (c PartsProvider) Parts(
 					part: generators.Text(endMarker),
 					path: info.Path,
 				})
+				// Baseline the extra file's content so the apply layer
+				// detects external disk changes against this snapshot.
+				// See changes.TheoryOfDiskChangeDetection.
+				c.FileHashes().Set(info.Path, info.Content)
 			}
 		}
 	}
@@ -282,6 +292,14 @@ func (c PartsProvider) Parts(
 			contextTokens += file.Confirmed.NumTokens
 		}
 		parts = append(parts, generators.Text(file.Confirmed.Content))
+		// Baseline the file's load-time content so the apply layer
+		// detects external disk changes against the snapshot the model
+		// saw. Synthetic package-doc entries have no real file behind
+		// their package-path "path" and are skipped. See
+		// changes.TheoryOfDiskChangeDetection.
+		if file.Path != file.LogicalPkgPath {
+			c.FileHashes().Set(file.Path, file.Content)
+		}
 	}
 
 	// Module-root markdown listings follow the project files: the listing

@@ -13,6 +13,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/reusee/dscope"
+	"github.com/reusee/tai/changes"
 	"github.com/reusee/tai/generators"
 	"github.com/reusee/tai/logs"
 	"github.com/reusee/tai/pathutil"
@@ -134,6 +135,7 @@ type PartsProvider struct {
 	Logger           dscope.Inject[logs.Logger]
 	Debug            dscope.Inject[Debug]
 	IncludeMimeTypes dscope.Inject[IncludeMimeTypes]
+	FileHashes       dscope.Inject[*changes.FileHashes]
 }
 
 var _ codetypes.PartsProvider = PartsProvider{}
@@ -565,6 +567,11 @@ func (c PartsProvider) Parts(
 
 			parts = append(parts, generators.Text(text))
 
+			// Record the file's content hash so the apply layer detects
+			// external disk changes against this snapshot. See
+			// changes.TheoryOfDiskChangeDetection.
+			c.FileHashes().Set(info.Path, info.Content)
+
 			if c.Debug() {
 				c.Logger().Info("text file",
 					"path", info.Path,
@@ -613,6 +620,11 @@ func (c PartsProvider) Parts(
 			})
 			parts = append(parts, generators.Text(endMarker))
 
+			// Record the file's content hash so the apply layer detects
+			// external disk changes against this snapshot. See
+			// changes.TheoryOfDiskChangeDetection.
+			c.FileHashes().Set(info.Path, info.Content)
+
 			if c.Debug() {
 				c.Logger().Info("binary file",
 					"path", info.Path,
@@ -641,6 +653,19 @@ func (c PartsProvider) Parts(
 	)
 
 	return
+}
+
+// FileHashes provider: the per-session baseline of file content hashes,
+// shared by context assembly (PartsProvider.Parts records every file it
+// hands to the model) and the apply layer (rootStore verifies against it).
+// The provider lives here — the leaf of the module tree both parts
+// providers resolve from — so every scope wiring a parts provider shares
+// one baseline without duplicate-provider conflicts. A scope's providers
+// are re-evaluated on dscope.Reset, so independent sessions (e.g., goal
+// loops) start with a fresh baseline matching the state they loaded. See
+// changes.TheoryOfDiskChangeDetection.
+func (Module) FileHashes() *changes.FileHashes {
+	return changes.NewFileHashes()
 }
 
 func (Module) PartsProvider(

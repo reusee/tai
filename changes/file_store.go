@@ -72,9 +72,14 @@ type FileStore interface {
 	isFileStore()
 }
 
+// rootStore is a FileStore backed by an *os.Root. writeTimes enables the
+// mtime-based write-conflict check; hashes enables content-baseline disk
+// change detection. Both are optional. See
+// TheoryOfWriteConflictDetection and TheoryOfDiskChangeDetection.
 type rootStore struct {
 	root       *os.Root
 	writeTimes *FileWriteTimes
+	hashes     *FileHashes
 }
 
 // NewRootStore creates a FileStore backed by the given *os.Root for
@@ -90,6 +95,16 @@ func NewRootStore(root *os.Root) FileStore {
 // TheoryOfWriteConflictDetection.
 func NewRootStoreWithWriteTimes(root *os.Root, writeTimes *FileWriteTimes) FileStore {
 	return rootStore{root: root, writeTimes: writeTimes}
+}
+
+// NewRootStoreWithSnapshot creates a FileStore backed by the given *os.Root
+// with disk change detection: every read and write verifies the file's
+// content against the session baseline in hashes, and a mismatch is a
+// DiskChangedError. writeTimes may be nil. When hashes is nil no baseline
+// verification happens and the mtime-based write-conflict check applies.
+// See TheoryOfDiskChangeDetection.
+func NewRootStoreWithSnapshot(root *os.Root, writeTimes *FileWriteTimes, hashes *FileHashes) FileStore {
+	return rootStore{root: root, writeTimes: writeTimes, hashes: hashes}
 }
 
 // FileWriteTimes tracks the last modification time observed for each file
@@ -138,12 +153,38 @@ func (f *FileWriteTimes) Delete(path string) {
 func (s rootStore) isFileStore() {}
 
 func (s rootStore) ReadFile(path string) ([]byte, error) {
-	return s.root.ReadFile(path)
+	content, err := s.root.ReadFile(path)
+	if s.hashes == nil {
+		return content, err
+	}
+	key := s.trackedPath(path)
+	if err != nil {
+		// A baselined file that has disappeared was deleted externally
+		// after the context snapshot was taken.
+		if os.IsNotExist(err) && s.hashes.Has(key) {
+			return nil, &DiskChangedError{Path: key}
+		}
+		return content, err
+	}
+	if err := s.hashes.Verify(key, content); err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 func (s rootStore) WriteFile(path string, content []byte, perm os.FileMode) error {
-	if err := s.checkWriteConflict(s.trackedPath(path), path); err != nil {
+	key := s.trackedPath(path)
+	if err := s.checkDiskChangedBeforeWrite(key, path); err != nil {
 		return err
+	}
+	// When a content baseline exists, the hash check governs: content
+	// comparison has no coarse-mtime false positives, so a matching hash
+	// makes the mtime check redundant noise. Stores without a baseline
+	// keep the mtime check. See TheoryOfDiskChangeDetection.
+	if s.hashes == nil {
+		if err := s.checkWriteConflict(key, path); err != nil {
+			return err
+		}
 	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := pathutil.RootMkdirAll(s.root, dir, 0755); err != nil {
@@ -153,7 +194,13 @@ func (s rootStore) WriteFile(path string, content []byte, perm os.FileMode) erro
 	if err := s.root.WriteFile(path, content, perm); err != nil {
 		return err
 	}
-	s.recordWriteTime(s.trackedPath(path), path)
+	s.recordWriteTime(key, path)
+	// Our own write refreshes the baseline, so only external changes
+	// between the snapshot and the next read or write are detected. See
+	// TheoryOfDiskChangeDetection.
+	if s.hashes != nil {
+		s.hashes.Set(key, content)
+	}
 	return nil
 }
 
@@ -201,6 +248,26 @@ func (s rootStore) recordWriteTime(key, statPath string) {
 	}
 }
 
+// checkDiskChangedBeforeWrite verifies the file's current disk content
+// against the session baseline before overwriting it. A baselined file
+// that was modified or deleted externally must not be overwritten: the
+// change block was computed against the stale snapshot. A missing baseline
+// means the file never entered the model context, so the write proceeds
+// unchecked. See TheoryOfDiskChangeDetection.
+func (s rootStore) checkDiskChangedBeforeWrite(key, statPath string) error {
+	if s.hashes == nil || !s.hashes.Has(key) {
+		return nil
+	}
+	current, err := s.root.ReadFile(statPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &DiskChangedError{Path: key}
+		}
+		return err
+	}
+	return s.hashes.Verify(key, current)
+}
+
 // trackedPath returns the canonical key used for write-time tracking: an
 // absolute, cleaned path. Two roots that happen to use the same relative
 // path (e.g., "test.go" in different directories) refer to different
@@ -225,9 +292,14 @@ func (s rootStore) Remove(path string) error {
 		return err
 	}
 	// A removed path can no longer conflict; a later recreation is a
-	// fresh file with no baseline. See TheoryOfWriteConflictDetection.
+	// fresh file with no baseline. See TheoryOfWriteConflictDetection
+	// and TheoryOfDiskChangeDetection.
+	key := s.trackedPath(path)
 	if s.writeTimes != nil {
-		s.writeTimes.Delete(s.trackedPath(path))
+		s.writeTimes.Delete(key)
+	}
+	if s.hashes != nil {
+		s.hashes.Delete(key)
 	}
 	return nil
 }
@@ -241,15 +313,19 @@ func (s rootStore) Rename(oldPath, newPath string) error {
 	if err := s.root.Rename(oldPath, newPath); err != nil {
 		return err
 	}
-	// Rename preserves the file's mtime, so the tracked write time moves
-	// with the file and the old path's record is dropped. See
-	// TheoryOfWriteConflictDetection.
+	// Rename preserves the file's mtime and content, so the tracked write
+	// time and the content baseline move with the file and the old
+	// path's records are dropped. See TheoryOfWriteConflictDetection and
+	// TheoryOfDiskChangeDetection.
 	if s.writeTimes != nil {
 		oldKey := s.trackedPath(oldPath)
 		if t, ok := s.writeTimes.Get(oldKey); ok {
 			s.writeTimes.Delete(oldKey)
 			s.writeTimes.Set(s.trackedPath(newPath), t)
 		}
+	}
+	if s.hashes != nil {
+		s.hashes.Transfer(s.trackedPath(oldPath), s.trackedPath(newPath))
 	}
 	return nil
 }
@@ -543,20 +619,28 @@ func (s *MemoryStore) ReadFile(path string) ([]byte, error) {
 }
 
 func (s *MemoryStore) WriteFile(path string, content []byte, perm os.FileMode) error {
-	s.captureOriginal(path)
+	if err := s.captureOriginal(path); err != nil {
+		return err
+	}
 	s.files[path] = &memoryFile{content: content, exists: true}
 	return nil
 }
 
 func (s *MemoryStore) Remove(path string) error {
-	s.captureOriginal(path)
+	if err := s.captureOriginal(path); err != nil {
+		return err
+	}
 	s.files[path] = &memoryFile{exists: false}
 	return nil
 }
 
 func (s *MemoryStore) Rename(oldPath, newPath string) error {
-	s.captureOriginal(oldPath)
-	s.captureOriginal(newPath)
+	if err := s.captureOriginal(oldPath); err != nil {
+		return err
+	}
+	if err := s.captureOriginal(newPath); err != nil {
+		return err
+	}
 	var content []byte
 	var exists bool
 	if mf, ok := s.files[oldPath]; ok {
@@ -606,20 +690,26 @@ func (s *MemoryStore) Reset() {
 
 // captureOriginal records the pre-session content of a path the first time
 // the path is modified in this session. Subsequent modifications reuse the
-// recorded original so Diffs always shows the full session delta.
-func (s *MemoryStore) captureOriginal(path string) {
+// recorded original so Diffs always shows the full session delta. A
+// DiskChangedError from the underlying store is propagated: the baseline
+// must not be recorded from content that no longer matches the snapshot.
+func (s *MemoryStore) captureOriginal(path string) error {
 	if _, ok := s.originals[path]; ok {
-		return
+		return nil
 	}
 	content, err := s.underlying.ReadFile(path)
 	if err != nil {
+		if _, ok := err.(*DiskChangedError); ok {
+			return err
+		}
 		// A read error (including file not found) means the original
 		// state is "does not exist"; the diff will show a new file or
 		// the absence of an old one.
 		s.originals[path] = &memoryFile{exists: false}
-		return
+		return nil
 	}
 	s.originals[path] = &memoryFile{content: slices.Clone(content), exists: true}
+	return nil
 }
 
 // Diffs returns the accumulated session changes as FileDiff entries,

@@ -554,6 +554,12 @@ its single-shot design has no trailing chat content, so the restate
 remains the last part.
 `
 
+// GenerateWithResultWithStats runs the full codes generation pipeline
+// and returns the Result together with the attempt statistics collected
+// during the run. The statistics are returned so that callers that run
+// multiple independent generation sessions — such as the goal runner —
+// can accumulate them and attribute each attempt to its goal loop. See
+// TheoryOfAttemptStatistics.
 func (Module) GenerateWithResultWithStats(
 	partsProvider codetypes.PartsProvider,
 	comps CodesComponents,
@@ -576,6 +582,7 @@ func (Module) GenerateWithResultWithStats(
 	loopRun Run,
 	recorder *records.Recorder,
 	writeTimes *changes.FileWriteTimes,
+	hashes *changes.FileHashes,
 	createHandoff CreateHandoff,
 	goalLoop GoalLoop,
 ) GenerateWithResultWithStats {
@@ -591,12 +598,14 @@ func (Module) GenerateWithResultWithStats(
 
 		// MemoryStore buffers change block modifications in memory during
 		// streaming, deferring disk writes until the generation succeeds.
-		// The underlying root store enables write conflict detection: a
-		// file modified externally since the last write is rejected at
+		// The underlying root store enables write conflict detection and
+		// disk-change detection: a file modified externally since the
+		// context snapshot was assembled is rejected at read, write, and
 		// flush time. See TheoryOfStreamingApply,
-		// changes.TheoryOfInMemoryApply and
-		// changes.TheoryOfWriteConflictDetection.
-		memStore := changes.NewMemoryStore(changes.NewRootStoreWithWriteTimes(root, writeTimes))
+		// changes.TheoryOfInMemoryApply,
+		// changes.TheoryOfWriteConflictDetection and
+		// changes.TheoryOfDiskChangeDetection.
+		memStore := changes.NewMemoryStore(changes.NewRootStoreWithSnapshot(root, writeTimes, hashes))
 
 		// generator
 		generator, err := getDefaultGenerator()

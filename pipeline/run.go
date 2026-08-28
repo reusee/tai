@@ -417,6 +417,17 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 		}
 
 		if generationErr != nil {
+			// A disk-change failure cannot be repaired by retrying
+			// the attempt: the in-memory snapshot no longer matches
+			// the disk, so the retry would compute changes against
+			// the same stale content. End the run with a handoff
+			// error; the goal runner carries it into the next loop,
+			// which reloads the filesystem. See
+			// TheoryOfDiskChangeHandoff.
+			var diskChanged *changes.DiskChangedError
+			if errors.As(generationErr, &diskChanged) {
+				return generationResult{state: phaseState}, ls.endOnDiskChange(generationErr, phaseState, attemptBase)
+			}
 			// Retry on any error when content was output during
 			// the attempt. The loop summarizes the incomplete
 			// output, appends both the error context and the
@@ -751,6 +762,13 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 	// OnAttemptSuccess hook.
 	if ls.opts.OnAttemptSuccess != nil {
 		if serr := ls.opts.OnAttemptSuccess(phaseState, generationSummaries); serr != nil {
+			// A disk-change failure at flush time ends the run: the
+			// snapshot diverged, so a retry cannot repair it. See
+			// TheoryOfDiskChangeHandoff.
+			var flushDiskChanged *changes.DiskChangedError
+			if errors.As(serr, &flushDiskChanged) {
+				return generationResult{state: phaseState}, ls.endOnDiskChange(serr, phaseState, attemptBase)
+			}
 			ls.recordAttemptError(serr)
 			ls.recordAttemptUsage(phaseState, attemptBase, "error")
 			return generationResult{state: phaseState}, serr
@@ -946,6 +964,40 @@ func (ls *loopState) recordAttemptError(err error) {
 	if ls.rec != nil && ls.rec.Enabled() {
 		ls.rec.AttemptError(err)
 	}
+}
+
+// endOnDiskChange terminates the run on a disk-change failure: it
+// condenses the interrupted output into a handoff when one is available,
+// records the failed attempt, and returns the terminal error the goal
+// runner forwards to the next loop. See TheoryOfDiskChangeHandoff.
+func (ls *loopState) endOnDiskChange(err error, phaseState generators.State, attemptBase int) *DiskChangeHandoffError {
+	var handoff *Handoff
+	if ls.opts.Handoff != nil {
+		incompleteText := ExtractIncompleteOutput(phaseState, attemptBase)
+		if incompleteText != "" {
+			ls.emitEvent(Event{
+				Kind:                EventHandoffStart,
+				Attempt:             ls.attempt,
+				AttemptInGeneration: ls.attemptInGeneration,
+				MaxAttempts:         ls.maxRetries,
+			})
+			if h, herr := ls.opts.Handoff(incompleteText); herr == nil && h != nil {
+				handoff = h
+				ls.emitEvent(Event{
+					Kind:                EventHandoff,
+					Attempt:             ls.attempt,
+					AttemptInGeneration: ls.attemptInGeneration,
+					MaxAttempts:         ls.maxRetries,
+					Summary:             h.Summary,
+					Handoff:             h,
+				})
+				phaseState = appendHandoffUsage(phaseState, attemptBase, h.Usage)
+			}
+		}
+	}
+	ls.recordAttemptError(err)
+	ls.recordAttemptUsage(phaseState, attemptBase, "error")
+	return &DiskChangeHandoffError{Err: err, Handoff: handoff}
 }
 
 // finishWithError fills the result with the final state and yields the

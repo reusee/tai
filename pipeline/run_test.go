@@ -1394,6 +1394,74 @@ func TestRunRetryOnApplyErrorGuidance(t *testing.T) {
 	})
 }
 
+func TestRunDiskChangeApplyEndsRun(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			return appendThenErrorPhase(
+				"partial model output",
+				&changes.ApplyError{Err: &changes.DiskChangedError{Path: "a.go"}},
+			)
+		}
+
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			RetryOnError: true,
+			MaxRetries:   3,
+			Handoff: func(text string) (*Handoff, error) {
+				return &Handoff{Summary: "disk change summary", Prompt: "disk change handoff"}, nil
+			},
+		})
+		// A disk change cannot be repaired by retrying the attempt: the
+		// run must end instead. See TheoryOfDiskChangeHandoff.
+		var handoffErr *DiskChangeHandoffError
+		if err == nil || !errors.As(err, &handoffErr) {
+			t.Fatalf("expected DiskChangeHandoffError, got: %v", err)
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 call (no retry), got %d", callCount)
+		}
+		if handoffErr.Handoff == nil || handoffErr.Handoff.Prompt != "disk change handoff" {
+			t.Fatalf("expected the handoff to be carried, got %+v", handoffErr.Handoff)
+		}
+		var diskChanged *changes.DiskChangedError
+		if !errors.As(err, &diskChanged) {
+			t.Fatalf("expected the underlying DiskChangedError, got: %v", err)
+		}
+	})
+}
+
+func TestRunDiskChangeFlushEndsRun(t *testing.T) {
+	withRun(t, func(run Run) {
+		callCount := 0
+		phaseBuilder := func(g generators.Generator) generators.Phase {
+			callCount++
+			return appendPhase("<<龘靐 summary\nDone.\n龘靐\n")
+		}
+
+		_, err := runOnce(run, RunOptions{
+			Generator:    nil,
+			InitialState: generators.NewPrompts("", nil),
+			Components:   nil,
+			PhaseBuilder: phaseBuilder,
+			OnAttemptSuccess: func(state generators.State, summaries []string) error {
+				return &changes.DiskChangedError{Path: "a.go"}
+			},
+		})
+		var handoffErr *DiskChangeHandoffError
+		if err == nil || !errors.As(err, &handoffErr) {
+			t.Fatalf("expected DiskChangeHandoffError, got: %v", err)
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 call, got %d", callCount)
+		}
+	})
+}
+
 func TestRunRetryOnErrorMaxRetries(t *testing.T) {
 	withRun(t, func(run Run) {
 		callCount := 0
