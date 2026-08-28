@@ -10,6 +10,7 @@ import (
 	"github.com/reusee/dscope"
 	"github.com/reusee/prompts"
 	"github.com/reusee/tai/changes"
+	"github.com/reusee/tai/flags"
 )
 
 const TheoryOfGoalMode = `
@@ -104,6 +105,20 @@ without duplication. Verdicts and failure notes are routed through
 goalReporter: as EventGoal events through GoalEventObserver when one is
 set (a display front-end's Events tab), or written to the output writer
 (failure notes to stderr) otherwise.
+`
+
+// TheoryOfGoalReviewModel documents the model used by the goal loops
+// after a done block has been emitted. See TheoryOfGoalMode.
+const TheoryOfGoalReviewModel = `
+The loops after the first done block run on the review model: the goal
+runner passes the first configured review model (ReviewModels) into each
+post-done loop's scope as flags.ModelName — the same fork Module.RunReview
+uses for its review sessions — so the model that verifies and corrects the
+declared goal is independent of the model that made the changes. The first
+done block itself is emitted by the default model; the switch is sticky,
+so a post-done loop whose corrections are overturned by errors or
+malformed blocks keeps the review model on its follow-up loops too. When
+no review model is configured, post-done loops keep the default model.
 `
 
 // GoalSystemPrompt teaches the model the goal-directed multi-loop
@@ -237,10 +252,15 @@ type GoalOptions struct {
 	GoalEvents GoalEventObserver
 	// Generate runs one goal loop: a fresh generation session that
 	// re-reads the current filesystem state, with the given loop
-	// number, feedback, and the previous loops' summaries.
+	// number, feedback, the previous loops' summaries, and the model
+	// the loop should run on (empty keeps the default model).
 	Generate GoalLoopGenerator
 	// Review reviews the accumulated session diffs after the run.
 	Review RunReview
+	// ReviewModel is the model the loops run on after a done block
+	// has been emitted. When empty, post-done loops keep the default
+	// model. See TheoryOfGoalReviewModel.
+	ReviewModel string
 }
 
 // GoalEventObserver receives the goal runner's progress events:
@@ -262,12 +282,15 @@ type GoalLoop int
 
 // GoalLoopGenerator runs one goal loop. The loop number, the feedback,
 // and the summaries of previous loops reach the loop's scope through
-// the forks of the goal runner. See TheoryOfGoalMode.
+// the forks of the goal runner. A non-empty reviewModel forks
+// flags.ModelName to the review model, so the loop runs on it; see
+// TheoryOfGoalReviewModel.
 type GoalLoopGenerator func(
 	ctx context.Context,
 	loop int,
 	feedback GoalFeedback,
 	summaries GoalLoopSummaries,
+	reviewModel string,
 ) (
 	result Result,
 	stats []AttemptStat,
@@ -316,12 +339,15 @@ func GoalSystemPromptText(comps CodesComponents, feedback GoalFeedback, summarie
 
 // goalLoopState carries the mutable state of a goal run across loops: the
 // feedback for the next loop's system prompt, the attempt summaries of
-// previous loops, the pending done-block declaration, repeated-error
-// tracking, and the terminal flags. See TheoryOfGoalMode.
+// previous loops, the pending done-block declaration, the sticky flag
+// marking that a done block has been emitted (post-done loops run on the
+// review model), repeated-error tracking, and the terminal flags. See
+// TheoryOfGoalMode and TheoryOfGoalReviewModel.
 type goalLoopState struct {
 	feedback                GoalFeedback
 	summaries               GoalLoopSummaries
 	pendingDoneVerification bool
+	doneDeclared            bool
 	lastErrMsg              string
 	consecutiveErrors       int
 	achieved                bool
@@ -376,8 +402,9 @@ func (s *goalLoopState) applyLoopError(loopsRun int, err error, reporter goalRep
 // applyLoopSuccess folds a successful loop into the runner state:
 // uncorrected malformed blocks carry re-emit feedback and overturn a
 // pending done declaration; a done block is a declaration that the next
-// loop verifies; a loop that applied no change blocks ends the run; a
-// clean loop with changes clears the feedback. See TheoryOfGoalMode.
+// loop verifies on the review model; a loop that applied no change
+// blocks ends the run; a clean loop with changes clears the feedback.
+// See TheoryOfGoalMode and TheoryOfGoalReviewModel.
 func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter goalReporter) bool {
 	s.consecutiveErrors = 0
 	s.lastErrMsg = ""
@@ -410,6 +437,10 @@ func (s *goalLoopState) applyLoopSuccess(loopsRun int, result Result, reporter g
 			return true
 		}
 		s.pendingDoneVerification = true
+		// The declaration switches every following loop to the review
+		// model; the flag is sticky, so the loops that carry later
+		// corrections stay on it too.
+		s.doneDeclared = true
 		s.feedback = GoalFeedback(goalDoneVerificationPrompt)
 		return false
 	}
@@ -486,10 +517,15 @@ func RunGoal(ctx context.Context, opts GoalOptions) GoalResult {
 
 	// runOneLoop executes one generation loop and folds its outcome into
 	// the runner state. It reports whether the run should stop after the
-	// loop.
+	// loop. A loop after the first done block runs on the review model
+	// when one is configured.
 	runOneLoop := func() bool {
 		loopStart := len(allStats)
-		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries)
+		reviewModel := ""
+		if state.doneDeclared {
+			reviewModel = opts.ReviewModel
+		}
+		result, stats, err := opts.Generate(ctx, loopsRun, state.feedback, state.summaries, reviewModel)
 		allStats = append(allStats, stats...)
 		for i := loopStart; i < len(allStats); i++ {
 			allStats[i].Loop = loopsRun
@@ -546,16 +582,18 @@ func appendLoopSummaries(summaries GoalLoopSummaries, loop int, stats []AttemptS
 
 // makeGoalLoopGenerator builds the per-loop generation function: each call
 // opens a fresh scope via reset, forks the loop's number, the loop's
-// feedback, and the previous loops' summaries into it, and resolves
+// feedback, the previous loops' summaries, and — when the runner requests
+// the review model — flags.ModelName into it, and resolves
 // GenerateWithResultWithStats from the forked scope, so the loop reads the
 // latest filesystem state, sees the previous loops' feedback and
-// summaries in its system prompt, and stamps its events with its loop
-// number. Generation streams to os.Stdout: in TUI
-// mode the terminal's stdout is the null device and the display captures
-// output through state decorators, so a per-loop writer would duplicate
-// output. See TheoryOfGoalMode.
+// summaries in its system prompt, stamps its events with its loop
+// number, and runs on the requested model. Generation streams to
+// os.Stdout: in TUI mode the terminal's stdout is the null device and
+// the display captures output through state decorators, so a per-loop
+// writer would duplicate output. See TheoryOfGoalMode and
+// TheoryOfGoalReviewModel.
 func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
-	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries) (Result, []AttemptStat, error) {
+	return func(ctx context.Context, loop int, feedback GoalFeedback, summaries GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 		scope := reset()
 		scope = scope.Fork(func() GoalLoop { return GoalLoop(loop) })
 		if feedback != "" {
@@ -563,6 +601,9 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 		}
 		if len(summaries) > 0 {
 			scope = scope.Fork(func() GoalLoopSummaries { return summaries })
+		}
+		if reviewModel != "" {
+			scope = scope.Fork(func() flags.ModelName { return flags.ModelName(reviewModel) })
 		}
 		var result Result
 		var stats []AttemptStat
@@ -579,18 +620,28 @@ func makeGoalLoopGenerator(reset dscope.Reset) GoalLoopGenerator {
 // reset to the resolving scope, so the command's forks (parts provider,
 // goal system prompt) apply to every loop. The goal event observer is
 // resolved from the scope, so a display front-end's fork receives the
-// goal verdicts as events. See TheoryOfGoalMode.
+// goal verdicts as events. The first configured review model becomes the
+// post-done loop model; see TheoryOfGoalReviewModel.
 func (Module) GoalRun(
 	reset dscope.Reset,
 	runReview RunReview,
 	observeGoal GoalEventObserver,
+	reviewModels ReviewModels,
 ) GoalRun {
+	reviewModel := ""
+	for _, model := range reviewModels {
+		if model != "" {
+			reviewModel = model
+			break
+		}
+	}
 	return func(ctx context.Context, output io.Writer) GoalResult {
 		return RunGoal(ctx, GoalOptions{
-			Output:     output,
-			Generate:   makeGoalLoopGenerator(reset),
-			Review:     runReview,
-			GoalEvents: observeGoal,
+			Output:      output,
+			Generate:    makeGoalLoopGenerator(reset),
+			Review:      runReview,
+			GoalEvents:  observeGoal,
+			ReviewModel: reviewModel,
 		})
 	}
 }

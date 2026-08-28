@@ -32,11 +32,14 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	output := &bytes.Buffer{}
 	calls := 0
 	var feedbacks []GoalFeedback
+	var reviewModels []string
 	result := RunGoal(context.Background(), GoalOptions{
-		Output: output,
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Output:      output,
+		ReviewModel: "review-model",
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
+			reviewModels = append(reviewModels, reviewModel)
 			return doneResult(), nil, nil
 		},
 		Review: noopReview,
@@ -59,6 +62,12 @@ func TestRunGoalConfirmsDoneAfterVerificationLoop(t *testing.T) {
 	if !strings.Contains(string(feedbacks[1]), "Verification is the primary work") {
 		t.Fatalf("verification loop feedback must state that verification is the primary work, got %q", feedbacks[1])
 	}
+	if reviewModels[0] != "" {
+		t.Fatalf("first loop review model = %q, want empty: the declaring loop runs on the default model", reviewModels[0])
+	}
+	if reviewModels[1] != "review-model" {
+		t.Fatalf("verification loop review model = %q, want \"review-model\"", reviewModels[1])
+	}
 	if !strings.Contains(output.String(), "Goal Achieved") {
 		t.Fatal("output must report the achieved goal")
 	}
@@ -69,7 +78,7 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 1 {
@@ -84,15 +93,12 @@ func TestRunGoalCarriesErrorFeedback(t *testing.T) {
 	}
 }
 
-// TestRunGoalCarriesPreviousLoopSummaries verifies that every loop after
-// the first receives the accumulated summaries of all previous loops,
-// including summaries from a loop that ended in an error.
 func TestRunGoalCarriesPreviousLoopSummaries(t *testing.T) {
 	calls := 0
 	var summaries []GoalLoopSummaries
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, s GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, s GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			summaries = append(summaries, s)
 			if calls == 1 {
@@ -128,7 +134,7 @@ func TestRunGoalStopsAfterConsecutiveSameErrors(t *testing.T) {
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, errors.New("persistent failure")
 		},
@@ -150,7 +156,7 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	var feedbacks []GoalFeedback
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			feedbacks = append(feedbacks, feedback)
 			if calls == 2 {
@@ -174,16 +180,12 @@ func TestRunGoalParseErrorsOverturnDoneDeclaration(t *testing.T) {
 	}
 }
 
-// TestRunGoalStopsWhenLoopAppliesNoChanges verifies the no-change
-// termination rule: a successful loop whose diff set is empty ends the
-// run after that loop, serving analytical tasks that need no code
-// changes. See TheoryOfGoalMode.
 func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
 	output := &bytes.Buffer{}
 	calls := 0
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			return Result{}, nil, nil
 		},
@@ -203,13 +205,11 @@ func TestRunGoalStopsWhenLoopAppliesNoChanges(t *testing.T) {
 	}
 }
 
-// TestRunGoalContinuesWhenLoopAppliesChanges verifies that a loop with
-// a non-empty diff set still continues to the next loop.
 func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
 				return Result{
@@ -227,16 +227,11 @@ func TestRunGoalContinuesWhenLoopAppliesChanges(t *testing.T) {
 	}
 }
 
-// TestRunGoalDoneDeclarationSkipsNoChangeStop verifies that a pending
-// done declaration exempts the following verification loop from the
-// no-change stop: a verification that corrects nothing and omits the
-// done block falls through to the clean-loop path, and the run
-// continues until a later no-change loop ends it.
 func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 	calls := 0
 	RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			calls++
 			if calls == 1 {
 				return doneResult(), nil, nil
@@ -257,7 +252,7 @@ func TestRunGoalDoneDeclarationSkipsNoChangeStop(t *testing.T) {
 func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: &bytes.Buffer{},
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			stats := []AttemptStat{{Attempt: 1, PromptTokens: 10}}
 			return doneResult(), stats, nil
 		},
@@ -274,16 +269,12 @@ func TestRunGoalAggregatesStatsWithLoopNumbers(t *testing.T) {
 	}
 }
 
-// TestRunGoalReportsEventsThroughObserver verifies that a goal event
-// observer receives the run's verdict as the only goal event while the
-// output writer stays empty: no loop banners and no statistics events
-// are reported. See TheoryOfGoalMode and TheoryOfLoopEvents.
 func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	output := &bytes.Buffer{}
 	var events []Event
 	result := RunGoal(context.Background(), GoalOptions{
 		Output: output,
-		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries) (Result, []AttemptStat, error) {
+		Generate: func(ctx context.Context, _ int, feedback GoalFeedback, _ GoalLoopSummaries, _ string) (Result, []AttemptStat, error) {
 			return doneResult(), []AttemptStat{{Attempt: 1, PromptTokens: 10}}, nil
 		},
 		Review: noopReview,
@@ -309,6 +300,72 @@ func TestRunGoalReportsEventsThroughObserver(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatalf("expected the output writer to stay empty when the observer is set, got %q", output.String())
+	}
+}
+
+// TestRunGoalReviewModelStickyAfterOverturnedDeclaration verifies that
+// the review-model switch is sticky: after the first done block, the
+// loops that carry later corrections — including those following a
+// declaration overturned by parse errors — keep running on the review
+// model. See TheoryOfGoalReviewModel.
+func TestRunGoalReviewModelStickyAfterOverturnedDeclaration(t *testing.T) {
+	calls := 0
+	var reviewModels []string
+	RunGoal(context.Background(), GoalOptions{
+		Output:      &bytes.Buffer{},
+		ReviewModel: "review-model",
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+			calls++
+			reviewModels = append(reviewModels, reviewModel)
+			if calls == 2 {
+				return Result{
+					ParseErrors: []*blocks.BlockParseError{
+						{BlockKind: "change", Boundary: "甲子"},
+					},
+				}, nil, nil
+			}
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	// Loop 1 declares done, loop 2's parse errors overturn the
+	// declaration, loop 3 declares again, loop 4 confirms.
+	if calls != 4 {
+		t.Fatalf("ran %d loops, want 4", calls)
+	}
+	if reviewModels[0] != "" {
+		t.Fatalf("first loop review model = %q, want empty", reviewModels[0])
+	}
+	for i, model := range reviewModels[1:] {
+		if model != "review-model" {
+			t.Fatalf("loop %d review model = %q, want \"review-model\" (the switch is sticky)", i+2, model)
+		}
+	}
+}
+
+// TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel verifies
+// that post-done loops keep the default model when no review model is
+// configured. See TheoryOfGoalReviewModel.
+func TestRunGoalPostDoneLoopsKeepDefaultModelWithoutReviewModel(t *testing.T) {
+	var reviewModels []string
+	result := RunGoal(context.Background(), GoalOptions{
+		Output: &bytes.Buffer{},
+		Generate: func(ctx context.Context, _ int, _ GoalFeedback, _ GoalLoopSummaries, reviewModel string) (Result, []AttemptStat, error) {
+			reviewModels = append(reviewModels, reviewModel)
+			return doneResult(), nil, nil
+		},
+		Review: noopReview,
+	})
+	if !result.Achieved {
+		t.Fatal("goal must be achieved after two consecutive done loops")
+	}
+	if result.LoopsRun != 2 {
+		t.Fatalf("ran %d loops, want 2", result.LoopsRun)
+	}
+	for i, model := range reviewModels {
+		if model != "" {
+			t.Fatalf("loop %d review model = %q, want empty (no review model configured)", i+1, model)
+		}
 	}
 }
 
