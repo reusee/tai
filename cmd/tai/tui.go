@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/tty"
@@ -201,6 +203,53 @@ buffers, tab machine, scroll offsets, events, and session flags.
 // TheoryOfTUI and taiui.TheoryOfTabs.
 const logsMaxBoxHeight = 3
 
+const TheoryOfTUIChatInput = `
+TUI mode replaces the liner-based chat prompt with the TUI's own input
+bar: the terminal has exactly one input reader (taiui.ReadKeys), and a
+liner prompt would open a second raw-mode reader on the same tty,
+racing for keystrokes and resetting the terminal mode under the TUI —
+the reported "TUI slows down and cannot switch tabs after ai output"
+was exactly that race, because the ai command's idle handler prompted
+with liner once the first generation finished. forkTUIDisplay forks
+pipeline.ChatInput to TUI.ChatInput, so both interactive chat paths
+(the ai command's OnIdle handler and the next command's chat phase) get
+the bar in TUI mode while plain command-line mode keeps the liner
+default. See pipeline.TheoryOfChatInput.
+
+The bar is non-modal and always rendered as the bottom row of the
+Output tab — part of the tab's layout, never a screen-wide overlay —
+so the rest of the interface stays operable while typing: pointer
+events route through the ordinary mouse path (wheel and drag scrolling,
+press-driven tab switching), and navigation keys (arrows, page keys,
+tab) fall through to the normal dispatch instead of being consumed.
+Only printable runes and line-editing keys are consumed by the bar;
+keys that double as navigation bindings (q, 1..3, s, [, ]) are typed
+as characters while the bar is focused, and Esc (or Ctrl-C) releases
+the keyboard back to navigation without cancelling anything.
+
+Focus is idle-driven and pointer-driven: the bar takes focus when a
+ChatInput call arrives (the model is idle and typing is the natural
+next action) and when the user clicks the bar's row, and it keeps
+focus after a submit, so a line typed while the model generated is
+sent with the next Enter. A left press outside the bar's row releases
+the focus; wheel events never change it. While focused, Enter submits
+the line ONLY when a ChatInput call is actually waiting — during
+generation typing works but Enter is a no-op and the line is kept, so
+the content reaches the model's next round. Esc and Ctrl-C only
+unfocus; the blocked ChatInput keeps waiting, and io.EOF reaches it
+only through the quit path (cancelChatInput), so ending the session
+always goes through the quit confirmation.
+
+The terminal cursor is shown while the bar is focused — the focused
+bar renders an Input element whose CursorAt records the editing
+position in the frame — and hidden on the focus-loss transition,
+written from render after the frame is presented so the sequence stays
+serial with the screen's output. The Output tab's scroll view shrinks
+by one row to make room for the bar (tuiPaneHeight), and the pane
+arithmetic — scroll updates, page scrolling, section jumps — uses the
+same adjusted height so the view and the layout never disagree.
+`
+
 const TheoryOfTUIHandoff = `
 The Output tab title reflects the handoff process: while a handoff
 request is being generated (see pipeline.TheoryOfHandoff), the title shows
@@ -259,6 +308,14 @@ expanded tab's scroll area focuses the tab (when it was not already
 focused) and records the origin of a drag-scroll. Presses outside every
 panel, middle and right presses, and no-button motion (mode 1003) are
 ignored.
+
+The Output tab's input row is the one press target with its own
+semantics: a left press on the chat input bar's row focuses the input
+instead of driving tab interaction (the Output tab takes the keyboard
+focus with it, so the scroll keys act on the pane the bar belongs to),
+and a left press anywhere else releases the input focus before the
+ordinary press handling runs. Wheel events never change the input
+focus. See TheoryOfTUIChatInput.
 
 Drag-scrolling follows the pointer: holding the left button inside a
 scroll area and dragging up reveals earlier content, dragging down
@@ -359,6 +416,14 @@ var (
 type tuiOutputState struct {
 	upstream generators.State
 	tui      *TUI
+}
+
+// chatInputResult carries one chat input outcome to the blocked
+// ChatInput call: the submitted line when ok is true, or a
+// cancellation when ok is false. See TheoryOfTUIChatInput.
+type chatInputResult struct {
+	line string
+	ok   bool
 }
 
 func (s tuiOutputState) AppendContent(content *generators.Content) (generators.State, error) {
@@ -524,6 +589,23 @@ type TUI struct {
 	// See TheoryOfTUI.
 	showHelp bool
 
+	// Chat input bar state, guarded by mu. The bar is always rendered
+	// as the bottom row of the Output tab; inputFocused reports whether
+	// it holds the keyboard. inputResult is non-nil while a ChatInput
+	// call is blocked on the generation goroutine (the model is idle);
+	// Enter delivers the typed line only then, and the pending line
+	// survives across calls so text typed while the model generated is
+	// sent with the next submit. See TheoryOfTUIChatInput.
+	inputFocused bool
+	inputPrompt  string
+	inputLine    []rune
+	inputCursor  int
+	inputResult  chan chatInputResult
+	// wasInputFocused tracks the input focus across renders to write
+	// the terminal cursor visibility sequence exactly on the
+	// transition. See TheoryOfTUIChatInput.
+	wasInputFocused bool
+
 	// showThoughts reports whether raw reasoning thoughts are displayed
 	// in the Output tab. It is false only when -no-thoughts is set;
 	// -summarize-thoughts never suppresses the raw stream in the TUI —
@@ -637,6 +719,149 @@ func (t *TUI) Writer() io.Writer {
 // are not written to stderr in TUI mode.
 func (t *TUI) LogsWriter() io.Writer {
 	return logsWriter{t}
+}
+
+func (t *TUI) ChatInput(prompt string) (string, error) {
+	ch := make(chan chatInputResult, 1)
+	t.mu.Lock()
+	// A quit confirmation armed before the bar took focus must not fire
+	// on a later quit key: while the bar is focused, q types text.
+	t.quit.Cancel()
+	t.inputPrompt = prompt
+	t.inputResult = ch
+	// The model went idle: typing is the natural next action, so the
+	// bar takes the keyboard. The pending typed line is preserved, so
+	// text typed while the model generated is submitted with the first
+	// Enter. See TheoryOfTUIChatInput.
+	t.inputFocused = true
+	t.mu.Unlock()
+	t.notify()
+	res := <-ch
+	if !res.ok {
+		return "", io.EOF
+	}
+	return res.line, nil
+}
+
+func (t *TUI) handleChatInputKey(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.inputFocused {
+		return false
+	}
+	switch {
+	case key == "enter":
+		// Submit only while a ChatInput call waits on the bar (the
+		// model is idle); during generation the key is a no-op that
+		// keeps the typed line for the next submit. The key is always
+		// consumed so it never triggers the unfocused Enter binding.
+		// See TheoryOfTUIChatInput.
+		if t.inputResult != nil {
+			t.deliverInputLocked(chatInputResult{line: string(t.inputLine), ok: true})
+		}
+	case key == "esc", key == "ctrl-c":
+		// Release the keyboard back to navigation; the blocked
+		// ChatInput keeps waiting and the typed line is kept. io.EOF
+		// reaches a waiting input only through the quit path. See
+		// TheoryOfTUIChatInput.
+		t.inputFocused = false
+	case key == "backspace":
+		if t.inputCursor > 0 {
+			t.inputLine = append(t.inputLine[:t.inputCursor-1], t.inputLine[t.inputCursor:]...)
+			t.inputCursor--
+		}
+	case key == "delete":
+		if t.inputCursor < len(t.inputLine) {
+			t.inputLine = append(t.inputLine[:t.inputCursor], t.inputLine[t.inputCursor+1:]...)
+		}
+	case key == "left":
+		if t.inputCursor > 0 {
+			t.inputCursor--
+		}
+	case key == "right":
+		if t.inputCursor < len(t.inputLine) {
+			t.inputCursor++
+		}
+	case key == "home", key == "ctrl-a":
+		t.inputCursor = 0
+	case key == "end", key == "ctrl-e":
+		t.inputCursor = len(t.inputLine)
+	case key == "space":
+		t.insertInputRune(' ')
+	default:
+		// ReadKeys emits printable ASCII and decoded multi-byte
+		// characters (CJK, emoji) as the character itself; a single
+		// printable rune inserts at the cursor, so keys that double as
+		// navigation bindings (q, 1..3, s, [, ]) are typed as text.
+		// Every other key — arrows, page keys, tab, function keys —
+		// falls through to the normal dispatch, so the TUI stays
+		// operable while typing. See TheoryOfTUIChatInput.
+		if r, size := utf8.DecodeRuneInString(key); len(key) > 0 && size == len(key) && unicode.IsPrint(r) {
+			t.insertInputRune(r)
+			return true
+		}
+		return false
+	}
+	return true
+}
+
+// insertInputRune inserts one rune at the input cursor, shifting the
+// rest of the line. The caller holds t.mu. See TheoryOfTUIChatInput.
+func (t *TUI) insertInputRune(r rune) {
+	t.inputLine = append(t.inputLine, 0)
+	copy(t.inputLine[t.inputCursor+1:], t.inputLine[t.inputCursor:])
+	t.inputLine[t.inputCursor] = r
+	t.inputCursor++
+}
+
+func (t *TUI) deliverInputLocked(res chatInputResult) {
+	ch := t.inputResult
+	t.inputPrompt = ""
+	t.inputLine = nil
+	t.inputCursor = 0
+	t.inputResult = nil
+	// The bar keeps its focus after the delivery, so typing continues
+	// right into the next round. See TheoryOfTUIChatInput.
+	if ch != nil {
+		ch <- res
+	}
+}
+
+func (t *TUI) cancelChatInput() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.inputFocused = false
+	if t.inputResult != nil {
+		t.deliverInputLocked(chatInputResult{})
+	}
+}
+
+// focusInputLocked focuses the chat input bar: typed keys edit the
+// line, and the Output tab — the pane the bar belongs to — takes the
+// keyboard focus with it so the scroll keys act on that pane. An armed
+// quit confirmation is cancelled because q types text while the bar is
+// focused. The caller holds t.mu. See TheoryOfTUIChatInput.
+func (t *TUI) focusInputLocked() {
+	t.inputFocused = true
+	t.quit.Cancel()
+	if t.tabs.Focus != 0 {
+		t.tabs.FocusTab(0)
+	}
+}
+
+// inputRowHit reports whether the given cell lies on the chat input
+// bar's row: the bottom row of the expanded Output tab's box, the same
+// row buildRoot renders the bar on. The caller holds t.mu. See
+// TheoryOfTUIChatInput.
+func (t *TUI) inputRowHit(x, y int) bool {
+	if !t.tabs.Expanded[0] {
+		return false
+	}
+	box := t.tabs.Boxes(t.width, t.height)[0]
+	if box.Height() <= 1 || box.Width() <= 0 {
+		return false
+	}
+	return y == box.Bottom-1 && x >= box.Left && x < box.Right
 }
 
 func (t *TUI) captureContent(content *generators.Content) {
@@ -803,12 +1028,27 @@ func (t *TUI) Stop() error {
 }
 
 func (t *TUI) handleKey(key string) bool {
+	// Pointer events route through the ordinary mouse path whether or
+	// not the chat input bar is focused: wheel and drag scrolling and
+	// press-driven tab switching keep working while typing, and the
+	// press target decides the input focus (a press on the bar's row
+	// focuses it; a press elsewhere releases it). See
+	// TheoryOfTUIChatInput and TheoryOfMouseSupport.
+	if strings.HasPrefix(key, taiui.MouseKeyPrefix) {
+		t.handleMouseKey(key)
+		return false
+	}
+	// While the chat input bar is focused, editing keys edit the
+	// pending line; every other key falls through to the dispatch below
+	// so the TUI stays operable while typing. See TheoryOfTUIChatInput.
+	if t.handleChatInputKey(key) {
+		return false
+	}
 	// taiui.ReadKeys returns generic key names ("q", "s", "?", "[", "]");
 	// mapTUIKey translates the TUI's key bindings to semantic names so
 	// the dispatch below reads as a table of actions, not a table of
 	// characters. Generic key names the TUI does not bind (arrows,
-	// function keys, mouse events) pass through unchanged. See
-	// TheoryOfTUIKeyMapping.
+	// function keys) pass through unchanged. See TheoryOfTUIKeyMapping.
 	key = mapTUIKey(key)
 	// Any key other than a quit key cancels a pending quit
 	// confirmation before its normal processing, so an accidental q
@@ -817,8 +1057,6 @@ func (t *TUI) handleKey(key string) bool {
 		t.cancelConfirmQuit()
 	}
 	switch {
-	case strings.HasPrefix(key, taiui.MouseKeyPrefix):
-		t.handleMouseKey(key)
 	case key == "tab":
 		t.cycleFocus()
 	case key == "1":
@@ -855,6 +1093,10 @@ func (t *TUI) handleKey(key string) bool {
 		// The first quit key press shows a confirmation bar; a second
 		// press confirms the quit. See TheoryOfTUI.
 		if t.handleQuitKey() {
+			// Release any chat input waiting on the input bar so the
+			// blocked generation loop can wind down as the session
+			// ends. See TheoryOfTUIChatInput.
+			t.cancelChatInput()
 			t.mu.Lock()
 			height := t.height
 			t.mu.Unlock()
@@ -989,6 +1231,17 @@ func (t *TUI) handleMouseKey(key string) {
 	case "wheel-down":
 		t.mouse.Wheel(t.tabs, t.scrolls[:], t.width, t.height, x, y, 1)
 	case "left":
+		if t.inputRowHit(x, y) {
+			// A press on the chat input bar's row focuses the bar
+			// instead of driving tab interaction, so the user can click
+			// the input and type. See TheoryOfTUIChatInput.
+			t.focusInputLocked()
+			return
+		}
+		// A press anywhere else releases the input focus before the
+		// ordinary press handling runs, so clicking a pane hands the
+		// keyboard back to navigation. See TheoryOfTUIChatInput.
+		t.inputFocused = false
 		t.mouse.Press(t.tabs, t.scrolls[:], t.width, t.height, x, y)
 		// A press on a handoff node's display rows toggles its
 		// expansion. See TheoryOfEventTree.
@@ -1258,8 +1511,11 @@ func (t *TUI) pageScroll(direction int) {
 	if box.Width() <= 0 || box.Height() <= 0 {
 		return
 	}
-	// The scroll view is the panel box minus the one-row label strip.
-	paneHeight := taiui.PaneHeight(box)
+	// The scroll view is the panel box minus the one-row label strip,
+	// and the Output tab's input bar row on top of it; tuiPaneHeight
+	// applies both so the page size matches the rendered pane. See
+	// TheoryOfTUIChatInput.
+	paneHeight := tuiPaneHeight(idx, box)
 	t.scrolls[idx].PageScroll(direction, paneHeight)
 }
 
@@ -1297,8 +1553,9 @@ func (t *TUI) jumpToTransition(direction int) {
 	// The anchor offset is clamped against the fresh display so a stale
 	// offset (e.g., the tail sentinel before the first render) anchors
 	// the jump at the content end. The pane height is the panel box
-	// minus its one-row label strip, matching render's scroll updates.
-	paneHeight := taiui.PaneHeight(box)
+	// minus its one-row label strip and the Output tab's input bar row,
+	// matching render's scroll updates. See TheoryOfTUIChatInput.
+	paneHeight := tuiPaneHeight(0, box)
 	offset := taiui.ClampOffset(t.scrolls[0].Offset, len(display), paneHeight)
 	// The stops come from taiui.TransitionJumpStops (each transition
 	// contributes the exit stop and the entry stop) and the selection —
@@ -1356,10 +1613,29 @@ func (t *TUI) render() {
 		if !t.tabs.Expanded[idx] || boxes[idx].Width() <= 0 || boxes[idx].Height() <= 0 {
 			continue
 		}
-		t.scrolls[idx].Update(len(displays[idx]), taiui.PaneHeight(boxes[idx]))
+		// tuiPaneHeight reserves every panel's one-row label strip plus
+		// the Output tab's input bar row, matching the boxes buildRoot
+		// renders. See TheoryOfTUIChatInput.
+		t.scrolls[idx].Update(len(displays[idx]), tuiPaneHeight(idx, boxes[idx]))
 	}
 
 	taiui.Render(buildRoot(t, width, height, displays), t.screen)
+
+	// The chat input bar carries the terminal cursor while it is
+	// focused: the cursor is shown on the focus gain and hidden on the
+	// loss, written after the frame is presented so the sequence stays
+	// serial with the screen's output. Between transitions the Input
+	// element's CursorAt records the editing position in the frame and
+	// the screen repositions the cursor on its own. See
+	// TheoryOfTUIChatInput.
+	if t.inputFocused != t.wasInputFocused {
+		if t.inputFocused {
+			io.WriteString(t.tty, taiui.CursorRestoreSequence)
+		} else {
+			io.WriteString(t.tty, taiui.CursorHideSequence)
+		}
+		t.wasInputFocused = t.inputFocused
+	}
 }
 
 var (
@@ -1424,6 +1700,11 @@ func forkTUIDisplay(scope dscope.Scope, tui *TUI) dscope.Scope {
 		// Events tab through the goal event observer below. See
 		// TheoryOfCommandOutput and TheoryOfTUI.
 		func() Output { return Output(tui.Writer()) },
+		// The TUI owns the terminal's single key reader, so interactive
+		// chat reads lines through the TUI's input bar instead of a
+		// liner prompt racing for the same tty. See TheoryOfTUIChatInput
+		// and pipeline.TheoryOfChatInput.
+		func() pipeline.ChatInput { return pipeline.ChatInput(tui.ChatInput) },
 		// Handoff generation reaches the Output tab through the
 		// tuiOutputState decorator, so each part is displayed with its
 		// role color and thought coloring — the same path as regular

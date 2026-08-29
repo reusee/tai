@@ -20,12 +20,36 @@ import (
 // chains generate -> chat so each user input triggers a generation round.
 type BuildChat func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder
 
-func (Module) BuildChatPhase(
-	buildGen generators.BuildGenerate,
-	logger logs.Logger,
-	tap debugs.Tap,
-) (buildChat BuildChat) {
+const TheoryOfChatInput = `
+Interactive chat reads lines through the injected ChatInput function so
+the terminal owner controls how a prompt is presented. The default
+provider is a liner prompt with persisted history, for plain
+command-line mode where the process owns stdin and stdout. A TUI session
+owns the terminal through its own raw-mode key reader; a second
+raw-mode reader on the same tty would race for input bytes and reset
+the terminal mode under the TUI, freezing tab navigation — so a TUI
+forks ChatInput with an implementation that reads through the TUI's
+input channel instead. Both interactive chat paths — the idle handler
+(BuildChatIdle) and the chat phase (BuildChatPhase) — read lines
+exclusively through ChatInput and never construct a reader themselves.
+Implementations return io.EOF when the user ends the input session; the
+liner default maps ErrPromptAborted to io.EOF so every implementation
+shares one contract.
+`
 
+// ChatInput reads one line of interactive user input, displaying the
+// given prompt. It blocks until a line is submitted and returns it
+// without a trailing newline, or returns io.EOF when the user ends the
+// input session. See TheoryOfChatInput.
+type ChatInput func(prompt string) (string, error)
+
+// ChatInput provider: the default interactive line reader — a liner
+// prompt with history persisted to the user config directory, suitable
+// for plain command-line mode where the process owns stdin and stdout.
+// A TUI forks this provider with its input-bar implementation, because
+// the TUI owns the terminal's key reader and a second raw-mode reader
+// would compete for the same input bytes. See TheoryOfChatInput.
+func (Module) ChatInput(logger logs.Logger) ChatInput {
 	getHistoryPath := sync.OnceValues(func() (string, error) {
 		dir, err := os.UserConfigDir()
 		if err != nil {
@@ -34,50 +58,70 @@ func (Module) BuildChatPhase(
 		return filepath.Join(dir, "ai-chat-history.json"), nil
 	})
 
-	buildChat = func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
+	return func(prompt string) (string, error) {
+		line := liner.NewLiner()
+		defer line.Close()
+		line.SetCtrlCAborts(true)
+		line.SetMultiLineMode(true)
+
+		historyPath, err := getHistoryPath()
+		if err != nil {
+			logger.Warn("get history path error", "err", err)
+		} else if f, err := os.Open(historyPath); err == nil {
+			line.ReadHistory(f)
+			f.Close()
+		}
+
+		input, err := line.Prompt(prompt)
+		if err != nil {
+			if err == liner.ErrPromptAborted {
+				return "", io.EOF
+			}
+			return "", err
+		}
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return input, nil
+		}
+		line.AppendHistory(input)
+		if historyPath != "" {
+			if err := os.MkdirAll(filepath.Dir(historyPath), 0755); err != nil {
+				logger.Warn("create history dir error", "err", err)
+			} else if f, err := os.Create(historyPath); err != nil {
+				logger.Warn("create history file error", "err", err)
+			} else {
+				line.WriteHistory(f)
+				f.Close()
+			}
+		}
+		return input, nil
+	}
+}
+
+// BuildChatPhase provider: reads the interactive line through the
+// injected ChatInput — the liner default in command-line mode, the TUI
+// input bar in TUI mode — so the chat phase never opens a second reader
+// on a terminal the display already owns. See TheoryOfChatInput.
+func (Module) BuildChatPhase(
+	buildGen generators.BuildGenerate,
+	chatInput ChatInput,
+	tap debugs.Tap,
+) (buildChat BuildChat) {
+	return func(generator generators.Generator, options *generators.GenerateOptions) generators.PhaseBuilder {
 		return func(cont generators.Phase) generators.Phase {
 			return func(ctx context.Context, state generators.State) (generators.Phase, generators.State, error) {
 
-				line := liner.NewLiner()
-				defer line.Close()
-				line.SetCtrlCAborts(true)
-				line.SetMultiLineMode(true)
-
-				historyPath, err := getHistoryPath()
-				if err != nil {
-					logger.Warn("get history path error", "err", err)
-				} else {
-					if f, err := os.Open(historyPath); err == nil {
-						line.ReadHistory(f)
-						f.Close()
-					}
-				}
-
 				var input string
 				for input == "" {
-					input, err = line.Prompt(">> ")
+					var err error
+					input, err = chatInput(">> ")
 					if err != nil {
-						switch err {
-						case io.EOF, liner.ErrPromptAborted:
+						if err == io.EOF {
 							return nil, nil, nil
 						}
 						return nil, nil, err
 					}
 					input = strings.TrimSpace(input)
-				}
-				line.AppendHistory(input)
-
-				if historyPath != "" {
-					if err := os.MkdirAll(filepath.Dir(historyPath), 0755); err != nil {
-						logger.Warn("create history dir error", "err", err)
-					} else {
-						if f, err := os.Create(historyPath); err != nil {
-							logger.Warn("create history file error", "err", err)
-						} else {
-							line.WriteHistory(f)
-							f.Close()
-						}
-					}
 				}
 
 				switch input {
@@ -139,6 +183,7 @@ func (Module) BuildChatPhase(
 				}
 
 				input += "\n\n"
+				var err error
 				state, err = state.AppendContent(&generators.Content{
 					Role: generators.RoleUser,
 					Parts: []generators.Part{
@@ -157,7 +202,6 @@ func (Module) BuildChatPhase(
 			}
 		}
 	}
-	return
 }
 
 const TheoryOfIdleHandler = `
@@ -192,56 +236,21 @@ type IdleHandler func(ctx context.Context, state generators.State) (generators.S
 // before prompting the user for input. See TheoryOfIdleHandler.
 type BuildChatIdle func(generator generators.Generator, options *generators.GenerateOptions) IdleHandler
 
+// BuildChatIdle provider: reads lines through the injected ChatInput —
+// the liner default in command-line mode, the TUI input bar in TUI
+// mode — so the idle handler never opens a second reader on a terminal
+// the display already owns. See TheoryOfChatInput and
+// TheoryOfIdleHandler.
 func (Module) BuildChatIdle(
-	logger logs.Logger,
+	chatInput ChatInput,
 	tap debugs.Tap,
 ) BuildChatIdle {
-	getHistoryPath := sync.OnceValues(func() (string, error) {
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(dir, "ai-chat-history.json"), nil
-	})
-
 	return func(generator generators.Generator, options *generators.GenerateOptions) IdleHandler {
 		return func(ctx context.Context, state generators.State) (generators.State, bool, error) {
-			line := liner.NewLiner()
-			defer line.Close()
-			line.SetCtrlCAborts(true)
-			line.SetMultiLineMode(true)
-
-			historyPath, err := getHistoryPath()
-			if err != nil {
-				logger.Warn("get history path error", "err", err)
-			} else {
-				if f, err := os.Open(historyPath); err == nil {
-					line.ReadHistory(f)
-					f.Close()
-				}
-			}
-
-			saveHistory := func() {
-				if historyPath == "" {
-					return
-				}
-				if err := os.MkdirAll(filepath.Dir(historyPath), 0755); err != nil {
-					logger.Warn("create history dir error", "err", err)
-					return
-				}
-				if f, err := os.Create(historyPath); err != nil {
-					logger.Warn("create history file error", "err", err)
-				} else {
-					line.WriteHistory(f)
-					f.Close()
-				}
-			}
-
 			for {
-				input, err := line.Prompt(">> ")
+				input, err := chatInput(">> ")
 				if err != nil {
-					if err == io.EOF || err == liner.ErrPromptAborted {
-						saveHistory()
+					if err == io.EOF {
 						return state, false, nil
 					}
 					return state, false, err
@@ -250,8 +259,6 @@ func (Module) BuildChatIdle(
 				if input == "" {
 					continue
 				}
-				line.AppendHistory(input)
-				saveHistory()
 
 				switch input {
 

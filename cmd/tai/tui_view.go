@@ -1,6 +1,9 @@
 package main
 
 import (
+	"unicode/utf8"
+
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/reusee/tai/taiui"
 )
 
@@ -49,6 +52,20 @@ func wrappedDisplay(t *TUI, idx int, box taiui.Box) []taiui.Line {
 	return nil
 }
 
+// tuiPaneHeight returns the scroll view height of tab idx's box: every
+// panel reserves its one-row label strip (taiui.PaneHeight), and the
+// Output tab reserves one more row for the chat input bar at its
+// bottom, so its scroll view is two rows shorter than the box. Every
+// pane-height consumer — the scroll updates in render, page scrolling,
+// and the section jumps — must use this helper so the view and the
+// layout never disagree. See TheoryOfTUIChatInput.
+func tuiPaneHeight(idx int, box taiui.Box) int {
+	if idx == 0 {
+		return max(box.Height()-2, 1)
+	}
+	return taiui.PaneHeight(box)
+}
+
 var tuiHelpLines = []string{
 	"1 / 2 / 3\tselect tab; press focused tab again to collapse",
 	"tab\tcycle focus among expanded tabs",
@@ -57,11 +74,12 @@ var tuiHelpLines = []string{
 	"page up / down\tscroll focused pane by page",
 	"home / end\tjump to start / end of focused pane",
 	"[ / ]\tjump to previous / next section start or end",
-	"enter\texpand / collapse the latest handoff summary",
-	"click\tselect / toggle tab under cursor",
+	"enter\tsend the input line when focused; toggle latest handoff otherwise",
+	"click\tselect / toggle tab under cursor; click the input row to focus input",
 	"wheel / drag\tscroll pane under cursor",
 	"m\ttoggle mouse reporting (off: select & copy in the terminal)",
 	"q / Ctrl-C\tquit (press again to confirm)",
+	"input bar\tbottom row of the output tab; type anytime, esc releases keys",
 	"?\ttoggle this help overlay",
 }
 
@@ -73,13 +91,27 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		if i == 0 {
 			label, highlight = outputTabLabel(t.finished, t.generating, t.handoff)
 		}
+		box := boxes[i]
+		var inputBar taiui.Element
+		if i == 0 && t.tabs.Expanded[0] && box.Height() > 1 && box.Width() > 0 {
+			// The chat input bar is the bottom row of the Output tab's
+			// box: the panel above it shrinks by one row and the bar
+			// spans the tab's width, so the bar is part of the tab's
+			// layout rather than a screen-wide overlay. See
+			// TheoryOfTUIChatInput.
+			inputBar = chatInputBar(box, t.inputFocused, t.inputPrompt, t.inputLine, t.inputCursor)
+			box.Bottom--
+		}
 		panel := taiui.TabPanel(
-			boxes[i], i+1, tabNames[i], label, highlight,
+			box, i+1, tabNames[i], label, highlight,
 			t.tabs.Expanded[i], t.tabs.Focus == i, t.tabs.Unseen[i],
 			displays[i], t.scrolls[i], panelStyle,
 		)
 		if panel != nil {
 			elements = append(elements, panel)
+		}
+		if inputBar != nil {
+			elements = append(elements, inputBar)
 		}
 	}
 	root := taiui.Overlay(elements...)
@@ -96,4 +128,27 @@ func buildRoot(t *TUI, width, height int, displays [3][]taiui.Line) taiui.Elemen
 		root = taiui.Overlay(root, taiui.QuitConfirmBar(width, height))
 	}
 	return root
+}
+
+func chatInputBar(box taiui.Box, focused bool, prompt string, line []rune, cursor int) taiui.Element {
+	if prompt == "" {
+		prompt = ">> "
+	}
+	text := prompt + string(line)
+	// A focused bar shows the bright text and the terminal cursor at
+	// the editing position (the Input element records it in the frame);
+	// an unfocused bar keeps the text in a dimmer foreground so the
+	// focus state is visible at a glance. See TheoryOfTUIChatInput.
+	var input taiui.Element
+	if focused {
+		input = taiui.Input(text, utf8.RuneCountInString(prompt)+cursor, taiui.FGColor(color.PaletteColor(15)))
+	} else {
+		input = taiui.Text(text, taiui.FGColor(color.PaletteColor(8)))
+	}
+	return taiui.Rect(
+		taiui.Box{Top: box.Bottom - 1, Left: box.Left, Bottom: box.Bottom, Right: box.Right},
+		taiui.Fill(true),
+		taiui.BGColor(taiui.HexColor(tabFocusBG)),
+		input,
+	)
 }
