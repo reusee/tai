@@ -235,21 +235,22 @@ func TestRunEmitsRequestEvent(t *testing.T) {
 			"temperature 0.5",
 			"effort low",
 			"max tokens 4096",
-			"thinking tokens default",
 			"context 100000",
 		} {
 			if !strings.Contains(requestEv.Detail, want) {
 				t.Fatalf("request detail %q missing %q", requestEv.Detail, want)
 			}
 		}
+		if strings.Contains(requestEv.Detail, "thinking tokens") {
+			t.Fatalf("request detail %q must omit unset thinking tokens", requestEv.Detail)
+		}
 	})
 }
 
 // TestDescribeRequest verifies the effective-value resolution of the
 // request description: the temperature and effort flags override the
-// spec fields, unset values render as "default", and the model
-// identity and token limits come from the spec. See
-// TheoryOfLoopEvents.
+// spec fields, unset values are omitted, and the model identity and
+// token limits come from the spec. See TheoryOfLoopEvents.
 func TestDescribeRequest(t *testing.T) {
 	specTemperature := float32(0.2)
 	maxTokens := 8192
@@ -265,11 +266,13 @@ func TestDescribeRequest(t *testing.T) {
 		"temperature 0.2",
 		"effort low",
 		"max tokens 8192",
-		"thinking tokens default",
 	} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail %q missing %q", detail, want)
 		}
+	}
+	if strings.Contains(detail, "thinking tokens") {
+		t.Fatalf("detail %q must omit unset thinking tokens", detail)
 	}
 
 	flagTemperature := float32(0.9)
@@ -287,6 +290,14 @@ func TestDescribeRequest(t *testing.T) {
 	}
 	if strings.Contains(detail, "family") {
 		t.Fatalf("unset family must be omitted, got %q", detail)
+	}
+
+	// A spec with no optional fields set renders the model identity
+	// alone: every default value is omitted.
+	bare := describeRequest(generators.Spec{Model: "model-bare"},
+		generators.TemperatureFlag{}, generators.EffortFlag(""))
+	if want := "model model-bare"; bare != want {
+		t.Fatalf("bare spec detail: want %q, got %q", want, bare)
 	}
 }
 

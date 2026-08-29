@@ -994,45 +994,35 @@ func (ls *loopState) runGeneration() (generationResult, error) {
 // overrides it. Max generate tokens come from the spec: every built-in
 // command passes nil GenerateOptions, so the spec field is the
 // effective limit; flags.MaxTokens bounds only the input budget and is
-// not part of the request. Unset values render as "default". See
-// TheoryOfLoopEvents.
+// not part of the request. Unset values are omitted from the detail.
+// See TheoryOfLoopEvents.
 func describeRequest(
 	spec generators.Spec,
 	temperatureFlag generators.TemperatureFlag,
 	effortFlag generators.EffortFlag,
 ) string {
-	temperature := "default"
-	if temperatureFlag.Value != nil {
-		temperature = fmt.Sprintf("%g", *temperatureFlag.Value)
-	} else if spec.Temperature != nil {
-		temperature = fmt.Sprintf("%g", *spec.Temperature)
-	}
-	effort := "default"
-	if effortFlag != "" {
-		effort = string(effortFlag)
-	} else if spec.ReasoningEffort != "" {
-		effort = spec.ReasoningEffort
-	}
-	maxGenerateTokens := "default"
-	if spec.MaxGenerateTokens != nil {
-		maxGenerateTokens = fmt.Sprintf("%d", *spec.MaxGenerateTokens)
-	}
-	thinkingTokens := "default"
-	if spec.MaxThinkingTokens != nil {
-		thinkingTokens = fmt.Sprintf("%d", *spec.MaxThinkingTokens)
-	}
 	parts := []string{
 		fmt.Sprintf("model %s", spec.Model),
 	}
 	if spec.Family != "" {
 		parts = append(parts, fmt.Sprintf("family %s", spec.Family))
 	}
-	parts = append(parts,
-		fmt.Sprintf("temperature %s", temperature),
-		fmt.Sprintf("effort %s", effort),
-		fmt.Sprintf("max tokens %s", maxGenerateTokens),
-		fmt.Sprintf("thinking tokens %s", thinkingTokens),
-	)
+	if temperatureFlag.Value != nil {
+		parts = append(parts, fmt.Sprintf("temperature %g", *temperatureFlag.Value))
+	} else if spec.Temperature != nil {
+		parts = append(parts, fmt.Sprintf("temperature %g", *spec.Temperature))
+	}
+	if effortFlag != "" {
+		parts = append(parts, fmt.Sprintf("effort %s", effortFlag))
+	} else if spec.ReasoningEffort != "" {
+		parts = append(parts, fmt.Sprintf("effort %s", spec.ReasoningEffort))
+	}
+	if spec.MaxGenerateTokens != nil {
+		parts = append(parts, fmt.Sprintf("max tokens %d", *spec.MaxGenerateTokens))
+	}
+	if spec.MaxThinkingTokens != nil {
+		parts = append(parts, fmt.Sprintf("thinking tokens %d", *spec.MaxThinkingTokens))
+	}
 	if spec.ContextTokens > 0 {
 		parts = append(parts, fmt.Sprintf("context %d", spec.ContextTokens))
 	}

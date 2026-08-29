@@ -74,8 +74,6 @@ log_level?: string
 
 // no_memory disables user profile memory persistence.
 no_memory?: bool
-// no_human disables interactive chat and REPL for unattended operation.
-no_human?: bool
 // record enables recording of interaction sessions for self-improvement
 // analysis. When enabled, every generation command records its sessions
 // into a single sqlite database file.

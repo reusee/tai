@@ -125,7 +125,6 @@ var AICommand = Command{
 		nameMatch anytexts.NameMatch,
 		flagChats flags.Chats,
 		noMemory NoMemory,
-		noHuman NoHuman,
 		loopRun pipeline.Run,
 		recorder *records.Recorder,
 		getDefaultSummarizer pipeline.GetDefaultSummarizer,
@@ -209,12 +208,10 @@ var AICommand = Command{
 
 		prevBufLen := 0
 
-		// When NoHuman is set, OnIdle is nil so the loop ends without
-		// prompting for input, enabling unattended operation.
-		var onIdle pipeline.IdleHandler
-		if !bool(noHuman) {
-			onIdle = buildChatIdle(generator, nil)
-		}
+		// OnIdle is the sole input gateway. An unattended run ends here:
+		// closed stdin makes ChatInput return io.EOF, so the loop ends
+		// after the generation instead of prompting.
+		onIdle := buildChatIdle(generator, nil)
 
 		// Run the unified generation loop. The PhaseBuilder includes only
 		// the generate phase (not chat); the chat prompt is handled by

@@ -115,7 +115,6 @@ Gemini, OpenAI, DeepSeek, Volcano Engine (Huoshan), Baidu, Tencent, Alibaba Clou
 | `-plan` | Enable mandatory planning and multi-round generation |
 | `-apply` / `-no-apply` | Control whether change blocks are applied |
 | `-no-memory` | Disable user profile memory persistence |
-| `-no-human` | Disable interactive chat for unattended operation |
 | `-record` | Record interaction sessions for self-improvement analysis |
 | `-review` | Run a review loop after generation to review and fix changes |
 | `-thoughts` / `-no-thoughts` | Control reasoning thought visibility |

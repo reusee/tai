@@ -53,9 +53,8 @@ var GoModuleCommand = Command{
 		output Output,
 		tap debugs.Tap,
 		repl Repl,
-		noHuman NoHuman,
 	) {
-		if bool(repl) && !bool(noHuman) {
+		if bool(repl) {
 			tap(context.Background(), "repl", map[string]any{})
 			return
 		}
