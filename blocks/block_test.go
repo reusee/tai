@@ -785,6 +785,108 @@ func TestParseFirstBlockBareKind(t *testing.T) {
 	})
 }
 
+func TestParseFirstBlockAttributeOnly(t *testing.T) {
+	t.Run("KindAttributeOnly", func(t *testing.T) {
+		content := []byte("<<齉爩 kind=\"summary\"\n- done\n齉爩\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "summary" {
+			t.Fatalf("expected kind summary, got %q", block.Kind)
+		}
+		if block.Attributes["kind"] != "summary" {
+			t.Fatalf("expected kind attribute summary, got %q", block.Attributes["kind"])
+		}
+		if block.Body != "- done" {
+			t.Fatalf("expected body '- done', got %q", block.Body)
+		}
+	})
+
+	t.Run("KindAttributeWithParameters", func(t *testing.T) {
+		content := []byte("<<龘靐 kind=\"change\" op=\"MODIFY\" target=\"Foo\" file-path=\"/test.go\"\nfunc Foo() {}\n龘靐\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		wantAttrs := map[string]string{
+			"kind":      "change",
+			"op":        "MODIFY",
+			"target":    "Foo",
+			"file-path": "/test.go",
+		}
+		for k, want := range wantAttrs {
+			if block.Attributes[k] != want {
+				t.Fatalf("expected attribute %q=%q, got %q", k, want, block.Attributes[k])
+			}
+		}
+		if block.Body != "func Foo() {}" {
+			t.Fatalf("expected body 'func Foo() {}', got %q", block.Body)
+		}
+	})
+
+	t.Run("MissingKindAttributeIsMalformed", func(t *testing.T) {
+		content := []byte("<<爨虋 op=\"MODIFY\"\nfunc Foo() {}\n爨虋\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err == nil {
+			t.Fatal("expected a parse error for a parameter list without a kind attribute")
+		}
+		if ok {
+			t.Fatalf("expected no block, got %+v", block)
+		}
+		parseErr, valid := err.(*BlockParseError)
+		if !valid {
+			t.Fatalf("expected *BlockParseError, got %T", err)
+		}
+		if parseErr.BlockKind != "op" {
+			t.Fatalf("expected block kind op, got %q", parseErr.BlockKind)
+		}
+	})
+
+	t.Run("NestedSameDelimiter", func(t *testing.T) {
+		content := []byte("<<齉爩 kind=\"change\"\nouter start\n<<齉爩 kind=\"summary\"\ninner\n齉爩\nouter end\n齉爩\n")
+		block, _, _, ok, err := ParseFirstBlock(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected block to be found")
+		}
+		if block.Kind != "change" {
+			t.Fatalf("expected kind change, got %q", block.Kind)
+		}
+		if block.Body != "outer start\n<<齉爩 kind=\"summary\"\ninner\n齉爩\nouter end" {
+			t.Fatalf("unexpected body: %q", block.Body)
+		}
+	})
+
+	t.Run("ParseBlocks", func(t *testing.T) {
+		content := []byte("<<齉爩 kind=\"summary\"\nfirst\n齉爩\n<<龘靐 change(op=\"WRITE\")\nsecond\n龘靐\n")
+		blocks, err := ParseBlocks(content)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(blocks) != 2 {
+			t.Fatalf("expected 2 blocks, got %d", len(blocks))
+		}
+		if blocks[0].Kind != "summary" || blocks[0].Body != "first" {
+			t.Fatalf("unexpected first block: %+v", blocks[0])
+		}
+		if blocks[1].Kind != "change" || blocks[1].Body != "second" {
+			t.Fatalf("unexpected second block: %+v", blocks[1])
+		}
+	})
+}
+
 func TestParseFirstBlockMultipleBlocksWithNoTrailingNewline(t *testing.T) {
 	content := []byte("<<龘靐 change(op=\"MODIFY\", target=\"Foo\", file-path=\"/test.go\")\nfunc Foo() {}\n龘靐\n<<齉爩 change(op=\"MODIFY\", target=\"Bar\", file-path=\"/test.go\")\nfunc Bar() {}\n齉爩")
 
